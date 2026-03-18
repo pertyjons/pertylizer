@@ -1,7 +1,7 @@
 //! AWE parameters, snapshots, and serializable state.
 
 use serde::{Deserialize, Serialize};
-use synth_core::{BipolarValue, Hertz, NormalizedValue};
+use synth_core::{BipolarValue, Hertz, Milliseconds, NormalizedValue};
 
 use crate::room::{Material, RoomShape};
 use crate::spatial_voice::NotePositionMapping;
@@ -37,6 +37,8 @@ pub enum AweLfoTarget {
     TailStretch,
     /// Modulate portal amount.
     PortalAmount,
+    /// Modulate pre-delay time.
+    PreDelay,
 }
 
 /// State of one AWE-internal LFO for persistence.
@@ -85,6 +87,8 @@ pub enum AweParam {
     TailStretch(StretchFactor),
     /// Portal amount (0.0 = off, 1.0 = full portal effect).
     PortalAmount(NormalizedValue),
+    /// Pre-delay time before first reflection (0–200 ms).
+    PreDelay(Milliseconds),
     /// Enable/disable the AWE engine.
     Enabled(bool),
     /// Enable/disable per-voice spatial processing.
@@ -135,6 +139,9 @@ pub struct AweSnapshot {
     /// Portal amount (0.0 = off, 1.0 = full).
     #[serde(default)]
     pub portal_amount: NormalizedValue,
+    /// Pre-delay time before first reflection (0–200 ms).
+    #[serde(default)]
+    pub pre_delay: Milliseconds,
     /// Source position.
     pub source_pos: Position3,
     /// Listener position.
@@ -169,6 +176,7 @@ impl Default for AweSnapshot {
             resonance_boost: NormalizedValue::new(0.0),
             tail_stretch: StretchFactor::new(1.0),
             portal_amount: NormalizedValue::new(0.0),
+            pre_delay: Milliseconds::new(0.0),
             source_pos: Position3::new(Meters::new(2.0), Meters::new(2.5), Meters::new(1.5)),
             listener_pos: Position3::new(Meters::new(6.0), Meters::new(2.5), Meters::new(1.5)),
             spatial_enabled: false,

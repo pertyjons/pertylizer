@@ -69,3 +69,30 @@ differentiation (visual and audio).
 2. Audio: increase material contrast in FDN and early reflections damping.
 3. Visual: per-shape reflection hints for non-Box rooms.
 
+---
+
+## Long-term / Ambitious Ideas (Phase 3+)
+
+### 13. Surface coupling / wall vibration
+Thin walls (drywall, wood panels) don't just absorb — they vibrate and re-radiate sound.
+Model as an extra LF feedback loop per surface, controlled by wall thickness, mass (kg/m²),
+and stiffness. Thin walls add "chest tone" and body to the reverb; the room "breathes" at
+low frequencies.
+
+### 14. Wall openings & room coupling
+Define openings (doors, windows) on specific walls. An opening reduces reflections from that
+wall and adds HF loss from edge diffraction. Openings can connect to an exterior (absorption
+sink) or to a second room shape (extended portal concept). Struct: wall ID, position on wall,
+size in m², and target (Outside or coupled Room).
+
+### 15. Weather effects (outdoor scenes)
+Wind, rain, and fog for outdoor or semi-outdoor spaces:
+- **Wind**: asymmetric delay modulation (downwind = shorter, upwind = longer), direction param
+- **Rain**: stochastic noise modulation of reflection times + increased diffuse absorption
+- **Fog**: extreme HF roll-off proportional to density
+
+### 16. Acoustic focusing & caustics (curved surfaces)
+Concave surfaces (dome, sphere) focus sound toward focal points — dramatic gain boost at the
+center. Convex surfaces scatter. Per-reflection gain adjustment based on surface curvature at
+the reflection point. Sphere/dome rooms would exhibit strong convergent focusing.
+

@@ -7,7 +7,8 @@
 //! 4. Stereo spatializer (ITD + ILD) on wet signal only
 
 use synth_core::{
-    BipolarValue, FilterState, Gain, NormalizedValue, SampleCount, SampleRate, Seconds,
+    BipolarValue, FilterState, Gain, Milliseconds, NormalizedValue, SampleCount, SampleRate,
+    Seconds,
 };
 use synth_dsp::{FdnCore, InterpolatedDelayLine};
 
@@ -44,6 +45,12 @@ const DEFAULT_PORTAL_FEEDBACK: f32 = 0.4;
 /// LP damping coefficient for muffled portal sound.
 const DEFAULT_PORTAL_DAMPING: f32 = 0.6;
 
+/// Maximum pre-delay time in milliseconds.
+const PRE_DELAY_MAX_MS: f32 = 200.0;
+
+/// Maximum pre-delay in samples (200ms @ 96kHz).
+const PRE_DELAY_MAX_SAMPLES: SampleCount = SampleCount::new(19_200);
+
 /// The Acoustic World Engine processor.
 ///
 /// Processes interleaved stereo audio through a physics-based room simulation:
@@ -70,6 +77,11 @@ pub struct AweEngine {
     lfo2: AweLfo,
     lfo3: AweLfo,
     lfo4: AweLfo,
+
+    // Pre-delay — delays wet input before reflections
+    pre_delay_left: InterpolatedDelayLine,
+    pre_delay_right: InterpolatedDelayLine,
+    current_pre_delay_samples: f32,
 
     // Acoustic portal — extra delay feedback path simulating adjoining room
     portal_delay_left: InterpolatedDelayLine,
@@ -98,6 +110,7 @@ struct FdnParams {
     feedback_gain: Gain,
     diffusion: NormalizedValue,
     width: NormalizedValue,
+    pre_delay_samples: f32,
     portal_delay: SampleOffset,
     portal_feedback: Gain,
     portal_damping: NormalizedValue,
@@ -128,6 +141,11 @@ impl AweEngine {
             lfo2: AweLfo::new(),
             lfo3: AweLfo::new(),
             lfo4: AweLfo::new(),
+
+            // Pre-delay: max 200ms @ 96kHz = 19200 samples
+            pre_delay_left: InterpolatedDelayLine::new(PRE_DELAY_MAX_SAMPLES.as_usize()),
+            pre_delay_right: InterpolatedDelayLine::new(PRE_DELAY_MAX_SAMPLES.as_usize()),
+            current_pre_delay_samples: 0.0,
 
             // Portal delay lines: max ~300ms @ 96kHz = 28800 samples
             portal_delay_left: InterpolatedDelayLine::new(PORTAL_MAX_DELAY.as_usize()),
@@ -180,6 +198,9 @@ impl AweEngine {
         let mut portal_feedback_state_l = self.portal_feedback_state_l;
         let mut portal_feedback_state_r = self.portal_feedback_state_r;
 
+        let target_pre_delay = fdn.pre_delay_samples;
+        let mut current_pre_delay = self.current_pre_delay_samples;
+
         // 3. Per-sample DSP
         for i in 0..num_samples {
             let idx = i * 2;
@@ -193,13 +214,23 @@ impl AweEngine {
             current_dry_wet += fdn.ramp_coeff * (target_dry_wet - current_dry_wet);
             current_early_late += fdn.ramp_coeff * (target_early_late - current_early_late);
             current_portal += fdn.ramp_coeff * (target_portal - current_portal);
+            current_pre_delay += fdn.ramp_coeff * (target_pre_delay - current_pre_delay);
+
+            // --- Pre-delay (delays wet input before reflections) ---
+            let delayed_input = if current_pre_delay > 0.5 {
+                self.pre_delay_left.write(mono_input);
+                self.pre_delay_left.read_interpolated(current_pre_delay)
+            } else {
+                self.pre_delay_left.write(mono_input);
+                mono_input
+            };
 
             // --- Early reflections (ISM) ---
-            let (early_left, early_right) = self.early_reflections.process(mono_input);
+            let (early_left, early_right) = self.early_reflections.process(delayed_input);
 
             // --- Late reverb (FDN) ---
             let fdn_out = self.fdn.process_sample(
-                mono_input,
+                delayed_input,
                 fdn.feedback_gain,
                 fdn.lp_coeff,
                 fdn.hp_coeff,
@@ -209,7 +240,7 @@ impl AweEngine {
             );
 
             // --- Room modes ---
-            let modes_out = self.room_modes.process(mono_input);
+            let modes_out = self.room_modes.process(delayed_input);
 
             // --- Mix early/late ---
             let early_amount = 1.0 - current_early_late;
@@ -264,6 +295,7 @@ impl AweEngine {
         self.current_dry_wet = NormalizedValue::new(current_dry_wet);
         self.current_early_late = NormalizedValue::new(current_early_late);
         self.current_portal = NormalizedValue::new(current_portal);
+        self.current_pre_delay_samples = current_pre_delay;
         self.portal_feedback_state_l = portal_feedback_state_l;
         self.portal_feedback_state_r = portal_feedback_state_r;
     }
@@ -319,6 +351,10 @@ impl AweEngine {
             AweParam::PortalAmount(v) => {
                 self.base_snapshot.portal_amount = v;
                 self.snapshot.portal_amount = v;
+            }
+            AweParam::PreDelay(v) => {
+                self.base_snapshot.pre_delay = v;
+                self.snapshot.pre_delay = v;
             }
             AweParam::Enabled(v) => self.enabled = v,
             AweParam::SpatialEnabled(v) => {
@@ -420,6 +456,8 @@ impl AweEngine {
             self.fdn.clear();
             self.room_modes.clear();
             self.spatializer.clear();
+            self.pre_delay_left.clear();
+            self.pre_delay_right.clear();
             self.portal_delay_left.clear();
             self.portal_delay_right.clear();
             self.portal_feedback_state_l = FilterState::ZERO;
@@ -556,6 +594,9 @@ impl AweEngine {
         let mut portal_feedback_state_l = self.portal_feedback_state_l;
         let mut portal_feedback_state_r = self.portal_feedback_state_r;
 
+        let target_pre_delay = fdn.pre_delay_samples;
+        let mut current_pre_delay = self.current_pre_delay_samples;
+
         // 5. Per-sample loop
         for i in 0..num_samples {
             let idx = i * 2;
@@ -566,6 +607,7 @@ impl AweEngine {
             current_dry_wet += fdn.ramp_coeff * (target_dry_wet - current_dry_wet);
             current_early_late += fdn.ramp_coeff * (target_early_late - current_early_late);
             current_portal += fdn.ramp_coeff * (target_portal - current_portal);
+            current_pre_delay += fdn.ramp_coeff * (target_pre_delay - current_pre_delay);
 
             let mut total_early_l = 0.0_f32;
             let mut total_early_r = 0.0_f32;
@@ -590,9 +632,18 @@ impl AweEngine {
                 total_spat_r += sr;
             }
 
-            // Late reverb (shared FDN, fed by global mono)
+            // --- Pre-delay for shared FDN/modes ---
+            let delayed_global = if current_pre_delay > 0.5 {
+                self.pre_delay_left.write(global_mono);
+                self.pre_delay_left.read_interpolated(current_pre_delay)
+            } else {
+                self.pre_delay_left.write(global_mono);
+                global_mono
+            };
+
+            // Late reverb (shared FDN, fed by pre-delayed global mono)
             let fdn_out = self.fdn.process_sample(
-                global_mono,
+                delayed_global,
                 fdn.feedback_gain,
                 fdn.lp_coeff,
                 fdn.hp_coeff,
@@ -601,8 +652,8 @@ impl AweEngine {
                 sample_rate_recip,
             );
 
-            // Room modes (shared)
-            let modes_out = self.room_modes.process(global_mono);
+            // Room modes (shared, pre-delayed)
+            let modes_out = self.room_modes.process(delayed_global);
 
             // Mix early/late
             let early_amount = 1.0 - current_early_late;
@@ -658,6 +709,7 @@ impl AweEngine {
         self.current_dry_wet = NormalizedValue::new(current_dry_wet);
         self.current_early_late = NormalizedValue::new(current_early_late);
         self.current_portal = NormalizedValue::new(current_portal);
+        self.current_pre_delay_samples = current_pre_delay;
         self.portal_feedback_state_l = portal_feedback_state_l;
         self.portal_feedback_state_r = portal_feedback_state_r;
     }
@@ -701,6 +753,15 @@ impl AweEngine {
         let portal_feedback = Gain::new(DEFAULT_PORTAL_FEEDBACK);
         let portal_damping = NormalizedValue::new(DEFAULT_PORTAL_DAMPING);
 
+        // Pre-delay: convert ms to samples, clamped to buffer size
+        let pre_delay_ms = self
+            .snapshot
+            .pre_delay
+            .as_f32()
+            .clamp(0.0, PRE_DELAY_MAX_MS);
+        let pre_delay_samples = (pre_delay_ms * 0.001 * sample_rate.as_f32())
+            .min(PRE_DELAY_MAX_SAMPLES.as_usize() as f32 - 1.0);
+
         FdnParams {
             ramp_coeff,
             lp_coeff,
@@ -708,6 +769,7 @@ impl AweEngine {
             feedback_gain,
             diffusion,
             width,
+            pre_delay_samples,
             portal_delay,
             portal_feedback,
             portal_damping,
@@ -744,6 +806,7 @@ impl AweEngine {
         self.snapshot.resonance_boost = self.base_snapshot.resonance_boost;
         self.snapshot.tail_stretch = self.base_snapshot.tail_stretch;
         self.snapshot.portal_amount = self.base_snapshot.portal_amount;
+        self.snapshot.pre_delay = self.base_snapshot.pre_delay;
 
         // Apply all LFO offsets from the restored base
         self.apply_lfo_modulation(self.lfo1.target(), lfo1_val);
@@ -894,6 +957,11 @@ impl AweEngine {
             AweLfoTarget::PortalAmount => {
                 self.snapshot.portal_amount =
                     NormalizedValue::new(self.snapshot.portal_amount.as_f32() + value * 0.3);
+            }
+            AweLfoTarget::PreDelay => {
+                self.snapshot.pre_delay = Milliseconds::new(
+                    (self.snapshot.pre_delay.as_f32() + value * 50.0).clamp(0.0, PRE_DELAY_MAX_MS),
+                );
             }
         }
     }

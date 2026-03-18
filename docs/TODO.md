@@ -147,6 +147,24 @@ This enables AI to self-discover the full synth architecture without hardcoded k
 
 Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 
+### 7.0 AWE acoustic engine — prioritized plan
+
+#### Phase 1 — Quick wins (high impact, low complexity)
+- [x] **1. Pre-delay** — new `PreDelay(Milliseconds)` param (0–200ms), delay before first reflection
+- [ ] **2. Air absorption** — new `AirAbsorption(NormalizedValue)` param, distance-proportional LP filtering per reflection
+- [ ] **3. Stereo width** — new `Width(NormalizedValue)` param (currently hardcoded to 1.0 in FDN)
+- [ ] **4. Wet signal EQ** — new `HighCut(Hertz)` and `LowCut(Hertz)` params, biquad filters on wet output
+- [ ] **5. FDN internal modulation** — new `ModulationDepth(NormalizedValue)` and `ModulationRate(Hertz)` params, chorus inside FDN to break metallic character
+- [ ] **6. Temperature → speed of sound** — new `Temperature(Celsius)` param, formula `v = 331.3 + 0.606 * T`, affects all delay calculations
+
+#### Phase 2 — Medium complexity
+- [ ] **7. Per-surface materials** — `MaterialConfig { floor, walls, ceiling }` instead of single global `Material`, ISM uses correct material per reflection
+- [ ] **8. Second-order reflections** — extend ISM from 6 to ~30 taps (configurable `ReflectionOrder(u8)` 1–3)
+- [ ] **9. Extended room modes** — add tangential modes `f = c/2 * sqrt((n/L)² + (m/W)²)` and axial overtones, ~12 total combs instead of 3
+- [ ] **10. Resonant objects** — sympathetic resonance from objects in the room (strings, membranes, plates, Helmholtz cavities, loose panels, chimes), implemented as bandpass + feedback at object frequency
+- [ ] **11. Eyring RT60** — replace Sabine `RT60 = 0.161V/(Sα)` with Eyring `RT60 = -0.161V/(S*ln(1-α))` for better accuracy at high absorption
+- [ ] **12. Doppler effect** — track radial velocity between source/listener, shift pitch via variable delay read speed: `ratio = v_sound / (v_sound + v_radial)`
+
 ### 7.1 Rework room visualization
 - [ ] Redesign the 3D isometric room rendering
 - [ ] Improve animations (sound rings, reflection paths)

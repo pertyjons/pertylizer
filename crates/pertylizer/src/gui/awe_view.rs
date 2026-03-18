@@ -17,7 +17,7 @@ use synth_awe::presets::awe_presets;
 use synth_awe::{
     AweParam, AwePreset, Material, Meters, NotePositionMapping, RoomShape, StretchFactor,
 };
-use synth_core::{BipolarValue, Hertz, MidiNote, NormalizedValue};
+use synth_core::{BipolarValue, Hertz, MidiNote, Milliseconds, NormalizedValue};
 use synth_engine::{EngineCommand, EngineHandle};
 
 /// Room shape kind for the UI selector.
@@ -84,6 +84,7 @@ pub struct AweUiState {
     pub freq_warp: f32,
     pub resonance_boost: f32,
     pub portal_amount: f32,
+    pub pre_delay: f32,
 
     // LFO states
     pub lfo1: AweLfoState,
@@ -136,6 +137,7 @@ impl Default for AweUiState {
             freq_warp: snap.freq_warp.as_f32(),
             resonance_boost: snap.resonance_boost.as_f32(),
             portal_amount: snap.portal_amount.as_f32(),
+            pre_delay: snap.pre_delay.as_f32(),
             lfo1: snap.lfo1,
             lfo2: snap.lfo2,
             lfo3: snap.lfo3,
@@ -218,6 +220,7 @@ impl AweUiState {
                 resonance_boost: NormalizedValue::new(self.resonance_boost),
                 tail_stretch: StretchFactor::new(self.tail_stretch),
                 portal_amount: NormalizedValue::new(self.portal_amount),
+                pre_delay: Milliseconds::new(self.pre_delay),
                 source_pos: [self.source_x, self.source_y, half_height].into(),
                 listener_pos: [self.listener_x, self.listener_y, half_height].into(),
                 spatial_enabled: self.spatial_enabled,
@@ -295,6 +298,7 @@ impl AweUiState {
         self.resonance_boost = snap.resonance_boost.as_f32();
         self.tail_stretch = snap.tail_stretch.as_f32();
         self.portal_amount = snap.portal_amount.as_f32();
+        self.pre_delay = snap.pre_delay.as_f32();
 
         // Positions
         self.source_x = snap.source_pos.x().as_f32();
@@ -369,7 +373,7 @@ fn material_to_index(mat: Material) -> usize {
     best_idx
 }
 
-const LFO_TARGET_NAMES: [&str; 13] = [
+const LFO_TARGET_NAMES: [&str; 14] = [
     "Room Length",
     "Room Width",
     "Source X",
@@ -383,6 +387,7 @@ const LFO_TARGET_NAMES: [&str; 13] = [
     "Res Boost",
     "Tail Stretch",
     "Portal",
+    "Pre-delay",
 ];
 
 fn lfo_target_from_index(idx: usize) -> AweLfoTarget {
@@ -400,6 +405,7 @@ fn lfo_target_from_index(idx: usize) -> AweLfoTarget {
         10 => AweLfoTarget::ResonanceBoost,
         11 => AweLfoTarget::TailStretch,
         12 => AweLfoTarget::PortalAmount,
+        13 => AweLfoTarget::PreDelay,
         _ => AweLfoTarget::SourceX,
     }
 }
@@ -419,6 +425,7 @@ fn lfo_target_to_index(target: AweLfoTarget) -> usize {
         AweLfoTarget::ResonanceBoost => 10,
         AweLfoTarget::TailStretch => 11,
         AweLfoTarget::PortalAmount => 12,
+        AweLfoTarget::PreDelay => 13,
     }
 }
 
@@ -2257,6 +2264,19 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         {
             handle.send(EngineCommand::SetAweParameter {
                 param: AweParam::PortalAmount(NormalizedValue::new(state.portal_amount)),
+            });
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Pre-delay:");
+        if ui
+            .add(egui::Slider::new(&mut state.pre_delay, 0.0..=200.0).suffix(" ms"))
+            .on_hover_text("Delay before first reflection — separates dry signal from reverb")
+            .changed()
+        {
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::PreDelay(Milliseconds::new(state.pre_delay)),
             });
         }
     });
