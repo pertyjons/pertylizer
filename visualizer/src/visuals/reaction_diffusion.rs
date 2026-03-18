@@ -421,14 +421,10 @@ impl render_graph::Node for ReactionDiffusionNode {
 
         match self.state {
             RdState::Loading => {
-                match pipeline_cache.get_compute_pipeline_state(pipeline.pipeline) {
-                    CachedPipelineState::Ok(_) => {
-                        self.state = RdState::Update(0);
-                    }
-                    CachedPipelineState::Err(err) => {
-                        panic!("Reaction diffusion pipeline error: {err:?}");
-                    }
-                    _ => {} // Still loading
+                if let CachedPipelineState::Ok(_) =
+                    pipeline_cache.get_compute_pipeline_state(pipeline.pipeline)
+                {
+                    self.state = RdState::Update(0);
                 }
             }
             RdState::Update(index) => {
