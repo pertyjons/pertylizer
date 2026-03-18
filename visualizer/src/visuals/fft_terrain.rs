@@ -1,21 +1,27 @@
-//! FFT Terrain — Landscape of columns deforming in real-time with FFT bands.
+//! FFT Terrain — GPU-driven frequency landscape.
 //!
-//! A grid of vertical pillars whose height is driven by FFT bin magnitudes.
-//! Creates a cityscape-like terrain that dances with the frequency spectrum.
-//! Colors use nonlinear frequency-to-hue mapping (bass=red, mids=green, highs=blue).
+//! A single subdivided plane mesh with vertex displacement driven by FFT
+//! magnitudes. CPU computes smoothed per-cell heights (instant attack, smooth
+//! decay) and uploads via storage buffer. Shader handles displacement and
+//! frequency-based coloring with Z-depth fade.
+//! Replaces the previous 128-entity CPU approach with 1 entity / 1 draw call.
 
-use bevy::color::LinearRgba;
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::storage::ShaderStorageBuffer;
+use bevy::shader::ShaderRef;
 
-use super::effects::{self, EffectId, EffectLayer, EffectState};
+use super::effects::{EffectId, EffectLayer, EffectState};
 use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
 /// Columns along the frequency axis.
-const COLS: usize = 16;
+const COLS: usize = 32;
 /// Rows (depth) for visual fullness.
-const ROWS: usize = 8;
+const ROWS: usize = 16;
 /// Spacing between columns.
 const COL_SPACING: f32 = 1.6;
 /// Spacing between rows.
@@ -27,162 +33,200 @@ const EMISSIVE_STRENGTH: f32 = 2.5;
 /// Per-second decay smoothing rate (frame-rate independent). Attack is instant.
 const DECAY_RATE: f32 = 6.0;
 
-#[derive(Component)]
-pub struct TerrainColumn {
-    pub base_pos: Vec3,
-    /// Which FFT bin this column represents.
-    pub fft_bin: usize,
+/// Uniform data sent to the FFT terrain shader.
+#[derive(ShaderType, Clone, Copy, Default)]
+pub struct FftTerrainUniforms {
+    pub num_cols: u32,
+    pub num_rows: u32,
+    pub fade: f32,
+    pub hue_offset: f32,
+    pub saturation: f32,
+    pub lightness: f32,
+    pub emissive_strength: f32,
+    pub flux_boost: f32,
 }
 
-/// Shared material handles — one per frequency column.
+/// Custom material for FFT terrain — displacement from storage buffer.
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct FftTerrainMaterial {
+    #[uniform(0)]
+    pub uniforms: FftTerrainUniforms,
+    #[storage(1, read_only)]
+    pub heights: Handle<ShaderStorageBuffer>,
+}
+
+impl Material for FftTerrainMaterial {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/fft_terrain.wgsl".into()
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        "shaders/fft_terrain.wgsl".into()
+    }
+}
+
+/// Tracks smoothed heights and GPU handles.
 #[derive(Resource)]
-pub struct TerrainMaterials {
-    pub materials: Vec<Handle<StandardMaterial>>,
+pub struct FftTerrainState {
+    /// Smoothed heights per cell (COLS * ROWS).
+    smoothed_heights: Vec<f32>,
+    material_handle: Handle<FftTerrainMaterial>,
+    buffer_handle: Handle<ShaderStorageBuffer>,
+}
+
+impl Default for FftTerrainState {
+    fn default() -> Self {
+        Self {
+            smoothed_heights: vec![0.0; COLS * ROWS],
+            material_handle: Handle::default(),
+            buffer_handle: Handle::default(),
+        }
+    }
+}
+
+/// Generate a subdivided plane mesh for the FFT terrain.
+fn create_fft_terrain_mesh() -> Mesh {
+    let cols = COLS;
+    let rows = ROWS;
+    let width = COLS as f32 * COL_SPACING;
+    let depth = ROWS as f32 * ROW_SPACING;
+
+    let num_verts = (cols + 1) * (rows + 1);
+    let mut positions = Vec::with_capacity(num_verts);
+    let mut normals = Vec::with_capacity(num_verts);
+    let mut uvs = Vec::with_capacity(num_verts);
+
+    for row in 0..=rows {
+        for col in 0..=cols {
+            let x = col as f32 / cols as f32 * width - width / 2.0;
+            let z = row as f32 / rows as f32 * depth - depth / 2.0;
+            positions.push([x, 0.0, z]);
+            normals.push([0.0, 1.0, 0.0]);
+            uvs.push([col as f32 / cols as f32, row as f32 / rows as f32]);
+        }
+    }
+
+    let mut indices = Vec::with_capacity(cols * rows * 6);
+    for row in 0..rows {
+        for col in 0..cols {
+            let i = (row * (cols + 1) + col) as u32;
+            let stride = (cols + 1) as u32;
+            indices.push(i);
+            indices.push(i + stride);
+            indices.push(i + 1);
+            indices.push(i + 1);
+            indices.push(i + stride);
+            indices.push(i + stride + 1);
+        }
+    }
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(Indices::U32(indices))
 }
 
 pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<FftTerrainMaterial>>,
+    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut state: ResMut<FftTerrainState>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
-    let mesh = meshes.add(Cuboid::new(COL_SPACING * 0.7, 1.0, ROW_SPACING * 0.7));
-
-    let offset_x = (COLS as f32 * COL_SPACING) / 2.0;
-    let offset_z = (ROWS as f32 * ROW_SPACING) / 2.0;
+    let mesh = meshes.add(create_fft_terrain_mesh());
 
     let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
-    let mut shared_mats = Vec::with_capacity(COLS * ROWS);
+    let buffer = buffers.add(ShaderStorageBuffer::from(vec![0.0_f32; COLS * ROWS]));
+    state.buffer_handle = buffer.clone();
 
-    for col in 0..COLS {
-        for row in 0..ROWS {
-            let band_pos = col as f32 / COLS as f32;
-            let hue = telemetry_color::band_frequency_hue(band_pos);
-            
-            // Fade lightness backward in Z
-            let z_fade = 1.0 - (row as f32 / ROWS as f32);
-            let color_lit = lit * (0.2 + z_fade * 0.8);
-            
-            let color = Color::hsl(hue, sat, color_lit);
-            let mat = materials.add(StandardMaterial {
-                base_color: color,
-                emissive: LinearRgba::from(color) * emissive * z_fade,
-                metallic: policy.metallic,
-                perceptual_roughness: policy.roughness,
-                ..default()
-            });
-
-            shared_mats.push(mat.clone());
-
-            let px = col as f32 * COL_SPACING - offset_x + COL_SPACING * 0.5;
-            let pz = row as f32 * ROW_SPACING - offset_z + ROW_SPACING * 0.5;
-            let pos = Vec3::new(px, 0.0, pz);
-
-            // Map column to FFT bin (spread across available bins)
-            let fft_bin = col * 4 + row % 4;
-
-            commands.spawn((
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(mat),
-                Transform::from_translation(pos),
-                Visibility::Hidden,
-                TerrainColumn {
-                    base_pos: pos,
-                    fft_bin,
-                },
-                EffectLayer(EffectId::FftTerrain),
-            ));
-        }
-    }
-
-    commands.insert_resource(TerrainMaterials {
-        materials: shared_mats,
+    let material = materials.add(FftTerrainMaterial {
+        uniforms: FftTerrainUniforms {
+            num_cols: COLS as u32,
+            num_rows: ROWS as u32,
+            fade: 1.0,
+            hue_offset: 0.0,
+            saturation: sat,
+            lightness: lit,
+            emissive_strength: emissive,
+            flux_boost: 1.0,
+        },
+        heights: buffer,
     });
+
+    state.material_handle = material.clone();
+
+    commands.spawn((
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        Transform::IDENTITY,
+        Visibility::Hidden,
+        EffectLayer(EffectId::FftTerrain),
+    ));
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn update(
     time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
     policy: Res<ThemeMaterialPolicy>,
-    terrain_materials: Res<TerrainMaterials>,
-    mut query: Query<(&TerrainColumn, &mut Transform)>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut last_policy_version: Local<u64>,
-    mut last_fade: Local<f32>,
-    mut last_hue_offset: Local<f32>,
+    mut state: ResMut<FftTerrainState>,
+    mut materials: ResMut<Assets<FftTerrainMaterial>>,
+    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
 ) {
     let fade = effect_state.fade;
     let dt = time.delta_secs();
     let decay_alpha = 1.0 - (-DECAY_RATE * dt).exp();
-
     let beat_pulse = telemetry_color::beat_pulse_factor(telemetry.beat_phase, &policy);
 
-    for (col, mut transform) in &mut query {
-        // Get FFT magnitude for this column
-        let mag = if col.fft_bin < telemetry.fft_bin_count {
-            telemetry.fft[col.fft_bin]
-        } else {
-            0.0
-        };
+    // Update smoothed heights per cell (instant attack, smooth decay)
+    for col in 0..COLS {
+        for row in 0..ROWS {
+            let fft_bin = col * 4 + row % 4;
+            let mag = if fft_bin < telemetry.fft_bin_count {
+                telemetry.fft[fft_bin]
+            } else {
+                0.0
+            };
 
-        // Height driven by FFT magnitude + beat pulse
-        let target_height = (mag * MAX_HEIGHT * (1.0 + beat_pulse * 0.3)).max(0.1) * fade;
+            let target = (mag * MAX_HEIGHT * (1.0 + beat_pulse * 0.3)).max(0.1) * fade;
+            let idx = col * ROWS + row;
+            let current = state.smoothed_heights[idx];
 
-        // Instant attack, smooth decay (same pattern as fft_bars)
-        let current = transform.scale.y;
-        let height = if target_height > current {
-            target_height
-        } else {
-            current + (target_height - current) * decay_alpha
-        };
-
-        // Scale Y for height, keep X/Z at 1
-        transform.scale = Vec3::new(1.0, height, 1.0);
-        // Position: base + half height (cube origin is center)
-        transform.translation = Vec3::new(col.base_pos.x, height * 0.5, col.base_pos.z);
+            state.smoothed_heights[idx] = if target > current {
+                target
+            } else {
+                current + (target - current) * decay_alpha
+            };
+        }
     }
 
-    // Update shared materials once each (not per entity)
+    // Upload heights to GPU
+    if let Some(buf) = buffers.get_mut(&state.buffer_handle) {
+        buf.set_data(state.smoothed_heights.clone());
+    }
+
+    // Update material uniforms
     let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
-    let policy_changed = *last_policy_version != policy.version;
-
-    if !policy_changed
-        && (fade - *last_fade).abs() < effects::FADE_EPSILON
-        && (hue_offset - *last_hue_offset).abs() < 1.0
-    {
-        return;
-    }
-    *last_policy_version = policy.version;
-    *last_fade = fade;
-    *last_hue_offset = hue_offset;
-
     let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
     let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
-    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost;
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
-    for (i, handle) in terrain_materials.materials.iter().enumerate() {
-        if let Some(material) = materials.get_mut(handle) {
-            let col = i / ROWS;
-            let row = i % ROWS;
-            
-            let band_pos = col as f32 / COLS as f32;
-            let hue = telemetry_color::band_frequency_hue(band_pos) + hue_offset;
-            
-            // Fade lightness backward in Z
-            let z_fade = 1.0 - (row as f32 / ROWS as f32);
-            let color_lit = lit * (0.2 + z_fade * 0.8);
-            
-            let color = Color::hsl(hue % 360.0, sat, color_lit * fade);
-            material.base_color = color;
-            material.emissive = LinearRgba::from(color) * emissive * z_fade * fade;
-            material.metallic = policy.metallic;
-            material.perceptual_roughness = policy.roughness;
-        }
+    if let Some(mat) = materials.get_mut(&state.material_handle) {
+        mat.uniforms = FftTerrainUniforms {
+            num_cols: COLS as u32,
+            num_rows: ROWS as u32,
+            fade,
+            hue_offset,
+            saturation: sat,
+            lightness: lit,
+            emissive_strength: emissive,
+            flux_boost,
+        };
     }
 }

@@ -1,33 +1,33 @@
-//! Spectral waterfall — scrolling 3D spectrogram / terrain.
+//! Spectral waterfall — GPU-driven scrolling 3D spectrogram.
 //!
-//! A grid of cubes where each row represents a moment in time.
-//! Rows physically scroll backward along the Z axis.
-//! To maintain high performance (batching), we only use 64 materials (one per band)
-//! and represent the magnitude via the Y-scale (height) of the cubes, rather than
-//! unique colors per cube which would cause 2000+ draw calls and massive lag.
+//! A single subdivided plane mesh where vertex displacement is handled entirely
+//! on the GPU via a custom shader. FFT history is uploaded as a storage buffer
+//! and the vertex shader displaces each vertex's Y coordinate based on magnitude.
+//! This replaces the previous 2048-entity CPU approach with 1 entity / 1 draw call.
 
-use bevy::color::LinearRgba;
+use bevy::asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
+use bevy::render::storage::ShaderStorageBuffer;
+use bevy::shader::ShaderRef;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
 use super::telemetry_color;
 use super::theme::ThemeMaterialPolicy;
 use crate::telemetry::SynthTelemetry;
 
-/// Number of frequency bands per row (half of full FFT for manageable entity count).
+/// Number of frequency bands per row.
 const BANDS: usize = 64;
 
 /// Number of history rows.
 const ROWS: usize = 32;
 
-/// Width of the entire waterfall.
+/// Width of the entire waterfall in world units.
 const TOTAL_WIDTH: f32 = 28.0;
 
 /// Depth spacing between rows.
 const ROW_DEPTH: f32 = 0.6;
-
-/// Cell size.
-const CELL_SIZE: f32 = TOTAL_WIDTH / BANDS as f32;
 
 /// Emissive intensity multiplier.
 const EMISSIVE_STRENGTH: f32 = 3.0;
@@ -35,30 +35,55 @@ const EMISSIVE_STRENGTH: f32 = 3.0;
 /// How often to scroll (seconds between row shifts).
 const SCROLL_INTERVAL: f32 = 0.05;
 
-/// Marker with (band_index, row_index).
-#[derive(Component)]
-pub struct WaterfallCell {
-    band: usize,
-    row: usize,
+/// Z offset to position the waterfall behind the camera focus.
+const Z_OFFSET: f32 = -8.0;
+
+/// Uniform data sent to the waterfall shader.
+#[derive(ShaderType, Clone, Copy, Default)]
+pub struct WaterfallUniforms {
+    pub front_row: u32,
+    pub fade: f32,
+    pub hue_offset: f32,
+    pub saturation: f32,
+    pub lightness: f32,
+    pub emissive_strength: f32,
+    /// Fractional scroll progress within the current interval [0, 1).
+    pub scroll_fraction: f32,
+    pub row_depth: f32,
 }
 
-/// Shared materials per band (to allow Bevy to batch rendering into 64 draw calls instead of 2048).
-#[derive(Resource)]
-pub struct WaterfallMaterials {
-    materials: Vec<Handle<StandardMaterial>>,
+/// Custom material for the waterfall — drives vertex displacement on the GPU.
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct WaterfallMaterial {
+    #[uniform(0)]
+    pub uniforms: WaterfallUniforms,
+    #[storage(1, read_only)]
+    pub fft_history: Handle<ShaderStorageBuffer>,
 }
 
-/// Tracks which logical row is at the front and scroll timing.
+impl Material for WaterfallMaterial {
+    fn vertex_shader() -> ShaderRef {
+        "shaders/spectral_waterfall.wgsl".into()
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        "shaders/spectral_waterfall.wgsl".into()
+    }
+}
+
+/// Tracks ring buffer state and scroll timing.
 #[derive(Resource)]
 pub struct WaterfallState {
     /// Logical front row index (wraps around).
     front_row: usize,
     /// Timer for scroll advancement.
     timer: f32,
-    /// Set to true during crossfades to update all materials with the new fade value.
-    full_update_needed: bool,
-    /// FFT history: [row][band] magnitudes.
-    history: [[f32; BANDS]; ROWS],
+    /// FFT history: [row][band] magnitudes stored flat for GPU upload.
+    history: Vec<f32>,
+    /// Handle to the waterfall material asset.
+    material_handle: Handle<WaterfallMaterial>,
+    /// Handle to the GPU storage buffer for FFT data.
+    buffer_handle: Handle<ShaderStorageBuffer>,
 }
 
 impl Default for WaterfallState {
@@ -66,57 +91,59 @@ impl Default for WaterfallState {
         Self {
             front_row: 0,
             timer: 0.0,
-            full_update_needed: true,
-            history: [[0.0; BANDS]; ROWS],
+            history: vec![0.0; BANDS * ROWS],
+            material_handle: Handle::default(),
+            buffer_handle: Handle::default(),
         }
     }
 }
 
-/// Spawn the waterfall grid (initially hidden).
-pub fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    policy: Res<ThemeMaterialPolicy>,
-) {
-    let mesh = meshes.add(Cuboid::new(CELL_SIZE * 0.9, 1.0, ROW_DEPTH * 0.85));
+/// Generate a subdivided plane mesh for the waterfall.
+///
+/// UV.x maps to frequency band position [0, 1].
+/// UV.y maps to time/row position [0, 1] (0 = newest, 1 = oldest).
+fn create_waterfall_mesh() -> Mesh {
+    let cols = BANDS;
+    let rows = ROWS;
+    let width = TOTAL_WIDTH;
+    let depth = ROWS as f32 * ROW_DEPTH;
 
-    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
-    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
-    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+    let num_verts = (cols + 1) * (rows + 1);
+    let mut positions = Vec::with_capacity(num_verts);
+    let mut normals = Vec::with_capacity(num_verts);
+    let mut uvs = Vec::with_capacity(num_verts);
 
-    // Create 64 shared materials (one for each frequency band)
-    // Nonlinear frequency→hue mapping: bass→red, mids→green, highs→blue
-    let mut shared_mats = Vec::with_capacity(BANDS);
-    for band in 0..BANDS {
-        let hue = telemetry_color::band_frequency_hue(band as f32 / BANDS as f32);
-        let color = Color::hsl(hue, sat, lit);
-        shared_mats.push(materials.add(StandardMaterial {
-            base_color: color,
-            emissive: LinearRgba::from(color) * emissive,
-            ..default()
-        }));
-    }
-    commands.insert_resource(WaterfallMaterials {
-        materials: shared_mats.clone(),
-    });
-
-    for row in 0..ROWS {
-        for (band, shared_mat) in shared_mats.iter().enumerate().take(BANDS) {
-            let x = (band as f32 - BANDS as f32 / 2.0) * CELL_SIZE;
-
-            // Z will be set properly in the first update
-
-            commands.spawn((
-                Mesh3d(mesh.clone()),
-                MeshMaterial3d(shared_mat.clone()),
-                Transform::from_xyz(x, 0.05, -8.0).with_scale(Vec3::new(1.0, 0.01, 1.0)),
-                Visibility::Hidden,
-                WaterfallCell { band, row },
-                EffectLayer(EffectId::SpectralWaterfall),
-            ));
+    for row in 0..=rows {
+        for col in 0..=cols {
+            let x = (col as f32 / cols as f32 - 0.5) * width;
+            let z = -(row as f32 / rows as f32) * depth;
+            positions.push([x, 0.0, z]);
+            normals.push([0.0, 1.0, 0.0]);
+            uvs.push([col as f32 / cols as f32, row as f32 / rows as f32]);
         }
     }
+
+    let mut indices = Vec::with_capacity(cols * rows * 6);
+    for row in 0..rows {
+        for col in 0..cols {
+            let i = (row * (cols + 1) + col) as u32;
+            let stride = (cols + 1) as u32;
+            // Triangle 1
+            indices.push(i);
+            indices.push(i + stride);
+            indices.push(i + 1);
+            // Triangle 2
+            indices.push(i + 1);
+            indices.push(i + stride);
+            indices.push(i + stride + 1);
+        }
+    }
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(Indices::U32(indices))
 }
 
 /// Downsample FFT bands to the waterfall band count.
@@ -145,15 +172,65 @@ fn downsample_fft(fft: &[f32], bin_count: usize) -> [f32; BANDS] {
     out
 }
 
-/// Advance the waterfall history by shifting the rows physically and updating their height scale.
+/// Spawn the waterfall as a single mesh entity with a custom GPU material.
+pub fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<WaterfallMaterial>>,
+    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut state: ResMut<WaterfallState>,
+    policy: Res<ThemeMaterialPolicy>,
+) {
+    let mesh = meshes.add(create_waterfall_mesh());
+
+    let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
+    let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
+
+    // Create storage buffer for FFT history data
+    let fft_data = vec![0.0_f32; BANDS * ROWS];
+    let buffer = buffers.add(ShaderStorageBuffer::from(fft_data));
+    state.buffer_handle = buffer.clone();
+
+    let material = materials.add(WaterfallMaterial {
+        uniforms: WaterfallUniforms {
+            front_row: 0,
+            fade: 1.0,
+            hue_offset: 0.0,
+            saturation: sat,
+            lightness: lit,
+            emissive_strength: emissive,
+            scroll_fraction: 0.0,
+            row_depth: ROW_DEPTH,
+        },
+        fft_history: buffer,
+    });
+
+    state.material_handle = material.clone();
+
+    commands.spawn((
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        Transform::from_xyz(0.0, 0.0, Z_OFFSET),
+        Visibility::Hidden,
+        EffectLayer(EffectId::SpectralWaterfall),
+    ));
+}
+
+/// Update FFT history ring buffer and upload new data to the GPU material.
+#[allow(clippy::too_many_arguments)]
 pub fn update(
     time: Res<Time>,
     telemetry: Res<SynthTelemetry>,
     effect_state: Res<EffectState>,
+    policy: Res<ThemeMaterialPolicy>,
     mut state: ResMut<WaterfallState>,
-    mut query: Query<(&WaterfallCell, &mut Transform)>,
+    mut materials: ResMut<Assets<WaterfallMaterial>>,
+    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut last_policy_version: Local<u64>,
+    mut last_hue_offset: Local<f32>,
 ) {
-    // Advance scroll on timer
+    // Advance scroll timer
     state.timer += time.delta_secs();
     let mut scrolled = false;
 
@@ -166,62 +243,21 @@ pub fn update(
         // Write new FFT data to the new front row
         let front = state.front_row;
         let bin_count = telemetry.fft_bin_count;
-        state.history[front] = downsample_fft(&telemetry.fft[..bin_count], bin_count);
+        let row_data = downsample_fft(&telemetry.fft[..bin_count], bin_count);
+
+        // Copy into flat history buffer
+        let offset = front * BANDS;
+        state.history[offset..offset + BANDS].copy_from_slice(&row_data);
+
         scrolled = true;
     }
 
-    // We only need to physically move transforms if we scrolled,
-    // OR if we are updating the active crossfade animation
-    let fade = effect_state.fade;
-
-    if !scrolled && fade == 1.0 && !state.full_update_needed {
-        return;
-    }
-
-    if fade == 1.0 {
-        state.full_update_needed = false;
-    }
-
-    // Since we use shared materials, we apply the "magnitude" and "fade" entirely via scale!
-    for (cell, mut transform) in &mut query {
-        // Calculate how far back this row is from the front
-        let age = (state.front_row + ROWS - cell.row) % ROWS;
-
-        if scrolled {
-            // Shift physical position instead of shifting data through materials
-            transform.translation.z = -(age as f32) * ROW_DEPTH - 8.0;
-        }
-
-        // Only scale if it just reached the front OR we are doing a crossfade
-        if age == 0 || fade < 1.0 || state.full_update_needed {
-            let magnitude = state.history[cell.row][cell.band];
-
-            // Height = magnitude * fade multiplier. Max height ~4.0
-            let target_height = (magnitude * 4.0 * fade).max(0.01);
-            transform.scale.y = target_height;
-            // Adjust translation so base stays flat on ground
-            transform.translation.y = target_height / 2.0;
-        }
-    }
-}
-
-/// Handles the global fade of the shared materials during crossfades
-#[allow(clippy::too_many_arguments)]
-pub fn update_materials(
-    effect_state: Res<EffectState>,
-    telemetry: Res<SynthTelemetry>,
-    state: Res<WaterfallState>,
-    waterfall_materials: Res<WaterfallMaterials>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    policy: Res<ThemeMaterialPolicy>,
-    mut last_policy_version: Local<u64>,
-    mut last_hue_offset: Local<f32>,
-) {
     let fade = effect_state.fade;
     let hue_offset = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
 
-    if fade == 1.0
-        && !state.full_update_needed
+    // Skip GPU upload if nothing changed
+    if !scrolled
+        && fade == 1.0
         && *last_policy_version == policy.version
         && (hue_offset - *last_hue_offset).abs() < 1.0
     {
@@ -229,23 +265,30 @@ pub fn update_materials(
     }
 
     let sat = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
+    let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
-    let metallic = policy.metallic;
-    let roughness = policy.roughness;
 
-    for (band, handle) in waterfall_materials.materials.iter().enumerate() {
-        if let Some(material) = materials.get_mut(handle) {
-            let hue = (telemetry_color::band_frequency_hue(band as f32 / BANDS as f32)
-                + hue_offset)
-                % 360.0;
-            let lightness = (0.5 + policy.lightness_offset).clamp(0.0, 1.0) * fade;
-            let color = Color::hsl(hue, sat, lightness);
-            material.base_color = color;
-            material.emissive = LinearRgba::from(color) * emissive * fade;
-            material.metallic = metallic;
-            material.perceptual_roughness = roughness;
-        }
+    let scroll_fraction = state.timer / SCROLL_INTERVAL;
+
+    // Update the storage buffer with latest FFT history
+    if let Some(buf) = buffers.get_mut(&state.buffer_handle) {
+        buf.set_data(state.history.clone());
     }
+
+    // Update material uniforms
+    if let Some(mat) = materials.get_mut(&state.material_handle) {
+        mat.uniforms = WaterfallUniforms {
+            front_row: state.front_row as u32,
+            fade,
+            hue_offset,
+            saturation: sat,
+            lightness: lit,
+            emissive_strength: emissive,
+            scroll_fraction,
+            row_depth: ROW_DEPTH,
+        };
+    }
+
     *last_policy_version = policy.version;
     *last_hue_offset = hue_offset;
 }

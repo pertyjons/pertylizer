@@ -44,6 +44,12 @@ use bevy::prelude::*;
 use bevy::render::view::Hdr;
 use bevy::ui::IsDefaultUiCamera;
 
+use ferrofluid_tendrils::FerrofluidMaterial;
+use fft_terrain::FftTerrainMaterial;
+use pulse_terrain::PulseTerrainMaterial;
+use reaction_diffusion::ReactionDiffusionDisplayMaterial;
+use spectral_waterfall::WaterfallMaterial;
+
 /// System set for effect switching (runs before visual updates).
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 struct EffectSwitch;
@@ -62,6 +68,12 @@ pub struct VisualsPlugin;
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FrameTimeDiagnosticsPlugin::default())
+            .add_plugins(MaterialPlugin::<WaterfallMaterial>::default())
+            .add_plugins(MaterialPlugin::<PulseTerrainMaterial>::default())
+            .add_plugins(MaterialPlugin::<FftTerrainMaterial>::default())
+            .add_plugins(MaterialPlugin::<ReactionDiffusionDisplayMaterial>::default())
+            .add_plugins(reaction_diffusion::ReactionDiffusionComputePlugin)
+            .add_plugins(MaterialPlugin::<FerrofluidMaterial>::default())
             .init_resource::<debug_hud::DebugHudState>()
             .init_resource::<beat_pulse::BeatPulseState>()
             .init_resource::<particles::ParticleCount>()
@@ -75,6 +87,11 @@ impl Plugin for VisualsPlugin {
             .init_resource::<theme::ThemeRegistry>()
             .init_resource::<theme::ThemeMaterialPolicy>()
             .init_resource::<theme::ThemeRuntime>()
+            .init_resource::<pulse_terrain::PulseTerrainState>()
+            .init_resource::<fft_terrain::FftTerrainState>()
+            .init_resource::<reaction_diffusion::ReactionDiffusionState>()
+            .init_resource::<reaction_diffusion::ReactionDiffusionParams>()
+            .init_resource::<ferrofluid_tendrils::FerrofluidState>()
             .init_resource::<camera::CameraState>()
             .add_systems(
                 Startup,
@@ -217,20 +234,11 @@ impl Plugin for VisualsPlugin {
             .add_systems(
                 Update,
                 (
-                    spectral_waterfall::update_materials.run_if(effects::effect_active_or_pending(
-                        effects::EffectId::SpectralWaterfall,
-                    )),
                     centroid_nebula::update_material.run_if(effects::effect_active_or_pending(
                         effects::EffectId::CentroidNebula,
                     )),
-                    pulse_terrain::update_material.run_if(effects::effect_active_or_pending(
-                        effects::EffectId::PulseTerrain,
-                    )),
                     spectral_origami::update_material.run_if(effects::effect_active_or_pending(
                         effects::EffectId::SpectralOrigami,
-                    )),
-                    ferrofluid_tendrils::update_material.run_if(effects::effect_active_or_pending(
-                        effects::EffectId::FerrofluidTendrils,
                     )),
                     voronoi_shatter::update_material.run_if(effects::effect_active_or_pending(
                         effects::EffectId::VoronoiShatter,

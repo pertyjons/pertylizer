@@ -103,11 +103,11 @@ Många effekter använder just nu ett enda delat material för hundratals instan
   Refaktorera OSC -> Telemetry till att använda `EventWriter` / `EventReader` för not-händelser och kamerabyten istället för att manuellt tömma listor.
 - [x] **Steg 2: Material-buckets i CPU-effekter (Quick Win)**
   Uppdatera de befintliga effekterna enligt avsnitt 3, vilket drastiskt minskar den platta "monokroma" känslan med befintlig CPU-kod.
-- [ ] **Steg 3: Introducera Custom Materials (Shaders)**
+- [x] **Steg 3: Introducera Custom Materials (Shaders)**
   Konvertera `spectral_waterfall` till en enda mesh och en egen Vertex Displacement Shader. (Läs in dig på Bevys `shader_material.rs` och Asynchronous Asset Loading för texturer/buffrar).
-- [ ] **Steg 4: Applicera shader-tekniken på all terräng**
+- [x] **Steg 4: Applicera shader-tekniken på all terräng**
   Gör samma sak med `pulse_terrain` och `fft_terrain` när du blivit bekväm med Material Extensions i Bevy.
-- [ ] **Steg 5: Experimentera med Compute Shaders**
+- [x] **Steg 5: Experimentera med Compute Shaders**
   Titta på Bevys officiella exempel för Game of Life (`compute_shader_game_of_life.rs`) och applicera det på `reaction_diffusion`.
-- [ ] **Steg 6: Extrema visuella effekter (Shaders/Particles)**
+- [x] **Steg 6: Extrema visuella effekter (Shaders/Particles)**
   Undersök Raymarching i Fragment Shaders för `ferrofluid_tendrils` och titta på integration av `bevy_hanabi` för att ta partikelsystemen (`particles`, `velocity_meteors`) till nästa nivå.
