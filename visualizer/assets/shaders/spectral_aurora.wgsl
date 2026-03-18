@@ -21,7 +21,7 @@ struct SpectralAuroraUniforms {
     _padding1: u32,
 }
 
-@group(2) @binding(0)
+@group(3) @binding(0)
 var<uniform> uniforms: SpectralAuroraUniforms;
 
 struct VertexInput {

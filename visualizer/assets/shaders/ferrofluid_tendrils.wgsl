@@ -4,11 +4,8 @@
 // Uses smooth minimum (smin) to blend capsules together like liquid mercury.
 // A single cube mesh serves as the raymarching bounding volume.
 
-#import bevy_render::view::View
 #import bevy_pbr::mesh_functions::{get_world_from_local, mesh_position_local_to_clip}
-
-@group(0) @binding(0)
-var<uniform> view: View;
+#import bevy_pbr::mesh_view_bindings::view
 
 struct FerrofluidUniforms {
     time: f32,
@@ -21,11 +18,11 @@ struct FerrofluidUniforms {
     _padding: f32,
 }
 
-@group(2) @binding(0)
+@group(3) @binding(0)
 var<uniform> uniforms: FerrofluidUniforms;
 
 // Per-tendril data: (x_pos, z_pos, height, hue)
-@group(2) @binding(1)
+@group(3) @binding(1)
 var<storage, read> tendrils: array<vec4<f32>>;
 
 struct VertexInput {

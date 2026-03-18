@@ -10,13 +10,13 @@ struct DisplayUniforms {
     fade: f32,
 }
 
-@group(2) @binding(0)
+@group(3) @binding(0)
 var sim_texture: texture_2d<f32>;
 
-@group(2) @binding(1)
+@group(3) @binding(1)
 var sim_sampler: sampler;
 
-@group(2) @binding(2)
+@group(3) @binding(2)
 var<uniform> display: DisplayUniforms;
 
 struct VertexInput {

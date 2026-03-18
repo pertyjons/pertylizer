@@ -23,7 +23,7 @@ struct PulseTerrainUniforms {
     _padding: f32,
 }
 
-@group(2) @binding(0)
+@group(3) @binding(0)
 var<uniform> uniforms: PulseTerrainUniforms;
 
 struct VertexInput {

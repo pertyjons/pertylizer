@@ -21,10 +21,10 @@ struct WaterfallUniforms {
     row_depth: f32,
 }
 
-@group(2) @binding(0)
+@group(3) @binding(0)
 var<uniform> uniforms: WaterfallUniforms;
 
-@group(2) @binding(1)
+@group(3) @binding(1)
 var<storage, read> fft_history: array<f32>;
 
 struct VertexInput {
