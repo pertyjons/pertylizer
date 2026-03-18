@@ -202,7 +202,7 @@ impl PolyModule for KineticModulator {
 
             // Apply bipolar remapping
             let (pos_out, vel_out, acc_out) = if self.bipolar {
-                (pos * 2.0 - 1.0, vel, acc)
+                (crate::math::unipolar_to_bipolar(pos), vel, acc)
             } else {
                 (pos, vel, acc)
             };

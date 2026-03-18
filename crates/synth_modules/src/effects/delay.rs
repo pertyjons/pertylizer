@@ -277,7 +277,7 @@ impl AudioEffect for Delay {
 
     fn tail_samples(&self) -> SampleCount {
         let decay_time =
-            self.time_left.as_f32() * (1.0 / (1.0 - self.feedback.as_f32().min(0.99))).ln() / 3.0;
+            crate::math::feedback_decay_time(self.time_left.as_f32(), self.feedback.as_f32());
         SampleCount::new((decay_time * self.sample_rate.as_f32()) as usize)
     }
 

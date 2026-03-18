@@ -54,32 +54,18 @@ impl Waveshaper {
         let driven = biased * gain;
 
         match self.curve {
-            WaveshaperCurve::SoftClip => {
-                crate::math::soft_clip(driven)
-            }
+            WaveshaperCurve::SoftClip => crate::math::soft_clip(driven),
 
-            WaveshaperCurve::Asymmetric => {
-                // Different tanh drive for positive/negative halves
-                // Symmetry controls the ratio: 0 = equal, +1 = more positive, -1 = more negative
-                let pos_drive = 1.0 + (1.0 + sym) * 0.5;
-                let neg_drive = 1.0 + (1.0 - sym) * 0.5;
-                if driven >= 0.0 {
-                    (driven * pos_drive).tanh()
-                } else {
-                    (driven * neg_drive).tanh()
-                }
-            }
+            WaveshaperCurve::Asymmetric => crate::math::asymmetric_soft_clip(driven, sym),
 
-            WaveshaperCurve::Fold => {
-                crate::math::foldback(driven, 1.0)
-            }
+            WaveshaperCurve::Fold => crate::math::foldback(driven, 1.0),
 
             WaveshaperCurve::Chebyshev => {
                 // Chebyshev polynomial T_n for harmonic generation
                 // Use symmetry to blend between T2 (even harmonics) and T3 (odd harmonics)
                 let x = driven.clamp(-1.0, 1.0);
-                let t2 = 2.0 * x * x - 1.0; // T2: 2nd harmonic
-                let t3 = 4.0 * x * x * x - 3.0 * x; // T3: 3rd harmonic
+                let t2 = crate::math::chebyshev_t2(x);
+                let t3 = crate::math::chebyshev_t3(x);
                 // Blend: sym=-1 -> pure T2, sym=0 -> equal, sym=+1 -> pure T3
                 let blend = (sym + 1.0) * 0.5; // 0..1
                 let chebyshev = t2 * (1.0 - blend) + t3 * blend;
@@ -95,8 +81,7 @@ impl Waveshaper {
                 // Quantize to N levels (drive controls resolution)
                 // Map drive 0..1 to levels: low drive = many levels (subtle), high drive = few (harsh)
                 let levels = (2.0 + (1.0 - self.drive.as_f32()) * 254.0).round();
-                let quantized = (biased * levels).round() / levels;
-                quantized.clamp(-1.0, 1.0)
+                crate::math::quantize_signal(biased, levels)
             }
         }
     }

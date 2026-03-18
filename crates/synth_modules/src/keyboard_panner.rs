@@ -61,18 +61,7 @@ impl KeyboardPanner {
         let normalized = (note_val - center) / 44.0; // 44 semitones = ~4 octaves each side
 
         // Apply curve
-        let safe_curve = self.curve.as_f32().clamp(-0.99, 0.99);
-        let curved = if safe_curve.abs() > 0.01 {
-            if safe_curve > 0.0 {
-                // Exponential curve (more center, less extremes)
-                normalized.signum() * normalized.abs().powf(1.0 + safe_curve)
-            } else {
-                // Logarithmic curve (less center, more extremes)
-                normalized.signum() * normalized.abs().powf(1.0 / (1.0 - safe_curve))
-            }
-        } else {
-            normalized
-        };
+        let curved = crate::math::bipolar_curve(normalized, self.curve.as_f32());
 
         // Apply spread
         let spread = self.spread.as_f32();

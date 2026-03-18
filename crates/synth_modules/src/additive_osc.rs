@@ -8,8 +8,6 @@
 //! - FM input for frequency modulation
 
 use std::collections::HashMap;
-use std::f32::consts::TAU;
-
 use synth_core::{
     AdditiveParam, AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor,
     ModuleType, Param, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor,
@@ -36,6 +34,7 @@ pub struct AdditiveOsc {
     amplitudes: [f32; NUM_HARMONICS],
     note_freq: Hertz,
     sample_rate: SampleRate,
+    inv_sample_rate: f32,
     amplitudes_dirty: bool,
 
     // Buffer
@@ -56,6 +55,7 @@ impl AdditiveOsc {
             amplitudes: [0.0; NUM_HARMONICS],
             note_freq: Hertz::A4,
             sample_rate: SampleRate::DVD_QUALITY,
+            inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
             amplitudes_dirty: true,
 
             output_buffer: AudioBuffer::new(1024),
@@ -77,24 +77,13 @@ impl AdditiveOsc {
             let harmonic_num = (i + 1) as f32;
 
             // Tilt: rolloff per octave
-            let octave = harmonic_num.log2();
-            let tilt_atten = (-tilt * octave * 3.0).exp();
+            let tilt_atten = crate::math::spectral_rolloff(harmonic_num, tilt);
 
             // Odd/even balance
-            let is_odd = (i + 1) % 2 == 1;
-            let oe_factor = if is_odd {
-                1.0 - odd_even * 0.8
-            } else {
-                odd_even * 1.2 + 0.2
-            };
+            let oe_factor = crate::math::odd_even_balance(i, odd_even);
 
             // Brightness: boost/cut upper harmonics
-            let bright_factor = if harmonic_num > 4.0 {
-                let boost = (brightness - 0.5) * 2.0; // -1 to +1
-                (1.0 + boost * (harmonic_num / 8.0).min(1.0)).max(0.0)
-            } else {
-                1.0
-            };
+            let bright_factor = crate::math::brightness_boost(harmonic_num, brightness);
 
             self.amplitudes[i] = (tilt_atten * oe_factor * bright_factor).clamp(0.0, 1.0);
         }
@@ -228,6 +217,7 @@ impl PolyModule for AdditiveOsc {
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
+        self.inv_sample_rate = 1.0 / context.sample_rate.as_f32();
         let num_samples = context.samples.as_usize();
         self.output_buffer.resize(num_samples);
 
@@ -236,6 +226,7 @@ impl PolyModule for AdditiveOsc {
         let freq_cv = inputs.get(PortName::FREQ_CV);
         let level = self.level.as_f32();
         let nyquist = self.sample_rate.as_f32() * 0.5;
+        let inv_sr = self.inv_sample_rate;
 
         for i in 0..num_samples {
             let mut sample = 0.0_f32;
@@ -260,17 +251,16 @@ impl PolyModule for AdditiveOsc {
                     break;
                 }
 
-                // Generate sine for this harmonic
+                // Fast sine approximation (max error ~0.001, inaudible)
                 let phase = self.phases[h];
-                sample += (phase * TAU).sin() * amp;
+                sample += crate::math::fast_sin_turns(phase) * amp;
 
-                // Advance phase
-                let dt = Hertz::new(freq).phase_increment(self.sample_rate);
-                self.phases[h] = (phase + dt).rem_euclid(1.0);
+                // Advance phase (multiply instead of division)
+                self.phases[h] = (phase + freq * inv_sr).rem_euclid(1.0);
             }
 
             // Normalize by approximate number of active harmonics
-            let normalization = 1.0 / (NUM_HARMONICS as f32).sqrt();
+            let normalization = crate::math::normalization_gain(NUM_HARMONICS);
             self.output_buffer[i] = sample * normalization * level;
         }
 

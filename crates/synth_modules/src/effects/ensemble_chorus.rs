@@ -274,10 +274,10 @@ impl AudioEffect for EnsembleChorus {
             wet_r /= voice_count as f32;
 
             // Stereo width via mid/side
-            let mid = (wet_l + wet_r) * 0.5;
-            let side = (wet_l - wet_r) * 0.5 * width;
-            wet_l = mid + side;
-            wet_r = mid - side;
+            let (mid, side) = crate::math::mid_side_encode(wet_l, wet_r);
+            let (new_l, new_r) = crate::math::mid_side_decode(mid, side, width);
+            wet_l = new_l;
+            wet_r = new_r;
 
             // Advance write position
             let buf_len = self.buffers_l[0].len();

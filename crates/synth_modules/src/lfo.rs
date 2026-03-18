@@ -96,7 +96,7 @@ impl Lfo {
 
         let output = match self.mode {
             LfoMode::Bipolar => raw,
-            LfoMode::Unipolar => (raw + 1.0) * 0.5,
+            LfoMode::Unipolar => crate::math::bipolar_to_unipolar(raw),
         };
 
         let effective_depth =
@@ -181,8 +181,7 @@ impl PolyModule for Lfo {
             if retrigger_reader.is_connected() {
                 let val = retrigger_reader[i];
                 if self.retrigger_mode.should_retrigger()
-                    && val > 0.5
-                    && self.prev_retrigger.as_f32() <= 0.5
+                    && crate::math::rising_edge(val, self.prev_retrigger.as_f32())
                 {
                     self.retrigger();
                 }

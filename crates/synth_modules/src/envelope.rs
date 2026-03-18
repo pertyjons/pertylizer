@@ -200,19 +200,15 @@ impl Envelope {
     /// Negative curve = slower start (raise coeff), positive = faster start (lower coeff).
     #[inline]
     fn apply_curve(base_coef: f32, curve: f32) -> f32 {
-        if curve.abs() < 0.01 {
-            base_coef
-        } else if curve < 0.0 {
-            base_coef.powf(1.0 + (-curve) * 3.0)
-        } else {
-            base_coef.powf(1.0 / (1.0 + curve * 3.0))
-        }
+        crate::math::apply_curve_shaping(base_coef, curve)
     }
 
     #[inline]
     fn process_sample(&mut self) -> f32 {
-        let velocity_scale =
-            1.0 - self.velocity_sensitivity.as_f32() * (1.0 - self.velocity.as_f32());
+        let velocity_scale = crate::math::velocity_sensitivity(
+            self.velocity.as_f32(),
+            self.velocity_sensitivity.as_f32(),
+        );
 
         let prev_stage = self.stage;
 
@@ -427,7 +423,7 @@ impl PolyModule for Envelope {
         for i in 0..context.samples.as_usize() {
             if gate_reader.is_connected() {
                 let gate_val = gate_reader[i];
-                if gate_val > 0.5 && self.prev_gate.as_f32() <= 0.5 {
+                if crate::math::rising_edge(gate_val, self.prev_gate.as_f32()) {
                     let vel = Velocity::new(velocity_reader[i]);
                     self.trigger(vel);
                 } else if gate_val <= 0.5 && self.prev_gate.as_f32() > 0.5 {

@@ -64,21 +64,13 @@ impl Distortion {
                 crate::math::hard_clip(driven)
             }
 
-            DistortionType::Foldback => {
-                crate::math::foldback(driven, 1.0)
-            }
+            DistortionType::Foldback => crate::math::foldback(driven, 1.0),
 
             DistortionType::Bitcrush => {
-                // Bit reduction
-                let bits = self.bit_depth.max(1.0);
-                let levels = 2.0f32.powf(bits);
-                let quantized = (driven * levels).round() / levels;
-                quantized.clamp(-1.0, 1.0)
+                crate::math::bitcrush(driven, self.bit_depth).clamp(-1.0, 1.0)
             }
 
-            DistortionType::Tube => {
-                crate::math::tube_saturate(driven)
-            }
+            DistortionType::Tube => crate::math::tube_saturate(driven),
         }
     }
 

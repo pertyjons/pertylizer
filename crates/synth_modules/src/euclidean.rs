@@ -233,7 +233,7 @@ impl PolyModule for Euclidean {
 
         // Calculate samples per step from BPM (16th notes by default)
         let bpm = context.tempo.as_f32().max(20.0);
-        self.samples_per_step = self.sample_rate.as_f32() * 60.0 / bpm / 4.0;
+        self.samples_per_step = crate::math::samples_per_16th(self.sample_rate.as_f32(), bpm);
 
         let steps = self.steps.as_usize();
         let swing_amount = self.swing.as_f32() * 0.33; // Max 33% swing
@@ -241,7 +241,7 @@ impl PolyModule for Euclidean {
         for i in 0..num_samples {
             // Check for external clock rising edge
             let clock_trigger = if let Some(clk) = clock {
-                clk[i] > 0.5 && (i == 0 || clk[i - 1] <= 0.5)
+                crate::math::rising_edge(clk[i], if i == 0 { 0.0 } else { clk[i - 1] })
             } else {
                 false
             };
@@ -272,7 +272,7 @@ impl PolyModule for Euclidean {
 
             // Gate output (short gate, ~50% duty cycle)
             let gate_phase = self.sample_counter / self.samples_per_step;
-            let gate_on = self.gate_active && gate_phase < 0.5;
+            let gate_on = self.gate_active && crate::math::gate_pulse(gate_phase, 0.5);
             self.gate_buffer[i] = if gate_on { 1.0 } else { 0.0 };
 
             // Accent: stronger on downbeat (step 0) and every 4th pulse

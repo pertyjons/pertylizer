@@ -49,18 +49,9 @@ impl VectorMixer {
     /// Returns (gain_a, gain_b, gain_c, gain_d)
     #[cfg(test)]
     fn compute_gains(&self) -> (f32, f32, f32, f32) {
-        // Map from [-1,1] to [0,1]
-        let xn = (self.x.as_f32() + 1.0) * 0.5;
-        let yn = (self.y.as_f32() + 1.0) * 0.5;
-
-        // Bilinear interpolation weights
-        let w_a = (1.0 - xn) * yn; // top-left
-        let w_b = xn * yn; // top-right
-        let w_c = (1.0 - xn) * (1.0 - yn); // bottom-left
-        let w_d = xn * (1.0 - yn); // bottom-right
-
-        // Equal-power: sqrt of linear weights
-        (w_a.sqrt(), w_b.sqrt(), w_c.sqrt(), w_d.sqrt())
+        let xn = crate::math::bipolar_to_unipolar(self.x.as_f32());
+        let yn = crate::math::bipolar_to_unipolar(self.y.as_f32());
+        crate::math::bilinear_equal_power_gains(xn, yn)
     }
 }
 
@@ -161,15 +152,9 @@ impl PolyModule for VectorMixer {
                 y_val = (y_val + cv[i]).clamp(-1.0, 1.0);
             }
 
-            // Map to [0,1]
-            let xn = (x_val + 1.0) * 0.5;
-            let yn = (y_val + 1.0) * 0.5;
-
-            // Bilinear weights with equal-power
-            let w_a = ((1.0 - xn) * yn).sqrt();
-            let w_b = (xn * yn).sqrt();
-            let w_c = ((1.0 - xn) * (1.0 - yn)).sqrt();
-            let w_d = (xn * (1.0 - yn)).sqrt();
+            let xn = crate::math::bipolar_to_unipolar(x_val);
+            let yn = crate::math::bipolar_to_unipolar(y_val);
+            let (w_a, w_b, w_c, w_d) = crate::math::bilinear_equal_power_gains(xn, yn);
 
             let sa = in_a.map_or(0.0, |buf| buf[i]);
             let sb = in_b.map_or(0.0, |buf| buf[i]);

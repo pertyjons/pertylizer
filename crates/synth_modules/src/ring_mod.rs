@@ -76,14 +76,7 @@ impl RingMod {
     fn carrier_sample(&self, p: f32, dt: f32) -> f32 {
         match self.carrier_waveform {
             Waveform::Sine => (p * TAU).sin(),
-            Waveform::Triangle => {
-                // Simple triangle without PolyBLAMP for carrier (good enough)
-                if p < 0.5 {
-                    4.0 * p - 1.0
-                } else {
-                    3.0 - 4.0 * p
-                }
-            }
+            Waveform::Triangle => crate::math::triangle_wave(p),
             Waveform::Sawtooth => {
                 let mut saw = 2.0 * p - 1.0;
                 saw -= poly_blep(p, dt);
@@ -226,7 +219,7 @@ impl PolyModule for RingMod {
 
             // Ring mod: input * carrier, with dry/wet mix
             let ring = in_sample * carrier;
-            self.output_buffer[i] = in_sample * (1.0 - mix) + ring * mix;
+            self.output_buffer[i] = crate::math::linear_mix(in_sample, ring, mix);
         }
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {

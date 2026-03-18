@@ -61,10 +61,7 @@ impl RandomGates {
     /// Simple xorshift PRNG.
     #[inline]
     fn next_random(&mut self) -> f32 {
-        self.rng_state ^= self.rng_state << 13;
-        self.rng_state ^= self.rng_state >> 17;
-        self.rng_state ^= self.rng_state << 5;
-        (self.rng_state as f32) / (u32::MAX as f32)
+        crate::math::xorshift32(&mut self.rng_state)
     }
 }
 
@@ -152,7 +149,7 @@ impl PolyModule for RandomGates {
 
         // Calculate step timing from BPM (16th notes)
         let bpm = context.tempo.as_f32().max(20.0);
-        self.samples_per_step = self.sample_rate.as_f32() * 60.0 / bpm / 4.0;
+        self.samples_per_step = crate::math::samples_per_16th(self.sample_rate.as_f32(), bpm);
 
         // Gate length in samples
         let gate_samples = self.gate_length.as_f32() * self.samples_per_step * 0.9 + 10.0;
@@ -160,7 +157,7 @@ impl PolyModule for RandomGates {
         for i in 0..num_samples {
             // Clock detection
             let clock_trigger = if let Some(clk) = clock {
-                clk[i] > 0.5 && (i == 0 || clk[i - 1] <= 0.5)
+                crate::math::rising_edge(clk[i], if i == 0 { 0.0 } else { clk[i - 1] })
             } else {
                 false
             };

@@ -118,9 +118,8 @@ impl PitchTracker {
             let curr = self.autocorr_at(best_lag);
             let next = self.autocorr_at(best_lag + 1);
 
-            let denom = prev - 2.0 * curr + next;
-            if denom.abs() > 1e-10 {
-                let delta = 0.5 * (prev - next) / denom;
+            let delta = crate::math::parabolic_interpolation(prev, curr, next);
+            if delta != 0.0 {
                 let refined_lag = best_lag as f32 + delta;
                 if refined_lag > 0.0 {
                     self.current_freq = Hertz::new(sr / refined_lag);
@@ -155,11 +154,7 @@ impl PitchTracker {
     /// Convert frequency to 1V/octave CV (relative to C4 = MIDI 60).
     #[inline]
     fn freq_to_cv(freq: Hertz) -> f32 {
-        if freq.as_f32() <= 0.0 {
-            return 0.0;
-        }
-        // C4 = 261.63 Hz = 0V, each octave = 1V
-        (freq.as_f32() / 261.63).log2()
+        crate::math::freq_to_cv(freq.as_f32())
     }
 }
 
@@ -271,11 +266,11 @@ impl PolyModule for PitchTracker {
 
             // Smooth the frequency output
             if self.gate_open && self.current_freq.as_f32() > 0.0 {
-                self.smoothed_freq = Hertz::new(
-                    self.smoothed_freq.as_f32()
-                        + (1.0 - smooth)
-                            * (self.current_freq.as_f32() - self.smoothed_freq.as_f32()),
-                );
+                self.smoothed_freq = Hertz::new(crate::math::smooth_value(
+                    self.smoothed_freq.as_f32(),
+                    self.current_freq.as_f32(),
+                    smooth,
+                ));
             }
 
             // Output pitch CV (1V/octave)

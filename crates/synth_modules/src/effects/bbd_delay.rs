@@ -146,9 +146,7 @@ impl BbdDelay {
     /// Calculate the feedback tone cutoff frequency from the tone parameter.
     #[inline]
     fn feedback_cutoff_hz(&self) -> f32 {
-        // Tone 0.0 = dark (800Hz), Tone 1.0 = bright (12kHz)
-        // Exponential mapping for perceptual linearity
-        800.0 * (12_000.0_f32 / 800.0).powf(self.tone.as_f32())
+        crate::math::exponential_frequency_map(self.tone.as_f32(), 800.0, 12_000.0)
     }
 }
 
@@ -383,7 +381,7 @@ impl AudioEffect for BbdDelay {
         // More feedback = longer tail
         let fb = self.feedback.as_f32();
         let decay_time = if fb < 0.95 {
-            self.time.as_f32() * (1.0 / (1.0 - fb)).ln() / 3.0
+            crate::math::feedback_decay_time(self.time.as_f32(), fb)
         } else {
             self.time.as_f32() * 20.0
         };

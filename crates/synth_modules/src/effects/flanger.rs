@@ -166,11 +166,7 @@ impl AudioEffect for Flanger {
 
             // Calculate LFO value (triangle wave for smoother flanging)
             let phase = self.lfo_phase.as_f32();
-            let lfo = if phase < 0.5 {
-                phase * 4.0 - 1.0
-            } else {
-                3.0 - phase * 4.0
-            };
+            let lfo = crate::math::triangle_wave(phase);
             self.lfo_phase = self.lfo_phase.advance(phase_inc);
 
             // Calculate modulated delay time

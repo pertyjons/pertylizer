@@ -125,15 +125,15 @@ impl AudioEffect for MidSide {
             let dry = StereoSample::read_frame(input, frame);
 
             // Encode to mid/side
-            let mid = (dry.left + dry.right) * 0.5;
-            let side = (dry.left - dry.right) * 0.5;
+            let (mid, side) = crate::math::mid_side_encode(dry.left, dry.right);
 
             // Apply mid and side gains
             let mid = mid * mid_gain_linear;
             let side = side * side_gain_linear;
 
             // Apply width and decode back to stereo
-            let wet = StereoSample::new(mid + side * width, mid - side * width);
+            let (wet_l, wet_r) = crate::math::mid_side_decode(mid, side, width);
+            let wet = StereoSample::new(wet_l, wet_r);
 
             // Mix dry/wet
             let result = dry.blend(wet, mix);

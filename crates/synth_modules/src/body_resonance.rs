@@ -215,7 +215,7 @@ impl PolyModule for BodyResonance {
             let resonance = r1 * 0.5 + r2 * 0.3 + r3 * 0.2;
 
             // Wet/dry mix
-            self.output_buffer[i] = input_sample * (1.0 - mix) + resonance * mix;
+            self.output_buffer[i] = crate::math::linear_mix(input_sample, resonance, mix);
         }
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {

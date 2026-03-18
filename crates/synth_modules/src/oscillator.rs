@@ -9,7 +9,6 @@
 //! - Intra-voice unison with detune and stereo spread
 
 use std::collections::HashMap;
-use std::f32::consts::TAU;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
@@ -48,6 +47,8 @@ pub struct Oscillator {
     // Unison pre-computed state (updated on param change)
     unison_detune_ratios: [f32; MAX_UNISON_VOICES],
     unison_pans: [f32; MAX_UNISON_VOICES],
+    /// Pre-computed equal-power pan gains (left, right) per unison voice.
+    unison_pan_gains: [(f32, f32); MAX_UNISON_VOICES],
 
     // State
     unison_phases: [Phase; MAX_UNISON_VOICES],
@@ -90,6 +91,7 @@ impl Oscillator {
             cross_mod_amount: NormalizedValue::MIN,
             unison_detune_ratios: [1.0; MAX_UNISON_VOICES],
             unison_pans: [0.0; MAX_UNISON_VOICES],
+            unison_pan_gains: [(std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2); MAX_UNISON_VOICES],
             unison_phases: [Phase::ZERO; MAX_UNISON_VOICES],
             sample_rate: SampleRate::DVD_QUALITY,
             prev_sync: NormalizedValue::MIN,
@@ -104,9 +106,9 @@ impl Oscillator {
     /// Calculate the actual frequency including detune, octave, and mod matrix pitch offset.
     #[inline]
     fn actual_frequency(&self) -> Hertz {
-        let octave_mult = 2.0f32.powf(self.octave.as_f32() / 12.0);
+        let octave_mult = crate::math::semitones_to_ratio(self.octave.as_f32());
         // Apply mod matrix pitch offset (in semitones)
-        let mod_mult = (self.mod_offset_pitch.as_f32() / 12.0).exp2();
+        let mod_mult = crate::math::semitones_to_ratio(self.mod_offset_pitch.as_f32());
         Hertz::new(self.detune.apply(self.frequency).as_f32() * octave_mult * mod_mult)
     }
 
@@ -117,6 +119,7 @@ impl Oscillator {
         if n <= 1 {
             self.unison_detune_ratios[0] = 1.0;
             self.unison_pans[0] = 0.0;
+            self.unison_pan_gains[0] = crate::math::equal_power_pan(0.0);
             return;
         }
         let total_cents = self.unison_detune.as_f32();
@@ -127,8 +130,9 @@ impl Oscillator {
             #[allow(clippy::cast_precision_loss)]
             let t = (i as f32) / n_minus_1 * 2.0 - 1.0; // -1.0 to 1.0
             let cents = t * total_cents * 0.5;
-            self.unison_detune_ratios[i] = (cents / 1200.0).exp2();
+            self.unison_detune_ratios[i] = crate::math::cents_to_ratio(cents);
             self.unison_pans[i] = t * spread;
+            self.unison_pan_gains[i] = crate::math::equal_power_pan(t * spread);
         }
     }
 
@@ -146,7 +150,7 @@ impl Oscillator {
         let p = (phase.advance(phase_mod).as_f32() + self.phase_offset.as_f32()) % 1.0;
 
         let sample = match self.waveform {
-            Waveform::Sine => (p * TAU).sin(),
+            Waveform::Sine => crate::math::fast_sin_turns(p),
             Waveform::Triangle => {
                 let mut tri = Phase::new_unchecked(p).triangle();
                 let dist_to_peak = p - 0.25;
@@ -435,7 +439,7 @@ impl PolyModule for Oscillator {
                 let mut left = 0.0f32;
                 let mut right = 0.0f32;
                 #[allow(clippy::cast_precision_loss)]
-                let gain = 1.0 / (voice_count as f32).sqrt();
+                let gain = crate::math::normalization_gain(voice_count);
 
                 for j in 0..voice_count {
                     let voice_freq = Hertz::new(freq.as_f32() * self.unison_detune_ratios[j]);
@@ -444,7 +448,7 @@ impl PolyModule for Oscillator {
                         self.generate_single_sample(voice_freq, phase, pm, effective_pulse_width);
                     self.unison_phases[j] = new_phase;
 
-                    let (pan_l, pan_r) = crate::math::equal_power_pan(self.unison_pans[j]);
+                    let (pan_l, pan_r) = self.unison_pan_gains[j];
                     left += sample * pan_l * gain;
                     right += sample * pan_r * gain;
                 }

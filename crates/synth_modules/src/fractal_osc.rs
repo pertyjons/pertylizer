@@ -12,8 +12,6 @@
 //! - 100% real-time safe: zero heap allocations in `process()`
 
 use std::collections::HashMap;
-use std::f32::consts::TAU;
-
 use synth_core::{
     AudioBuffer, Describable, FractalOscParam, Hertz, InputPorts, MidiNote, ModuleCategory,
     ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, PolyModule,
@@ -81,14 +79,18 @@ impl FractalOscillator {
     /// All power computations are iterative (multiply-accumulate) to avoid
     /// expensive `powf` calls in the hot path.
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     fn process_sample(
         &mut self,
         freq: f32,
         a: f32,
         b: f32,
         dispersion: f32,
-        spread: f32,
         nyquist: f32,
+        even_pan_l: f32,
+        even_pan_r: f32,
+        odd_pan_l: f32,
+        odd_pan_r: f32,
     ) -> (f32, f32) {
         // Early out: frequency out of valid range
         if freq <= 0.0 || freq >= nyquist {
@@ -119,13 +121,16 @@ impl FractalOscillator {
             // Weierstrass phase with dispersion offset (in cycles)
             let phase_with_disp = self.phases[n] + (n as f32) * dispersion;
 
-            // Convert to radians and compute sine
-            let value = (phase_with_disp * TAU).sin();
+            // Fast sine approximation (max error ~0.001, inaudible)
+            let value = crate::math::fast_sin_turns(phase_with_disp);
 
-            // Equal-power stereo panning:
-            // Even partials pan left (-spread), odd partials pan right (+spread)
-            let pan = if n % 2 == 0 { -spread } else { spread };
-            let (gain_l, gain_r) = crate::math::equal_power_pan(pan);
+            // Equal-power stereo panning (pre-computed):
+            // Even partials pan left, odd partials pan right
+            let (gain_l, gain_r) = if n % 2 == 0 {
+                (even_pan_l, even_pan_r)
+            } else {
+                (odd_pan_l, odd_pan_r)
+            };
 
             out_l += amp * value * gain_l;
             out_r += amp * value * gain_r;
@@ -260,6 +265,10 @@ impl PolyModule for FractalOscillator {
         let dispersion = self.dispersion.as_f32().clamp(0.0, 1.0);
         let spread = self.spread.as_f32().clamp(0.0, 1.0);
 
+        // Pre-compute pan gains for even/odd partials (constant across samples)
+        let (even_pan_l, even_pan_r) = crate::math::equal_power_pan(-spread);
+        let (odd_pan_l, odd_pan_r) = crate::math::equal_power_pan(spread);
+
         for i in 0..num_samples {
             // Apply frequency CV (1V/oct)
             let freq = if let Some(cv) = freq_cv {
@@ -268,7 +277,10 @@ impl PolyModule for FractalOscillator {
                 self.note_freq.as_f32()
             };
 
-            let (l, r) = self.process_sample(freq, a, b, dispersion, spread, nyquist);
+            let (l, r) = self.process_sample(
+                freq, a, b, dispersion, nyquist,
+                even_pan_l, even_pan_r, odd_pan_l, odd_pan_r,
+            );
             self.output_buffer_left[i] = l * level;
             self.output_buffer_right[i] = r * level;
         }

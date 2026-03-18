@@ -70,7 +70,7 @@ impl WavetableOsc {
         // Apply detune in cents
         let detune_cents = self.detune.as_f32();
         if detune_cents.abs() > 0.001 {
-            freq *= (2.0_f32).powf(detune_cents / 1200.0);
+            freq *= crate::math::cents_to_ratio(detune_cents);
         }
 
         Hertz::new(freq)

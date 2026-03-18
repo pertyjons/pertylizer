@@ -76,10 +76,7 @@ impl Xorshift32 {
     /// Returns a value in [0, 1).
     #[inline]
     fn next_f32(&mut self) -> f32 {
-        self.state ^= self.state << 13;
-        self.state ^= self.state >> 17;
-        self.state ^= self.state << 5;
-        (self.state as f32) / (u32::MAX as f32)
+        crate::math::xorshift32(&mut self.state)
     }
 
     /// Returns a value in [-1, 1).
@@ -192,22 +189,9 @@ impl GranularOsc {
     #[inline]
     fn grain_envelope(window: GrainWindow, t: f32) -> f32 {
         match window {
-            GrainWindow::Hann => 0.5 * (1.0 - (TAU * t).cos()),
-            GrainWindow::Gaussian => {
-                let sigma = 0.4;
-                let x = (t - 0.5) / sigma;
-                (-0.5 * x * x).exp()
-            }
-            GrainWindow::Trapezoid => {
-                let ramp = 0.1;
-                if t < ramp {
-                    t / ramp
-                } else if t > 1.0 - ramp {
-                    (1.0 - t) / ramp
-                } else {
-                    1.0
-                }
-            }
+            GrainWindow::Hann => crate::math::hann_window(t),
+            GrainWindow::Gaussian => crate::math::gaussian_window(t, 0.4),
+            GrainWindow::Trapezoid => crate::math::trapezoid_window(t, 0.1),
         }
     }
 
@@ -231,7 +215,7 @@ impl GranularOsc {
         // Pitch variation (semitones -> rate)
         let pitch_spread_semitones = self.pitch_spread.as_f32() * 24.0;
         let pitch_offset = self.rng.next_bipolar() * pitch_spread_semitones;
-        let rate = (self.note_freq / 440.0) * 2.0f32.powf(pitch_offset / 12.0);
+        let rate = (self.note_freq / 440.0) * crate::math::semitones_to_ratio(pitch_offset);
 
         // Pan
         let pan = BipolarValue::new(self.rng.next_bipolar() * self.pan_spread.as_f32());
@@ -432,7 +416,7 @@ impl PolyModule for GranularOsc {
                 } else {
                     0.0
                 };
-                let sample = s0 + (s1 - s0) * frac;
+                let sample = crate::math::lerp(s0, s1, frac);
 
                 mix += sample * env;
                 grain.pos += 1.0;

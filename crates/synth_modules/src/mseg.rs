@@ -260,19 +260,7 @@ impl Mseg {
     fn interpolate_curve(from: f32, to: f32, t: f32, curve: BipolarValue) -> f32 {
         let t_clamped = t.clamp(0.0, 1.0);
         let c = curve.as_f32();
-
-        let shaped_t = if c.abs() < 0.01 {
-            // Linear
-            t_clamped
-        } else if c > 0.0 {
-            // Exponential: slow start, fast end
-            t_clamped.powf(1.0 + c * 4.0)
-        } else {
-            // Logarithmic: fast start, slow end
-            1.0 - (1.0 - t_clamped).powf(1.0 + (-c) * 4.0)
-        };
-
-        from + (to - from) * shaped_t
+        crate::math::interpolate_with_curve(from, to, t_clamped, c)
     }
 
     /// Get the effective segment time, scaled by the time_scale parameter.
@@ -486,11 +474,11 @@ impl PolyModule for Mseg {
             let trigger_val = trigger_input.map_or(0.0, |buf| buf[i]);
 
             // Detect gate rising edge -> start envelope
-            let gate_rising = gate_val > 0.5 && self.prev_gate <= 0.5;
+            let gate_rising = crate::math::rising_edge(gate_val, self.prev_gate);
             // Detect gate falling edge -> release
             let gate_falling = gate_val <= 0.5 && self.prev_gate > 0.5;
             // Detect trigger rising edge -> retrigger
-            let trigger_rising = trigger_val > 0.5 && self.prev_trigger <= 0.5;
+            let trigger_rising = crate::math::rising_edge(trigger_val, self.prev_trigger);
 
             if gate_rising || trigger_rising {
                 self.trigger_envelope();

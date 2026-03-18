@@ -69,10 +69,7 @@ impl TuringMachine {
     /// Simple xorshift PRNG.
     #[inline]
     fn next_random(&mut self) -> f32 {
-        self.rng_state ^= self.rng_state << 13;
-        self.rng_state ^= self.rng_state >> 17;
-        self.rng_state ^= self.rng_state << 5;
-        (self.rng_state as f32) / (u32::MAX as f32)
+        crate::math::xorshift32(&mut self.rng_state)
     }
 
     /// Advance the shift register by one step.
@@ -125,26 +122,7 @@ impl TuringMachine {
             TuringScale::Pentatonic => &PENTATONIC,
         };
 
-        if intervals.is_empty() {
-            return 0.0;
-        }
-
-        // Find closest scale degree
-        let octave = (semitone / 12.0).floor();
-        let note_in_octave = semitone - octave * 12.0;
-
-        let mut closest = intervals[0];
-        let mut min_dist = f32::MAX;
-        for &interval in intervals {
-            let dist = (note_in_octave - interval as f32).abs();
-            if dist < min_dist {
-                min_dist = dist;
-                closest = interval;
-            }
-        }
-
-        // Return as V/Oct (1V = 1 octave)
-        (octave * 12.0 + closest as f32) / 12.0
+        crate::math::quantize_to_scale(semitone, intervals)
     }
 }
 
@@ -229,12 +207,12 @@ impl PolyModule for TuringMachine {
 
         // Calculate step timing from BPM
         let bpm = context.tempo.as_f32().max(20.0);
-        self.samples_per_step = self.sample_rate.as_f32() * 60.0 / bpm / 4.0; // 16th notes
+        self.samples_per_step = crate::math::samples_per_16th(self.sample_rate.as_f32(), bpm);
 
         for i in 0..num_samples {
             // Clock detection
             let clock_trigger = if let Some(clk) = clock {
-                clk[i] > 0.5 && (i == 0 || clk[i - 1] <= 0.5)
+                crate::math::rising_edge(clk[i], if i == 0 { 0.0 } else { clk[i - 1] })
             } else {
                 false
             };
@@ -257,7 +235,7 @@ impl PolyModule for TuringMachine {
 
             // Gate: short pulse on step
             let gate_phase = self.step_counter / self.samples_per_step;
-            let gate_on = self.gate_active && gate_phase < 0.5;
+            let gate_on = self.gate_active && crate::math::gate_pulse(gate_phase, 0.5);
             self.gate_buffer[i] = if gate_on { 1.0 } else { 0.0 };
 
             // Pitch CV (constant until next step)

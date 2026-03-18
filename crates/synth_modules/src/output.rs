@@ -97,19 +97,8 @@ impl StereoOutput {
         if !self.limit_mode.is_enabled() {
             return sample.clamp(-1.0, 1.0);
         }
-
-        // Convert threshold from dB to linear
         let threshold = self.limit_threshold.to_linear();
-
-        // Soft knee limiting using tanh
-        if sample.abs() > threshold {
-            let sign = sample.signum();
-            let excess = sample.abs() - threshold;
-            let limited = threshold + (1.0 - threshold) * (excess / (1.0 + excess)).tanh();
-            sign * limited
-        } else {
-            sample
-        }
+        crate::math::soft_knee_limit(sample, threshold)
     }
 
     /// Apply soft limiting to a stereo sample.

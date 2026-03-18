@@ -65,14 +65,14 @@ impl Compressor {
     #[inline]
     fn attack_coeff(&self) -> f32 {
         let attack_secs = self.attack.to_seconds();
-        (-1.0 / (attack_secs.as_f32() * self.sample_rate.as_f32())).exp()
+        crate::math::envelope_coeff(attack_secs.as_f32(), self.sample_rate.as_f32())
     }
 
     /// Calculate release coefficient using type-safe Milliseconds.
     #[inline]
     fn release_coeff(&self) -> f32 {
         let release_secs = self.release.to_seconds();
-        (-1.0 / (release_secs.as_f32() * self.sample_rate.as_f32())).exp()
+        crate::math::envelope_coeff(release_secs.as_f32(), self.sample_rate.as_f32())
     }
 
     /// Calculate gain reduction for a given input level.
