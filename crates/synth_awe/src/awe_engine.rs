@@ -7,7 +7,7 @@
 //! 4. Stereo spatializer (ITD + ILD) on wet signal only
 
 use synth_core::{
-    BipolarValue, FilterState, Gain, Milliseconds, NormalizedValue, SampleCount, SampleRate,
+    BipolarValue, FilterState, Gain, Hertz, Milliseconds, NormalizedValue, SampleCount, SampleRate,
     Seconds,
 };
 use synth_dsp::{FdnCore, InterpolatedDelayLine};
@@ -19,7 +19,7 @@ use crate::room::{Material, RoomShape};
 use crate::room_modes::RoomModeBank;
 use crate::spatial_voice::{NotePositionMapping, SpatialVoiceBank, SpatialVoicePool};
 use crate::spatializer::Spatializer;
-use crate::types::{Meters, Position3, SampleOffset, StretchFactor};
+use crate::types::{Celsius, Meters, Position3, SampleOffset, StretchFactor};
 
 /// Smooth parameter ramp time in seconds (~5 ms).
 const RAMP_TIME_SECONDS: Seconds = Seconds::new(0.005);
@@ -94,6 +94,21 @@ pub struct AweEngine {
     current_early_late: NormalizedValue,
     current_portal: NormalizedValue,
 
+    // FDN modulation (chorus to break metallic artifacts)
+    mod_chorus_left: InterpolatedDelayLine,
+    mod_chorus_right: InterpolatedDelayLine,
+    mod_phase: f32,
+
+    // Air absorption one-pole LP filter states (left/right)
+    air_absorption_state_l: FilterState,
+    air_absorption_state_r: FilterState,
+
+    // Wet signal EQ filter states
+    wet_lp_state_l: FilterState,
+    wet_lp_state_r: FilterState,
+    wet_hp_state_l: FilterState,
+    wet_hp_state_r: FilterState,
+
     // Geometry dirty flag — recalculate ISM taps, FDN, modes when true
     geometry_dirty: bool,
 
@@ -114,6 +129,10 @@ struct FdnParams {
     portal_delay: SampleOffset,
     portal_feedback: Gain,
     portal_damping: NormalizedValue,
+    mod_depth: f32,
+    mod_rate: f32,
+    high_cut_coeff: f32,
+    low_cut_coeff: f32,
 }
 
 impl AweEngine {
@@ -157,6 +176,18 @@ impl AweEngine {
             current_early_late: snapshot.early_late_balance,
             current_portal: snapshot.portal_amount,
 
+            mod_chorus_left: InterpolatedDelayLine::new(64),
+            mod_chorus_right: InterpolatedDelayLine::new(64),
+            mod_phase: 0.0,
+
+            air_absorption_state_l: FilterState::ZERO,
+            air_absorption_state_r: FilterState::ZERO,
+
+            wet_lp_state_l: FilterState::ZERO,
+            wet_lp_state_r: FilterState::ZERO,
+            wet_hp_state_l: FilterState::ZERO,
+            wet_hp_state_r: FilterState::ZERO,
+
             geometry_dirty: true,
 
             spatial_enabled: false,
@@ -197,9 +228,25 @@ impl AweEngine {
         let mut current_portal = self.current_portal.as_f32();
         let mut portal_feedback_state_l = self.portal_feedback_state_l;
         let mut portal_feedback_state_r = self.portal_feedback_state_r;
+        let mut air_abs_state_l = self.air_absorption_state_l;
+        let mut air_abs_state_r = self.air_absorption_state_r;
 
         let target_pre_delay = fdn.pre_delay_samples;
         let mut current_pre_delay = self.current_pre_delay_samples;
+
+        // Compute air absorption LP coefficient from distance
+        let air_absorption = self.snapshot.air_absorption.as_f32();
+        let air_lp = if air_absorption > 0.001 {
+            let [sx, sy, sz] = self.snapshot.source_pos.as_f32();
+            let [lx, ly, lz] = self.snapshot.listener_pos.as_f32();
+            let dx = sx - lx;
+            let dy = sy - ly;
+            let dz = sz - lz;
+            let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+            air_absorption * (distance / 20.0).min(1.0)
+        } else {
+            0.0
+        };
 
         // 3. Per-sample DSP
         for i in 0..num_samples {
@@ -239,6 +286,26 @@ impl AweEngine {
                 sample_rate_recip,
             );
 
+            // --- FDN modulation (chorus to break metallic artifacts) ---
+            let (fdn_left, fdn_right) = if fdn.mod_depth > 0.001 {
+                self.mod_phase += fdn.mod_rate * sample_rate_recip;
+                if self.mod_phase >= 1.0 {
+                    self.mod_phase -= 1.0;
+                }
+                let lfo_val = (self.mod_phase * std::f32::consts::TAU).sin();
+                let mod_delay = 20.0 + lfo_val * fdn.mod_depth * 18.0;
+                self.mod_chorus_left.write(fdn_out.left);
+                self.mod_chorus_right.write(fdn_out.right);
+                (
+                    self.mod_chorus_left.read_interpolated(mod_delay),
+                    self.mod_chorus_right.read_interpolated(mod_delay),
+                )
+            } else {
+                self.mod_chorus_left.write(fdn_out.left);
+                self.mod_chorus_right.write(fdn_out.right);
+                (fdn_out.left, fdn_out.right)
+            };
+
             // --- Room modes ---
             let modes_out = self.room_modes.process(delayed_input);
 
@@ -247,13 +314,47 @@ impl AweEngine {
             let late_amount = current_early_late;
 
             let wet_mono_left =
-                early_left * early_amount + fdn_out.left * late_amount + modes_out * 0.5;
+                early_left * early_amount + fdn_left * late_amount + modes_out * 0.5;
             let wet_mono_right =
-                early_right * early_amount + fdn_out.right * late_amount + modes_out * 0.5;
+                early_right * early_amount + fdn_right * late_amount + modes_out * 0.5;
+
+            // --- Air absorption (distance-proportional HF damping) ---
+            let (wet_mono_left, wet_mono_right) = if air_lp > 0.001 {
+                (
+                    air_abs_state_l.one_pole(wet_mono_left, air_lp),
+                    air_abs_state_r.one_pole(wet_mono_right, air_lp),
+                )
+            } else {
+                (wet_mono_left, wet_mono_right)
+            };
 
             // --- Spatializer (on wet signal only) ---
             let wet_mid = (wet_mono_left + wet_mono_right) * 0.5;
             let (spat_left, spat_right) = self.spatializer.process(wet_mid);
+
+            // --- Wet signal EQ ---
+            let spat_left = if fdn.high_cut_coeff > 0.001 {
+                self.wet_lp_state_l.one_pole(spat_left, fdn.high_cut_coeff)
+            } else {
+                spat_left
+            };
+            let spat_right = if fdn.high_cut_coeff > 0.001 {
+                self.wet_lp_state_r.one_pole(spat_right, fdn.high_cut_coeff)
+            } else {
+                spat_right
+            };
+            let spat_left = if fdn.low_cut_coeff < 0.999 {
+                self.wet_hp_state_l
+                    .one_pole_hp(spat_left, fdn.low_cut_coeff)
+            } else {
+                spat_left
+            };
+            let spat_right = if fdn.low_cut_coeff < 0.999 {
+                self.wet_hp_state_r
+                    .one_pole_hp(spat_right, fdn.low_cut_coeff)
+            } else {
+                spat_right
+            };
 
             // --- Acoustic portal (delayed feedback from adjoining virtual room) ---
             let (spat_left, spat_right) = if current_portal > 0.001 {
@@ -298,6 +399,8 @@ impl AweEngine {
         self.current_pre_delay_samples = current_pre_delay;
         self.portal_feedback_state_l = portal_feedback_state_l;
         self.portal_feedback_state_r = portal_feedback_state_r;
+        self.air_absorption_state_l = air_abs_state_l;
+        self.air_absorption_state_r = air_abs_state_r;
     }
 
     /// Set a single parameter.
@@ -416,6 +519,35 @@ impl AweEngine {
                 self.snapshot.lfo4.target = t;
                 self.lfo4.set_target(t);
             }
+            AweParam::ModulationDepth(v) => {
+                self.base_snapshot.modulation_depth = v;
+                self.snapshot.modulation_depth = v;
+            }
+            AweParam::ModulationRate(v) => {
+                self.base_snapshot.modulation_rate = v;
+                self.snapshot.modulation_rate = v;
+            }
+            AweParam::AirAbsorption(v) => {
+                self.base_snapshot.air_absorption = v;
+                self.snapshot.air_absorption = v;
+            }
+            AweParam::Width(v) => {
+                self.base_snapshot.width = v;
+                self.snapshot.width = v;
+            }
+            AweParam::HighCut(v) => {
+                self.base_snapshot.high_cut = v;
+                self.snapshot.high_cut = v;
+            }
+            AweParam::LowCut(v) => {
+                self.base_snapshot.low_cut = v;
+                self.snapshot.low_cut = v;
+            }
+            AweParam::Temperature(v) => {
+                self.base_snapshot.temperature = v;
+                self.snapshot.temperature = v;
+                self.geometry_dirty = true;
+            }
         }
     }
 
@@ -462,6 +594,15 @@ impl AweEngine {
             self.portal_delay_right.clear();
             self.portal_feedback_state_l = FilterState::ZERO;
             self.portal_feedback_state_r = FilterState::ZERO;
+            self.mod_chorus_left.clear();
+            self.mod_chorus_right.clear();
+            self.mod_phase = 0.0;
+            self.air_absorption_state_l = FilterState::ZERO;
+            self.air_absorption_state_r = FilterState::ZERO;
+            self.wet_lp_state_l = FilterState::ZERO;
+            self.wet_lp_state_r = FilterState::ZERO;
+            self.wet_hp_state_l = FilterState::ZERO;
+            self.wet_hp_state_r = FilterState::ZERO;
             self.voice_pool.clear();
         }
     }
@@ -576,6 +717,8 @@ impl AweEngine {
                 self.material.absorption_mid,
                 self.material.absorption_high,
                 self.material.diffusion,
+                self.snapshot.air_absorption,
+                self.snapshot.temperature.speed_of_sound(),
                 sample_rate,
             );
         }
@@ -593,9 +736,25 @@ impl AweEngine {
         let mut current_portal = self.current_portal.as_f32();
         let mut portal_feedback_state_l = self.portal_feedback_state_l;
         let mut portal_feedback_state_r = self.portal_feedback_state_r;
+        let mut air_abs_state_l = self.air_absorption_state_l;
+        let mut air_abs_state_r = self.air_absorption_state_r;
 
         let target_pre_delay = fdn.pre_delay_samples;
         let mut current_pre_delay = self.current_pre_delay_samples;
+
+        // Compute air absorption LP coefficient from distance
+        let air_absorption = self.snapshot.air_absorption.as_f32();
+        let air_lp = if air_absorption > 0.001 {
+            let [sx, sy, sz] = self.snapshot.source_pos.as_f32();
+            let [lx, ly, lz] = self.snapshot.listener_pos.as_f32();
+            let dx = sx - lx;
+            let dy = sy - ly;
+            let dz = sz - lz;
+            let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+            air_absorption * (distance / 20.0).min(1.0)
+        } else {
+            0.0
+        };
 
         // 5. Per-sample loop
         for i in 0..num_samples {
@@ -652,6 +811,26 @@ impl AweEngine {
                 sample_rate_recip,
             );
 
+            // FDN modulation (chorus to break metallic artifacts)
+            let (fdn_left, fdn_right) = if fdn.mod_depth > 0.001 {
+                self.mod_phase += fdn.mod_rate * sample_rate_recip;
+                if self.mod_phase >= 1.0 {
+                    self.mod_phase -= 1.0;
+                }
+                let lfo_val = (self.mod_phase * std::f32::consts::TAU).sin();
+                let mod_delay = 20.0 + lfo_val * fdn.mod_depth * 18.0;
+                self.mod_chorus_left.write(fdn_out.left);
+                self.mod_chorus_right.write(fdn_out.right);
+                (
+                    self.mod_chorus_left.read_interpolated(mod_delay),
+                    self.mod_chorus_right.read_interpolated(mod_delay),
+                )
+            } else {
+                self.mod_chorus_left.write(fdn_out.left);
+                self.mod_chorus_right.write(fdn_out.right);
+                (fdn_out.left, fdn_out.right)
+            };
+
             // Room modes (shared, pre-delayed)
             let modes_out = self.room_modes.process(delayed_global);
 
@@ -660,14 +839,47 @@ impl AweEngine {
             let late_amount = current_early_late;
 
             // Use per-voice spatialized dry instead of global spatializer
-            let wet_left =
-                total_early_l * early_amount + fdn_out.left * late_amount + modes_out * 0.5;
+            let wet_left = total_early_l * early_amount + fdn_left * late_amount + modes_out * 0.5;
             let wet_right =
-                total_early_r * early_amount + fdn_out.right * late_amount + modes_out * 0.5;
+                total_early_r * early_amount + fdn_right * late_amount + modes_out * 0.5;
+
+            // Air absorption (distance-proportional HF damping)
+            let (wet_left, wet_right) = if air_lp > 0.001 {
+                (
+                    air_abs_state_l.one_pole(wet_left, air_lp),
+                    air_abs_state_r.one_pole(wet_right, air_lp),
+                )
+            } else {
+                (wet_left, wet_right)
+            };
 
             // Combine with per-voice spatializer output for dry positioning
             let spat_left = wet_left + total_spat_l * 0.1;
             let spat_right = wet_right + total_spat_r * 0.1;
+
+            // --- Wet signal EQ ---
+            let spat_left = if fdn.high_cut_coeff > 0.001 {
+                self.wet_lp_state_l.one_pole(spat_left, fdn.high_cut_coeff)
+            } else {
+                spat_left
+            };
+            let spat_right = if fdn.high_cut_coeff > 0.001 {
+                self.wet_lp_state_r.one_pole(spat_right, fdn.high_cut_coeff)
+            } else {
+                spat_right
+            };
+            let spat_left = if fdn.low_cut_coeff < 0.999 {
+                self.wet_hp_state_l
+                    .one_pole_hp(spat_left, fdn.low_cut_coeff)
+            } else {
+                spat_left
+            };
+            let spat_right = if fdn.low_cut_coeff < 0.999 {
+                self.wet_hp_state_r
+                    .one_pole_hp(spat_right, fdn.low_cut_coeff)
+            } else {
+                spat_right
+            };
 
             // Portal
             let (spat_left, spat_right) = if current_portal > 0.001 {
@@ -712,6 +924,8 @@ impl AweEngine {
         self.current_pre_delay_samples = current_pre_delay;
         self.portal_feedback_state_l = portal_feedback_state_l;
         self.portal_feedback_state_r = portal_feedback_state_r;
+        self.air_absorption_state_l = air_abs_state_l;
+        self.air_absorption_state_r = air_abs_state_r;
     }
 
     // --- Internal helpers ---
@@ -741,7 +955,7 @@ impl AweEngine {
         let material_diffusion = self.material.diffusion;
         let diffusion =
             NormalizedValue::new((0.35 + material_diffusion.as_f32() * 0.55).clamp(0.1, 1.0));
-        let width = NormalizedValue::new(1.0);
+        let width = self.snapshot.width;
 
         let room = &self.room;
         let avg_dim =
@@ -762,6 +976,16 @@ impl AweEngine {
         let pre_delay_samples = (pre_delay_ms * 0.001 * sample_rate.as_f32())
             .min(PRE_DELAY_MAX_SAMPLES.as_usize() as f32 - 1.0);
 
+        let mod_depth = self.snapshot.modulation_depth.as_f32();
+        let mod_rate = self.snapshot.modulation_rate.as_f32().clamp(0.1, 10.0);
+
+        // Wet signal EQ: one-pole coefficients
+        let high_cut_hz = self.snapshot.high_cut.as_f32().clamp(200.0, 20000.0);
+        let low_cut_hz = self.snapshot.low_cut.as_f32().clamp(20.0, 2000.0);
+        let sr = sample_rate.as_f32();
+        let high_cut_coeff = (-std::f32::consts::TAU * high_cut_hz / sr).exp();
+        let low_cut_coeff = (-std::f32::consts::TAU * low_cut_hz / sr).exp();
+
         FdnParams {
             ramp_coeff,
             lp_coeff,
@@ -773,6 +997,10 @@ impl AweEngine {
             portal_delay,
             portal_feedback,
             portal_damping,
+            mod_depth,
+            mod_rate,
+            high_cut_coeff,
+            low_cut_coeff,
         }
     }
 
@@ -807,6 +1035,13 @@ impl AweEngine {
         self.snapshot.tail_stretch = self.base_snapshot.tail_stretch;
         self.snapshot.portal_amount = self.base_snapshot.portal_amount;
         self.snapshot.pre_delay = self.base_snapshot.pre_delay;
+        self.snapshot.modulation_depth = self.base_snapshot.modulation_depth;
+        self.snapshot.modulation_rate = self.base_snapshot.modulation_rate;
+        self.snapshot.air_absorption = self.base_snapshot.air_absorption;
+        self.snapshot.width = self.base_snapshot.width;
+        self.snapshot.high_cut = self.base_snapshot.high_cut;
+        self.snapshot.low_cut = self.base_snapshot.low_cut;
+        self.snapshot.temperature = self.base_snapshot.temperature;
 
         // Apply all LFO offsets from the restored base
         self.apply_lfo_modulation(self.lfo1.target(), lfo1_val);
@@ -963,6 +1198,39 @@ impl AweEngine {
                     (self.snapshot.pre_delay.as_f32() + value * 50.0).clamp(0.0, PRE_DELAY_MAX_MS),
                 );
             }
+            AweLfoTarget::ModulationDepth => {
+                self.snapshot.modulation_depth =
+                    NormalizedValue::new(self.snapshot.modulation_depth.as_f32() + value * 0.3);
+            }
+            AweLfoTarget::ModulationRate => {
+                self.snapshot.modulation_rate = Hertz::new(
+                    (self.snapshot.modulation_rate.as_f32() + value * 2.0).clamp(0.1, 10.0),
+                );
+            }
+            AweLfoTarget::AirAbsorption => {
+                self.snapshot.air_absorption =
+                    NormalizedValue::new(self.snapshot.air_absorption.as_f32() + value * 0.3);
+            }
+            AweLfoTarget::Width => {
+                self.snapshot.width =
+                    NormalizedValue::new(self.snapshot.width.as_f32() + value * 0.3);
+            }
+            AweLfoTarget::HighCut => {
+                let freq = self.snapshot.high_cut.as_f32();
+                self.snapshot.high_cut =
+                    Hertz::new((freq * (1.0 + value * 0.5)).clamp(200.0, 20000.0));
+            }
+            AweLfoTarget::LowCut => {
+                let freq = self.snapshot.low_cut.as_f32();
+                self.snapshot.low_cut =
+                    Hertz::new((freq * (1.0 + value * 0.5)).clamp(20.0, 2000.0));
+            }
+            AweLfoTarget::Temperature => {
+                self.snapshot.temperature = Celsius::new(
+                    (self.snapshot.temperature.as_f32() + value * 10.0).clamp(-40.0, 60.0),
+                );
+                self.geometry_dirty = true;
+            }
         }
     }
 
@@ -971,6 +1239,7 @@ impl AweEngine {
         let room_length = self.room.length();
         let room_width = self.room.width();
         let room_height = self.room.height();
+        let speed_of_sound = self.snapshot.temperature.speed_of_sound();
 
         // Clamp positions inside the room
         let min_pos = Meters::new(0.1);
@@ -1014,6 +1283,8 @@ impl AweEngine {
             self.material.absorption_mid,
             self.material.absorption_high,
             self.material.diffusion,
+            self.snapshot.air_absorption,
+            speed_of_sound,
             sample_rate,
         );
 
@@ -1033,11 +1304,13 @@ impl AweEngine {
             room_height,
             self.material.absorption_low,
             self.material.absorption_high,
+            speed_of_sound,
             sample_rate,
         );
 
         // Update spatializer
-        self.spatializer.update(source, listener, sample_rate);
+        self.spatializer
+            .update(source, listener, speed_of_sound, sample_rate);
     }
 
     /// Calculate RT60 using Sabine's formula.

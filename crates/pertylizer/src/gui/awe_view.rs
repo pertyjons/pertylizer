@@ -76,6 +76,10 @@ pub struct AweUiState {
     /// Material diffusion override (0.0 - 1.0).
     pub material_diffusion: f32,
 
+    // FDN modulation (chorus)
+    pub modulation_depth: f32,
+    pub modulation_rate: f32,
+
     // Mix parameters
     pub dry_wet: f32,
     pub early_late: f32,
@@ -85,6 +89,11 @@ pub struct AweUiState {
     pub resonance_boost: f32,
     pub portal_amount: f32,
     pub pre_delay: f32,
+    pub air_absorption: f32,
+    pub width: f32,
+    pub high_cut: f32,
+    pub low_cut: f32,
+    pub temperature: f32,
 
     // LFO states
     pub lfo1: AweLfoState,
@@ -130,6 +139,8 @@ impl Default for AweUiState {
             listener_y: snap.listener_pos.y().as_f32(),
             material_idx: 0,
             material_diffusion: default_material.diffusion.as_f32(),
+            modulation_depth: snap.modulation_depth.as_f32(),
+            modulation_rate: snap.modulation_rate.as_f32(),
             dry_wet: snap.dry_wet.as_f32(),
             early_late: snap.early_late_balance.as_f32(),
             modes_amount: snap.modes_amount.as_f32(),
@@ -138,6 +149,11 @@ impl Default for AweUiState {
             resonance_boost: snap.resonance_boost.as_f32(),
             portal_amount: snap.portal_amount.as_f32(),
             pre_delay: snap.pre_delay.as_f32(),
+            air_absorption: snap.air_absorption.as_f32(),
+            width: snap.width.as_f32(),
+            high_cut: snap.high_cut.as_f32(),
+            low_cut: snap.low_cut.as_f32(),
+            temperature: snap.temperature.as_f32(),
             lfo1: snap.lfo1,
             lfo2: snap.lfo2,
             lfo3: snap.lfo3,
@@ -221,6 +237,13 @@ impl AweUiState {
                 tail_stretch: StretchFactor::new(self.tail_stretch),
                 portal_amount: NormalizedValue::new(self.portal_amount),
                 pre_delay: Milliseconds::new(self.pre_delay),
+                modulation_depth: NormalizedValue::new(self.modulation_depth),
+                modulation_rate: Hertz::new(self.modulation_rate),
+                air_absorption: NormalizedValue::new(self.air_absorption),
+                width: NormalizedValue::new(self.width),
+                high_cut: Hertz::new(self.high_cut),
+                low_cut: Hertz::new(self.low_cut),
+                temperature: synth_awe::Celsius::new(self.temperature),
                 source_pos: [self.source_x, self.source_y, half_height].into(),
                 listener_pos: [self.listener_x, self.listener_y, half_height].into(),
                 spatial_enabled: self.spatial_enabled,
@@ -299,6 +322,13 @@ impl AweUiState {
         self.tail_stretch = snap.tail_stretch.as_f32();
         self.portal_amount = snap.portal_amount.as_f32();
         self.pre_delay = snap.pre_delay.as_f32();
+        self.modulation_depth = snap.modulation_depth.as_f32();
+        self.modulation_rate = snap.modulation_rate.as_f32();
+        self.air_absorption = snap.air_absorption.as_f32();
+        self.width = snap.width.as_f32();
+        self.high_cut = snap.high_cut.as_f32();
+        self.low_cut = snap.low_cut.as_f32();
+        self.temperature = snap.temperature.as_f32();
 
         // Positions
         self.source_x = snap.source_pos.x().as_f32();
@@ -373,7 +403,7 @@ fn material_to_index(mat: Material) -> usize {
     best_idx
 }
 
-const LFO_TARGET_NAMES: [&str; 14] = [
+const LFO_TARGET_NAMES: [&str; 21] = [
     "Room Length",
     "Room Width",
     "Source X",
@@ -388,6 +418,13 @@ const LFO_TARGET_NAMES: [&str; 14] = [
     "Tail Stretch",
     "Portal",
     "Pre-delay",
+    "Mod Depth",
+    "Mod Rate",
+    "Air Absorb",
+    "Width",
+    "High Cut",
+    "Low Cut",
+    "Temperature",
 ];
 
 fn lfo_target_from_index(idx: usize) -> AweLfoTarget {
@@ -406,6 +443,13 @@ fn lfo_target_from_index(idx: usize) -> AweLfoTarget {
         11 => AweLfoTarget::TailStretch,
         12 => AweLfoTarget::PortalAmount,
         13 => AweLfoTarget::PreDelay,
+        14 => AweLfoTarget::ModulationDepth,
+        15 => AweLfoTarget::ModulationRate,
+        16 => AweLfoTarget::AirAbsorption,
+        17 => AweLfoTarget::Width,
+        18 => AweLfoTarget::HighCut,
+        19 => AweLfoTarget::LowCut,
+        20 => AweLfoTarget::Temperature,
         _ => AweLfoTarget::SourceX,
     }
 }
@@ -426,6 +470,13 @@ fn lfo_target_to_index(target: AweLfoTarget) -> usize {
         AweLfoTarget::TailStretch => 11,
         AweLfoTarget::PortalAmount => 12,
         AweLfoTarget::PreDelay => 13,
+        AweLfoTarget::ModulationDepth => 14,
+        AweLfoTarget::ModulationRate => 15,
+        AweLfoTarget::AirAbsorption => 16,
+        AweLfoTarget::Width => 17,
+        AweLfoTarget::HighCut => 18,
+        AweLfoTarget::LowCut => 19,
+        AweLfoTarget::Temperature => 20,
     }
 }
 
@@ -2277,6 +2328,105 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         {
             handle.send(EngineCommand::SetAweParameter {
                 param: AweParam::PreDelay(Milliseconds::new(state.pre_delay)),
+            });
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Mod Depth:");
+        if ui
+            .add(egui::Slider::new(&mut state.modulation_depth, 0.0..=1.0))
+            .on_hover_text("FDN chorus depth \u{2014} breaks metallic reverb artifacts")
+            .changed()
+        {
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::ModulationDepth(NormalizedValue::new(state.modulation_depth)),
+            });
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Mod Rate:");
+        if ui
+            .add(egui::Slider::new(&mut state.modulation_rate, 0.1..=10.0).suffix(" Hz"))
+            .on_hover_text("FDN chorus rate")
+            .changed()
+        {
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::ModulationRate(Hertz::new(state.modulation_rate)),
+            });
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Air Absorb:");
+        if ui
+            .add(egui::Slider::new(&mut state.air_absorption, 0.0..=1.0))
+            .on_hover_text("Distance-proportional high-frequency damping")
+            .changed()
+        {
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::AirAbsorption(NormalizedValue::new(state.air_absorption)),
+            });
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Width:");
+        if ui
+            .add(egui::Slider::new(&mut state.width, 0.0..=1.0))
+            .on_hover_text("Stereo width (0 = mono, 1 = full stereo)")
+            .changed()
+        {
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::Width(NormalizedValue::new(state.width)),
+            });
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("High Cut:");
+        if ui
+            .add(
+                egui::Slider::new(&mut state.high_cut, 200.0..=20000.0)
+                    .logarithmic(true)
+                    .suffix(" Hz"),
+            )
+            .on_hover_text("Low-pass filter on wet signal")
+            .changed()
+        {
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::HighCut(Hertz::new(state.high_cut)),
+            });
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Low Cut:");
+        if ui
+            .add(
+                egui::Slider::new(&mut state.low_cut, 20.0..=2000.0)
+                    .logarithmic(true)
+                    .suffix(" Hz"),
+            )
+            .on_hover_text("High-pass filter on wet signal")
+            .changed()
+        {
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::LowCut(Hertz::new(state.low_cut)),
+            });
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Temperature:");
+        if ui
+            .add(egui::Slider::new(&mut state.temperature, -40.0..=60.0).suffix(" \u{00b0}C"))
+            .on_hover_text("Room temperature \u{2014} affects speed of sound")
+            .changed()
+        {
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::Temperature(synth_awe::Celsius::new(state.temperature)),
             });
         }
     });

@@ -9,7 +9,7 @@ use synth_core::{BipolarValue, MidiNote, NormalizedValue, SampleCount, SampleRat
 
 use crate::early_reflections::EarlyReflections;
 use crate::spatializer::Spatializer;
-use crate::types::{Meters, Position3};
+use crate::types::{Meters, MetersPerSecond, Position3};
 
 /// Maximum number of simultaneous spatial voice slots.
 pub const MAX_SPATIAL_VOICES: usize = 16;
@@ -304,6 +304,8 @@ impl SpatialVoicePool {
         absorption_mid: NormalizedValue,
         absorption_high: NormalizedValue,
         diffusion: NormalizedValue,
+        air_absorption: NormalizedValue,
+        speed_of_sound: MetersPerSecond,
         sample_rate: SampleRate,
     ) {
         let Some(slot) = self.slots.get_mut(idx) else {
@@ -324,10 +326,13 @@ impl SpatialVoicePool {
             absorption_mid,
             absorption_high,
             diffusion,
+            air_absorption,
+            speed_of_sound,
             sample_rate,
         );
 
-        slot.spatializer.update(pos, listener_pos, sample_rate);
+        slot.spatializer
+            .update(pos, listener_pos, speed_of_sound, sample_rate);
         slot.geometry_dirty = false;
     }
 

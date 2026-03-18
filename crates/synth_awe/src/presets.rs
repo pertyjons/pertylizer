@@ -1,6 +1,6 @@
 //! Pre-defined AWE presets demonstrating various room configurations.
 
-use synth_core::{BipolarValue, Milliseconds};
+use synth_core::{BipolarValue, Hertz, Milliseconds, NormalizedValue};
 
 use crate::params::{AweSnapshot, AweState};
 use crate::room::{Material, RoomShape};
@@ -47,6 +47,9 @@ pub fn awe_presets() -> Vec<AwePreset> {
                     listener_pos: [26.0, 10.0, 9.0].into(),
                     spatial_enabled: false,
                     note_mapping: NotePositionMapping::Off,
+                    modulation_depth: NormalizedValue::new(0.15),
+                    modulation_rate: Hertz::new(0.8),
+                    air_absorption: NormalizedValue::new(0.3),
                     ..AweSnapshot::default()
                 },
             },
@@ -164,6 +167,8 @@ pub fn awe_presets() -> Vec<AwePreset> {
                     listener_pos: [22.0, 9.0, 5.0].into(),
                     spatial_enabled: false,
                     note_mapping: NotePositionMapping::Off,
+                    modulation_depth: NormalizedValue::new(0.2),
+                    modulation_rate: Hertz::new(0.7),
                     ..AweSnapshot::default()
                 },
             },
@@ -228,6 +233,8 @@ pub fn awe_presets() -> Vec<AwePreset> {
                     listener_pos: [11.0, 5.0, 2.5].into(),
                     spatial_enabled: false,
                     note_mapping: NotePositionMapping::Off,
+                    modulation_depth: NormalizedValue::new(0.5),
+                    modulation_rate: Hertz::new(0.4),
                     ..AweSnapshot::default()
                 },
             },
@@ -467,6 +474,8 @@ pub fn awe_presets() -> Vec<AwePreset> {
                     listener_pos: [22.0, 9.0, 8.0].into(),
                     spatial_enabled: false,
                     note_mapping: NotePositionMapping::Off,
+                    modulation_depth: NormalizedValue::new(0.2),
+                    modulation_rate: Hertz::new(0.6),
                     ..AweSnapshot::default()
                 },
             },
@@ -760,6 +769,8 @@ pub fn awe_presets() -> Vec<AwePreset> {
                     listener_pos: [19.0, 8.0, 6.0].into(),
                     spatial_enabled: false,
                     note_mapping: NotePositionMapping::Off,
+                    modulation_depth: NormalizedValue::new(0.3),
+                    modulation_rate: Hertz::new(0.9),
                     ..AweSnapshot::default()
                 },
             },
@@ -846,6 +857,8 @@ pub fn awe_presets() -> Vec<AwePreset> {
                     listener_pos: [10.0, 6.5, 6.5].into(),
                     spatial_enabled: true,
                     note_mapping: NotePositionMapping::Circular,
+                    modulation_depth: NormalizedValue::new(0.4),
+                    modulation_rate: Hertz::new(0.5),
                     ..AweSnapshot::default()
                 },
             },

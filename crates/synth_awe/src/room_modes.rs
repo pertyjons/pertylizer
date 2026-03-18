@@ -7,8 +7,7 @@
 
 use synth_core::{FilterState, Gain, Hertz, NormalizedValue, SampleCount, SampleRate};
 
-use crate::room::SPEED_OF_SOUND;
-use crate::types::Meters;
+use crate::types::{Meters, MetersPerSecond};
 use synth_dsp::DelayLine;
 
 /// Number of axial modes (one per room axis).
@@ -66,9 +65,10 @@ impl CombFilter {
         dimension: Meters,
         absorption_low: NormalizedValue,
         absorption_high: NormalizedValue,
+        speed_of_sound: MetersPerSecond,
         sample_rate: SampleRate,
     ) {
-        let mode_freq = Hertz::new(SPEED_OF_SOUND.as_f32() / (2.0 * dimension.as_f32().max(0.001)));
+        let mode_freq = Hertz::new(speed_of_sound.as_f32() / (2.0 * dimension.as_f32().max(0.001)));
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let raw_delay = (sample_rate.as_f32() / mode_freq.as_f32()) as usize;
         let max_delay = self.delay_line.len().saturating_sub(1);
@@ -146,6 +146,7 @@ impl RoomModeBank {
     /// * `absorption_low`  - Low-frequency absorption coefficient (0.0 to 1.0).
     /// * `absorption_high` - High-frequency absorption coefficient (0.0 to 1.0).
     /// * `sample_rate`     - Current sample rate in Hz.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_geometry(
         &mut self,
         room_length: Meters,
@@ -153,11 +154,18 @@ impl RoomModeBank {
         room_height: Meters,
         absorption_low: NormalizedValue,
         absorption_high: NormalizedValue,
+        speed_of_sound: MetersPerSecond,
         sample_rate: SampleRate,
     ) {
         let dimensions = [room_length, room_width, room_height];
         for (mode, &dim) in self.modes.iter_mut().zip(dimensions.iter()) {
-            mode.update(dim, absorption_low, absorption_high, sample_rate);
+            mode.update(
+                dim,
+                absorption_low,
+                absorption_high,
+                speed_of_sound,
+                sample_rate,
+            );
         }
     }
 
@@ -210,6 +218,7 @@ impl Default for RoomModeBank {
 #[cfg(test)]
 mod tests {
     use super::*;
+    const SPEED_OF_SOUND: MetersPerSecond = MetersPerSecond::new(343.0);
 
     #[test]
     fn test_default_is_silent() {
@@ -229,6 +238,7 @@ mod tests {
             Meters::new(3.0),
             NormalizedValue::new(0.05),
             NormalizedValue::new(0.15),
+            SPEED_OF_SOUND,
             sample_rate,
         );
 
@@ -255,6 +265,7 @@ mod tests {
             Meters::new(3.0),
             NormalizedValue::new(0.0),
             NormalizedValue::new(0.0),
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
         let fb_no_absorption = bank.modes[0].feedback.as_f32();
@@ -265,6 +276,7 @@ mod tests {
             Meters::new(3.0),
             NormalizedValue::new(1.0),
             NormalizedValue::new(1.0),
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
         let fb_full_absorption = bank.modes[0].feedback.as_f32();
@@ -287,6 +299,7 @@ mod tests {
             Meters::new(3.0),
             NormalizedValue::new(0.0),
             NormalizedValue::new(0.0),
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
         let lp_no_absorption = bank.modes[0].lp_coeff.as_f32();
@@ -297,6 +310,7 @@ mod tests {
             Meters::new(3.0),
             NormalizedValue::new(0.0),
             NormalizedValue::new(1.0),
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
         let lp_full_hf_absorption = bank.modes[0].lp_coeff.as_f32();
@@ -317,6 +331,7 @@ mod tests {
             Meters::new(3.0),
             NormalizedValue::new(0.0),
             NormalizedValue::new(0.0),
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
         let hp_no_absorption = bank.modes[0].hp_coeff.as_f32();
@@ -327,6 +342,7 @@ mod tests {
             Meters::new(3.0),
             NormalizedValue::new(1.0),
             NormalizedValue::new(0.0),
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
         let hp_full_lf_absorption = bank.modes[0].hp_coeff.as_f32();
@@ -414,6 +430,7 @@ mod tests {
             Meters::new(100.0),
             NormalizedValue::new(0.05),
             NormalizedValue::new(0.15),
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
         for mode in &bank.modes {
@@ -428,6 +445,7 @@ mod tests {
             Meters::new(5.0),
             NormalizedValue::new(0.1),
             NormalizedValue::new(0.3),
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
 

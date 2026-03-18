@@ -11,8 +11,7 @@ use synth_core::{
 };
 use synth_dsp::InterpolatedDelayLine;
 
-use crate::room::SPEED_OF_SOUND;
-use crate::types::{Meters, Position3, SampleOffset};
+use crate::types::{Meters, MetersPerSecond, Position3, SampleOffset};
 
 /// Head width in meters (average distance between human ears).
 const HEAD_WIDTH: Meters = Meters::new(0.17);
@@ -77,6 +76,7 @@ impl Spatializer {
         &mut self,
         source_pos: Position3,
         listener_pos: Position3,
+        speed_of_sound: MetersPerSecond,
         sample_rate: SampleRate,
     ) {
         let dx = source_pos.x().as_f32() - listener_pos.x().as_f32();
@@ -87,7 +87,7 @@ impl Spatializer {
 
         // --- ITD ---
         // Time difference based on path length difference around the head.
-        let itd_seconds = Seconds::new(HEAD_WIDTH.as_f32() / SPEED_OF_SOUND.as_f32() * angle.sin());
+        let itd_seconds = Seconds::new(HEAD_WIDTH.as_f32() / speed_of_sound.as_f32() * angle.sin());
 
         // Positive angle (source right): left ear is farther, gets more delay.
         self.itd_left = SampleOffset::new(itd_seconds.as_f32().max(0.0) * sample_rate.as_f32());
@@ -164,6 +164,7 @@ mod tests {
     use super::*;
 
     const SAMPLE_RATE: SampleRate = SampleRate(48_000.0);
+    const SPEED_OF_SOUND: MetersPerSecond = MetersPerSecond::new(343.0);
 
     fn pos(x: f32, y: f32, z: f32) -> Position3 {
         Position3::new(Meters::new(x), Meters::new(y), Meters::new(z))
@@ -173,7 +174,12 @@ mod tests {
     fn test_center_source_equal_output() {
         let mut spat = Spatializer::new();
         // Source directly ahead.
-        spat.update(pos(0.0, 5.0, 0.0), pos(0.0, 0.0, 0.0), SAMPLE_RATE);
+        spat.update(
+            pos(0.0, 5.0, 0.0),
+            pos(0.0, 0.0, 0.0),
+            SPEED_OF_SOUND,
+            SAMPLE_RATE,
+        );
 
         assert!((spat.itd_left.as_f32() - 0.0).abs() < 1e-6);
         assert!((spat.itd_right.as_f32() - 0.0).abs() < 1e-6);
@@ -184,7 +190,12 @@ mod tests {
     fn test_right_source_more_left_delay() {
         let mut spat = Spatializer::new();
         // Source to the right.
-        spat.update(pos(5.0, 0.0, 0.0), pos(0.0, 0.0, 0.0), SAMPLE_RATE);
+        spat.update(
+            pos(5.0, 0.0, 0.0),
+            pos(0.0, 0.0, 0.0),
+            SPEED_OF_SOUND,
+            SAMPLE_RATE,
+        );
 
         // Left ear should have more delay (farther from source).
         assert!(spat.itd_left.as_f32() > spat.itd_right.as_f32());
@@ -196,7 +207,12 @@ mod tests {
     fn test_left_source_more_right_delay() {
         let mut spat = Spatializer::new();
         // Source to the left.
-        spat.update(pos(-5.0, 0.0, 0.0), pos(0.0, 0.0, 0.0), SAMPLE_RATE);
+        spat.update(
+            pos(-5.0, 0.0, 0.0),
+            pos(0.0, 0.0, 0.0),
+            SPEED_OF_SOUND,
+            SAMPLE_RATE,
+        );
 
         // Right ear should have more delay.
         assert!(spat.itd_right.as_f32() > spat.itd_left.as_f32());
@@ -209,7 +225,12 @@ mod tests {
         let mut spat = Spatializer::new();
         let high_rate = SampleRate::new(96_000.0);
         // Source at 90 degrees right.
-        spat.update(pos(10.0, 0.0, 0.0), pos(0.0, 0.0, 0.0), high_rate);
+        spat.update(
+            pos(10.0, 0.0, 0.0),
+            pos(0.0, 0.0, 0.0),
+            SPEED_OF_SOUND,
+            high_rate,
+        );
 
         // Max ITD ~ HEAD_WIDTH / SPEED_OF_SOUND * sample_rate = 0.17/343*96000 ~ 47.5
         assert!(spat.itd_left.as_f32() < MAX_ITD_SAMPLES.as_usize() as f32);
@@ -219,7 +240,12 @@ mod tests {
     #[test]
     fn test_process_produces_output() {
         let mut spat = Spatializer::new();
-        spat.update(pos(3.0, 4.0, 0.0), pos(0.0, 0.0, 0.0), SAMPLE_RATE);
+        spat.update(
+            pos(3.0, 4.0, 0.0),
+            pos(0.0, 0.0, 0.0),
+            SPEED_OF_SOUND,
+            SAMPLE_RATE,
+        );
 
         // Feed a pulse.
         let (l, r) = spat.process(1.0);
@@ -241,7 +267,12 @@ mod tests {
     #[test]
     fn test_clear_resets_state() {
         let mut spat = Spatializer::new();
-        spat.update(pos(5.0, 0.0, 0.0), pos(0.0, 0.0, 0.0), SAMPLE_RATE);
+        spat.update(
+            pos(5.0, 0.0, 0.0),
+            pos(0.0, 0.0, 0.0),
+            SPEED_OF_SOUND,
+            SAMPLE_RATE,
+        );
 
         // Feed some signal.
         for _ in 0..50 {
@@ -260,7 +291,12 @@ mod tests {
     fn test_head_shadow_far_ear_attenuated() {
         // Source far right: left ear should be more attenuated (shadow).
         let mut spat = Spatializer::new();
-        spat.update(pos(10.0, 0.0, 0.0), pos(0.0, 0.0, 0.0), SAMPLE_RATE);
+        spat.update(
+            pos(10.0, 0.0, 0.0),
+            pos(0.0, 0.0, 0.0),
+            SPEED_OF_SOUND,
+            SAMPLE_RATE,
+        );
 
         // Left ear shadow coeff should be higher (more LP filtering on far ear).
         assert!(spat.shadow_coeff_left.as_f32() > spat.shadow_coeff_right.as_f32());
@@ -281,8 +317,18 @@ mod tests {
         let mut spat_left = Spatializer::new();
         let mut spat_right = Spatializer::new();
 
-        spat_left.update(pos(-3.0, 4.0, 0.0), pos(0.0, 0.0, 0.0), SAMPLE_RATE);
-        spat_right.update(pos(3.0, 4.0, 0.0), pos(0.0, 0.0, 0.0), SAMPLE_RATE);
+        spat_left.update(
+            pos(-3.0, 4.0, 0.0),
+            pos(0.0, 0.0, 0.0),
+            SPEED_OF_SOUND,
+            SAMPLE_RATE,
+        );
+        spat_right.update(
+            pos(3.0, 4.0, 0.0),
+            pos(0.0, 0.0, 0.0),
+            SPEED_OF_SOUND,
+            SAMPLE_RATE,
+        );
 
         // ITDs should be swapped.
         assert!((spat_left.itd_left.as_f32() - spat_right.itd_right.as_f32()).abs() < 1e-3);

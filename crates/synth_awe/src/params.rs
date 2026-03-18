@@ -3,9 +3,29 @@
 use serde::{Deserialize, Serialize};
 use synth_core::{BipolarValue, Hertz, Milliseconds, NormalizedValue};
 
+/// Default FDN chorus modulation rate (1 Hz).
+fn default_modulation_rate() -> Hertz {
+    Hertz::new(1.0)
+}
+
 use crate::room::{Material, RoomShape};
 use crate::spatial_voice::NotePositionMapping;
-use crate::types::{Meters, Position3, StretchFactor};
+use crate::types::{Celsius, Meters, Position3, StretchFactor};
+
+/// Default width (full stereo).
+fn default_width() -> NormalizedValue {
+    NormalizedValue::new(1.0)
+}
+
+/// Default high-cut frequency (20 kHz = pass-through).
+fn default_high_cut() -> Hertz {
+    Hertz::new(20000.0)
+}
+
+/// Default low-cut frequency (20 Hz = pass-through).
+fn default_low_cut() -> Hertz {
+    Hertz::new(20.0)
+}
 
 /// Target for an AWE-internal LFO modulation.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +59,20 @@ pub enum AweLfoTarget {
     PortalAmount,
     /// Modulate pre-delay time.
     PreDelay,
+    /// Modulate FDN chorus depth.
+    ModulationDepth,
+    /// Modulate FDN chorus rate.
+    ModulationRate,
+    /// Modulate air absorption.
+    AirAbsorption,
+    /// Modulate stereo width.
+    Width,
+    /// Modulate high-cut frequency.
+    HighCut,
+    /// Modulate low-cut frequency.
+    LowCut,
+    /// Modulate temperature.
+    Temperature,
 }
 
 /// State of one AWE-internal LFO for persistence.
@@ -119,6 +153,20 @@ pub enum AweParam {
     Lfo4Amount(NormalizedValue),
     /// Set LFO 4 target.
     Lfo4Target(AweLfoTarget),
+    /// FDN chorus depth (0 = off, 1 = max wobble).
+    ModulationDepth(NormalizedValue),
+    /// FDN chorus rate in Hz.
+    ModulationRate(Hertz),
+    /// Air absorption — distance-proportional high-frequency damping (0.0 = off, 1.0 = max).
+    AirAbsorption(NormalizedValue),
+    /// Stereo width (0.0 = mono, 1.0 = full stereo).
+    Width(NormalizedValue),
+    /// High-cut frequency for wet signal (200–20000 Hz).
+    HighCut(Hertz),
+    /// Low-cut frequency for wet signal (20–2000 Hz).
+    LowCut(Hertz),
+    /// Temperature in Celsius (affects speed of sound).
+    Temperature(Celsius),
 }
 
 /// Snapshot of all numeric AWE parameters for batch-updating.
@@ -152,6 +200,27 @@ pub struct AweSnapshot {
     /// Note-to-position mapping for per-voice spatial.
     #[serde(default)]
     pub note_mapping: NotePositionMapping,
+    /// FDN chorus depth (0 = off, 1 = max wobble).
+    #[serde(default)]
+    pub modulation_depth: NormalizedValue,
+    /// FDN chorus rate in Hz.
+    #[serde(default = "default_modulation_rate")]
+    pub modulation_rate: Hertz,
+    /// Air absorption — distance-proportional high-frequency damping (0.0 = off, 1.0 = max).
+    #[serde(default)]
+    pub air_absorption: NormalizedValue,
+    /// Stereo width (0.0 = mono, 1.0 = full stereo).
+    #[serde(default = "default_width")]
+    pub width: NormalizedValue,
+    /// High-cut frequency for wet signal EQ.
+    #[serde(default = "default_high_cut")]
+    pub high_cut: Hertz,
+    /// Low-cut frequency for wet signal EQ.
+    #[serde(default = "default_low_cut")]
+    pub low_cut: Hertz,
+    /// Temperature in Celsius (affects speed of sound).
+    #[serde(default)]
+    pub temperature: Celsius,
     /// LFO 1 state.
     #[serde(default)]
     pub lfo1: AweLfoState,
@@ -181,6 +250,13 @@ impl Default for AweSnapshot {
             listener_pos: Position3::new(Meters::new(6.0), Meters::new(2.5), Meters::new(1.5)),
             spatial_enabled: false,
             note_mapping: NotePositionMapping::Off,
+            modulation_depth: NormalizedValue::MIN,
+            modulation_rate: Hertz::new(1.0),
+            air_absorption: NormalizedValue::new(0.0),
+            width: NormalizedValue::new(1.0),
+            high_cut: default_high_cut(),
+            low_cut: default_low_cut(),
+            temperature: Celsius::default(),
             lfo1: AweLfoState::default(),
             lfo2: AweLfoState {
                 target: AweLfoTarget::SourceY,

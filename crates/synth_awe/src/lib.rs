@@ -27,5 +27,6 @@ pub use spatial_voice::{
     MAX_SPATIAL_VOICES, NotePositionMapping, SpatialContext, SpatialVoiceBank, SpatialVoiceInfo,
 };
 pub use types::{
-    CubicMeters, Meters, MetersPerSecond, Position3, SampleOffset, SquareMeters, StretchFactor,
+    Celsius, CubicMeters, Meters, MetersPerSecond, Position3, SampleOffset, SquareMeters,
+    StretchFactor,
 };

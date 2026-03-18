@@ -171,6 +171,39 @@ impl CubicMeters {
 #[must_use]
 pub struct MetersPerSecond(pub f32);
 
+/// Temperature in degrees Celsius.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+#[repr(transparent)]
+#[must_use]
+pub struct Celsius(pub f32);
+
+impl Celsius {
+    /// Create a new temperature value.
+    #[inline]
+    pub const fn new(value: f32) -> Self {
+        Self(value)
+    }
+
+    /// Get the raw value.
+    #[inline]
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+
+    /// Calculate speed of sound at this temperature.
+    /// Formula: v = 331.3 + 0.606 * T (m/s)
+    pub fn speed_of_sound(self) -> MetersPerSecond {
+        MetersPerSecond::new(331.3 + 0.606 * self.0)
+    }
+}
+
+impl Default for Celsius {
+    fn default() -> Self {
+        Self(20.0) // 20 C ~ 343.4 m/s (matches old constant)
+    }
+}
+
 impl MetersPerSecond {
     /// Create a new speed.
     #[inline]

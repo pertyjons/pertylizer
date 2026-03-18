@@ -7,8 +7,9 @@ use synth_core::{Hertz, NormalizedValue};
 
 use crate::types::{CubicMeters, Meters, MetersPerSecond, SquareMeters};
 
-/// Speed of sound in air at room temperature (m/s).
-pub const SPEED_OF_SOUND: MetersPerSecond = MetersPerSecond::new(343.0);
+/// Default speed of sound in air at 20 C (m/s), used for tests.
+#[cfg(test)]
+const DEFAULT_SPEED_OF_SOUND: MetersPerSecond = MetersPerSecond::new(343.0);
 
 /// Shape of the simulated room.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -217,14 +218,15 @@ impl RoomShape {
     /// Axial room modes (fundamental frequencies for each axis).
     ///
     /// Returns (length_mode, width_mode, height_mode) in Hz.
-    /// Formula: f = c / (2 * L), where c = 343 m/s (speed of sound).
+    /// Formula: f = c / (2 * L), where c is the speed of sound.
     /// Dimensions <= 0 are clamped to 0.01m to avoid division by zero.
     #[must_use]
-    pub fn axial_modes(self) -> (Hertz, Hertz, Hertz) {
+    pub fn axial_modes(self, speed_of_sound: MetersPerSecond) -> (Hertz, Hertz, Hertz) {
+        let c = speed_of_sound.as_f32();
         /// Compute mode frequency safely, clamping the divisor to avoid division by zero.
         #[inline]
-        fn safe_mode(divisor: f32) -> Hertz {
-            Hertz::new(SPEED_OF_SOUND.as_f32() / divisor.max(0.01))
+        fn safe_mode(c: f32, divisor: f32) -> Hertz {
+            Hertz::new(c / divisor.max(0.01))
         }
 
         match self {
@@ -233,16 +235,16 @@ impl RoomShape {
                 width,
                 height,
             } => (
-                safe_mode(2.0 * length.as_f32()),
-                safe_mode(2.0 * width.as_f32()),
-                safe_mode(2.0 * height.as_f32()),
+                safe_mode(c, 2.0 * length.as_f32()),
+                safe_mode(c, 2.0 * width.as_f32()),
+                safe_mode(c, 2.0 * height.as_f32()),
             ),
             Self::Cylinder { radius, length } => {
                 let diameter = radius * 2.0;
                 (
-                    safe_mode(2.0 * length.as_f32()),
-                    safe_mode(2.0 * diameter.as_f32()),
-                    safe_mode(2.0 * diameter.as_f32()),
+                    safe_mode(c, 2.0 * length.as_f32()),
+                    safe_mode(c, 2.0 * diameter.as_f32()),
+                    safe_mode(c, 2.0 * diameter.as_f32()),
                 )
             }
             Self::LShape {
@@ -252,24 +254,24 @@ impl RoomShape {
                 width_b,
                 height,
             } => (
-                safe_mode(2.0 * (length_a + length_b).as_f32()),
-                safe_mode(2.0 * width_a.max(width_b).as_f32()),
-                safe_mode(2.0 * height.as_f32()),
+                safe_mode(c, 2.0 * (length_a + length_b).as_f32()),
+                safe_mode(c, 2.0 * width_a.max(width_b).as_f32()),
+                safe_mode(c, 2.0 * height.as_f32()),
             ),
             Self::Sphere { radius } => {
                 // All modes coincide at c / (4r)
-                let mode = safe_mode(4.0 * radius.as_f32());
+                let mode = safe_mode(c, 4.0 * radius.as_f32());
                 (mode, mode, mode)
             }
             Self::Dome { radius } => (
-                safe_mode(4.0 * radius.as_f32()), // length mode (diameter)
-                safe_mode(4.0 * radius.as_f32()), // width mode (diameter)
-                safe_mode(2.0 * radius.as_f32()), // height mode (radius)
+                safe_mode(c, 4.0 * radius.as_f32()), // length mode (diameter)
+                safe_mode(c, 4.0 * radius.as_f32()), // width mode (diameter)
+                safe_mode(c, 2.0 * radius.as_f32()), // height mode (radius)
             ),
             Self::Tube { radius, length } => (
-                safe_mode(length.as_f32()),       // open-open length mode: c/L
-                safe_mode(4.0 * radius.as_f32()), // radial mode
-                safe_mode(4.0 * radius.as_f32()), // radial mode
+                safe_mode(c, length.as_f32()),       // open-open length mode: c/L
+                safe_mode(c, 4.0 * radius.as_f32()), // radial mode
+                safe_mode(c, 4.0 * radius.as_f32()), // radial mode
             ),
         }
     }
@@ -452,7 +454,7 @@ mod tests {
     #[test]
     fn test_axial_modes() {
         let room = RoomShape::DEFAULT;
-        let (fl, fw, fh) = room.axial_modes();
+        let (fl, fw, fh) = room.axial_modes(DEFAULT_SPEED_OF_SOUND);
         // 343 / (2*8) = 21.4375
         assert!((fl.as_f32() - 21.4375).abs() < 0.01);
         // 343 / (2*5) = 34.3
@@ -485,7 +487,7 @@ mod tests {
     #[test]
     fn test_cylinder_axial_modes() {
         let room = RoomShape::DEFAULT_CYLINDER;
-        let (fl, fw, fh) = room.axial_modes();
+        let (fl, fw, fh) = room.axial_modes(DEFAULT_SPEED_OF_SOUND);
         // length mode: 343 / (2*20) = 8.575
         assert!((fl.as_f32() - 8.575).abs() < 0.01);
         // radial modes (diameter = 2): 343 / (2*2) = 85.75
@@ -536,7 +538,7 @@ mod tests {
     #[test]
     fn test_sphere_axial_modes() {
         let room = RoomShape::DEFAULT_SPHERE;
-        let (fl, fw, fh) = room.axial_modes();
+        let (fl, fw, fh) = room.axial_modes(DEFAULT_SPEED_OF_SOUND);
         // All modes = 343 / (4*5) = 17.15
         assert!((fl.as_f32() - 17.15).abs() < 0.01);
         assert!((fw.as_f32() - 17.15).abs() < 0.01);
@@ -590,7 +592,7 @@ mod tests {
     #[test]
     fn test_tube_axial_modes() {
         let room = RoomShape::DEFAULT_TUBE;
-        let (fl, fw, fh) = room.axial_modes();
+        let (fl, fw, fh) = room.axial_modes(DEFAULT_SPEED_OF_SOUND);
         // length mode: 343 / 30 ≈ 11.43 (open-open)
         assert!((fl.as_f32() - 11.43).abs() < 0.01);
         // radial modes: 343 / (4*1.5) ≈ 57.17

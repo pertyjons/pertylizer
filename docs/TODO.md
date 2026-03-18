@@ -151,11 +151,11 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 
 #### Phase 1 — Quick wins (high impact, low complexity)
 - [x] **1. Pre-delay** — new `PreDelay(Milliseconds)` param (0–200ms), delay before first reflection
-- [ ] **2. Air absorption** — new `AirAbsorption(NormalizedValue)` param, distance-proportional LP filtering per reflection
-- [ ] **3. Stereo width** — new `Width(NormalizedValue)` param (currently hardcoded to 1.0 in FDN)
-- [ ] **4. Wet signal EQ** — new `HighCut(Hertz)` and `LowCut(Hertz)` params, biquad filters on wet output
-- [ ] **5. FDN internal modulation** — new `ModulationDepth(NormalizedValue)` and `ModulationRate(Hertz)` params, chorus inside FDN to break metallic character
-- [ ] **6. Temperature → speed of sound** — new `Temperature(Celsius)` param, formula `v = 331.3 + 0.606 * T`, affects all delay calculations
+- [x] **2. Air absorption** — new `AirAbsorption(NormalizedValue)` param, distance-proportional LP filtering per reflection
+- [x] **3. Stereo width** — new `Width(NormalizedValue)` param (currently hardcoded to 1.0 in FDN)
+- [x] **4. Wet signal EQ** — new `HighCut(Hertz)` and `LowCut(Hertz)` params, biquad filters on wet output
+- [x] **5. FDN internal modulation** — new `ModulationDepth(NormalizedValue)` and `ModulationRate(Hertz)` params, chorus inside FDN to break metallic character
+- [x] **6. Temperature → speed of sound** — new `Temperature(Celsius)` param, formula `v = 331.3 + 0.606 * T`, affects all delay calculations
 
 #### Phase 2 — Medium complexity
 - [ ] **7. Per-surface materials** — `MaterialConfig { floor, walls, ceiling }` instead of single global `Material`, ISM uses correct material per reflection

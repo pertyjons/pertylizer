@@ -9,8 +9,7 @@ use synth_core::{
 };
 use synth_dsp::InterpolatedDelayLine;
 
-use crate::room::SPEED_OF_SOUND;
-use crate::types::{Meters, Position3, SampleOffset};
+use crate::types::{Meters, MetersPerSecond, Position3, SampleOffset};
 
 /// Number of first-order reflection taps (one per wall face).
 const MAX_EARLY_TAPS: usize = 6;
@@ -79,6 +78,8 @@ impl Default for EarlyTap {
 pub struct EarlyReflections {
     taps: [EarlyTap; MAX_EARLY_TAPS],
     delay_line: InterpolatedDelayLine,
+    /// Air absorption amount (0.0 = off, 1.0 = max).
+    air_absorption: NormalizedValue,
 }
 
 impl EarlyReflections {
@@ -87,6 +88,7 @@ impl EarlyReflections {
         Self {
             taps: [EarlyTap::SILENT; MAX_EARLY_TAPS],
             delay_line: InterpolatedDelayLine::new(MAX_DELAY_SAMPLES.as_usize()),
+            air_absorption: NormalizedValue::MIN,
         }
     }
 
@@ -98,7 +100,13 @@ impl EarlyReflections {
         Self {
             taps: [EarlyTap::SILENT; MAX_EARLY_TAPS],
             delay_line: InterpolatedDelayLine::new(max_samples.as_usize()),
+            air_absorption: NormalizedValue::MIN,
         }
+    }
+
+    /// Set the air absorption amount.
+    pub fn set_air_absorption(&mut self, air_absorption: NormalizedValue) {
+        self.air_absorption = air_absorption;
     }
 
     /// Recalculate tap parameters from room geometry and positions.
@@ -130,8 +138,11 @@ impl EarlyReflections {
         absorption_mid: NormalizedValue,
         absorption_high: NormalizedValue,
         diffusion: NormalizedValue,
+        air_absorption: NormalizedValue,
+        speed_of_sound: MetersPerSecond,
         sample_rate: SampleRate,
     ) {
+        self.air_absorption = air_absorption;
         let [sx, sy, sz] = source_pos.as_f32();
         let [lx, ly, lz] = listener_pos.as_f32();
 
@@ -180,7 +191,7 @@ impl EarlyReflections {
 
             let jitter = JITTER_PATTERN[i] * diffusion.as_f32() * jitter_max.as_f32();
             let delay =
-                (distance.as_f32() / SPEED_OF_SOUND.as_f32()) * sample_rate.as_f32() + jitter;
+                (distance.as_f32() / speed_of_sound.as_f32()) * sample_rate.as_f32() + jitter;
             let delay_clamped = delay.clamp(1.0, max_delay.as_f32());
 
             let total_gain = ((1.0 / distance.as_f32()) * reflection_coeff.as_f32()).min(2.0);
@@ -194,10 +205,15 @@ impl EarlyReflections {
             // Diffusion reduces directional cues.
             pan = BipolarValue::new(pan.as_f32() * (1.0 - diffusion.as_f32() * 0.6));
 
+            // Boost LP damping proportional to air_absorption and tap distance
+            let air_lp_boost = air_absorption.as_f32() * (distance.as_f32() / 20.0).min(1.0) * 0.3;
+            let tap_lp =
+                NormalizedValue::new((lp_damping.as_f32() + air_lp_boost).clamp(0.0, 0.999));
+
             self.taps[i].delay_samples = SampleOffset::new(delay_clamped);
             self.taps[i].gain_left = Gain::new((1.0 - pan.as_f32()) * 0.5 * total_gain);
             self.taps[i].gain_right = Gain::new((1.0 + pan.as_f32()) * 0.5 * total_gain);
-            self.taps[i].lp_coeff = lp_damping;
+            self.taps[i].lp_coeff = tap_lp;
             self.taps[i].hp_coeff = hp_damping;
             // Preserve filter states across geometry updates for smooth transitions.
         }
@@ -254,6 +270,8 @@ impl Default for EarlyReflections {
 mod tests {
     use super::*;
 
+    const SPEED_OF_SOUND: MetersPerSecond = MetersPerSecond::new(343.0);
+
     fn pos(x: f32, y: f32, z: f32) -> Position3 {
         Position3::new(Meters::new(x), Meters::new(y), Meters::new(z))
     }
@@ -282,6 +300,8 @@ mod tests {
             NormalizedValue::new(0.2),
             NormalizedValue::new(0.3),
             NormalizedValue::new(0.0),
+            NormalizedValue::MIN,
+            SPEED_OF_SOUND,
             sample_rate,
         );
 
@@ -317,6 +337,8 @@ mod tests {
             NormalizedValue::new(0.1),
             NormalizedValue::new(0.15),
             NormalizedValue::new(0.0),
+            NormalizedValue::MIN,
+            SPEED_OF_SOUND,
             sample_rate,
         );
 
@@ -350,6 +372,8 @@ mod tests {
             NormalizedValue::new(0.2),
             NormalizedValue::new(0.3),
             NormalizedValue::new(0.0),
+            NormalizedValue::MIN,
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
 
@@ -381,6 +405,8 @@ mod tests {
             NormalizedValue::new(0.1),
             NormalizedValue::new(0.1),
             NormalizedValue::new(0.0),
+            NormalizedValue::MIN,
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
         er_high.update_geometry(
@@ -393,6 +419,8 @@ mod tests {
             NormalizedValue::new(0.5),
             NormalizedValue::new(0.9),
             NormalizedValue::new(0.0),
+            NormalizedValue::MIN,
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
 
@@ -418,6 +446,8 @@ mod tests {
             NormalizedValue::new(0.2),
             NormalizedValue::new(0.3),
             NormalizedValue::new(0.0),
+            NormalizedValue::MIN,
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
         // Listener far from the +x wall.
@@ -431,6 +461,8 @@ mod tests {
             NormalizedValue::new(0.2),
             NormalizedValue::new(0.3),
             NormalizedValue::new(0.0),
+            NormalizedValue::MIN,
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
 
@@ -471,6 +503,8 @@ mod tests {
             NormalizedValue::new(0.0),
             NormalizedValue::new(0.0),
             NormalizedValue::new(0.0),
+            NormalizedValue::MIN,
+            SPEED_OF_SOUND,
             SampleRate::new(48000.0),
         );
 
