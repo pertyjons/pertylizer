@@ -74,11 +74,11 @@ pub struct Mseg {
     /// Phase within the current segment (0.0 to 1.0).
     phase: Phase,
     /// Level at the start of the current segment (for interpolation).
-    start_level: f32,
+    start_level: NormalizedValue,
     /// Previous gate value for edge detection.
-    prev_gate: f32,
+    prev_gate: NormalizedValue,
     /// Previous trigger value for edge detection.
-    prev_trigger: f32,
+    prev_trigger: NormalizedValue,
     sample_rate: SampleRate,
 
     // Output buffer
@@ -124,9 +124,9 @@ impl Mseg {
             time_scale: NormalizedValue::MAX,
             state: MsegState::Idle,
             phase: Phase::ZERO,
-            start_level: 0.0,
-            prev_gate: 0.0,
-            prev_trigger: 0.0,
+            start_level: NormalizedValue::MIN,
+            prev_gate: NormalizedValue::MIN,
+            prev_trigger: NormalizedValue::MIN,
             sample_rate: SampleRate::DVD_QUALITY,
             output_buffer: AudioBuffer::new(1024),
         }
@@ -246,7 +246,7 @@ impl Mseg {
             MsegState::Running(idx) | MsegState::Release(idx) => {
                 let seg = &self.segments[idx as usize];
                 let target = seg.level.as_f32();
-                Self::interpolate_curve(self.start_level, target, self.phase.as_f32(), seg.curve)
+                Self::interpolate_curve(self.start_level.as_f32(), target, self.phase.as_f32(), seg.curve)
             }
         }
     }
@@ -304,7 +304,7 @@ impl Mseg {
             let loop_idx = self.loop_start;
             self.state = MsegState::Running(loop_idx);
             self.phase = Phase::ZERO;
-            self.start_level = self.current_level();
+            self.start_level = NormalizedValue::new(self.current_level());
             return;
         }
 
@@ -314,7 +314,7 @@ impl Mseg {
         } else {
             self.state = MsegState::Running(next_idx);
             self.phase = Phase::ZERO;
-            self.start_level = self.segments[current_idx as usize].level.as_f32();
+            self.start_level = self.segments[current_idx as usize].level;
         }
     }
 
@@ -327,7 +327,7 @@ impl Mseg {
         } else {
             self.state = MsegState::Release(next_idx);
             self.phase = Phase::ZERO;
-            self.start_level = self.segments[current_idx as usize].level.as_f32();
+            self.start_level = self.segments[current_idx as usize].level;
         }
     }
 
@@ -339,7 +339,7 @@ impl Mseg {
         }
         self.state = MsegState::Running(0);
         self.phase = Phase::ZERO;
-        self.start_level = 0.0;
+        self.start_level = NormalizedValue::MIN;
     }
 
     /// Release the envelope (exit sustain, continue through remaining segments).
@@ -352,7 +352,7 @@ impl Mseg {
                 } else {
                     self.state = MsegState::Release(next_idx);
                     self.phase = Phase::ZERO;
-                    self.start_level = self.segments[self.sustain_segment as usize].level.as_f32();
+                    self.start_level = self.segments[self.sustain_segment as usize].level;
                 }
             }
             MsegState::Running(idx) => {
@@ -365,7 +365,7 @@ impl Mseg {
                         self.state = MsegState::Release(release_idx);
                         self.phase = Phase::ZERO;
                         // Start release from the current interpolated level for smooth transition
-                        self.start_level = self.current_level();
+                        self.start_level = NormalizedValue::new(self.current_level());
                     }
                 } else {
                     // Already past sustain, just switch to release mode
@@ -474,11 +474,11 @@ impl PolyModule for Mseg {
             let trigger_val = trigger_input.map_or(0.0, |buf| buf[i]);
 
             // Detect gate rising edge -> start envelope
-            let gate_rising = crate::math::rising_edge(gate_val, self.prev_gate);
+            let gate_rising = crate::math::rising_edge(gate_val, self.prev_gate.as_f32());
             // Detect gate falling edge -> release
-            let gate_falling = gate_val <= 0.5 && self.prev_gate > 0.5;
+            let gate_falling = gate_val <= 0.5 && self.prev_gate.as_f32() > 0.5;
             // Detect trigger rising edge -> retrigger
-            let trigger_rising = crate::math::rising_edge(trigger_val, self.prev_trigger);
+            let trigger_rising = crate::math::rising_edge(trigger_val, self.prev_trigger.as_f32());
 
             if gate_rising || trigger_rising {
                 self.trigger_envelope();
@@ -486,8 +486,8 @@ impl PolyModule for Mseg {
                 self.release_envelope();
             }
 
-            self.prev_gate = gate_val;
-            self.prev_trigger = trigger_val;
+            self.prev_gate = NormalizedValue::new(gate_val);
+            self.prev_trigger = NormalizedValue::new(trigger_val);
 
             // Advance phase based on current state
             match self.state {
@@ -501,14 +501,14 @@ impl PolyModule for Mseg {
                     let seg_time = self.effective_time(idx);
                     if seg_time <= 0.001 {
                         // Instant segment: snap to end level, move to next
-                        self.start_level = self.segments[idx as usize].level.as_f32();
+                        self.start_level = self.segments[idx as usize].level;
                         self.advance_to_next_segment(idx);
                     } else {
                         let phase_inc = sample_dt / seg_time;
                         let new_phase = self.phase.as_f32() + phase_inc;
                         if new_phase >= 1.0 {
                             // Segment complete
-                            self.start_level = self.segments[idx as usize].level.as_f32();
+                            self.start_level = self.segments[idx as usize].level;
                             self.advance_to_next_segment(idx);
                         } else {
                             self.phase = Phase::new(new_phase);
@@ -518,13 +518,13 @@ impl PolyModule for Mseg {
                 MsegState::Release(idx) => {
                     let seg_time = self.effective_time(idx);
                     if seg_time <= 0.001 {
-                        self.start_level = self.segments[idx as usize].level.as_f32();
+                        self.start_level = self.segments[idx as usize].level;
                         self.advance_release_segment(idx);
                     } else {
                         let phase_inc = sample_dt / seg_time;
                         let new_phase = self.phase.as_f32() + phase_inc;
                         if new_phase >= 1.0 {
-                            self.start_level = self.segments[idx as usize].level.as_f32();
+                            self.start_level = self.segments[idx as usize].level;
                             self.advance_release_segment(idx);
                         } else {
                             self.phase = Phase::new(new_phase);
@@ -638,9 +638,9 @@ impl PolyModule for Mseg {
     fn reset(&mut self) {
         self.state = MsegState::Idle;
         self.phase = Phase::ZERO;
-        self.start_level = 0.0;
-        self.prev_gate = 0.0;
-        self.prev_trigger = 0.0;
+        self.start_level = NormalizedValue::MIN;
+        self.prev_gate = NormalizedValue::MIN;
+        self.prev_trigger = NormalizedValue::MIN;
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {

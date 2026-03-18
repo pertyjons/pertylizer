@@ -29,7 +29,7 @@ pub struct RandomGates {
     gate_active: bool,
     gate_remaining: f32,
     burst_remaining: u8,
-    cv_value: f32,
+    cv_value: NormalizedValue,
 
     // Buffers
     gate_buffer: AudioBuffer,
@@ -51,7 +51,7 @@ impl RandomGates {
             gate_active: false,
             gate_remaining: 0.0,
             burst_remaining: 0,
-            cv_value: 0.0,
+            cv_value: NormalizedValue::MIN,
 
             gate_buffer: AudioBuffer::new(1024),
             cv_buffer: AudioBuffer::new(1024),
@@ -180,14 +180,14 @@ impl PolyModule for RandomGates {
                     self.burst_remaining -= 1;
                     self.gate_active = true;
                     self.gate_remaining = gate_samples;
-                    self.cv_value = self.next_random();
+                    self.cv_value = NormalizedValue::new(self.next_random());
                 } else {
                     // Normal density check
                     let trigger = self.next_random() < self.density.as_f32();
                     if trigger {
                         self.gate_active = true;
                         self.gate_remaining = gate_samples;
-                        self.cv_value = self.next_random();
+                        self.cv_value = NormalizedValue::new(self.next_random());
 
                         // Check for burst
                         if self.next_random() < self.burst_probability.as_f32() {
@@ -206,7 +206,7 @@ impl PolyModule for RandomGates {
             }
 
             self.gate_buffer[i] = if self.gate_active { 1.0 } else { 0.0 };
-            self.cv_buffer[i] = self.cv_value;
+            self.cv_buffer[i] = self.cv_value.as_f32();
         }
 
         if let Some(out) = outputs.get_mut(&PortName::GATE) {

@@ -33,7 +33,7 @@ pub struct TuringMachine {
     sample_rate: SampleRate,
     step_counter: f32,
     samples_per_step: f32,
-    current_cv: f32,
+    current_cv: NormalizedValue,
     gate_active: bool,
 
     // Simple PRNG state
@@ -56,7 +56,7 @@ impl TuringMachine {
             sample_rate: SampleRate::DVD_QUALITY,
             step_counter: 0.0,
             samples_per_step: 5512.5,
-            current_cv: 0.0,
+            current_cv: NormalizedValue::MIN,
             gate_active: false,
 
             rng_state: 12345,
@@ -106,7 +106,7 @@ impl TuringMachine {
 
         // Convert register to CV
         let raw_value = (self.shift_register as f32) / (mask as f32);
-        self.current_cv = self.quantize_to_scale(raw_value);
+        self.current_cv = NormalizedValue::new(self.quantize_to_scale(raw_value));
         self.gate_active = true;
     }
 
@@ -239,7 +239,7 @@ impl PolyModule for TuringMachine {
             self.gate_buffer[i] = if gate_on { 1.0 } else { 0.0 };
 
             // Pitch CV (constant until next step)
-            self.pitch_buffer[i] = self.current_cv;
+            self.pitch_buffer[i] = self.current_cv.as_f32();
         }
 
         if let Some(out) = outputs.get_mut(&PortName::PITCH) {
@@ -329,7 +329,7 @@ mod tests {
         }
         // Should repeat when locked
         assert!(
-            (tm.current_cv - first_cv).abs() < 0.01,
+            (tm.current_cv.as_f32() - first_cv.as_f32()).abs() < 0.01,
             "Locked Turing Machine should repeat"
         );
     }

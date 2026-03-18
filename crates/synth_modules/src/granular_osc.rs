@@ -14,7 +14,7 @@ use std::f32::consts::TAU;
 
 use synth_core::module_traits::ChoiceOption;
 use synth_core::{
-    AudioBuffer, BipolarValue, Describable, Gain, GrainSource, GrainWindow, GranularParam,
+    AudioBuffer, BipolarValue, Describable, Gain, GrainSource, GrainWindow, GranularParam, Hertz,
     InputPorts, Milliseconds, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param,
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
     SampleRate, WidgetHint,
@@ -110,7 +110,7 @@ pub struct GranularOsc {
 
     // State
     sample_rate: SampleRate,
-    note_freq: f32,
+    note_freq: Hertz,
     samples_until_next_grain: f32,
     rng: Xorshift32,
 
@@ -138,7 +138,7 @@ impl GranularOsc {
             source_len: MAX_SOURCE_SAMPLES,
 
             sample_rate: SampleRate::DVD_QUALITY,
-            note_freq: 440.0,
+            note_freq: Hertz::A4,
             samples_until_next_grain: 0.0,
             rng: Xorshift32::new(42),
 
@@ -215,7 +215,7 @@ impl GranularOsc {
         // Pitch variation (semitones -> rate)
         let pitch_spread_semitones = self.pitch_spread.as_f32() * 24.0;
         let pitch_offset = self.rng.next_bipolar() * pitch_spread_semitones;
-        let rate = (self.note_freq / 440.0) * crate::math::semitones_to_ratio(pitch_offset);
+        let rate = (self.note_freq.as_f32() / 440.0) * crate::math::semitones_to_ratio(pitch_offset);
 
         // Pan
         let pan = BipolarValue::new(self.rng.next_bipolar() * self.pan_spread.as_f32());
