@@ -215,7 +215,8 @@ impl GranularOsc {
         // Pitch variation (semitones -> rate)
         let pitch_spread_semitones = self.pitch_spread.as_f32() * 24.0;
         let pitch_offset = self.rng.next_bipolar() * pitch_spread_semitones;
-        let rate = (self.note_freq.as_f32() / 440.0) * crate::math::semitones_to_ratio(pitch_offset);
+        let rate =
+            (self.note_freq.as_f32() / 440.0) * crate::math::semitones_to_ratio(pitch_offset);
 
         // Pan
         let pan = BipolarValue::new(self.rng.next_bipolar() * self.pan_spread.as_f32());

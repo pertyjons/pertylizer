@@ -160,9 +160,9 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 #### Phase 2 — Medium complexity
 - [ ] **7. Per-surface materials** — `MaterialConfig { floor, walls, ceiling }` instead of single global `Material`, ISM uses correct material per reflection
 - [ ] **8. Second-order reflections** — extend ISM from 6 to ~30 taps (configurable `ReflectionOrder(u8)` 1–3)
-- [ ] **9. Extended room modes** — add tangential modes `f = c/2 * sqrt((n/L)² + (m/W)²)` and axial overtones, ~12 total combs instead of 3
+- [x] **9. Extended room modes** — add tangential modes `f = c/2 * sqrt((n/L)² + (m/W)²)` and axial overtones, ~12 total combs instead of 3
 - [ ] **10. Resonant objects** — sympathetic resonance from objects in the room (strings, membranes, plates, Helmholtz cavities, loose panels, chimes), implemented as bandpass + feedback at object frequency
-- [ ] **11. Eyring RT60** — replace Sabine `RT60 = 0.161V/(Sα)` with Eyring `RT60 = -0.161V/(S*ln(1-α))` for better accuracy at high absorption
+- [x] **11. Eyring RT60** — replace Sabine `RT60 = 0.161V/(Sα)` with Eyring `RT60 = -0.161V/(S*ln(1-α))` for better accuracy at high absorption
 - [ ] **12. Doppler effect** — track radial velocity between source/listener, shift pitch via variable delay read speed: `ratio = v_sound / (v_sound + v_radial)`
 
 ### 7.1 Rework room visualization

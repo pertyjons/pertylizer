@@ -278,8 +278,7 @@ impl PolyModule for FractalOscillator {
             };
 
             let (l, r) = self.process_sample(
-                freq, a, b, dispersion, nyquist,
-                even_pan_l, even_pan_r, odd_pan_l, odd_pan_r,
+                freq, a, b, dispersion, nyquist, even_pan_l, even_pan_r, odd_pan_l, odd_pan_r,
             );
             self.output_buffer_left[i] = l * level;
             self.output_buffer_right[i] = r * level;

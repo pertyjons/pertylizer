@@ -1313,13 +1313,16 @@ impl AweEngine {
             .update(source, listener, speed_of_sound, sample_rate);
     }
 
-    /// Calculate RT60 using Sabine's formula.
+    /// Calculate RT60 using Eyring's formula.
+    ///
+    /// Eyring is more accurate than Sabine at high absorption coefficients:
+    /// `RT60 = -0.161 * V / (S * ln(1 - α))`
     #[must_use]
     fn calculate_rt60(&self) -> Seconds {
         let volume = self.room.volume();
         let surface = self.room.surface_area();
-        let absorption = self.material.average_absorption().as_f32().max(0.001);
-        let rt60 = 0.161 * volume.as_f32() / (absorption * surface.as_f32());
+        let absorption = self.material.average_absorption().as_f32().clamp(0.001, 0.999);
+        let rt60 = -0.161 * volume.as_f32() / (surface.as_f32() * (1.0 - absorption).ln());
         // Apply tail stretch and clamp to reasonable range
         Seconds::new((rt60 * self.snapshot.tail_stretch.as_f32()).clamp(0.1, 20.0))
     }
@@ -1408,9 +1411,11 @@ mod tests {
     #[test]
     fn test_engine_apply_snapshot() {
         let mut engine = AweEngine::new();
-        let mut snap = AweSnapshot::default();
-        snap.dry_wet = NormalizedValue::new(0.8);
-        snap.tail_stretch = StretchFactor::new(2.0);
+        let snap = AweSnapshot {
+            dry_wet: NormalizedValue::new(0.8),
+            tail_stretch: StretchFactor::new(2.0),
+            ..AweSnapshot::default()
+        };
         engine.apply_snapshot(snap);
         assert!((engine.snapshot().dry_wet.as_f32() - 0.8).abs() < 0.001);
         assert!((engine.snapshot().tail_stretch.as_f32() - 2.0).abs() < 0.001);

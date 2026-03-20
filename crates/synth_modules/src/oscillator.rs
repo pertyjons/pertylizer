@@ -91,7 +91,10 @@ impl Oscillator {
             cross_mod_amount: NormalizedValue::MIN,
             unison_detune_ratios: [1.0; MAX_UNISON_VOICES],
             unison_pans: [0.0; MAX_UNISON_VOICES],
-            unison_pan_gains: [(std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2); MAX_UNISON_VOICES],
+            unison_pan_gains: [(
+                std::f32::consts::FRAC_1_SQRT_2,
+                std::f32::consts::FRAC_1_SQRT_2,
+            ); MAX_UNISON_VOICES],
             unison_phases: [Phase::ZERO; MAX_UNISON_VOICES],
             sample_rate: SampleRate::DVD_QUALITY,
             prev_sync: NormalizedValue::MIN,

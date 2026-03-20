@@ -246,7 +246,12 @@ impl Mseg {
             MsegState::Running(idx) | MsegState::Release(idx) => {
                 let seg = &self.segments[idx as usize];
                 let target = seg.level.as_f32();
-                Self::interpolate_curve(self.start_level.as_f32(), target, self.phase.as_f32(), seg.curve)
+                Self::interpolate_curve(
+                    self.start_level.as_f32(),
+                    target,
+                    self.phase.as_f32(),
+                    seg.curve,
+                )
             }
         }
     }

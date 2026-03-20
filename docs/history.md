@@ -1,5 +1,13 @@
 # Version History
 
+## [0.248.0] - 2026-03-20
+### AWE: Eyring RT60 and extended room modes
+- **Replaced Sabine RT60 with Eyring formula** — `RT60 = -0.161V/(S·ln(1-α))` gives more accurate decay times at high absorption (e.g. carpet, fabric rooms)
+- **Extended room modes from 3 to 12** — added axial overtones (2,0,0)/(0,2,0)/(0,0,2), tangential modes (1,1,0)/(1,0,1)/(0,1,1)/(2,1,0)/(1,2,0), and oblique mode (1,1,1) using general formula `f = c/2·√((nx/L)²+(ny/W)²+(nz/H)²)`
+- **Gain-weighted mode bank** — tangential modes at 0.7×, higher tangential at 0.5×, oblique at 0.4× relative to axial fundamentals
+- **Fixed newtype violation** — `MODE_GAINS` and `CombFilter::update` now use `Gain` instead of raw `f32`
+- **Fixed pre-existing clippy warning** — `field_reassign_with_default` in test replaced with struct update syntax
+
 ## [0.247.0] - 2026-03-18
 ### AWE fixes: RT-safety, div-by-zero guards, portal scaling, Swedish→English
 - **Translated all Swedish text to English** — doc comments in room.rs (10 material descriptions), preset descriptions in presets.rs, module docs in awe_engine.rs and spatial_voice.rs

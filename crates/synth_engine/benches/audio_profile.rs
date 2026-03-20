@@ -21,8 +21,8 @@ use synth_core::{EnvelopeParam, FilterParam, LfoParam, OscillatorParam};
 use synth_engine::graph::ModuleGraph;
 use synth_engine::voice::Voice;
 use synth_modules::{
-    AdditiveOsc, Amplifier, Envelope, Filter, FractalOscillator, GranularOsc, Lfo,
-    MathOscillator, Oscillator, StereoOutput, WavetableOsc,
+    AdditiveOsc, Amplifier, Envelope, Filter, FractalOscillator, GranularOsc, Lfo, MathOscillator,
+    Oscillator, StereoOutput, WavetableOsc,
 };
 
 const SAMPLE_RATE: SampleRate = SampleRate::DVD_QUALITY; // 48 kHz
@@ -50,7 +50,10 @@ fn build_subtractive_voice() -> Voice {
     graph.connect(lfo, "out", filter, "cutoff_cv").unwrap();
 
     // Configure
-    graph.set_param(osc, Param::Oscillator(OscillatorParam::Waveform(Waveform::Sawtooth)));
+    graph.set_param(
+        osc,
+        Param::Oscillator(OscillatorParam::Waveform(Waveform::Sawtooth)),
+    );
     graph.set_param(
         filter,
         Param::Filter(FilterParam::Cutoff(Hertz::new(800.0))),
@@ -68,10 +71,7 @@ fn build_subtractive_voice() -> Voice {
         Param::Envelope(EnvelopeParam::Release(Seconds::new(0.5))),
     );
     graph.set_param(lfo, Param::Lfo(LfoParam::Rate(Hertz::new(0.5))));
-    graph.set_param(
-        lfo,
-        Param::Lfo(LfoParam::Depth(NormalizedValue::new(0.3))),
-    );
+    graph.set_param(lfo, Param::Lfo(LfoParam::Depth(NormalizedValue::new(0.3))));
 
     Voice::from_graph(0, graph)
 }
@@ -187,10 +187,7 @@ fn build_unison_voice() -> Voice {
         osc1,
         Param::Oscillator(OscillatorParam::Waveform(Waveform::Sawtooth)),
     );
-    graph.set_param(
-        osc1,
-        Param::Oscillator(OscillatorParam::UnisonVoices(7)),
-    );
+    graph.set_param(osc1, Param::Oscillator(OscillatorParam::UnisonVoices(7)));
     graph.set_param(
         osc1,
         Param::Oscillator(OscillatorParam::UnisonDetune(Cents::new(15.0))),
@@ -199,10 +196,7 @@ fn build_unison_voice() -> Voice {
         osc2,
         Param::Oscillator(OscillatorParam::Waveform(Waveform::Square)),
     );
-    graph.set_param(
-        osc2,
-        Param::Oscillator(OscillatorParam::UnisonVoices(5)),
-    );
+    graph.set_param(osc2, Param::Oscillator(OscillatorParam::UnisonVoices(5)));
     graph.set_param(
         osc2,
         Param::Oscillator(OscillatorParam::Level(Gain::new(0.5))),
@@ -315,7 +309,10 @@ fn main() {
     eprintln!("=== Pertylizer Audio Profiling Benchmark ===");
     eprintln!("  Sample rate: {} Hz", SAMPLE_RATE.as_f32());
     eprintln!("  Block size:  {BLOCK_SIZE} samples");
-    eprintln!("  Blocks:      {NUM_BLOCKS} ({:.1}s audio)", NUM_BLOCKS as f64 * BLOCK_SIZE as f64 / SAMPLE_RATE.as_f32() as f64);
+    eprintln!(
+        "  Blocks:      {NUM_BLOCKS} ({:.1}s audio)",
+        NUM_BLOCKS as f64 * BLOCK_SIZE as f64 / SAMPLE_RATE.as_f32() as f64
+    );
     eprintln!();
 
     // ── Single voice benchmarks ────────────────────────────────────────
