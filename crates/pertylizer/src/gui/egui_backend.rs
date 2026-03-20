@@ -1354,7 +1354,9 @@ impl eframe::App for SynthApp {
                 // Rack view: show the active instrument's patch editor
                 let Some(active_id) = self.active_instrument_id else {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        crate::gui::views::rack::draw_empty_state(ui);
+                        ui.centered_and_justified(|ui| {
+                            ui.label("Select or create an instrument to begin patching");
+                        });
                     });
                     return;
                 };
