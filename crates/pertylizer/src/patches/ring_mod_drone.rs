@@ -1,12 +1,12 @@
 //! Ring Mod Drone - Evolving metallic drone with LFO-modulated ring mod.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Ring Mod Drone - Deep evolving drone with slowly shifting ring modulation.
 pub fn patch_ring_mod_drone() -> Patch {
     let mut patch = Patch::new("Ring Mod Drone");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
         "Deep evolving drone where an LFO modulates the ring modulator carrier frequency."
             .to_string(),

@@ -34,7 +34,7 @@ use crate::gui::widgets::{draw_oscilloscope, draw_stereo_meter};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
 use crate::io::{GroupTemplateManager, MidiHandler, PatchManager};
-use crate::patch::{GroupCategory, InstrumentState, Patch, categorized_patches};
+use crate::patch::{AwePresetFile, GroupCategory, InstrumentState, Patch, categorized_patches};
 use crate::project::{self, GlobalProjectState, LoadedFile, ProjectFile};
 use synth_core::{Describable, ModuleCategory};
 use synth_core::{Seconds, Velocity};
@@ -292,6 +292,9 @@ struct SynthApp {
 
     /// Cached window title to avoid allocating every frame.
     last_title: String,
+
+    /// Pending AWE preset to save (waiting for file dialog).
+    pending_awe_preset_save: Option<crate::patch::AwePresetFile>,
 }
 
 impl SynthApp {
@@ -376,6 +379,7 @@ impl SynthApp {
             scope_buf_l: Vec::new(),
             scope_buf_r: Vec::new(),
             last_title: String::new(),
+            pending_awe_preset_save: None,
         }
     }
 
@@ -554,7 +558,7 @@ impl eframe::App for SynthApp {
                     }
                     ProjectAction::Load(path) => match project::load_file(&path) {
                         Ok(LoadedFile::Project(proj)) => {
-                            self.load_project_data(proj);
+                            self.load_project_data(*proj);
                             self.current_project_path = Some(path.clone());
                             Ok(format!("Loaded {}", path.display()))
                         }
@@ -563,6 +567,10 @@ impl eframe::App for SynthApp {
                             self.current_patch_path = Some(path.clone());
                             self.load_patch_data(&patch);
                             Ok(format!("Loaded patch from {}", path.display()))
+                        }
+                        Ok(LoadedFile::AwePreset(preset)) => {
+                            self.load_awe_preset_data(&preset);
+                            Ok(format!("Loaded AWE preset: {}", preset.name))
                         }
                         Err(e) => Err(e.to_string()),
                     },
@@ -1583,12 +1591,46 @@ impl eframe::App for SynthApp {
                 });
             }
             AppView::AcousticWorld => {
-                crate::gui::awe_view::draw_awe_view(
+                // Scan user presets on first view
+                if !self.awe_ui.user_presets_loaded {
+                    let dir = self
+                        .settings
+                        .directories
+                        .awe_presets_dir
+                        .clone()
+                        .or_else(|| crate::project::default_awe_presets_dir().ok());
+                    if let Some(dir) = dir {
+                        self.awe_ui.scan_user_presets(&dir);
+                    } else {
+                        self.awe_ui.user_presets_loaded = true;
+                    }
+                }
+
+                let awe_action = crate::gui::awe_view::draw_awe_view(
                     ctx,
                     &mut self.handle,
                     &mut self.awe_enabled,
                     &mut self.awe_ui,
                 );
+                match awe_action {
+                    crate::gui::awe_view::AweViewAction::SavePreset => {
+                        self.dialog_state.show_save_awe_preset = true;
+                        self.dialog_state.awe_preset_save_name.clear();
+                        self.dialog_state.awe_preset_save_description.clear();
+                        self.dialog_state.awe_preset_save_tags.clear();
+                    }
+                    crate::gui::awe_view::AweViewAction::LoadPreset => {
+                        let dir = self
+                            .settings
+                            .directories
+                            .awe_presets_dir
+                            .clone()
+                            .or_else(|| crate::project::default_awe_presets_dir().ok());
+                        self.dialog_state
+                            .open_open_awe_preset_dialog(dir.as_deref());
+                    }
+                    crate::gui::awe_view::AweViewAction::None => {}
+                }
             }
             AppView::Sequencer => {
                 crate::gui::sequencer::draw_sequencer_view(
@@ -3008,6 +3050,58 @@ impl SynthApp {
             }
         }
 
+        // Save AWE preset dialog
+        if self.dialog_state.show_save_awe_preset {
+            match crate::gui::dialogs::show_save_awe_preset_dialog(
+                ctx,
+                &mut self.dialog_state.show_save_awe_preset,
+                &mut self.dialog_state.awe_preset_save_name,
+                &mut self.dialog_state.awe_preset_save_description,
+                &mut self.dialog_state.awe_preset_save_tags,
+                &self.settings.author,
+            ) {
+                crate::gui::dialogs::SaveAwePresetResult::Save => {
+                    let state = self.awe_ui.to_awe_state(self.awe_enabled);
+                    let mut preset =
+                        AwePresetFile::new(self.dialog_state.awe_preset_save_name.trim(), state);
+                    preset.description = self
+                        .dialog_state
+                        .awe_preset_save_description
+                        .trim()
+                        .to_string();
+                    preset.tags = self
+                        .dialog_state
+                        .awe_preset_save_tags
+                        .split(',')
+                        .map(|t| t.trim().to_string())
+                        .filter(|t| !t.is_empty())
+                        .collect();
+                    if !self.settings.author.is_empty() {
+                        preset.author = Some(self.settings.author.clone());
+                    }
+
+                    // Open file save dialog
+                    let default_name =
+                        format!("{}.json", preset.name.to_lowercase().replace(' ', "_"));
+                    let dir = self
+                        .settings
+                        .directories
+                        .awe_presets_dir
+                        .clone()
+                        .or_else(|| crate::project::default_awe_presets_dir().ok());
+                    // Ensure directory exists
+                    if let Some(ref d) = dir {
+                        let _ = std::fs::create_dir_all(d);
+                    }
+                    self.pending_awe_preset_save = Some(preset);
+                    self.dialog_state
+                        .open_save_awe_preset_dialog(&default_name, dir.as_deref());
+                }
+                crate::gui::dialogs::SaveAwePresetResult::Cancelled
+                | crate::gui::dialogs::SaveAwePresetResult::None => {}
+            }
+        }
+
         // File dialog (open/save/import)
         if let Some(result) = self.dialog_state.update_file_dialog(ctx) {
             match result {
@@ -3060,7 +3154,7 @@ impl SynthApp {
                     // Smart open: auto-detect and load in a single read
                     match project::load_file(&path) {
                         Ok(LoadedFile::Project(proj)) => {
-                            self.load_project_data(proj);
+                            self.load_project_data(*proj);
                             self.current_project_path = Some(path.clone());
                             self.dirty = false;
                             self.settings.add_recent_project(path.clone());
@@ -3077,6 +3171,11 @@ impl SynthApp {
                             self.settings.save();
                             self.dialog_state
                                 .set_status(format!("Loaded patch: {}", path.display()));
+                        }
+                        Ok(LoadedFile::AwePreset(preset)) => {
+                            self.load_awe_preset_data(&preset);
+                            self.dialog_state
+                                .set_status(format!("Loaded AWE preset: {}", preset.name));
                         }
                         Err(e) => {
                             self.settings.save();
@@ -3120,6 +3219,37 @@ impl SynthApp {
                         Err(e) => {
                             self.dialog_state
                                 .set_status(format!("Error loading template: {e}"));
+                        }
+                    }
+                }
+                FileDialogResult::Picked(path, Some(FileDialogMode::OpenAwePreset)) => {
+                    match AwePresetFile::load(&path) {
+                        Ok(preset) => {
+                            self.load_awe_preset_data(&preset);
+                            self.dialog_state
+                                .set_status(format!("Loaded AWE preset: {}", preset.name));
+                            // Refresh user presets list
+                            self.awe_ui.user_presets_loaded = false;
+                        }
+                        Err(e) => {
+                            self.dialog_state
+                                .set_status(format!("Error loading AWE preset: {e}"));
+                        }
+                    }
+                }
+                FileDialogResult::Saved(path, Some(FileDialogMode::SaveAwePreset)) => {
+                    if let Some(preset) = self.pending_awe_preset_save.take() {
+                        match preset.save(&path) {
+                            Ok(()) => {
+                                self.dialog_state
+                                    .set_status(format!("AWE preset saved: {}", path.display()));
+                                // Refresh user presets list
+                                self.awe_ui.user_presets_loaded = false;
+                            }
+                            Err(e) => {
+                                self.dialog_state
+                                    .set_status(format!("Error saving AWE preset: {e}"));
+                            }
                         }
                     }
                 }
@@ -3589,11 +3719,19 @@ impl SynthApp {
             } else {
                 None
             },
+            awe_preset: None,
+        };
+
+        let author = if self.settings.author.is_empty() {
+            None
+        } else {
+            Some(self.settings.author.clone())
         };
 
         ProjectFile::new(
             instrument_states,
             self.active_instrument_id.map_or(0, |id| id.as_u64()),
+            author,
             song,
             global,
         )
@@ -3766,6 +3904,7 @@ impl SynthApp {
         let project = ProjectFile::new(
             vec![],
             0,
+            None,
             synth_sequencer::Song::new("Untitled"),
             GlobalProjectState::default(),
         );
@@ -3776,11 +3915,40 @@ impl SynthApp {
         self.dirty = false;
     }
 
+    /// Load an AWE preset file, applying its state to the engine and UI.
+    fn load_awe_preset_data(&mut self, preset: &crate::patch::AwePresetFile) {
+        let state = &preset.state;
+        self.awe_enabled = state.enabled;
+        self.awe_ui.restore_from(state);
+        self.awe_ui.selected_preset = None;
+        self.awe_ui.current_preset_name = preset.name.clone();
+        self.awe_ui.current_preset_description = preset.description.clone();
+        self.awe_ui.current_preset_tags = preset.tags.clone();
+        self.handle.send(EngineCommand::SetAweEnabled {
+            enabled: state.enabled,
+        });
+        self.handle.send(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::RoomShape(state.room),
+        });
+        self.handle.send(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::Material(state.material),
+        });
+        self.handle.send(EngineCommand::SetAweState {
+            snapshot: state.to_snapshot(),
+        });
+        self.handle.send(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::SpatialEnabled(state.spatial_enabled),
+        });
+        self.handle.send(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::NoteMapping(state.note_mapping),
+        });
+    }
+
     /// Load a project from a recent-projects path.
     fn load_recent_project(&mut self, path: PathBuf) {
         match project::load_file(&path) {
             Ok(LoadedFile::Project(proj)) => {
-                self.load_project_data(proj);
+                self.load_project_data(*proj);
                 self.current_project_path = Some(path.clone());
                 self.dirty = false;
                 self.settings.add_recent_project(path.clone());
@@ -3797,6 +3965,11 @@ impl SynthApp {
                 self.settings.save();
                 self.dialog_state
                     .set_status(format!("Loaded patch: {}", path.display()));
+            }
+            Ok(LoadedFile::AwePreset(preset)) => {
+                self.load_awe_preset_data(&preset);
+                self.dialog_state
+                    .set_status(format!("Loaded AWE preset: {}", preset.name));
             }
             Err(e) => {
                 self.settings.remove_recent_project(&path);

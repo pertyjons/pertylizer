@@ -1,5 +1,17 @@
 # Version History
 
+## [0.249.0] - 2026-03-20
+### AWE preset save/load and unified Author type
+- **AWE preset save/load** — save and load AWE configurations as named `.json` preset files with metadata (name, description, author, license, tags)
+- **Unified Author type** — renamed `PatchAuthor` → `Author`, removed duplicate `AuthorInfo` from settings; single type reused for patches, projects, and AWE presets
+- **Author on projects** — `ProjectFile` now includes optional `author` field, auto-populated from app settings
+- **AWE preset file format** — `AwePresetFile` with `"file_type": "awe_preset"` discriminator, JSON serialization matching existing patch/project patterns
+- **User presets in AWE dropdown** — scans `~/.local/share/pertylizer/awe_presets/` for user presets, shown in "User" section above built-in Standard/Extreme presets
+- **Save/Load buttons in AWE toolbar** — "Save Preset..." opens metadata dialog then file picker; "Load Preset..." opens file picker
+- **Preset name display** — active preset name shown in AWE toolbar with tooltip for description and tags
+- **AWE preset embeddable in projects** — `GlobalProjectState::awe_preset` field for future "save with project" toggle
+- **`load_file` auto-detection** — extended to detect and load AWE preset files alongside patches and projects
+
 ## [0.248.0] - 2026-03-20
 ### AWE: Eyring RT60 and extended room modes
 - **Replaced Sabine RT60 with Eyring formula** — `RT60 = -0.161V/(S·ln(1-α))` gives more accurate decay times at high absorption (e.g. carpet, fabric rooms)

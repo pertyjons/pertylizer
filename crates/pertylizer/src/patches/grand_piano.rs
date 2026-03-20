@@ -1,12 +1,12 @@
 //! Grand Piano - Acoustic piano simulation with velocity response.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Grand Piano - Rich acoustic piano with velocity-sensitive dynamics and key tracking.
 pub fn patch_grand_piano() -> Patch {
     let mut patch = Patch::new("Grand Piano");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
         "Dynamic acoustic piano with velocity-sensitive hammer attack, \
          key tracking, stereo keyboard panning, and body resonance."

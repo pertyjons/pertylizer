@@ -1,12 +1,12 @@
 //! Chaos Drone - Evolving chaotic textures using Lorenz attractor.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Chaos Drone - Evolving chaotic textures using Lorenz attractor.
 pub fn patch_chaos_drone() -> Patch {
     let mut patch = Patch::new("Chaos Drone");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description =
         Some("Evolving chaotic textures using the Lorenz strange attractor.".to_string());
     patch.notes = Some(

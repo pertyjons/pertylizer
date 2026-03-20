@@ -1,12 +1,12 @@
 //! Deep Space Pad - Evolving atmospheric pad with multiple modulation sources.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Deep Space Pad - Evolving atmospheric pad with multiple modulation sources.
 pub fn patch_deep_space_pad() -> Patch {
     let mut patch = Patch::new("Deep Space Pad");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some("Evolving atmospheric pad with rich modulation.".to_string());
     patch.notes = Some(
         r"

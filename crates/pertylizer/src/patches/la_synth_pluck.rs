@@ -1,12 +1,12 @@
 //! LA Synth Pluck — Linear Arithmetic synthesis with percussive attack transient.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// LA Synth Pluck — sharp attack transient crossfades into a filtered sustain tone.
 pub fn patch_la_synth_pluck() -> Patch {
     let mut patch = Patch::new("LA Synth Pluck");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
         "Linear Arithmetic pluck using LA Synth's attack transient crossfading into filtered saw."
             .to_string(),

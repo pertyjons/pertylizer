@@ -1321,7 +1321,11 @@ impl AweEngine {
     fn calculate_rt60(&self) -> Seconds {
         let volume = self.room.volume();
         let surface = self.room.surface_area();
-        let absorption = self.material.average_absorption().as_f32().clamp(0.001, 0.999);
+        let absorption = self
+            .material
+            .average_absorption()
+            .as_f32()
+            .clamp(0.001, 0.999);
         let rt60 = -0.161 * volume.as_f32() / (surface.as_f32() * (1.0 - absorption).ln());
         // Apply tail stretch and clamp to reasonable range
         Seconds::new((rt60 * self.snapshot.tail_stretch.as_f32()).clamp(0.1, 20.0))

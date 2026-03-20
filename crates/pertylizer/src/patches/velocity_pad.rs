@@ -1,12 +1,12 @@
 //! Velocity Pad - Expressive pad using Mod Matrix for velocity-sensitive filtering.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Velocity Pad - Warm pad with velocity-controlled brightness and dynamics.
 pub fn patch_velocity_pad() -> Patch {
     let mut patch = Patch::new("Velocity Pad");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description =
         Some("Expressive pad with velocity-controlled filter and dynamics via Mod Matrix.".into());
     patch.notes = Some(

@@ -27,9 +27,9 @@ use synth_core::ModuleType;
 use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 
-/// Author information embedded in a patch file.
+/// Author information embedded in patch, project, and preset files.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct PatchAuthor {
+pub struct Author {
     /// Full name.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
@@ -44,7 +44,7 @@ pub struct PatchAuthor {
     pub license: String,
 }
 
-impl From<&str> for PatchAuthor {
+impl From<&str> for Author {
     fn from(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -53,7 +53,7 @@ impl From<&str> for PatchAuthor {
     }
 }
 
-impl PatchAuthor {
+impl Author {
     /// Returns true if all fields are empty.
     pub fn is_empty(&self) -> bool {
         self.name.is_empty()
@@ -64,7 +64,7 @@ impl PatchAuthor {
 }
 
 /// Deserialize author from either a string (legacy) or an object (new format).
-fn deserialize_author<'de, D>(deserializer: D) -> Result<Option<PatchAuthor>, D::Error>
+fn deserialize_author<'de, D>(deserializer: D) -> Result<Option<Author>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -73,7 +73,7 @@ where
     struct AuthorVisitor;
 
     impl<'de> de::Visitor<'de> for AuthorVisitor {
-        type Value = Option<PatchAuthor>;
+        type Value = Option<Author>;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("a string or an author object")
@@ -88,21 +88,21 @@ where
         }
 
         fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            Ok(Some(PatchAuthor {
+            Ok(Some(Author {
                 name: v.to_string(),
-                ..PatchAuthor::default()
+                ..Author::default()
             }))
         }
 
         fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
-            Ok(Some(PatchAuthor {
+            Ok(Some(Author {
                 name: v,
-                ..PatchAuthor::default()
+                ..Author::default()
             }))
         }
 
         fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
-            let author = PatchAuthor::deserialize(de::value::MapAccessDeserializer::new(map))?;
+            let author = Author::deserialize(de::value::MapAccessDeserializer::new(map))?;
             Ok(Some(author))
         }
     }
@@ -121,7 +121,7 @@ pub struct Patch {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_author"
     )]
-    pub author: Option<PatchAuthor>,
+    pub author: Option<Author>,
     /// Patch version.
     #[serde(default = "default_version")]
     pub version: String,
@@ -652,6 +652,65 @@ pub enum PatchError {
 }
 
 // ============================================================================
+// AWE PRESET FILE
+// ============================================================================
+
+/// A saved AWE (Acoustic World Engine) preset file.
+///
+/// Contains full AWE state plus metadata (name, author, license, tags).
+/// Serialized as JSON with `"file_type": "awe_preset"` discriminator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AwePresetFile {
+    /// Always `"awe_preset"` — distinguishes from patch and project files.
+    pub file_type: String,
+    /// Format version (currently `"1.0"`).
+    #[serde(default = "default_version")]
+    pub version: String,
+    /// Preset name.
+    pub name: String,
+    /// Short description of the acoustic character.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Author information.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<Author>,
+    /// Tags for categorization.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Full AWE state.
+    pub state: synth_awe::AweState,
+}
+
+impl AwePresetFile {
+    /// Create a new AWE preset file.
+    pub fn new(name: impl Into<String>, state: synth_awe::AweState) -> Self {
+        Self {
+            file_type: "awe_preset".to_string(),
+            version: "1.0".to_string(),
+            name: name.into(),
+            description: String::new(),
+            author: None,
+            tags: Vec::new(),
+            state,
+        }
+    }
+
+    /// Load an AWE preset from a JSON file.
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, PatchError> {
+        let content =
+            fs::read_to_string(path.as_ref()).map_err(|e| PatchError::Io(e.to_string()))?;
+        serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))
+    }
+
+    /// Save the AWE preset to a JSON file.
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), PatchError> {
+        let content =
+            serde_json::to_string_pretty(self).map_err(|e| PatchError::Serialize(e.to_string()))?;
+        fs::write(path.as_ref(), content).map_err(|e| PatchError::Io(e.to_string()))
+    }
+}
+
+// ============================================================================
 // MODULE BUILDER
 // ============================================================================
 
@@ -758,3 +817,61 @@ impl ModuleBuilder {
 
 pub use crate::group_templates::categorized_group_templates;
 pub use crate::patches::{categorized_patches, example_patches};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_awe_preset_file_round_trip() {
+        let state = synth_awe::AweState::default();
+        let mut preset = AwePresetFile::new("Test Preset", state);
+        preset.description = "A test preset".to_string();
+        preset.tags = vec!["test".to_string(), "demo".to_string()];
+        preset.author = Some(Author {
+            name: "Test Author".to_string(),
+            license: "CC BY 4.0".to_string(),
+            ..Author::default()
+        });
+
+        let json = serde_json::to_string_pretty(&preset).expect("serialize");
+        let parsed: AwePresetFile = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(parsed.file_type, "awe_preset");
+        assert_eq!(parsed.name, "Test Preset");
+        assert_eq!(parsed.description, "A test preset");
+        assert_eq!(parsed.tags, vec!["test", "demo"]);
+        assert_eq!(
+            parsed.author.as_ref().map(|a| a.name.as_str()),
+            Some("Test Author")
+        );
+        assert_eq!(parsed.state.enabled, preset.state.enabled);
+    }
+
+    #[test]
+    fn test_author_is_empty() {
+        let author = Author::default();
+        assert!(author.is_empty());
+
+        let author = Author::from("Test");
+        assert!(!author.is_empty());
+    }
+
+    #[test]
+    fn test_awe_preset_file_save_load() {
+        let dir = std::env::temp_dir().join("pertylizer_test_awe");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_preset.json");
+
+        let state = synth_awe::AweState::default();
+        let preset = AwePresetFile::new("Save Load Test", state);
+        preset.save(&path).expect("save");
+
+        let loaded = AwePresetFile::load(&path).expect("load");
+        assert_eq!(loaded.name, "Save Load Test");
+        assert_eq!(loaded.file_type, "awe_preset");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+}

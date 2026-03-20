@@ -1,12 +1,12 @@
 //! PWM E-Piano - Electric piano using PWM wavetable with velocity response.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// PWM E-Piano - Warm electric piano using PWM wavetable morphing.
 pub fn patch_pwm_epiano() -> Patch {
     let mut patch = Patch::new("PWM E-Piano");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
         "Warm electric piano using the PWM wavetable with envelope-driven pulse width sweep."
             .to_string(),

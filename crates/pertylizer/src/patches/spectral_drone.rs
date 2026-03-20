@@ -1,12 +1,12 @@
 //! Spectral Drone — detuned saws through Frequency Shifter for inharmonic shimmer.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Spectral Drone — two detuned saws processed by a frequency shifter for metallic, evolving textures.
 pub fn patch_spectral_drone() -> Patch {
     let mut patch = Patch::new("Spectral Drone");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
         "Evolving drone using detuned saws and Frequency Shifter for inharmonic spectral content."
             .to_string(),

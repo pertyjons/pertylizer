@@ -1,12 +1,12 @@
 //! Euclidean Texture — generative rhythmic texture with euclidean patterns and turing machine.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Euclidean Texture — Euclidean, TuringMachine, and RandomGates create generative modulation.
 pub fn patch_euclidean_texture() -> Patch {
     let mut patch = Patch::new("Euclidean Texture");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
         "Generative rhythmic texture using Euclidean sequencer patterns, \
          Turing Machine melodic evolution, and Random Gates for stochastic modulation."

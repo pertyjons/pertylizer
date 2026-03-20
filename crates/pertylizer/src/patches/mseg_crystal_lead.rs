@@ -1,12 +1,12 @@
 //! MSEG Crystal Lead — sharp crystalline lead with complex MSEG shaping additive brightness.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// MSEG Crystal Lead — AdditiveOsc + standard Osc with MSEG modulation, Flanger, BBD Delay, Compressor.
 pub fn patch_mseg_crystal_lead() -> Patch {
     let mut patch = Patch::new("MSEG Crystal Lead");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
         "Sharp crystalline lead combining additive and standard oscillators, \
          with complex MSEG envelope shaping filter movement, flanged and delayed."

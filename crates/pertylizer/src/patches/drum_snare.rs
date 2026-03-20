@@ -1,12 +1,12 @@
 //! Snare Drum - Punchy electronic snare with noise.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Snare Drum - Punchy electronic snare with noise.
 pub fn patch_drum_snare() -> Patch {
     let mut patch = Patch::new("Snare Drum");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some("Electronic snare with tuned body and noise snap.".to_string());
     patch.notes = Some(
         r#"

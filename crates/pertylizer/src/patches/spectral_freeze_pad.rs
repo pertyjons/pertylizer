@@ -1,12 +1,12 @@
 //! Spectral Freeze Pad — frozen spectral textures from additive harmonics, blurred and shimmering.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Spectral Freeze Pad — AdditiveOsc through PhaseVocoder freeze, SpectralBlur, ShimmerReverb, and Limiter.
 pub fn patch_spectral_freeze_pad() -> Patch {
     let mut patch = Patch::new("Spectral Freeze Pad");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
         "Rich additive harmonics frozen in spectral time by the Phase Vocoder, \
          blurred across frequencies, and shimmered into infinite sustain."

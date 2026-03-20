@@ -31,6 +31,10 @@ pub enum FileDialogMode {
     SaveProject,
     /// Choosing output path for WAV export.
     ExportWav,
+    /// Opening an AWE preset file.
+    OpenAwePreset,
+    /// Saving an AWE preset file.
+    SaveAwePreset,
 }
 
 /// State for all application dialogs.
@@ -75,6 +79,14 @@ pub struct DialogState {
     pub show_export_wav: bool,
     /// Export dialog state.
     pub export_state: crate::gui::export_dialog::ExportDialogState,
+    /// Show save AWE preset dialog.
+    pub show_save_awe_preset: bool,
+    /// AWE preset name when saving.
+    pub awe_preset_save_name: String,
+    /// AWE preset description when saving.
+    pub awe_preset_save_description: String,
+    /// AWE preset tags when saving (comma-separated).
+    pub awe_preset_save_tags: String,
 }
 
 impl Default for DialogState {
@@ -100,6 +112,10 @@ impl Default for DialogState {
             file_dialog_mode: None,
             show_export_wav: false,
             export_state: crate::gui::export_dialog::ExportDialogState::default(),
+            show_save_awe_preset: false,
+            awe_preset_save_name: String::new(),
+            awe_preset_save_description: String::new(),
+            awe_preset_save_tags: String::new(),
         }
     }
 }
@@ -204,6 +220,38 @@ impl DialogState {
         self.file_dialog.save_file();
     }
 
+    /// Open the file dialog for opening an AWE preset.
+    pub fn open_open_awe_preset_dialog(&mut self, initial_dir: Option<&Path>) {
+        self.file_dialog_mode = Some(FileDialogMode::OpenAwePreset);
+        let mut dialog = FileDialog::new()
+            .add_file_filter(
+                "AWE presets",
+                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+            )
+            .add_file_filter("All files", Arc::new(|_| true));
+        if let Some(dir) = initial_dir {
+            dialog = dialog.initial_directory(dir.to_path_buf());
+        }
+        self.file_dialog = dialog;
+        self.file_dialog.pick_file();
+    }
+
+    /// Open the file dialog for saving an AWE preset.
+    pub fn open_save_awe_preset_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
+        self.file_dialog_mode = Some(FileDialogMode::SaveAwePreset);
+        let mut dialog = FileDialog::new()
+            .add_file_filter(
+                "AWE presets",
+                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+            )
+            .default_file_name(default_name);
+        if let Some(dir) = initial_dir {
+            dialog = dialog.initial_directory(dir.to_path_buf());
+        }
+        self.file_dialog = dialog;
+        self.file_dialog.save_file();
+    }
+
     /// Open the file dialog for opening a group template.
     pub fn open_open_group_template_dialog(&mut self, initial_dir: Option<&Path>) {
         self.file_dialog_mode = Some(FileDialogMode::OpenGroupTemplate);
@@ -231,7 +279,8 @@ impl DialogState {
                 Some(
                     FileDialogMode::SavePatch
                     | FileDialogMode::SaveProject
-                    | FileDialogMode::ExportWav,
+                    | FileDialogMode::ExportWav
+                    | FileDialogMode::SaveAwePreset,
                 ) => Some(FileDialogResult::Saved(path, mode)),
                 _ => Some(FileDialogResult::Picked(path, mode)),
             };
@@ -878,6 +927,89 @@ pub fn show_save_group_template_dialog(
                     .clicked()
                 {
                     result = SaveGroupTemplateResult::Save;
+                    *open = false;
+                }
+            });
+        });
+
+    result
+}
+
+/// Result from save AWE preset dialog.
+pub enum SaveAwePresetResult {
+    /// No action taken.
+    None,
+    /// User cancelled.
+    Cancelled,
+    /// User wants to save — returns (name, description, tags).
+    Save,
+}
+
+/// Show the save AWE preset dialog.
+pub fn show_save_awe_preset_dialog(
+    ctx: &egui::Context,
+    open: &mut bool,
+    name: &mut String,
+    description: &mut String,
+    tags: &mut String,
+    author: &crate::patch::Author,
+) -> SaveAwePresetResult {
+    if !*open {
+        return SaveAwePresetResult::None;
+    }
+
+    let mut result = SaveAwePresetResult::None;
+
+    egui::Window::new("Save AWE Preset")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            ui.label("Preset name");
+            ui.text_edit_singleline(name);
+
+            ui.add_space(6.0);
+            ui.label("Description");
+            ui.text_edit_multiline(description);
+
+            ui.add_space(6.0);
+            ui.label("Tags (comma-separated)");
+            ui.text_edit_singleline(tags);
+
+            ui.add_space(6.0);
+            ui.separator();
+            ui.label(
+                RichText::new("Author")
+                    .color(theme().colors.text_dim)
+                    .small(),
+            );
+            if !author.name.is_empty() {
+                ui.label(format!("Name: {}", author.name));
+            }
+            if !author.license.is_empty() {
+                ui.label(format!("License: {}", author.license));
+            }
+            if author.name.is_empty() && author.license.is_empty() {
+                ui.label(
+                    RichText::new("(set in Settings)")
+                        .color(theme().colors.text_dim)
+                        .small(),
+                );
+            }
+
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    result = SaveAwePresetResult::Cancelled;
+                    *open = false;
+                }
+
+                let can_save = !name.trim().is_empty();
+                if ui
+                    .add_enabled(can_save, egui::Button::new("Save"))
+                    .clicked()
+                {
+                    result = SaveAwePresetResult::Save;
                     *open = false;
                 }
             });

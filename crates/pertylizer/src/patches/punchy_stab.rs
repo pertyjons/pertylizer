@@ -1,12 +1,12 @@
 //! Punchy Stab - Aggressive synth stab showcasing envelope curves.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Punchy Stab - Demonstrates the power of envelope curve parameters.
 pub fn patch_punchy_stab() -> Patch {
     let mut patch = Patch::new("Punchy Stab");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description =
         Some("Aggressive synth stab showcasing the new envelope curve parameters.".to_string());
     patch.notes = Some(

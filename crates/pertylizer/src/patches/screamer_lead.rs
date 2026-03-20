@@ -1,12 +1,12 @@
 //! Screamer Lead - Aggressive MS-20 style lead with diode distortion.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Screamer Lead - Raw, aggressive lead with MS-20 inspired diode clipping.
 pub fn patch_screamer_lead() -> Patch {
     let mut patch = Patch::new("Screamer Lead");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
         "Aggressive lead with Screamer filter's asymmetric diode clipping and high resonance."
             .to_string(),

@@ -1,12 +1,12 @@
 //! Stereo Unison Pad - Wide, evolving pad using stereo unison outputs directly.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Stereo Unison Pad - Immersive, wide ambient pad with direct stereo routing.
 pub fn patch_stereo_unison_pad() -> Patch {
     let mut patch = Patch::new("Stereo Unison Pad");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
         "Lush ambient pad using triangle unison with stereo outputs routed directly to amplifier."
             .to_string(),

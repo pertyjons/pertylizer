@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::patch::Author;
+
 #[cfg(feature = "gui-egui")]
 use crate::gui::theme::ThemePreset;
 
@@ -21,7 +23,7 @@ pub struct AppSettings {
     pub theme: ThemePreset,
 
     /// Composer / author information.
-    pub author: AuthorInfo,
+    pub author: Author,
 
     /// Directory preferences.
     pub directories: DirectorySettings,
@@ -54,20 +56,8 @@ pub struct DirectorySettings {
     pub projects_dir: Option<PathBuf>,
     /// Last directory used for opening/saving projects.
     pub last_project_dir: Option<PathBuf>,
-}
-
-/// Author / composer information embedded in saved songs.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct AuthorInfo {
-    /// Full name.
-    pub name: String,
-    /// Email address.
-    pub email: String,
-    /// Website URL.
-    pub website: String,
-    /// Default license for compositions (e.g. "CC BY 4.0", "All rights reserved").
-    pub license: String,
+    /// Custom AWE presets directory (None = platform default).
+    pub awe_presets_dir: Option<PathBuf>,
 }
 
 /// Persisted window geometry.

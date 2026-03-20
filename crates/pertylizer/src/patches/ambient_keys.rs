@@ -1,12 +1,12 @@
 //! Ambient Keys - Soft, dreamy electric piano with shimmer.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Ambient Keys - Soft, dreamy electric piano with shimmer.
 pub fn patch_ambient_keys() -> Patch {
     let mut patch = Patch::new("Ambient Keys");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some("Soft, dreamy electric piano with shimmer and reverb.".to_string());
     patch.notes = Some(
         r#"

@@ -1,12 +1,12 @@
 //! Formant Voice - Vocal-like synthesis.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Formant Voice - Vocal-like synthesis.
 pub fn patch_formant_voice() -> Patch {
     let mut patch = Patch::new("Formant Voice");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some("Vocal-like sounds using formant synthesis.".to_string());
     patch.notes = Some(
         r#"

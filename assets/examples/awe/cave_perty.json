@@ -1,0 +1,78 @@
+{
+  "file_type": "awe_preset",
+  "version": "1.0",
+  "name": "Cave Perty",
+  "author": {
+    "name": "Per Jonsson",
+    "email": "pertyjons@gmail.com",
+    "website": "https://github.com/pertyjons/pertylizer"
+  },
+  "tags": [
+    "cave"
+  ],
+  "state": {
+    "enabled": true,
+    "room": {
+      "Sphere": {
+        "radius": 8.0
+      }
+    },
+    "material": {
+      "absorption_low": 0.05,
+      "absorption_mid": 0.08,
+      "absorption_high": 0.15,
+      "diffusion": 0.15
+    },
+    "spatial_enabled": false,
+    "note_mapping": "Off",
+    "snapshot": {
+      "dry_wet": 0.6,
+      "early_late_balance": 0.6,
+      "modes_amount": 0.5,
+      "freq_warp": -0.3,
+      "resonance_boost": 0.3,
+      "tail_stretch": 2.0,
+      "portal_amount": 0.0,
+      "pre_delay": 25.0,
+      "source_pos": [
+        6.0,
+        8.0,
+        8.0
+      ],
+      "listener_pos": [
+        10.0,
+        8.0,
+        8.0
+      ],
+      "spatial_enabled": false,
+      "note_mapping": "Off",
+      "modulation_depth": 0.0,
+      "modulation_rate": 1.0,
+      "air_absorption": 0.0,
+      "width": 1.0,
+      "high_cut": 20000.0,
+      "low_cut": 20.0,
+      "temperature": 20.0,
+      "lfo1": {
+        "rate": 0.5,
+        "amount": 0.0,
+        "target": "SourceX"
+      },
+      "lfo2": {
+        "rate": 0.5,
+        "amount": 0.0,
+        "target": "SourceY"
+      },
+      "lfo3": {
+        "rate": 0.5,
+        "amount": 0.0,
+        "target": "EarlyLate"
+      },
+      "lfo4": {
+        "rate": 0.5,
+        "amount": 0.0,
+        "target": "ModesAmount"
+      }
+    }
+  }
+}

@@ -54,13 +54,20 @@ const MODE_INDICES: [(u32, u32, u32); NUM_MODES] = [
 /// oblique modes weaker still (~0.5x).
 const MODE_GAINS: [Gain; NUM_MODES] = [
     // Axial fundamentals — full strength
-    Gain::UNITY, Gain::UNITY, Gain::UNITY,
+    Gain::UNITY,
+    Gain::UNITY,
+    Gain::UNITY,
     // Axial overtones — slightly reduced
-    Gain::new(0.8), Gain::new(0.8), Gain::new(0.8),
+    Gain::new(0.8),
+    Gain::new(0.8),
+    Gain::new(0.8),
     // Tangential
-    Gain::new(0.7), Gain::new(0.7), Gain::new(0.7),
+    Gain::new(0.7),
+    Gain::new(0.7),
+    Gain::new(0.7),
     // Higher tangential
-    Gain::new(0.5), Gain::new(0.5),
+    Gain::new(0.5),
+    Gain::new(0.5),
     // Oblique
     Gain::new(0.4),
 ];

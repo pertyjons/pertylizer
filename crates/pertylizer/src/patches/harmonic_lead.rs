@@ -1,12 +1,12 @@
 //! Harmonic Lead - Expressive lead using harmonics wavetable scanning.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Harmonic Lead - Bright lead with envelope-driven harmonic sweep.
 pub fn patch_harmonic_lead() -> Patch {
     let mut patch = Patch::new("Harmonic Lead");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
         "Expressive lead using the Harmonics wavetable with envelope-driven position sweep."
             .to_string(),

@@ -1,12 +1,12 @@
 //! Kick Drum - Classic electronic kick with punch.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Kick Drum - Classic electronic kick with punch.
 pub fn patch_drum_kick() -> Patch {
     let mut patch = Patch::new("Kick Drum");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some("Punchy electronic kick drum with pitch sweep.".to_string());
     patch.notes = Some(
         r#"

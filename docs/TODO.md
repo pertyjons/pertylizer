@@ -4,7 +4,7 @@
 
 ### 0.1 Project save/load
 - [ ] Verify that Rack view saves each instrument's module positions and canvas size correctly when saving a project
-- [ ] You should be able to load and save AWE, AWE preset should be saved in the project as well or maybe with an instrument
+- [x] You should be able to load and save AWE, AWE preset should be saved in the project as well or maybe with an instrument *(v0.249.0)*
 
 ### 0.2 Project settings — unsaved instrument strip parameters
 The following `InstrumentParam` variants exist in the engine but have no UI controls and are not persisted in project/patch files:

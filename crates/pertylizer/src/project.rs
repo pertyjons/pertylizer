@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::patch::{InstrumentState, Patch, PatchError};
+use crate::patch::{Author, AwePresetFile, InstrumentState, Patch, PatchError};
 use synth_core::{BipolarValue, Gain, Seconds, Semitones};
 use synth_engine::instrument::InstrumentId;
 use synth_sequencer::Song;
@@ -24,6 +24,9 @@ pub struct ProjectFile {
     pub instruments: Vec<InstrumentState>,
     /// Which instrument was active (focused) when saved.
     pub active_instrument_id: u64,
+    /// Author / composer of this project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<Author>,
     /// Complete sequencer song (patterns, tracks, arrangement).
     pub song: Song,
     /// Global settings not tied to any instrument.
@@ -46,6 +49,9 @@ pub struct GlobalProjectState {
     /// AWE (Acoustic World Engine) state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awe: Option<synth_awe::AweState>,
+    /// Full AWE preset with metadata, embedded in project when enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub awe_preset: Option<AwePresetFile>,
 }
 
 fn default_master_volume() -> Gain {
@@ -59,6 +65,7 @@ impl Default for GlobalProjectState {
             octave_offset: 0,
             glide_time: Seconds::ZERO,
             awe: None,
+            awe_preset: None,
         }
     }
 }
@@ -68,6 +75,7 @@ impl ProjectFile {
     pub fn new(
         instruments: Vec<InstrumentState>,
         active_instrument_id: u64,
+        author: Option<Author>,
         song: Song,
         global: GlobalProjectState,
     ) -> Self {
@@ -76,6 +84,7 @@ impl ProjectFile {
             version: "1.0".to_string(),
             instruments,
             active_instrument_id,
+            author,
             song,
             global,
         }
@@ -101,24 +110,33 @@ pub enum LoadedFile {
     /// A single-instrument patch file.
     Patch(Patch),
     /// A full project file with multiple instruments and song.
-    Project(ProjectFile),
+    Project(Box<ProjectFile>),
+    /// An AWE preset file.
+    AwePreset(AwePresetFile),
 }
 
-/// Read a JSON file once, auto-detect whether it's a patch or project, and parse it.
+/// Read a JSON file once, auto-detect whether it's a patch, project, or AWE preset,
+/// and parse it.
 ///
-/// Looks for `"file_type": "project"` to distinguish project files from patches.
-/// This avoids the double read/parse that would occur from calling
-/// `detect_file_type` followed by `load`.
+/// Looks for `"file_type"` to distinguish file types. Falls back to patch.
 pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedFile, PatchError> {
     let content = fs::read_to_string(path.as_ref()).map_err(|e| PatchError::Io(e.to_string()))?;
 
-    // Check for the project discriminator field
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content)
-        && value.get("file_type").and_then(|v| v.as_str()) == Some("project")
-    {
-        let project =
-            serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))?;
-        return Ok(LoadedFile::Project(project));
+    // Check for discriminator field
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
+        match value.get("file_type").and_then(|v| v.as_str()) {
+            Some("project") => {
+                let project =
+                    serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))?;
+                return Ok(LoadedFile::Project(Box::new(project)));
+            }
+            Some("awe_preset") => {
+                let preset =
+                    serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))?;
+                return Ok(LoadedFile::AwePreset(preset));
+            }
+            _ => {}
+        }
     }
 
     let patch = serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))?;
@@ -135,6 +153,18 @@ pub(crate) fn default_projects_dir() -> Result<PathBuf, String> {
         .or_else(dirs::home_dir)
         .ok_or_else(|| "Could not determine home directory".to_string())?;
     Ok(base.join("pertylizer").join("projects"))
+}
+
+/// Get the default AWE presets directory based on the platform.
+///
+/// - Linux: `~/.local/share/pertylizer/awe_presets`
+/// - macOS: `~/Library/Application Support/pertylizer/awe_presets`
+/// - Windows: `%APPDATA%\pertylizer\awe_presets`
+pub(crate) fn default_awe_presets_dir() -> Result<PathBuf, String> {
+    let base = dirs::data_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| "Could not determine home directory".to_string())?;
+    Ok(base.join("pertylizer").join("awe_presets"))
 }
 
 /// Create a default instrument state for instrument 0 with an empty patch.

@@ -12,10 +12,9 @@ use eframe::egui::Pos2;
 
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_editor::{EffectType, PatchEditor};
-use crate::io::settings::AuthorInfo;
 use crate::patch::{
-    ConnectionState, ExposedPortState, GroupId, GroupTemplate, ModuleState, ParamValue, Patch,
-    PatchAuthor, Position,
+    Author, ConnectionState, ExposedPortState, GroupId, GroupTemplate, ModuleState, ParamValue,
+    Patch, Position,
 };
 use crate::session::SynthSession;
 use synth_core::ModuleType;
@@ -396,7 +395,7 @@ pub fn apply_module_parameters(
 #[allow(clippy::too_many_arguments)]
 pub fn create_patch_from_rack(
     patch_name: &str,
-    author: &AuthorInfo,
+    author: &Author,
     patch_editor: &PatchEditor,
     keyboard: &PianoKeyboard,
     handle: &EngineHandle,
@@ -406,14 +405,8 @@ pub fn create_patch_from_rack(
     engine_state: Option<(&synth_engine::state::EngineState, InstrumentId)>,
 ) -> Option<Patch> {
     let mut patch = create_patch_from_editor(patch_name, patch_editor, engine_state);
-    let patch_author = PatchAuthor {
-        name: author.name.clone(),
-        email: author.email.clone(),
-        website: author.website.clone(),
-        license: author.license.clone(),
-    };
-    if !patch_author.is_empty() {
-        patch.author = Some(patch_author);
+    if !author.is_empty() {
+        patch.author = Some(author.clone());
     }
     patch.settings.octave_offset = keyboard.octave_offset();
     patch.settings.master_volume = synth_core::Gain::new(handle.master_volume());

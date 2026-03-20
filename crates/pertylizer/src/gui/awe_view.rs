@@ -9,9 +9,12 @@
 //! - Sliders for dry/wet, early/late, modes amount, tail stretch
 //! - Four LFO sections with rate/amount/target controls
 
+use std::path::PathBuf;
+
 use eframe::egui;
 
 use crate::gui::theme::theme;
+use crate::patch::AwePresetFile;
 use synth_awe::params::{AweLfoState, AweLfoTarget};
 use synth_awe::presets::awe_presets;
 use synth_awe::{
@@ -108,9 +111,29 @@ pub struct AweUiState {
     // Preset selection (None = custom / manual)
     pub selected_preset: Option<usize>,
 
+    /// Name of the currently active preset (empty = no preset loaded).
+    pub current_preset_name: String,
+    /// Description of the currently active preset.
+    pub current_preset_description: String,
+    /// Tags of the currently active preset.
+    pub current_preset_tags: Vec<String>,
+
     // Drag state
     pub dragging_source: bool,
     pub dragging_listener: bool,
+
+    // User presets loaded from disk
+    pub user_presets: Vec<UserAwePreset>,
+    /// Whether user presets have been scanned from disk.
+    pub user_presets_loaded: bool,
+}
+
+/// A user-saved AWE preset loaded from disk.
+pub struct UserAwePreset {
+    /// Preset file data.
+    pub preset: AwePresetFile,
+    /// Path on disk.
+    pub path: PathBuf,
 }
 
 impl Default for AweUiState {
@@ -161,13 +184,37 @@ impl Default for AweUiState {
             spatial_enabled: false,
             note_mapping_idx: 0,
             selected_preset: None,
+            current_preset_name: String::new(),
+            current_preset_description: String::new(),
+            current_preset_tags: Vec::new(),
             dragging_source: false,
             dragging_listener: false,
+            user_presets: Vec::new(),
+            user_presets_loaded: false,
         }
     }
 }
 
 impl AweUiState {
+    /// Scan a directory for user AWE presets (`.json` files with `file_type: "awe_preset"`).
+    pub fn scan_user_presets(&mut self, dir: &std::path::Path) {
+        self.user_presets.clear();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|e| e == "json")
+                    && let Ok(preset) = AwePresetFile::load(&path)
+                    && preset.file_type == "awe_preset"
+                {
+                    self.user_presets.push(UserAwePreset { preset, path });
+                }
+            }
+        }
+        self.user_presets
+            .sort_by(|a, b| a.preset.name.cmp(&b.preset.name));
+        self.user_presets_loaded = true;
+    }
+
     /// Build a `RoomShape` from the current UI state.
     pub fn current_room_shape(&self) -> RoomShape {
         match self.shape_kind {
@@ -493,6 +540,9 @@ pub fn apply_awe_preset(
     ui_state: &mut AweUiState,
 ) {
     ui_state.selected_preset = Some(preset_idx);
+    ui_state.current_preset_name = preset.name.to_string();
+    ui_state.current_preset_description = preset.description.to_string();
+    ui_state.current_preset_tags.clear();
     ui_state.restore_from(&preset.state);
     *awe_enabled = preset.state.enabled;
     handle.send(EngineCommand::SetAweEnabled {
@@ -515,6 +565,16 @@ pub fn apply_awe_preset(
     });
 }
 
+/// Action requested by the AWE view toolbar.
+pub enum AweViewAction {
+    /// No action.
+    None,
+    /// User wants to save the current AWE config as a preset.
+    SavePreset,
+    /// User wants to open an AWE preset file.
+    LoadPreset,
+}
+
 /// Draw the AWE view.
 #[allow(clippy::too_many_lines)]
 pub fn draw_awe_view(
@@ -522,7 +582,8 @@ pub fn draw_awe_view(
     handle: &mut EngineHandle,
     awe_enabled: &mut bool,
     ui_state: &mut AweUiState,
-) {
+) -> AweViewAction {
+    let mut action = AweViewAction::None;
     // Top toolbar
     egui::TopBottomPanel::top("awe_toolbar").show(ctx, |ui| {
         ui.horizontal(|ui| {
@@ -560,9 +621,30 @@ pub fn draw_awe_view(
                 .and_then(|i| presets.get(i))
                 .map_or("-- Preset --", |p| p.name);
             let mut new_preset = ui_state.selected_preset;
+            let mut apply_user_preset_idx: Option<usize> = None;
             egui::ComboBox::from_id_salt("awe_preset")
                 .selected_text(preset_label)
                 .show_ui(ui, |ui| {
+                    // User presets
+                    if !ui_state.user_presets.is_empty() {
+                        ui.label("User");
+                        for (i, user_preset) in ui_state.user_presets.iter().enumerate() {
+                            let hover = if user_preset.preset.description.is_empty() {
+                                user_preset.path.display().to_string()
+                            } else {
+                                user_preset.preset.description.clone()
+                            };
+                            if ui
+                                .selectable_label(false, &user_preset.preset.name)
+                                .on_hover_text(hover)
+                                .clicked()
+                            {
+                                apply_user_preset_idx = Some(i);
+                            }
+                        }
+                        ui.separator();
+                    }
+                    // Built-in standard presets
                     if !standard_indices.is_empty() {
                         ui.label("Standard");
                         for i in &standard_indices {
@@ -601,6 +683,66 @@ pub fn draw_awe_view(
             {
                 apply_awe_preset(idx, preset, handle, awe_enabled, ui_state);
             }
+            if let Some(idx) = apply_user_preset_idx {
+                let user_preset = &ui_state.user_presets[idx].preset;
+                let state = user_preset.state.clone();
+                let name = user_preset.name.clone();
+                let description = user_preset.description.clone();
+                let tags = user_preset.tags.clone();
+                ui_state.restore_from(&state);
+                ui_state.selected_preset = None;
+                ui_state.current_preset_name = name;
+                ui_state.current_preset_description = description;
+                ui_state.current_preset_tags = tags;
+                *awe_enabled = state.enabled;
+                handle.send(EngineCommand::SetAweEnabled {
+                    enabled: state.enabled,
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::RoomShape(state.room),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Material(state.material),
+                });
+                handle.send(EngineCommand::SetAweState {
+                    snapshot: state.snapshot,
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::SpatialEnabled(state.spatial_enabled),
+                });
+                handle.send(EngineCommand::SetAweParameter {
+                    param: AweParam::NoteMapping(state.note_mapping),
+                });
+            }
+
+            ui.separator();
+
+            // Show current preset name with tooltip
+            if !ui_state.current_preset_name.is_empty() {
+                let name_label = ui.label(
+                    egui::RichText::new(&ui_state.current_preset_name)
+                        .color(theme().colors.accent_green),
+                );
+                let mut tooltip_parts = Vec::new();
+                if !ui_state.current_preset_description.is_empty() {
+                    tooltip_parts.push(ui_state.current_preset_description.clone());
+                }
+                if !ui_state.current_preset_tags.is_empty() {
+                    tooltip_parts
+                        .push(format!("Tags: {}", ui_state.current_preset_tags.join(", ")));
+                }
+                if !tooltip_parts.is_empty() {
+                    name_label.on_hover_text(tooltip_parts.join("\n"));
+                }
+                ui.separator();
+            }
+
+            if ui.button("Save Preset...").clicked() {
+                action = AweViewAction::SavePreset;
+            }
+            if ui.button("Load Preset...").clicked() {
+                action = AweViewAction::LoadPreset;
+            }
         });
     });
 
@@ -618,6 +760,8 @@ pub fn draw_awe_view(
     egui::CentralPanel::default().show(ctx, |ui| {
         draw_floor_plan(ui, handle, ui_state);
     });
+
+    action
 }
 
 /// Draw an arrowhead (filled triangle) at `tip` pointing in direction `dir`.

@@ -1,12 +1,12 @@
 //! Kinetic Pluck — short, percussive pluck using Kinetic Modulator.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Kinetic Pluck — CubicOut easing drives filter and amp for a natural pluck.
 pub fn patch_kinetic_pluck() -> Patch {
     let mut patch = Patch::new("Kinetic Pluck");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description =
         Some("Short pluck using Kinetic Modulator's CubicOut curve for natural decay.".to_string());
     patch.tags = vec!["pluck".into(), "kinetic".into(), "percussive".into()];

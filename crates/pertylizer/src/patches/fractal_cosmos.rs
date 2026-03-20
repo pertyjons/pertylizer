@@ -1,12 +1,12 @@
 //! Fractal Cosmos - Triple fractal oscillator pad with evolving stereo texture.
 
-use crate::patch::{ModuleBuilder, Patch, PatchAuthor};
+use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
 /// Fractal Cosmos - Triple fractal oscillator pad with evolving stereo texture.
 pub fn patch_fractal_cosmos() -> Patch {
     let mut patch = Patch::new("Fractal Cosmos");
-    patch.author = Some(PatchAuthor::from("Pertylizer"));
+    patch.author = Some(Author::from("Pertylizer"));
     patch.description =
         Some("Massive evolving pad from three Weierstrass fractal oscillators.".to_string());
     patch.notes = Some(
