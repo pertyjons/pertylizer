@@ -1,5 +1,22 @@
 # Version History
 
+## [0.250.0] - 2026-03-20
+### AWE MCP integration
+- **8 new MCP tools for AWE** — full remote control of the Acoustic World Engine via MCP:
+  - `get_awe_state` — read complete AWE state (room shape, material, all parameters, LFOs)
+  - `set_awe_enabled` — enable/disable room simulation
+  - `set_awe_parameter` — set individual acoustic parameters (20 parameters: dry_wet, tail_stretch, modes_amount, etc.)
+  - `set_awe_room_shape` — configure room geometry (Box, Cylinder, LShape, Sphere, Dome, Tube) with dimensions
+  - `set_awe_material` — set wall material (15 materials from Concrete to Nanogel)
+  - `set_awe_preset` — load named AWE presets (36 built-in presets)
+  - `list_awe_presets` — browse all available presets with descriptions
+  - `set_awe_lfo` — configure AWE's 4 internal LFOs (rate, amount, target)
+- **Bidirectional GUI sync** — MCP changes reflect in the GUI immediately; GUI changes visible via MCP
+- **Rich AI descriptions** — every tool, parameter, and enum value includes detailed descriptions with ranges, units, and usage hints
+- **Comprehensive error messages** — invalid parameters, room shapes, materials, LFO targets all return helpful error messages listing valid options
+- **AWE shared state** — `McpSharedState` extended with `awe_state` and `pending_awe_state` for thread-safe GUI↔MCP communication
+- **Server instructions updated** — MCP server instructions now include AWE section explaining the room simulation workflow
+
 ## [0.249.0] - 2026-03-20
 ### AWE preset save/load and unified Author type
 - **AWE preset save/load** — save and load AWE configurations as named `.json` preset files with metadata (name, description, author, license, tags)

@@ -585,6 +585,54 @@ impl eframe::App for SynthApp {
             }
         }
 
+        // Poll MCP pending AWE state
+        #[cfg(feature = "mcp")]
+        {
+            let pending_awe = self.mcp_shared.as_ref().and_then(|shared| {
+                shared
+                    .pending_awe_state
+                    .lock()
+                    .ok()
+                    .and_then(|mut pending| pending.take())
+            });
+            if let Some(awe_state) = pending_awe {
+                self.awe_enabled = awe_state.enabled;
+                self.awe_ui.restore_from(&awe_state);
+                // Send engine commands so audio matches
+                self.handle
+                    .send(synth_engine::EngineCommand::SetAweEnabled {
+                        enabled: awe_state.enabled,
+                    });
+                self.handle
+                    .send(synth_engine::EngineCommand::SetAweParameter {
+                        param: synth_awe::AweParam::RoomShape(awe_state.room),
+                    });
+                self.handle
+                    .send(synth_engine::EngineCommand::SetAweParameter {
+                        param: synth_awe::AweParam::Material(awe_state.material),
+                    });
+                self.handle.send(synth_engine::EngineCommand::SetAweState {
+                    snapshot: awe_state.snapshot,
+                });
+                self.handle
+                    .send(synth_engine::EngineCommand::SetAweParameter {
+                        param: synth_awe::AweParam::SpatialEnabled(awe_state.spatial_enabled),
+                    });
+                self.handle
+                    .send(synth_engine::EngineCommand::SetAweParameter {
+                        param: synth_awe::AweParam::NoteMapping(awe_state.note_mapping),
+                    });
+            }
+        }
+
+        // Sync AWE state to MCP shared state
+        #[cfg(feature = "mcp")]
+        if let Some(shared) = &self.mcp_shared
+            && let Ok(mut awe_state) = shared.awe_state.lock()
+        {
+            *awe_state = self.awe_ui.to_awe_state(self.awe_enabled);
+        }
+
         // Reconcile with session: detect modules added/removed by MCP
         #[cfg(feature = "mcp")]
         self.reconcile_with_session();

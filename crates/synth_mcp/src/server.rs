@@ -1060,6 +1060,111 @@ pub struct ProjectPathParam {
     pub path: String,
 }
 
+// === AWE parameter structs ===
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetAweEnabledParam {
+    #[schemars(description = "Whether to enable AWE (Acoustic World Engine) room simulation")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetAweParameterParam {
+    #[schemars(
+        description = "AWE parameter name. Valid names: dry_wet (0-1, wet/dry mix), \
+                       early_late_balance (0-1, early vs late reflections), \
+                       modes_amount (0-1, room mode resonance strength), \
+                       freq_warp (-1 to 1, shifts room mode frequencies), \
+                       resonance_boost (0-1, emphasize room modes), \
+                       tail_stretch (0.5-4.0, reverb tail length multiplier), \
+                       portal_amount (0-1, acoustic portal effect), \
+                       pre_delay (0-200, milliseconds before first reflection), \
+                       modulation_depth (0-1, FDN chorus depth), \
+                       modulation_rate (0.01-20.0, FDN chorus rate in Hz), \
+                       air_absorption (0-1, high-frequency damping over distance), \
+                       width (0-1, stereo width: 0=mono, 1=full stereo), \
+                       high_cut (200-20000, high-cut frequency in Hz), \
+                       low_cut (20-2000, low-cut frequency in Hz), \
+                       temperature (-40 to 60, Celsius, affects speed of sound), \
+                       source_x (meters, sound source X position in room), \
+                       source_y (meters, sound source Y position in room), \
+                       listener_x (meters, listener X position in room), \
+                       listener_y (meters, listener Y position in room)"
+    )]
+    pub name: String,
+    #[schemars(
+        description = "New value for the parameter (range depends on parameter, see name description)"
+    )]
+    pub value: f64,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetAweRoomShapeParam {
+    #[schemars(
+        description = "Room shape type: 'Box' (rectangular room), 'Cylinder' (tunnel/pipeline), \
+                       'LShape' (two connected rectangles), 'Sphere' (spherical room), \
+                       'Dome' (half-sphere), 'Tube' (open-ended cylinder, no end reflections)"
+    )]
+    pub shape: String,
+    #[schemars(description = "Room dimensions in meters (depends on shape): \
+                       Box: [length, width, height] (e.g. [8.0, 5.0, 3.0]). \
+                       Cylinder: [radius, length] (e.g. [1.0, 20.0]). \
+                       LShape: [length_a, width_a, length_b, width_b, height] (e.g. [8.0, 5.0, 6.0, 4.0, 3.0]). \
+                       Sphere: [radius] (e.g. [5.0]). \
+                       Dome: [radius] (e.g. [6.0]). \
+                       Tube: [radius, length] (e.g. [1.5, 30.0]).")]
+    pub dimensions: Vec<f32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetAweMaterialParam {
+    #[schemars(description = "Wall material name. Available materials: \
+                       Concrete (hard, dark, cold — low absorption), \
+                       Wood (warm, balanced — medium absorption), \
+                       Glass (bright, thin bass — reflects highs, absorbs lows), \
+                       Metal (ultra-bright, ringing — minimal absorption), \
+                       Fabric (very dark — high absorption, especially highs), \
+                       Tile (hard, bright, clinical — like bathroom tiles), \
+                       Marble (warmer hard surface — moderate absorption), \
+                       Ice (crisp, noticeable HF absorption), \
+                       Carpet (dead, absorbs everything — very high absorption), \
+                       Water (murmuring, medium-dark — moderate absorption), \
+                       Void (perfectly reflective — zero absorption, infinite reverb), \
+                       Prism (extreme HF absorption with high diffusion), \
+                       Plasma (strong LF damping with bright tail), \
+                       Membrane (absorbs lows more than highs — non-physical), \
+                       Nanogel (ultra-absorbent but highly diffusive)")]
+    pub material: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetAwePresetParam {
+    #[schemars(
+        description = "AWE preset name (case-insensitive). Use list_awe_presets to see all available presets. \
+                       Examples: 'Cathedral', 'Bathroom', 'Cave', 'Concert Hall', 'Dream', 'Small Studio'"
+    )]
+    pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetAweLfoParam {
+    #[schemars(description = "LFO index (1-4). AWE has 4 internal LFOs for parameter modulation.")]
+    pub index: u8,
+    #[schemars(
+        description = "LFO rate in Hz (0.01-20.0). Lower = slow sweep, higher = vibrato-like."
+    )]
+    pub rate: f32,
+    #[schemars(description = "Modulation amount (0.0-1.0). 0 = no modulation, 1 = maximum.")]
+    pub amount: f32,
+    #[schemars(
+        description = "Modulation target: RoomLength, RoomWidth, SourceX, SourceY, ListenerX, \
+                       ListenerY, DryWet, FreqWarp, EarlyLate, ModesAmount, ResonanceBoost, \
+                       TailStretch, PortalAmount, PreDelay, ModulationDepth, ModulationRate, \
+                       AirAbsorption, Width, HighCut, LowCut, Temperature"
+    )]
+    pub target: String,
+}
+
 // === MCP Server ===
 
 /// The MCP server that wraps a SynthBridge implementation.
@@ -1143,7 +1248,23 @@ impl ServerHandler for SynthMcpServer {
              Use `create_pattern` → `add_notes` → `create_track` → `place_pattern` to build songs.\n\n\
              ## Batch operations\n\
              Prefer batch tools (`build_instrument`, `add_notes`, `connect_multiple`, \
-             `create_patterns`, `place_patterns`) over repeated single calls for efficiency.",
+             `create_patterns`, `place_patterns`) over repeated single calls for efficiency.\n\n\
+             ## AWE (Acoustic World Engine)\n\
+             AWE is a physics-based room simulation applied to the master output. It models \
+             early reflections, late reverb (FDN), room modes (standing waves), and stereo \
+             spatialisation based on room geometry, wall material, and source/listener positions.\n\n\
+             **Typical workflow:**\n\
+             1. `list_awe_presets` → browse available room presets\n\
+             2. `set_awe_preset` → load a preset (also enables AWE)\n\
+             3. `set_awe_parameter` → fine-tune individual parameters (dry_wet, tail_stretch, etc.)\n\
+             4. `set_awe_room_shape` / `set_awe_material` → change room geometry or wall material\n\
+             5. `set_awe_lfo` → add animated modulation (e.g. slowly sweep source position)\n\n\
+             **Key concepts:** Room shape determines reflection patterns and standing waves. \
+             Material controls frequency-dependent absorption (Metal = bright, Carpet = dark). \
+             Source/listener positions affect early reflection timing and stereo image. \
+             4 internal LFOs can modulate any parameter for evolving, animated spaces.\n\
+             AWE must be enabled (`set_awe_enabled`) before you can hear its effect. \
+             Use `get_awe_state` to inspect the current configuration at any time.",
         )
     }
 
@@ -2839,6 +2960,151 @@ impl SynthMcpServer {
     async fn optimize_project(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.optimize_project() {
             Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // === AWE (Acoustic World Engine) ===
+
+    #[tool(
+        description = "Get the current state of the Acoustic World Engine (AWE) — a physics-based room simulation \
+                       that adds reverb, early reflections, and spatial effects. Returns room shape, material, \
+                       all acoustic parameters, source/listener positions, LFO states, and whether AWE is enabled. \
+                       Call this first to understand the current acoustic environment before making changes."
+    )]
+    async fn get_awe_state(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.get_awe_state() {
+            Ok(state) => to_json(&state),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Enable or disable AWE (Acoustic World Engine). AWE must be enabled for room simulation \
+                       to affect the audio output. When disabled, audio passes through dry."
+    )]
+    async fn set_awe_enabled(&self, params: Parameters<SetAweEnabledParam>) -> String {
+        match self.bridge.set_awe_enabled(params.0.enabled) {
+            Ok(()) => {
+                let state = if params.0.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+                format!("OK: AWE {state}")
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set a single AWE acoustic parameter by name. Use get_awe_state to see current values \
+                       and valid ranges. Each parameter controls a different aspect of the room simulation — \
+                       see the parameter name description for all options and their ranges."
+    )]
+    async fn set_awe_parameter(&self, params: Parameters<SetAweParameterParam>) -> String {
+        match self
+            .bridge
+            .set_awe_parameter(&params.0.name, params.0.value)
+        {
+            Ok(()) => format!("OK: AWE {} = {}", params.0.name, params.0.value),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set the AWE room shape and dimensions. The room geometry determines early reflection \
+                       patterns, room modes (standing waves), and reverb character. \
+                       Changing the room shape will clamp source/listener positions to fit the new geometry. \
+                       Hint: small rooms (< 5m) sound tight and colored, large rooms (> 20m) sound spacious."
+    )]
+    async fn set_awe_room_shape(&self, params: Parameters<SetAweRoomShapeParam>) -> String {
+        // Validate dimensions are positive
+        for (i, &d) in params.0.dimensions.iter().enumerate() {
+            if d <= 0.0 || d.is_nan() {
+                return format!(
+                    "Error: dimension[{i}] must be positive, got {d}. \
+                     All room dimensions are in meters and must be > 0."
+                );
+            }
+        }
+        match self
+            .bridge
+            .set_awe_room_shape(&params.0.shape, &params.0.dimensions)
+        {
+            Ok(()) => format!("OK: AWE room shape set to {}", params.0.shape),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set the AWE wall material. Materials determine how sound is absorbed and reflected \
+                       at different frequencies, dramatically affecting the reverb character. \
+                       Hard materials (Metal, Tile, Concrete) create bright, long reverb tails. \
+                       Soft materials (Carpet, Fabric, Nanogel) create dark, short reverb. \
+                       Exotic materials (Void, Prism, Plasma, Membrane) create non-physical effects."
+    )]
+    async fn set_awe_material(&self, params: Parameters<SetAweMaterialParam>) -> String {
+        match self.bridge.set_awe_material(&params.0.material) {
+            Ok(()) => format!("OK: AWE material set to {}", params.0.material),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Load a named AWE preset. Presets configure the complete room simulation \
+                       (room shape, material, all acoustic parameters, positions) in one call. \
+                       This also enables AWE. Use list_awe_presets to see all available presets. \
+                       After loading a preset, use set_awe_parameter to fine-tune individual settings."
+    )]
+    async fn set_awe_preset(&self, params: Parameters<SetAwePresetParam>) -> String {
+        match self.bridge.set_awe_preset(&params.0.name) {
+            Ok(state) => to_json(&state),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "List all available AWE (Acoustic World Engine) presets with their names and descriptions. \
+                       Presets range from realistic spaces (Cathedral, Concert Hall, Bathroom, Small Studio) \
+                       to creative effects (Dream, Portal, Stargate) and exotic/sci-fi environments \
+                       (EXT: Singularity, EXT: Plasma Storm, EXT: Nano Fog)."
+    )]
+    async fn list_awe_presets(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.list_awe_presets() {
+            Ok(presets) => to_json(&presets),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Configure one of AWE's 4 internal LFOs. LFOs automatically modulate AWE parameters \
+                       at a given rate, creating evolving, animated room effects. \
+                       Example: set LFO 1 to slowly sweep the source position for a moving-source effect, \
+                       or modulate tail_stretch for breathing reverb."
+    )]
+    async fn set_awe_lfo(&self, params: Parameters<SetAweLfoParam>) -> String {
+        let p = params.0;
+        if !(1..=4).contains(&p.index) {
+            return format!(
+                "Error: LFO index must be 1-4, got {}. AWE has 4 LFOs (LFO 1 through LFO 4).",
+                p.index
+            );
+        }
+        if let Err(e) = validate_range("rate", p.rate, 0.01, 20.0) {
+            return format!("Error: {e}");
+        }
+        if let Err(e) = validate_range("amount", p.amount, 0.0, 1.0) {
+            return format!("Error: {e}");
+        }
+        match self
+            .bridge
+            .set_awe_lfo(p.index, p.rate, p.amount, &p.target)
+        {
+            Ok(()) => format!(
+                "OK: AWE LFO {} → {} at {:.2} Hz (amount {:.2})",
+                p.index, p.target, p.rate, p.amount
+            ),
             Err(e) => format!("Error: {e}"),
         }
     }

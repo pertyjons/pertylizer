@@ -17,12 +17,13 @@ use synth_mcp::bridge::{
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
-    ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, BatchItemResult, BatchResult,
-    BuildInstrumentResult, ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo,
-    GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult,
-    ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue,
-    PatchResourceData, PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo,
-    UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, AweLfoInfo, AwePresetInfo,
+    AweStateInfo, BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionInfo,
+    DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InstrumentInfo,
+    ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo,
+    PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo,
+    PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap,
+    UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -2490,6 +2491,800 @@ impl SynthBridge for AppSynthBridge {
             duration_ms,
             tail_ms,
         )
+    }
+
+    // === AWE (Acoustic World Engine) ===
+
+    fn get_awe_state(&self) -> Result<AweStateInfo, McpBridgeError> {
+        let state = self
+            .shared
+            .awe_state
+            .lock()
+            .map_err(|_| McpBridgeError::Other("AWE state lock poisoned".to_string()))?;
+        Ok(awe_state_to_info(&state))
+    }
+
+    fn set_awe_enabled(&self, enabled: bool) -> Result<(), McpBridgeError> {
+        // Update shared state
+        if let Ok(mut state) = self.shared.awe_state.lock() {
+            state.enabled = enabled;
+        }
+        // Queue for GUI consumption
+        if let Ok(mut pending) = self.shared.pending_awe_state.lock() {
+            let current = self
+                .shared
+                .awe_state
+                .lock()
+                .map_err(|_| McpBridgeError::Other("AWE state lock poisoned".to_string()))?
+                .clone();
+            *pending = Some(current);
+        }
+        // Send engine command
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetAweEnabled { enabled })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "SetAweEnabled",
+            });
+        }
+        Ok(())
+    }
+
+    fn set_awe_parameter(&self, name: &str, value: f64) -> Result<(), McpBridgeError> {
+        use synth_awe::{AweParam, Celsius, Meters, Position3, StretchFactor};
+        use synth_core::{BipolarValue, Hertz, Milliseconds, NormalizedValue};
+
+        let v = value as f32;
+
+        /// Validate that `v` is within `[min, max]` for parameter `name`.
+        fn check(name: &'static str, v: f32, min: f32, max: f32) -> Result<(), McpBridgeError> {
+            if v < min || v > max || v.is_nan() {
+                return Err(McpBridgeError::ValueOutOfRange {
+                    name,
+                    value: v,
+                    min,
+                    max,
+                });
+            }
+            Ok(())
+        }
+
+        /// Validate a position value against room bounds.
+        fn check_pos(name: &str, v: f32, min: f32, max: f32) -> Result<(), McpBridgeError> {
+            if v < min || v > max || v.is_nan() {
+                return Err(McpBridgeError::Other(format!(
+                    "{name} value {v:.2} out of range: must be {min:.1}..={max:.1} meters \
+                     (within current room bounds with 0.1m margin). \
+                     Use get_awe_state to see room dimensions, or set_awe_room_shape to resize."
+                )));
+            }
+            Ok(())
+        }
+
+        let param = match name {
+            "dry_wet" => {
+                check("dry_wet", v, 0.0, 1.0)?;
+                AweParam::DryWet(NormalizedValue::new(v))
+            }
+            "early_late_balance" => {
+                check("early_late_balance", v, 0.0, 1.0)?;
+                AweParam::EarlyLateBalance(NormalizedValue::new(v))
+            }
+            "modes_amount" => {
+                check("modes_amount", v, 0.0, 1.0)?;
+                AweParam::ModesAmount(NormalizedValue::new(v))
+            }
+            "freq_warp" => {
+                check("freq_warp", v, -1.0, 1.0)?;
+                AweParam::FreqWarp(BipolarValue::new(v))
+            }
+            "resonance_boost" => {
+                check("resonance_boost", v, 0.0, 1.0)?;
+                AweParam::ResonanceBoost(NormalizedValue::new(v))
+            }
+            "tail_stretch" => {
+                check("tail_stretch", v, 0.5, 4.0)?;
+                AweParam::TailStretch(StretchFactor::new(v))
+            }
+            "portal_amount" => {
+                check("portal_amount", v, 0.0, 1.0)?;
+                AweParam::PortalAmount(NormalizedValue::new(v))
+            }
+            "pre_delay" => {
+                check("pre_delay", v, 0.0, 200.0)?;
+                AweParam::PreDelay(Milliseconds::new(v))
+            }
+            "modulation_depth" => {
+                check("modulation_depth", v, 0.0, 1.0)?;
+                AweParam::ModulationDepth(NormalizedValue::new(v))
+            }
+            "modulation_rate" => {
+                check("modulation_rate", v, 0.01, 20.0)?;
+                AweParam::ModulationRate(Hertz::new(v))
+            }
+            "air_absorption" => {
+                check("air_absorption", v, 0.0, 1.0)?;
+                AweParam::AirAbsorption(NormalizedValue::new(v))
+            }
+            "width" => {
+                check("width", v, 0.0, 1.0)?;
+                AweParam::Width(NormalizedValue::new(v))
+            }
+            "high_cut" => {
+                check("high_cut", v, 200.0, 20000.0)?;
+                AweParam::HighCut(Hertz::new(v))
+            }
+            "low_cut" => {
+                check("low_cut", v, 20.0, 2000.0)?;
+                AweParam::LowCut(Hertz::new(v))
+            }
+            "temperature" => {
+                check("temperature", v, -40.0, 60.0)?;
+                AweParam::Temperature(Celsius::new(v))
+            }
+            "source_x" | "source_y" | "listener_x" | "listener_y" => {
+                // Read current state to get room bounds and modify one axis
+                let current =
+                    self.shared.awe_state.lock().map_err(|_| {
+                        McpBridgeError::Other("AWE state lock poisoned".to_string())
+                    })?;
+                let room = current.room;
+                let max_x = room.length().as_f32();
+                let max_y = room.width().as_f32();
+                let margin = 0.1;
+                match name {
+                    "source_x" => {
+                        check_pos("source_x", v, margin, max_x - margin)?;
+                        AweParam::SourcePos(Position3::new(
+                            Meters::new(v),
+                            current.snapshot.source_pos.y(),
+                            current.snapshot.source_pos.z(),
+                        ))
+                    }
+                    "source_y" => {
+                        check_pos("source_y", v, margin, max_y - margin)?;
+                        AweParam::SourcePos(Position3::new(
+                            current.snapshot.source_pos.x(),
+                            Meters::new(v),
+                            current.snapshot.source_pos.z(),
+                        ))
+                    }
+                    "listener_x" => {
+                        check_pos("listener_x", v, margin, max_x - margin)?;
+                        AweParam::ListenerPos(Position3::new(
+                            Meters::new(v),
+                            current.snapshot.listener_pos.y(),
+                            current.snapshot.listener_pos.z(),
+                        ))
+                    }
+                    "listener_y" => {
+                        check_pos("listener_y", v, margin, max_y - margin)?;
+                        AweParam::ListenerPos(Position3::new(
+                            current.snapshot.listener_pos.x(),
+                            Meters::new(v),
+                            current.snapshot.listener_pos.z(),
+                        ))
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            _ => return Err(McpBridgeError::InvalidAweParameter(name.to_string())),
+        };
+
+        // Update shared state snapshot
+        if let Ok(mut state) = self.shared.awe_state.lock() {
+            apply_awe_param_to_state(&mut state, &param);
+        }
+
+        // Queue for GUI
+        queue_awe_for_gui(&self.shared)?;
+
+        // Send engine command
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetAweParameter { param })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "SetAweParameter",
+            });
+        }
+        Ok(())
+    }
+
+    fn set_awe_room_shape(&self, shape: &str, dimensions: &[f32]) -> Result<(), McpBridgeError> {
+        let room = parse_room_shape(shape, dimensions)?;
+
+        // Update shared state
+        if let Ok(mut state) = self.shared.awe_state.lock() {
+            state.room = room;
+        }
+
+        // Queue for GUI
+        queue_awe_for_gui(&self.shared)?;
+
+        // Send engine command
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetAweParameter {
+                param: synth_awe::AweParam::RoomShape(room),
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "SetAweParameter",
+            });
+        }
+        Ok(())
+    }
+
+    fn set_awe_material(&self, material: &str) -> Result<(), McpBridgeError> {
+        let mat = parse_material(material)?;
+
+        // Update shared state
+        if let Ok(mut state) = self.shared.awe_state.lock() {
+            state.material = mat;
+        }
+
+        // Queue for GUI
+        queue_awe_for_gui(&self.shared)?;
+
+        // Send engine command
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetAweParameter {
+                param: synth_awe::AweParam::Material(mat),
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "SetAweParameter",
+            });
+        }
+        Ok(())
+    }
+
+    fn set_awe_preset(&self, name: &str) -> Result<AweStateInfo, McpBridgeError> {
+        let presets = synth_awe::awe_presets();
+        let preset = presets
+            .iter()
+            .find(|p| p.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| McpBridgeError::AwePresetNotFound(name.to_string()))?;
+
+        let state = preset.state.clone();
+
+        // Update shared state
+        if let Ok(mut shared) = self.shared.awe_state.lock() {
+            *shared = state.clone();
+        }
+
+        // Queue for GUI
+        queue_awe_for_gui(&self.shared)?;
+
+        // Send engine commands (same sequence as GUI)
+        let sender = self.session.command_sender();
+        sender.send(EngineCommand::SetAweEnabled {
+            enabled: state.enabled,
+        });
+        sender.send(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::RoomShape(state.room),
+        });
+        sender.send(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::Material(state.material),
+        });
+        sender.send(EngineCommand::SetAweState {
+            snapshot: state.snapshot,
+        });
+        sender.send(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::SpatialEnabled(state.spatial_enabled),
+        });
+        sender.send(EngineCommand::SetAweParameter {
+            param: synth_awe::AweParam::NoteMapping(state.note_mapping),
+        });
+
+        Ok(awe_state_to_info(&state))
+    }
+
+    fn list_awe_presets(&self) -> Result<Vec<AwePresetInfo>, McpBridgeError> {
+        let presets = synth_awe::awe_presets();
+        Ok(presets
+            .iter()
+            .map(|p| AwePresetInfo {
+                name: p.name.to_string(),
+                description: p.description.to_string(),
+            })
+            .collect())
+    }
+
+    fn set_awe_lfo(
+        &self,
+        index: u8,
+        rate: f32,
+        amount: f32,
+        target: &str,
+    ) -> Result<(), McpBridgeError> {
+        use synth_awe::AweParam;
+        use synth_core::{Hertz, NormalizedValue};
+
+        if !(1..=4).contains(&index) {
+            return Err(McpBridgeError::InvalidLfoIndex(index));
+        }
+        let lfo_target = parse_lfo_target(target)?;
+        if !(0.01..=20.0).contains(&rate) {
+            return Err(McpBridgeError::ValueOutOfRange {
+                name: "rate",
+                value: rate,
+                min: 0.01,
+                max: 20.0,
+            });
+        }
+        if !(0.0..=1.0).contains(&amount) {
+            return Err(McpBridgeError::ValueOutOfRange {
+                name: "amount",
+                value: amount,
+                min: 0.0,
+                max: 1.0,
+            });
+        }
+        let rate_hz = Hertz::new(rate);
+        let amt = NormalizedValue::new(amount);
+
+        // Update shared state
+        if let Ok(mut state) = self.shared.awe_state.lock() {
+            let lfo = match index {
+                1 => &mut state.snapshot.lfo1,
+                2 => &mut state.snapshot.lfo2,
+                3 => &mut state.snapshot.lfo3,
+                4 => &mut state.snapshot.lfo4,
+                _ => unreachable!(),
+            };
+            lfo.rate = rate_hz;
+            lfo.amount = amt;
+            lfo.target = lfo_target;
+        }
+
+        // Queue for GUI
+        queue_awe_for_gui(&self.shared)?;
+
+        // Send engine commands for rate, amount, target
+        let sender = self.session.command_sender();
+        match index {
+            1 => {
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo1Rate(rate_hz),
+                });
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo1Amount(amt),
+                });
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo1Target(lfo_target),
+                });
+            }
+            2 => {
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo2Rate(rate_hz),
+                });
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo2Amount(amt),
+                });
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo2Target(lfo_target),
+                });
+            }
+            3 => {
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo3Rate(rate_hz),
+                });
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo3Amount(amt),
+                });
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo3Target(lfo_target),
+                });
+            }
+            4 => {
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo4Rate(rate_hz),
+                });
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo4Amount(amt),
+                });
+                sender.send(EngineCommand::SetAweParameter {
+                    param: AweParam::Lfo4Target(lfo_target),
+                });
+            }
+            _ => unreachable!(),
+        }
+
+        Ok(())
+    }
+}
+
+// === AWE helper functions ===
+
+/// Queue the current shared AWE state for GUI consumption.
+fn queue_awe_for_gui(shared: &crate::mcp_shared::McpSharedState) -> Result<(), McpBridgeError> {
+    let current = shared
+        .awe_state
+        .lock()
+        .map_err(|_| McpBridgeError::Other("AWE state lock poisoned".to_string()))?
+        .clone();
+    if let Ok(mut pending) = shared.pending_awe_state.lock() {
+        *pending = Some(current);
+    }
+    Ok(())
+}
+
+/// Convert `AweState` to the serializable `AweStateInfo`.
+fn awe_state_to_info(state: &synth_awe::AweState) -> AweStateInfo {
+    let room = state.room;
+    let snap = &state.snapshot;
+
+    AweStateInfo {
+        enabled: state.enabled,
+        room_shape: room_shape_name(&room),
+        room_dimensions: room_dimensions_string(&room),
+        room_length: room.length().as_f32(),
+        room_width: room.width().as_f32(),
+        room_height: room.height().as_f32(),
+        room_volume: room.volume().as_f32(),
+        material: material_name(&state.material),
+        source_position: snap.source_pos.as_f32(),
+        listener_position: snap.listener_pos.as_f32(),
+        dry_wet: snap.dry_wet.as_f32(),
+        early_late_balance: snap.early_late_balance.as_f32(),
+        modes_amount: snap.modes_amount.as_f32(),
+        freq_warp: snap.freq_warp.as_f32(),
+        resonance_boost: snap.resonance_boost.as_f32(),
+        tail_stretch: snap.tail_stretch.as_f32(),
+        portal_amount: snap.portal_amount.as_f32(),
+        pre_delay_ms: snap.pre_delay.as_f32(),
+        modulation_depth: snap.modulation_depth.as_f32(),
+        modulation_rate: snap.modulation_rate.as_f32(),
+        air_absorption: snap.air_absorption.as_f32(),
+        width: snap.width.as_f32(),
+        high_cut: snap.high_cut.as_f32(),
+        low_cut: snap.low_cut.as_f32(),
+        temperature: snap.temperature.as_f32(),
+        spatial_enabled: state.spatial_enabled,
+        note_mapping: mapping_name(&state.note_mapping),
+        lfos: vec![
+            lfo_to_info(1, &snap.lfo1),
+            lfo_to_info(2, &snap.lfo2),
+            lfo_to_info(3, &snap.lfo3),
+            lfo_to_info(4, &snap.lfo4),
+        ],
+    }
+}
+
+fn lfo_to_info(index: u8, lfo: &synth_awe::params::AweLfoState) -> AweLfoInfo {
+    AweLfoInfo {
+        index,
+        rate: lfo.rate.as_f32(),
+        amount: lfo.amount.as_f32(),
+        target: lfo_target_name(&lfo.target),
+    }
+}
+
+fn room_shape_name(shape: &synth_awe::RoomShape) -> String {
+    match shape {
+        synth_awe::RoomShape::Box { .. } => "Box".to_string(),
+        synth_awe::RoomShape::Cylinder { .. } => "Cylinder".to_string(),
+        synth_awe::RoomShape::LShape { .. } => "LShape".to_string(),
+        synth_awe::RoomShape::Sphere { .. } => "Sphere".to_string(),
+        synth_awe::RoomShape::Dome { .. } => "Dome".to_string(),
+        synth_awe::RoomShape::Tube { .. } => "Tube".to_string(),
+    }
+}
+
+fn room_dimensions_string(shape: &synth_awe::RoomShape) -> String {
+    match shape {
+        synth_awe::RoomShape::Box {
+            length,
+            width,
+            height,
+        } => format!(
+            "{:.1} x {:.1} x {:.1} m (L x W x H)",
+            length.as_f32(),
+            width.as_f32(),
+            height.as_f32()
+        ),
+        synth_awe::RoomShape::Cylinder { radius, length } => format!(
+            "radius {:.1} m, length {:.1} m",
+            radius.as_f32(),
+            length.as_f32()
+        ),
+        synth_awe::RoomShape::LShape {
+            length_a,
+            width_a,
+            length_b,
+            width_b,
+            height,
+        } => format!(
+            "section A: {:.1} x {:.1} m, section B: {:.1} x {:.1} m, height {:.1} m",
+            length_a.as_f32(),
+            width_a.as_f32(),
+            length_b.as_f32(),
+            width_b.as_f32(),
+            height.as_f32()
+        ),
+        synth_awe::RoomShape::Sphere { radius } => {
+            format!("radius {:.1} m", radius.as_f32())
+        }
+        synth_awe::RoomShape::Dome { radius } => {
+            format!("radius {:.1} m", radius.as_f32())
+        }
+        synth_awe::RoomShape::Tube { radius, length } => format!(
+            "radius {:.1} m, length {:.1} m",
+            radius.as_f32(),
+            length.as_f32()
+        ),
+    }
+}
+
+fn material_name(mat: &synth_awe::Material) -> String {
+    use synth_awe::Material;
+    // Match by absorption coefficients to identify the material
+    if *mat == Material::CONCRETE {
+        "Concrete"
+    } else if *mat == Material::WOOD {
+        "Wood"
+    } else if *mat == Material::GLASS {
+        "Glass"
+    } else if *mat == Material::METAL {
+        "Metal"
+    } else if *mat == Material::FABRIC {
+        "Fabric"
+    } else if *mat == Material::TILE {
+        "Tile"
+    } else if *mat == Material::MARBLE {
+        "Marble"
+    } else if *mat == Material::ICE {
+        "Ice"
+    } else if *mat == Material::CARPET {
+        "Carpet"
+    } else if *mat == Material::WATER {
+        "Water"
+    } else if *mat == Material::VOID {
+        "Void"
+    } else if *mat == Material::PRISM {
+        "Prism"
+    } else if *mat == Material::PLASMA {
+        "Plasma"
+    } else if *mat == Material::MEMBRANE {
+        "Membrane"
+    } else if *mat == Material::NANOGEL {
+        "Nanogel"
+    } else {
+        "Custom"
+    }
+    .to_string()
+}
+
+fn mapping_name(mapping: &synth_awe::NotePositionMapping) -> String {
+    match mapping {
+        synth_awe::NotePositionMapping::Off => "Off",
+        synth_awe::NotePositionMapping::LinearX => "LinearX",
+        synth_awe::NotePositionMapping::LinearY => "LinearY",
+        synth_awe::NotePositionMapping::Circular => "Circular",
+    }
+    .to_string()
+}
+
+fn lfo_target_name(target: &synth_awe::AweLfoTarget) -> String {
+    match target {
+        synth_awe::AweLfoTarget::RoomLength => "RoomLength",
+        synth_awe::AweLfoTarget::RoomWidth => "RoomWidth",
+        synth_awe::AweLfoTarget::SourceX => "SourceX",
+        synth_awe::AweLfoTarget::SourceY => "SourceY",
+        synth_awe::AweLfoTarget::ListenerX => "ListenerX",
+        synth_awe::AweLfoTarget::ListenerY => "ListenerY",
+        synth_awe::AweLfoTarget::DryWet => "DryWet",
+        synth_awe::AweLfoTarget::FreqWarp => "FreqWarp",
+        synth_awe::AweLfoTarget::EarlyLate => "EarlyLate",
+        synth_awe::AweLfoTarget::ModesAmount => "ModesAmount",
+        synth_awe::AweLfoTarget::ResonanceBoost => "ResonanceBoost",
+        synth_awe::AweLfoTarget::TailStretch => "TailStretch",
+        synth_awe::AweLfoTarget::PortalAmount => "PortalAmount",
+        synth_awe::AweLfoTarget::PreDelay => "PreDelay",
+        synth_awe::AweLfoTarget::ModulationDepth => "ModulationDepth",
+        synth_awe::AweLfoTarget::ModulationRate => "ModulationRate",
+        synth_awe::AweLfoTarget::AirAbsorption => "AirAbsorption",
+        synth_awe::AweLfoTarget::Width => "Width",
+        synth_awe::AweLfoTarget::HighCut => "HighCut",
+        synth_awe::AweLfoTarget::LowCut => "LowCut",
+        synth_awe::AweLfoTarget::Temperature => "Temperature",
+    }
+    .to_string()
+}
+
+fn parse_lfo_target(target: &str) -> Result<synth_awe::AweLfoTarget, McpBridgeError> {
+    use synth_awe::AweLfoTarget;
+    match target {
+        "RoomLength" => Ok(AweLfoTarget::RoomLength),
+        "RoomWidth" => Ok(AweLfoTarget::RoomWidth),
+        "SourceX" => Ok(AweLfoTarget::SourceX),
+        "SourceY" => Ok(AweLfoTarget::SourceY),
+        "ListenerX" => Ok(AweLfoTarget::ListenerX),
+        "ListenerY" => Ok(AweLfoTarget::ListenerY),
+        "DryWet" => Ok(AweLfoTarget::DryWet),
+        "FreqWarp" => Ok(AweLfoTarget::FreqWarp),
+        "EarlyLate" => Ok(AweLfoTarget::EarlyLate),
+        "ModesAmount" => Ok(AweLfoTarget::ModesAmount),
+        "ResonanceBoost" => Ok(AweLfoTarget::ResonanceBoost),
+        "TailStretch" => Ok(AweLfoTarget::TailStretch),
+        "PortalAmount" => Ok(AweLfoTarget::PortalAmount),
+        "PreDelay" => Ok(AweLfoTarget::PreDelay),
+        "ModulationDepth" => Ok(AweLfoTarget::ModulationDepth),
+        "ModulationRate" => Ok(AweLfoTarget::ModulationRate),
+        "AirAbsorption" => Ok(AweLfoTarget::AirAbsorption),
+        "Width" => Ok(AweLfoTarget::Width),
+        "HighCut" => Ok(AweLfoTarget::HighCut),
+        "LowCut" => Ok(AweLfoTarget::LowCut),
+        "Temperature" => Ok(AweLfoTarget::Temperature),
+        _ => Err(McpBridgeError::InvalidLfoTarget(target.to_string())),
+    }
+}
+
+fn parse_material(name: &str) -> Result<synth_awe::Material, McpBridgeError> {
+    use synth_awe::Material;
+    match name.to_ascii_lowercase().as_str() {
+        "concrete" => Ok(Material::CONCRETE),
+        "wood" => Ok(Material::WOOD),
+        "glass" => Ok(Material::GLASS),
+        "metal" => Ok(Material::METAL),
+        "fabric" => Ok(Material::FABRIC),
+        "tile" => Ok(Material::TILE),
+        "marble" => Ok(Material::MARBLE),
+        "ice" => Ok(Material::ICE),
+        "carpet" => Ok(Material::CARPET),
+        "water" => Ok(Material::WATER),
+        "void" => Ok(Material::VOID),
+        "prism" => Ok(Material::PRISM),
+        "plasma" => Ok(Material::PLASMA),
+        "membrane" => Ok(Material::MEMBRANE),
+        "nanogel" => Ok(Material::NANOGEL),
+        _ => Err(McpBridgeError::InvalidMaterial(name.to_string())),
+    }
+}
+
+fn parse_room_shape(
+    shape: &str,
+    dimensions: &[f32],
+) -> Result<synth_awe::RoomShape, McpBridgeError> {
+    use synth_awe::{Meters, RoomShape};
+
+    match shape.to_ascii_lowercase().as_str() {
+        "box" => {
+            if dimensions.len() < 3 {
+                return Err(McpBridgeError::Other(format!(
+                    "Box requires 3 dimensions [length, width, height], got {}. \
+                     Example: [8.0, 5.0, 3.0] for an 8m x 5m x 3m room.",
+                    dimensions.len()
+                )));
+            }
+            Ok(RoomShape::Box {
+                length: Meters::new(dimensions[0]),
+                width: Meters::new(dimensions[1]),
+                height: Meters::new(dimensions[2]),
+            })
+        }
+        "cylinder" => {
+            if dimensions.len() < 2 {
+                return Err(McpBridgeError::Other(format!(
+                    "Cylinder requires 2 dimensions [radius, length], got {}. \
+                     Example: [1.0, 20.0] for a 1m radius, 20m long tunnel.",
+                    dimensions.len()
+                )));
+            }
+            Ok(RoomShape::Cylinder {
+                radius: Meters::new(dimensions[0]),
+                length: Meters::new(dimensions[1]),
+            })
+        }
+        "lshape" | "l_shape" | "l-shape" => {
+            if dimensions.len() < 5 {
+                return Err(McpBridgeError::Other(format!(
+                    "LShape requires 5 dimensions [length_a, width_a, length_b, width_b, height], got {}. \
+                     Example: [8.0, 5.0, 6.0, 4.0, 3.0] for two connected rectangular sections.",
+                    dimensions.len()
+                )));
+            }
+            Ok(RoomShape::LShape {
+                length_a: Meters::new(dimensions[0]),
+                width_a: Meters::new(dimensions[1]),
+                length_b: Meters::new(dimensions[2]),
+                width_b: Meters::new(dimensions[3]),
+                height: Meters::new(dimensions[4]),
+            })
+        }
+        "sphere" => {
+            if dimensions.is_empty() {
+                return Err(McpBridgeError::Other(
+                    "Sphere requires 1 dimension [radius]. \
+                     Example: [5.0] for a 5m radius sphere."
+                        .to_string(),
+                ));
+            }
+            Ok(RoomShape::Sphere {
+                radius: Meters::new(dimensions[0]),
+            })
+        }
+        "dome" => {
+            if dimensions.is_empty() {
+                return Err(McpBridgeError::Other(
+                    "Dome requires 1 dimension [radius]. \
+                     Example: [6.0] for a 6m radius dome (height = radius)."
+                        .to_string(),
+                ));
+            }
+            Ok(RoomShape::Dome {
+                radius: Meters::new(dimensions[0]),
+            })
+        }
+        "tube" => {
+            if dimensions.len() < 2 {
+                return Err(McpBridgeError::Other(format!(
+                    "Tube requires 2 dimensions [radius, length], got {}. \
+                     Example: [1.5, 30.0] for a 1.5m radius, 30m long open tube.",
+                    dimensions.len()
+                )));
+            }
+            Ok(RoomShape::Tube {
+                radius: Meters::new(dimensions[0]),
+                length: Meters::new(dimensions[1]),
+            })
+        }
+        _ => Err(McpBridgeError::InvalidRoomShape(shape.to_string())),
+    }
+}
+
+/// Apply a single AWE param to the shared state snapshot.
+fn apply_awe_param_to_state(state: &mut synth_awe::AweState, param: &synth_awe::AweParam) {
+    use synth_awe::AweParam;
+    match param {
+        AweParam::RoomShape(v) => state.room = *v,
+        AweParam::Material(v) => state.material = *v,
+        AweParam::SourcePos(v) => state.snapshot.source_pos = *v,
+        AweParam::ListenerPos(v) => state.snapshot.listener_pos = *v,
+        AweParam::DryWet(v) => state.snapshot.dry_wet = *v,
+        AweParam::EarlyLateBalance(v) => state.snapshot.early_late_balance = *v,
+        AweParam::ModesAmount(v) => state.snapshot.modes_amount = *v,
+        AweParam::FreqWarp(v) => state.snapshot.freq_warp = *v,
+        AweParam::ResonanceBoost(v) => state.snapshot.resonance_boost = *v,
+        AweParam::TailStretch(v) => state.snapshot.tail_stretch = *v,
+        AweParam::PortalAmount(v) => state.snapshot.portal_amount = *v,
+        AweParam::PreDelay(v) => state.snapshot.pre_delay = *v,
+        AweParam::Enabled(v) => state.enabled = *v,
+        AweParam::SpatialEnabled(v) => {
+            state.spatial_enabled = *v;
+            state.snapshot.spatial_enabled = *v;
+        }
+        AweParam::NoteMapping(v) => {
+            state.note_mapping = *v;
+            state.snapshot.note_mapping = *v;
+        }
+        AweParam::Lfo1Rate(v) => state.snapshot.lfo1.rate = *v,
+        AweParam::Lfo1Amount(v) => state.snapshot.lfo1.amount = *v,
+        AweParam::Lfo1Target(v) => state.snapshot.lfo1.target = *v,
+        AweParam::Lfo2Rate(v) => state.snapshot.lfo2.rate = *v,
+        AweParam::Lfo2Amount(v) => state.snapshot.lfo2.amount = *v,
+        AweParam::Lfo2Target(v) => state.snapshot.lfo2.target = *v,
+        AweParam::Lfo3Rate(v) => state.snapshot.lfo3.rate = *v,
+        AweParam::Lfo3Amount(v) => state.snapshot.lfo3.amount = *v,
+        AweParam::Lfo3Target(v) => state.snapshot.lfo3.target = *v,
+        AweParam::Lfo4Rate(v) => state.snapshot.lfo4.rate = *v,
+        AweParam::Lfo4Amount(v) => state.snapshot.lfo4.amount = *v,
+        AweParam::Lfo4Target(v) => state.snapshot.lfo4.target = *v,
+        AweParam::ModulationDepth(v) => state.snapshot.modulation_depth = *v,
+        AweParam::ModulationRate(v) => state.snapshot.modulation_rate = *v,
+        AweParam::AirAbsorption(v) => state.snapshot.air_absorption = *v,
+        AweParam::Width(v) => state.snapshot.width = *v,
+        AweParam::HighCut(v) => state.snapshot.high_cut = *v,
+        AweParam::LowCut(v) => state.snapshot.low_cut = *v,
+        AweParam::Temperature(v) => state.snapshot.temperature = *v,
     }
 }
 

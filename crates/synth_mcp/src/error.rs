@@ -97,6 +97,45 @@ pub enum McpBridgeError {
     #[error("{kind} name must not be empty")]
     EmptyName { kind: &'static str },
 
+    /// Invalid AWE parameter name.
+    #[error(
+        "unknown AWE parameter '{0}'. Valid parameters: dry_wet, early_late_balance, modes_amount, \
+         freq_warp, resonance_boost, tail_stretch, portal_amount, pre_delay, modulation_depth, \
+         modulation_rate, air_absorption, width, high_cut, low_cut, temperature, source_x, \
+         source_y, listener_x, listener_y"
+    )]
+    InvalidAweParameter(String),
+
+    /// Invalid AWE room shape.
+    #[error(
+        "unknown AWE room shape '{0}'. Valid shapes: Box, Cylinder, LShape, Sphere, Dome, Tube"
+    )]
+    InvalidRoomShape(String),
+
+    /// Invalid AWE material.
+    #[error(
+        "unknown AWE material '{0}'. Valid materials: Concrete, Wood, Glass, Metal, Fabric, Tile, \
+         Marble, Ice, Carpet, Water, Void, Prism, Plasma, Membrane, Nanogel"
+    )]
+    InvalidMaterial(String),
+
+    /// Invalid AWE LFO target.
+    #[error(
+        "unknown AWE LFO target '{0}'. Valid targets: RoomLength, RoomWidth, SourceX, SourceY, \
+         ListenerX, ListenerY, DryWet, FreqWarp, EarlyLate, ModesAmount, ResonanceBoost, \
+         TailStretch, PortalAmount, PreDelay, ModulationDepth, ModulationRate, AirAbsorption, \
+         Width, HighCut, LowCut, Temperature"
+    )]
+    InvalidLfoTarget(String),
+
+    /// AWE preset not found.
+    #[error("AWE preset '{0}' not found. Use list_awe_presets to see available presets.")]
+    AwePresetNotFound(String),
+
+    /// Invalid AWE LFO index.
+    #[error("invalid LFO index {0}: must be 1-4")]
+    InvalidLfoIndex(u8),
+
     /// Generic error — use sparingly; prefer a specific variant when the failure
     /// mode is known so MCP clients can programmatically handle it.
     #[error("{0}")]

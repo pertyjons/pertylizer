@@ -528,3 +528,88 @@ pub struct AudioPreview {
     /// Duration in seconds (note + tail).
     pub duration_seconds: f32,
 }
+
+// === AWE (Acoustic World Engine) types ===
+
+/// Full AWE state returned by `get_awe_state`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AweStateInfo {
+    /// Whether AWE is enabled.
+    pub enabled: bool,
+    /// Current room shape (e.g. "Box", "Cylinder", "Sphere").
+    pub room_shape: String,
+    /// Room dimensions as a human-readable string (e.g. "8.0 x 5.0 x 3.0 m").
+    pub room_dimensions: String,
+    /// Room length in meters (x-axis).
+    pub room_length: f32,
+    /// Room width in meters (y-axis).
+    pub room_width: f32,
+    /// Room height in meters (z-axis).
+    pub room_height: f32,
+    /// Room volume in cubic meters.
+    pub room_volume: f32,
+    /// Wall material name (e.g. "Concrete", "Wood", "Glass").
+    pub material: String,
+    /// Source position [x, y, z] in meters.
+    pub source_position: [f32; 3],
+    /// Listener position [x, y, z] in meters.
+    pub listener_position: [f32; 3],
+    /// Dry/wet mix (0.0 = fully dry, 1.0 = fully wet).
+    pub dry_wet: f32,
+    /// Early/late reflection balance (0.0 = early only, 1.0 = late only).
+    pub early_late_balance: f32,
+    /// Room mode resonance amount (0.0 = off, 1.0 = full).
+    pub modes_amount: f32,
+    /// Frequency warping (-1.0 to 1.0). Negative = lower modes, positive = higher modes.
+    pub freq_warp: f32,
+    /// Resonance boost for room modes (0.0-1.0).
+    pub resonance_boost: f32,
+    /// Tail stretch factor (0.5 = shorter, 1.0 = natural, 4.0 = longest).
+    pub tail_stretch: f32,
+    /// Portal amount (0.0 = off, 1.0 = full acoustic portal effect).
+    pub portal_amount: f32,
+    /// Pre-delay in milliseconds (0-200 ms delay before first reflection).
+    pub pre_delay_ms: f32,
+    /// FDN chorus modulation depth (0.0-1.0).
+    pub modulation_depth: f32,
+    /// FDN chorus modulation rate in Hz (0.01-20.0).
+    pub modulation_rate: f32,
+    /// Air absorption amount (0.0-1.0, high-frequency damping over distance).
+    pub air_absorption: f32,
+    /// Stereo width (0.0 = mono, 1.0 = full stereo).
+    pub width: f32,
+    /// High-cut frequency in Hz (200-20000).
+    pub high_cut: f32,
+    /// Low-cut frequency in Hz (20-2000).
+    pub low_cut: f32,
+    /// Temperature in Celsius (affects speed of sound).
+    pub temperature: f32,
+    /// Per-voice spatial processing enabled.
+    pub spatial_enabled: bool,
+    /// Note-to-position mapping ("Off", "LinearX", "LinearY", "Circular").
+    pub note_mapping: String,
+    /// LFO states (4 LFOs).
+    pub lfos: Vec<AweLfoInfo>,
+}
+
+/// State of one AWE LFO.
+#[derive(Debug, Clone, Serialize)]
+pub struct AweLfoInfo {
+    /// LFO index (1-4).
+    pub index: u8,
+    /// Rate in Hz (0.01-20.0).
+    pub rate: f32,
+    /// Modulation amount (0.0-1.0).
+    pub amount: f32,
+    /// Modulation target name.
+    pub target: String,
+}
+
+/// Info about an AWE preset.
+#[derive(Debug, Clone, Serialize)]
+pub struct AwePresetInfo {
+    /// Preset name.
+    pub name: String,
+    /// Short description of the acoustic character.
+    pub description: String,
+}

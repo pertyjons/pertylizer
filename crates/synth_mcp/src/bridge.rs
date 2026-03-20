@@ -16,10 +16,11 @@
 
 use crate::error::McpBridgeError;
 use crate::types::{
-    ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo, BatchResult,
-    BuildInstrumentResult, ConnectionInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
-    InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo,
-    PatchResourceData, PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo, AwePresetInfo,
+    AweStateInfo, BatchResult, BuildInstrumentResult, ConnectionInfo, EngineStatus,
+    ExamplePatchInfo, GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo,
+    OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, SetSongResult,
+    SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -593,6 +594,39 @@ pub trait SynthBridge: Send + Sync + 'static {
         duration_ms: u32,
         tail_ms: u32,
     ) -> Result<AudioPreview, McpBridgeError>;
+
+    // === AWE (Acoustic World Engine) ===
+
+    /// Get the current AWE state (room, material, all parameters, LFOs).
+    fn get_awe_state(&self) -> Result<AweStateInfo, McpBridgeError>;
+
+    /// Enable or disable the AWE engine.
+    fn set_awe_enabled(&self, enabled: bool) -> Result<(), McpBridgeError>;
+
+    /// Set a single AWE parameter by name. Value interpretation depends on the parameter.
+    fn set_awe_parameter(&self, name: &str, value: f64) -> Result<(), McpBridgeError>;
+
+    /// Set the room shape. `shape` is one of: "Box", "Cylinder", "LShape", "Sphere", "Dome", "Tube".
+    /// `dimensions` contains shape-specific values (length, width, height, radius, etc.).
+    fn set_awe_room_shape(&self, shape: &str, dimensions: &[f32]) -> Result<(), McpBridgeError>;
+
+    /// Set the wall material by name.
+    fn set_awe_material(&self, material: &str) -> Result<(), McpBridgeError>;
+
+    /// Load a named AWE preset. Returns the resulting state.
+    fn set_awe_preset(&self, name: &str) -> Result<AweStateInfo, McpBridgeError>;
+
+    /// List all available AWE presets.
+    fn list_awe_presets(&self) -> Result<Vec<AwePresetInfo>, McpBridgeError>;
+
+    /// Configure an AWE LFO (1-4).
+    fn set_awe_lfo(
+        &self,
+        index: u8,
+        rate: f32,
+        amount: f32,
+        target: &str,
+    ) -> Result<(), McpBridgeError>;
 }
 
 /// Automation point data for MCP bridge.

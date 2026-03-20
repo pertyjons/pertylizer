@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 
+use synth_awe::AweState;
+
 use crate::patch::Patch;
 use synth_mcp::McpSessionRegistry;
 use synth_sequencer::Song;
@@ -39,6 +41,10 @@ pub struct McpSharedState {
     pub pending_project_action: Mutex<Option<ProjectAction>>,
     /// Result of the last project action, signaled via condvar.
     pub project_action_result: (Mutex<Option<Result<String, String>>>, Condvar),
+    /// Current AWE state (written by GUI each frame, read by MCP).
+    pub awe_state: Mutex<AweState>,
+    /// Pending AWE state change from MCP (consumed by GUI each frame).
+    pub pending_awe_state: Mutex<Option<AweState>>,
 }
 
 impl McpSharedState {
@@ -53,6 +59,8 @@ impl McpSharedState {
             pending_auto_layout: AtomicBool::new(false),
             pending_project_action: Mutex::new(None),
             project_action_result: (Mutex::new(None), Condvar::new()),
+            awe_state: Mutex::new(AweState::default()),
+            pending_awe_state: Mutex::new(None),
         }
     }
 
@@ -68,6 +76,8 @@ impl McpSharedState {
             pending_auto_layout: AtomicBool::new(false),
             pending_project_action: Mutex::new(None),
             project_action_result: (Mutex::new(None), Condvar::new()),
+            awe_state: Mutex::new(AweState::default()),
+            pending_awe_state: Mutex::new(None),
         }
     }
 
