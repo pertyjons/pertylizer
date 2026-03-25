@@ -12,11 +12,14 @@ use ringbuf::traits::{Consumer, Split};
 use crate::audio::traits::{AudioHostTrait, AudioStream};
 use crate::audio::types::*;
 
-/// Ring buffer size for GUI consumer (large, ~65536 samples for ~1.4s at 48 kHz).
-const GUI_RING_SIZE: usize = 65536;
+/// Ring buffer size for GUI consumer (large, ~262144 samples for ~5.5s at 48 kHz stereo).
+/// Extra large to tolerate GUI lag spikes without dropping recorded audio.
+const GUI_RING_SIZE: usize = 262_144;
 
-/// Ring buffer size for engine consumer (small, ~2048 samples for low-latency).
-const ENGINE_RING_SIZE: usize = 2048;
+/// Ring buffer size for engine consumer (~16384 samples).
+/// Must be large enough that even at buffer sizes of 2048+ frames the cpal callback
+/// never overflows before the engine drains.
+const ENGINE_RING_SIZE: usize = 16_384;
 
 /// Recording state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -710,33 +710,41 @@ fn draw_waveform(ui: &mut egui::Ui, state: &mut SampleViewState, sample: &synth_
             let loop_end_x =
                 frame_to_x(loop_region.end.0, rect.left(), scroll_frames, frames_per_px);
 
-            // Loop region overlay
-            let loop_rect = egui::Rect::from_min_max(
-                egui::pos2(loop_start_x.max(rect.left()), rect.top()),
-                egui::pos2(loop_end_x.min(rect.right()), rect.bottom()),
-            );
-            painter.rect_filled(
-                loop_rect,
-                0.0,
-                Color32::from_rgba_unmultiplied(100, 200, 100, 30),
-            );
+            // Loop region overlay (guard against inverted rect when zoomed out of view)
+            let clamped_start = loop_start_x.max(rect.left());
+            let clamped_end = loop_end_x.min(rect.right());
+            if clamped_start < clamped_end {
+                let loop_rect = egui::Rect::from_min_max(
+                    egui::pos2(clamped_start, rect.top()),
+                    egui::pos2(clamped_end, rect.bottom()),
+                );
+                painter.rect_filled(
+                    loop_rect,
+                    0.0,
+                    Color32::from_rgba_unmultiplied(100, 200, 100, 30),
+                );
+            }
 
-            // Loop start/end lines
+            // Loop start/end lines (only if visible)
             let loop_color = t.colors.accent_green;
-            painter.line_segment(
-                [
-                    egui::pos2(loop_start_x, rect.top()),
-                    egui::pos2(loop_start_x, rect.bottom()),
-                ],
-                egui::Stroke::new(2.0, loop_color),
-            );
-            painter.line_segment(
-                [
-                    egui::pos2(loop_end_x, rect.top()),
-                    egui::pos2(loop_end_x, rect.bottom()),
-                ],
-                egui::Stroke::new(2.0, loop_color),
-            );
+            if loop_start_x >= rect.left() && loop_start_x <= rect.right() {
+                painter.line_segment(
+                    [
+                        egui::pos2(loop_start_x, rect.top()),
+                        egui::pos2(loop_start_x, rect.bottom()),
+                    ],
+                    egui::Stroke::new(2.0, loop_color),
+                );
+            }
+            if loop_end_x >= rect.left() && loop_end_x <= rect.right() {
+                painter.line_segment(
+                    [
+                        egui::pos2(loop_end_x, rect.top()),
+                        egui::pos2(loop_end_x, rect.bottom()),
+                    ],
+                    egui::Stroke::new(2.0, loop_color),
+                );
+            }
         }
     }
 

@@ -213,8 +213,14 @@ pub fn load_bundle(path: &Path, library: &mut SampleLibrary) -> Result<ProjectFi
         let id_str = name
             .strip_prefix("samples/")
             .and_then(|s| s.strip_suffix(".wav"))
-            .unwrap_or("0");
-        let sample_id: u64 = id_str.parse().unwrap_or(0);
+            .unwrap_or("");
+        let sample_id: u64 = match id_str.parse() {
+            Ok(id) if id > 0 => id,
+            _ => {
+                eprintln!("Warning: skipping non-numeric sample file in bundle: {name}");
+                continue;
+            }
+        };
 
         // Read WAV data
         let mut entry = archive

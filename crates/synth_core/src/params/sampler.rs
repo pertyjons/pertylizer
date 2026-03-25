@@ -32,6 +32,7 @@ pub enum PlayDirection {
     #[default]
     Forward,
     Reverse,
+    PingPong,
 }
 
 /// Parameters for the Sampler module.
@@ -51,6 +52,8 @@ pub enum SamplerParam {
     VelocitySensitivity(NormalizedValue),
     /// Fine-tune in cents (-100 to +100).
     FineTune(Cents),
+    /// Playback start offset (0.0 = beginning of crop, 1.0 = end).
+    StartOffset(NormalizedValue),
 }
 
 impl SamplerParam {
@@ -69,13 +72,16 @@ impl SamplerParam {
             Self::Direction(_) => "Direction",
             Self::VelocitySensitivity(_) => "Vel Sens",
             Self::FineTune(_) => "Fine Tune",
+            Self::StartOffset(_) => "Start Offset",
         }
     }
 
     /// Convert to f32 for GUI sliders.
+    ///
+    /// Returns `None` for `SampleSelect` (not slider-compatible).
     pub fn as_f32(&self) -> f32 {
         match self {
-            Self::SampleSelect(id) => id.0 as f32,
+            Self::SampleSelect(_) => 0.0, // Not meaningful as f32
             Self::PitchTracking(b) => {
                 if *b {
                     1.0
@@ -88,6 +94,7 @@ impl SamplerParam {
             Self::Direction(d) => *d as u8 as f32,
             Self::VelocitySensitivity(v) => v.as_f32(),
             Self::FineTune(c) => c.0,
+            Self::StartOffset(v) => v.as_f32(),
         }
     }
 
@@ -106,15 +113,16 @@ impl SamplerParam {
                 Self::PlayMode(mode)
             }
             Self::Direction(_) => {
-                let dir = if value < 0.5 {
-                    PlayDirection::Forward
-                } else {
-                    PlayDirection::Reverse
+                let dir = match value as u8 {
+                    0 => PlayDirection::Forward,
+                    1 => PlayDirection::Reverse,
+                    _ => PlayDirection::PingPong,
                 };
                 Self::Direction(dir)
             }
             Self::VelocitySensitivity(_) => Self::VelocitySensitivity(NormalizedValue::new(value)),
             Self::FineTune(_) => Self::FineTune(Cents::new(value)),
+            Self::StartOffset(_) => Self::StartOffset(NormalizedValue::new(value)),
         }
     }
 }

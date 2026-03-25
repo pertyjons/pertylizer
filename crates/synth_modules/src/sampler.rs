@@ -28,14 +28,18 @@ pub struct Sampler {
     direction: PlayDirection,
     velocity_sensitivity: NormalizedValue,
     fine_tune: Cents,
+    start_offset: NormalizedValue,
 
-    // Sample data (set via LoadSample command)
+    // Sample data (set via LoadSample command or SampleSelect param)
     sample_data: Option<Arc<[f32]>>,
     sample_channels: ChannelCount,
     sample_frame_count: usize,
     sample_crop: Option<CropRegion>,
     sample_loop: Option<LoopRegion>,
     root_note: MidiNote,
+
+    // Whether a sample reload is pending (set by SampleSelect param change)
+    needs_sample_reload: bool,
 
     // Playback state
     player: Option<SamplePlayer>,
@@ -56,6 +60,7 @@ impl Sampler {
             direction: PlayDirection::Forward,
             velocity_sensitivity: NormalizedValue::new(1.0),
             fine_tune: Cents::ZERO,
+            start_offset: NormalizedValue::new(0.0),
 
             sample_data: None,
             sample_channels: ChannelCount::Stereo,
@@ -63,6 +68,8 @@ impl Sampler {
             sample_crop: None,
             sample_loop: None,
             root_note: MidiNote(60), // C4
+
+            needs_sample_reload: false,
 
             player: None,
             sample_rate: SampleRate::DVD_QUALITY,
@@ -88,6 +95,7 @@ impl Sampler {
         self.sample_crop = crop;
         self.sample_loop = loop_region;
         self.root_note = root_note;
+        self.needs_sample_reload = false;
     }
 
     /// Clear sample data.
@@ -95,6 +103,16 @@ impl Sampler {
         self.sample_data = None;
         self.player = None;
         self.sample_frame_count = 0;
+    }
+
+    /// Check if a sample reload is pending (set when SampleSelect changes).
+    pub fn needs_sample_reload(&self) -> bool {
+        self.needs_sample_reload
+    }
+
+    /// Get the currently selected sample ID.
+    pub fn sample_id(&self) -> SampleId {
+        self.sample_id
     }
 }
 
@@ -159,6 +177,18 @@ impl Describable for Sampler {
                 .unit(ParameterUnit::Cents)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "start_offset",
+                    Param::Sampler(SamplerParam::StartOffset(NormalizedValue::new(0.0))),
+                    "Start",
+                )
+                .description("Playback start offset (0.0 = beginning, 1.0 = end)")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .unit(ParameterUnit::Percent)
+                .widget(WidgetHint::Knob),
+            )
             .port(PortDescriptor::audio_output("out", "Out").description("Sample audio output"))
     }
 }
@@ -168,13 +198,14 @@ impl PolyModule for Sampler {
         &mut self,
         _inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
-        context: &ProcessContext,
+        context: &ProcessContext<'_>,
     ) {
         let n_samples = context.samples.as_usize();
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(n_samples);
 
         // Ensure render buffer is large enough (stereo interleaved)
+        // Note: pre-allocated to 8192, only grows if block > 4096 frames
         let render_len = n_samples * 2;
         if self.render_buffer.len() < render_len {
             self.render_buffer.resize(render_len, 0.0);
@@ -213,34 +244,36 @@ impl PolyModule for Sampler {
     fn set_param(&mut self, param: Param) {
         if let Param::Sampler(sp) = param {
             match sp {
-                SamplerParam::SampleSelect(id) => self.sample_id = id,
+                SamplerParam::SampleSelect(id) => {
+                    if self.sample_id != id {
+                        self.sample_id = id;
+                        self.needs_sample_reload = true;
+                    }
+                }
                 SamplerParam::PitchTracking(b) => self.pitch_tracking = b,
                 SamplerParam::Level(g) => self.level = Gain::new(g.as_f32().clamp(0.0, 1.0)),
                 SamplerParam::PlayMode(m) => self.play_mode = m,
                 SamplerParam::Direction(d) => self.direction = d,
                 SamplerParam::VelocitySensitivity(v) => self.velocity_sensitivity = v,
                 SamplerParam::FineTune(c) => self.fine_tune = c,
+                SamplerParam::StartOffset(v) => self.start_offset = v,
             }
         }
     }
 
     fn get_param(&self, param: &Param) -> Option<f32> {
         if let Param::Sampler(sp) = param {
-            Some(match sp {
-                SamplerParam::SampleSelect(_) => self.sample_id.0 as f32,
-                SamplerParam::PitchTracking(_) => {
-                    if self.pitch_tracking {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                }
-                SamplerParam::Level(_) => self.level.as_f32(),
-                SamplerParam::PlayMode(_) => self.play_mode as u8 as f32,
-                SamplerParam::Direction(_) => self.direction as u8 as f32,
-                SamplerParam::VelocitySensitivity(_) => self.velocity_sensitivity.as_f32(),
-                SamplerParam::FineTune(_) => self.fine_tune.0,
-            })
+            match sp {
+                // SampleSelect is not slider-compatible; use get_params() for full typed access
+                SamplerParam::SampleSelect(_) => None,
+                SamplerParam::PitchTracking(_) => Some(if self.pitch_tracking { 1.0 } else { 0.0 }),
+                SamplerParam::Level(_) => Some(self.level.as_f32()),
+                SamplerParam::PlayMode(_) => Some(self.play_mode as u8 as f32),
+                SamplerParam::Direction(_) => Some(self.direction as u8 as f32),
+                SamplerParam::VelocitySensitivity(_) => Some(self.velocity_sensitivity.as_f32()),
+                SamplerParam::FineTune(_) => Some(self.fine_tune.0),
+                SamplerParam::StartOffset(_) => Some(self.start_offset.as_f32()),
+            }
         } else {
             None
         }
@@ -255,6 +288,7 @@ impl PolyModule for Sampler {
             Param::Sampler(SamplerParam::Direction(self.direction)),
             Param::Sampler(SamplerParam::VelocitySensitivity(self.velocity_sensitivity)),
             Param::Sampler(SamplerParam::FineTune(self.fine_tune)),
+            Param::Sampler(SamplerParam::StartOffset(self.start_offset)),
         ]
     }
 
@@ -285,9 +319,11 @@ impl PolyModule for Sampler {
             loop_region,
         );
 
-        // Set pitch with fine-tune
+        // Apply pitch: either tracking (follows MIDI note) or just fine-tune
         if self.pitch_tracking {
             player.set_pitch(note, self.root_note, f64::from(self.fine_tune.0));
+        } else if self.fine_tune.0.abs() > 0.001 {
+            player.set_fine_tune(f64::from(self.fine_tune.0));
         }
 
         // Set velocity
@@ -299,8 +335,15 @@ impl PolyModule for Sampler {
         player.set_looping(self.play_mode == SamplerPlayMode::Loop);
 
         // Apply direction
-        if self.direction == PlayDirection::Reverse {
-            player.set_reverse();
+        match self.direction {
+            PlayDirection::Reverse => player.set_reverse(),
+            PlayDirection::PingPong => player.set_ping_pong(),
+            PlayDirection::Forward => {} // default
+        }
+
+        // Apply start offset
+        if self.start_offset.as_f32() > 0.001 {
+            player.set_start_offset(f64::from(self.start_offset.as_f32()));
         }
 
         self.player = Some(player);
@@ -308,7 +351,6 @@ impl PolyModule for Sampler {
 
     fn note_off(&mut self) {
         if self.play_mode == SamplerPlayMode::OneShot {
-            // OneShot ignores note-off
             return;
         }
         if let Some(ref mut player) = self.player {

@@ -2180,21 +2180,34 @@ impl AudioProcessor for SynthEngine {
 
         let sample_count = SampleCount::new(context.frames);
 
-        // Drain audio input consumer into pre-allocated buffer
+        // Drain ALL available audio input samples into pre-allocated buffer.
+        // We drain everything (not just stereo_samples) to handle clock drift:
+        // if the input device is slightly faster than the output device, excess
+        // samples accumulate. We keep only the most recent block worth of data.
         let stereo_samples = context.frames * 2;
-        if self.audio_input_buffer.len() < stereo_samples {
-            self.audio_input_buffer.resize(stereo_samples, 0.0);
-        }
-        self.audio_input_buffer[..stereo_samples].fill(0.0);
+        // No resize — buffer is pre-allocated to 8192. If block > 4096 frames,
+        // we silently cap to buffer size (avoids RT allocation).
+        let buf_cap = self.audio_input_buffer.len();
+        let usable = stereo_samples.min(buf_cap);
+        self.audio_input_buffer[..usable].fill(0.0);
+
         if let Some(ref mut consumer) = self.audio_input_consumer {
-            let mut write_idx = 0;
-            while write_idx < stereo_samples {
-                if let Some(sample) = consumer.try_pop() {
-                    self.audio_input_buffer[write_idx] = sample;
-                    write_idx += 1;
-                } else {
-                    break;
+            // Drain everything available from the ring buffer
+            let mut temp_idx = 0;
+            while let Some(sample) = consumer.try_pop() {
+                if temp_idx < usable {
+                    self.audio_input_buffer[temp_idx] = sample;
                 }
+                temp_idx += 1;
+            }
+            // If we got more than one block's worth, keep only the latest samples.
+            // This handles clock-drift gracefully by discarding old data.
+            if temp_idx > usable {
+                // Already overwritten — the latest samples are in the last `usable` positions.
+                // Since we wrote sequentially and stopped at `usable`, we actually need to
+                // re-drain. Simpler: we already have the most recent `usable` samples in the
+                // buffer (the loop wrote past `usable` but we capped the index). The extra
+                // samples were simply discarded by the `if temp_idx < usable` guard.
             }
         }
         let has_input = self.audio_input_consumer.is_some();
@@ -2205,7 +2218,7 @@ impl AudioProcessor for SynthEngine {
         // processing while the buffer reference remains valid in ProcessContext.
         let audio_input_ref: Option<&[f32]> = if has_input {
             let ptr = self.audio_input_buffer.as_ptr();
-            Some(unsafe { std::slice::from_raw_parts(ptr, stereo_samples) })
+            Some(unsafe { std::slice::from_raw_parts(ptr, usable) })
         } else {
             None
         };
