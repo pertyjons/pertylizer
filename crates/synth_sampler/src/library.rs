@@ -30,9 +30,37 @@ impl SampleLibrary {
         id
     }
 
+    /// Add a sample with a specific ID (for bundle loading).
+    /// Updates `next_id` to avoid future collisions.
+    pub fn add_with_id(&mut self, mut sample: Sample, id: SampleId) -> SampleId {
+        sample.meta.id = id;
+        self.samples.insert(id, sample);
+        // Ensure next_id is always above the highest inserted ID
+        if id.0 >= self.next_id {
+            self.next_id = id.0 + 1;
+        }
+        id
+    }
+
+    /// Replace the audio data of an existing sample, preserving its ID and metadata.
+    /// Returns `false` if the sample was not found.
+    pub fn replace_data(&mut self, id: SampleId, data: Arc<[f32]>) -> bool {
+        if let Some(sample) = self.samples.get_mut(&id) {
+            sample.data = data;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Remove a sample by ID.
     pub fn remove(&mut self, id: SampleId) -> Option<Sample> {
         self.samples.remove(&id)
+    }
+
+    /// Remove all samples from the library.
+    pub fn clear(&mut self) {
+        self.samples.clear();
     }
 
     /// Get a sample reference by ID.

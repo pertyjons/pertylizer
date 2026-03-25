@@ -3026,14 +3026,12 @@ impl SynthBridge for AppSynthBridge {
             .map(|&s| s * gain)
             .collect::<Vec<_>>()
             .into();
-        let meta = sample.meta.clone();
         drop(lib);
         let mut lib = self
             .sample_library
             .write()
             .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
-        lib.remove(sample_id);
-        lib.add(synth_sampler::Sample::new(meta, normalized));
+        lib.replace_data(sample_id, normalized);
         Ok(())
     }
 
@@ -3055,15 +3053,13 @@ impl SynthBridge for AppSynthBridge {
                 reversed[frame * channels + ch] = sample.data[src * channels + ch];
             }
         }
-        let meta = sample.meta.clone();
         let data: std::sync::Arc<[f32]> = reversed.into();
         drop(lib);
         let mut lib = self
             .sample_library
             .write()
             .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
-        lib.remove(sample_id);
-        lib.add(synth_sampler::Sample::new(meta, data));
+        lib.replace_data(sample_id, data);
         Ok(())
     }
 

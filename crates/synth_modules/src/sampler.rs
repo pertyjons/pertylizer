@@ -67,7 +67,7 @@ impl Sampler {
             player: None,
             sample_rate: SampleRate::DVD_QUALITY,
 
-            render_buffer: vec![0.0; 2048],
+            render_buffer: vec![0.0; 8192], // Pre-allocate for up to 4096 stereo frames
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -285,9 +285,9 @@ impl PolyModule for Sampler {
             loop_region,
         );
 
-        // Set pitch
+        // Set pitch with fine-tune
         if self.pitch_tracking {
-            player.set_pitch(note, self.root_note);
+            player.set_pitch(note, self.root_note, f64::from(self.fine_tune.0));
         }
 
         // Set velocity
@@ -297,6 +297,11 @@ impl PolyModule for Sampler {
 
         // Set looping
         player.set_looping(self.play_mode == SamplerPlayMode::Loop);
+
+        // Apply direction
+        if self.direction == PlayDirection::Reverse {
+            player.set_reverse();
+        }
 
         self.player = Some(player);
     }

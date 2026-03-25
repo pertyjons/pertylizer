@@ -7,7 +7,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use eframe::egui;
+use eframe::egui::{self, Color32};
 use egui_remixicon::icons as ri;
 
 use crate::audio::input::{AudioInputManager, InputState};
@@ -662,44 +662,53 @@ fn draw_waveform(ui: &mut egui::Ui, state: &mut SampleViewState, sample: &synth_
             );
         }
 
+        // Compute frame-to-pixel mapping accounting for zoom and scroll
+        let visible_frames = (frame_count as f32 * state.zoom).max(1.0);
+        let frames_per_px = visible_frames / width;
+        let scroll_frames = state.scroll_offset;
+
+        /// Convert a frame index to an x pixel coordinate.
+        fn frame_to_x(frame: usize, rect_left: f32, scroll: f32, fpp: f32) -> f32 {
+            rect_left + (frame as f32 - scroll) / fpp
+        }
+
         // Draw crop region overlay
         if let Some(crop) = sample.meta.crop {
-            let frames_per_px = if visible_peaks > 0 {
-                frame_count as f32 / width
-            } else {
-                1.0
-            };
-
             // Dim area before crop start
             if crop.start.0 > 0 {
-                let crop_x = rect.left() + crop.start.0 as f32 / frames_per_px;
-                let dim_rect = egui::Rect::from_min_max(
-                    rect.left_top(),
-                    egui::pos2(crop_x.min(rect.right()), rect.bottom()),
-                );
-                painter.rect_filled(dim_rect, 0.0, Color32::from_black_alpha(100));
+                let crop_x = frame_to_x(crop.start.0, rect.left(), scroll_frames, frames_per_px);
+                if crop_x > rect.left() {
+                    let dim_rect = egui::Rect::from_min_max(
+                        rect.left_top(),
+                        egui::pos2(crop_x.min(rect.right()), rect.bottom()),
+                    );
+                    painter.rect_filled(dim_rect, 0.0, Color32::from_black_alpha(100));
+                }
             }
 
             // Dim area after crop end
             if crop.end.0 < frame_count {
-                let crop_x = rect.left() + crop.end.0 as f32 / frames_per_px;
-                let dim_rect = egui::Rect::from_min_max(
-                    egui::pos2(crop_x.max(rect.left()), rect.top()),
-                    rect.right_bottom(),
-                );
-                painter.rect_filled(dim_rect, 0.0, Color32::from_black_alpha(100));
+                let crop_x = frame_to_x(crop.end.0, rect.left(), scroll_frames, frames_per_px);
+                if crop_x < rect.right() {
+                    let dim_rect = egui::Rect::from_min_max(
+                        egui::pos2(crop_x.max(rect.left()), rect.top()),
+                        rect.right_bottom(),
+                    );
+                    painter.rect_filled(dim_rect, 0.0, Color32::from_black_alpha(100));
+                }
             }
         }
 
         // Draw loop region markers
         if let Some(loop_region) = sample.meta.loop_region {
-            let frames_per_px = if visible_peaks > 0 {
-                frame_count as f32 / width
-            } else {
-                1.0
-            };
-            let loop_start_x = rect.left() + loop_region.start.0 as f32 / frames_per_px;
-            let loop_end_x = rect.left() + loop_region.end.0 as f32 / frames_per_px;
+            let loop_start_x = frame_to_x(
+                loop_region.start.0,
+                rect.left(),
+                scroll_frames,
+                frames_per_px,
+            );
+            let loop_end_x =
+                frame_to_x(loop_region.end.0, rect.left(), scroll_frames, frames_per_px);
 
             // Loop region overlay
             let loop_rect = egui::Rect::from_min_max(
@@ -747,8 +756,6 @@ fn draw_waveform(ui: &mut egui::Ui, state: &mut SampleViewState, sample: &synth_
         state.peaks_dirty = true;
     }
 }
-
-use egui::Color32;
 
 // ============================================================================
 // PROPERTIES PANEL
@@ -1049,11 +1056,9 @@ fn normalize_sample(library: &Arc<RwLock<SampleLibrary>>, id: SampleId) {
                 .map(|&s| s * gain)
                 .collect::<Vec<_>>()
                 .into();
-            let meta = sample.meta.clone();
             drop(lib);
             if let Ok(mut lib) = library.write() {
-                lib.remove(id);
-                lib.add(synth_sampler::Sample::new(meta, normalized));
+                lib.replace_data(id, normalized);
             }
         }
     }
@@ -1075,12 +1080,10 @@ fn reverse_sample(library: &Arc<RwLock<SampleLibrary>>, id: SampleId) {
             }
         }
 
-        let meta = sample.meta.clone();
         let data: Arc<[f32]> = reversed.into();
         drop(lib);
         if let Ok(mut lib) = library.write() {
-            lib.remove(id);
-            lib.add(synth_sampler::Sample::new(meta, data));
+            lib.replace_data(id, data);
         }
     }
 }

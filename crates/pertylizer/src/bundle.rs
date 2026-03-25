@@ -111,15 +111,16 @@ pub fn save_bundle(
         let id = sample_meta.id.0;
         let filename = format!("samples/{id}.wav");
 
-        // Write WAV data into the ZIP
-        if let Some(sample) = library.get(sample_meta.id) {
-            let wav_data = sample_to_wav_bytes(sample)
-                .map_err(|e| PatchError::Io(format!("WAV encode: {e}")))?;
-            zip.start_file(&filename, options)
-                .map_err(|e| PatchError::Io(format!("ZIP write {filename}: {e}")))?;
-            zip.write_all(&wav_data)
-                .map_err(|e| PatchError::Io(format!("ZIP write: {e}")))?;
-        }
+        // Write WAV data into the ZIP (skip metadata if data missing)
+        let Some(sample) = library.get(sample_meta.id) else {
+            continue;
+        };
+        let wav_data =
+            sample_to_wav_bytes(sample).map_err(|e| PatchError::Io(format!("WAV encode: {e}")))?;
+        zip.start_file(&filename, options)
+            .map_err(|e| PatchError::Io(format!("ZIP write {filename}: {e}")))?;
+        zip.write_all(&wav_data)
+            .map_err(|e| PatchError::Io(format!("ZIP write: {e}")))?;
 
         // Build metadata entry
         metadata.samples.push(BundleSampleEntry {
@@ -156,7 +157,10 @@ pub fn save_bundle(
 }
 
 /// Load a project from a ZIP bundle, restoring samples into the library.
+///
+/// Clears existing samples before loading to avoid stale data.
 pub fn load_bundle(path: &Path, library: &mut SampleLibrary) -> Result<ProjectFile, PatchError> {
+    library.clear();
     let file =
         std::fs::File::open(path).map_err(|e| PatchError::Io(format!("Open bundle: {e}")))?;
     let mut archive =
@@ -240,7 +244,8 @@ pub fn load_bundle(path: &Path, library: &mut SampleLibrary) -> Result<ProjectFi
                         end: synth_sampler::FrameIndex::new(c.end),
                     });
                 }
-                library.add(sample);
+                let sid = synth_sampler::SampleId::new(sample_id);
+                library.add_with_id(sample, sid);
             }
             Err(e) => {
                 eprintln!("Warning: failed to load sample {name} from bundle: {e}");

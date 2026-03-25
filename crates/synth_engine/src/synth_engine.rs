@@ -461,7 +461,7 @@ impl SynthEngine {
             ),
             pre_record_loop: None,
             audio_input_consumer: None,
-            audio_input_buffer: vec![0.0; 2048],
+            audio_input_buffer: vec![0.0; 8192], // Pre-allocate for up to 4096 stereo frames
             callback_duration_sum: 0.0,
             callback_count: 0,
         };

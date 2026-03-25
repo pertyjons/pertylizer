@@ -99,9 +99,20 @@ impl SamplePlayer {
         }
     }
 
-    /// Set the playback speed from a MIDI note offset.
-    pub fn set_pitch(&mut self, target_note: MidiNote, root_note: MidiNote) {
-        self.speed = PlaybackSpeed::from_note_offset(target_note, root_note);
+    /// Set the playback speed from a MIDI note offset with optional fine-tune in cents.
+    pub fn set_pitch(&mut self, target_note: MidiNote, root_note: MidiNote, fine_tune_cents: f64) {
+        let semitones = f64::from(target_note.0) - f64::from(root_note.0) + fine_tune_cents / 100.0;
+        self.speed = PlaybackSpeed(2.0_f64.powf(semitones / 12.0));
+    }
+
+    /// Multiply the current speed by -1 (reverse playback).
+    /// Sets position to crop_end - 1 if currently at the start.
+    pub fn set_reverse(&mut self) {
+        self.speed = PlaybackSpeed(-self.speed.0.abs());
+        // Start from the end for reverse playback
+        if self.position.0 <= self.crop_end as f64 * 0.01 {
+            self.position = PlaybackPosition::new((self.crop_end.saturating_sub(1)) as f64);
+        }
     }
 
     /// Set velocity gain (0.0–1.0).
@@ -135,6 +146,7 @@ impl SamplePlayer {
     /// Render `frame_count` stereo frames into `output`.
     ///
     /// Output is always stereo interleaved `[L, R, L, R, ...]`.
+    /// Caller must ensure `output.len() >= frame_count * 2`.
     /// Returns `true` if still active.
     pub fn render(&mut self, output: &mut [f32], frame_count: usize) -> bool {
         if self.state == PlaybackState::Finished {
@@ -142,36 +154,38 @@ impl SamplePlayer {
         }
 
         let speed = self.speed.0;
+        let out_len = frame_count * 2;
+        // Bounds guard (W1): avoid panic on undersized buffer
+        if output.len() < out_len {
+            return false;
+        }
 
         for i in 0..frame_count {
-            let pos = self.position.0;
-            let idx = pos as usize;
+            // Wrap position if looping, or finish if past end
+            let idx = self.position.0 as usize;
+            let end = if self.looping {
+                self.loop_end.unwrap_or(self.crop_end)
+            } else {
+                self.crop_end
+            };
 
-            // Check if past the end
-            if idx >= self.crop_end {
+            if idx >= end {
                 if self.looping {
-                    if let (Some(ls), Some(_le)) = (self.loop_start, self.loop_end) {
-                        self.position = PlaybackPosition::new(ls as f64);
+                    if let Some(ls) = self.loop_start {
+                        // Wrap to loop start, preserving fractional offset
+                        let overshoot = self.position.0 - end as f64;
+                        self.position = PlaybackPosition::new(ls as f64 + overshoot);
                     } else {
-                        self.state = PlaybackState::Finished;
-                        // Fill remaining with silence
-                        for j in i..frame_count {
-                            output[j * 2] = 0.0;
-                            output[j * 2 + 1] = 0.0;
-                        }
+                        self.finish_silence(output, i, frame_count);
                         return false;
                     }
                 } else {
-                    self.state = PlaybackState::Finished;
-                    for j in i..frame_count {
-                        output[j * 2] = 0.0;
-                        output[j * 2 + 1] = 0.0;
-                    }
+                    self.finish_silence(output, i, frame_count);
                     return false;
                 }
             }
 
-            // Linear interpolation
+            // Read with linear interpolation (using current, possibly wrapped, position)
             let frac = self.position.fraction() as f32;
             let (left, right) = self.read_frame_interpolated(self.position.0 as usize, frac);
 
@@ -194,17 +208,18 @@ impl SamplePlayer {
 
             // Advance position
             self.position = PlaybackPosition::new(self.position.0 + speed);
-
-            // Handle loop wrapping
-            if self.looping
-                && let (Some(ls), Some(le)) = (self.loop_start, self.loop_end)
-                && self.position.0 as usize >= le
-            {
-                self.position = PlaybackPosition::new(ls as f64);
-            }
         }
 
         self.state != PlaybackState::Finished
+    }
+
+    /// Fill remaining output with silence and mark finished.
+    fn finish_silence(&mut self, output: &mut [f32], from: usize, total: usize) {
+        self.state = PlaybackState::Finished;
+        for j in from..total {
+            output[j * 2] = 0.0;
+            output[j * 2 + 1] = 0.0;
+        }
     }
 
     /// Read an interpolated stereo frame at the given position.
