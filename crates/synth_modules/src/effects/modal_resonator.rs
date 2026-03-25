@@ -202,7 +202,7 @@ impl Describable for ModalResonator {
 }
 
 impl AudioEffect for ModalResonator {
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         self.update_coeffs();
 
         let mode_count = self.modes.as_usize().clamp(1, MAX_MODES);

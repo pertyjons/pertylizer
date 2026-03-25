@@ -1,5 +1,38 @@
 # Version History
 
+## [0.251.0] - 2026-03-25
+### Sampling & Audio Recording
+- **New crate: `synth_sampler`** — sample data types, WAV I/O (load/save), sample library, linear interpolation resampling, sample playback DSP
+- **Sample View** — new GUI tab for browsing, importing, editing, and previewing samples:
+  - Sample list with name, duration, channels, and memory usage
+  - Waveform display with zoom, scroll, crop overlays, and loop markers
+  - Properties panel: editable name, root note, loop toggle with start/end/crossfade, crop toggle
+  - Toolbar: Import WAV, Export WAV, Zoom, Normalize, Reverse, Auto-trim, Delete
+  - Waveform peak cache for rendering performance
+- **Audio input recording** — record from microphone/line-in directly into the sample library:
+  - `AudioBackend::create_input_stream()` with dual SPSC ring buffers (engine + GUI)
+  - `AudioInputManager` with monitoring state machine, peak metering, recording buffer
+  - Bottom bar UI: input device selector, level meter, monitor toggle, record button with timer
+- **Sampler module** — new `PolyModule` for playing samples as instruments in the Rack:
+  - `SamplerParam`: sample select, pitch tracking, level, play mode (OneShot/Sustain/Loop), direction, velocity sensitivity, fine tune
+  - `SamplePlayer` DSP with linear interpolation, loop wrapping, velocity gain, release envelope
+  - Registered in module factory as voice module (prefix: "sam")
+- **Audio Input module** — new `PolyModule` that reads live audio input from `ProcessContext::audio_input`:
+  - Routes microphone/line-in into the patch graph
+  - `ProcessContext` refactored to `ProcessContext<'a>` with `audio_input: Option<&'a [f32]>` field
+  - Engine drains input consumer once per block, passes to all voices
+- **Bundle project format** — ZIP archives with embedded samples:
+  - `save_bundle()` / `load_bundle()` — ZIP with project.json + metadata.json + samples/*.wav
+  - Auto-detect format via ZIP magic bytes vs JSON
+  - Smart save: uses bundle when samples exist, plain JSON otherwise
+- **10 new MCP tools for sampling** — full remote control of the sample library:
+  - `list_samples`, `import_sample`, `delete_sample`, `rename_sample`
+  - `set_sample_root_note`, `normalize_sample`, `reverse_sample`, `trim_sample_silence`
+  - `list_input_devices`, `get_input_state`
+  - Shared `SampleLibrary` between GUI and MCP bridge via `Arc<RwLock<>>`
+- **Sample memory indicator** in top bar (next to CPU/voices/latency)
+- **`ModuleType::Sampler`** and **`ModuleType::AudioInput`** added to the module system
+
 ## [0.250.0] - 2026-03-20
 ### AWE MCP integration
 - **8 new MCP tools for AWE** — full remote control of the Acoustic World Engine via MCP:

@@ -134,7 +134,7 @@ impl Describable for FrequencyShifter {
 
 impl AudioEffect for FrequencyShifter {
     #[allow(clippy::too_many_lines)]
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         self.sample_rate = context.sample_rate;
         let sr = self.sample_rate.as_f32();
         let shift_hz = self.shift.as_f32();

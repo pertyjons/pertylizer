@@ -159,7 +159,7 @@ impl Describable for Waveshaper {
 }
 
 impl AudioEffect for Waveshaper {
-    fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext<'_>) {
         for i in 0..input.len().min(output.len()) {
             let dry = input[i];
             let shaped = self.shape(dry);

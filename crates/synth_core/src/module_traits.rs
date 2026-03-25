@@ -315,7 +315,7 @@ impl std::ops::Index<usize> for InputReader<'_> {
 
 /// Context passed to modules during processing.
 #[derive(Debug, Clone, Copy)]
-pub struct ProcessContext {
+pub struct ProcessContext<'a> {
     /// Sample rate (type-safe Hz).
     pub sample_rate: SampleRate,
     /// Number of samples to process (type-safe).
@@ -328,9 +328,11 @@ pub struct ProcessContext {
     pub position_beats: BeatPosition,
     /// Start time of the voice that is processing (for sweep arbitration).
     pub voice_start_time: SamplePosition,
+    /// Live audio input buffer for the current block (`None` if no input active).
+    pub audio_input: Option<&'a [f32]>,
 }
 
-impl Default for ProcessContext {
+impl Default for ProcessContext<'_> {
     fn default() -> Self {
         Self {
             sample_rate: SampleRate::DVD_QUALITY,
@@ -339,6 +341,7 @@ impl Default for ProcessContext {
             is_playing: false,
             position_beats: BeatPosition::ZERO,
             voice_start_time: SamplePosition::ZERO,
+            audio_input: None,
         }
     }
 }
@@ -939,7 +942,7 @@ pub trait PolyModule: Describable + Send {
         &mut self,
         inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
-        context: &ProcessContext,
+        context: &ProcessContext<'_>,
     );
 
     /// Set a parameter value.
@@ -1005,7 +1008,7 @@ pub trait PolyModule: Describable + Send {
 /// Effect modules process the mixed output of all voices.
 pub trait AudioEffect: Describable + Send {
     /// Process audio in-place or with separate input/output.
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext);
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>);
 
     /// Set a parameter value.
     /// The Param contains both the parameter type and its value.

@@ -1,6 +1,6 @@
 [package]
 name = "pertylizer"
-version = "0.250.0"
+version = "0.251.0"
 edition = "2024"
 rust-version = "1.94"
 description = "Pertylizer — a modular synthesizer"
@@ -24,6 +24,7 @@ synth_sequencer = { path = "../synth_sequencer" }
 synth_modules = { path = "../synth_modules" }
 synth_awe = { path = "../synth_awe" }
 synth_engine = { path = "../synth_engine" }
+synth_sampler = { path = "../synth_sampler" }
 
 # Audio I/O
 cpal = { workspace = true }
@@ -49,6 +50,9 @@ fastrand = { workspace = true }
 # Serialization for save/load
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# ZIP archive (bundle project format)
+zip = { workspace = true }
 
 # File system paths
 dirs = { workspace = true }

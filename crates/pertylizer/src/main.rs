@@ -91,6 +91,10 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             song: std::sync::Arc::clone(&song),
         });
 
+    // Create shared sample library (used by GUI and MCP bridge)
+    let sample_library =
+        std::sync::Arc::new(std::sync::RwLock::new(synth_sampler::SampleLibrary::new()));
+
     // Start MCP HTTP server in background (if feature enabled)
     #[cfg(feature = "mcp")]
     let mcp_shared = {
@@ -100,6 +104,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         let bridge = std::sync::Arc::new(pertylizer::mcp_bridge::AppSynthBridge::new(
             std::sync::Arc::clone(&session),
             std::sync::Arc::clone(&shared),
+            std::sync::Arc::clone(&sample_library),
         ));
         let registry = shared.mcp_sessions.clone();
         let shared_for_flag = std::sync::Arc::clone(&shared);
@@ -162,6 +167,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(feature = "osc")]
         osc_shared,
         settings,
+        sample_library,
     };
 
     let backend = create_backend();
@@ -209,9 +215,12 @@ fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
         .send(pertylizer::synth_engine::EngineCommand::SetSong {
             song: std::sync::Arc::clone(&shared.song),
         });
+    let sample_library =
+        std::sync::Arc::new(std::sync::RwLock::new(synth_sampler::SampleLibrary::new()));
     let bridge = std::sync::Arc::new(pertylizer::mcp_bridge::AppSynthBridge::new(
         std::sync::Arc::clone(&session),
         std::sync::Arc::clone(&shared),
+        sample_library,
     ));
 
     // Run MCP on stdio (blocking)

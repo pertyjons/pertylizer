@@ -264,7 +264,7 @@ impl Describable for GranularFx {
 
 impl AudioEffect for GranularFx {
     #[allow(clippy::too_many_lines)]
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         let sr = self.sample_rate.as_f32();
         let grains_per_sec = 1.0 + self.density.as_f32() * 59.0;
         self.spawn_interval = sr / grains_per_sec;

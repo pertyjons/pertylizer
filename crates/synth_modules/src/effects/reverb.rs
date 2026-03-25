@@ -238,7 +238,7 @@ impl Describable for Reverb {
 
 impl AudioEffect for Reverb {
     #[allow(clippy::too_many_lines)]
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         debug_assert!(
             (self.sample_rate.as_f32() - context.sample_rate.as_f32()).abs() <= 1.0,
             "Reverb sample rate mismatch - call set_sample_rate() before processing"

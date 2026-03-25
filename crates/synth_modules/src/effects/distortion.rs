@@ -159,7 +159,7 @@ impl Describable for Distortion {
 }
 
 impl AudioEffect for Distortion {
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         self.sample_rate = context.sample_rate;
         for i in 0..input.len().min(output.len()) {
             let dry = input[i];

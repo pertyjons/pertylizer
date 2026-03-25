@@ -60,6 +60,9 @@ pub mod panels;
 pub mod sequencer;
 
 #[cfg(feature = "gui-egui")]
+pub mod sample_view;
+
+#[cfg(feature = "gui-egui")]
 pub(crate) mod clipboard;
 
 use crate::audio::{AudioHostTrait, StreamConfig};
@@ -90,6 +93,8 @@ pub struct SynthGuiConfig {
     pub osc_shared: Option<synth_osc::OscSharedState>,
     /// Persistent application settings.
     pub settings: crate::io::settings::AppSettings,
+    /// Shared sample library.
+    pub sample_library: Arc<std::sync::RwLock<synth_sampler::SampleLibrary>>,
 }
 
 /// Trait that all GUI backends must implement.

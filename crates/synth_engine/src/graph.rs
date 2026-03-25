@@ -331,7 +331,7 @@ impl ModuleGraph {
     }
 
     /// Process the graph.
-    pub fn process(&mut self, output: &mut AudioBuffer, context: &ProcessContext) {
+    pub fn process(&mut self, output: &mut AudioBuffer, context: &ProcessContext<'_>) {
         // Ensure buffer sizes
         self.resize_buffers(context.samples.as_usize());
 
@@ -771,7 +771,7 @@ impl ModuleGraph {
         None
     }
 
-    fn process_module(&mut self, module_id: ModuleId, context: &ProcessContext) {
+    fn process_module(&mut self, module_id: ModuleId, context: &ProcessContext<'_>) {
         // Clear the input buffers Vec for this module
         self.input_buffers.clear();
 

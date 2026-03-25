@@ -238,7 +238,7 @@ impl Describable for BbdDelay {
 
 impl AudioEffect for BbdDelay {
     #[allow(clippy::too_many_lines)]
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         debug_assert_eq!(
             self.sample_rate, context.sample_rate,
             "BbdDelay sample rate mismatch - call set_sample_rate() before processing"

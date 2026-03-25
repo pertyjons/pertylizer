@@ -35,6 +35,10 @@ pub enum FileDialogMode {
     OpenAwePreset,
     /// Saving an AWE preset file.
     SaveAwePreset,
+    /// Importing a WAV sample file.
+    ImportSample,
+    /// Exporting a sample as WAV file.
+    ExportSample,
 }
 
 /// State for all application dialogs.
@@ -252,6 +256,38 @@ impl DialogState {
         self.file_dialog.save_file();
     }
 
+    /// Open the file dialog for importing a WAV sample.
+    pub fn open_import_sample_dialog(&mut self, initial_dir: Option<&Path>) {
+        self.file_dialog_mode = Some(FileDialogMode::ImportSample);
+        let mut dialog = FileDialog::new()
+            .add_file_filter(
+                "WAV files",
+                Arc::new(|p| p.extension().is_some_and(|e| e == "wav")),
+            )
+            .add_file_filter("All files", Arc::new(|_| true));
+        if let Some(dir) = initial_dir {
+            dialog = dialog.initial_directory(dir.to_path_buf());
+        }
+        self.file_dialog = dialog;
+        self.file_dialog.pick_file();
+    }
+
+    /// Open the file dialog for exporting a sample as WAV.
+    pub fn open_export_sample_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
+        self.file_dialog_mode = Some(FileDialogMode::ExportSample);
+        let mut dialog = FileDialog::new()
+            .add_file_filter(
+                "WAV files",
+                Arc::new(|p| p.extension().is_some_and(|e| e == "wav")),
+            )
+            .default_file_name(default_name);
+        if let Some(dir) = initial_dir {
+            dialog = dialog.initial_directory(dir.to_path_buf());
+        }
+        self.file_dialog = dialog;
+        self.file_dialog.save_file();
+    }
+
     /// Open the file dialog for opening a group template.
     pub fn open_open_group_template_dialog(&mut self, initial_dir: Option<&Path>) {
         self.file_dialog_mode = Some(FileDialogMode::OpenGroupTemplate);
@@ -280,7 +316,8 @@ impl DialogState {
                     FileDialogMode::SavePatch
                     | FileDialogMode::SaveProject
                     | FileDialogMode::ExportWav
-                    | FileDialogMode::SaveAwePreset,
+                    | FileDialogMode::SaveAwePreset
+                    | FileDialogMode::ExportSample,
                 ) => Some(FileDialogResult::Saved(path, mode)),
                 _ => Some(FileDialogResult::Picked(path, mode)),
             };

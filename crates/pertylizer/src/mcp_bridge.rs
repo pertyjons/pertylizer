@@ -33,12 +33,21 @@ use crate::session::SynthSession;
 pub struct AppSynthBridge {
     session: Arc<SynthSession>,
     shared: Arc<McpSharedState>,
+    sample_library: Arc<std::sync::RwLock<synth_sampler::SampleLibrary>>,
 }
 
 impl AppSynthBridge {
-    /// Create a new bridge with access to the session and shared MCP state.
-    pub fn new(session: Arc<SynthSession>, shared: Arc<McpSharedState>) -> Self {
-        Self { session, shared }
+    /// Create a new bridge with access to the session, shared MCP state, and sample library.
+    pub fn new(
+        session: Arc<SynthSession>,
+        shared: Arc<McpSharedState>,
+        sample_library: Arc<std::sync::RwLock<synth_sampler::SampleLibrary>>,
+    ) -> Self {
+        Self {
+            session,
+            shared,
+            sample_library,
+        }
     }
 }
 
@@ -2899,6 +2908,251 @@ impl SynthBridge for AppSynthBridge {
         }
 
         Ok(())
+    }
+
+    // === Sample library ===
+
+    fn list_samples(
+        &self,
+        filter: Option<&str>,
+    ) -> Result<Vec<synth_mcp::types::SampleInfo>, McpBridgeError> {
+        let lib = self
+            .sample_library
+            .read()
+            .map_err(|_| McpBridgeError::Other("Sample library lock poisoned".to_string()))?;
+        let metas = lib.list();
+        let filter_lower = filter.map(|f| f.to_lowercase());
+        Ok(metas
+            .into_iter()
+            .filter(|m| {
+                filter_lower
+                    .as_ref()
+                    .is_none_or(|f| m.name.to_lowercase().contains(f))
+            })
+            .map(meta_to_sample_info)
+            .collect())
+    }
+
+    fn import_sample(
+        &self,
+        path: &str,
+        name: Option<&str>,
+        root_note: Option<u8>,
+    ) -> Result<synth_mcp::types::SampleInfo, McpBridgeError> {
+        let file_path = std::path::Path::new(path);
+        if !file_path.exists() {
+            return Err(McpBridgeError::Other(format!("File not found: {path}")));
+        }
+        let target_rate = synth_core::audio::SampleRate::DVD_QUALITY;
+        let mut sample = synth_sampler::load_wav(file_path, target_rate)
+            .map_err(|e| McpBridgeError::Other(format!("WAV load error: {e}")))?;
+        if let Some(n) = name {
+            sample.meta.name = n.to_string();
+        }
+        if let Some(note) = root_note {
+            sample.meta.root_note = Some(synth_core::MidiNote(note));
+        }
+        let mut lib = self
+            .sample_library
+            .write()
+            .map_err(|_| McpBridgeError::Other("Sample library lock poisoned".to_string()))?;
+        let id = lib.add(sample);
+        let meta = lib.get_meta(id).ok_or_else(|| {
+            McpBridgeError::Other("Failed to retrieve imported sample".to_string())
+        })?;
+        Ok(meta_to_sample_info(meta))
+    }
+
+    fn delete_sample(&self, id: u64) -> Result<(), McpBridgeError> {
+        let mut lib = self
+            .sample_library
+            .write()
+            .map_err(|_| McpBridgeError::Other("Sample library lock poisoned".to_string()))?;
+        let sample_id = synth_sampler::SampleId::new(id);
+        lib.remove(sample_id)
+            .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?;
+        Ok(())
+    }
+
+    fn rename_sample(&self, id: u64, name: &str) -> Result<(), McpBridgeError> {
+        let mut lib = self
+            .sample_library
+            .write()
+            .map_err(|_| McpBridgeError::Other("Sample library lock poisoned".to_string()))?;
+        let sample_id = synth_sampler::SampleId::new(id);
+        let meta = lib
+            .get_meta(sample_id)
+            .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?
+            .clone();
+        let mut updated = meta;
+        updated.name = name.to_string();
+        lib.update_meta(sample_id, updated);
+        Ok(())
+    }
+
+    fn set_sample_root_note(&self, id: u64, note: u8) -> Result<(), McpBridgeError> {
+        let mut lib = self
+            .sample_library
+            .write()
+            .map_err(|_| McpBridgeError::Other("Sample library lock poisoned".to_string()))?;
+        let sample_id = synth_sampler::SampleId::new(id);
+        let meta = lib
+            .get_meta(sample_id)
+            .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?
+            .clone();
+        let mut updated = meta;
+        updated.root_note = Some(synth_core::MidiNote(note));
+        lib.update_meta(sample_id, updated);
+        Ok(())
+    }
+
+    fn normalize_sample(&self, id: u64) -> Result<(), McpBridgeError> {
+        let sample_id = synth_sampler::SampleId::new(id);
+        let lib = self
+            .sample_library
+            .read()
+            .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+        let sample = lib
+            .get(sample_id)
+            .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?;
+        let peak = sample.data.iter().fold(0.0_f32, |a, &s| a.max(s.abs()));
+        if peak <= 0.0 || (peak - 1.0).abs() < 1e-6 {
+            return Ok(());
+        }
+        let gain = 1.0 / peak;
+        let normalized: std::sync::Arc<[f32]> = sample
+            .data
+            .iter()
+            .map(|&s| s * gain)
+            .collect::<Vec<_>>()
+            .into();
+        let meta = sample.meta.clone();
+        drop(lib);
+        let mut lib = self
+            .sample_library
+            .write()
+            .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+        lib.remove(sample_id);
+        lib.add(synth_sampler::Sample::new(meta, normalized));
+        Ok(())
+    }
+
+    fn reverse_sample(&self, id: u64) -> Result<(), McpBridgeError> {
+        let sample_id = synth_sampler::SampleId::new(id);
+        let lib = self
+            .sample_library
+            .read()
+            .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+        let sample = lib
+            .get(sample_id)
+            .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?;
+        let channels = sample.meta.channels.count() as usize;
+        let frame_count = sample.meta.frame_count.as_usize();
+        let mut reversed = vec![0.0_f32; sample.data.len()];
+        for frame in 0..frame_count {
+            let src = frame_count - 1 - frame;
+            for ch in 0..channels {
+                reversed[frame * channels + ch] = sample.data[src * channels + ch];
+            }
+        }
+        let meta = sample.meta.clone();
+        let data: std::sync::Arc<[f32]> = reversed.into();
+        drop(lib);
+        let mut lib = self
+            .sample_library
+            .write()
+            .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+        lib.remove(sample_id);
+        lib.add(synth_sampler::Sample::new(meta, data));
+        Ok(())
+    }
+
+    fn trim_sample_silence(&self, id: u64) -> Result<(), McpBridgeError> {
+        let sample_id = synth_sampler::SampleId::new(id);
+        let threshold = 0.01_f32;
+        let lib = self
+            .sample_library
+            .read()
+            .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+        let sample = lib
+            .get(sample_id)
+            .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?;
+        let channels = sample.meta.channels.count() as usize;
+        let frame_count = sample.meta.frame_count.as_usize();
+        let mut start = 0;
+        for frame in 0..frame_count {
+            let mut peak = 0.0_f32;
+            for ch in 0..channels {
+                peak = peak.max(sample.data[frame * channels + ch].abs());
+            }
+            if peak > threshold {
+                start = frame;
+                break;
+            }
+        }
+        let mut end = frame_count;
+        for frame in (0..frame_count).rev() {
+            let mut peak = 0.0_f32;
+            for ch in 0..channels {
+                peak = peak.max(sample.data[frame * channels + ch].abs());
+            }
+            if peak > threshold {
+                end = frame + 1;
+                break;
+            }
+        }
+        drop(lib);
+        if start < end {
+            let mut lib = self
+                .sample_library
+                .write()
+                .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+            lib.update_crop(
+                sample_id,
+                Some(synth_sampler::CropRegion {
+                    start: synth_sampler::FrameIndex::new(start),
+                    end: synth_sampler::FrameIndex::new(end),
+                }),
+            );
+        }
+        Ok(())
+    }
+
+    // === Audio input ===
+
+    fn list_input_devices(&self) -> Result<Vec<synth_mcp::types::InputDeviceInfo>, McpBridgeError> {
+        // Input devices are GUI-side state; return empty from bridge
+        // (real implementation would need access to AudioHostTrait)
+        Ok(Vec::new())
+    }
+
+    fn get_input_state(&self) -> Result<synth_mcp::types::InputStateInfo, McpBridgeError> {
+        // Input state is GUI-side; return idle from bridge
+        Ok(synth_mcp::types::InputStateInfo {
+            state: "idle".to_string(),
+            peak_level: 0.0,
+            recorded_seconds: 0.0,
+            is_active: false,
+        })
+    }
+}
+
+fn meta_to_sample_info(meta: &synth_sampler::SampleMeta) -> synth_mcp::types::SampleInfo {
+    synth_mcp::types::SampleInfo {
+        id: meta.id.0,
+        name: meta.name.clone(),
+        duration_seconds: meta.duration_seconds(),
+        sample_rate: meta.sample_rate.0,
+        channels: meta.channels.count(),
+        frame_count: meta.frame_count.as_usize(),
+        root_note: meta.root_note.map(|n| n.0),
+        loop_enabled: meta.loop_region.is_some(),
+        has_crop: meta.crop.is_some(),
+        source: match &meta.source {
+            synth_sampler::SampleSource::Recorded => "recorded".to_string(),
+            synth_sampler::SampleSource::Imported { .. } => "imported".to_string(),
+            synth_sampler::SampleSource::Generated => "generated".to_string(),
+        },
     }
 }
 

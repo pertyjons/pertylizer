@@ -18,6 +18,8 @@ pub enum AppView {
     AcousticWorld,
     /// Sequencer view (piano roll / arrangement).
     Sequencer,
+    /// Sample browser and editor view.
+    Sample,
 }
 
 // Re-export effect types from views module to avoid duplication

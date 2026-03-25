@@ -105,7 +105,7 @@ impl ProjectFile {
     }
 }
 
-/// Result of auto-detecting and loading a JSON file.
+/// Result of auto-detecting and loading a file.
 pub enum LoadedFile {
     /// A single-instrument patch file.
     Patch(Patch),
@@ -113,13 +113,21 @@ pub enum LoadedFile {
     Project(Box<ProjectFile>),
     /// An AWE preset file.
     AwePreset(AwePresetFile),
+    /// A ZIP bundle (contains project + samples). Path stored for deferred loading.
+    Bundle(PathBuf),
 }
 
-/// Read a JSON file once, auto-detect whether it's a patch, project, or AWE preset,
+/// Read a file, auto-detect whether it's a ZIP bundle, patch, project, or AWE preset,
 /// and parse it.
 ///
-/// Looks for `"file_type"` to distinguish file types. Falls back to patch.
+/// Detects ZIP bundles via magic bytes (`PK\x03\x04`), then falls back to JSON parsing
+/// with `"file_type"` discriminator. Falls back to patch format.
 pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedFile, PatchError> {
+    // Check for ZIP bundle format first
+    if crate::bundle::is_zip_file(path.as_ref()) {
+        return Ok(LoadedFile::Bundle(path.as_ref().to_path_buf()));
+    }
+
     let content = fs::read_to_string(path.as_ref()).map_err(|e| PatchError::Io(e.to_string()))?;
 
     // Check for discriminator field

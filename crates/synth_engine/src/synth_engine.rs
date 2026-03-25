@@ -392,6 +392,12 @@ pub struct SynthEngine {
     /// Saved loop state before recording started (start, end, enabled).
     pre_record_loop: Option<(synth_sequencer::Tick, synth_sequencer::Tick, bool)>,
 
+    // === Audio input ===
+    /// Consumer for live audio input (from AudioInputManager's engine ring buffer).
+    audio_input_consumer: Option<ringbuf::HeapCons<f32>>,
+    /// Pre-allocated buffer for audio input (stereo interleaved, block_size * 2).
+    audio_input_buffer: Vec<f32>,
+
     // === Performance monitoring ===
     callback_duration_sum: f32,
     callback_count: u32,
@@ -454,6 +460,8 @@ impl SynthEngine {
                 synth_core::SampleRate::DVD_QUALITY,
             ),
             pre_record_loop: None,
+            audio_input_consumer: None,
+            audio_input_buffer: vec![0.0; 2048],
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -1052,6 +1060,12 @@ impl SynthEngine {
             }
             EngineCommand::SetAweState { snapshot } => {
                 self.awe_engine.apply_snapshot(snapshot);
+            }
+            EngineCommand::SetAudioInputConsumer { consumer } => {
+                self.audio_input_consumer = Some(consumer);
+            }
+            EngineCommand::ClearAudioInputConsumer => {
+                self.audio_input_consumer = None;
             }
         }
     }
@@ -1945,7 +1959,7 @@ impl SynthEngine {
     /// ## Solo Logic
     /// If any instrument is soloed, only soloed instruments produce sound.
     /// Non-soloed instruments are skipped entirely (not just muted).
-    fn process_voices(&mut self, context: &ProcessContext) {
+    fn process_voices(&mut self, context: &ProcessContext<'_>) {
         let num_channels = 2;
         let buffer_size = context.samples.as_usize() * num_channels;
 
@@ -2000,7 +2014,7 @@ impl SynthEngine {
     ///
     /// This processes user-added modules and mixes their output
     /// into the main mix buffer.
-    fn process_module_graph(&mut self, context: &ProcessContext) {
+    fn process_module_graph(&mut self, context: &ProcessContext<'_>) {
         if !self.use_modular_routing || self.module_graph.is_empty() {
             return;
         }
@@ -2024,7 +2038,7 @@ impl SynthEngine {
     ///
     /// This processes effects like master reverb, limiter, EQ
     /// on the mixed output from all instruments.
-    fn process_master_effects(&mut self, context: &ProcessContext) {
+    fn process_master_effects(&mut self, context: &ProcessContext<'_>) {
         if self.master_effects.is_empty() {
             return;
         }
@@ -2166,6 +2180,36 @@ impl AudioProcessor for SynthEngine {
 
         let sample_count = SampleCount::new(context.frames);
 
+        // Drain audio input consumer into pre-allocated buffer
+        let stereo_samples = context.frames * 2;
+        if self.audio_input_buffer.len() < stereo_samples {
+            self.audio_input_buffer.resize(stereo_samples, 0.0);
+        }
+        self.audio_input_buffer[..stereo_samples].fill(0.0);
+        if let Some(ref mut consumer) = self.audio_input_consumer {
+            let mut write_idx = 0;
+            while write_idx < stereo_samples {
+                if let Some(sample) = consumer.try_pop() {
+                    self.audio_input_buffer[write_idx] = sample;
+                    write_idx += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+        let has_input = self.audio_input_consumer.is_some();
+
+        // SAFETY: The audio_input_buffer is pre-allocated and not modified during
+        // the remainder of this process() call. We extend its lifetime to decouple
+        // it from `self` so that `self` can be borrowed mutably for instrument
+        // processing while the buffer reference remains valid in ProcessContext.
+        let audio_input_ref: Option<&[f32]> = if has_input {
+            let ptr = self.audio_input_buffer.as_ptr();
+            Some(unsafe { std::slice::from_raw_parts(ptr, stereo_samples) })
+        } else {
+            None
+        };
+
         let process_context = ProcessContext {
             sample_rate: synth_core::SampleRate::new(context.sample_rate.as_f32()),
             samples: sample_count,
@@ -2173,6 +2217,7 @@ impl AudioProcessor for SynthEngine {
             is_playing: self.state.transport.is_playing(),
             position_beats: BeatPosition::new(self.state.transport.position_beats.load()),
             voice_start_time: synth_core::SamplePosition::ZERO,
+            audio_input: audio_input_ref,
         };
 
         // Save tick before sequencer advances (for beat boundary detection)

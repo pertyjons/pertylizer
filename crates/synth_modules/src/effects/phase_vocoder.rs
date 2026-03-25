@@ -215,7 +215,7 @@ impl Describable for PhaseVocoder {
 }
 
 impl AudioEffect for PhaseVocoder {
-    fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext<'_>) {
         if self.needs_rebuild {
             self.rebuild_stft();
         }

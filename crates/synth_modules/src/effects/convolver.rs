@@ -220,7 +220,7 @@ impl Describable for Convolver {
 
 impl AudioEffect for Convolver {
     #[allow(clippy::too_many_lines)]
-    fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext<'_>) {
         if self.ir_dirty {
             self.rebuild_ir();
         }

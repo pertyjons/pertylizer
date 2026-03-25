@@ -43,6 +43,7 @@ use synth_engine::commands::PortId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer};
 use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
+use synth_sampler::SampleLibrary;
 
 /// Action deferred until the user responds to the unsaved-changes dialog.
 enum PendingAction {
@@ -295,6 +296,15 @@ struct SynthApp {
 
     /// Pending AWE preset to save (waiting for file dialog).
     pending_awe_preset_save: Option<crate::patch::AwePresetFile>,
+
+    /// Shared sample library.
+    sample_library: std::sync::Arc<std::sync::RwLock<SampleLibrary>>,
+
+    /// Sample view state.
+    sample_view_state: crate::gui::sample_view::SampleViewState,
+
+    /// Audio input manager for recording.
+    audio_input: crate::audio::input::AudioInputManager,
 }
 
 impl SynthApp {
@@ -380,6 +390,9 @@ impl SynthApp {
             scope_buf_r: Vec::new(),
             last_title: String::new(),
             pending_awe_preset_save: None,
+            sample_library: config.sample_library,
+            sample_view_state: crate::gui::sample_view::SampleViewState::new(),
+            audio_input: crate::audio::input::AudioInputManager::new(),
         }
     }
 
@@ -572,6 +585,7 @@ impl eframe::App for SynthApp {
                             self.load_awe_preset_data(&preset);
                             Ok(format!("Loaded AWE preset: {}", preset.name))
                         }
+                        Ok(LoadedFile::Bundle(bundle_path)) => self.load_bundle_file(&bundle_path),
                         Err(e) => Err(e.to_string()),
                     },
                 };
@@ -933,13 +947,14 @@ impl eframe::App for SynthApp {
                 ui.separator();
                 {
                     let t = theme();
-                    let views: [(AppView, &str); 3] = [
+                    let views: [(AppView, &str); 4] = [
                         (AppView::Rack, &format!("{} Rack", ri::LAYOUT_GRID_FILL)),
                         (
                             AppView::AcousticWorld,
                             &format!("{} AWE", ri::SURROUND_SOUND_FILL),
                         ),
                         (AppView::Sequencer, &format!("{} Seq", ri::PLAY_LIST_FILL)),
+                        (AppView::Sample, &format!("{} Sample", ri::MUSIC_FILL)),
                     ];
                     let seg_w = 80.0_f32;
                     let seg_h = 22.0_f32;
@@ -1064,6 +1079,27 @@ impl eframe::App for SynthApp {
                         ))
                         .color(theme().colors.text_dim),
                     );
+                    // Sample memory indicator
+                    if let Ok(lib) = self.sample_library.read() {
+                        let count = lib.len();
+                        if count > 0 {
+                            let total_bytes: usize = lib
+                                .list()
+                                .iter()
+                                .map(|m| {
+                                    m.frame_count.as_usize()
+                                        * m.channels.count() as usize
+                                        * std::mem::size_of::<f32>()
+                                })
+                                .sum();
+                            let mb = total_bytes as f64 / (1024.0 * 1024.0);
+                            ui.separator();
+                            ui.label(
+                                RichText::new(format!("Samples: {count} ({mb:.1}MB)"))
+                                    .color(theme().colors.text_dim),
+                            );
+                        }
+                    }
                     ui.separator();
                     // MIDI status indicator (with port selector on click)
                     {
@@ -1691,6 +1727,98 @@ impl eframe::App for SynthApp {
                     &self.instruments,
                     &mut self.undo_manager,
                 );
+            }
+            AppView::Sample => {
+                // Refresh input device cache on demand (not every frame)
+                if self.sample_view_state.devices_dirty {
+                    self.sample_view_state.cached_input_devices = self
+                        .host
+                        .as_ref()
+                        .and_then(|h| h.devices().ok())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|d| {
+                            matches!(
+                                d.device_type,
+                                synth_core::DeviceType::Input | synth_core::DeviceType::Duplex
+                            )
+                        })
+                        .collect();
+                    self.sample_view_state.devices_dirty = false;
+                }
+
+                let action = crate::gui::sample_view::draw_sample_view(
+                    ctx,
+                    &self.sample_library,
+                    &mut self.sample_view_state,
+                    &mut self.audio_input,
+                );
+                match action {
+                    crate::gui::sample_view::SampleViewAction::None => {}
+                    crate::gui::sample_view::SampleViewAction::ImportWav => {
+                        self.dialog_state.open_import_sample_dialog(None);
+                    }
+                    crate::gui::sample_view::SampleViewAction::ExportWav { name } => {
+                        let wav_name = format!("{name}.wav");
+                        self.dialog_state.open_export_sample_dialog(&wav_name, None);
+                    }
+                    crate::gui::sample_view::SampleViewAction::StartMonitoring => {
+                        if let Some(host) = &self.host {
+                            let device = self.sample_view_state.selected_input_device.as_deref();
+                            let config = synth_core::StreamConfig {
+                                sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
+                                buffer_size: synth_core::BufferSize::MEDIUM,
+                                channels: synth_core::ChannelCount::Stereo,
+                            };
+                            if let Err(e) =
+                                self.audio_input
+                                    .start_monitoring(host.as_ref(), device, &config)
+                            {
+                                self.dialog_state.set_status(format!("Input error: {e}"));
+                            }
+                        }
+                    }
+                    crate::gui::sample_view::SampleViewAction::StopMonitoring => {
+                        self.audio_input.stop_monitoring();
+                    }
+                    crate::gui::sample_view::SampleViewAction::StartRecording => {
+                        self.audio_input.start_recording();
+                    }
+                    crate::gui::sample_view::SampleViewAction::StopRecording => {
+                        if let Some(data) = self.audio_input.stop_recording() {
+                            let channels = self.audio_input.channels();
+                            let sample_rate = self.audio_input.sample_rate();
+                            let frame_count = if channels > 0 {
+                                data.len() / channels as usize
+                            } else {
+                                0
+                            };
+                            let sample = synth_sampler::Sample::new(
+                                synth_sampler::SampleMeta {
+                                    id: synth_sampler::SampleId::new(0),
+                                    name: format!(
+                                        "Recording {:.1}s",
+                                        frame_count as f64 / f64::from(sample_rate.0)
+                                    ),
+                                    sample_rate,
+                                    channels: synth_core::ChannelCount::from(channels),
+                                    frame_count: synth_core::SampleCount::new(frame_count),
+                                    root_note: None,
+                                    loop_region: None,
+                                    crop: None,
+                                    source: synth_sampler::SampleSource::Recorded,
+                                },
+                                data.into(),
+                            );
+                            if let Ok(mut lib) = self.sample_library.write() {
+                                let id = lib.add(sample);
+                                self.sample_view_state.selected_sample = Some(id);
+                                self.sample_view_state.invalidate_peaks();
+                            }
+                            self.dialog_state.set_status("Recording saved");
+                        }
+                    }
+                }
             }
         }
 
@@ -3227,6 +3355,21 @@ impl SynthApp {
                             self.dialog_state
                                 .set_status(format!("Loaded AWE preset: {}", preset.name));
                         }
+                        Ok(LoadedFile::Bundle(bundle_path)) => {
+                            match self.load_bundle_file(&bundle_path) {
+                                Ok(msg) => {
+                                    self.current_project_path = Some(path.clone());
+                                    self.dirty = false;
+                                    self.settings.add_recent_project(path.clone());
+                                    self.settings.save();
+                                    self.dialog_state.set_status(msg);
+                                }
+                                Err(e) => {
+                                    self.dialog_state
+                                        .set_status(format!("Bundle load error: {e}"));
+                                }
+                            }
+                        }
                         Err(e) => {
                             self.settings.save();
                             self.dialog_state
@@ -3239,7 +3382,18 @@ impl SynthApp {
                         self.settings.directories.last_project_dir = Some(parent.to_path_buf());
                     }
                     let proj = self.create_project_from_app();
-                    match proj.save(&path) {
+                    // Use bundle format if there are samples, plain JSON otherwise
+                    let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+                    let save_result = if has_samples {
+                        if let Ok(lib) = self.sample_library.read() {
+                            crate::bundle::save_bundle(&proj, &lib, &path)
+                        } else {
+                            proj.save(&path)
+                        }
+                    } else {
+                        proj.save(&path)
+                    };
+                    match save_result {
                         Ok(()) => {
                             self.current_project_path = Some(path.clone());
                             self.dirty = false;
@@ -3299,6 +3453,49 @@ impl SynthApp {
                             Err(e) => {
                                 self.dialog_state
                                     .set_status(format!("Error saving AWE preset: {e}"));
+                            }
+                        }
+                    }
+                }
+                FileDialogResult::Picked(path, Some(FileDialogMode::ImportSample)) => {
+                    let target_rate = synth_core::audio::SampleRate::DVD_QUALITY;
+                    match synth_sampler::load_wav(&path, target_rate) {
+                        Ok(sample) => {
+                            let name = sample.meta.name.clone();
+                            if let Ok(mut lib) = self.sample_library.write() {
+                                let id = lib.add(sample);
+                                self.sample_view_state.selected_sample = Some(id);
+                                self.sample_view_state.invalidate_peaks();
+                            }
+                            self.dialog_state
+                                .set_status(format!("Imported sample: {name}"));
+                        }
+                        Err(e) => {
+                            self.dialog_state.set_status(format!("Import failed: {e}"));
+                        }
+                    }
+                }
+                FileDialogResult::Saved(path, Some(FileDialogMode::ExportSample)) => {
+                    if let Some(id) = self.sample_view_state.selected_sample
+                        && let Ok(lib) = self.sample_library.read()
+                        && let Some(sample) = lib.get(id)
+                    {
+                        let save_path = if path.extension().is_none() {
+                            path.with_extension("wav")
+                        } else {
+                            path
+                        };
+                        match synth_sampler::save_wav(
+                            sample,
+                            &save_path,
+                            synth_sampler::BitDepth::Int16,
+                        ) {
+                            Ok(()) => {
+                                self.dialog_state
+                                    .set_status(format!("Exported: {}", save_path.display()));
+                            }
+                            Err(e) => {
+                                self.dialog_state.set_status(format!("Export failed: {e}"));
                             }
                         }
                     }
@@ -3787,6 +3984,25 @@ impl SynthApp {
         )
     }
 
+    /// Load a ZIP bundle project file with embedded samples.
+    fn load_bundle_file(&mut self, path: &std::path::Path) -> Result<String, String> {
+        let library_clone = std::sync::Arc::clone(&self.sample_library);
+        let (project, sample_count) = {
+            let mut lib = library_clone
+                .write()
+                .map_err(|_| "Failed to acquire sample library lock".to_string())?;
+            let project = crate::bundle::load_bundle(path, &mut lib).map_err(|e| format!("{e}"))?;
+            let count = lib.len();
+            (project, count)
+        };
+        self.load_project_data(project);
+        self.sample_view_state.invalidate_peaks();
+        Ok(format!(
+            "Bundle loaded: {} ({sample_count} samples)",
+            path.display()
+        ))
+    }
+
     /// Load a project file, replacing all current state.
     fn load_project_data(&mut self, project: ProjectFile) {
         // 1. Stop sequencer playback
@@ -4021,6 +4237,19 @@ impl SynthApp {
                 self.dialog_state
                     .set_status(format!("Loaded AWE preset: {}", preset.name));
             }
+            Ok(LoadedFile::Bundle(bundle_path)) => match self.load_bundle_file(&bundle_path) {
+                Ok(msg) => {
+                    self.current_project_path = Some(path.clone());
+                    self.dirty = false;
+                    self.settings.add_recent_project(path.clone());
+                    self.settings.save();
+                    self.dialog_state.set_status(msg);
+                }
+                Err(e) => {
+                    self.dialog_state
+                        .set_status(format!("Bundle load error: {e}"));
+                }
+            },
             Err(e) => {
                 self.settings.remove_recent_project(&path);
                 self.settings.save();

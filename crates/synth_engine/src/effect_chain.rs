@@ -309,7 +309,7 @@ impl EffectChain {
     /// The `mix_buffer` contains interleaved stereo audio and is modified in place.
     /// Visualizers are processed separately via `process_visualizers()` so they
     /// can run after AWE to show the final post-AWE signal.
-    pub fn process(&mut self, mix_buffer: &mut AudioBuffer, context: &ProcessContext) {
+    pub fn process(&mut self, mix_buffer: &mut AudioBuffer, context: &ProcessContext<'_>) {
         // Resize to active frame count. This never exceeds MAX_BUFFER_SIZE * 2
         // which was pre-allocated in the constructor, so no heap allocation occurs.
         debug_assert!(

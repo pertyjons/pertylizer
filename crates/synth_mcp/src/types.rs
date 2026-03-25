@@ -613,3 +613,54 @@ pub struct AwePresetInfo {
     /// Short description of the acoustic character.
     pub description: String,
 }
+
+// ============================================================================
+// SAMPLE TYPES
+// ============================================================================
+
+/// Information about a sample in the library.
+#[derive(Debug, Clone, Serialize)]
+pub struct SampleInfo {
+    /// Sample ID.
+    pub id: u64,
+    /// Display name.
+    pub name: String,
+    /// Duration in seconds.
+    pub duration_seconds: f64,
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// Number of channels (1=mono, 2=stereo).
+    pub channels: u16,
+    /// Total frames.
+    pub frame_count: usize,
+    /// Root MIDI note (if set).
+    pub root_note: Option<u8>,
+    /// Whether loop is enabled.
+    pub loop_enabled: bool,
+    /// Whether crop is set.
+    pub has_crop: bool,
+    /// Source type (recorded, imported, generated).
+    pub source: String,
+}
+
+/// Current audio input state.
+#[derive(Debug, Clone, Serialize)]
+pub struct InputStateInfo {
+    /// Current state: "idle", "monitoring", or "recording".
+    pub state: String,
+    /// Current peak level (0.0 to 1.0+).
+    pub peak_level: f32,
+    /// Recording duration in seconds (0 if not recording).
+    pub recorded_seconds: f64,
+    /// Whether the input stream is active.
+    pub is_active: bool,
+}
+
+/// Info about an audio input device.
+#[derive(Debug, Clone, Serialize)]
+pub struct InputDeviceInfo {
+    /// Device name/ID.
+    pub name: String,
+    /// Number of input channels.
+    pub input_channels: u16,
+}

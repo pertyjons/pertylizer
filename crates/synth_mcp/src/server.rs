@@ -1165,6 +1165,50 @@ pub struct SetAweLfoParam {
     pub target: String,
 }
 
+// ============================================================================
+// SAMPLE PARAMETER STRUCTS
+// ============================================================================
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListSamplesParam {
+    #[schemars(description = "Optional name filter (substring match, case-insensitive).")]
+    pub name_filter: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ImportSampleParam {
+    #[schemars(description = "Absolute file path to the WAV file to import.")]
+    pub path: String,
+    #[schemars(description = "Optional display name. Defaults to filename without extension.")]
+    pub name: Option<String>,
+    #[schemars(
+        description = "Optional root MIDI note (0-127). 60 = C4 (middle C). Determines pitch mapping."
+    )]
+    pub root_note: Option<u8>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SampleIdParam {
+    #[schemars(description = "Sample ID. Use list_samples to find available IDs.")]
+    pub sample_id: u64,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RenameSampleParam {
+    #[schemars(description = "Sample ID.")]
+    pub sample_id: u64,
+    #[schemars(description = "New display name for the sample.")]
+    pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetSampleRootNoteParam {
+    #[schemars(description = "Sample ID.")]
+    pub sample_id: u64,
+    #[schemars(description = "Root MIDI note (0-127). 60=C4, 48=C3, 72=C5.")]
+    pub note: u8,
+}
+
 // === MCP Server ===
 
 /// The MCP server that wraps a SynthBridge implementation.
@@ -3105,6 +3149,126 @@ impl SynthMcpServer {
                 "OK: AWE LFO {} → {} at {:.2} Hz (amount {:.2})",
                 p.index, p.target, p.rate, p.amount
             ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // ========================================================================
+    // SAMPLE LIBRARY TOOLS
+    // ========================================================================
+
+    #[tool(
+        description = "List all samples in the sample library. Returns id, name, duration, channels, \
+                       sample rate, root note, and source type for each sample. Use optional \
+                       name_filter to search by name substring."
+    )]
+    async fn list_samples(&self, params: Parameters<ListSamplesParam>) -> String {
+        match self.bridge.list_samples(params.0.name_filter.as_deref()) {
+            Ok(samples) => to_json(&samples),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Import a WAV file into the sample library. Returns the new sample info with \
+                       assigned ID. Optionally override the name and set the root MIDI note (0-127, \
+                       default 60=C4)."
+    )]
+    async fn import_sample(&self, params: Parameters<ImportSampleParam>) -> String {
+        match self.bridge.import_sample(
+            &params.0.path,
+            params.0.name.as_deref(),
+            params.0.root_note,
+        ) {
+            Ok(info) => to_json(&info),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Delete a sample from the library by ID. Use list_samples to find sample IDs."
+    )]
+    async fn delete_sample(&self, params: Parameters<SampleIdParam>) -> String {
+        match self.bridge.delete_sample(params.0.sample_id) {
+            Ok(()) => "OK: Sample deleted".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Rename a sample in the library.")]
+    async fn rename_sample(&self, params: Parameters<RenameSampleParam>) -> String {
+        match self
+            .bridge
+            .rename_sample(params.0.sample_id, &params.0.name)
+        {
+            Ok(()) => format!("OK: Sample renamed to '{}'", params.0.name),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set the root MIDI note for a sample (determines playback pitch mapping). \
+                       Note 60 = C4 (middle C). Range: 0-127."
+    )]
+    async fn set_sample_root_note(&self, params: Parameters<SetSampleRootNoteParam>) -> String {
+        if params.0.note > 127 {
+            return "Error: note must be 0-127".to_string();
+        }
+        match self
+            .bridge
+            .set_sample_root_note(params.0.sample_id, params.0.note)
+        {
+            Ok(()) => format!("OK: Root note set to {}", params.0.note),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Normalize sample peak level to 0 dB (maximum without clipping).")]
+    async fn normalize_sample(&self, params: Parameters<SampleIdParam>) -> String {
+        match self.bridge.normalize_sample(params.0.sample_id) {
+            Ok(()) => "OK: Sample normalized".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Reverse the sample audio data in place.")]
+    async fn reverse_sample(&self, params: Parameters<SampleIdParam>) -> String {
+        match self.bridge.reverse_sample(params.0.sample_id) {
+            Ok(()) => "OK: Sample reversed".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Auto-trim silence from the start and end of a sample. Sets crop markers \
+                       at the first and last audible frames (threshold: -40 dB)."
+    )]
+    async fn trim_sample_silence(&self, params: Parameters<SampleIdParam>) -> String {
+        match self.bridge.trim_sample_silence(params.0.sample_id) {
+            Ok(()) => "OK: Silence trimmed".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // ========================================================================
+    // AUDIO INPUT TOOLS
+    // ========================================================================
+
+    #[tool(description = "List available audio input devices (microphones, line-in, etc.).")]
+    async fn list_input_devices(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.list_input_devices() {
+            Ok(devices) => to_json(&devices),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Get the current audio input state: monitoring status, recording status, \
+                       peak level, and recording duration."
+    )]
+    async fn get_input_state(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.get_input_state() {
+            Ok(state) => to_json(&state),
             Err(e) => format!("Error: {e}"),
         }
     }

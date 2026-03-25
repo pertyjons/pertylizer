@@ -33,6 +33,7 @@ mod phase_vocoder;
 mod physical;
 mod pitch_tracker;
 mod ring_mod;
+mod sampler;
 mod signal_monitor;
 mod spectrum_analyzer;
 mod sub_osc;
@@ -77,6 +78,7 @@ pub use physical::{
 };
 pub use pitch_tracker::PitchTrackerParam;
 pub use ring_mod::RingModParam;
+pub use sampler::{PlayDirection, SampleId, SamplerParam, SamplerPlayMode};
 pub use signal_monitor::SignalMonitorParam;
 pub use spectrum_analyzer::SpectrumAnalyzerParam;
 pub use sub_osc::{SubOscOctave, SubOscParam, SubOscWaveform};
@@ -161,6 +163,10 @@ pub enum ModuleType {
     ReverseGateReverb,
     // Fractal synthesis
     FractalOsc,
+    // Sampler
+    Sampler,
+    // Audio input
+    AudioInput,
 }
 
 impl ModuleType {
@@ -214,6 +220,10 @@ impl ModuleType {
                 | Self::PitchTracker
                 // Fractal synthesis
                 | Self::FractalOsc
+                // Sampler
+                | Self::Sampler
+                // Audio input
+                | Self::AudioInput
         )
     }
 
@@ -333,6 +343,8 @@ impl ModuleType {
             Self::ModalResonator => "Modal Resonator",
             Self::ReverseGateReverb => "Reverse/Gate Reverb",
             Self::FractalOsc => "Fractal Osc",
+            Self::Sampler => "Sampler",
+            Self::AudioInput => "Audio Input",
         }
     }
 
@@ -396,6 +408,8 @@ impl ModuleType {
             Self::ModalResonator => "mdr",
             Self::ReverseGateReverb => "rgr",
             Self::FractalOsc => "frc",
+            Self::Sampler => "sam",
+            Self::AudioInput => "ain",
         }
     }
 
@@ -459,6 +473,8 @@ impl ModuleType {
             "mdr" => Some(Self::ModalResonator),
             "rgr" => Some(Self::ReverseGateReverb),
             "frc" => Some(Self::FractalOsc),
+            "sam" => Some(Self::Sampler),
+            "ain" => Some(Self::AudioInput),
             _ => None,
         }
     }
@@ -543,6 +559,8 @@ pub enum Param {
     ReverseGateReverb(ReverseGateReverbParam),
     // Fractal synthesis
     FractalOsc(FractalOscParam),
+    // Sampler
+    Sampler(SamplerParam),
 }
 
 impl Param {
@@ -614,6 +632,7 @@ impl Param {
             (Self::ModalResonator(a), Self::ModalResonator(b)) => a.same_kind(b),
             (Self::ReverseGateReverb(a), Self::ReverseGateReverb(b)) => a.same_kind(b),
             (Self::FractalOsc(a), Self::FractalOsc(b)) => a.same_kind(b),
+            (Self::Sampler(a), Self::Sampler(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -677,6 +696,7 @@ impl Param {
             Self::ModalResonator(_) => ModuleType::ModalResonator,
             Self::ReverseGateReverb(_) => ModuleType::ReverseGateReverb,
             Self::FractalOsc(_) => ModuleType::FractalOsc,
+            Self::Sampler(_) => ModuleType::Sampler,
         }
     }
 
@@ -739,6 +759,7 @@ impl Param {
             Self::ModalResonator(p) => p.name(),
             Self::ReverseGateReverb(p) => p.name(),
             Self::FractalOsc(p) => p.name(),
+            Self::Sampler(p) => p.name(),
         }
     }
 
@@ -801,6 +822,7 @@ impl Param {
             Self::ModalResonator(p) => p.as_f32(),
             Self::ReverseGateReverb(p) => p.as_f32(),
             Self::FractalOsc(p) => p.as_f32(),
+            Self::Sampler(p) => p.as_f32(),
         }
     }
 
@@ -863,6 +885,7 @@ impl Param {
             Self::ModalResonator(p) => Self::ModalResonator(p.with_f32(value)),
             Self::ReverseGateReverb(p) => Self::ReverseGateReverb(p.with_f32(value)),
             Self::FractalOsc(p) => Self::FractalOsc(p.with_f32(value)),
+            Self::Sampler(p) => Self::Sampler(p.with_f32(value)),
         }
     }
 }

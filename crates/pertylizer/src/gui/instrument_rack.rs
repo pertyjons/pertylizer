@@ -110,4 +110,3 @@ impl InstrumentUiState {
         self.volume
     }
 }
-

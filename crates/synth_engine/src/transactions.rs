@@ -616,6 +616,11 @@ impl EngineCommand {
                 module_id: *module_id,
                 direction: *direction,
             },
+
+            // Non-clonable commands (contain move-only types)
+            Self::SetAudioInputConsumer { .. } | Self::ClearAudioInputConsumer => {
+                return None;
+            }
         })
     }
 }

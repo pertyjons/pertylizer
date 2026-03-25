@@ -13,5 +13,6 @@ workspace = true
 [dependencies]
 synth_core = { path = "../synth_core" }
 synth_dsp = { path = "../synth_dsp" }
+synth_sampler = { path = "../synth_sampler" }
 serde = { workspace = true }
 fastrand = { workspace = true }

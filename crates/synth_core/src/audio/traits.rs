@@ -4,6 +4,8 @@
 //! to work with different audio backends (cpal, JACK, PortAudio, etc.)
 //! without being tied to any specific implementation.
 
+use ringbuf::HeapProd;
+
 use super::types::*;
 
 /// Trait for processing audio.
@@ -71,6 +73,25 @@ pub trait AudioBackend: Send + Sync {
         config: &StreamConfig,
         processor: Box<dyn AudioProcessor>,
     ) -> AudioResult<Box<dyn AudioStream>>;
+
+    /// Start an input stream that writes captured audio into ring buffer producers.
+    ///
+    /// Two producers are needed because ringbuf is SPSC: one for the engine
+    /// (low-latency passthrough) and one for the GUI (metering + recording).
+    /// The cpal callback pushes each sample to both.
+    ///
+    /// Default implementation returns an error (not all backends support input).
+    fn create_input_stream(
+        &self,
+        _device_id: Option<&str>,
+        _config: &StreamConfig,
+        _engine_producer: HeapProd<f32>,
+        _gui_producer: HeapProd<f32>,
+    ) -> AudioResult<Box<dyn AudioStream>> {
+        Err(AudioError::BackendError(
+            "Input streams not supported by this backend".to_string(),
+        ))
+    }
 }
 
 /// Trait for an active audio stream.
@@ -128,6 +149,18 @@ pub trait AudioHostTrait: Send {
 
     /// Get the current latency, if a stream is active.
     fn latency(&self) -> Option<std::time::Duration>;
+
+    /// Create an input stream with dual ring buffer producers.
+    fn create_input_stream(
+        &self,
+        device_id: Option<&str>,
+        config: &StreamConfig,
+        engine_producer: HeapProd<f32>,
+        gui_producer: HeapProd<f32>,
+    ) -> AudioResult<Box<dyn AudioStream>>;
+
+    /// Get the default input device.
+    fn default_input_device(&self) -> AudioResult<DeviceInfo>;
 }
 
 impl AudioHost {
@@ -258,5 +291,20 @@ impl AudioHostTrait for AudioHost {
 
     fn latency(&self) -> Option<std::time::Duration> {
         self.active_stream.as_ref().map(|s| s.latency())
+    }
+
+    fn create_input_stream(
+        &self,
+        device_id: Option<&str>,
+        config: &StreamConfig,
+        engine_producer: HeapProd<f32>,
+        gui_producer: HeapProd<f32>,
+    ) -> AudioResult<Box<dyn AudioStream>> {
+        self.backend
+            .create_input_stream(device_id, config, engine_producer, gui_producer)
+    }
+
+    fn default_input_device(&self) -> AudioResult<DeviceInfo> {
+        self.backend.default_input_device()
     }
 }

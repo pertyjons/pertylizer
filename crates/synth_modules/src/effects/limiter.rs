@@ -136,7 +136,7 @@ impl Describable for Limiter {
 
 impl AudioEffect for Limiter {
     #[allow(clippy::too_many_lines)]
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         let ceiling_linear = self.ceiling.to_linear();
         let release_coeff =
             (-1.0 / (self.release_ms.as_f32() * 0.001 * self.sample_rate.as_f32()).max(1.0)).exp();

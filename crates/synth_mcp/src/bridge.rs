@@ -18,9 +18,9 @@ use crate::error::McpBridgeError;
 use crate::types::{
     ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo, AwePresetInfo,
     AweStateInfo, BatchResult, BuildInstrumentResult, ConnectionInfo, EngineStatus,
-    ExamplePatchInfo, GraphDiagnostic, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo,
-    OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, SetSongResult,
-    SongInfo, TrackInfo, UiSnapshot,
+    ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo, InputStateInfo, InstrumentInfo, ModuleInfo,
+    ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo,
+    PlacementInfo, SampleInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -627,6 +627,45 @@ pub trait SynthBridge: Send + Sync + 'static {
         amount: f32,
         target: &str,
     ) -> Result<(), McpBridgeError>;
+
+    // === Sample library ===
+
+    /// List all samples, optionally filtered by name substring.
+    fn list_samples(&self, filter: Option<&str>) -> Result<Vec<SampleInfo>, McpBridgeError>;
+
+    /// Import a WAV file into the sample library.
+    fn import_sample(
+        &self,
+        path: &str,
+        name: Option<&str>,
+        root_note: Option<u8>,
+    ) -> Result<SampleInfo, McpBridgeError>;
+
+    /// Delete a sample by ID.
+    fn delete_sample(&self, id: u64) -> Result<(), McpBridgeError>;
+
+    /// Rename a sample.
+    fn rename_sample(&self, id: u64, name: &str) -> Result<(), McpBridgeError>;
+
+    /// Set the root note for a sample.
+    fn set_sample_root_note(&self, id: u64, note: u8) -> Result<(), McpBridgeError>;
+
+    /// Normalize sample peak to 0 dB.
+    fn normalize_sample(&self, id: u64) -> Result<(), McpBridgeError>;
+
+    /// Reverse sample audio data.
+    fn reverse_sample(&self, id: u64) -> Result<(), McpBridgeError>;
+
+    /// Auto-trim silence from sample.
+    fn trim_sample_silence(&self, id: u64) -> Result<(), McpBridgeError>;
+
+    // === Audio input ===
+
+    /// List available audio input devices.
+    fn list_input_devices(&self) -> Result<Vec<InputDeviceInfo>, McpBridgeError>;
+
+    /// Get current audio input state.
+    fn get_input_state(&self) -> Result<InputStateInfo, McpBridgeError>;
 }
 
 /// Automation point data for MCP bridge.

@@ -380,6 +380,10 @@ impl EngineHub {
             | EngineCommand::DisarmRecord
             | EngineCommand::SetMetronome(_)
             | EngineCommand::SetMetronomeVolume(_) => perms.can_control_transport,
+
+            // Audio input commands
+            EngineCommand::SetAudioInputConsumer { .. }
+            | EngineCommand::ClearAudioInputConsumer => perms.can_modify_params,
         }
     }
 

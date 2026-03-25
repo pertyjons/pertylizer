@@ -205,7 +205,7 @@ impl Describable for ReverseGateReverb {
 }
 
 impl AudioEffect for ReverseGateReverb {
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         let mix = self.mix.as_f32();
         let threshold_linear = self.threshold.to_linear();
         let gate_samples = self.gate_time.to_samples(self.sample_rate).max(1);

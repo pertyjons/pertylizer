@@ -159,6 +159,16 @@ pub fn create_voice_module(
             let d = m.descriptor();
             Some((Box::new(m), d))
         }
+        ModuleType::Sampler => {
+            let m = synth_modules::Sampler::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
+        ModuleType::AudioInput => {
+            let m = synth_modules::AudioInput::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
         // Effects and visualizers are not voice modules
         _ => None,
     }
@@ -339,6 +349,8 @@ pub const ALL_MODULE_TYPES: &[ModuleType] = &[
     ModuleType::LaSynth,
     ModuleType::PitchTracker,
     ModuleType::FractalOsc,
+    ModuleType::Sampler,
+    ModuleType::AudioInput,
     // Effects
     ModuleType::Delay,
     ModuleType::Reverb,

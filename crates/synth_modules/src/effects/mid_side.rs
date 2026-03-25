@@ -114,7 +114,7 @@ impl Describable for MidSide {
 }
 
 impl AudioEffect for MidSide {
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         let mix = self.mix.as_f32();
         let width = self.actual_width();
         let mid_gain_linear = self.mid_gain.to_linear();

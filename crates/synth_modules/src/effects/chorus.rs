@@ -125,7 +125,7 @@ impl Describable for Chorus {
 }
 
 impl AudioEffect for Chorus {
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         // Note: sample_rate is set via set_sample_rate() which is called from main thread
         // We don't resize buffers here to avoid allocation in audio thread
         debug_assert_eq!(

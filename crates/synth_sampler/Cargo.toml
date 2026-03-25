@@ -1,0 +1,21 @@
+[package]
+name = "synth_sampler"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+description = "Sample playback and manipulation for Pertylizer"
+authors = ["Per Jonsson"]
+license = "MIT"
+
+[lints]
+workspace = true
+
+[dependencies]
+synth_core = { path = "../synth_core" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+hound = { workspace = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true

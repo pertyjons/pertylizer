@@ -186,7 +186,7 @@ impl Describable for SpectralBlur {
 }
 
 impl AudioEffect for SpectralBlur {
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         self.rebuild_stft();
 
         let fft_size = self.stft_l.fft_size();

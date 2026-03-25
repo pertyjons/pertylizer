@@ -6,6 +6,7 @@ members = [
     "crates/synth_sequencer",
     "crates/synth_modules",
     "crates/synth_awe",
+    "crates/synth_sampler",
     "crates/synth_engine",
     "crates/synth_mcp",
     "crates/synth_osc",
@@ -57,6 +58,9 @@ hound = "3.5.1"
 
 # Base64 encoding
 base64 = "0.22"
+
+# ZIP archive (bundle project format)
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 # Testing
 tempfile = "3.27.0"

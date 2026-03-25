@@ -2,12 +2,17 @@
 
 use std::ops::{Add, Div, Mul, Sub};
 
+use serde::{Deserialize, Serialize};
+
 use super::{SampleRate, Seconds};
 
 /// A count of audio samples.
 ///
 /// Used for buffer sizes, delay lengths, etc.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+#[serde(transparent)]
 #[repr(transparent)]
 pub struct SampleCount(pub usize);
 

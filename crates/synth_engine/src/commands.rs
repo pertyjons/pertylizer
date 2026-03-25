@@ -582,6 +582,14 @@ pub enum EngineCommand {
 
     /// Apply a batch AWE parameter snapshot.
     SetAweState { snapshot: synth_awe::AweSnapshot },
+
+    // === Audio Input ===
+    /// Set the audio input consumer (from AudioInputManager's engine ring buffer).
+    /// Sent once when input monitoring starts.
+    SetAudioInputConsumer { consumer: ringbuf::HeapCons<f32> },
+
+    /// Clear the audio input consumer (when monitoring stops).
+    ClearAudioInputConsumer,
 }
 
 /// Direction for reordering an effect in the chain.
@@ -1146,6 +1154,8 @@ impl std::fmt::Debug for EngineCommand {
                 .debug_struct("SetAweState")
                 .field("snapshot", snapshot)
                 .finish(),
+            Self::SetAudioInputConsumer { .. } => f.debug_struct("SetAudioInputConsumer").finish(),
+            Self::ClearAudioInputConsumer => write!(f, "ClearAudioInputConsumer"),
         }
     }
 }

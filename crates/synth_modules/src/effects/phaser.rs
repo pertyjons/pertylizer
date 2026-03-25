@@ -160,7 +160,7 @@ impl Describable for Phaser {
 }
 
 impl AudioEffect for Phaser {
-    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext) {
+    fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         self.sample_rate = context.sample_rate;
         let phase_inc = self.rate.phase_increment(self.sample_rate);
 

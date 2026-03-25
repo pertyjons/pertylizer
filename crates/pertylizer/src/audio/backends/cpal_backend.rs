@@ -12,6 +12,9 @@ use std::time::{Duration, Instant};
 
 use synth_core::DenormalGuard;
 
+use ringbuf::HeapProd;
+use ringbuf::traits::Producer;
+
 use crate::audio::traits::{AudioBackend, AudioProcessor, AudioStream};
 use crate::audio::types::*;
 
@@ -125,6 +128,22 @@ impl CpalBackend {
 
         Err(AudioError::DeviceNotFound(device_id.to_string()))
     }
+
+    fn find_input_device(&self, device_id: &str) -> AudioResult<Device> {
+        let devices = self.host.input_devices().map_err(|e| {
+            AudioError::BackendError(format!("Failed to enumerate input devices: {e}"))
+        })?;
+
+        for device in devices {
+            if let Ok(desc) = device.description()
+                && desc.name() == device_id
+            {
+                return Ok(device);
+            }
+        }
+
+        Err(AudioError::DeviceNotFound(device_id.to_string()))
+    }
 }
 
 impl AudioBackend for CpalBackend {
@@ -137,15 +156,24 @@ impl AudioBackend for CpalBackend {
     }
 
     fn devices(&self) -> AudioResult<Vec<DeviceInfo>> {
-        let output_devices = self
-            .host
-            .output_devices()
-            .map_err(|e| AudioError::BackendError(format!("Failed to enumerate devices: {e}")))?;
-
         let mut devices = Vec::new();
-        for device in output_devices {
-            if let Ok(info) = self.device_to_info(&device, DeviceType::Output) {
-                devices.push(info);
+
+        if let Ok(output_devices) = self.host.output_devices() {
+            for device in output_devices {
+                if let Ok(info) = self.device_to_info(&device, DeviceType::Output) {
+                    devices.push(info);
+                }
+            }
+        }
+
+        if let Ok(input_devices) = self.host.input_devices() {
+            for device in input_devices {
+                if let Ok(info) = self.device_to_info(&device, DeviceType::Input) {
+                    // Avoid duplicates (some backends list duplex devices in both)
+                    if !devices.iter().any(|d| d.id == info.id) {
+                        devices.push(info);
+                    }
+                }
             }
         }
 
@@ -183,6 +211,25 @@ impl AudioBackend for CpalBackend {
         };
 
         let stream = CpalStream::new(device, config, processor)?;
+        Ok(Box::new(stream))
+    }
+
+    fn create_input_stream(
+        &self,
+        device_id: Option<&str>,
+        config: &StreamConfig,
+        engine_producer: HeapProd<f32>,
+        gui_producer: HeapProd<f32>,
+    ) -> AudioResult<Box<dyn AudioStream>> {
+        let device = if let Some(id) = device_id {
+            self.find_input_device(id)?
+        } else {
+            self.host
+                .default_input_device()
+                .ok_or(AudioError::NoDefaultDevice)?
+        };
+
+        let stream = CpalInputStream::new(device, config, engine_producer, gui_producer)?;
         Ok(Box::new(stream))
     }
 }
@@ -335,6 +382,132 @@ impl AudioStream for CpalStream {
         self.position.load(Ordering::Relaxed)
     }
 }
+
+/// Active CPAL audio input stream.
+///
+/// Captures audio from an input device and writes to two ring buffer producers
+/// (one for the engine, one for the GUI).
+struct CpalInputStream {
+    stream: Stream,
+    info: StreamInfo,
+    running: Arc<AtomicBool>,
+    position: Arc<AtomicU64>,
+}
+
+impl CpalInputStream {
+    fn new(
+        device: Device,
+        config: &StreamConfig,
+        mut engine_producer: HeapProd<f32>,
+        mut gui_producer: HeapProd<f32>,
+    ) -> AudioResult<Self> {
+        let channels = config.channels.count();
+
+        let cpal_config = CpalStreamConfig {
+            channels,
+            sample_rate: config.sample_rate.0,
+            buffer_size: cpal::BufferSize::Fixed(config.buffer_size.0),
+        };
+
+        let input_latency = device
+            .default_input_config()
+            .ok()
+            .map(|c| {
+                let buffer_frames = config.buffer_size.0 as f64;
+                let sample_rate = c.sample_rate() as f64;
+                Duration::from_secs_f64(buffer_frames / sample_rate)
+            })
+            .unwrap_or(Duration::from_millis(10));
+
+        let info = StreamInfo {
+            sample_rate: config.sample_rate,
+            buffer_size: config.buffer_size,
+            channels: config.channels,
+            output_latency: Duration::ZERO,
+            input_latency: Some(input_latency),
+        };
+
+        let running = Arc::new(AtomicBool::new(false));
+        let position = Arc::new(AtomicU64::new(0));
+        let running_clone = Arc::clone(&running);
+        let position_clone = Arc::clone(&position);
+
+        let stream = device
+            .build_input_stream(
+                &cpal_config,
+                move |data: &[f32], _input_info: &cpal::InputCallbackInfo| {
+                    if !running_clone.load(Ordering::Relaxed) {
+                        return;
+                    }
+
+                    // Write to both ring buffers (drop samples if full)
+                    for &sample in data {
+                        let _ = engine_producer.try_push(sample);
+                        let _ = gui_producer.try_push(sample);
+                    }
+
+                    let frames = data.len() / channels as usize;
+                    position_clone.fetch_add(frames as u64, Ordering::Relaxed);
+                },
+                move |err| {
+                    eprintln!("Audio input stream error: {err}");
+                },
+                None,
+            )
+            .map_err(|e| AudioError::StreamCreationFailed(format!("{e}")))?;
+
+        Ok(Self {
+            stream,
+            info,
+            running,
+            position,
+        })
+    }
+}
+
+impl AudioStream for CpalInputStream {
+    fn start(&mut self) -> AudioResult<()> {
+        if self.running.load(Ordering::Relaxed) {
+            return Err(AudioError::StreamAlreadyRunning);
+        }
+
+        self.stream
+            .play()
+            .map_err(|e| AudioError::BackendError(format!("Failed to start input stream: {e}")))?;
+
+        self.running.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn stop(&mut self) -> AudioResult<()> {
+        if !self.running.load(Ordering::Relaxed) {
+            return Err(AudioError::StreamNotRunning);
+        }
+
+        self.running.store(false, Ordering::Relaxed);
+
+        self.stream
+            .pause()
+            .map_err(|e| AudioError::BackendError(format!("Failed to stop input stream: {e}")))?;
+
+        Ok(())
+    }
+
+    fn is_running(&self) -> bool {
+        self.running.load(Ordering::Relaxed)
+    }
+
+    fn info(&self) -> &StreamInfo {
+        &self.info
+    }
+
+    fn position(&self) -> u64 {
+        self.position.load(Ordering::Relaxed)
+    }
+}
+
+// SAFETY: CpalInputStream is safe to send between threads for the same reasons as CpalStream.
+unsafe impl Send for CpalInputStream {}
 
 // SAFETY: CpalStream is safe to send between threads because:
 // 1. The `stream` field (cpal::Stream) is managed by cpal and its audio callback
