@@ -2192,22 +2192,19 @@ impl AudioProcessor for SynthEngine {
         self.audio_input_buffer[..usable].fill(0.0);
 
         if let Some(ref mut consumer) = self.audio_input_consumer {
-            // Drain everything available from the ring buffer
-            let mut temp_idx = 0;
+            // Drain everything available from the ring buffer to handle clock drift.
+            // We keep only the most recent `usable` samples. If the input device is
+            // slightly faster than the output, excess samples are discarded.
+            let mut write_idx = 0;
             while let Some(sample) = consumer.try_pop() {
-                if temp_idx < usable {
-                    self.audio_input_buffer[temp_idx] = sample;
+                if write_idx < usable {
+                    self.audio_input_buffer[write_idx] = sample;
+                } else {
+                    // Overflow: shift buffer left and append at end (keep latest)
+                    self.audio_input_buffer.copy_within(1..usable, 0);
+                    self.audio_input_buffer[usable - 1] = sample;
                 }
-                temp_idx += 1;
-            }
-            // If we got more than one block's worth, keep only the latest samples.
-            // This handles clock-drift gracefully by discarding old data.
-            if temp_idx > usable {
-                // Already overwritten — the latest samples are in the last `usable` positions.
-                // Since we wrote sequentially and stopped at `usable`, we actually need to
-                // re-drain. Simpler: we already have the most recent `usable` samples in the
-                // buffer (the loop wrote past `usable` but we capped the index). The extra
-                // samples were simply discarded by the `if temp_idx < usable` guard.
+                write_idx += 1;
             }
         }
         let has_input = self.audio_input_consumer.is_some();

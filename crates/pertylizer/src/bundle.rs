@@ -212,7 +212,13 @@ pub fn load_bundle(path: &Path, library: &mut SampleLibrary) -> Result<ProjectFi
         // Extract sample ID from filename (e.g., "samples/42.wav" → 42)
         let id_str = name
             .strip_prefix("samples/")
-            .and_then(|s| s.strip_suffix(".wav"))
+            .and_then(|s| {
+                if s.to_lowercase().ends_with(".wav") {
+                    Some(&s[..s.len() - 4])
+                } else {
+                    None
+                }
+            })
             .unwrap_or("");
         let sample_id: u64 = match id_str.parse() {
             Ok(id) if id > 0 => id,
