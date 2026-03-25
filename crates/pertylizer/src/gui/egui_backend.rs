@@ -443,7 +443,10 @@ impl eframe::App for SynthApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         use egui_remixicon::icons as ri;
 
-        // If a project was just loaded, clear cached egui Area positions so that
+        // Drain audio input ring buffer every frame (needed for peak metering and recording).
+        // Must run regardless of active view so recording works from the patch editor too.
+        self.audio_input.drain_gui_buffer();
+
         // Clean up any modules returned from audio thread (dropped on main thread)
         self.handle.cleanup_dropped_modules();
 
@@ -1430,7 +1433,18 @@ impl eframe::App for SynthApp {
                 .map(|s| s.effect_chain_order.clone())
                 .unwrap_or_default();
 
-            let result = patch_editor.show(ui, &self.handle, active_id.as_u64(), &effect_chain_order);
+            let audio_input_snapshot = crate::gui::patch_editor::AudioInputSnapshot {
+                state: self.audio_input.state(),
+                peak_level: self.audio_input.peak_level(),
+                recorded_seconds: self.audio_input.recorded_seconds(),
+            };
+            let result = patch_editor.show(
+                ui,
+                &self.handle,
+                active_id.as_u64(),
+                &effect_chain_order,
+                &audio_input_snapshot,
+            );
             let had_mutations = result.has_mutations();
 
             // Handle parameter changes - send Param directly (carries its own value)
@@ -1566,6 +1580,85 @@ impl eframe::App for SynthApp {
                     module_id,
                     direction,
                 });
+            }
+
+            // Handle audio input actions from patch module
+            if let Some(action) = result.audio_input_action {
+                use crate::gui::patch_editor::AudioInputAction;
+                match action {
+                    AudioInputAction::StartMonitoring => {
+                        if let Some(host) = &self.host {
+                            let device =
+                                self.sample_view_state.selected_input_device.as_deref();
+                            let config = synth_core::StreamConfig {
+                                sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
+                                buffer_size: synth_core::BufferSize::MEDIUM,
+                                channels: synth_core::ChannelCount::Stereo,
+                            };
+                            match self
+                                .audio_input
+                                .start_monitoring(host.as_ref(), device, &config)
+                            {
+                                Ok(()) => {
+                                    if let Some(consumer) =
+                                        self.audio_input.take_engine_consumer()
+                                    {
+                                        self.handle.send(
+                                            EngineCommand::SetAudioInputConsumer {
+                                                consumer,
+                                            },
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    self.dialog_state
+                                        .set_status(format!("Input error: {e}"));
+                                }
+                            }
+                        }
+                    }
+                    AudioInputAction::StopMonitoring => {
+                        self.handle.send(EngineCommand::ClearAudioInputConsumer);
+                        self.audio_input.stop_monitoring();
+                    }
+                    AudioInputAction::StartRecording => {
+                        self.audio_input.start_recording();
+                    }
+                    AudioInputAction::StopRecording => {
+                        if let Some(data) = self.audio_input.stop_recording() {
+                            let channels = self.audio_input.channels();
+                            let sample_rate = self.audio_input.sample_rate();
+                            let frame_count = if channels > 0 {
+                                data.len() / channels as usize
+                            } else {
+                                0
+                            };
+                            let sample = synth_sampler::Sample::new(
+                                synth_sampler::SampleMeta {
+                                    id: synth_sampler::SampleId::new(0),
+                                    name: format!(
+                                        "Recording {:.1}s",
+                                        frame_count as f64 / f64::from(sample_rate.0)
+                                    ),
+                                    sample_rate,
+                                    channels: synth_core::ChannelCount::from(channels),
+                                    frame_count: synth_core::SampleCount::new(frame_count),
+                                    root_note: None,
+                                    loop_region: None,
+                                    crop: None,
+                                    source: synth_sampler::SampleSource::Recorded,
+                                },
+                                data.into(),
+                            );
+                            if let Ok(mut lib) = self.sample_library.write() {
+                                let id = lib.add(sample);
+                                self.sample_view_state.selected_sample = Some(id);
+                                self.sample_view_state.invalidate_peaks();
+                            }
+                            self.dialog_state.set_status("Recording saved");
+                        }
+                    }
+                }
             }
 
             // Handle signal monitor insertions — create inline monitor and rewire

@@ -1023,7 +1023,7 @@ AI → stop_recording()
 
 ## Implementation Status
 
-> **Last updated:** 2026-03-25 — v0.251.0
+> **Last updated:** 2026-03-25 — v0.252.0
 
 ### Legend
 
@@ -1098,7 +1098,8 @@ AI → stop_recording()
 | [x] | Registered in module_factory | P0 | |
 | [ ] | Engine-side sample cache (`HashMap<SampleId, Arc<[f32]>>`) | P1 | Currently `load_sample()` called manually |
 | [ ] | `EngineCommand::LoadSample` / `UnloadSample` | P1 | `needs_sample_reload` flag exists but engine doesn't poll it |
-| [ ] | Module panel UI in Rack (sample selector + mini waveform) | P1 | Uses generic param panel |
+| [x] | Sample selector dropdown in Rack module panel | P1 | v0.252.0 |
+| [ ] | Mini waveform preview in Rack module panel | P2 | |
 | [ ] | Crossfade at loop points (`LoopRegion::crossfade`) | P2 | Field exists, DSP not implemented |
 | [ ] | Cubic Hermite interpolation | P2 | Linear is "classic sampler" quality |
 | [ ] | Anti-alias LP filter for pitch-up | P3 | |
@@ -1112,7 +1113,8 @@ AI → stop_recording()
 | [x] | `AudioInputModule` reads from ProcessContext | P0 | |
 | [x] | `EngineCommand::SetAudioInputConsumer` / `ClearAudioInputConsumer` | P0 | |
 | [x] | Registered in module_factory | P0 | Prefix "ain" |
-| [ ] | Wire `SetAudioInputConsumer` from GUI monitoring start | P1 | Command exists but GUI doesn't send it |
+| [x] | Wire `SetAudioInputConsumer` from GUI monitoring start | P1 | v0.252.0 |
+| [x] | Monitoring/recording controls in Rack patch module panel | P1 | v0.252.0 — monitor toggle, rec button, peak meter, timer |
 | [ ] | UI "Live" indicator when input is active | P2 | |
 | [ ] | One-per-instrument limit | P2 | |
 | [ ] | Record from Rack view (post-effects) | P3 | |
@@ -1169,7 +1171,7 @@ AI → stop_recording()
 | Status | Item | Priority | Notes |
 |--------|------|----------|-------|
 | [x] | Sample memory indicator in top bar | P1 | |
-| [x] | Version bump + history docs | P0 | v0.251.0 |
+| [x] | Version bump + history docs | P0 | v0.251.0, v0.252.0 |
 | [ ] | Sample preview in Rack view (click to audition) | P2 | |
 | [ ] | Drag-and-drop WAV from file manager | P2 | |
 | [ ] | Undo/redo for sample edits | P2 | |
@@ -1209,10 +1211,10 @@ AI → stop_recording()
 | Category | Done | Remaining | Total |
 |----------|------|-----------|-------|
 | P0 (must have) | 52 | 0 | 52 |
-| P1 (should have) | 8 | 13 | 21 |
-| P2 (nice to have) | 0 | 22 | 22 |
+| P1 (should have) | 11 | 11 | 22 |
+| P2 (nice to have) | 0 | 23 | 23 |
 | P3 (future) | 0 | 13 | 13 |
-| **Total** | **60** | **48** | **108** |
+| **Total** | **63** | **47** | **110** |
 
 All P0 items are complete. The most impactful remaining work is the P1 items:
 engine-side sample loading (`LoadSample` command), MCP recording/monitoring tools

@@ -16,6 +16,7 @@ use synth_core::{ModuleCategory, ModuleDescriptor, PortName, PortType};
 use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
 
+use crate::audio::input::InputState;
 use crate::patch::{
     ConnectionState, ExposedPortState, GroupCategory, GroupId, GroupTemplate, HexColor,
     ModuleGroupState, ModuleState, ParamValue, Position,
@@ -1301,6 +1302,7 @@ impl PatchEditor {
         handle: &EngineHandle,
         instrument_id: u64,
         effect_chain_order: &[ModuleId],
+        audio_input_snapshot: &AudioInputSnapshot,
     ) -> PatchEditorResult {
         let mut result = PatchEditorResult::default();
 
@@ -1967,9 +1969,13 @@ impl PatchEditor {
                                 vis_buffer,
                                 &analysis,
                                 &self.sample_list,
+                                audio_input_snapshot,
                             );
                             for param in panel_result.param_changes {
                                 result.param_changes.push((module_id, param));
+                            }
+                            if panel_result.audio_input_action.is_some() {
+                                result.audio_input_action = panel_result.audio_input_action;
                             }
                         }
                     } else {
@@ -2002,9 +2008,14 @@ impl PatchEditor {
                                         vis_buffer,
                                         &analysis,
                                         &self.sample_list,
+                                        audio_input_snapshot,
                                     );
                                     for param in panel_result.param_changes {
                                         result.param_changes.push((module_id, param));
+                                    }
+                                    if panel_result.audio_input_action.is_some() {
+                                        result.audio_input_action =
+                                            panel_result.audio_input_action;
                                     }
                                 }
                             });
@@ -4207,6 +4218,35 @@ pub struct PatchEditorResult {
     pub group_template_action: Option<GroupTemplateAction>,
     /// Requests to reorder effects in the chain (module_id, direction).
     pub reorder_effects: Vec<(ModuleId, synth_engine::ReorderDirection)>,
+    /// Audio input action (monitoring/recording toggle from patch module).
+    pub audio_input_action: Option<AudioInputAction>,
+}
+
+/// Actions from the Audio Input module panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioInputAction {
+    StartMonitoring,
+    StopMonitoring,
+    StartRecording,
+    StopRecording,
+}
+
+/// Snapshot of audio input state for rendering in the patch editor.
+#[derive(Debug, Clone, Copy)]
+pub struct AudioInputSnapshot {
+    pub state: InputState,
+    pub peak_level: f32,
+    pub recorded_seconds: f64,
+}
+
+impl Default for AudioInputSnapshot {
+    fn default() -> Self {
+        Self {
+            state: InputState::Idle,
+            peak_level: 0.0,
+            recorded_seconds: 0.0,
+        }
+    }
 }
 
 impl PatchEditorResult {
@@ -4228,6 +4268,8 @@ impl PatchEditorResult {
 pub struct PanelParamsResult {
     /// Parameter changes - each Param carries its own value.
     pub param_changes: Vec<Param>,
+    /// Audio input action (if this is an AudioInput module).
+    pub audio_input_action: Option<AudioInputAction>,
 }
 
 /// Draw visualizer display (oscilloscope or level meter).
@@ -4354,6 +4396,7 @@ fn draw_visualizer_display(
 }
 
 /// Draw only the parameters section of a module panel.
+#[allow(clippy::too_many_arguments)]
 fn draw_module_panel_params(
     ui: &mut Ui,
     state: &mut ModulePanelState,
@@ -4362,17 +4405,22 @@ fn draw_module_panel_params(
     vis_buffer: Option<&synth_engine::visualizers::VisualizationBuffer>,
     analysis: &PatchAnalysis,
     sample_list: &[(u64, String)],
+    audio_input_snapshot: &AudioInputSnapshot,
 ) -> PanelParamsResult {
     use super::widgets::{EnvelopeEditor, Knob, WaveformSelector};
     use synth_core::WidgetHint;
 
     let mut param_changes = Vec::new();
+    let mut audio_input_action = None;
 
     // For Visualizer modules, draw visualization FIRST (before parameters)
     if descriptor.category == ModuleCategory::Visualizer {
         draw_visualizer_display(ui, state, descriptor, vis_buffer, &mut param_changes);
         // Skip regular parameter drawing for visualizers - the display is the main UI
-        return PanelParamsResult { param_changes };
+        return PanelParamsResult {
+            param_changes,
+            audio_input_action: None,
+        };
     }
 
     // Special handling for Envelope modules - use interactive EnvelopeEditor
@@ -4461,7 +4509,114 @@ fn draw_module_panel_params(
             }
         }
 
-        return PanelParamsResult { param_changes };
+        return PanelParamsResult {
+            param_changes,
+            audio_input_action: None,
+        };
+    }
+
+    // Special handling for Audio Input — monitoring and recording controls
+    if descriptor.type_id.0 == "audio_input" {
+        let t = theme();
+        let input_state = audio_input_snapshot.state;
+        let is_monitoring = input_state != InputState::Idle;
+        let is_recording = input_state == InputState::Recording;
+
+        // Monitor toggle button
+        ui.add_space(4.0);
+        let monitor_icon = if is_monitoring {
+            ri::MIC_FILL
+        } else {
+            ri::MIC_LINE
+        };
+        let monitor_color = if is_monitoring {
+            t.colors.meter_green
+        } else {
+            t.colors.text_dim
+        };
+        if ui
+            .button(
+                egui::RichText::new(format!("{monitor_icon} Monitor"))
+                    .color(monitor_color)
+                    .size(11.0),
+            )
+            .clicked()
+        {
+            audio_input_action = Some(if is_monitoring {
+                AudioInputAction::StopMonitoring
+            } else {
+                AudioInputAction::StartMonitoring
+            });
+        }
+
+        // Record button (only enabled when monitoring)
+        let rec_icon = if is_recording {
+            ri::STOP_FILL
+        } else {
+            ri::RECORD_CIRCLE_FILL
+        };
+        let rec_color = if is_recording {
+            t.colors.meter_red
+        } else if is_monitoring {
+            t.colors.text_primary
+        } else {
+            t.colors.text_dim
+        };
+        if ui
+            .add_enabled(
+                is_monitoring,
+                egui::Button::new(
+                    egui::RichText::new(format!("{rec_icon} Rec"))
+                        .color(rec_color)
+                        .size(11.0),
+                ),
+            )
+            .clicked()
+        {
+            audio_input_action = Some(if is_recording {
+                AudioInputAction::StopRecording
+            } else {
+                AudioInputAction::StartRecording
+            });
+        }
+
+        // Peak level meter
+        if is_monitoring {
+            let peak = audio_input_snapshot.peak_level;
+            let bar_width = ui.available_width().min(120.0);
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(bar_width, 6.0), egui::Sense::hover());
+            let painter = ui.painter();
+            painter.rect_filled(rect, 2.0, t.colors.bg_dark);
+            let fill_w = rect.width() * peak.clamp(0.0, 1.0);
+            let fill_color = if peak > 0.9 {
+                t.colors.meter_red
+            } else if peak > 0.6 {
+                t.colors.meter_yellow
+            } else {
+                t.colors.meter_green
+            };
+            painter.rect_filled(
+                Rect::from_min_size(rect.min, Vec2::new(fill_w, rect.height())),
+                2.0,
+                fill_color,
+            );
+            ui.ctx().request_repaint();
+        }
+
+        // Recording timer
+        if is_recording {
+            let secs = audio_input_snapshot.recorded_seconds;
+            let mins = (secs / 60.0) as u32;
+            let remaining = secs - f64::from(mins) * 60.0;
+            ui.label(
+                egui::RichText::new(format!("{mins}:{remaining:04.1}"))
+                    .color(t.colors.meter_red)
+                    .monospace()
+                    .size(10.0),
+            );
+        }
+
+        ui.add_space(4.0);
     }
 
     // Special handling for Sampler — sample selector dropdown
@@ -4754,7 +4909,10 @@ fn draw_module_panel_params(
         }
     }
 
-    PanelParamsResult { param_changes }
+    PanelParamsResult {
+        param_changes,
+        audio_input_action,
+    }
 }
 
 /// Draw mod matrix as a grid with size selector.
@@ -4985,7 +5143,10 @@ fn draw_mod_matrix_grid(
             }
         });
 
-    PanelParamsResult { param_changes }
+    PanelParamsResult {
+        param_changes,
+        audio_input_action: None,
+    }
 }
 
 /// Check if a mod matrix dropdown choice should be shown, based on available modules.
