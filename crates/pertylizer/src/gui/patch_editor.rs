@@ -322,6 +322,8 @@ pub struct PatchEditor {
     group_context_menu: Option<GroupContextMenuState>,
     /// Minimum canvas size hint (restored from saved patch).
     min_canvas_size: Option<Vec2>,
+    /// Cached list of available samples (id, name) for sampler module dropdowns.
+    sample_list: Vec<(u64, String)>,
     /// Cached effect chain order from previous frame (for change detection).
     prev_effect_chain_order: Vec<ModuleId>,
     /// When true, skip reading positions back from egui Area state.
@@ -356,9 +358,15 @@ impl PatchEditor {
             bg_context_menu: None,
             group_context_menu: None,
             min_canvas_size: None,
+            sample_list: Vec::new(),
             suppress_position_readback: false,
             prev_effect_chain_order: Vec::new(),
         }
+    }
+
+    /// Update the cached sample list for sampler module dropdowns.
+    pub fn set_sample_list(&mut self, list: Vec<(u64, String)>) {
+        self.sample_list = list;
     }
 
     /// Add a module to the rack.
@@ -1958,6 +1966,7 @@ impl PatchEditor {
                                 accent_color,
                                 vis_buffer,
                                 &analysis,
+                                &self.sample_list,
                             );
                             for param in panel_result.param_changes {
                                 result.param_changes.push((module_id, param));
@@ -1992,6 +2001,7 @@ impl PatchEditor {
                                         accent_color,
                                         vis_buffer,
                                         &analysis,
+                                        &self.sample_list,
                                     );
                                     for param in panel_result.param_changes {
                                         result.param_changes.push((module_id, param));
@@ -4351,6 +4361,7 @@ fn draw_module_panel_params(
     accent_color: Color32,
     vis_buffer: Option<&synth_engine::visualizers::VisualizationBuffer>,
     analysis: &PatchAnalysis,
+    sample_list: &[(u64, String)],
 ) -> PanelParamsResult {
     use super::widgets::{EnvelopeEditor, Knob, WaveformSelector};
     use synth_core::WidgetHint;
@@ -4451,6 +4462,34 @@ fn draw_module_panel_params(
         }
 
         return PanelParamsResult { param_changes };
+    }
+
+    // Special handling for Sampler — sample selector dropdown
+    if descriptor.type_id.0 == "sampler" && !sample_list.is_empty() {
+        let current_id = state.param_values.get("Sample").copied().unwrap_or(0.0) as u64;
+        let current_name = sample_list
+            .iter()
+            .find(|(id, _)| *id == current_id)
+            .map(|(_, name)| name.as_str())
+            .unwrap_or("(none)");
+
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Sample:").color(accent_color).small());
+            egui::ComboBox::from_id_salt("sampler_sample_select")
+                .selected_text(current_name)
+                .width(120.0)
+                .show_ui(ui, |ui| {
+                    for &(id, ref name) in sample_list {
+                        if ui.selectable_label(id == current_id, name).clicked() {
+                            state.param_values.insert("Sample".to_string(), id as f32);
+                            param_changes.push(synth_core::Param::Sampler(
+                                synth_core::SamplerParam::SampleSelect(synth_core::SampleId(id)),
+                            ));
+                        }
+                    }
+                });
+        });
+        ui.add_space(4.0);
     }
 
     // Special handling for Mod Matrix — custom grid rendering

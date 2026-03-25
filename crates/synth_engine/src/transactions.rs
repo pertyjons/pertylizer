@@ -617,8 +617,10 @@ impl EngineCommand {
                 direction: *direction,
             },
 
-            // Non-clonable commands (contain move-only types)
-            Self::SetAudioInputConsumer { .. } | Self::ClearAudioInputConsumer => {
+            // Non-clonable commands (contain move-only types or Arc data)
+            Self::SetAudioInputConsumer { .. }
+            | Self::ClearAudioInputConsumer
+            | Self::LoadSampleData { .. } => {
                 return None;
             }
         })

@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::ChannelCount;
 use crate::params::{ModuleType, Param};
 pub use crate::types::{
     BeatPosition, Bpm, MidiNote, NormalizedValue, SampleCount, SamplePosition, SampleRate,
@@ -997,6 +998,17 @@ pub trait PolyModule: Describable + Send {
     /// Clear all modulation offsets back to zero.
     fn clear_mod_offsets(&mut self) {
         // Default: nothing to clear
+    }
+
+    /// Load sample audio data for playback (Sampler modules only).
+    /// Default implementation does nothing.
+    fn load_sample_data(
+        &mut self,
+        _data: std::sync::Arc<[f32]>,
+        _channels: ChannelCount,
+        _frame_count: usize,
+        _root_note: MidiNote,
+    ) {
     }
 
     /// Clone into a boxed trait object.

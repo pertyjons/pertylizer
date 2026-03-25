@@ -384,6 +384,9 @@ impl EngineHub {
             // Audio input commands
             EngineCommand::SetAudioInputConsumer { .. }
             | EngineCommand::ClearAudioInputConsumer => perms.can_modify_params,
+
+            // Sample loading
+            EngineCommand::LoadSampleData { .. } => perms.can_modify_params,
         }
     }
 

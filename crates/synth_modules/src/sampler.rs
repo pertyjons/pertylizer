@@ -300,6 +300,16 @@ impl PolyModule for Sampler {
         self.player = None;
     }
 
+    fn load_sample_data(
+        &mut self,
+        data: std::sync::Arc<[f32]>,
+        channels: ChannelCount,
+        frame_count: usize,
+        root_note: MidiNote,
+    ) {
+        self.load_sample(data, channels, frame_count, None, None, root_note);
+    }
+
     fn note_on(&mut self, note: MidiNote, velocity: Velocity) {
         let Some(ref data) = self.sample_data else {
             return;

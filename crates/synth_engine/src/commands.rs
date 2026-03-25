@@ -590,6 +590,18 @@ pub enum EngineCommand {
 
     /// Clear the audio input consumer (when monitoring stops).
     ClearAudioInputConsumer,
+
+    // === Sample Loading ===
+    /// Load sample audio data into a Sampler module.
+    /// Sent by GUI when the user selects a sample from the dropdown.
+    LoadSampleData {
+        instrument_id: InstrumentId,
+        module_id: ModuleId,
+        data: std::sync::Arc<[f32]>,
+        channels: synth_core::ChannelCount,
+        frame_count: usize,
+        root_note: synth_core::MidiNote,
+    },
 }
 
 /// Direction for reordering an effect in the chain.
@@ -1156,6 +1168,15 @@ impl std::fmt::Debug for EngineCommand {
                 .finish(),
             Self::SetAudioInputConsumer { .. } => f.debug_struct("SetAudioInputConsumer").finish(),
             Self::ClearAudioInputConsumer => write!(f, "ClearAudioInputConsumer"),
+            Self::LoadSampleData {
+                instrument_id,
+                module_id,
+                ..
+            } => f
+                .debug_struct("LoadSampleData")
+                .field("instrument_id", instrument_id)
+                .field("module_id", module_id)
+                .finish(),
         }
     }
 }

@@ -1067,6 +1067,32 @@ impl SynthEngine {
             EngineCommand::ClearAudioInputConsumer => {
                 self.audio_input_consumer = None;
             }
+            EngineCommand::LoadSampleData {
+                instrument_id,
+                module_id,
+                data,
+                channels,
+                frame_count,
+                root_note,
+            } => {
+                // Load sample data into the Sampler module in template + all active voices
+                if let Some(instrument) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|i| i.id() == instrument_id)
+                {
+                    // Template graph
+                    if let Some(module) = instrument.voice_graph_mut().get_module_mut(module_id) {
+                        module.load_sample_data(data.clone(), channels, frame_count, root_note);
+                    }
+                    // Active voices
+                    for voice in instrument.allocator_mut().voices_mut() {
+                        if let Some(module) = voice.graph.get_module_mut(module_id) {
+                            module.load_sample_data(data.clone(), channels, frame_count, root_note);
+                        }
+                    }
+                }
+            }
         }
     }
 

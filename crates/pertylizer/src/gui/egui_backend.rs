@@ -1411,6 +1411,16 @@ impl eframe::App for SynthApp {
                 return;
             };
 
+            // Update sample list for sampler module dropdowns
+            if let Ok(lib) = self.sample_library.read() {
+                let list: Vec<(u64, String)> = lib
+                    .list()
+                    .iter()
+                    .map(|m| (m.id.0, m.name.clone()))
+                    .collect();
+                patch_editor.set_sample_list(list);
+            }
+
             // Get effect chain order from shared state
             let effect_chain_order: Vec<synth_engine::ModuleId> = self
                 .session
@@ -1450,7 +1460,8 @@ impl eframe::App for SynthApp {
                         | ModuleCategory::LFO
                         | ModuleCategory::Amplifier
                         | ModuleCategory::Mixer
-                        | ModuleCategory::Output,
+                        | ModuleCategory::Output
+                        | ModuleCategory::Sampler,
                     ) => {
                         // Voice/modular module - send to active instrument's voice graph
                         // SetModuleParameter updates both the template AND all active voices
@@ -1459,6 +1470,27 @@ impl eframe::App for SynthApp {
                             module_id,
                             param,
                         });
+
+                        // If a SampleSelect param was changed, also load the sample data
+                        if let synth_core::Param::Sampler(
+                            synth_core::SamplerParam::SampleSelect(sample_id),
+                        ) = param
+                            && let Ok(lib) = self.sample_library.read()
+                            && let Some(sample) =
+                                lib.get(synth_sampler::SampleId::new(sample_id.0))
+                        {
+                            self.handle.send(EngineCommand::LoadSampleData {
+                                instrument_id: active_id,
+                                module_id,
+                                data: std::sync::Arc::clone(&sample.data),
+                                channels: sample.meta.channels,
+                                frame_count: sample.meta.frame_count.as_usize(),
+                                root_note: sample
+                                    .meta
+                                    .root_note
+                                    .unwrap_or(synth_core::MidiNote(60)),
+                            });
+                        }
                     }
                     _ => {}
                 }
