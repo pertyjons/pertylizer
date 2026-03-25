@@ -1802,15 +1802,27 @@ impl eframe::App for SynthApp {
                                 buffer_size: synth_core::BufferSize::MEDIUM,
                                 channels: synth_core::ChannelCount::Stereo,
                             };
-                            if let Err(e) =
-                                self.audio_input
-                                    .start_monitoring(host.as_ref(), device, &config)
+                            match self
+                                .audio_input
+                                .start_monitoring(host.as_ref(), device, &config)
                             {
-                                self.dialog_state.set_status(format!("Input error: {e}"));
+                                Ok(()) => {
+                                    // Send engine consumer so ProcessContext::audio_input works
+                                    if let Some(consumer) = self.audio_input.take_engine_consumer()
+                                    {
+                                        self.handle.send(EngineCommand::SetAudioInputConsumer {
+                                            consumer,
+                                        });
+                                    }
+                                }
+                                Err(e) => {
+                                    self.dialog_state.set_status(format!("Input error: {e}"));
+                                }
                             }
                         }
                     }
                     crate::gui::sample_view::SampleViewAction::StopMonitoring => {
+                        self.handle.send(EngineCommand::ClearAudioInputConsumer);
                         self.audio_input.stop_monitoring();
                     }
                     crate::gui::sample_view::SampleViewAction::StartRecording => {

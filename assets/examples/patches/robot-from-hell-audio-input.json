@@ -1,0 +1,233 @@
+{
+  "name": "Instrument 1",
+  "author": {
+    "name": "Per Jonsson",
+    "email": "pertyjons@gmail.com",
+    "website": "https://github.com/pertyjons/pertylizer"
+  },
+  "version": "1.0",
+  "modules": [
+    {
+      "id": "amp-1",
+      "type": "amplifier",
+      "position": {
+        "x": 1056.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "cv_bipolar": 0.0,
+        "level": 0.9,
+        "pan": 0.0
+      }
+    },
+    {
+      "id": "rev-1",
+      "type": "reverb",
+      "position": {
+        "x": 1728.0,
+        "y": 256.0
+      },
+      "parameters": {
+        "damping": 0.5,
+        "decay": 0.5,
+        "diffusion": 0.5,
+        "low_cut": 80.0,
+        "mix": 0.3,
+        "pre_delay": 0.0,
+        "room_size": 0.5,
+        "width": 1.0
+      }
+    },
+    {
+      "id": "osc-1",
+      "type": "oscillator",
+      "position": {
+        "x": 32.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "detune": 0.0,
+        "fm_amt": 1.0,
+        "fm_mode": 0.0,
+        "frequency": 20.0,
+        "level": 0.3,
+        "pulse_width": 0.5,
+        "uni_detune": 10.0,
+        "uni_phase": 1.0,
+        "uni_spread": 0.5,
+        "unison": 1.0,
+        "waveform": 2.0,
+        "x_mod": 0.0
+      }
+    },
+    {
+      "id": "lfo-1",
+      "type": "lfo",
+      "position": {
+        "x": 32.0,
+        "y": 512.0
+      },
+      "parameters": {
+        "depth": 0.6,
+        "phase": 0.0,
+        "rate": 2.5,
+        "waveform": 1.0
+      }
+    },
+    {
+      "id": "out-1",
+      "type": "stereo_output",
+      "position": {
+        "x": 1376.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "limit": 1.0,
+        "master": 0.8,
+        "mute": 0.0,
+        "pan": 0.0
+      }
+    },
+    {
+      "id": "flt-1",
+      "type": "filter",
+      "position": {
+        "x": 384.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "cutoff": 1200.0,
+        "cv_amt": 1.0,
+        "drive": 1.0,
+        "key_track": 0.0,
+        "model": 0.0,
+        "morph": 0.0,
+        "resonance": 0.7,
+        "type": 0.0
+      }
+    },
+    {
+      "id": "rng-1",
+      "type": "ring_mod",
+      "position": {
+        "x": 736.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "carrier_freq": 440.0,
+        "carrier_wave": 0.0,
+        "freq_ratio": 0.5,
+        "key_track": 0.0,
+        "mix": 0.6
+      }
+    },
+    {
+      "id": "ain-1",
+      "type": "audio_input",
+      "position": {
+        "x": 32.0,
+        "y": 352.0
+      },
+      "parameters": {
+        "level": 1.0
+      }
+    },
+    {
+      "id": "dst-1",
+      "type": "distortion",
+      "position": {
+        "x": 1728.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "bit_depth": 8.0,
+        "drive": 0.5,
+        "mix": 1.0,
+        "tone": 0.8,
+        "type": 0.0
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": [
+        "flt-1",
+        "out"
+      ],
+      "to": [
+        "rng-1",
+        "in"
+      ]
+    },
+    {
+      "from": [
+        "rng-1",
+        "out"
+      ],
+      "to": [
+        "amp-1",
+        "in"
+      ]
+    },
+    {
+      "from": [
+        "amp-1",
+        "out"
+      ],
+      "to": [
+        "out-1",
+        "in_l"
+      ]
+    },
+    {
+      "from": [
+        "amp-1",
+        "out"
+      ],
+      "to": [
+        "out-1",
+        "in_r"
+      ]
+    },
+    {
+      "from": [
+        "ain-1",
+        "out"
+      ],
+      "to": [
+        "flt-1",
+        "in"
+      ]
+    },
+    {
+      "from": [
+        "lfo-1",
+        "out"
+      ],
+      "to": [
+        "flt-1",
+        "cutoff_cv"
+      ]
+    },
+    {
+      "from": [
+        "osc-1",
+        "out"
+      ],
+      "to": [
+        "rng-1",
+        "freq_cv"
+      ]
+    }
+  ],
+  "settings": {
+    "master_volume": 0.8,
+    "bpm": 120.0,
+    "octave_offset": -2,
+    "glide_time": 0.0,
+    "canvas_size": {
+      "width": 2178.0,
+      "height": 1012.0
+    }
+  }
+}

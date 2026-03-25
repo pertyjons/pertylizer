@@ -103,6 +103,12 @@ impl AudioInputManager {
         Ok(())
     }
 
+    /// Take the engine-side ring buffer consumer (to send to SynthEngine).
+    /// Returns `None` if already taken or not monitoring.
+    pub fn take_engine_consumer(&mut self) -> Option<ringbuf::HeapCons<f32>> {
+        self.engine_consumer.take()
+    }
+
     /// Stop monitoring and release the input stream.
     pub fn stop_monitoring(&mut self) {
         if let Some(ref mut stream) = self.stream {
