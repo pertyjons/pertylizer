@@ -3164,6 +3164,9 @@ impl PatchEditor {
                     Self::bg_menu_item(ui, PaletteSelection::AdditiveOsc, &mut selected);
                     Self::bg_menu_item(ui, PaletteSelection::GranularOsc, &mut selected);
                     Self::bg_menu_item(ui, PaletteSelection::FractalOsc, &mut selected);
+                    ui.separator();
+                    Self::bg_menu_item(ui, PaletteSelection::Sampler, &mut selected);
+                    Self::bg_menu_item(ui, PaletteSelection::AudioInput, &mut selected);
                 },
             );
 
@@ -3451,6 +3454,8 @@ impl PatchEditor {
                                     PaletteSelection::AdditiveOsc,
                                     PaletteSelection::GranularOsc,
                                     PaletteSelection::FractalOsc,
+                                    PaletteSelection::Sampler,
+                                    PaletteSelection::AudioInput,
                                     PaletteSelection::Noise,
                                     PaletteSelection::RingMod,
                                 ],
@@ -5012,6 +5017,9 @@ pub enum PaletteSelection {
     KineticModulator,
     SignalMonitor,
     FractalOsc,
+    // Sampler
+    Sampler,
+    AudioInput,
 }
 
 /// Get the display label (with Remix Icon) and category color for a palette selection.
@@ -5059,6 +5067,17 @@ fn palette_label(selection: PaletteSelection) -> (String, Color32) {
             ri::SEEDLING_FILL,
             "Fractal Osc",
             category_color(ModuleCategory::Oscillator),
+        ),
+        // Sampler
+        PaletteSelection::Sampler => (
+            ri::MUSIC_FILL,
+            "Sampler",
+            category_color(ModuleCategory::Sampler),
+        ),
+        PaletteSelection::AudioInput => (
+            ri::MIC_FILL,
+            "Audio Input",
+            category_color(ModuleCategory::Sampler),
         ),
         // Simple categories
         PaletteSelection::Category(ModuleCategory::Filter) => (
