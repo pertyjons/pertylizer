@@ -1,5 +1,17 @@
 # Version History
 
+## [0.252.0] - 2026-03-25
+### Sampling bugfixes and Rack integration
+- **Sampler and Audio Input in Rack palette** — both modules available in right-click menu and port quick-add
+- **Sample selector dropdown** in Sampler module panel — select which sample to play from loaded library
+- **EngineCommand::LoadSampleData** — loads `Arc<[f32]>` into Sampler template + active voices when sample is selected
+- **Live audio input wired to engine** — `SetAudioInputConsumer` sent on monitoring start, `ClearAudioInputConsumer` on stop
+- **Critical DSP fixes**: reverse playback, loop interpolation OOB, high-pitch overshoot (modulo), PingPong direction
+- **Sampler fixes**: FineTune without pitch tracking, StartOffset parameter, SampleSelect triggers data reload, get_param returns None for SampleSelect
+- **Engine fixes**: drain-all strategy for clock drift, ENGINE_RING_SIZE 16k, GUI_RING_SIZE 262k, no RT heap alloc
+- **GUI fixes**: inverted rect guard for loop overlay, ZIP import skips non-numeric filenames
+- **SampleLibrary**: `replace_data()`, `add_with_id()`, `clear()` — preserves IDs on normalize/reverse/bundle-load
+
 ## [0.251.0] - 2026-03-25
 ### Sampling & Audio Recording
 - **New crate: `synth_sampler`** — sample data types, WAV I/O (load/save), sample library, linear interpolation resampling, sample playback DSP
