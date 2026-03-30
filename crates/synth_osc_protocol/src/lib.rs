@@ -5,6 +5,7 @@
 //! standalone visualizer can reference the same definitions.
 
 use core::fmt;
+use core::net::Ipv4Addr;
 
 // ---------------------------------------------------------------------------
 // Protocol version
@@ -19,6 +20,13 @@ pub const PROTOCOL_VERSION: i32 = 1;
 
 /// Default UDP port for OSC communication.
 pub const DEFAULT_OSC_PORT: u16 = 9000;
+
+/// Default multicast group address for OSC telemetry.
+///
+/// Multiple visualizer instances can join this group simultaneously.
+/// Uses the "administratively scoped" range (239.x.x.x) which is safe
+/// for local/LAN use and will not be forwarded by routers.
+pub const DEFAULT_MULTICAST_GROUP: Ipv4Addr = Ipv4Addr::new(239, 0, 0, 1);
 
 /// Default telemetry update rate (Hz).
 pub const DEFAULT_UPDATE_RATE_HZ: f32 = 30.0;

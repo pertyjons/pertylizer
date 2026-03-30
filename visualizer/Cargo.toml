@@ -13,4 +13,5 @@ bevy = "0.18.1"
 crossbeam-channel = "0.5"
 fastrand = "2.3.0"
 rosc = "0.11.4"
+socket2 = "0.6"
 synth_osc_protocol = { path = "../crates/synth_osc_protocol" }

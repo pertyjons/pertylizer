@@ -162,9 +162,10 @@ This enables AI to self-discover the full synth architecture without hardcoded k
 
 - [ ] Enable AI to "play freely" via MCP to autonomously generate complete songs and arrangements
 - [ ] Implement real-time parameter interpolation (gliding) to allow smoother AI-driven sound design
-- [ ] Support batching of MCP commands to reduce latency and overhead during complex generations
-- [ ] Add "Discovery" tools for the AI to better understand available port types and valid parameter ranges (see ★ MCP
-  section above)
+- [x] Support batching of MCP commands to reduce latency and overhead during complex generations *(v0.253.0 —
+  `batch_execute`)*
+- [x] Add "Discovery" tools for the AI to better understand available port types and valid parameter ranges *(v0.253.0 —
+  `get_module_type_info`, `search_modules`, `list_port_types`, `check_connection`)*
 
 ---
 

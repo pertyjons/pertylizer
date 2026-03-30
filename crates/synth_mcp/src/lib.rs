@@ -68,10 +68,11 @@ pub async fn serve_http(
             }
         },
         Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig {
-            stateful_mode: true,
-            cancellation_token: ct.child_token(),
-            ..Default::default()
+        {
+            let mut config = StreamableHttpServerConfig::default();
+            config.stateful_mode = true;
+            config.cancellation_token = ct.child_token();
+            config
         },
     );
 

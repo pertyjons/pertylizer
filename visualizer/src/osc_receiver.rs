@@ -9,7 +9,7 @@
 //! The background thread also sends `/viz/pong` replies so the sender knows
 //! a client is connected (enables full telemetry).
 
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::Instant;
 
 use bevy::prelude::*;
@@ -127,13 +127,33 @@ impl Plugin for OscReceiverPlugin {
 }
 
 fn setup_osc_socket(mut commands: Commands) {
-    let bind_addr = format!("0.0.0.0:{}", synth_osc_protocol::DEFAULT_OSC_PORT);
-    let socket = UdpSocket::bind(&bind_addr).unwrap_or_else(|e| {
-        panic!(
-            "Failed to bind OSC port {}: {e}",
-            synth_osc_protocol::DEFAULT_OSC_PORT
-        )
-    });
+    let port = synth_osc_protocol::DEFAULT_OSC_PORT;
+    let multicast_group = synth_osc_protocol::DEFAULT_MULTICAST_GROUP;
+
+    // Use socket2 to set SO_REUSEADDR before binding, allowing multiple
+    // visualizer instances to share the same port.
+    let socket2 = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )
+    .unwrap_or_else(|e| panic!("Failed to create UDP socket: {e}"));
+
+    socket2
+        .set_reuse_address(true)
+        .unwrap_or_else(|e| panic!("Failed to set SO_REUSEADDR: {e}"));
+
+    let bind_addr: SocketAddr = SocketAddr::from(([0, 0, 0, 0], port));
+    socket2
+        .bind(&bind_addr.into())
+        .unwrap_or_else(|e| panic!("Failed to bind OSC port {port}: {e}"));
+
+    // Join the multicast group so we receive packets sent to the group address.
+    socket2
+        .join_multicast_v4(&multicast_group, &Ipv4Addr::UNSPECIFIED)
+        .unwrap_or_else(|e| panic!("Failed to join multicast group {multicast_group}: {e}"));
+
+    let socket: UdpSocket = socket2.into();
 
     let (tx, rx) = bounded(CHANNEL_CAPACITY);
 
@@ -191,7 +211,7 @@ fn setup_osc_socket(mut commands: Commands) {
         })
         .expect("Failed to spawn OSC reader thread");
 
-    println!("OSC receiver: listening on {bind_addr}");
+    println!("OSC receiver: listening on {bind_addr} (multicast group {multicast_group})");
 
     commands.insert_resource(OscSocket { rx });
 }

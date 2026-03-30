@@ -643,6 +643,71 @@ pub struct SampleInfo {
     pub source: String,
 }
 
+// ============================================================================
+// DISCOVERY TYPES
+// ============================================================================
+
+/// Information about a port signal type (returned by `list_port_types`).
+#[derive(Debug, Clone, Serialize)]
+pub struct PortSignalTypeInfo {
+    /// Signal type identifier (matches `PortTypeInfo::signal_type`).
+    pub signal_type: String,
+    /// Human-readable description.
+    pub description: String,
+    /// Value range hint.
+    pub value_range: String,
+    /// Which other signal types this can connect to.
+    pub compatible_with: Vec<String>,
+}
+
+/// Result of checking whether a connection between two ports is valid.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectionCheckResult {
+    /// Whether the connection is valid.
+    pub valid: bool,
+    /// Signal type of the source port (if found).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_signal_type: Option<String>,
+    /// Signal type of the destination port (if found).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_signal_type: Option<String>,
+    /// Explanation of why the connection is valid or invalid.
+    pub message: String,
+    /// Actionable hint for the caller.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+// ============================================================================
+// BATCH EXECUTE TYPES
+// ============================================================================
+
+/// Result of a single operation in a `batch_execute` call.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchExecItemResult {
+    /// Zero-based index of the operation in the input array.
+    pub index: usize,
+    /// Tool name that was called.
+    pub tool: String,
+    /// Whether the operation succeeded.
+    pub success: bool,
+    /// Result string (JSON or message) on success, error message on failure.
+    pub result: String,
+}
+
+/// Aggregate result for a `batch_execute` call.
+#[derive(Debug, Clone, Serialize)]
+pub struct BatchExecResult {
+    /// Total number of operations.
+    pub total: usize,
+    /// Number of operations that succeeded.
+    pub succeeded: usize,
+    /// Number of operations that failed.
+    pub failed: usize,
+    /// Per-operation results.
+    pub results: Vec<BatchExecItemResult>,
+}
+
 /// Current audio input state.
 #[derive(Debug, Clone, Serialize)]
 pub struct InputStateInfo {

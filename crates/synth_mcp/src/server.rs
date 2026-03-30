@@ -222,6 +222,55 @@ fn mcp_err(e: McpBridgeError) -> ErrorData {
     ErrorData::internal_error(e.to_string(), None)
 }
 
+/// Valid port signal type strings.
+const VALID_SIGNAL_TYPES: &[&str] = &["audio", "control", "gate", "midi"];
+
+/// Find strings similar to `needle` in `haystack` using simple edit distance.
+fn find_similar(needle: &str, haystack: &[&str], max_results: usize) -> Vec<String> {
+    let needle_lower = needle.to_lowercase();
+    let mut scored: Vec<(&str, usize)> = haystack
+        .iter()
+        .filter_map(|&s| {
+            let s_lower = s.to_lowercase();
+            // Substring match gets priority
+            if s_lower.contains(&needle_lower) || needle_lower.contains(&s_lower) {
+                Some((s, 0))
+            } else {
+                let dist = edit_distance(&needle_lower, &s_lower);
+                if dist <= 3 { Some((s, dist)) } else { None }
+            }
+        })
+        .collect();
+    scored.sort_by_key(|(_, d)| *d);
+    scored
+        .into_iter()
+        .take(max_results)
+        .map(|(s, _)| format!("'{s}'"))
+        .collect()
+}
+
+/// Simple Levenshtein edit distance.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    for (i, row) in dp.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for j in 0..=b.len() {
+        dp[0][j] = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+        }
+    }
+    dp[a.len()][b.len()]
+}
+
 // === MCP session tracking ===
 
 /// Information about a connected MCP client.
@@ -311,6 +360,62 @@ impl Default for McpSessionRegistry {
 /// Empty parameter struct for tools that take no arguments.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoParams {}
+
+// === Discovery parameter structs ===
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetModuleTypeInfoParam {
+    #[schemars(
+        description = "Module type key, e.g. 'osc', 'flt', 'env', 'lfo'. Use list_module_types to see all keys."
+    )]
+    pub type_key: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SearchModulesParam {
+    #[schemars(description = "Filter by category: 'voice', 'effect', or 'visualizer'")]
+    pub category: Option<String>,
+    #[schemars(
+        description = "Filter to modules that have an input port of this signal type: 'audio', 'control', 'gate', or 'midi'"
+    )]
+    pub has_input_type: Option<String>,
+    #[schemars(
+        description = "Filter to modules that have an output port of this signal type: 'audio', 'control', 'gate', or 'midi'"
+    )]
+    pub has_output_type: Option<String>,
+    #[schemars(
+        description = "Text search in module name, description, and parameter names (case-insensitive)"
+    )]
+    pub query: Option<String>,
+}
+
+/// Same fields as `ConnectParam` — reused for connection validation.
+pub type CheckConnectionParam = ConnectParam;
+
+// === Batch execute parameter structs ===
+
+/// A single operation in a `batch_execute` call.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct BatchOperation {
+    #[schemars(
+        description = "Tool name to call, e.g. 'set_parameter', 'connect', 'set_song_tempo'"
+    )]
+    pub tool: String,
+    #[schemars(description = "Parameters for the tool as a JSON object")]
+    pub params: serde_json::Value,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct BatchExecuteParam {
+    #[schemars(
+        description = "Array of operations to execute sequentially. Each has a 'tool' name and 'params' object."
+    )]
+    pub operations: Vec<BatchOperation>,
+    #[schemars(
+        description = "If true, stop on the first error. If false (default), continue and report all errors."
+    )]
+    pub stop_on_error: Option<bool>,
+}
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InstrumentIdParam {
@@ -1245,6 +1350,188 @@ impl SynthMcpServer {
     }
 }
 
+/// Macro to generate dispatch arms for `batch_execute`.
+///
+/// Each arm deserializes the JSON params into the appropriate type and calls
+/// the corresponding tool method, unwrapping the `Parameters` wrapper.
+macro_rules! dispatch_tools {
+    ($self:expr, $tool:expr, $params:expr, [
+        $( $name:literal => $method:ident ( $ptype:ty ) ),* $(,)?
+    ]) => {
+        match $tool {
+            $(
+                $name => {
+                    match serde_json::from_value::<$ptype>($params) {
+                        Ok(p) => Ok($self.$method(Parameters(p)).await),
+                        Err(e) => Err(format!("Error: invalid params for '{}': {}", $name, e)),
+                    }
+                }
+            )*
+            _ => {
+                let known: &[&str] = &[ $( $name ),* ];
+                let similar = find_similar($tool, known, 3);
+                let hint = if similar.is_empty() {
+                    String::new()
+                } else {
+                    format!(". Did you mean {}?", similar.join(", "))
+                };
+                Err(format!("Error: unknown tool '{}'{}", $tool, hint))
+            }
+        }
+    }
+}
+
+impl SynthMcpServer {
+    /// Dispatch a tool call by name with JSON params.
+    /// Used by `batch_execute` to run arbitrary tool calls.
+    async fn dispatch_tool(&self, tool: &str, params: serde_json::Value) -> Result<String, String> {
+        dispatch_tools!(self, tool, params, [
+            // Read operations
+            "list_instruments" => list_instruments(NoParams),
+            "get_instrument_info" => get_instrument_info(InstrumentIdParam),
+            "list_modules" => list_modules(InstrumentIdParam),
+            "get_module_info" => get_module_info(ModuleParam),
+            "get_connections" => get_connections(InstrumentIdParam),
+            "get_parameter" => get_parameter(GetParameterParam),
+            "get_engine_status" => get_engine_status(NoParams),
+            "get_graph_diagnostics" => get_graph_diagnostics(InstrumentIdParam),
+            "get_ui_snapshot" => get_ui_snapshot(InstrumentIdParam),
+
+            // Module types & discovery
+            "list_module_types" => list_module_types(NoParams),
+            "get_module_type_info" => get_module_type_info(GetModuleTypeInfoParam),
+            "search_modules" => search_modules(SearchModulesParam),
+            "list_port_types" => list_port_types(NoParams),
+            "check_connection" => check_connection(CheckConnectionParam),
+
+            // Parameters
+            "set_parameter" => set_parameter(SetParameterParam),
+            "set_parameters" => set_parameters(SetParametersParam),
+
+            // Notes
+            "note_on" => note_on(NoteOnParam),
+            "note_off" => note_off(NoteOffParam),
+
+            // Example patches
+            "list_example_patches" => list_example_patches(NoParams),
+            "load_example_patch" => load_example_patch(LoadExamplePatchParam),
+            "auto_layout" => auto_layout(NoParams),
+
+            // Module management
+            "add_module" => add_module(AddModuleParam),
+            "remove_module" => remove_module(ModuleParam),
+            "connect" => connect(ConnectParam),
+            "connect_multiple" => connect_multiple(ConnectMultipleParam),
+            "disconnect" => disconnect(ConnectParam),
+            "clear_graph" => clear_graph(InstrumentIdParam),
+
+            // Instrument lifecycle
+            "create_instrument" => create_instrument(CreateInstrumentParam),
+            "delete_instrument" => delete_instrument(InstrumentIdParam),
+            "rename_instrument" => rename_instrument(RenameInstrumentParam),
+            "set_instrument_volume" => set_instrument_volume(SetInstrumentVolumeParam),
+            "set_instrument_pan" => set_instrument_pan(SetInstrumentPanParam),
+            "set_instrument_mute" => set_instrument_mute(SetInstrumentMuteParam),
+            "set_instrument_solo" => set_instrument_solo(SetInstrumentSoloParam),
+            "set_instrument_midi_channel" => set_instrument_midi_channel(SetInstrumentMidiChannelParam),
+            "set_instrument_enabled" => set_instrument_enabled(SetInstrumentEnabledParam),
+            "set_instrument_category" => set_instrument_category(SetInstrumentCategoryParam),
+
+            // Song
+            "get_song_info" => get_song_info(NoParams),
+            "set_song_tempo" => set_song_tempo(SetSongTempoParam),
+            "set_song_name" => set_song_name(SetSongNameParam),
+            "set_song_author" => set_song_author(SetSongAuthorParam),
+            "set_song_time_signature" => set_song_time_signature(SetSongTimeSignatureParam),
+
+            // Patterns
+            "list_patterns" => list_patterns(NoParams),
+            "create_pattern" => create_pattern(CreatePatternParam),
+            "delete_pattern" => delete_pattern(PatternIdParam),
+            "rename_pattern" => rename_pattern(RenamePatternParam),
+            "set_pattern_length" => set_pattern_length(SetPatternLengthParam),
+            "duplicate_pattern" => duplicate_pattern(DuplicatePatternParam),
+            "create_patterns" => create_patterns(CreatePatternsParam),
+
+            // Notes in patterns
+            "list_notes" => list_notes(PatternIdParam),
+            "add_note" => add_note(AddNoteParam),
+            "remove_note" => remove_note(RemoveNoteParam),
+            "update_note" => update_note(UpdateNoteParam),
+            "add_notes" => add_notes(AddNotesParam),
+            "update_notes" => update_notes(UpdateNotesParam),
+            "replace_notes" => replace_notes(ReplaceNotesParam),
+            "clear_pattern" => clear_pattern(ClearPatternParam),
+
+            // Tracks
+            "list_tracks" => list_tracks(NoParams),
+            "create_track" => create_track(CreateTrackParam),
+            "create_tracks" => create_tracks(CreateTracksParam),
+            "set_track_volume" => set_track_volume(SetTrackVolumeParam),
+            "set_track_pan" => set_track_pan(SetTrackPanParam),
+            "set_track_mute" => set_track_mute(SetTrackMuteParam),
+            "set_track_solo" => set_track_solo(SetTrackSoloParam),
+            "set_track_instrument" => set_track_instrument(SetTrackInstrumentParam),
+            "rename_track" => rename_track(RenameTrackParam),
+            "delete_track" => delete_track(DeleteTrackParam),
+
+            // Arrangement
+            "place_pattern" => place_pattern(PlacePatternParam),
+            "remove_placement" => remove_placement(PlacePatternParam),
+            "list_arrangement" => list_arrangement(NoParams),
+            "place_patterns" => place_patterns(PlacePatternsParam),
+
+            // Automation
+            "add_automation_points" => add_automation_points(AddAutomationPointsParam),
+            "list_automation_lanes" => list_automation_lanes(PatternIdParam),
+            "get_automation_points" => get_automation_points(GetAutomationPointsParam),
+            "remove_automation_points" => remove_automation_points(RemoveAutomationPointsParam),
+            "clear_automation_lane" => clear_automation_lane(ClearAutomationLaneParam),
+
+            // Transport
+            "seq_play" => seq_play(NoParams),
+            "seq_stop" => seq_stop(NoParams),
+            "seq_seek" => seq_seek(SeqSeekParam),
+
+            // Build instruments
+            "build_instrument" => build_instrument(BuildInstrumentParam),
+            "build_instruments" => build_instruments(BuildInstrumentsParam),
+            "apply_example_patch" => apply_example_patch(ApplyExamplePatchParam),
+            "set_song" => set_song(SetSongParam),
+
+            // Project
+            "new_project" => new_project(NoParams),
+            "save_project" => save_project(ProjectPathParam),
+            "load_project" => load_project(ProjectPathParam),
+            "optimize_project" => optimize_project(NoParams),
+
+            // AWE
+            "get_awe_state" => get_awe_state(NoParams),
+            "set_awe_enabled" => set_awe_enabled(SetAweEnabledParam),
+            "set_awe_parameter" => set_awe_parameter(SetAweParameterParam),
+            "set_awe_room_shape" => set_awe_room_shape(SetAweRoomShapeParam),
+            "set_awe_material" => set_awe_material(SetAweMaterialParam),
+            "set_awe_preset" => set_awe_preset(SetAwePresetParam),
+            "list_awe_presets" => list_awe_presets(NoParams),
+            "set_awe_lfo" => set_awe_lfo(SetAweLfoParam),
+
+            // Samples
+            "list_samples" => list_samples(ListSamplesParam),
+            "import_sample" => import_sample(ImportSampleParam),
+            "delete_sample" => delete_sample(SampleIdParam),
+            "rename_sample" => rename_sample(RenameSampleParam),
+            "set_sample_root_note" => set_sample_root_note(SetSampleRootNoteParam),
+            "normalize_sample" => normalize_sample(SampleIdParam),
+            "reverse_sample" => reverse_sample(SampleIdParam),
+            "trim_sample_silence" => trim_sample_silence(SampleIdParam),
+
+            // Audio input
+            "list_input_devices" => list_input_devices(NoParams),
+            "get_input_state" => get_input_state(NoParams),
+        ])
+    }
+}
+
 impl Drop for SynthMcpServer {
     fn drop(&mut self) {
         if let Some(registry) = &self.registry {
@@ -1283,16 +1570,32 @@ impl ServerHandler for SynthMcpServer {
              LFO → any cv input for modulation.\n\n\
              ## Building instruments\n\
              Use `build_instrument` for one-call instrument creation, or step-by-step: \
-             `create_instrument` → `add_module` (multiple) → `set_parameter` → `connect`.\n\
-             Call `list_module_types` to discover available modules with parameter ranges, \
-             units, port types, and signal flow hints.\n\n\
+             `create_instrument` → `add_module` (multiple) → `set_parameter` → `connect`.\n\n\
+             ## Discovery tools\n\
+             Use these to understand available modules and valid connections before building:\n\
+             - `get_module_type_info` — get ports, parameters (with ranges/units/choices), and \
+               signal flow hints for a single module type by key (e.g. 'osc', 'flt'). \
+               Lighter than `list_module_types` when you know which module you need.\n\
+             - `search_modules` — filter modules by category ('voice'/'effect'), port signal \
+               type ('audio'/'control'/'gate'/'midi'), or text query. Use this to find modules \
+               with specific capabilities.\n\
+             - `list_port_types` — reference of all signal types with descriptions, value ranges, \
+               and compatibility rules.\n\
+             - `check_connection` — validate a proposed connection before making it. Reports \
+               port direction errors, signal type incompatibilities, and lists available ports.\n\
+             - `list_module_types` — full catalog of all modules (use sparingly, large response).\n\n\
              ## Sequencer\n\
              Songs have **tracks** and **patterns**. Patterns contain notes and automation. \
              Patterns are placed on tracks in the **arrangement** timeline. \
              Use `create_pattern` → `add_notes` → `create_track` → `place_pattern` to build songs.\n\n\
              ## Batch operations\n\
-             Prefer batch tools (`build_instrument`, `add_notes`, `connect_multiple`, \
-             `create_patterns`, `place_patterns`) over repeated single calls for efficiency.\n\n\
+             Prefer batch tools for efficiency:\n\
+             - Domain-specific: `build_instrument`, `add_notes`, `connect_multiple`, \
+               `create_patterns`, `place_patterns`, `set_parameters`, `set_song`.\n\
+             - Generic: `batch_execute` — run up to 50 tool calls in a single request. \
+               Accepts an array of `{tool, params}` objects, executes sequentially, \
+               and returns per-item results. Use for cross-domain orchestration \
+               (e.g. instrument setup + sequencer config + AWE in one call).\n\n\
              ## AWE (Acoustic World Engine)\n\
              AWE is a physics-based room simulation applied to the master output. It models \
              early reflections, late reverb (FDN), room modes (standing waves), and stereo \
@@ -3271,6 +3574,233 @@ impl SynthMcpServer {
             Ok(state) => to_json(&state),
             Err(e) => format!("Error: {e}"),
         }
+    }
+
+    // ========================================================================
+    // DISCOVERY TOOLS
+    // ========================================================================
+
+    #[tool(
+        description = "Get detailed info for a single module type by its type key (e.g. 'osc', 'flt', 'env'). \
+                       Returns ports, parameters with ranges/units/choices, and signal flow hints. \
+                       Lighter than list_module_types when you already know which module you need."
+    )]
+    async fn get_module_type_info(&self, params: Parameters<GetModuleTypeInfoParam>) -> String {
+        let type_key = params.0.type_key.trim();
+        if type_key.is_empty() {
+            return validation_err(McpBridgeError::EmptyName { kind: "type_key" });
+        }
+        match self.bridge.get_module_type_info(type_key) {
+            Ok(info) => to_json(&info),
+            Err(e) => {
+                let hint = if matches!(e, McpBridgeError::InvalidModuleType(_)) {
+                    match self.bridge.list_module_types() {
+                        Ok(types) => {
+                            let keys: Vec<&str> =
+                                types.iter().map(|t| t.type_key.as_str()).collect();
+                            let similar = find_similar(type_key, &keys, 3);
+                            if similar.is_empty() {
+                                "\nHint: use list_module_types to see all available type keys."
+                                    .to_string()
+                            } else {
+                                format!(
+                                    "\nHint: did you mean {}? Use list_module_types to see all.",
+                                    similar.join(", ")
+                                )
+                            }
+                        }
+                        Err(_) => String::new(),
+                    }
+                } else {
+                    String::new()
+                };
+                format!("Error: {e}{hint}")
+            }
+        }
+    }
+
+    #[tool(
+        description = "Search available module types by category, port signal type, or text query. \
+                       All filters are optional and combined with AND logic. Returns matching modules \
+                       with full port/parameter details."
+    )]
+    async fn search_modules(&self, params: Parameters<SearchModulesParam>) -> String {
+        let p = params.0;
+        // Validate category if provided
+        if let Some(ref cat) = p.category
+            && !["voice", "effect", "visualizer"].contains(&cat.as_str())
+        {
+            return format!(
+                "Error: invalid category '{}'. Valid categories: voice, effect, visualizer",
+                cat
+            );
+        }
+        // Validate signal types if provided
+        for (name, val) in [
+            ("has_input_type", &p.has_input_type),
+            ("has_output_type", &p.has_output_type),
+        ] {
+            if let Some(st) = val
+                && !VALID_SIGNAL_TYPES.contains(&st.as_str())
+            {
+                return format!(
+                    "Error: invalid {name} '{}'. Valid signal types: audio, control, gate, midi",
+                    st
+                );
+            }
+        }
+        match self.bridge.search_modules(
+            p.category.as_deref(),
+            p.has_input_type.as_deref(),
+            p.has_output_type.as_deref(),
+            p.query.as_deref(),
+        ) {
+            Ok(modules) => {
+                if modules.is_empty() {
+                    let mut hint = "No modules matched your filters.".to_string();
+                    if p.query.is_some() {
+                        hint.push_str(" Try a broader text query or remove filters.");
+                    }
+                    hint
+                } else {
+                    let count = modules.len();
+                    let json = to_json(&modules);
+                    format!("{json}\n\n({count} module(s) matched)")
+                }
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "List all port signal types with descriptions, value ranges, and compatibility. \
+                       Use this to understand which port types can connect to each other."
+    )]
+    async fn list_port_types(&self, _params: Parameters<NoParams>) -> String {
+        use crate::types::PortSignalTypeInfo;
+        let types = vec![
+            PortSignalTypeInfo {
+                signal_type: "audio".to_string(),
+                description: "Audio-rate signal, processed sample-by-sample at the engine sample rate.".to_string(),
+                value_range: "Typically -1.0 to +1.0 (can exceed for hot signals)".to_string(),
+                compatible_with: vec!["audio".to_string(), "control".to_string()],
+            },
+            PortSignalTypeInfo {
+                signal_type: "control".to_string(),
+                description: "Control-rate signal for parameter modulation (pitch CV, filter cutoff CV, etc.).".to_string(),
+                value_range: "0.0 to 1.0 (unipolar) or -1.0 to +1.0 (bipolar), depends on source".to_string(),
+                compatible_with: vec!["audio".to_string(), "control".to_string()],
+            },
+            PortSignalTypeInfo {
+                signal_type: "gate".to_string(),
+                description: "Binary trigger signal for note on/off. High (1.0) = note held, low (0.0) = released.".to_string(),
+                value_range: "0.0 or 1.0".to_string(),
+                compatible_with: vec!["gate".to_string(), "control".to_string()],
+            },
+            PortSignalTypeInfo {
+                signal_type: "midi".to_string(),
+                description: "MIDI event data (note on/off, CC, pitch bend). Only connects to MIDI ports.".to_string(),
+                value_range: "Structured MIDI events".to_string(),
+                compatible_with: vec!["midi".to_string()],
+            },
+        ];
+        to_json(&types)
+    }
+
+    #[tool(
+        description = "Check whether a connection between two module ports would be valid. \
+                       Returns compatibility info and hints. Use this before connect to avoid errors."
+    )]
+    async fn check_connection(&self, params: Parameters<CheckConnectionParam>) -> String {
+        let p = params.0;
+        match self.bridge.check_connection(
+            p.instrument_id,
+            &p.from_module,
+            &p.from_port,
+            &p.to_module,
+            &p.to_port,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // ========================================================================
+    // BATCH EXECUTE
+    // ========================================================================
+
+    #[tool(
+        description = "Execute multiple tool calls in a single request to reduce round-trip latency. \
+                       Operations run sequentially. Max 50 operations per batch. \
+                       Cannot nest batch_execute inside a batch."
+    )]
+    async fn batch_execute(&self, params: Parameters<BatchExecuteParam>) -> String {
+        use crate::types::{BatchExecItemResult, BatchExecResult};
+
+        let p = params.0;
+        let stop_on_error = p.stop_on_error.unwrap_or(false);
+
+        if p.operations.is_empty() {
+            return "Error: operations array is empty".to_string();
+        }
+        if p.operations.len() > 50 {
+            return format!(
+                "Error: too many operations ({}). Maximum is 50 per batch.",
+                p.operations.len()
+            );
+        }
+
+        let total = p.operations.len();
+        let mut results = Vec::with_capacity(total);
+        let mut succeeded = 0usize;
+        let mut failed = 0usize;
+
+        for (i, op) in p.operations.into_iter().enumerate() {
+            if op.tool == "batch_execute" {
+                results.push(BatchExecItemResult {
+                    index: i,
+                    tool: op.tool,
+                    success: false,
+                    result: "Error: batch_execute cannot be nested".to_string(),
+                });
+                failed += 1;
+                if stop_on_error {
+                    break;
+                }
+                continue;
+            }
+
+            match self.dispatch_tool(&op.tool, op.params).await {
+                Ok(result) => {
+                    results.push(BatchExecItemResult {
+                        index: i,
+                        tool: op.tool,
+                        success: true,
+                        result,
+                    });
+                    succeeded += 1;
+                }
+                Err(err) => {
+                    results.push(BatchExecItemResult {
+                        index: i,
+                        tool: op.tool,
+                        success: false,
+                        result: err,
+                    });
+                    failed += 1;
+                    if stop_on_error {
+                        break;
+                    }
+                }
+            }
+        }
+
+        to_json(&BatchExecResult {
+            total,
+            succeeded,
+            failed,
+            results,
+        })
     }
 }
 

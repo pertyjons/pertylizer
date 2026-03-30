@@ -1,5 +1,15 @@
 # Version History
 
+## [0.253.0] - 2026-03-30
+### MCP discovery tools and batch execution
+- **`get_module_type_info`** — query a single module type by key with full port/parameter details and signal flow hints; suggests similar keys on typos
+- **`search_modules`** — filter modules by category, input/output signal type, or text query with early filtering for efficiency
+- **`list_port_types`** — static reference of all signal types (audio, control, gate, midi) with descriptions, value ranges, and compatibility rules
+- **`check_connection`** — validate proposed connections before making them; reports direction errors, signal type incompatibilities, and lists available ports with hints
+- **`batch_execute`** — generic cross-domain batch tool: up to 50 tool calls in a single request with per-item results, `stop_on_error` flag, and "did you mean?" suggestions for unknown tools
+- **Updated MCP server instructions** — new Discovery Tools and Batch Operations sections guide AI clients to the right tools
+- **Code quality** — extracted shared `build_module_type_info` helper, unified `port_type_str` usage, optimized `search_modules` to filter before building full type infos
+
 ## [0.252.0] - 2026-03-25
 ### Sampling bugfixes and Rack integration
 - **Sampler and Audio Input in Rack palette** — both modules available in right-click menu and port quick-add

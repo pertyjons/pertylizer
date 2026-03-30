@@ -18,7 +18,10 @@ pub struct OscConfig {
 impl Default for OscConfig {
     fn default() -> Self {
         Self {
-            target: SocketAddr::from(([127, 0, 0, 1], synth_osc_protocol::DEFAULT_OSC_PORT)),
+            target: SocketAddr::from((
+                synth_osc_protocol::DEFAULT_MULTICAST_GROUP,
+                synth_osc_protocol::DEFAULT_OSC_PORT,
+            )),
             update_rate_hz: synth_osc_protocol::DEFAULT_UPDATE_RATE_HZ,
             meta_interval_secs: synth_osc_protocol::DEFAULT_META_INTERVAL_SECS,
             idle_timeout_secs: synth_osc_protocol::DEFAULT_IDLE_TIMEOUT_SECS,

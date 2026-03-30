@@ -17,10 +17,11 @@
 use crate::error::McpBridgeError;
 use crate::types::{
     ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo, AwePresetInfo,
-    AweStateInfo, BatchResult, BuildInstrumentResult, ConnectionInfo, EngineStatus,
-    ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo, InputStateInfo, InstrumentInfo, ModuleInfo,
-    ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo,
-    PlacementInfo, SampleInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    AweStateInfo, BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo,
+    EngineStatus, ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo, InputStateInfo,
+    InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo,
+    PatchResourceData, PatternInfo, PlacementInfo, SampleInfo, SetSongResult, SongInfo, TrackInfo,
+    UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -666,6 +667,30 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Get current audio input state.
     fn get_input_state(&self) -> Result<InputStateInfo, McpBridgeError>;
+
+    // === Discovery ===
+
+    /// Get detailed info for a single module type by its type key (e.g. "osc", "flt").
+    fn get_module_type_info(&self, type_key: &str) -> Result<ModuleTypeInfo, McpBridgeError>;
+
+    /// Search module types by category, port requirements, or text query.
+    fn search_modules(
+        &self,
+        category: Option<&str>,
+        has_input_type: Option<&str>,
+        has_output_type: Option<&str>,
+        query: Option<&str>,
+    ) -> Result<Vec<ModuleTypeInfo>, McpBridgeError>;
+
+    /// Check whether a connection between two ports is valid.
+    fn check_connection(
+        &self,
+        instrument_id: u64,
+        from_module: &str,
+        from_port: &str,
+        to_module: &str,
+        to_port: &str,
+    ) -> Result<ConnectionCheckResult, McpBridgeError>;
 }
 
 /// Automation point data for MCP bridge.

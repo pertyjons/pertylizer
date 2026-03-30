@@ -4,7 +4,7 @@
 //! `idle_timeout_secs`, the sender skips FFT computation and most messages,
 //! only sending a lightweight meta beacon so new clients can discover it.
 
-use std::net::UdpSocket;
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
@@ -97,16 +97,17 @@ pub(crate) fn run(
         }
     };
 
-    if let Err(e) = socket.connect(config.target) {
-        eprintln!("OSC: failed to connect to {}: {e}", config.target);
-        return;
-    }
+    // Don't use connect() — we send to the multicast group address but need
+    // to receive unicast /viz/pong replies from individual visualizers.
+    // connect() would filter recv() to only the connected address.
 
     // Non-blocking so we can check for /viz/pong replies
     if let Err(e) = socket.set_nonblocking(true) {
         eprintln!("OSC: failed to set non-blocking: {e}");
         return;
     }
+
+    let target = config.target;
 
     let tick_interval = Duration::from_secs_f64(1.0 / f64::from(config.update_rate_hz));
     let meta_interval = Duration::from_secs_f32(config.meta_interval_secs);
@@ -196,7 +197,7 @@ pub(crate) fn run(
             // Still drain events to prevent ring buffer overflow
             while event_consumer.try_pop().is_some() {}
 
-            send_bundle(&socket, &mut messages);
+            send_bundle(&socket, target, &mut messages);
             continue;
         }
 
@@ -335,7 +336,7 @@ pub(crate) fn run(
             ));
         }
 
-        send_bundle(&socket, &mut messages);
+        send_bundle(&socket, target, &mut messages);
     }
 
     println!("OSC: sender stopped");
@@ -360,8 +361,8 @@ fn contains_pong(packet: &OscPacket) -> bool {
     }
 }
 
-/// Encode and send an OSC bundle, consuming the messages vec.
-fn send_bundle(socket: &UdpSocket, messages: &mut Vec<OscPacket>) {
+/// Encode and send an OSC bundle to the target address, consuming the messages vec.
+fn send_bundle(socket: &UdpSocket, target: SocketAddr, messages: &mut Vec<OscPacket>) {
     let bundle = OscBundle {
         timetag: OscTime {
             seconds: 0,
@@ -371,7 +372,7 @@ fn send_bundle(socket: &UdpSocket, messages: &mut Vec<OscPacket>) {
     };
 
     if let Ok(bytes) = encoder::encode(&OscPacket::Bundle(bundle)) {
-        let _ = socket.send(&bytes);
+        let _ = socket.send_to(&bytes, target);
     }
 }
 

@@ -18,12 +18,12 @@ use synth_mcp::bridge::{
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
     ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, AweLfoInfo, AwePresetInfo,
-    AweStateInfo, BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionInfo,
-    DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InstrumentInfo,
-    ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo,
-    PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo,
-    PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap,
-    UiSnapshot,
+    AweStateInfo, BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionCheckResult,
+    ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
+    InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo,
+    ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
+    PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo,
+    UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -792,78 +792,11 @@ impl SynthBridge for AppSynthBridge {
 
     fn list_module_types(&self) -> Result<Vec<ModuleTypeInfo>, McpBridgeError> {
         use crate::module_factory::{ALL_MODULE_TYPES, get_descriptor};
-        use synth_core::PortDirection;
-        use synth_mcp::types::{ChoiceInfo, PortTypeInfo};
 
         let mut result = Vec::new();
         for &mt in ALL_MODULE_TYPES {
             if let Some(desc) = get_descriptor(mt) {
-                let category = if mt.is_voice_module() {
-                    "voice"
-                } else if mt.is_effect() {
-                    "effect"
-                } else {
-                    "visualizer"
-                };
-
-                let port_to_info = |p: &synth_core::PortDescriptor| PortTypeInfo {
-                    name: p.name.to_string(),
-                    signal_type: match p.port_type {
-                        synth_core::PortType::Audio => "audio",
-                        synth_core::PortType::Control => "control",
-                        synth_core::PortType::Gate => "gate",
-                        synth_core::PortType::Midi => "midi",
-                    }
-                    .to_owned(),
-                };
-
-                let input_ports = desc
-                    .ports
-                    .iter()
-                    .filter(|p| p.direction == PortDirection::Input)
-                    .map(port_to_info)
-                    .collect();
-                let output_ports = desc
-                    .ports
-                    .iter()
-                    .filter(|p| p.direction == PortDirection::Output)
-                    .map(port_to_info)
-                    .collect();
-                let parameters = desc
-                    .parameters
-                    .iter()
-                    .map(|p| ParamTypeInfo {
-                        name: p.name.clone(),
-                        description: p.description.clone(),
-                        min: p.range.min,
-                        max: p.range.max,
-                        default: p.range.default,
-                        unit: p.unit.suffix().to_owned(),
-                        choices: p.choices.as_ref().map(|opts| {
-                            opts.iter()
-                                .enumerate()
-                                .map(|(i, c)| ChoiceInfo {
-                                    value: i as f32,
-                                    id: c.id.clone(),
-                                    name: c.name.clone(),
-                                })
-                                .collect()
-                        }),
-                    })
-                    .collect();
-
-                let signal_flow_hint = signal_flow_hint(&desc.category);
-
-                result.push(ModuleTypeInfo {
-                    type_key: mt.prefix().to_string(),
-                    name: mt.name().to_string(),
-                    description: desc.description.clone(),
-                    category: category.to_string(),
-                    input_ports,
-                    output_ports,
-                    parameters,
-                    signal_flow_hint,
-                });
+                result.push(build_module_type_info(mt, &desc));
             }
         }
         Ok(result)
@@ -3131,6 +3064,253 @@ impl SynthBridge for AppSynthBridge {
             is_active: false,
         })
     }
+
+    // === Discovery ===
+
+    fn get_module_type_info(&self, type_key: &str) -> Result<ModuleTypeInfo, McpBridgeError> {
+        use crate::module_factory::{ALL_MODULE_TYPES, get_descriptor};
+
+        let mt = synth_core::ModuleType::from_prefix(type_key)
+            .ok_or_else(|| McpBridgeError::InvalidModuleType(type_key.to_string()))?;
+
+        if !ALL_MODULE_TYPES.contains(&mt) {
+            return Err(McpBridgeError::InvalidModuleType(type_key.to_string()));
+        }
+
+        let desc = get_descriptor(mt)
+            .ok_or_else(|| McpBridgeError::InvalidModuleType(type_key.to_string()))?;
+
+        Ok(build_module_type_info(mt, &desc))
+    }
+
+    fn search_modules(
+        &self,
+        category: Option<&str>,
+        has_input_type: Option<&str>,
+        has_output_type: Option<&str>,
+        query: Option<&str>,
+    ) -> Result<Vec<ModuleTypeInfo>, McpBridgeError> {
+        use crate::module_factory::{ALL_MODULE_TYPES, get_descriptor};
+        use synth_core::PortDirection;
+
+        let query_lower = query.map(|q| q.to_lowercase());
+
+        let mut result = Vec::new();
+        for &mt in ALL_MODULE_TYPES {
+            // Category filter — cheap, no descriptor needed
+            if let Some(cat) = category {
+                let mt_cat = if mt.is_voice_module() {
+                    "voice"
+                } else if mt.is_effect() {
+                    "effect"
+                } else {
+                    "visualizer"
+                };
+                if mt_cat != cat {
+                    continue;
+                }
+            }
+
+            let Some(desc) = get_descriptor(mt) else {
+                continue;
+            };
+
+            // Port type filters — use raw descriptor, skip building full info
+            if let Some(input_type) = has_input_type
+                && !desc.ports.iter().any(|p| {
+                    p.direction == PortDirection::Input && port_type_str(p.port_type) == input_type
+                })
+            {
+                continue;
+            }
+            if let Some(output_type) = has_output_type
+                && !desc.ports.iter().any(|p| {
+                    p.direction == PortDirection::Output
+                        && port_type_str(p.port_type) == output_type
+                })
+            {
+                continue;
+            }
+
+            // Text query — search descriptor strings directly
+            if let Some(ref q) = query_lower {
+                let name_match = mt.name().to_lowercase().contains(q.as_str());
+                let key_match = mt.prefix().to_lowercase().contains(q.as_str());
+                let desc_match = desc.description.to_lowercase().contains(q.as_str());
+                let param_match = desc
+                    .parameters
+                    .iter()
+                    .any(|p| p.name.to_lowercase().contains(q.as_str()));
+                if !name_match && !key_match && !desc_match && !param_match {
+                    continue;
+                }
+            }
+
+            // Only build full ModuleTypeInfo for matches
+            result.push(build_module_type_info(mt, &desc));
+        }
+        Ok(result)
+    }
+
+    fn check_connection(
+        &self,
+        instrument_id: u64,
+        from_module: &str,
+        from_port: &str,
+        to_module: &str,
+        to_port: &str,
+    ) -> Result<ConnectionCheckResult, McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let inst_id = InstrumentId::new(instrument_id);
+
+        let from_mid: ModuleId = from_module
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(from_module.to_string()))?;
+        let to_mid: ModuleId = to_module
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(to_module.to_string()))?;
+
+        let from_desc = self
+            .session
+            .module_descriptor(inst_id, from_mid)
+            .ok_or_else(|| McpBridgeError::ModuleNotFound(from_module.to_string()))?;
+        let to_desc = self
+            .session
+            .module_descriptor(inst_id, to_mid)
+            .ok_or_else(|| McpBridgeError::ModuleNotFound(to_module.to_string()))?;
+
+        let from_port_desc = from_desc.ports.iter().find(|p| p.name == from_port);
+        let to_port_desc = to_desc.ports.iter().find(|p| p.name == to_port);
+
+        let Some(from_pd) = from_port_desc else {
+            let available: Vec<&str> = from_desc.ports.iter().map(|p| p.name.as_str()).collect();
+            return Ok(ConnectionCheckResult {
+                valid: false,
+                from_signal_type: None,
+                to_signal_type: None,
+                message: format!(
+                    "Port '{}' not found on module '{}'.",
+                    from_port, from_module
+                ),
+                hint: Some(format!("Available ports: {}", available.join(", "))),
+            });
+        };
+
+        let Some(to_pd) = to_port_desc else {
+            let available: Vec<&str> = to_desc.ports.iter().map(|p| p.name.as_str()).collect();
+            return Ok(ConnectionCheckResult {
+                valid: false,
+                from_signal_type: None,
+                to_signal_type: None,
+                message: format!("Port '{}' not found on module '{}'.", to_port, to_module),
+                hint: Some(format!("Available ports: {}", available.join(", "))),
+            });
+        };
+
+        let from_type_str = port_type_str(from_pd.port_type);
+        let to_type_str = port_type_str(to_pd.port_type);
+
+        if from_pd.direction != PortDirection::Output {
+            let outputs: Vec<&str> = from_desc
+                .ports
+                .iter()
+                .filter(|p| p.direction == PortDirection::Output)
+                .map(|p| p.name.as_str())
+                .collect();
+            return Ok(ConnectionCheckResult {
+                valid: false,
+                from_signal_type: Some(from_type_str.to_string()),
+                to_signal_type: Some(to_type_str.to_string()),
+                message: format!(
+                    "'{}' on '{}' is an input port, not an output.",
+                    from_port, from_module
+                ),
+                hint: Some(format!(
+                    "Output ports on '{}': {}",
+                    from_module,
+                    if outputs.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        outputs.join(", ")
+                    }
+                )),
+            });
+        };
+
+        if to_pd.direction != PortDirection::Input {
+            let inputs: Vec<&str> = to_desc
+                .ports
+                .iter()
+                .filter(|p| p.direction == PortDirection::Input)
+                .map(|p| p.name.as_str())
+                .collect();
+            return Ok(ConnectionCheckResult {
+                valid: false,
+                from_signal_type: Some(from_type_str.to_string()),
+                to_signal_type: Some(to_type_str.to_string()),
+                message: format!(
+                    "'{}' on '{}' is an output port, not an input.",
+                    to_port, to_module
+                ),
+                hint: Some(format!(
+                    "Input ports on '{}': {}",
+                    to_module,
+                    if inputs.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        inputs.join(", ")
+                    }
+                )),
+            });
+        };
+
+        let compatible = matches!(
+            (from_pd.port_type, to_pd.port_type),
+            (synth_core::PortType::Audio, synth_core::PortType::Audio)
+                | (synth_core::PortType::Audio, synth_core::PortType::Control)
+                | (synth_core::PortType::Control, synth_core::PortType::Audio)
+                | (synth_core::PortType::Control, synth_core::PortType::Control)
+                | (synth_core::PortType::Gate, synth_core::PortType::Gate)
+                | (synth_core::PortType::Gate, synth_core::PortType::Control)
+                | (synth_core::PortType::Midi, synth_core::PortType::Midi)
+        );
+
+        if compatible {
+            let note = if from_pd.port_type != to_pd.port_type {
+                format!(
+                    " (cross-type: {} → {}, signal will be interpreted as {})",
+                    from_type_str, to_type_str, to_type_str
+                )
+            } else {
+                String::new()
+            };
+            Ok(ConnectionCheckResult {
+                valid: true,
+                from_signal_type: Some(from_type_str.to_string()),
+                to_signal_type: Some(to_type_str.to_string()),
+                message: format!(
+                    "Valid connection: {}:{} → {}:{}{}",
+                    from_module, from_port, to_module, to_port, note
+                ),
+                hint: None,
+            })
+        } else {
+            Ok(ConnectionCheckResult {
+                valid: false,
+                from_signal_type: Some(from_type_str.to_string()),
+                to_signal_type: Some(to_type_str.to_string()),
+                message: format!(
+                    "Incompatible signal types: {} output → {} input.",
+                    from_type_str, to_type_str
+                ),
+                hint: Some(format!(
+                    "{} ports can connect to: {}",
+                    from_type_str,
+                    compatible_types_hint(from_pd.port_type)
+                )),
+            })
+        }
+    }
 }
 
 fn meta_to_sample_info(meta: &synth_sampler::SampleMeta) -> synth_mcp::types::SampleInfo {
@@ -3833,6 +4013,93 @@ fn format_param_display(param: &Param) -> String {
         format!("{value:.2}")
     } else {
         format!("{value:.3}")
+    }
+}
+
+/// Build a [`ModuleTypeInfo`] from a [`ModuleType`] and its descriptor.
+fn build_module_type_info(
+    mt: synth_core::ModuleType,
+    desc: &synth_core::ModuleDescriptor,
+) -> ModuleTypeInfo {
+    use synth_core::PortDirection;
+
+    let category = if mt.is_voice_module() {
+        "voice"
+    } else if mt.is_effect() {
+        "effect"
+    } else {
+        "visualizer"
+    };
+
+    let port_to_info = |p: &synth_core::PortDescriptor| synth_mcp::types::PortTypeInfo {
+        name: p.name.to_string(),
+        signal_type: port_type_str(p.port_type).to_owned(),
+    };
+
+    let input_ports = desc
+        .ports
+        .iter()
+        .filter(|p| p.direction == PortDirection::Input)
+        .map(port_to_info)
+        .collect();
+    let output_ports = desc
+        .ports
+        .iter()
+        .filter(|p| p.direction == PortDirection::Output)
+        .map(port_to_info)
+        .collect();
+    let parameters = desc
+        .parameters
+        .iter()
+        .map(|p| ParamTypeInfo {
+            name: p.name.clone(),
+            description: p.description.clone(),
+            min: p.range.min,
+            max: p.range.max,
+            default: p.range.default,
+            unit: p.unit.suffix().to_owned(),
+            choices: p.choices.as_ref().map(|opts| {
+                opts.iter()
+                    .enumerate()
+                    .map(|(i, c)| synth_mcp::types::ChoiceInfo {
+                        value: i as f32,
+                        id: c.id.clone(),
+                        name: c.name.clone(),
+                    })
+                    .collect()
+            }),
+        })
+        .collect();
+
+    ModuleTypeInfo {
+        type_key: mt.prefix().to_string(),
+        name: mt.name().to_string(),
+        description: desc.description.clone(),
+        category: category.to_string(),
+        input_ports,
+        output_ports,
+        parameters,
+        signal_flow_hint: signal_flow_hint(&desc.category),
+    }
+}
+
+/// Convert a `PortType` to its string name.
+fn port_type_str(pt: synth_core::PortType) -> &'static str {
+    match pt {
+        synth_core::PortType::Audio => "audio",
+        synth_core::PortType::Control => "control",
+        synth_core::PortType::Gate => "gate",
+        synth_core::PortType::Midi => "midi",
+    }
+}
+
+/// Return a hint about which types a given port type can connect to.
+fn compatible_types_hint(pt: synth_core::PortType) -> &'static str {
+    match pt {
+        synth_core::PortType::Audio => "audio, control",
+        synth_core::PortType::Control => "audio, control",
+        synth_core::PortType::Gate => "gate, control",
+        synth_core::PortType::Midi => "midi",
     }
 }
 

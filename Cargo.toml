@@ -33,6 +33,9 @@ serde_json = "1.0.149"
 thiserror = "2.0.18"
 
 # Audio I/O
+# Pinned to 0.17.1: cpal 0.17.3 requires alsa 0.11 (alsa-sys 0.4) which conflicts
+# with midir 0.10.3's dependency on alsa 0.9 (alsa-sys 0.3.1) via the `links = "alsa"` constraint.
+# Upgrade when midir releases a version compatible with alsa-sys 0.4.
 cpal = "0.17.1"
 
 # MIDI I/O
@@ -60,7 +63,7 @@ hound = "3.5.1"
 base64 = "0.22"
 
 # ZIP archive (bundle project format)
-zip = { version = "2.4", default-features = false, features = ["deflate"] }
+zip = { version = "8.4", default-features = false, features = ["deflate"] }
 
 # Testing
 tempfile = "3.27.0"
@@ -78,7 +81,9 @@ schemars = "1.2"
 axum = "0.8"
 tokio-util = { version = "0.7", features = ["rt"] }
 
-# GUI - egui (optional)
+# GUI - egui
+# Pinned to 0.33: egui-file-dialog 0.12 and egui-remixicon 0.33 require egui ^0.33.
+# Upgrade to 0.34 when these dependencies release egui 0.34-compatible versions.
 eframe = { version = "0.33.3", default-features = false, features = [
     "default_fonts",
     "glow",
