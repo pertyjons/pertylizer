@@ -37,27 +37,29 @@ Each scene is composed of up to four layered slots, each with one or more effect
 
 ### Terrain (ground/base layer)
 
-| Effect                 | Description                                                                                   |
-|------------------------|-----------------------------------------------------------------------------------------------|
-| **Base Floor**         | Reflective ground plane                                                                       |
-| **FFT Bars**           | Vertical bars driven by FFT bins with frequency-to-hue coloring (bass=red, highs=violet)      |
-| **Waveform Ring**      | Circular ring shape modulated by audio waveform                                               |
-| **Spectral Waterfall** | Scrolling frequency waterfall display                                                         |
-| **Pulse Terrain**      | Ground mesh that pulses with bass energy                                                      |
-| **Spectral Origami**   | Folding geometric shapes driven by spectrum data                                              |
-| **Phase Rings**        | Concentric rings modulated by beat phase                                                      |
-| **Voronoi Shatter**    | Ground cells that split and tumble on spectral flux spikes, reassembling during calm passages |
-| **FFT Terrain**        | 16x8 grid of pillars with height driven by FFT bins and frequency-to-hue coloring             |
+| Effect                 | Description                                                                                                |
+|------------------------|------------------------------------------------------------------------------------------------------------|
+| **Base Floor**         | Reflective ground plane                                                                                    |
+| **FFT Bars**           | Vertical bars driven by FFT bins with frequency-to-hue coloring (bass=red, highs=violet)                   |
+| **Waveform Ring**      | Circular ring shape modulated by audio waveform                                                            |
+| **Spectral Waterfall** | Scrolling frequency waterfall display                                                                      |
+| **Pulse Terrain**      | Ground mesh that pulses with bass energy                                                                   |
+| **Spectral Origami**   | Folding geometric shapes driven by spectrum data                                                           |
+| **Phase Rings**        | Concentric rings modulated by beat phase                                                                   |
+| **Voronoi Shatter**    | Ground cells that split and tumble on spectral flux spikes, reassembling during calm passages              |
+| **FFT Terrain**        | 16x8 grid of pillars with height driven by FFT bins and frequency-to-hue coloring                          |
+| **Cyber Wireframe**    | GPU-driven wireframe grid with nodes displaced by FFT data; radar-sweep coloring and beat-pulse brightness |
 
 ### Hero (centerpiece)
 
-| Effect                  | Description                                                                     |
-|-------------------------|---------------------------------------------------------------------------------|
-| **CPU Overdrive Core**  | Glowing core that intensifies with CPU load                                     |
-| **Flux Supernova**      | Expanding supernova triggered by spectral flux                                  |
-| **Fractal Pulse**       | Pulsing fractal geometry driven by amplitude, boosted by voice count            |
-| **Ferrofluid Tendrils** | Organic tendrils that react to spectral data                                    |
-| **Note Tree**           | L-system branching cylinders that grow on note events and wither during silence |
+| Effect                  | Description                                                                                 |
+|-------------------------|---------------------------------------------------------------------------------------------|
+| **CPU Overdrive Core**  | Glowing core that intensifies with CPU load                                                 |
+| **Flux Supernova**      | Expanding supernova triggered by spectral flux                                              | 
+| **Fractal Pulse**       | Pulsing fractal geometry driven by amplitude, boosted by voice count                        |
+| **Ferrofluid Tendrils** | Organic tendrils that react to spectral data                                                |
+| **Note Tree**           | L-system branching cylinders that grow on note events and wither during silence             |
+| **Orbital Satellites**  | Ring of metallic spheres orbiting the center; laser beams fire toward center on note events |
 
 ### Ambient (sky/atmosphere)
 
@@ -66,41 +68,45 @@ Each scene is composed of up to four layered slots, each with one or more effect
 | **Centroid Nebula**    | Nebula coloring driven by spectral centroid, energy scales with voice count                                              |
 | **Spectral Cathedral** | Cathedral-like arches with breathing animation boosted by velocity                                                       |
 | **Reaction Diffusion** | 12x12 sphere grid simulating Gray-Scott reaction-diffusion patterns; centroid controls feed rate, RMS controls kill rate |
+| **Spectral Aurora**    | Soft waving curtains like aurora borealis; GPU vertex displacement driven by RMS amplitude and spectral centroid         |
 
 ### Transients (event-driven)
 
-| Effect               | Description                                                    |
-|----------------------|----------------------------------------------------------------|
-| **Note Particles**   | Particle bursts on note events, colored by instrument category |
-| **Velocity Meteors** | Meteor streaks on high-velocity notes, colored by instrument   |
-| **Harmonic Ribbons** | Flowing ribbons that appear on note events                     |
-| **Chord Bloom**      | Blooming flower-like geometry on chord events                  |
-| **Neon Calligraphy** | Glowing calligraphic strokes on note activity                  |
-| **Instrument Cubes** | Cubes that spawn per instrument, colored by category           |
+| Effect               | Description                                                                         |
+|----------------------|-------------------------------------------------------------------------------------|
+| **Note Particles**   | Particle bursts on note events, colored by instrument category                      |
+| **Velocity Meteors** | Meteor streaks on high-velocity notes, colored by instrument                        |
+| **Harmonic Ribbons** | Flowing ribbons that appear on note events                                          |
+| **Chord Bloom**      | Blooming flower-like geometry on chord events                                       |
+| **Neon Calligraphy** | Glowing calligraphic strokes on note activity                                       |
+| **Instrument Cubes** | Cubes that spawn per instrument, colored by category                                |
+| **Beat Fracture**    | Neon-edged translucent shards that burst on high flux+RMS spikes and tumble briefly |
 
 ### Always active
 
-| Effect              | Description                                                                   |
-|---------------------|-------------------------------------------------------------------------------|
-| **RMS Light**       | Dynamic scene lighting driven by RMS levels; flashes on high-velocity notes   |
-| **Beat Pulse**      | Subtle pulse synchronized to beat position                                    |
-| **Telemetry Color** | Per-instrument hue offsets (Drums=red, Bass=blue, Lead=gold, Pad=green, etc.) |
+| Effect              | Description                                                                                                                                                       |
+|---------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **RMS Light**       | Dynamic scene lighting driven by RMS levels; flashes on high-velocity notes                                                                                       |
+| **Beat Pulse**      | Subtle pulse synchronized to beat position                                                                                                                        |
+| **Telemetry Color** | Shared color mapping: centroid-to-hue, category hue offsets (Drums=red, Bass=blue, Lead=gold, Pad=green, etc.), flux emissive boost, and peak transient detection |
 
 ## Scene Presets
 
 Cycle through presets with Left/Right arrow keys, or press R for a random scene.
 
-| # | Name                   | Composition                                                                            |
-|---|------------------------|----------------------------------------------------------------------------------------|
-| 0 | **Classic Pertylizer** | Spectral Waterfall + Note Particles                                                    |
-| 1 | **The Matrix**         | Pulse Terrain + CPU Overdrive + Centroid Nebula + Velocity Meteors                     |
-| 2 | **Sacred Geometry**    | Spectral Origami + Fractal Pulse + Spectral Cathedral + Chord Bloom                    |
-| 3 | **Magnetic Storm**     | Waveform Ring + Ferrofluid Tendrils + Centroid Nebula + Phase Rings + Harmonic Ribbons |
-| 4 | **The Exploding Sun**  | FFT Bars + Flux Supernova + Neon Calligraphy + Note Particles                          |
-| 5 | **Metallic Orchestra** | Base Floor + Fractal Pulse + Centroid Nebula + Instrument Cubes                        |
-| 6 | **Earthquake**         | Voronoi Shatter + Ferrofluid Tendrils + Velocity Meteors + Note Particles              |
-| 7 | **Spectrum City**      | FFT Terrain + Note Tree + Reaction Diffusion + Chord Bloom                             |
-| 8 | **Living Forest**      | Pulse Terrain + Note Tree + Centroid Nebula + Harmonic Ribbons + Note Particles        |
+| #  | Name                   | Composition                                                                            |
+|----|------------------------|----------------------------------------------------------------------------------------|
+| 0  | **Classic Pertylizer** | Spectral Waterfall + Note Particles                                                    |
+| 1  | **The Matrix**         | Pulse Terrain + CPU Overdrive + Centroid Nebula + Velocity Meteors                     |
+| 2  | **Sacred Geometry**    | Spectral Origami + Fractal Pulse + Spectral Cathedral + Chord Bloom                    |
+| 3  | **Magnetic Storm**     | Waveform Ring + Ferrofluid Tendrils + Centroid Nebula + Phase Rings + Harmonic Ribbons |
+| 4  | **The Exploding Sun**  | FFT Bars + Flux Supernova + Neon Calligraphy + Note Particles                          |
+| 5  | **Metallic Orchestra** | Base Floor + Fractal Pulse + Centroid Nebula + Instrument Cubes                        |
+| 6  | **Earthquake**         | Voronoi Shatter + Ferrofluid Tendrils + Velocity Meteors + Note Particles              |
+| 7  | **Spectrum City**      | FFT Terrain + Note Tree + Reaction Diffusion + Chord Bloom                             |
+| 8  | **Living Forest**      | Pulse Terrain + Note Tree + Centroid Nebula + Harmonic Ribbons + Note Particles        |
+| 9  | **Neon Grid**          | Cyber Wireframe + Orbital Satellites + Spectral Aurora + Beat Fracture                 |
+| 10 | **Arctic Station**     | Cyber Wireframe + Flux Supernova + Spectral Aurora + Note Particles + Beat Fracture    |
 
 Random scenes (R) are procedurally generated: 80% chance of terrain, 70% hero, 50% ambient, and 1-3 random transients.
 
@@ -189,11 +195,14 @@ Up/Down     Zoom in/out
 
 ## OSC Protocol
 
-Communication uses OSC over UDP on port 9000 (configurable in code).
+Communication uses OSC over UDP multicast (group `239.0.0.1`, port 9000). Multiple visualizer instances can
+join simultaneously.
 
 | Address                     | Data                                 | Rate      |
 |-----------------------------|--------------------------------------|-----------|
-| `/synth/audio/rms`          | L, R levels (f32)                    | 30 Hz     | 
+| `/synth/meta/seq`           | Monotonic sequence number (i32)      | 30 Hz     |
+| `/synth/meta/fft_freqs`     | FFT band center frequencies (f32[])  | every 5s  |
+| `/synth/audio/rms`          | L, R levels (f32)                    | 30 Hz     |
 | `/synth/audio/peak`         | L, R peak (f32)                      | 30 Hz     |
 | `/synth/audio/fft`          | 128 normalized bands (f32)           | 30 Hz     |
 | `/synth/audio/centroid`     | Hz (f32)                             | 30 Hz     |
@@ -205,6 +214,7 @@ Communication uses OSC over UDP on port 9000 (configurable in code).
 | `/synth/transport/phase`    | beat phase 0.0-1.0                   | 30 Hz     |
 | `/synth/engine/voice_count` | count (i32)                          | 30 Hz     |
 | `/synth/engine/cpu`         | percentage (f32)                     | 30 Hz     |
+| `/synth/engine/event_drops` | drop count since last report (i32)   | 30 Hz     |
 | `/synth/meta`               | protocol version, sample rate        | every 5s  |
 | `/viz/ping`                 | (in bundle)                          | 30 Hz     |
 | `/viz/pong`                 | reply from visualizer                | every 2s  |
@@ -212,7 +222,7 @@ Communication uses OSC over UDP on port 9000 (configurable in code).
 
 ## Tech Stack
 
-- **Engine:** Bevy 0.16
+- **Engine:** Bevy 0.18
 - **OSC:** rosc (Open Sound Control)
 - **Protocol:** synth_osc_protocol (shared crate with the synth)
 - **Rendering:** Bevy PBR with StandardMaterial, dynamic meshes, and particle systems
