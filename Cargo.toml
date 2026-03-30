@@ -84,16 +84,16 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # GUI - egui
 # Pinned to 0.33: egui-file-dialog 0.12 and egui-remixicon 0.33 require egui ^0.33.
 # Upgrade to 0.34 when these dependencies release egui 0.34-compatible versions.
-eframe = { version = "0.33.3", default-features = false, features = [
+eframe = { version = "0.34.1", default-features = false, features = [
     "default_fonts",
     "glow",
     "persistence",
     "wayland",
     "x11",
 ] }
-egui = { version = "0.33.3" }
-egui_extras = { version = "0.33.3" }
-egui-file-dialog = { version = "0.12.0" }
+egui = { version = "0.34.1" }
+egui_extras = { version = "0.34.1" }
+egui-file-dialog = { version = "0.13.0" }
 egui-remixicon = { version = "0.33" }
 
 [workspace.lints.clippy]
