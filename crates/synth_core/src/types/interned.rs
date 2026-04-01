@@ -59,6 +59,19 @@ const ID_IN5: u32 = 31;
 const ID_IN6: u32 = 32;
 const ID_IN7: u32 = 33;
 const ID_IN8: u32 = 34;
+// Module-specific ports (oscillator, sequencer, mixer)
+const ID_CROSS_MOD: u32 = 35;
+const ID_TRIGGER: u32 = 36;
+const ID_CLOCK: u32 = 37;
+const ID_IN_A: u32 = 38;
+const ID_IN_B: u32 = 39;
+const ID_IN_C: u32 = 40;
+const ID_IN_D: u32 = 41;
+const ID_X_CV: u32 = 42;
+const ID_Y_CV: u32 = 43;
+const ID_POS_CV: u32 = 44;
+const ID_PARAM_A: u32 = 45;
+const ID_PARAM_B: u32 = 46;
 
 /// Global intern pool for port names.
 static INTERN_POOL: LazyLock<RwLock<InternPool>> = LazyLock::new(|| RwLock::new(InternPool::new()));
@@ -103,15 +116,30 @@ impl InternPool {
         pool.intern("pitch"); // 23
         pool.intern("pitch_cv"); // 24
         pool.intern("accent"); // 25
+        // Retrigger port
+        pool.intern("retrigger"); // 26
         // Mixer input ports
-        pool.intern("in1"); // 26
-        pool.intern("in2"); // 27
-        pool.intern("in3"); // 28
-        pool.intern("in4"); // 29
-        pool.intern("in5"); // 30
-        pool.intern("in6"); // 31
-        pool.intern("in7"); // 32
-        pool.intern("in8"); // 33
+        pool.intern("in1"); // 27
+        pool.intern("in2"); // 28
+        pool.intern("in3"); // 29
+        pool.intern("in4"); // 30
+        pool.intern("in5"); // 31
+        pool.intern("in6"); // 32
+        pool.intern("in7"); // 33
+        pool.intern("in8"); // 34
+        // Module-specific ports
+        pool.intern("cross_mod"); // 35
+        pool.intern("trigger"); // 36
+        pool.intern("clock"); // 37
+        pool.intern("in_a"); // 38
+        pool.intern("in_b"); // 39
+        pool.intern("in_c"); // 40
+        pool.intern("in_d"); // 41
+        pool.intern("x_cv"); // 42
+        pool.intern("y_cv"); // 43
+        pool.intern("pos_cv"); // 44
+        pool.intern("param_a"); // 45
+        pool.intern("param_b"); // 46
         pool
     }
 
@@ -219,6 +247,31 @@ impl PortName {
     pub const IN7: Self = Self(ID_IN7);
     /// Mixer input port 8 "in8".
     pub const IN8: Self = Self(ID_IN8);
+    // Module-specific ports
+    /// Cross-modulation port "cross_mod".
+    pub const CROSS_MOD: Self = Self(ID_CROSS_MOD);
+    /// Trigger port "trigger".
+    pub const TRIGGER: Self = Self(ID_TRIGGER);
+    /// Clock port "clock".
+    pub const CLOCK: Self = Self(ID_CLOCK);
+    /// Input A port "in_a".
+    pub const IN_A: Self = Self(ID_IN_A);
+    /// Input B port "in_b".
+    pub const IN_B: Self = Self(ID_IN_B);
+    /// Input C port "in_c".
+    pub const IN_C: Self = Self(ID_IN_C);
+    /// Input D port "in_d".
+    pub const IN_D: Self = Self(ID_IN_D);
+    /// X CV port "x_cv".
+    pub const X_CV: Self = Self(ID_X_CV);
+    /// Y CV port "y_cv".
+    pub const Y_CV: Self = Self(ID_Y_CV);
+    /// Position CV port "pos_cv".
+    pub const POS_CV: Self = Self(ID_POS_CV);
+    /// Parameter A modulation port "param_a".
+    pub const PARAM_A: Self = Self(ID_PARAM_A);
+    /// Parameter B modulation port "param_b".
+    pub const PARAM_B: Self = Self(ID_PARAM_B);
     /// Array of mixer input ports for iteration (IN1 through IN8).
     pub const MIXER_INPUTS: [Self; 8] = [
         Self::IN1,
@@ -240,21 +293,24 @@ impl PortName {
     /// **Note:** For standard port names, prefer the constants (e.g., `PortName::IN`)
     /// to avoid any locking overhead.
     ///
-    /// # Panics
-    /// Panics if the intern pool lock is poisoned.
-    #[allow(clippy::unwrap_used)]
+    /// Returns `PortName(0)` (the empty-string slot) if the lock is poisoned.
     pub fn intern(s: &str) -> Self {
-        let id = INTERN_POOL.write().unwrap().intern(s);
-        Self(id)
+        if let Ok(mut pool) = INTERN_POOL.write() {
+            Self(pool.intern(s))
+        } else {
+            Self(0)
+        }
     }
 
     /// Get the string representation.
     ///
-    /// # Panics
-    /// Panics if the intern pool lock is poisoned.
-    #[allow(clippy::unwrap_used)]
+    /// Returns `""` if the lock is poisoned or the id is unknown.
     pub fn as_str(&self) -> &'static str {
-        INTERN_POOL.read().unwrap().get(self.0).unwrap_or("")
+        if let Ok(pool) = INTERN_POOL.read() {
+            pool.get(self.0).unwrap_or("")
+        } else {
+            ""
+        }
     }
 
     // ========================================================================
@@ -397,6 +453,29 @@ mod tests {
         assert_eq!(PortName::OUT_R.as_str(), "out_r");
         assert_eq!(PortName::GATE.as_str(), "gate");
         assert_eq!(PortName::CV.as_str(), "cv");
+        assert_eq!(PortName::RETRIGGER.as_str(), "retrigger");
+        // Mixer ports — verify all 8 to catch off-by-one regressions
+        assert_eq!(PortName::IN1.as_str(), "in1");
+        assert_eq!(PortName::IN2.as_str(), "in2");
+        assert_eq!(PortName::IN3.as_str(), "in3");
+        assert_eq!(PortName::IN4.as_str(), "in4");
+        assert_eq!(PortName::IN5.as_str(), "in5");
+        assert_eq!(PortName::IN6.as_str(), "in6");
+        assert_eq!(PortName::IN7.as_str(), "in7");
+        assert_eq!(PortName::IN8.as_str(), "in8");
+        // Module-specific ports
+        assert_eq!(PortName::CROSS_MOD.as_str(), "cross_mod");
+        assert_eq!(PortName::TRIGGER.as_str(), "trigger");
+        assert_eq!(PortName::CLOCK.as_str(), "clock");
+        assert_eq!(PortName::IN_A.as_str(), "in_a");
+        assert_eq!(PortName::IN_B.as_str(), "in_b");
+        assert_eq!(PortName::IN_C.as_str(), "in_c");
+        assert_eq!(PortName::IN_D.as_str(), "in_d");
+        assert_eq!(PortName::X_CV.as_str(), "x_cv");
+        assert_eq!(PortName::Y_CV.as_str(), "y_cv");
+        assert_eq!(PortName::POS_CV.as_str(), "pos_cv");
+        assert_eq!(PortName::PARAM_A.as_str(), "param_a");
+        assert_eq!(PortName::PARAM_B.as_str(), "param_b");
     }
 
     #[test]

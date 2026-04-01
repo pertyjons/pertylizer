@@ -8,7 +8,7 @@ use std::f32::consts::PI;
 
 use super::connectivity::{ModuleConnectivityStatus, PortVisualState};
 use super::shared_state::ModuleStateSnapshot;
-use synth_core::{Amplitude, NormalizedValue, Phase, PortName, Seconds};
+use synth_core::{Amplitude, Decibels, NormalizedValue, Phase, PortName, Seconds};
 
 /// Visual style for rendering a module.
 #[derive(Debug, Clone)]
@@ -91,17 +91,19 @@ impl ModuleVisualState {
     }
 
     /// Update visual state from a module snapshot.
-    pub fn update_from_snapshot(&mut self, snapshot: &ModuleStateSnapshot, dt: f32) {
+    pub fn update_from_snapshot(&mut self, snapshot: &ModuleStateSnapshot, dt: Seconds) {
         self.connectivity = snapshot.connectivity;
 
         // Calculate target opacity based on connectivity
-        self.opacity_target = NormalizedValue::new(snapshot.connectivity.opacity());
+        self.opacity_target = snapshot.connectivity.opacity();
 
         // Lerp current opacity toward target
         let lerp_speed = 5.0;
         self.opacity_current = NormalizedValue::new(
             self.opacity_current.as_f32()
-                + (self.opacity_target.as_f32() - self.opacity_current.as_f32()) * lerp_speed * dt,
+                + (self.opacity_target.as_f32() - self.opacity_current.as_f32())
+                    * lerp_speed
+                    * dt.as_f32(),
         );
 
         // Glow for live modules
@@ -120,8 +122,9 @@ impl ModuleVisualState {
             .fold(0.0f32, f32::max);
 
         if max_output > 0.01 {
-            self.pulse_phase =
-                Phase::new((self.pulse_phase.as_f32() + dt * 10.0 * max_output) % (2.0 * PI));
+            self.pulse_phase = Phase::new(
+                (self.pulse_phase.as_f32() + dt.as_f32() * 10.0 * max_output) % (2.0 * PI),
+            );
         }
 
         // Update port states
@@ -145,7 +148,7 @@ impl ModuleVisualState {
 
         // Error flash decay
         if self.error_flash_time.as_f32() > 0.0 {
-            self.error_flash_time = Seconds::new(self.error_flash_time.as_f32() - dt);
+            self.error_flash_time = Seconds::new(self.error_flash_time.as_f32() - dt.as_f32());
             if self.error_flash_time.as_f32() <= 0.0 {
                 self.error = None;
             }
@@ -267,14 +270,14 @@ impl CableVisualState {
     }
 
     /// Update cable animation.
-    pub fn update(&mut self, signal_level: Amplitude, dt: f32) {
+    pub fn update(&mut self, signal_level: Amplitude, dt: Seconds) {
         // Smooth signal level
         let sl = self.signal_level.as_f32() * 0.9 + signal_level.as_f32() * 0.1;
         self.signal_level = Amplitude::new(sl);
 
         // Animate flow based on signal presence
         if sl > 0.001 {
-            self.flow_phase = Phase::new((self.flow_phase.as_f32() + dt * sl * 5.0) % 1.0);
+            self.flow_phase = Phase::new((self.flow_phase.as_f32() + dt.as_f32() * sl * 5.0) % 1.0);
         }
 
         // Update color based on signal level
@@ -367,7 +370,7 @@ impl MiniMeter {
     }
 
     /// Update the meter with a new level.
-    pub fn update(&mut self, new_level: Amplitude, dt: f32) {
+    pub fn update(&mut self, new_level: Amplitude, dt: Seconds) {
         // Smooth level
         let l = self.level.as_f32() * 0.8 + new_level.as_f32() * 0.2;
         self.level = Amplitude::new(l);
@@ -377,7 +380,7 @@ impl MiniMeter {
             self.peak = new_level;
             self.peak_hold_time = Seconds::new(1.0); // Hold for 1 second
         } else {
-            self.peak_hold_time = Seconds::new(self.peak_hold_time.as_f32() - dt);
+            self.peak_hold_time = Seconds::new(self.peak_hold_time.as_f32() - dt.as_f32());
             if self.peak_hold_time.as_f32() <= 0.0 {
                 self.peak = Amplitude::new(self.peak.as_f32() * 0.99); // Slow decay
             }
@@ -397,15 +400,15 @@ impl MiniMeter {
     }
 
     /// Get level as dB (-60 to 0).
-    pub fn level_db(&self) -> f32 {
-        let l = self.level.as_f32();
-        if l > 0.0001 { 20.0 * l.log10() } else { -60.0 }
+    #[must_use]
+    pub fn level_db(&self) -> Decibels {
+        Decibels::from_linear(self.level.as_f32().max(0.0001))
     }
 
     /// Get peak as dB.
-    pub fn peak_db(&self) -> f32 {
-        let p = self.peak.as_f32();
-        if p > 0.0001 { 20.0 * p.log10() } else { -60.0 }
+    #[must_use]
+    pub fn peak_db(&self) -> Decibels {
+        Decibels::from_linear(self.peak.as_f32().max(0.0001))
     }
 
     /// Check if currently clipping.
@@ -430,7 +433,7 @@ mod tests {
         assert_eq!(state.connectivity, ModuleConnectivityStatus::Disconnected);
 
         state.connectivity = ModuleConnectivityStatus::Connected;
-        state.opacity_target = 1.0;
+        state.opacity_target = NormalizedValue::MAX;
         state.update_from_snapshot(
             &ModuleStateSnapshot::new(
                 crate::commands::ModuleId::new(synth_core::ModuleType::Oscillator, 1),
@@ -438,7 +441,7 @@ mod tests {
                 synth_core::ModuleType::Oscillator,
                 "Test".to_string(),
             ),
-            0.016,
+            Seconds::new(0.016),
         );
 
         let style = state.get_style();
@@ -449,7 +452,7 @@ mod tests {
     fn test_cable_visual_state() {
         let mut cable = CableVisualState::new(Point::new(0.0, 0.0), Point::new(100.0, 100.0));
 
-        cable.update(Amplitude::new(0.5), 0.016);
+        cable.update(Amplitude::new(0.5), Seconds::new(0.016));
         assert!(cable.signal_level.as_f32() > 0.0);
         assert!(cable.flow_phase.as_f32() > 0.0);
 
@@ -461,11 +464,11 @@ mod tests {
     fn test_mini_meter() {
         let mut meter = MiniMeter::new(10.0, 50.0);
 
-        meter.update(Amplitude::new(0.8), 0.016);
+        meter.update(Amplitude::new(0.8), Seconds::new(0.016));
         assert!(meter.level.as_f32() > 0.0);
         assert!(meter.peak.as_f32() >= meter.level.as_f32());
 
-        meter.update(Amplitude::new(0.2), 0.016);
+        meter.update(Amplitude::new(0.2), Seconds::new(0.016));
         assert!(meter.peak.as_f32() > meter.level.as_f32()); // Peak should hold
     }
 

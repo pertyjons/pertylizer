@@ -80,7 +80,6 @@ pub struct AweEngine {
 
     // Pre-delay — delays wet input before reflections
     pre_delay_left: InterpolatedDelayLine,
-    pre_delay_right: InterpolatedDelayLine,
     current_pre_delay_samples: f32,
 
     // Acoustic portal — extra delay feedback path simulating adjoining room
@@ -163,7 +162,6 @@ impl AweEngine {
 
             // Pre-delay: max 200ms @ 96kHz = 19200 samples
             pre_delay_left: InterpolatedDelayLine::new(PRE_DELAY_MAX_SAMPLES.as_usize()),
-            pre_delay_right: InterpolatedDelayLine::new(PRE_DELAY_MAX_SAMPLES.as_usize()),
             current_pre_delay_samples: 0.0,
 
             // Portal delay lines: max ~300ms @ 96kHz = 28800 samples
@@ -385,6 +383,10 @@ impl AweEngine {
                 (spat_left, spat_right)
             };
 
+            // Clamp wet signal to prevent runaway output
+            let spat_left = spat_left.clamp(-2.0, 2.0);
+            let spat_right = spat_right.clamp(-2.0, 2.0);
+
             // --- Dry/wet mix ---
             let dry_amount = 1.0 - current_dry_wet;
             let wet_amount = current_dry_wet;
@@ -589,7 +591,6 @@ impl AweEngine {
             self.room_modes.clear();
             self.spatializer.clear();
             self.pre_delay_left.clear();
-            self.pre_delay_right.clear();
             self.portal_delay_left.clear();
             self.portal_delay_right.clear();
             self.portal_feedback_state_l = FilterState::ZERO;
@@ -684,15 +685,15 @@ impl AweEngine {
             self.snapshot
                 .listener_pos
                 .x()
-                .clamp(min_pos, room_length - min_pos),
+                .clamp(min_pos, (room_length - min_pos).max(min_pos)),
             self.snapshot
                 .listener_pos
                 .y()
-                .clamp(min_pos, room_width - min_pos),
+                .clamp(min_pos, (room_width - min_pos).max(min_pos)),
             self.snapshot
                 .listener_pos
                 .z()
-                .clamp(min_pos, room_height - min_pos),
+                .clamp(min_pos, (room_height - min_pos).max(min_pos)),
         );
 
         // Deactivate unused slots
@@ -909,6 +910,10 @@ impl AweEngine {
                 self.portal_delay_right.write(0.0);
                 (spat_left, spat_right)
             };
+
+            // Clamp wet signal to prevent runaway output
+            let spat_left = spat_left.clamp(-2.0, 2.0);
+            let spat_right = spat_right.clamp(-2.0, 2.0);
 
             // Dry/wet mix
             let dry_amount = 1.0 - current_dry_wet;

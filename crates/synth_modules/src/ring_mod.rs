@@ -18,7 +18,7 @@ use synth_core::{
     ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{
-    Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity, Waveform,
+    BipolarValue, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity, Waveform,
 };
 use synth_core::{ModuleType, Param, RingModParam};
 use synth_dsp::oscillators::poly_blep;
@@ -206,7 +206,7 @@ impl PolyModule for RingMod {
             // Apply frequency CV if connected
             let freq = if let Some(cv) = freq_cv {
                 // CV scales freq exponentially: +1V = double freq
-                carrier_freq.apply_cv(cv[i])
+                carrier_freq.apply_cv(BipolarValue::new(cv[i]))
             } else {
                 carrier_freq
             };

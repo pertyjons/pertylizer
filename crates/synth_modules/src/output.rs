@@ -57,7 +57,7 @@ impl StereoOutput {
             limit_threshold: Decibels::new(-0.3),
             peak_l: Amplitude::ZERO,
             peak_r: Amplitude::ZERO,
-            output_buffer: Vec::new(),
+            output_buffer: vec![0.0; 1024 * 2],
             mute_state: MuteState::Unmuted,
         }
     }
@@ -200,9 +200,10 @@ impl PolyModule for StereoOutput {
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        // Resize output buffer if needed (interleaved stereo)
+        // Ensure output buffer is large enough (interleaved stereo).
+        // Pre-allocated in new(); only re-allocates if block size grows beyond initial capacity.
         let stereo_samples = context.samples.as_usize() * 2;
-        if self.output_buffer.len() != stereo_samples {
+        if self.output_buffer.len() < stereo_samples {
             self.output_buffer.resize(stereo_samples, 0.0);
         }
 

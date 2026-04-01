@@ -32,6 +32,9 @@ pub struct Euclidean {
     samples_per_step: f32,
     sample_counter: f32,
 
+    // Edge detection
+    prev_clock: f32,
+
     // Buffers
     gate_buffer: AudioBuffer,
     accent_buffer: AudioBuffer,
@@ -51,6 +54,8 @@ impl Euclidean {
             gate_active: false,
             samples_per_step: 5512.5, // 120 BPM, 16th notes
             sample_counter: 0.0,
+
+            prev_clock: 0.0,
 
             gate_buffer: AudioBuffer::new(1024),
             accent_buffer: AudioBuffer::new(1024),
@@ -92,6 +97,9 @@ impl Euclidean {
             counts[level] = divisor / remainders[level];
             let new_remainder = divisor % remainders[level];
             divisor = remainders[level];
+            if level + 1 >= remainders.len() {
+                break;
+            }
             remainders[level + 1] = new_remainder;
             level += 1;
             if remainders[level] <= 1 {
@@ -229,7 +237,7 @@ impl PolyModule for Euclidean {
         self.gate_buffer.resize(num_samples);
         self.accent_buffer.resize(num_samples);
 
-        let clock = inputs.get(PortName::intern("clock"));
+        let clock = inputs.get(PortName::CLOCK);
 
         // Calculate samples per step from BPM (16th notes by default)
         let bpm = context.tempo.as_f32().max(20.0);
@@ -241,7 +249,8 @@ impl PolyModule for Euclidean {
         for i in 0..num_samples {
             // Check for external clock rising edge
             let clock_trigger = if let Some(clk) = clock {
-                crate::math::rising_edge(clk[i], if i == 0 { 0.0 } else { clk[i - 1] })
+                let prev = if i == 0 { self.prev_clock } else { clk[i - 1] };
+                crate::math::rising_edge(clk[i], prev)
             } else {
                 false
             };
@@ -284,6 +293,13 @@ impl PolyModule for Euclidean {
                 0.0
             };
             self.accent_buffer[i] = accent;
+        }
+
+        // Persist last clock sample for edge detection across buffers
+        if let Some(clk) = clock
+            && num_samples > 0
+        {
+            self.prev_clock = clk[num_samples - 1];
         }
 
         if let Some(out) = outputs.get_mut(&PortName::GATE) {

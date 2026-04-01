@@ -52,7 +52,6 @@ pub struct Convolver {
 
     // State
     sample_rate: SampleRate,
-    ir_dirty: bool,
 }
 
 impl Convolver {
@@ -83,7 +82,6 @@ impl Convolver {
             accum_pos: 0,
 
             sample_rate: SampleRate::DVD_QUALITY,
-            ir_dirty: false,
         }
     }
 
@@ -132,7 +130,6 @@ impl Convolver {
     }
 
     fn rebuild_ir(&mut self) {
-        self.ir_dirty = false;
         let ir = Self::generate_ir(self.ir_type, self.sample_rate, self.decay_trim.as_f32());
         self.conv_left = PartitionedConvolver::new(PARTITION_SIZE, &ir);
         self.conv_right = PartitionedConvolver::new(PARTITION_SIZE, &ir);
@@ -221,10 +218,6 @@ impl Describable for Convolver {
 impl AudioEffect for Convolver {
     #[allow(clippy::too_many_lines)]
     fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext<'_>) {
-        if self.ir_dirty {
-            self.rebuild_ir();
-        }
-
         let num_frames = input.len() / 2;
         let mix = self.mix.as_f32();
 
@@ -263,17 +256,17 @@ impl AudioEffect for Convolver {
             }
 
             // Read convolved output (from most recent full block)
-            let wet_l = if self.accum_pos > 0 && self.accum_pos <= PARTITION_SIZE {
+            let wet_l = if self.accum_pos < PARTITION_SIZE {
                 self.output_accum_l
-                    .get(self.accum_pos.wrapping_sub(1))
+                    .get(self.accum_pos)
                     .copied()
                     .unwrap_or(0.0)
             } else {
                 0.0
             };
-            let wet_r = if self.accum_pos > 0 && self.accum_pos <= PARTITION_SIZE {
+            let wet_r = if self.accum_pos < PARTITION_SIZE {
                 self.output_accum_r
-                    .get(self.accum_pos.wrapping_sub(1))
+                    .get(self.accum_pos)
                     .copied()
                     .unwrap_or(0.0)
             } else {
@@ -299,7 +292,7 @@ impl AudioEffect for Convolver {
                 ConvolverParam::Ir(ir) => {
                     if ir != self.ir_type {
                         self.ir_type = ir;
-                        self.ir_dirty = true;
+                        self.rebuild_ir();
                     }
                 }
                 ConvolverParam::Mix(v) => self.mix = v,
@@ -310,7 +303,7 @@ impl AudioEffect for Convolver {
                 ConvolverParam::DecayTrim(v) => {
                     if (v.as_f32() - self.decay_trim.as_f32()).abs() > 0.01 {
                         self.decay_trim = v;
-                        self.ir_dirty = true;
+                        self.rebuild_ir();
                     }
                 }
                 ConvolverParam::Brightness(v) => self.brightness = v,
@@ -378,7 +371,7 @@ impl AudioEffect for Convolver {
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         if sample_rate != self.sample_rate {
             self.sample_rate = sample_rate;
-            self.ir_dirty = true;
+            self.rebuild_ir();
             self.update_delay();
         }
     }

@@ -74,7 +74,9 @@ impl Sampler {
             player: None,
             sample_rate: SampleRate::DVD_QUALITY,
 
-            render_buffer: vec![0.0; 8192], // Pre-allocate for up to 4096 stereo frames
+            // Pre-allocate for up to 8192 stereo frames. Grow-only: if a larger
+            // block is encountered the Vec will resize once and stay at that size.
+            render_buffer: vec![0.0; 16384],
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -204,8 +206,9 @@ impl PolyModule for Sampler {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(n_samples);
 
-        // Ensure render buffer is large enough (stereo interleaved)
-        // Note: pre-allocated to 8192, only grows if block > 4096 frames
+        // Ensure render buffer is large enough (stereo interleaved).
+        // Only grows, never shrinks — avoids allocation on the audio thread
+        // when block sizes fluctuate below the high-water mark.
         let render_len = n_samples * 2;
         if self.render_buffer.len() < render_len {
             self.render_buffer.resize(render_len, 0.0);
@@ -338,8 +341,8 @@ impl PolyModule for Sampler {
 
         // Set velocity
         let vel_amount = self.velocity_sensitivity.as_f32();
-        let vel_gain = 1.0 - vel_amount + vel_amount * velocity.0;
-        player.set_velocity(vel_gain);
+        let vel_gain = 1.0 - vel_amount + vel_amount * velocity.as_f32();
+        player.set_velocity(Velocity::new(vel_gain));
 
         // Set looping
         player.set_looping(self.play_mode == SamplerPlayMode::Loop);

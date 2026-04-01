@@ -301,7 +301,9 @@ impl PolyModule for Filter {
 
         for i in 0..context.samples.as_usize() {
             let input = audio_in[i];
-            let cutoff_mod = Semitones::new(cutoff_cv[i] * self.cutoff_mod_amount.as_f32());
+            let cutoff_mod = Semitones::new(
+                cutoff_cv[i] * self.cutoff_mod_amount.as_f32() * self.env_amount.as_f32(),
+            );
             let res_mod = NormalizedValue::new(res_cv[i]);
 
             self.output_buffer[i] = self.process_sample(input, cutoff_mod, res_mod);

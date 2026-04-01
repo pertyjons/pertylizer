@@ -62,16 +62,10 @@ impl FrequencyShifter {
     fn process_chain(state: &mut [f32; NUM_STAGES], coeffs: &[f32; NUM_STAGES], input: f32) -> f32 {
         let mut x = input;
         for i in 0..NUM_STAGES {
+            // First-order all-pass: y[n] = c * (x[n] - y[n-1]) + x[n-1]
             let y = coeffs[i] * (x - state[i]) + state[i];
             state[i] = y;
-            // Feed forward: output of this stage becomes input to next
-            // But for the Hilbert pair, we use simple first-order all-pass
-            // y[n] = c * (x[n] - y[n-1]) + x[n-1]
-            // Simplified: store previous output
-            let prev = state[i];
-            let out = coeffs[i] * (x - prev) + prev;
-            state[i] = out;
-            x = out;
+            x = y;
         }
         x
     }

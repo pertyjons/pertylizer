@@ -66,6 +66,7 @@ impl FftProcessor {
     ///
     /// # Panics
     /// Panics if `fft_size` is not a power of 2 or is zero.
+    #[must_use]
     pub fn new(fft_size: usize) -> Self {
         assert!(
             fft_size > 0 && fft_size.is_power_of_two(),
@@ -105,7 +106,8 @@ impl FftProcessor {
             .forward
             .process_with_scratch(input, output, &mut self.scratch_forward)
         {
-            // Silently fail in real-time context
+            // Silently zero on FFT error — correct for RT safety, errors diagnosed via debug builds
+            debug_assert!(false, "Forward FFT failed: {_e:?}");
             for bin in output.iter_mut() {
                 *bin = Complex::new(0.0, 0.0);
             }
@@ -121,6 +123,8 @@ impl FftProcessor {
             .inverse
             .process_with_scratch(input, output, &mut self.scratch_inverse)
         {
+            // Silently zero on FFT error — correct for RT safety, errors diagnosed via debug builds
+            debug_assert!(false, "Inverse FFT failed: {_e:?}");
             for s in output.iter_mut() {
                 *s = 0.0;
             }

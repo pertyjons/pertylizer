@@ -377,12 +377,16 @@ impl GroupTemplate {
 
 /// Parameter value for serialization.
 /// Supports all types including string choices for waveforms, filter modes, etc.
+///
+/// **Variant order matters** for `#[serde(untagged)]`: Bool must come before
+/// numeric types (JSON `true`/`false` would match numbers otherwise), and
+/// Int before Float so integer JSON values deserialize as `Int` rather than `Float`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ParamValue {
-    Float(f32),
-    Int(i32),
     Bool(bool),
+    Int(i32),
+    Float(f32),
     Choice(String),
 }
 
@@ -603,13 +607,13 @@ impl Patch {
 /// BipolarValue, Semitones, InstrumentId). Fields that would change
 /// serialization format (channel, key_range) or lack serde (oversampling)
 /// remain as primitives.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct InstrumentState {
     /// Engine instrument ID.
     pub id: InstrumentId,
     /// Display name.
     pub name: String,
-    /// MIDI channel (1-indexed, 1–16).
+    /// MIDI channel (1-indexed, 1–16, clamped on deserialization).
     pub channel: u8,
     /// Volume (0.0 = silent, 1.0 = unity).
     pub volume: Gain,
@@ -630,6 +634,46 @@ pub struct InstrumentState {
     pub oversampling: u8,
     /// Full module graph for this instrument.
     pub patch: Patch,
+}
+
+impl<'de> Deserialize<'de> for InstrumentState {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            id: InstrumentId,
+            name: String,
+            channel: u8,
+            volume: Gain,
+            pan: BipolarValue,
+            muted: bool,
+            solo: bool,
+            #[serde(default = "default_key_range")]
+            key_range: (u8, u8),
+            #[serde(default)]
+            transpose: Semitones,
+            #[serde(default = "default_oversampling")]
+            oversampling: u8,
+            patch: Patch,
+        }
+
+        let raw = Raw::deserialize(deserializer)?;
+        Ok(Self {
+            id: raw.id,
+            name: raw.name,
+            channel: raw.channel.clamp(1, 16),
+            volume: raw.volume,
+            pan: raw.pan,
+            muted: raw.muted,
+            solo: raw.solo,
+            key_range: raw.key_range,
+            transpose: raw.transpose,
+            oversampling: raw.oversampling,
+            patch: raw.patch,
+        })
+    }
 }
 
 fn default_key_range() -> (u8, u8) {

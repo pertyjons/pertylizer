@@ -109,7 +109,7 @@ pub(crate) fn run(
 
     let target = config.target;
 
-    let tick_interval = Duration::from_secs_f64(1.0 / f64::from(config.update_rate_hz));
+    let tick_interval = Duration::from_secs_f64(1.0 / f64::from(config.update_rate_hz.max(1.0)));
     let meta_interval = Duration::from_secs_f32(config.meta_interval_secs);
     let idle_timeout = Duration::from_secs_f32(config.idle_timeout_secs);
 
@@ -203,8 +203,17 @@ pub(crate) fn run(
 
         // === Active mode: full telemetry below ===
 
-        // Drain note events from the ring buffer
+        // Drain note events from the ring buffer.
+        // Cap per-bundle to avoid exceeding UDP MTU (~1500 bytes).
+        const MAX_EVENTS_PER_BUNDLE: usize = 32;
+        let mut event_count = 0;
         while let Some(event) = event_consumer.try_pop() {
+            event_count += 1;
+            if event_count > MAX_EVENTS_PER_BUNDLE {
+                // Flush current bundle and start a new one
+                send_bundle(&socket, target, &mut messages);
+                event_count = 1;
+            }
             match event {
                 NoteEvent::On {
                     note,
@@ -217,7 +226,7 @@ pub(crate) fn run(
                         vec![
                             OscType::Int(i32::from(note.as_u8())),
                             OscType::Int(i32::from(velocity.to_midi())),
-                            OscType::Int(instrument_id.as_u64() as i32),
+                            OscType::Long(instrument_id.as_u64() as i64),
                             OscType::Int(i32::from(category.as_u8())),
                         ],
                     ));
@@ -231,7 +240,7 @@ pub(crate) fn run(
                         addresses::EVENT_NOTE_OFF,
                         vec![
                             OscType::Int(i32::from(note.as_u8())),
-                            OscType::Int(instrument_id.as_u64() as i32),
+                            OscType::Long(instrument_id.as_u64() as i64),
                             OscType::Int(i32::from(category.as_u8())),
                         ],
                     ));
@@ -371,8 +380,15 @@ fn send_bundle(socket: &UdpSocket, target: SocketAddr, messages: &mut Vec<OscPac
         content: std::mem::take(messages),
     };
 
-    if let Ok(bytes) = encoder::encode(&OscPacket::Bundle(bundle)) {
-        let _ = socket.send_to(&bytes, target);
+    match encoder::encode(&OscPacket::Bundle(bundle)) {
+        Ok(bytes) => {
+            if let Err(e) = socket.send_to(&bytes, target) {
+                eprintln!("OSC send error to {target}: {e}");
+            }
+        }
+        Err(e) => {
+            eprintln!("OSC encode error: {e}");
+        }
     }
 }
 

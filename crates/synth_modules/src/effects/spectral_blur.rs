@@ -46,7 +46,6 @@ pub struct SpectralBlur {
     out_r: Vec<f32>,
 
     sample_rate: SampleRate,
-    needs_rebuild: bool,
 }
 
 impl SpectralBlur {
@@ -73,16 +72,10 @@ impl SpectralBlur {
             out_r: vec![0.0; MAX_BLOCK_SIZE],
 
             sample_rate: SampleRate::DVD_QUALITY,
-            needs_rebuild: false,
         }
     }
 
     fn rebuild_stft(&mut self) {
-        if !self.needs_rebuild {
-            return;
-        }
-        self.needs_rebuild = false;
-
         let size = self.fft_size.size();
         let hop = size / 4;
         self.stft_l = StftProcessor::new(size, hop, WindowType::Hann);
@@ -187,8 +180,6 @@ impl Describable for SpectralBlur {
 
 impl AudioEffect for SpectralBlur {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
-        self.rebuild_stft();
-
         let fft_size = self.stft_l.fft_size();
         let num_bins = fft_size / 2 + 1;
         let blur_time = self.blur_time.as_f32();
@@ -299,7 +290,7 @@ impl AudioEffect for SpectralBlur {
                 SpectralBlurParam::FftSize(v) => {
                     if v != self.fft_size {
                         self.fft_size = v;
-                        self.needs_rebuild = true;
+                        self.rebuild_stft();
                     }
                 }
                 SpectralBlurParam::BlurTime(v) => self.blur_time = v,
@@ -346,6 +337,6 @@ impl AudioEffect for SpectralBlur {
 
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
-        self.needs_rebuild = true;
+        self.rebuild_stft();
     }
 }

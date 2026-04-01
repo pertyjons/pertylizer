@@ -81,10 +81,14 @@ impl RowResolution {
     }
 
     /// Quantize with strength (0.0 = no change, 1.0 = full quantize).
-    pub fn quantize_with_strength(&self, tick: PatternTick, strength: f32) -> PatternTick {
+    pub fn quantize_with_strength(
+        &self,
+        tick: PatternTick,
+        strength: NormalizedValue,
+    ) -> PatternTick {
         let quantized = self.quantize(tick);
         let diff = quantized.0 as f32 - tick.0 as f32;
-        PatternTick((tick.0 as f32 + diff * strength.clamp(0.0, 1.0)).round() as u32)
+        PatternTick((tick.0 as f32 + diff * strength.as_f32()).round() as u32)
     }
 }
 
@@ -273,8 +277,7 @@ impl Pattern {
     }
 
     /// Quantize with strength (0.0 = no change, 1.0 = full).
-    pub fn quantize_notes_with_strength(&mut self, strength: f32) {
-        let strength = strength.clamp(0.0, 1.0);
+    pub fn quantize_notes_with_strength(&mut self, strength: NormalizedValue) {
         for note in &mut self.notes {
             note.start = self
                 .row_resolution
@@ -464,11 +467,15 @@ impl Pattern {
         let mut events = Vec::new();
 
         // Convert song-ticks to pattern-local ticks
+        // Tick.0 is u64 but PatternTick.0 is u32; values are bounded by pattern length
+        // which fits in u32, so truncation is safe.
+        #[allow(clippy::cast_possible_truncation)]
         let local_start = if range_start.0 > pattern_start.0 {
             PatternTick((range_start.0 - pattern_start.0) as u32)
         } else {
             PatternTick(0)
         };
+        #[allow(clippy::cast_possible_truncation)]
         let local_end = PatternTick(
             (range_end.0.saturating_sub(pattern_start.0)).min(self.length.0 as u64) as u32,
         );
@@ -626,7 +633,7 @@ mod tests {
         );
 
         // 50% quantization toward 240
-        pattern.quantize_notes_with_strength(0.5);
+        pattern.quantize_notes_with_strength(NormalizedValue::CENTER);
 
         let note = pattern.note(id).unwrap();
         // 120 + 0.5 * (240 - 120) = 120 + 60 = 180

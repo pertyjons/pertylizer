@@ -18,6 +18,7 @@ use crate::graph::ModuleGraph;
 use crate::instrument::{Instrument, InstrumentId, MidiChannel};
 use crate::instrument_mapping::InstrumentMapping;
 use crate::metering::MeteringSystem;
+use crate::recording::RecordingState;
 use crate::sequencer_engine::SequencerEngine;
 use crate::shared_state::{ConnectionSnapshot, ModuleStateSnapshot};
 use crate::state::EngineState;
@@ -391,6 +392,12 @@ pub struct SynthEngine {
     click_generator: crate::click_generator::ClickGenerator,
     /// Saved loop state before recording started (start, end, enabled).
     pre_record_loop: Option<(synth_sequencer::Tick, synth_sequencer::Tick, bool)>,
+    /// Pending recorded notes that failed to send (retry on next process cycle).
+    pending_recorded_notes: Option<(
+        synth_sequencer::PatternId,
+        Vec<crate::recording::RecordedNote>,
+        bool,
+    )>,
 
     // === Audio input ===
     /// Consumer for live audio input (from AudioInputManager's engine ring buffer).
@@ -460,6 +467,7 @@ impl SynthEngine {
                 synth_core::SampleRate::DVD_QUALITY,
             ),
             pre_record_loop: None,
+            pending_recorded_notes: None,
             audio_input_consumer: None,
             audio_input_buffer: vec![0.0; 8192], // Pre-allocate for up to 4096 stereo frames
             callback_duration_sum: 0.0,
@@ -782,8 +790,12 @@ impl SynthEngine {
             }
 
             // Effects
-            EngineCommand::SetBypass { module, bypass } => {
-                self.handle_set_bypass(module, bypass);
+            EngineCommand::SetBypass {
+                instrument_id,
+                module,
+                bypass,
+            } => {
+                self.handle_set_bypass(instrument_id, module, bypass);
             }
             EngineCommand::SetEffectParameter {
                 instrument_id,
@@ -892,7 +904,7 @@ impl SynthEngine {
                         self.state.transport.set_ticks(seek_to.0);
                         self.state
                             .transport
-                            .set_recording_state(self.recording.state().as_u32());
+                            .set_recording_state(self.recording.state());
                     }
                 } else {
                     self.sequencer.play();
@@ -912,7 +924,9 @@ impl SynthEngine {
                     {
                         self.flush_recorded_notes(pid, notes, overdub);
                     }
-                    self.state.transport.set_recording_state(0);
+                    self.state
+                        .transport
+                        .set_recording_state(RecordingState::Idle);
                     // Restore metronome to shared state
                     self.click_generator
                         .set_enabled(self.state.transport.is_metronome_on());
@@ -956,8 +970,7 @@ impl SynthEngine {
                 let bounds = self
                     .sequencer
                     .song()
-                    .read()
-                    .ok()
+                    .try_read()
                     .and_then(|song| Self::find_pattern_bounds(&song, pattern_id));
 
                 if let Some((start, end)) = bounds {
@@ -978,8 +991,7 @@ impl SynthEngine {
                 let bounds = self
                     .sequencer
                     .song()
-                    .read()
-                    .ok()
+                    .try_read()
                     .and_then(|song| Self::find_pattern_bounds(&song, pattern_id));
 
                 if let Some((start, _end)) = bounds {
@@ -1024,7 +1036,7 @@ impl SynthEngine {
                 self.recording.set_quantize_grid(quantize_grid);
                 self.state
                     .transport
-                    .set_recording_state(self.recording.state().as_u32());
+                    .set_recording_state(self.recording.state());
             }
             EngineCommand::DisarmRecord => {
                 let pattern_id = self.recording.target_pattern();
@@ -1035,7 +1047,9 @@ impl SynthEngine {
                 {
                     self.flush_recorded_notes(pid, notes, overdub);
                 }
-                self.state.transport.set_recording_state(0);
+                self.state
+                    .transport
+                    .set_recording_state(RecordingState::Idle);
                 // Restore loop state from before recording
                 self.restore_pre_record_loop();
             }
@@ -1390,13 +1404,22 @@ impl SynthEngine {
         notes: Vec<crate::recording::RecordedNote>,
         overdub: bool,
     ) {
-        let _ = self
+        if let Err(EngineEvent::RecordedNotesFlushed {
+            pattern_id,
+            notes,
+            overdub,
+        }) = self
             .event_producer
             .try_push(EngineEvent::RecordedNotesFlushed {
                 pattern_id,
                 notes,
                 overdub,
-            });
+            })
+        {
+            // Ring buffer full — save for retry on next process cycle
+            // to avoid dropping the Vec on the audio thread.
+            self.pending_recorded_notes = Some((pattern_id, notes, overdub));
+        }
     }
 
     /// Restore loop state saved before recording started.
@@ -1563,9 +1586,21 @@ impl SynthEngine {
     // Effect handlers
     // ========================================================================
 
-    fn handle_set_bypass(&mut self, module: ModuleId, bypass: bool) {
-        // Try effect chain first
-        for instrument in &mut self.instruments {
+    fn handle_set_bypass(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        module: ModuleId,
+        bypass: bool,
+    ) {
+        let target_instruments: Box<dyn Iterator<Item = &mut Box<Instrument>> + '_> =
+            if let Some(id) = instrument_id {
+                Box::new(self.instruments.iter_mut().filter(move |i| i.id() == id))
+            } else {
+                Box::new(self.instruments.iter_mut())
+            };
+
+        for instrument in target_instruments {
+            // Try effect chain first
             if let Some(slot) = instrument
                 .effect_chain_mut()
                 .find_effect_by_type(module.module_type)
@@ -1573,10 +1608,8 @@ impl SynthEngine {
                 slot.state = crate::effect_chain::EnabledState::from(!bypass);
                 return;
             }
-        }
 
-        // Also set bypass on voice graph modules (osc, filter, env, LFO)
-        for instrument in &mut self.instruments {
+            // Also set bypass on voice graph modules (osc, filter, env, LFO)
             instrument.voice_graph_mut().set_bypass(module, bypass);
             for voice in instrument.allocator_mut().voices_mut() {
                 voice.graph.set_bypass(module, bypass);
@@ -1596,18 +1629,12 @@ impl SynthEngine {
                 if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
                     slot.effect.set_param(param);
                     slot.state = crate::effect_chain::EnabledState::Active;
-                } else {
-                    eprintln!(
-                        "SetEffectParameter: effect type {mt:?} not found in instrument {inst_id}"
-                    );
                 }
             }
             None => {
                 if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
                     slot.effect.set_param(param);
                     slot.state = crate::effect_chain::EnabledState::Active;
-                } else {
-                    eprintln!("SetEffectParameter: effect type {mt:?} not found in master effects");
                 }
             }
         }
@@ -1625,17 +1652,11 @@ impl SynthEngine {
             Some(inst_id) => {
                 if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
                     slot.state = state;
-                } else {
-                    eprintln!(
-                        "SetEffectEnabled: effect type {mt:?} not found in instrument {inst_id}"
-                    );
                 }
             }
             None => {
                 if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
                     slot.state = state;
-                } else {
-                    eprintln!("SetEffectEnabled: effect type {mt:?} not found in master effects");
                 }
             }
         }
@@ -1803,10 +1824,7 @@ impl SynthEngine {
                         to.module,
                         to.port,
                     ) {
-                        eprintln!(
-                            "Voice graph connection failed: {:?}:{} -> {:?}:{} - {}",
-                            from.module, from.port, to.module, to.port, e
-                        );
+                        let _ = e;
                     } else {
                         instrument.rebuild_voices();
                     }
@@ -1817,10 +1835,7 @@ impl SynthEngine {
                     self.module_graph
                         .connect(from.module, from.port, to.module, to.port)
                 {
-                    eprintln!(
-                        "Global graph connection failed: {:?}:{} -> {:?}:{} - {}",
-                        from.module, from.port, to.module, to.port, e
-                    );
+                    let _ = e;
                 }
             }
         }
@@ -2201,6 +2216,11 @@ impl AudioProcessor for SynthEngine {
     fn process(&mut self, output: &mut [f32], context: &AudioCallbackContext) {
         let start_time = Instant::now();
 
+        // Retry sending pending recorded notes from previous cycle
+        if let Some((pattern_id, notes, overdub)) = self.pending_recorded_notes.take() {
+            self.flush_recorded_notes(pattern_id, notes, overdub);
+        }
+
         // Process commands
         self.process_commands();
 
@@ -2271,7 +2291,7 @@ impl AudioProcessor for SynthEngine {
         // Tick the recording state machine
         self.recording.tick(curr_tick);
         // Update shared recording state if it changed
-        let rec_state = self.recording.state().as_u32();
+        let rec_state = self.recording.state();
         if self.state.transport.recording_state() != rec_state {
             self.state.transport.set_recording_state(rec_state);
         }
@@ -2295,11 +2315,11 @@ impl AudioProcessor for SynthEngine {
             }
         }
 
-        // Emit live recording preview (once per buffer callback, ~86Hz)
+        // Emit live recording preview only when notes changed (avoids per-buffer clone)
         if rec_state_enum == crate::recording::RecordingState::Capturing
             && let Some((_region_start, pattern_length)) = self.recording.target_info()
+            && let Some((completed, held)) = self.recording.preview_snapshot()
         {
-            let (completed, held) = self.recording.preview_snapshot();
             let _ = self.event_producer.try_push(EngineEvent::RecordingPreview {
                 completed,
                 held,
@@ -2423,7 +2443,7 @@ impl AudioProcessor for SynthEngine {
     }
 
     fn on_error(&mut self, error: synth_core::AudioError) {
-        eprintln!("Audio error: {error}");
+        let _ = error;
         let _ = self.event_producer.try_push(EngineEvent::BufferUnderrun);
     }
 }

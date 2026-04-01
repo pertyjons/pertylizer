@@ -111,7 +111,7 @@ pub struct EnvelopeEditor<'a> {
     /// Maximum time value for A/D/R (seconds).
     max_time: f32,
     /// Current playback position for visualization (stage, time_in_stage_seconds).
-    playback_position: Option<(EnvelopeStage, f32)>,
+    playback_position: Option<(EnvelopeStage, Seconds)>,
 }
 
 impl<'a> EnvelopeEditor<'a> {
@@ -163,7 +163,7 @@ impl<'a> EnvelopeEditor<'a> {
     /// A vertical time indicator line will be drawn at the position
     /// corresponding to the current envelope stage and elapsed time.
     #[must_use]
-    pub fn playback_position(mut self, stage: EnvelopeStage, time_in_stage: f32) -> Self {
+    pub fn playback_position(mut self, stage: EnvelopeStage, time_in_stage: Seconds) -> Self {
         self.playback_position = Some((stage, time_in_stage));
         self
     }
@@ -272,11 +272,12 @@ impl<'a> EnvelopeEditor<'a> {
             .chain(std::iter::once(Pos2::new(left, bottom)))
             .collect();
 
-        painter.add(egui::Shape::convex_polygon(
-            fill_points,
-            self.accent_color.gamma_multiply(0.15),
-            Stroke::NONE,
-        ));
+        painter.add(Shape::Path(eframe::epaint::PathShape {
+            points: fill_points,
+            closed: true,
+            fill: self.accent_color.gamma_multiply(0.15),
+            stroke: Stroke::NONE.into(),
+        }));
 
         // Curve line
         painter.add(Shape::line(
@@ -286,29 +287,30 @@ impl<'a> EnvelopeEditor<'a> {
 
         // Draw playback time indicator (vertical line)
         if let Some((stage, time_in_stage)) = self.playback_position {
+            let t = time_in_stage.as_f32();
             let playhead_x = match stage {
                 EnvelopeStage::Idle => None,
                 EnvelopeStage::Attack => {
                     // Time progress through attack phase
                     let attack_time = (*self.attack).max(0.001);
-                    let progress = (time_in_stage / attack_time).clamp(0.0, 1.0);
+                    let progress = (t / attack_time).clamp(0.0, 1.0);
                     Some(left + progress * (attack_x - left))
                 }
                 EnvelopeStage::Decay => {
                     // Time progress through decay phase
                     let decay_time = (*self.decay).max(0.001);
-                    let progress = (time_in_stage / decay_time).clamp(0.0, 1.0);
+                    let progress = (t / decay_time).clamp(0.0, 1.0);
                     Some(attack_x + progress * (decay_x - attack_x))
                 }
                 EnvelopeStage::Sustain => {
                     // Sustain holds at decay_x (or animate through sustain section)
-                    let sustain_progress = (time_in_stage / sustain_hold).clamp(0.0, 1.0);
+                    let sustain_progress = (t / sustain_hold).clamp(0.0, 1.0);
                     Some(decay_x + sustain_progress * (sustain_x - decay_x))
                 }
                 EnvelopeStage::Release => {
                     // Time progress through release phase
                     let release_time = (*self.release).max(0.001);
-                    let progress = (time_in_stage / release_time).clamp(0.0, 1.0);
+                    let progress = (t / release_time).clamp(0.0, 1.0);
                     Some(sustain_x + progress * (release_x - sustain_x))
                 }
             };

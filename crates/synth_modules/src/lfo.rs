@@ -209,7 +209,12 @@ impl PolyModule for Lfo {
 
                 let effective_rate = if rate_cv_reader.is_connected() {
                     let mod_amount = rate_cv_reader[i];
-                    Hertz::new(base_rate.apply_fm(mod_amount).as_f32().clamp(0.01, 50.0))
+                    Hertz::new(
+                        base_rate
+                            .apply_fm(BipolarValue::new(mod_amount))
+                            .as_f32()
+                            .clamp(0.01, 50.0),
+                    )
                 } else {
                     base_rate
                 };

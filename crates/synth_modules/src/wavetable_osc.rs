@@ -17,7 +17,8 @@ use synth_core::{
     ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{
-    Cents, Gain, Hertz, MidiNote, NormalizedValue, Octaves, Phase, PortName, SampleRate, Velocity,
+    BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Octaves, Phase, PortName,
+    SampleRate, Velocity,
 };
 use synth_core::{ModuleType, Param, WavetableParam, WavetableSelect};
 
@@ -177,7 +178,7 @@ impl PolyModule for WavetableOsc {
         self.output_buffer.resize(num_samples);
 
         let fm_input = inputs.get(PortName::FM);
-        let pos_cv = inputs.get(PortName::intern("pos_cv"));
+        let pos_cv = inputs.get(PortName::POS_CV);
 
         let bank = get_wavetable(self.table);
         let base_freq = self.effective_freq();
@@ -188,7 +189,7 @@ impl PolyModule for WavetableOsc {
             // Apply FM
             let freq = if let Some(fm) = fm_input {
                 let fm_val = fm[i];
-                base_freq.apply_cv(fm_val)
+                base_freq.apply_cv(BipolarValue::new(fm_val))
             } else {
                 base_freq
             };

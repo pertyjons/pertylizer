@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use synth_core::{ChannelCount, MidiNote};
+use synth_core::{ChannelCount, MidiNote, Velocity};
 
 use crate::types::{CropRegion, LoopRegion, PlaybackPosition};
 
@@ -39,6 +39,7 @@ pub struct SamplePlayer {
     /// Number of channels (1 or 2).
     channels: usize,
     /// Total frames in the sample.
+    #[expect(dead_code, reason = "retained for future diagnostics/debugging")]
     frame_count: usize,
     /// Current playback position (fractional frame).
     position: PlaybackPosition,
@@ -150,8 +151,8 @@ impl SamplePlayer {
     }
 
     /// Set velocity gain (0.0–1.0).
-    pub fn set_velocity(&mut self, gain: f32) {
-        self.velocity_gain = gain.clamp(0.0, 1.0);
+    pub fn set_velocity(&mut self, velocity: Velocity) {
+        self.velocity_gain = velocity.as_f32().clamp(0.0, 1.0);
     }
 
     /// Enable or disable looping.
@@ -210,7 +211,7 @@ impl SamplePlayer {
             let mut gain = self.velocity_gain;
             if self.state == PlaybackState::Releasing {
                 if self.release_counter > 0 {
-                    gain *= self.release_counter as f32 / self.release_frames as f32;
+                    gain *= self.release_counter as f32 / self.release_frames.max(1) as f32;
                     self.release_counter -= 1;
                 } else {
                     self.state = PlaybackState::Finished;
@@ -353,7 +354,7 @@ impl SamplePlayer {
 
     #[inline]
     fn read_mono(&self, frame: usize) -> f32 {
-        if frame < self.frame_count {
+        if frame < self.data.len() {
             self.data[frame]
         } else {
             0.0

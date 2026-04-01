@@ -96,6 +96,8 @@ impl SvfCoeffs {
                 let hp = input - self.k * v1 - v2;
                 lp - hp
             }
+            // Fixed ~6dB shelving via LP/HP blend.
+            // For parametric shelving, use a dedicated shelf topology.
             SvfFilterType::LowShelf => {
                 let lp = v2;
                 input * 0.5 + lp * 0.5
@@ -127,6 +129,7 @@ impl BiquadCoeffs {
     /// Normalizes all coefficients by dividing by `a0`.
     #[must_use]
     pub fn from_raw(b0: f32, b1: f32, b2: f32, a0: f32, a1: f32, a2: f32) -> Self {
+        let a0 = if a0.abs() < f32::EPSILON { 1.0 } else { a0 };
         Self {
             b0: b0 / a0,
             b1: b1 / a0,

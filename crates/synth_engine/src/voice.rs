@@ -14,6 +14,7 @@
 //! Each voice stores macro controller state (pitch bend, mod wheel) using type-safe
 //! domain types to prevent unit mismatches.
 
+use crate::ModuleId;
 use crate::graph::ModuleGraph;
 use synth_core::tuning::TuningTable;
 use synth_core::{AudioBuffer, PortName, ProcessContext};
@@ -22,6 +23,25 @@ use synth_core::{
     Semitones, Velocity,
 };
 use synth_core::{ModuleType, OscillatorParam, Param};
+
+/// Unique identifier for a voice within an instrument's voice pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[must_use]
+pub struct VoiceId(pub(crate) u32);
+
+impl VoiceId {
+    /// Create a new voice ID.
+    #[inline]
+    pub fn new(id: u32) -> Self {
+        Self(id)
+    }
+
+    /// Get the raw u32 value.
+    #[inline]
+    pub fn as_u32(self) -> u32 {
+        self.0
+    }
+}
 
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
@@ -193,7 +213,7 @@ impl GlideState {
         } else {
             // Exponential interpolation (sounds more natural for pitch)
             // f(t) = from * (to/from)^t
-            let ratio = self.to_freq.as_f32() / self.from_freq.as_f32();
+            let ratio = self.to_freq.as_f32() / self.from_freq.as_f32().max(f32::EPSILON);
             self.current_freq =
                 Hertz::new(self.from_freq.as_f32() * ratio.powf(self.position.as_f32()));
         }
@@ -252,7 +272,7 @@ impl Default for ExpressionSettings {
 /// idle voice - the type system prevents it.
 pub struct Voice {
     /// Unique voice ID.
-    pub id: u32,
+    pub id: VoiceId,
 
     /// Current state (carries note/velocity data when active).
     pub state: VoiceState,
@@ -305,7 +325,7 @@ pub struct Voice {
 
 impl Voice {
     /// Create a new voice with the given ID.
-    pub fn new(id: u32) -> Self {
+    pub fn new(id: VoiceId) -> Self {
         Self {
             id,
             state: VoiceState::Idle,
@@ -329,7 +349,7 @@ impl Voice {
     }
 
     /// Create a new voice from a ModuleGraph template.
-    pub fn from_graph(id: u32, graph: ModuleGraph) -> Self {
+    pub fn from_graph(id: VoiceId, graph: ModuleGraph) -> Self {
         // Find output module with priority: StereoOutput > Amplifier > Mixer
         let output_id = graph
             .find_module_by_type(ModuleType::StereoOutput)
@@ -387,14 +407,21 @@ impl Voice {
     /// Set detune on all oscillators in the voice (type-safe Cents).
     /// Used for unison mode.
     pub fn set_oscillator_detune(&mut self, detune: Cents) {
-        // Apply to all oscillators in the graph
-        for module_id in self.graph.module_ids().collect::<Vec<_>>() {
-            if module_id.module_type == ModuleType::Oscillator {
-                self.graph.set_param(
-                    module_id,
-                    Param::Oscillator(OscillatorParam::Detune(detune)),
-                );
+        // Collect oscillator IDs into a small fixed-size buffer to avoid
+        // heap allocation on the audio thread (can't iterate and mutate graph).
+        let mut osc_ids: [Option<ModuleId>; 8] = [None; 8];
+        let mut count = 0;
+        for module_id in self.graph.module_ids() {
+            if module_id.module_type == ModuleType::Oscillator && count < osc_ids.len() {
+                osc_ids[count] = Some(module_id);
+                count += 1;
             }
+        }
+        for module_id in osc_ids.into_iter().flatten() {
+            self.graph.set_param(
+                module_id,
+                Param::Oscillator(OscillatorParam::Detune(detune)),
+            );
         }
     }
 
@@ -834,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_note_to_freq() {
-        let voice = Voice::new(0);
+        let voice = Voice::new(VoiceId::new(0));
 
         // A4 should be 440 Hz
         let freq = voice.note_to_freq(MidiNote::A4);
@@ -861,7 +888,7 @@ mod tests {
 
     #[test]
     fn test_voice_with_graph() {
-        let voice = Voice::new(0);
+        let voice = Voice::new(VoiceId::new(0));
         assert_eq!(voice.state, VoiceState::Idle);
         assert!(voice.graph.is_empty());
     }

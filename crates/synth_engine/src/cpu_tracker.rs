@@ -81,7 +81,8 @@ impl ModuleTracker {
         }
 
         let avg_time = self.accumulated_time / self.block_count;
-        let cpu_percent = (avg_time.as_secs_f32() / block_duration.as_secs_f32()) * 100.0;
+        let block_secs = block_duration.as_secs_f32().max(f32::EPSILON);
+        let cpu_percent = (avg_time.as_secs_f32() / block_secs) * 100.0;
 
         // Exponential moving average for smooth display
         let s = self.smoothing.as_f32();

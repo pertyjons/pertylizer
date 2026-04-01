@@ -34,7 +34,12 @@ use synth_engine::{EngineCommand, EngineHandle, ModuleId};
 /// - Applying parameters
 /// - Establishing connections
 ///
+/// When `apply_global` is `true` (full project load), master volume, glide time,
+/// and AWE settings are applied. When `false` (per-instrument patch load), those
+/// global settings are skipped to avoid overwriting state from other instruments.
+///
 /// Note: Effects are per-instrument (on EffectChain) - each instrument has its own effects.
+#[allow(clippy::too_many_arguments)]
 pub fn load_patch(
     patch: &Patch,
     patch_editor: &mut PatchEditor,
@@ -43,6 +48,7 @@ pub fn load_patch(
     keyboard: &mut PianoKeyboard,
     glide_time: &mut synth_core::Seconds,
     instrument_id: InstrumentId,
+    apply_global: bool,
 ) {
     // Remove visualizers directly (session doesn't track them)
     for module_id in patch_editor.module_ids() {
@@ -58,10 +64,11 @@ pub fn load_patch(
         }
     }
 
-    // Clear all non-visualizer modules via session
-    let _ = session.clear_graph(instrument_id);
-
-    // Clear GUI state
+    // Clear all non-visualizer modules via session — only clear GUI if engine succeeds
+    if session.clear_graph(instrument_id).is_err() {
+        eprintln!("Patch load: failed to clear graph for instrument {instrument_id:?}");
+        return;
+    }
     patch_editor.clear();
 
     // Add modules from patch
@@ -97,32 +104,36 @@ pub fn load_patch(
         }
     }
 
-    // Apply settings
+    // Apply per-instrument settings (always)
     keyboard.set_octave_offset(patch.settings.octave_offset);
-    *glide_time = patch.settings.glide_time;
-    handle.send_blocking(EngineCommand::SetMasterVolume(patch.settings.master_volume));
-    handle.send_blocking(EngineCommand::SetGlideTime(patch.settings.glide_time));
 
-    // Load full AWE state if present
-    if let Some(awe) = &patch.settings.awe {
-        handle.send_blocking(EngineCommand::SetAweEnabled {
-            enabled: awe.enabled,
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::RoomShape(awe.room),
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::Material(awe.material),
-        });
-        handle.send_blocking(EngineCommand::SetAweState {
-            snapshot: awe.to_snapshot(),
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::SpatialEnabled(awe.spatial_enabled),
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::NoteMapping(awe.note_mapping),
-        });
+    // Apply global settings only during full project load, not per-instrument patch load
+    if apply_global {
+        *glide_time = patch.settings.glide_time;
+        handle.send_blocking(EngineCommand::SetMasterVolume(patch.settings.master_volume));
+        handle.send_blocking(EngineCommand::SetGlideTime(patch.settings.glide_time));
+
+        // Load full AWE state if present
+        if let Some(awe) = &patch.settings.awe {
+            handle.send_blocking(EngineCommand::SetAweEnabled {
+                enabled: awe.enabled,
+            });
+            handle.send_blocking(EngineCommand::SetAweParameter {
+                param: synth_awe::AweParam::RoomShape(awe.room),
+            });
+            handle.send_blocking(EngineCommand::SetAweParameter {
+                param: synth_awe::AweParam::Material(awe.material),
+            });
+            handle.send_blocking(EngineCommand::SetAweState {
+                snapshot: awe.to_snapshot(),
+            });
+            handle.send_blocking(EngineCommand::SetAweParameter {
+                param: synth_awe::AweParam::SpatialEnabled(awe.spatial_enabled),
+            });
+            handle.send_blocking(EngineCommand::SetAweParameter {
+                param: synth_awe::AweParam::NoteMapping(awe.note_mapping),
+            });
+        }
     }
 
     // Ensure the target instrument is enabled after loading
@@ -143,7 +154,13 @@ fn load_module(
     // Parse module ID from patch file (e.g., "osc-1" -> ModuleId)
     let module_id: ModuleId = match module_state.id.parse() {
         Ok(id) => id,
-        Err(_) => return, // Skip invalid IDs
+        Err(_) => {
+            eprintln!(
+                "patch_bridge: skipping module with invalid ID {:?} in instrument {instrument_id:?}",
+                module_state.id
+            );
+            return;
+        }
     };
 
     let position = Pos2::new(module_state.position.x, module_state.position.y);
@@ -254,6 +271,7 @@ fn load_signal_monitor(
         }
     }
 
+    session.register_descriptor(instrument_id, module_id, descriptor.clone());
     patch_editor.add_module_at(module_id, descriptor.clone(), position);
 
     let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
@@ -300,6 +318,7 @@ fn load_visualizer(
         }
     }
 
+    session.register_descriptor(instrument_id, module_id, descriptor.clone());
     patch_editor.add_module_at(module_id, descriptor, position);
 
     let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
@@ -643,13 +662,18 @@ pub fn insert_group_template(
         };
         let connection = Connection::new(*from_id, &*conn.from.1, *to_id, &*conn.to.1);
         patch_editor.add_connection(connection);
-        let _ = session.connect(
+        if let Err(e) = session.connect(
             instrument_id,
             connection.from_module,
             connection.from_port,
             connection.to_module,
             connection.to_port,
-        );
+        ) {
+            eprintln!(
+                "patch_bridge: failed to connect {} -> {}: {e}",
+                connection.from_module, connection.to_module
+            );
+        }
     }
 
     // Map exposed ports to new IDs
@@ -822,13 +846,18 @@ pub fn paste_clipboard_modules(
         };
         let connection = Connection::new(*from_id, &*conn.from.1, *to_id, &*conn.to.1);
         patch_editor.add_connection(connection);
-        let _ = session.connect(
+        if let Err(e) = session.connect(
             instrument_id,
             connection.from_module,
             connection.from_port,
             connection.to_module,
             connection.to_port,
-        );
+        ) {
+            eprintln!(
+                "patch_bridge: failed to connect {} -> {}: {e}",
+                connection.from_module, connection.to_module
+            );
+        }
     }
 
     new_ids

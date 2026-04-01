@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::commands::ModuleId;
-use synth_core::{Amplitude, CpuUsage, Param};
+use synth_core::{Amplitude, CpuUsage, NormalizedValue, Param};
 
 // ============================================================================
 // Port State Enums - Descriptive types instead of booleans
@@ -135,12 +135,13 @@ pub enum ModuleConnectivityStatus {
 
 impl ModuleConnectivityStatus {
     /// Get the opacity value for rendering (0.0 - 1.0).
-    pub fn opacity(&self) -> f32 {
+    #[must_use]
+    pub fn opacity(&self) -> NormalizedValue {
         match self {
-            Self::Disconnected => 0.4,
-            Self::PartiallyConnected => 0.7,
-            Self::Connected => 1.0,
-            Self::Bypassed => 0.5,
+            Self::Disconnected => NormalizedValue::new(0.4),
+            Self::PartiallyConnected => NormalizedValue::new(0.7),
+            Self::Connected => NormalizedValue::MAX,
+            Self::Bypassed => NormalizedValue::new(0.5),
         }
     }
 
@@ -397,8 +398,14 @@ mod tests {
 
     #[test]
     fn test_connectivity_status() {
-        assert_eq!(ModuleConnectivityStatus::Disconnected.opacity(), 0.4);
-        assert_eq!(ModuleConnectivityStatus::Connected.opacity(), 1.0);
+        assert_eq!(
+            ModuleConnectivityStatus::Disconnected.opacity(),
+            NormalizedValue::new(0.4)
+        );
+        assert_eq!(
+            ModuleConnectivityStatus::Connected.opacity(),
+            NormalizedValue::MAX
+        );
         assert!(ModuleConnectivityStatus::Connected.is_live());
         assert!(!ModuleConnectivityStatus::Disconnected.is_live());
     }

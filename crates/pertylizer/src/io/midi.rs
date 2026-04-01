@@ -39,6 +39,7 @@ mod status {
 /// MIDI CC numbers.
 mod cc {
     pub const MOD_WHEEL: u8 = 1;
+    pub const SUSTAIN_PEDAL: u8 = 64;
     pub const ALL_NOTES_OFF: u8 = 123;
 }
 
@@ -104,8 +105,19 @@ pub fn parse_midi(bytes: &[u8]) -> Option<EngineCommand> {
                     let value = NormalizedValue::new(cc_value as f32 / 127.0);
                     Some(EngineCommand::ModWheel { value, channel })
                 }
+                cc::SUSTAIN_PEDAL => {
+                    // Sustain pedal (CC 64): >= 64 is on, < 64 is off.
+                    //
+                    // Full sustain-pedal semantics require the engine to:
+                    //  1. Track which notes are held while the pedal is down.
+                    //  2. Suppress NoteOff for held notes until the pedal is released.
+                    //  3. Send deferred NoteOff events when the pedal goes off.
+                    // This needs a ControlChange EngineCommand variant and
+                    // voice-level tracking, neither of which exist yet.
+                    // Ignored for now — the pedal message is intentionally dropped.
+                    None
+                }
                 cc::ALL_NOTES_OFF => Some(EngineCommand::AllNotesOff),
-                // TODO: Add more CC handling as needed (sustain, expression, etc.)
                 _ => None,
             }
         }

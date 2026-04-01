@@ -196,6 +196,9 @@ impl Song {
             let _ = new_pattern.insert_note(note.clone());
         }
 
+        // Copy automation lanes
+        new_pattern.automation = pattern.automation.clone();
+
         self.patterns.insert(new_id, new_pattern);
         Some(new_id)
     }
@@ -252,6 +255,15 @@ impl Song {
     /// Returns `false` if the pattern or track does not exist.
     pub fn place_pattern(&mut self, pattern_id: PatternId, track_id: TrackId, start: Tick) -> bool {
         if !self.patterns.contains_key(&pattern_id) || !self.tracks.contains_key(&track_id) {
+            return false;
+        }
+
+        // Check for duplicate placement at same position and track
+        let already_exists = self
+            .arrangement
+            .iter()
+            .any(|p| p.start == start && p.track_id == track_id);
+        if already_exists {
             return false;
         }
 
@@ -340,6 +352,9 @@ impl Song {
 
     /// Find the pattern playing at a given tick.
     /// Returns the pattern ID and the tick offset within that pattern.
+    ///
+    /// **Known limitation:** If multiple patterns overlap at the same tick,
+    /// only the first match (by arrangement order) is returned.
     #[must_use]
     pub fn pattern_at_tick(&self, tick: Tick) -> Option<(PatternId, Tick)> {
         for placement in &self.arrangement {

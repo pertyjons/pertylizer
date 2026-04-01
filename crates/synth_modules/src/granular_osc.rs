@@ -505,7 +505,8 @@ impl PolyModule for GranularOsc {
         self.samples_until_next_grain = 0.0;
     }
 
-    fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {
+    fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
+        self.note_freq = note.to_frequency();
         self.samples_until_next_grain = 0.0;
     }
 

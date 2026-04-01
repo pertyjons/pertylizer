@@ -84,11 +84,11 @@ impl EnvelopePositionBuffer {
     }
 
     /// Get the envelope state (called from GUI thread).
-    /// Returns (stage, time_in_stage_seconds).
+    /// Returns (stage, time_in_stage).
     #[must_use]
-    pub fn get(&self) -> (EnvelopeStage, f32) {
+    pub fn get(&self) -> (EnvelopeStage, Seconds) {
         let stage = EnvelopeStage::from_u32(self.stage.load(Ordering::Relaxed));
-        let time = f32::from_bits(self.time_in_stage.load(Ordering::Relaxed));
+        let time = Seconds::new(f32::from_bits(self.time_in_stage.load(Ordering::Relaxed)));
         (stage, time)
     }
 
@@ -100,8 +100,8 @@ impl EnvelopePositionBuffer {
 
     /// Get time in current stage (seconds).
     #[must_use]
-    pub fn time_in_stage(&self) -> f32 {
-        f32::from_bits(self.time_in_stage.load(Ordering::Relaxed))
+    pub fn time_in_stage(&self) -> Seconds {
+        Seconds::new(f32::from_bits(self.time_in_stage.load(Ordering::Relaxed)))
     }
 }
 
@@ -281,8 +281,9 @@ impl Envelope {
 
         // Update time tracking
         if self.stage != prev_stage {
-            // Stage changed - reset time
-            self.time_in_stage = Seconds::ZERO;
+            // Stage changed - start at one sample so the position buffer
+            // never briefly reports zero on the transition sample.
+            self.time_in_stage = Seconds::new(1.0 / self.sample_rate.as_f32());
         } else if self.stage != EnvelopeStage::Idle {
             // Increment time (1 sample)
             self.time_in_stage =

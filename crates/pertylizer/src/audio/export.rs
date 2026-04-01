@@ -211,7 +211,7 @@ fn render_to_wav(
     let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
 
     // 3. Set up the song
-    let song = Arc::new(std::sync::RwLock::new(project.song.clone()));
+    let song = Arc::new(parking_lot::RwLock::new(project.song.clone()));
     handle.send_blocking(EngineCommand::SetSong {
         song: Arc::clone(&song),
     });
@@ -264,7 +264,7 @@ fn render_to_wav(
         channels: channels as u16,
         stream_time: 0.0,
         sample_position: 0,
-        output_latency: 0.0,
+        output_latency: synth_core::Seconds::ZERO,
     };
     engine.process(&mut buffer, &init_context);
 
@@ -280,7 +280,7 @@ fn render_to_wav(
         channels: channels as u16,
         stream_time: 0.0,
         sample_position: 0,
-        output_latency: 0.0,
+        output_latency: synth_core::Seconds::ZERO,
     };
     engine.process(&mut buffer, &warmup_context);
 
@@ -332,7 +332,7 @@ fn render_to_wav(
             channels: channels as u16,
             stream_time: frames_written as f64 / f64::from(config.sample_rate),
             sample_position: frames_written,
-            output_latency: 0.0,
+            output_latency: synth_core::Seconds::ZERO,
         };
 
         engine.process(&mut buffer[..sample_count], &context);
@@ -398,12 +398,33 @@ fn load_project_into_engine(
 
         // Set instrument properties
         let channel = MidiChannel::from_one_indexed(inst_state.channel).unwrap_or(MidiChannel::CH1);
-        let _ = session.rename_instrument(inst_id, &inst_state.name);
-        let _ = session.set_instrument_volume(inst_id, inst_state.volume);
-        let _ = session.set_instrument_pan(inst_id, inst_state.pan);
-        let _ = session.set_instrument_mute(inst_id, inst_state.muted);
-        let _ = session.set_instrument_solo(inst_id, inst_state.solo);
-        let _ = session.set_instrument_midi_channel(inst_id, channel);
+        if let Err(e) = session.rename_instrument(inst_id, &inst_state.name) {
+            eprintln!(
+                "Warning: failed to rename instrument '{}': {e}",
+                inst_state.name
+            );
+        }
+        if let Err(e) = session.set_instrument_volume(inst_id, inst_state.volume) {
+            eprintln!(
+                "Warning: failed to set volume for '{}': {e}",
+                inst_state.name
+            );
+        }
+        if let Err(e) = session.set_instrument_pan(inst_id, inst_state.pan) {
+            eprintln!("Warning: failed to set pan for '{}': {e}", inst_state.name);
+        }
+        if let Err(e) = session.set_instrument_mute(inst_id, inst_state.muted) {
+            eprintln!("Warning: failed to set mute for '{}': {e}", inst_state.name);
+        }
+        if let Err(e) = session.set_instrument_solo(inst_id, inst_state.solo) {
+            eprintln!("Warning: failed to set solo for '{}': {e}", inst_state.name);
+        }
+        if let Err(e) = session.set_instrument_midi_channel(inst_id, channel) {
+            eprintln!(
+                "Warning: failed to set MIDI channel for '{}': {e}",
+                inst_state.name
+            );
+        }
 
         // Send oversampling, key range, transpose
         handle.send_blocking(EngineCommand::SetInstrumentParameter {
@@ -505,9 +526,9 @@ fn load_patch_modules(
         }
     }
 
-    // Apply patch-level settings (master volume, glide)
-    handle.send_blocking(EngineCommand::SetMasterVolume(patch.settings.master_volume));
-    handle.send_blocking(EngineCommand::SetGlideTime(patch.settings.glide_time));
+    // NOTE: SetMasterVolume and SetGlideTime are global (not per-instrument) settings.
+    // They are applied once at the project level, so we skip them here to avoid
+    // the last instrument's patch overriding the project-level values.
 
     // Apply AWE settings from patch
     if let Some(awe) = &patch.settings.awe {

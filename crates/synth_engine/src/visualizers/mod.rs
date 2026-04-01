@@ -16,23 +16,7 @@ use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-/// Atomic float wrapper for lock-free level sharing.
-#[derive(Debug)]
-struct AtomicF32(AtomicU32);
-
-impl AtomicF32 {
-    fn new(val: f32) -> Self {
-        Self(AtomicU32::new(val.to_bits()))
-    }
-
-    fn load(&self) -> f32 {
-        f32::from_bits(self.0.load(Ordering::Relaxed))
-    }
-
-    fn store(&self, val: f32) {
-        self.0.store(val.to_bits(), Ordering::Relaxed);
-    }
-}
+use crate::shared_state::AtomicF32;
 
 /// Lock-free shared buffer for passing visualization data from audio thread to GUI.
 ///

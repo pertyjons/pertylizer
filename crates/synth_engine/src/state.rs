@@ -10,6 +10,7 @@ use parking_lot::RwLock;
 
 use synth_core::{Amplitude, Bpm};
 
+use crate::recording::RecordingState;
 use crate::shared_state::{InstrumentSnapshot, SharedGraphState};
 use crate::visualizers::VisualizationBuffer;
 
@@ -250,29 +251,29 @@ impl TransportState {
         self.position_ticks.store(0, Ordering::Relaxed);
     }
 
-    /// Get the recording state (0=off, 1=armed, 2=count_in, 3=capturing).
-    pub fn recording_state(&self) -> u32 {
-        self.recording.load(Ordering::Relaxed)
+    /// Get the recording state.
+    pub fn recording_state(&self) -> RecordingState {
+        RecordingState::from_u32(self.recording.load(Ordering::Relaxed))
     }
 
     /// Set the recording state.
-    pub fn set_recording_state(&self, state: u32) {
-        self.recording.store(state, Ordering::Relaxed);
+    pub fn set_recording_state(&self, state: RecordingState) {
+        self.recording.store(state.as_u32(), Ordering::Relaxed);
     }
 
     /// Check if recording is armed.
     pub fn is_armed(&self) -> bool {
-        self.recording_state() == 1
+        self.recording_state() == RecordingState::Armed
     }
 
     /// Check if actively capturing.
     pub fn is_recording(&self) -> bool {
-        self.recording_state() == 3
+        self.recording_state() == RecordingState::Capturing
     }
 
     /// Check if in count-in phase.
     pub fn is_count_in(&self) -> bool {
-        self.recording_state() == 2
+        self.recording_state() == RecordingState::CountIn
     }
 
     /// Check if metronome is on.

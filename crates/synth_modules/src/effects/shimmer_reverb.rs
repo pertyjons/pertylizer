@@ -13,6 +13,8 @@ use synth_core::{
 };
 use synth_dsp::FdnCore;
 
+use crate::math::soft_clip;
+
 const MAX_PRE_DELAY_SECS: f32 = 0.5;
 /// Pitch shifter grain size in samples (at 48 kHz ~ 21ms).
 const SHIFT_GRAIN_SIZE: usize = 1024;
@@ -308,8 +310,8 @@ impl AudioEffect for ShimmerReverb {
                 dry.to_mono()
             };
 
-            // Mix in pitch-shifted feedback
-            let input_with_shimmer = pre_delayed + self.feedback_acc * feedback_gain.as_f32();
+            // Mix in pitch-shifted feedback (FDN applies its own feedback gain internally)
+            let input_with_shimmer = pre_delayed + self.feedback_acc;
 
             // FDN processing
             let wet = self.core.process_sample(
@@ -325,7 +327,7 @@ impl AudioEffect for ShimmerReverb {
             // Generate shimmer feedback: blend reverb output with pitch-shifted version
             let reverb_mono = (wet.left + wet.right) * 0.5;
             let shifted = self.shifter.process(reverb_mono);
-            self.feedback_acc = reverb_mono * (1.0 - shimmer) + shifted * shimmer;
+            self.feedback_acc = soft_clip(reverb_mono * (1.0 - shimmer) + shifted * shimmer);
 
             // Mix
             let result = dry.blend(wet.into(), mix);

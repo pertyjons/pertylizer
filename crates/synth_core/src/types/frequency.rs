@@ -4,7 +4,7 @@ use std::f32::consts::TAU;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Clampable, Interpolate, Seconds};
+use super::{BipolarValue, Cents, Clampable, Interpolate, Seconds, Semitones};
 
 /// Frequency in Hertz.
 ///
@@ -118,8 +118,8 @@ impl Hertz {
     /// Transpose by semitones.
     #[inline]
     #[must_use]
-    pub fn transpose(self, semitones: f32) -> Self {
-        Self(self.0 * (semitones / 12.0).exp2())
+    pub fn transpose(self, semitones: Semitones) -> Self {
+        Self(self.0 * (semitones.as_f32() / 12.0).exp2())
     }
 
     /// Transpose by octaves.
@@ -135,8 +135,8 @@ impl Hertz {
     /// where `cv = 1.0` produces a 4x frequency multiplier (2 octaves up).
     #[inline]
     #[must_use]
-    pub fn apply_fm(self, cv: f32) -> Self {
-        Self(self.0 * (cv * 2.0).exp2())
+    pub fn apply_fm(self, cv: BipolarValue) -> Self {
+        Self((self.0 * (cv.as_f32() * 2.0).exp2()).clamp(0.01, 100_000.0))
     }
 
     /// Apply 1V/octave CV pitch tracking.
@@ -145,8 +145,8 @@ impl Hertz {
     /// each unit of CV shifts the frequency by one octave.
     #[inline]
     #[must_use]
-    pub fn apply_cv(self, cv: f32) -> Self {
-        Self(self.0 * cv.exp2())
+    pub fn apply_cv(self, cv: BipolarValue) -> Self {
+        Self(self.0 * cv.as_f32().exp2())
     }
 
     /// Clamp to audible range.
@@ -237,11 +237,11 @@ impl Hertz {
     /// Calculate detune in cents between two frequencies.
     #[inline]
     #[must_use]
-    pub fn cents_between(self, other: Self) -> f32 {
+    pub fn cents_between(self, other: Self) -> Cents {
         if self.0 <= 0.0 {
-            return 0.0;
+            return Cents::ZERO;
         }
-        1200.0 * (other.0 / self.0).log2()
+        Cents::new(1200.0 * (other.0 / self.0).log2())
     }
 }
 
@@ -426,7 +426,7 @@ mod tests {
         let a5 = a4.octave(1);
         assert!((a5.0 - 880.0).abs() < 0.001);
 
-        let e5 = a4.transpose(7.0); // Perfect fifth up
+        let e5 = a4.transpose(Semitones::new(7.0)); // Perfect fifth up
         assert!((e5.0 - 659.26).abs() < 0.1);
     }
 

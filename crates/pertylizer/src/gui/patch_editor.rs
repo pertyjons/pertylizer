@@ -327,6 +327,8 @@ pub struct PatchEditor {
     sample_list: Vec<(u64, String)>,
     /// Cached effect chain order from previous frame (for change detection).
     prev_effect_chain_order: Vec<ModuleId>,
+    /// Cached connected ports per module (rebuilt when connections change).
+    connected_ports_cache: HashMap<ModuleId, Vec<PortName>>,
     /// When true, skip reading positions back from egui Area state.
     /// Set after loading a patch/project so saved positions aren't overwritten
     /// by stale egui Area rects during the same frame.
@@ -362,6 +364,7 @@ impl PatchEditor {
             sample_list: Vec::new(),
             suppress_position_readback: false,
             prev_effect_chain_order: Vec::new(),
+            connected_ports_cache: HashMap::new(),
         }
     }
 
@@ -433,6 +436,7 @@ impl PatchEditor {
         self.next_group_id = 1;
         self.group_context_menu = None;
         self.needs_reposition.clear();
+        self.connected_ports_cache.clear();
         self.suppress_position_readback = true;
     }
 
@@ -784,11 +788,14 @@ impl PatchEditor {
     }
 
     fn refresh_exposed_for_module(&mut self, module_id: ModuleId) {
-        let connections: Vec<Connection> = self.connections.clone();
-        for conn in &connections {
-            if conn.from_module == module_id || conn.to_module == module_id {
-                self.ensure_exposed_for_connection(conn);
-            }
+        let relevant: Vec<Connection> = self
+            .connections
+            .iter()
+            .filter(|c| c.from_module == module_id || c.to_module == module_id)
+            .copied()
+            .collect();
+        for conn in &relevant {
+            self.ensure_exposed_for_connection(conn);
         }
     }
 
@@ -1250,20 +1257,6 @@ impl PatchEditor {
         !self.connections.iter().any(|c| c.from_module == module_id)
     }
 
-    /// Get connected ports for a module.
-    fn get_connected_ports(&self, module_id: ModuleId) -> Vec<PortName> {
-        let mut ports = Vec::new();
-        for conn in &self.connections {
-            if conn.from_module == module_id {
-                ports.push(conn.from_port);
-            }
-            if conn.to_module == module_id {
-                ports.push(conn.to_port);
-            }
-        }
-        ports
-    }
-
     /// Calculate the bounding box of all module positions + estimated size.
     /// Used to tell `ScrollArea` how large the content is and for persisting
     /// canvas size in patch files.
@@ -1425,10 +1418,6 @@ impl PatchEditor {
 
         // Collect data before mutable iteration
         let module_ids: Vec<_> = self.z_order.clone();
-        let connected_ports_map: HashMap<ModuleId, Vec<PortName>> = module_ids
-            .iter()
-            .map(|&id| (id, self.get_connected_ports(id)))
-            .collect();
 
         // Constrain rect: prevent modules going to negative logical coords,
         // allow extending right/down (content grows to fit)
@@ -1442,19 +1431,24 @@ impl PatchEditor {
         // Track which module to bring to front
         let mut bring_to_front: Option<ModuleId> = None;
 
+        // Temporarily take descriptors out of self to allow immutable access
+        // while self is mutably borrowed in the loop body.
+        let descriptors = std::mem::take(&mut self.descriptors);
+
         // Draw modules as windows (in z-order)
         for module_id in &module_ids {
             let module_id = *module_id;
             if group_layout.hidden_modules.contains(&module_id) {
                 continue;
             }
-            let connected_ports = connected_ports_map
+            let connected_ports = self
+                .connected_ports_cache
                 .get(&module_id)
                 .cloned()
                 .unwrap_or_default();
 
-            let descriptor = match self.descriptors.get(&module_id) {
-                Some(d) => d.clone(),
+            let descriptor = match descriptors.get(&module_id) {
+                Some(d) => d,
                 None => continue,
             };
 
@@ -1964,7 +1958,7 @@ impl PatchEditor {
                             let panel_result = draw_module_panel_params(
                                 ui,
                                 panel_state,
-                                &descriptor,
+                                descriptor,
                                 accent_color,
                                 vis_buffer,
                                 &analysis,
@@ -1989,7 +1983,7 @@ impl PatchEditor {
                                 self.draw_port_column(
                                     ui,
                                     module_id,
-                                    &descriptor,
+                                    descriptor,
                                     WidgetPortDirection::Input,
                                     &connected_ports,
                                 );
@@ -2003,7 +1997,7 @@ impl PatchEditor {
                                     let panel_result = draw_module_panel_params(
                                         ui,
                                         panel_state,
-                                        &descriptor,
+                                        descriptor,
                                         accent_color,
                                         vis_buffer,
                                         &analysis,
@@ -2026,7 +2020,7 @@ impl PatchEditor {
                                 self.draw_port_column(
                                     ui,
                                     module_id,
-                                    &descriptor,
+                                    descriptor,
                                     WidgetPortDirection::Output,
                                     &connected_ports,
                                 );
@@ -2104,6 +2098,9 @@ impl PatchEditor {
                 self.needs_reposition.remove(&module_id);
             }
         }
+
+        // Restore descriptors after the render loop
+        self.descriptors = descriptors;
 
         // Apply z-order change
         if let Some(id) = bring_to_front {
@@ -4094,6 +4091,19 @@ impl PatchEditor {
 
             self.connectivity.insert(id, status);
         }
+
+        // Rebuild connected ports cache
+        self.connected_ports_cache.clear();
+        for conn in &self.connections {
+            self.connected_ports_cache
+                .entry(conn.from_module)
+                .or_default()
+                .push(conn.from_port);
+            self.connected_ports_cache
+                .entry(conn.to_module)
+                .or_default()
+                .push(conn.to_port);
+        }
     }
 
     /// Get connectivity status for a module.
@@ -4630,7 +4640,7 @@ fn draw_module_panel_params(
 
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Sample:").color(accent_color).small());
-            egui::ComboBox::from_id_salt("sampler_sample_select")
+            egui::ComboBox::from_id_salt(format!("sampler_sample_select_{:?}", state.id))
                 .selected_text(current_name)
                 .width(120.0)
                 .show_ui(ui, |ui| {

@@ -62,10 +62,11 @@ pub(crate) enum UndoAction {
     },
 
     // ── Module operations ──
-    /// A module was added to an instrument.
+    /// A module was added to an instrument (connections captured for undo round-trip).
     AddModule {
         instrument_id: InstrumentId,
         module_state: ModuleState,
+        connections: Vec<ConnectionState>,
     },
     /// A module was removed from an instrument (captures state + connections for undo).
     RemoveModule {
@@ -257,18 +258,20 @@ impl UndoManager {
             UndoAction::AddModule {
                 instrument_id,
                 module_state,
+                connections,
             } => UndoAction::RemoveModule {
                 instrument_id: *instrument_id,
                 module_state: module_state.clone(),
-                connections: Vec::new(),
+                connections: connections.clone(),
             },
             UndoAction::RemoveModule {
                 instrument_id,
                 module_state,
-                connections: _,
+                connections,
             } => UndoAction::AddModule {
                 instrument_id: *instrument_id,
                 module_state: module_state.clone(),
+                connections: connections.clone(),
             },
             UndoAction::MoveModule {
                 module_id,

@@ -80,7 +80,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     // Create shared Song (always available, not just MCP)
-    let song = std::sync::Arc::new(std::sync::RwLock::new(synth_sequencer::Song::new(
+    let song = std::sync::Arc::new(parking_lot::RwLock::new(synth_sequencer::Song::new(
         "Untitled",
     )));
 

@@ -261,7 +261,7 @@ struct SynthApp {
     awe_ui: crate::gui::awe_view::AweUiState,
 
     // Sequencer state
-    song: std::sync::Arc<std::sync::RwLock<synth_sequencer::Song>>,
+    song: std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>>,
     sequencer_view_state: crate::gui::sequencer::SequencerViewState,
 
     // MCP shared state
@@ -492,20 +492,33 @@ impl eframe::App for SynthApp {
                     notes,
                     overdub,
                 } => {
-                    // Write recorded notes into the pattern (on UI thread, safe to lock)
-                    if let Ok(mut song) = self.song.write()
-                        && let Some(pattern) = song.pattern_mut(pattern_id)
+                    // Write recorded notes into the pattern (on UI thread, safe to lock).
+                    // Known limitation: if the song lock is poisoned, recorded notes are
+                    // silently dropped. Buffering for retry adds complexity for a scenario
+                    // that is extremely unlikely since only the UI thread writes.
                     {
-                        if !overdub {
-                            pattern.clear_notes();
-                        }
-                        let instrument = self.sequencer_view_state.recording_instrument;
-                        for note in &notes {
-                            let nid =
-                                pattern.add_note(note.start, note.pitch, note.velocity, instrument);
-                            if let Some(n) = pattern.note_mut(nid) {
-                                n.duration = Some(note.duration);
+                        let mut song = self.song.write();
+                        if let Some(pattern) = song.pattern_mut(pattern_id) {
+                            if !overdub {
+                                pattern.clear_notes();
                             }
+                            let instrument = self.sequencer_view_state.recording_instrument;
+                            for note in &notes {
+                                let nid = pattern.add_note(
+                                    note.start,
+                                    note.pitch,
+                                    note.velocity,
+                                    instrument,
+                                );
+                                if let Some(n) = pattern.note_mut(nid) {
+                                    n.duration = Some(note.duration);
+                                }
+                            }
+                        } else {
+                            eprintln!(
+                                "RecordedNotesFlushed: pattern {pattern_id:?} not found, {} notes dropped",
+                                notes.len()
+                            );
                         }
                     }
                     self.mark_dirty();
@@ -837,8 +850,7 @@ impl eframe::App for SynthApp {
                         .clicked()
                     {
                         // Pre-fill duration from song length
-                        let song_secs =
-                            self.song.read().map(|s| s.length_seconds()).unwrap_or(60.0);
+                        let song_secs = self.song.read().length_seconds();
                         self.dialog_state
                             .export_state
                             .set_duration_from_song(song_secs);
@@ -1521,10 +1533,13 @@ impl eframe::App for SynthApp {
                             || d.type_id.0 == "inline_signal_monitor"
                     });
 
-                patch_editor.remove_module(module_id);
-
                 // Remove from session (registry + engine command)
-                let _ = self.session.remove_module(active_id, module_id);
+                if let Err(e) = self.session.remove_module(active_id, module_id) {
+                    eprintln!("Failed to remove module {module_id:?}: {e}");
+                    continue;
+                }
+
+                patch_editor.remove_module(module_id);
 
                 // Clean up visualization buffer if needed
                 if has_vis_buffer {
@@ -1568,6 +1583,7 @@ impl eframe::App for SynthApp {
             // Handle bypass toggles - send SetBypass commands to engine
             for (module_id, new_bypass_state) in result.bypass_toggles {
                 self.handle.send(EngineCommand::SetBypass {
+                    instrument_id: Some(active_id),
                     module: module_id,
                     bypass: new_bypass_state,
                 });
@@ -2170,14 +2186,17 @@ impl SynthApp {
             ),
         };
 
-        editor.add_connection(connection);
-        let _ = session.connect(
+        if let Err(e) = session.connect(
             instrument_id,
             connection.from_module,
             connection.from_port,
             connection.to_module,
             connection.to_port,
-        );
+        ) {
+            eprintln!("Failed to connect {connection:?} in quick-add: {e}");
+        } else {
+            editor.add_connection(connection);
+        }
     }
 
     /// Handle a context menu add: create a module and place it at the given position.
@@ -2439,29 +2458,30 @@ impl SynthApp {
                     )
                     .clicked()
                 {
-                    let new_id = InstrumentId::new(self.next_instrument_id);
-                    self.next_instrument_id += 1;
-
                     let instrument_num = self.instruments.len() + 1;
                     let new_name = format!("Instrument {instrument_num}");
                     let new_channel = MidiChannel::from_one_indexed(instrument_num as u8)
                         .unwrap_or(MidiChannel::CH1);
 
-                    let new_ui_instrument =
-                        InstrumentUiState::new(new_id, &new_name).with_channel(new_channel);
+                    if let Ok(new_id) = self.session.add_instrument(&new_name) {
+                        // Keep UI counter in sync with session counter
+                        let id_val = new_id.as_u64() + 1;
+                        if id_val > self.next_instrument_id {
+                            self.next_instrument_id = id_val;
+                        }
 
-                    let mut engine_instrument =
-                        synth_engine::instrument::Instrument::new(new_id, &new_name);
-                    engine_instrument.set_midi_channel(new_channel);
+                        self.handle.send(EngineCommand::SetInstrumentMidiChannel {
+                            instrument_id: new_id,
+                            channel: new_channel,
+                        });
 
-                    self.handle.send(EngineCommand::AddInstrument {
-                        instrument: Box::new(engine_instrument),
-                    });
-
-                    self.instruments.push(new_ui_instrument);
-                    self.active_instrument_id = Some(new_id);
-                    self.handle.set_focused_instrument(Some(new_id));
-                    self.mark_dirty();
+                        let new_ui_instrument =
+                            InstrumentUiState::new(new_id, &new_name).with_channel(new_channel);
+                        self.instruments.push(new_ui_instrument);
+                        self.active_instrument_id = Some(new_id);
+                        self.handle.set_focused_instrument(Some(new_id));
+                        self.mark_dirty();
+                    }
                     ui.close();
                 }
 
@@ -2971,7 +2991,7 @@ impl SynthApp {
     fn optimize_project(&mut self) {
         // Remove unused patterns and tracks from the song
         let (removed_patterns, removed_tracks, used_instrument_ids) = {
-            let mut song = self.song.write().unwrap_or_else(|e| e.into_inner());
+            let mut song = self.song.write();
             song.remove_unused()
         };
 
@@ -3036,9 +3056,8 @@ impl SynthApp {
         match action {
             UndoAction::AddNote { pattern_id, note } => {
                 // Re-add the note to the pattern.
-                if let Ok(mut song_w) = self.song.write()
-                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
-                {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
                     let nid =
                         pattern.add_note(note.start, note.pitch, note.velocity, note.instrument);
                     if let Some(n) = pattern.note_mut(nid) {
@@ -3049,9 +3068,8 @@ impl SynthApp {
             }
             UndoAction::RemoveNote { pattern_id, note } => {
                 // Remove the note from the pattern.
-                if let Ok(mut song_w) = self.song.write()
-                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
-                {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
                     pattern.remove_note(note.id);
                 }
             }
@@ -3062,9 +3080,8 @@ impl SynthApp {
                 ..
             } => {
                 // Move note to the target position (new_start is the destination).
-                if let Ok(mut song_w) = self.song.write()
-                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
-                {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
                     pattern.move_note(*note_id, *new_start);
                 }
             }
@@ -3074,9 +3091,8 @@ impl SynthApp {
                 new_duration,
                 ..
             } => {
-                if let Ok(mut song_w) = self.song.write()
-                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
-                {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
                     if let Some(dur) = new_duration {
                         pattern.resize_note(*note_id, *dur);
                     } else if let Some(n) = pattern.note_mut(*note_id) {
@@ -3090,8 +3106,8 @@ impl SynthApp {
                 new_pitch,
                 ..
             } => {
-                if let Ok(mut song_w) = self.song.write()
-                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id)
                     && let Some(n) = pattern.note_mut(*note_id)
                 {
                     n.pitch = *new_pitch;
@@ -3103,21 +3119,21 @@ impl SynthApp {
                 new_velocity,
                 ..
             } => {
-                if let Ok(mut song_w) = self.song.write()
-                    && let Some(pattern) = song_w.pattern_mut(*pattern_id)
-                {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
                     pattern.set_note_velocity(*note_id, *new_velocity);
                 }
             }
             UndoAction::AddModule {
                 instrument_id,
                 module_state,
+                connections,
             } => {
                 // TODO: Full undo requires recreating the module from ModuleState
                 // via the session, rebuilding connections, and updating the patch
                 // editor. This needs significant refactoring of the session API
                 // to support module reconstruction from serialized state.
-                let _ = (instrument_id, module_state);
+                let _ = (instrument_id, module_state, connections);
                 eprintln!("Undo: AddModule not yet implemented — requires session refactoring");
             }
             UndoAction::RemoveModule {
@@ -3732,9 +3748,6 @@ impl SynthApp {
     fn load_patch_data(&mut self, patch: &Patch) {
         self.mark_dirty();
 
-        // Clear visualization buffers (not handled by patch_bridge)
-        self.handle.visualization_buffers.clear();
-
         // Delegate to patch_bridge for the main loading logic
         // Load into the active instrument's patch editor
         let Some(active_id) = self.active_instrument_id else {
@@ -3745,6 +3758,11 @@ impl SynthApp {
             eprintln!("Warning: Cannot load patch - no active instrument found");
             return;
         };
+
+        // Clear visualization buffers only for the active instrument's modules
+        for module_id in instrument.patch_editor.module_ids() {
+            self.handle.visualization_buffers.remove(&module_id);
+        }
 
         // Update instrument name to match the loaded patch (both UI and engine)
         instrument.name = patch.name.clone();
@@ -3761,6 +3779,7 @@ impl SynthApp {
             &mut self.keyboard,
             &mut self.glide_time,
             active_id,
+            false,
         );
 
         // Restore canvas size hint so the scroll area matches the original layout
@@ -4026,8 +4045,11 @@ impl SynthApp {
             }
         }
 
-        // Clear all non-visualizer modules via session
-        let _ = self.session.clear_graph(active_id);
+        // Clear all non-visualizer modules via session.
+        // Failure is non-fatal during load — the instrument may already be empty.
+        if let Err(e) = self.session.clear_graph(active_id) {
+            eprintln!("clear_graph({active_id:?}) failed during load: {e}");
+        }
 
         // Clear the patch editor GUI state
         if let Some(editor) = self.active_patch_editor() {
@@ -4096,7 +4118,7 @@ impl SynthApp {
             })
             .collect();
 
-        let song = self.song.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let song = self.song.read().clone();
 
         let global = GlobalProjectState {
             master_volume: synth_core::Gain::new(self.handle.master_volume()),
@@ -4153,8 +4175,13 @@ impl SynthApp {
         let all_ids: Vec<InstrumentId> = self.instruments.iter().map(|i| i.id).collect();
         for inst_id in &all_ids {
             self.remove_visualizers_for_instrument(*inst_id);
-            let _ = self.session.clear_graph(*inst_id);
-            let _ = self.session.remove_instrument(*inst_id);
+            // Failures are non-fatal during load — instruments are being torn down.
+            if let Err(e) = self.session.clear_graph(*inst_id) {
+                eprintln!("clear_graph({inst_id:?}) failed during project load: {e}");
+            }
+            if let Err(e) = self.session.remove_instrument(*inst_id) {
+                eprintln!("remove_instrument({inst_id:?}) failed during project load: {e}");
+            }
         }
 
         // 3. Clear GUI state
@@ -4199,6 +4226,7 @@ impl SynthApp {
                 &mut self.keyboard,
                 &mut self.glide_time,
                 inst_id,
+                true,
             );
 
             // Restore canvas size so the scroll area matches the original layout
@@ -4225,14 +4253,27 @@ impl SynthApp {
             };
 
             // Send engine commands for instrument parameters
-            let _ = self.session.rename_instrument(inst_id, &inst_state.name);
-            let _ = self
+            if let Err(e) = self.session.rename_instrument(inst_id, &inst_state.name) {
+                eprintln!("Failed to rename instrument {inst_id:?}: {e}");
+            }
+            if let Err(e) = self
                 .session
-                .set_instrument_volume(inst_id, inst_state.volume);
-            let _ = self.session.set_instrument_pan(inst_id, inst_state.pan);
-            let _ = self.session.set_instrument_mute(inst_id, inst_state.muted);
-            let _ = self.session.set_instrument_solo(inst_id, inst_state.solo);
-            let _ = self.session.set_instrument_midi_channel(inst_id, channel);
+                .set_instrument_volume(inst_id, inst_state.volume)
+            {
+                eprintln!("Failed to set instrument volume {inst_id:?}: {e}");
+            }
+            if let Err(e) = self.session.set_instrument_pan(inst_id, inst_state.pan) {
+                eprintln!("Failed to set instrument pan {inst_id:?}: {e}");
+            }
+            if let Err(e) = self.session.set_instrument_mute(inst_id, inst_state.muted) {
+                eprintln!("Failed to set instrument mute {inst_id:?}: {e}");
+            }
+            if let Err(e) = self.session.set_instrument_solo(inst_id, inst_state.solo) {
+                eprintln!("Failed to set instrument solo {inst_id:?}: {e}");
+            }
+            if let Err(e) = self.session.set_instrument_midi_channel(inst_id, channel) {
+                eprintln!("Failed to set instrument MIDI channel {inst_id:?}: {e}");
+            }
 
             // Send oversampling, key range, transpose via engine commands
             self.handle.send(EngineCommand::SetInstrumentParameter {
@@ -4253,7 +4294,7 @@ impl SynthApp {
 
         // 5. Replace song (move instead of clone since we own the project)
         {
-            let mut song = self.song.write().unwrap_or_else(|e| e.into_inner());
+            let mut song = self.song.write();
             *song = project.song;
         }
 

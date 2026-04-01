@@ -20,8 +20,10 @@ pub struct Compressor {
     // Sidechain
     sidechain_enabled: bool,
     sidechain_filter_freq: Hertz,
-    /// One-pole HPF state for sidechain filter.
+    /// One-pole HPF output state for sidechain filter.
     sc_filter_state: f32,
+    /// One-pole HPF previous input for sidechain filter.
+    sc_filter_prev_input: f32,
 
     // Sidechain input buffer (pre-allocated, filled externally before process)
     sidechain_buffer: Vec<f32>,
@@ -46,6 +48,7 @@ impl Compressor {
             sidechain_enabled: false,
             sidechain_filter_freq: Hertz::new(80.0),
             sc_filter_state: 0.0,
+            sc_filter_prev_input: 0.0,
             sidechain_buffer: vec![0.0; 4096],
             sidechain_len: 0,
             envelope: 0.0,
@@ -236,8 +239,11 @@ impl AudioEffect for Compressor {
 
                 // Apply HPF to sidechain signal
                 if sc_hpf_coeff > 0.0 {
-                    let filtered = sc_hpf_coeff * (self.sc_filter_state + sc_mono);
-                    self.sc_filter_state = filtered - sc_mono;
+                    // One-pole HPF: y[n] = coeff * (y[n-1] + x[n] - x[n-1])
+                    let filtered =
+                        sc_hpf_coeff * (self.sc_filter_state + sc_mono - self.sc_filter_prev_input);
+                    self.sc_filter_state = filtered;
+                    self.sc_filter_prev_input = sc_mono;
                     filtered.abs()
                 } else {
                     sc_mono
@@ -273,6 +279,7 @@ impl AudioEffect for Compressor {
     fn reset(&mut self) {
         self.envelope = 0.0;
         self.sc_filter_state = 0.0;
+        self.sc_filter_prev_input = 0.0;
         self.sidechain_len = 0;
     }
 

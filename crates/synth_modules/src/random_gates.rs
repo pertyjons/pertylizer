@@ -31,6 +31,9 @@ pub struct RandomGates {
     burst_remaining: u8,
     cv_value: NormalizedValue,
 
+    // Edge detection
+    prev_clock: f32,
+
     // Buffers
     gate_buffer: AudioBuffer,
     cv_buffer: AudioBuffer,
@@ -52,6 +55,8 @@ impl RandomGates {
             gate_remaining: 0.0,
             burst_remaining: 0,
             cv_value: NormalizedValue::MIN,
+
+            prev_clock: 0.0,
 
             gate_buffer: AudioBuffer::new(1024),
             cv_buffer: AudioBuffer::new(1024),
@@ -145,7 +150,7 @@ impl PolyModule for RandomGates {
         self.gate_buffer.resize(num_samples);
         self.cv_buffer.resize(num_samples);
 
-        let clock = inputs.get(PortName::intern("clock"));
+        let clock = inputs.get(PortName::CLOCK);
 
         // Calculate step timing from BPM (16th notes)
         let bpm = context.tempo.as_f32().max(20.0);
@@ -157,7 +162,8 @@ impl PolyModule for RandomGates {
         for i in 0..num_samples {
             // Clock detection
             let clock_trigger = if let Some(clk) = clock {
-                crate::math::rising_edge(clk[i], if i == 0 { 0.0 } else { clk[i - 1] })
+                let prev = if i == 0 { self.prev_clock } else { clk[i - 1] };
+                crate::math::rising_edge(clk[i], prev)
             } else {
                 false
             };
@@ -207,6 +213,13 @@ impl PolyModule for RandomGates {
 
             self.gate_buffer[i] = if self.gate_active { 1.0 } else { 0.0 };
             self.cv_buffer[i] = self.cv_value.as_f32();
+        }
+
+        // Persist last clock sample for edge detection across buffers
+        if let Some(clk) = clock
+            && num_samples > 0
+        {
+            self.prev_clock = clk[num_samples - 1];
         }
 
         if let Some(out) = outputs.get_mut(&PortName::GATE) {

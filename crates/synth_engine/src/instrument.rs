@@ -17,7 +17,7 @@ use std::fmt;
 
 use crate::effect_chain::EffectChain;
 use crate::graph::ModuleGraph;
-use crate::voice::VoiceState;
+use crate::voice::{VoiceId, VoiceState};
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_awe::{SpatialContext, SpatialVoiceBank};
 use synth_core::{
@@ -798,7 +798,7 @@ impl Instrument {
     ///
     /// Returns the voice ID if a voice was allocated.
     /// The note is checked against the key range and transposed before playing.
-    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity) -> Option<u32> {
+    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity) -> Option<VoiceId> {
         if self.mute_state.is_muted() {
             return None;
         }

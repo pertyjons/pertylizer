@@ -100,6 +100,9 @@ pub(crate) struct RecordingBuffer {
     /// Number of held notes dropped because all slots were full.
     /// Readable by the UI via `dropped_note_count()` for user feedback.
     dropped_notes: u32,
+    /// Set when a note is added or released; cleared after preview_snapshot sends.
+    /// Avoids cloning recorded_notes every buffer when nothing changed.
+    preview_dirty: bool,
 }
 
 impl RecordingBuffer {
@@ -115,6 +118,7 @@ impl RecordingBuffer {
             quantize_grid: Duration(0),
             loop_flushed: false,
             dropped_notes: 0,
+            preview_dirty: false,
         }
     }
 
@@ -145,22 +149,27 @@ impl RecordingBuffer {
         self.target.map(|t| (t.region_start, t.pattern_length))
     }
 
-    /// Get a snapshot of current recording for live preview.
+    /// Get a snapshot of current recording for live preview, if notes changed.
     ///
-    /// Returns (completed_notes, held_note_starts).
+    /// Returns `Some((completed_notes, held_note_starts))` only when a note was
+    /// added or released since the last snapshot. Returns `None` (no allocation)
+    /// on the majority of buffer callbacks where nothing changed.
     /// Called at buffer-rate (~86Hz), not per-sample.
-    ///
-    /// NOTE: This allocates on the audio thread (clone + collect) because the
-    /// returned Vecs are moved into a ring buffer event and consumed by the UI.
-    /// At ~86Hz with bounded size this is acceptable; a lock-free pool would
-    /// eliminate it but adds complexity.
-    pub(crate) fn preview_snapshot(&self) -> (Vec<RecordedNote>, Vec<(Pitch, PatternTick)>) {
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn preview_snapshot(
+        &mut self,
+    ) -> Option<(Vec<RecordedNote>, Vec<(Pitch, PatternTick)>)> {
+        if !self.preview_dirty {
+            return None;
+        }
+        self.preview_dirty = false;
+
         let completed = self.recorded_notes.clone();
         let mut held = Vec::with_capacity(MAX_HELD_NOTES);
         for h in self.held_notes.iter().flatten() {
             held.push((h.pitch, h.start_tick));
         }
-        (completed, held)
+        Some((completed, held))
     }
 
     /// Whether recorded notes should be layered rather than replacing the pattern.
@@ -248,6 +257,7 @@ impl RecordingBuffer {
                     velocity,
                     start_tick: pattern_tick,
                 });
+                self.preview_dirty = true;
                 return;
             }
         }
@@ -278,6 +288,7 @@ impl RecordingBuffer {
                     });
                 }
                 *slot = None;
+                self.preview_dirty = true;
                 return;
             }
         }
@@ -371,6 +382,7 @@ impl RecordingBuffer {
         self.recorded_notes.clear();
         self.loop_flushed = false;
         self.dropped_notes = 0;
+        self.preview_dirty = false;
         // Ensure both buffers have capacity for the next session.
         // This may allocate, but arm() is called before real-time capture starts.
         if self.recorded_notes.capacity() < MAX_RECORDED_NOTES {

@@ -13,9 +13,9 @@
 
 use std::collections::HashMap;
 use synth_core::{
-    AudioBuffer, Describable, FractalOscParam, Hertz, InputPorts, MidiNote, ModuleCategory,
-    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, PolyModule,
-    PortDescriptor, PortName, ProcessContext, SampleRate, Velocity, WidgetHint,
+    AudioBuffer, BipolarValue, Describable, FractalOscParam, Hertz, InputPorts, MidiNote,
+    ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor,
+    PolyModule, PortDescriptor, PortName, ProcessContext, SampleRate, Velocity, WidgetHint,
 };
 
 /// Maximum number of Weierstrass partials.
@@ -137,9 +137,9 @@ impl FractalOscillator {
 
             // Advance phase for this partial: phase += f_n / sample_rate
             self.phases[n] += f_n * self.inv_sample_rate;
-            // Wrap phase to [0, 1) — single subtract is sufficient for audio rates
+            // Wrap phase to [0, 1) — use fract() to handle extreme frequencies
             if self.phases[n] >= 1.0 {
-                self.phases[n] -= 1.0;
+                self.phases[n] = self.phases[n].fract();
             }
 
             // Step iterative powers
@@ -272,7 +272,7 @@ impl PolyModule for FractalOscillator {
         for i in 0..num_samples {
             // Apply frequency CV (1V/oct)
             let freq = if let Some(cv) = freq_cv {
-                self.note_freq.apply_cv(cv[i]).as_f32()
+                self.note_freq.apply_cv(BipolarValue::new(cv[i])).as_f32()
             } else {
                 self.note_freq.as_f32()
             };

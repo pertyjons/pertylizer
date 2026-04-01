@@ -494,7 +494,12 @@ impl EngineCommand {
             Self::SetMasterVolume(v) => Self::SetMasterVolume(*v),
             Self::SetGlideTime(t) => Self::SetGlideTime(*t),
             Self::SetFocusedInstrument(id) => Self::SetFocusedInstrument(*id),
-            Self::SetBypass { module, bypass } => Self::SetBypass {
+            Self::SetBypass {
+                instrument_id,
+                module,
+                bypass,
+            } => Self::SetBypass {
+                instrument_id: *instrument_id,
                 module: *module,
                 bypass: *bypass,
             },

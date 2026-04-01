@@ -386,7 +386,7 @@ impl PolyModule for Oscillator {
         // pm = phase mod, pwm = pulse width mod - different concepts
         let pwm_reader = inputs.reader(PortName::PWM, 0.0);
         let sync_reader = inputs.reader(PortName::SYNC, 0.0);
-        let cross_mod_reader = inputs.reader(PortName::intern("cross_mod"), 0.0);
+        let cross_mod_reader = inputs.reader(PortName::CROSS_MOD, 0.0);
 
         let voice_count = self.unison_voice_count.as_usize();
         let base_freq = self.actual_frequency();
@@ -400,7 +400,7 @@ impl PolyModule for Oscillator {
             let total_fm = fm + cross_mod;
 
             let freq = match self.fm_mode {
-                FmMode::Exponential => base_freq.apply_fm(total_fm),
+                FmMode::Exponential => base_freq.apply_fm(BipolarValue::new(total_fm)),
                 FmMode::Linear => {
                     Hertz::new((base_freq.as_f32() + total_fm * base_freq.as_f32() * 4.0).max(1.0))
                 }

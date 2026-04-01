@@ -309,7 +309,12 @@ impl TicksPerRow {
     /// Create a new ticks per row value from song ticks.
     #[inline]
     pub const fn new(song_ticks: u16) -> Self {
-        Self(song_ticks)
+        // Guard against zero to prevent division-by-zero in tick_to_row / quantize
+        if song_ticks < Self::MIN.0 {
+            Self::MIN
+        } else {
+            Self(song_ticks)
+        }
     }
 
     /// Get the raw u16 value (song ticks).

@@ -50,10 +50,6 @@ pub enum McpBridgeError {
     #[error("track not found: {0}")]
     TrackNotFound(u16),
 
-    /// Song lock poisoned.
-    #[error("song lock poisoned")]
-    SongLockPoisoned,
-
     /// MIDI note out of valid range.
     #[error("invalid MIDI note {0}: must be 0-127")]
     InvalidMidiNote(u8),

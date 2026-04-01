@@ -115,11 +115,25 @@ impl AppSettings {
         serde_json::from_str(&data).map_err(|e| format!("parse error: {e}"))
     }
 
-    /// Save settings to disk.
+    /// Save settings to disk (fire-and-forget convenience wrapper).
+    ///
+    /// Logs to stderr on failure. Use [`Self::try_save`] if the caller
+    /// needs to surface the error in the UI.
     pub fn save(&self) {
         if let Err(e) = self.try_save() {
-            eprintln!("Settings: failed to save ({e})");
+            let path = settings_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "<unknown>".to_string());
+            eprintln!("Settings: failed to save to {path}: {e}");
         }
+    }
+
+    /// Save settings to disk, returning any error to the caller.
+    ///
+    /// Prefer this when the caller can surface failures in the UI
+    /// (e.g. a toast notification or status bar message).
+    pub fn try_save_checked(&self) -> Result<(), String> {
+        self.try_save()
     }
 
     /// Maximum number of recent projects to remember.

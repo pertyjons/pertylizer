@@ -12,6 +12,7 @@ use parking_lot::RwLock;
 use super::commands::ModuleId;
 use super::connectivity::ModuleConnectivityStatus;
 use super::instrument::InstrumentId;
+use super::recording::RecordingState;
 use synth_core::{
     Amplitude, BipolarValue, BypassState, CpuUsage, Gain, MuteState, PortName, SoloState,
 };
@@ -176,29 +177,29 @@ impl SharedTransportState {
         self.position_samples.load(Ordering::Relaxed)
     }
 
-    /// Get the recording state (0=off, 1=armed, 2=count_in, 3=capturing).
-    pub fn recording_state(&self) -> u32 {
-        self.recording.load(Ordering::Relaxed)
+    /// Get the recording state.
+    pub fn recording_state(&self) -> RecordingState {
+        RecordingState::from_u32(self.recording.load(Ordering::Relaxed))
     }
 
     /// Set the recording state.
-    pub fn set_recording_state(&self, state: u32) {
-        self.recording.store(state, Ordering::Relaxed);
+    pub fn set_recording_state(&self, state: RecordingState) {
+        self.recording.store(state.as_u32(), Ordering::Relaxed);
     }
 
     /// Check if recording is armed (waiting for play).
     pub fn is_armed(&self) -> bool {
-        self.recording_state() == 1
+        self.recording_state() == RecordingState::Armed
     }
 
     /// Check if actively capturing.
     pub fn is_recording(&self) -> bool {
-        self.recording_state() == 3
+        self.recording_state() == RecordingState::Capturing
     }
 
     /// Check if in count-in phase.
     pub fn is_count_in(&self) -> bool {
-        self.recording_state() == 2
+        self.recording_state() == RecordingState::CountIn
     }
 
     /// Check if metronome is on.
@@ -422,6 +423,9 @@ impl SharedGraphState {
     }
 
     /// Check if a module is connected to output.
+    ///
+    /// Lock ordering: `live_modules` before `modules`. All call sites that
+    /// acquire both locks must follow this order to prevent deadlocks.
     pub fn is_live(&self, instrument_id: InstrumentId, id: ModuleId) -> bool {
         // Acquire both locks before checking to avoid TOCTOU race
         let live = self.live_modules.read();

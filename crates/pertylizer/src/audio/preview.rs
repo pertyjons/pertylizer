@@ -60,7 +60,9 @@ pub fn render_note_preview(
 
     // Create a temporary session and instrument for loading modules
     let tmp_session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
-    let _ = tmp_session.add_instrument_with_id(InstrumentId::FIRST, "Preview");
+    tmp_session
+        .add_instrument_with_id(InstrumentId::FIRST, "Preview")
+        .map_err(|e| McpBridgeError::Other(format!("Failed to create preview instrument: {e}")))?;
     tmp_session.reset_counters_for_instrument(InstrumentId::FIRST);
 
     // Load modules into the offline engine
@@ -149,13 +151,15 @@ pub fn render_note_preview(
     // Warm up: process one buffer to let engine initialize
     let channels: usize = 2;
     let mut buffer = vec![0.0f32; BUFFER_SIZE * channels];
+    // Use a sentinel position for the warmup block so the engine does not see
+    // a duplicate sample_position 0 when real rendering starts.
     let init_context = AudioCallbackContext {
         sample_rate: hw_sample_rate,
         frames: BUFFER_SIZE,
         channels: channels as u16,
         stream_time: 0.0,
-        sample_position: 0,
-        output_latency: 0.0,
+        sample_position: u64::MAX,
+        output_latency: synth_core::Seconds::ZERO,
     };
     engine.process(&mut buffer, &init_context);
 
@@ -207,7 +211,7 @@ pub fn render_note_preview(
             channels: channels as u16,
             stream_time: frames_written as f64 / f64::from(PREVIEW_SAMPLE_RATE),
             sample_position: frames_written,
-            output_latency: 0.0,
+            output_latency: synth_core::Seconds::ZERO,
         };
 
         engine.process(&mut buffer[..sample_count], &context);

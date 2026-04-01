@@ -67,7 +67,7 @@ pub use transactions::{
     BatchBuilder, BatchResult, CommandBatch, TransactionId, TransactionalCommand,
 };
 pub use visual_state::{CableVisualState, MiniMeter, ModuleStyle, ModuleVisualState, Point};
-pub use voice::{Voice, VoiceState};
+pub use voice::{Voice, VoiceId, VoiceState};
 pub use voice_allocator::{
     AllocationMode, AllocatorConfig, NotePriority, StealingStrategy, VoiceAllocator,
 };

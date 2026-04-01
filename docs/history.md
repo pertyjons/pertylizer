@@ -1,5 +1,14 @@
 # Version History
 
+## [0.254.0] - 2026-04-01
+### Systematic code review — 149 fixes across 11 crates
+- **7 audio bugs fixed** — frequency shifter Hilbert chain, shimmer reverb double feedback, violet noise formula, MSEG loop click, filter env_amount dead parameter, compressor sidechain HPF, granular oscillator note pitch
+- **4 critical RT allocations eliminated** — AudioBuffer pool in graph, pre-allocated sequencer buffers, HashMap pre-allocation, reusable topo-sort scratch fields
+- **13 high-severity RT safety fixes** — spectral rebuilds moved out of process(), blocking song.read() → try_read(), eprintln! removed from audio thread, recording snapshot only on note change
+- **17 data integrity fixes** — undo captures connections, per-instrument patch skip globals, GUI clear gated on engine success, session-tracked instrument creation, MCP double-lock race, parking_lot::RwLock for sequencer
+- **30 medium fixes** — PortName::intern replaced with 12 pre-interned constants, clock edge state persisted, poly_blep/blamp div-by-zero guards, AWE output clamp, ModDestination::ALL completed, TimeSignature zero-guards, MCP validation (NaN, tempo, path sanitization, root_note)
+- **78 low/quality fixes** — newtype compliance (VoiceId, RecordingState, Seconds, Velocity, Semitones, BipolarValue, Cents, Decibels, NormalizedValue), PERF (descriptor cache, connected_ports cache, connections filter), dead code removal, bounds checks, soft-clip on feedback paths, duplicate file deduplication
+
 ## [0.253.0] - 2026-03-30
 ### MCP discovery tools and batch execution
 - **`get_module_type_info`** — query a single module type by key with full port/parameter details and signal flow hints; suggests similar keys on typos

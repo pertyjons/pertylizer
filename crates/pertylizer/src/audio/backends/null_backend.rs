@@ -146,7 +146,7 @@ impl AudioStream for NullStream {
                     channels: channels as u16,
                     stream_time: start_time.elapsed().as_secs_f64(),
                     sample_position: current_position,
-                    output_latency: output_latency.as_secs_f32(),
+                    output_latency: synth_core::Seconds::new(output_latency.as_secs_f32()),
                 };
 
                 // Clear buffer and process

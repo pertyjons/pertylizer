@@ -168,6 +168,7 @@ impl PolyModule for Amplifier {
             let base_level = (self.level.as_f32() + self.mod_offset_level.as_f32()).clamp(0.0, 2.0);
             let effective_level = base_level * cv_scaled;
 
+            // BipolarValue::new() clamps internally to [-1, 1]
             let effective_pan = if pan_cv.is_connected() {
                 BipolarValue::new(self.pan.as_f32() + pan_cv[i] + self.mod_offset_pan.as_f32())
             } else {

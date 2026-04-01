@@ -92,6 +92,14 @@ pub struct ModuleGraph {
     cached_output_id: Option<ModuleId>,
     /// Set of bypassed modules (outputs zeroed instead of processing).
     bypassed: HashSet<ModuleId>,
+    /// Pool of reusable AudioBuffers to avoid per-frame heap allocations.
+    buffer_pool: Vec<AudioBuffer>,
+    /// Scratch storage for topological sort: in-degree per module.
+    topo_in_degree: HashMap<ModuleId, usize>,
+    /// Scratch storage for topological sort: adjacency list.
+    topo_adjacency: HashMap<ModuleId, Vec<ModuleId>>,
+    /// Scratch storage for topological sort: processing queue.
+    topo_queue: VecDeque<ModuleId>,
 }
 
 impl ModuleGraph {
@@ -109,6 +117,10 @@ impl ModuleGraph {
             incoming_cache: Vec::with_capacity(16),
             cached_output_id: None,
             bypassed: HashSet::new(),
+            buffer_pool: Vec::with_capacity(16),
+            topo_in_degree: HashMap::with_capacity(16),
+            topo_adjacency: HashMap::with_capacity(16),
+            topo_queue: VecDeque::with_capacity(16),
         }
     }
 
@@ -124,6 +136,10 @@ impl ModuleGraph {
         self.incoming_cache.clear();
         self.cached_output_id = None;
         self.bypassed.clear();
+        self.buffer_pool.clear();
+        self.topo_in_degree.clear();
+        self.topo_adjacency.clear();
+        self.topo_queue.clear();
     }
 
     /// Get the next instance number for a module type.
@@ -649,44 +665,51 @@ impl ModuleGraph {
 
     fn calculate_processing_order(&mut self) {
         // Topological sort using Kahn's algorithm
-        let mut order = Vec::new();
-        let mut in_degree: HashMap<ModuleId, usize> = HashMap::new();
-        let mut adjacency: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+        // Reuse scratch fields to avoid allocations on the audio thread
+        self.processing_order.clear();
+        self.topo_in_degree.clear();
+        for val in self.topo_adjacency.values_mut() {
+            val.clear();
+        }
+        self.topo_queue.clear();
 
         // Initialize
         for &id in self.nodes.keys() {
-            in_degree.insert(id, 0);
-            adjacency.insert(id, Vec::new());
+            self.topo_in_degree.insert(id, 0);
+            self.topo_adjacency.entry(id).or_default();
         }
 
         // Build adjacency list and in-degrees
         // Only process connections where both modules exist
         for conn in &self.connections {
-            if let (Some(adj), Some(deg)) = (
-                adjacency.get_mut(&conn.from_module),
-                in_degree.get_mut(&conn.to_module),
-            ) {
-                adj.push(conn.to_module);
-                *deg += 1;
+            if self.topo_in_degree.contains_key(&conn.from_module)
+                && self.topo_in_degree.contains_key(&conn.to_module)
+            {
+                if let Some(adj) = self.topo_adjacency.get_mut(&conn.from_module) {
+                    adj.push(conn.to_module);
+                }
+                if let Some(deg) = self.topo_in_degree.get_mut(&conn.to_module) {
+                    *deg += 1;
+                }
             }
         }
 
         // Find all nodes with in-degree 0
-        let mut queue: VecDeque<ModuleId> = in_degree
-            .iter()
-            .filter(|&(_, &deg)| deg == 0)
-            .map(|(&id, _)| id)
-            .collect();
+        for (&id, &deg) in &self.topo_in_degree {
+            if deg == 0 {
+                self.topo_queue.push_back(id);
+            }
+        }
 
-        while let Some(id) = queue.pop_front() {
-            order.push(id);
+        while let Some(id) = self.topo_queue.pop_front() {
+            self.processing_order.push(id);
 
-            if let Some(neighbors) = adjacency.get(&id) {
+            if let Some(neighbors) = self.topo_adjacency.get(&id) {
                 for &neighbor in neighbors {
-                    if let Some(deg) = in_degree.get_mut(&neighbor) {
+                    if let Some(deg) = self.topo_in_degree.get_mut(&neighbor) {
                         *deg -= 1;
                         if *deg == 0 {
-                            queue.push_back(neighbor);
+                            self.topo_queue.push_back(neighbor);
                         }
                     }
                 }
@@ -695,12 +718,11 @@ impl ModuleGraph {
 
         // If order doesn't contain all nodes, there's a cycle
         // (shouldn't happen if validate_connection works correctly)
-        if order.len() != self.nodes.len() {
+        if self.processing_order.len() != self.nodes.len() {
             // Fallback: just use arbitrary order
-            order = self.nodes.keys().copied().collect();
+            self.processing_order.clear();
+            self.processing_order.extend(self.nodes.keys().copied());
         }
-
-        self.processing_order = order;
         self.order_dirty = false;
 
         // Rebuild incoming connection map (avoids per-frame O(M×C) scan)
@@ -772,8 +794,10 @@ impl ModuleGraph {
     }
 
     fn process_module(&mut self, module_id: ModuleId, context: &ProcessContext<'_>) {
-        // Clear the input buffers Vec for this module
-        self.input_buffers.clear();
+        // Return input buffers to the pool for reuse (avoids per-frame allocation)
+        for (_, buf) in self.input_buffers.drain(..) {
+            self.buffer_pool.push(buf);
+        }
 
         // Use pre-built incoming connection map (rebuilt on topology change, not per frame)
         if let Some(incoming) = self.incoming_map.get(&module_id) {
@@ -793,7 +817,13 @@ impl ModuleGraph {
                         }
                         existing.add_from(output_buf);
                     } else {
-                        let mut buf = AudioBuffer::new(context.samples.as_usize());
+                        let mut buf = if let Some(mut pooled) = self.buffer_pool.pop() {
+                            pooled.resize(context.samples.as_usize());
+                            pooled.clear();
+                            pooled
+                        } else {
+                            AudioBuffer::new(context.samples.as_usize())
+                        };
                         buf.copy_from(output_buf);
                         self.input_buffers.push((to_port, buf));
                     }

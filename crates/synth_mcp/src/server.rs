@@ -21,6 +21,21 @@ use crate::error::McpBridgeError;
 
 // === Helper functions ===
 
+/// Reject paths containing `..` components to prevent directory traversal attacks.
+fn validate_file_path(path: &str) -> Result<(), String> {
+    use std::path::Path;
+    let p = Path::new(path);
+    for component in p.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err("Error: path must not contain '..' components".to_string());
+        }
+    }
+    if !p.is_absolute() {
+        return Err("Error: path must be absolute".to_string());
+    }
+    Ok(())
+}
+
 /// Serialize a value to pretty-printed JSON, returning an error string on failure.
 fn to_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|e| format!("Serialization error: {e}"))
@@ -2929,6 +2944,14 @@ impl SynthMcpServer {
     )]
     async fn set_parameters(&self, params: Parameters<SetParametersParam>) -> String {
         let p = params.0;
+        for ps in &p.params {
+            if ps.value.is_nan() {
+                return format!(
+                    "Error: NaN is not a valid value for parameter '{}' on module '{}'",
+                    ps.param_name, ps.module_id
+                );
+            }
+        }
         let param_sets: Vec<_> = p
             .params
             .into_iter()
@@ -3144,6 +3167,9 @@ impl SynthMcpServer {
             })
             .collect();
         let tempo = p.tempo.unwrap_or(120.0);
+        if let Err(e) = validate_range("tempo", tempo, 20.0, 999.0) {
+            return format!("Error: {e}");
+        }
         match self
             .bridge
             .set_song(&p.name, tempo, &patterns, &tracks, &placements)
@@ -3175,6 +3201,9 @@ impl SynthMcpServer {
 
     #[tool(description = "Seek the sequencer to a beat position (0.0 = beginning)")]
     async fn seq_seek(&self, params: Parameters<SeqSeekParam>) -> String {
+        if let Err(e) = validate_range("beat", params.0.beat, 0.0, 9999.0) {
+            return format!("Error: {e}");
+        }
         match self.bridge.seq_seek(params.0.beat) {
             Ok(()) => format!("OK: seeked to beat {}", params.0.beat),
             Err(e) => format!("Error: {e}"),
@@ -3283,6 +3312,9 @@ impl SynthMcpServer {
         description = "Save the current project (all instruments, patches, song, arrangement) to a JSON file."
     )]
     async fn save_project(&self, params: Parameters<ProjectPathParam>) -> String {
+        if let Err(e) = validate_file_path(&params.0.path) {
+            return e;
+        }
         match self.bridge.save_project(&params.0.path) {
             Ok(msg) => format!("OK: {msg}"),
             Err(e) => format!("Error: {e}"),
@@ -3293,6 +3325,9 @@ impl SynthMcpServer {
         description = "Load a project or patch file, replacing all current state. Supports both project files and single patch files."
     )]
     async fn load_project(&self, params: Parameters<ProjectPathParam>) -> String {
+        if let Err(e) = validate_file_path(&params.0.path) {
+            return e;
+        }
         match self.bridge.load_project(&params.0.path) {
             Ok(msg) => format!("OK: {msg}"),
             Err(e) => format!("Error: {e}"),
@@ -3478,6 +3513,11 @@ impl SynthMcpServer {
                        default 60=C4)."
     )]
     async fn import_sample(&self, params: Parameters<ImportSampleParam>) -> String {
+        if let Some(note) = params.0.root_note
+            && let Err(e) = validate_midi_note(note)
+        {
+            return format!("Error: {e}");
+        }
         match self.bridge.import_sample(
             &params.0.path,
             params.0.name.as_deref(),
@@ -3514,8 +3554,8 @@ impl SynthMcpServer {
                        Note 60 = C4 (middle C). Range: 0-127."
     )]
     async fn set_sample_root_note(&self, params: Parameters<SetSampleRootNoteParam>) -> String {
-        if params.0.note > 127 {
-            return "Error: note must be 0-127".to_string();
+        if let Err(e) = validate_midi_note(params.0.note) {
+            return format!("Error: {e}");
         }
         match self
             .bridge
@@ -3750,8 +3790,8 @@ impl SynthMcpServer {
             );
         }
 
-        let total = p.operations.len();
-        let mut results = Vec::with_capacity(total);
+        let capacity = p.operations.len();
+        let mut results = Vec::with_capacity(capacity);
         let mut succeeded = 0usize;
         let mut failed = 0usize;
 
@@ -3772,13 +3812,21 @@ impl SynthMcpServer {
 
             match self.dispatch_tool(&op.tool, op.params).await {
                 Ok(result) => {
+                    let is_error = result.starts_with("Error:");
                     results.push(BatchExecItemResult {
                         index: i,
                         tool: op.tool,
-                        success: true,
+                        success: !is_error,
                         result,
                     });
-                    succeeded += 1;
+                    if is_error {
+                        failed += 1;
+                        if stop_on_error {
+                            break;
+                        }
+                    } else {
+                        succeeded += 1;
+                    }
                 }
                 Err(err) => {
                     results.push(BatchExecItemResult {
@@ -3796,7 +3844,7 @@ impl SynthMcpServer {
         }
 
         to_json(&BatchExecResult {
-            total,
+            total: succeeded + failed,
             succeeded,
             failed,
             results,

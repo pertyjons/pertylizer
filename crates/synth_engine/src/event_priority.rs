@@ -72,7 +72,7 @@ impl TimestampedEvent {
 }
 
 /// Buffer sizes for each priority level.
-const CRITICAL_BUFFER_SIZE: usize = 64;
+const CRITICAL_BUFFER_SIZE: usize = 256;
 const HIGH_BUFFER_SIZE: usize = 256;
 const NORMAL_BUFFER_SIZE: usize = 512;
 const LOW_BUFFER_SIZE: usize = 2048;

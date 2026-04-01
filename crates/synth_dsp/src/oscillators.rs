@@ -37,6 +37,7 @@
 #[inline]
 #[must_use]
 pub fn poly_blep(t: f32, dt: f32) -> f32 {
+    let dt = dt.max(f32::EPSILON);
     if t < dt {
         // Rising edge at start of period
         let t = t / dt;
@@ -66,6 +67,7 @@ pub fn poly_blep(t: f32, dt: f32) -> f32 {
 #[inline]
 #[must_use]
 pub fn poly_blep_integrated(t: f32, dt: f32) -> f32 {
+    let dt = dt.max(f32::EPSILON);
     if t < dt {
         let t = t / dt;
         let t2 = t * t;
@@ -95,6 +97,7 @@ pub fn poly_blep_integrated(t: f32, dt: f32) -> f32 {
 #[inline]
 #[must_use]
 pub fn poly_blamp(t: f32, dt: f32) -> f32 {
+    let dt = dt.max(f32::EPSILON);
     if t < dt && t > -dt {
         // Within the transition region
         let t_norm = t / dt;

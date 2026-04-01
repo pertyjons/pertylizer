@@ -307,9 +307,9 @@ impl Mseg {
             && self.loop_start <= self.loop_end
         {
             let loop_idx = self.loop_start;
+            self.start_level = self.segments[current_idx as usize].level;
             self.state = MsegState::Running(loop_idx);
             self.phase = Phase::ZERO;
-            self.start_level = NormalizedValue::new(self.current_level());
             return;
         }
 
@@ -468,8 +468,7 @@ impl PolyModule for Mseg {
         self.output_buffer.resize(num_samples);
 
         let gate_input = inputs.get(PortName::GATE);
-        let trigger_port = PortName::intern("trigger");
-        let trigger_input = inputs.get(trigger_port);
+        let trigger_input = inputs.get(PortName::TRIGGER);
 
         let sample_dt = 1.0 / self.sample_rate.as_f32();
 

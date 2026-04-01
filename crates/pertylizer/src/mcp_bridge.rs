@@ -907,11 +907,7 @@ impl SynthBridge for AppSynthBridge {
     // === Sequencer: Song ===
 
     fn get_song_info(&self) -> Result<SongInfo, McpBridgeError> {
-        let song = self
-            .shared
-            .song
-            .read()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let song = self.shared.song.read();
         let ts = song.default_time_signature;
         Ok(SongInfo {
             name: song.name.clone(),
@@ -926,27 +922,24 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_song_tempo(&self, bpm: f32) -> Result<(), McpBridgeError> {
         {
-            let mut song = self
-                .shared
-                .song
-                .write()
-                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+            let mut song = self.shared.song.write();
             song.default_tempo = synth_core::Bpm::new(bpm);
         }
         // Also update engine transport tempo
-        let _ = self
+        if !self
             .session
             .command_sender()
-            .send(EngineCommand::SetTempo(synth_core::Bpm::new(bpm)));
+            .send(EngineCommand::SetTempo(synth_core::Bpm::new(bpm)))
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "SetTempo",
+            });
+        }
         Ok(())
     }
 
     fn set_song_name(&self, name: &str) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         song.name = name.to_string();
         Ok(())
     }
@@ -954,11 +947,7 @@ impl SynthBridge for AppSynthBridge {
     // === Sequencer: Patterns ===
 
     fn list_patterns(&self) -> Result<Vec<PatternInfo>, McpBridgeError> {
-        let song = self
-            .shared
-            .song
-            .read()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let song = self.shared.song.read();
         let mut patterns: Vec<PatternInfo> = song
             .patterns()
             .map(|p| PatternInfo {
@@ -978,11 +967,7 @@ impl SynthBridge for AppSynthBridge {
                 "length_beats must be positive, got {length_beats}"
             )));
         }
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let duration = synth_sequencer::Duration(beats_to_ticks(length_beats));
         let id = song.create_pattern(duration);
         if let Some(pattern) = song.pattern_mut(id) {
@@ -992,11 +977,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn delete_pattern(&self, pattern_id: u32) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let id = synth_sequencer::PatternId::new(pattern_id);
         song.delete_pattern(id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -1006,11 +987,7 @@ impl SynthBridge for AppSynthBridge {
     // === Sequencer: Notes ===
 
     fn list_notes(&self, pattern_id: u32) -> Result<Vec<NoteInfo>, McpBridgeError> {
-        let song = self
-            .shared
-            .song
-            .read()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let song = self.shared.song.read();
         let id = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern(id)
@@ -1037,11 +1014,7 @@ impl SynthBridge for AppSynthBridge {
                 "duration_beats must be positive, got {duration_beats}"
             )));
         }
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern_mut(pid)
@@ -1076,11 +1049,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn remove_note(&self, pattern_id: u32, note_id: u64) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern_mut(pid)
@@ -1115,11 +1084,7 @@ impl SynthBridge for AppSynthBridge {
                 "duration_beats must be positive, got {d}"
             )));
         }
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern_mut(pid)
@@ -1154,11 +1119,7 @@ impl SynthBridge for AppSynthBridge {
     // === Sequencer: Tracks ===
 
     fn list_tracks(&self) -> Result<Vec<TrackInfo>, McpBridgeError> {
-        let song = self
-            .shared
-            .song
-            .read()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let song = self.shared.song.read();
         let mut tracks: Vec<TrackInfo> = song
             .tracks()
             .map(|t| TrackInfo {
@@ -1177,11 +1138,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn create_track(&self, name: &str, instrument_id: Option<u16>) -> Result<u16, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let id = song.create_track(name);
         if let Some(inst_id) = instrument_id
             && let Some(track) = song.track_mut(id)
@@ -1199,11 +1156,7 @@ impl SynthBridge for AppSynthBridge {
         track_id: u16,
         start_beat: f32,
     ) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let tid = synth_sequencer::TrackId(track_id);
         let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(start_beat)));
@@ -1226,11 +1179,7 @@ impl SynthBridge for AppSynthBridge {
         track_id: u16,
         start_beat: f32,
     ) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let tid = synth_sequencer::TrackId(track_id);
         let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(start_beat)));
@@ -1239,11 +1188,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn list_arrangement(&self) -> Result<Vec<PlacementInfo>, McpBridgeError> {
-        let song = self
-            .shared
-            .song
-            .read()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let song = self.shared.song.read();
         Ok(song
             .arrangement()
             .iter()
@@ -1262,11 +1207,7 @@ impl SynthBridge for AppSynthBridge {
         pattern_id: u32,
         notes: &[BridgeNoteData],
     ) -> Result<BatchResult, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern_mut(pid)
@@ -1310,11 +1251,7 @@ impl SynthBridge for AppSynthBridge {
         pattern_id: u32,
         updates: &[BridgeNoteUpdate],
     ) -> Result<BatchResult, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern_mut(pid)
@@ -1326,10 +1263,18 @@ impl SynthBridge for AppSynthBridge {
         for (i, u) in updates.iter().enumerate() {
             let nid = synth_sequencer::NoteId(u.note_id);
             if let Some(note) = pattern.note_mut(nid) {
-                if let Some(p) = u.pitch
-                    && let Some(new_pitch) = synth_sequencer::Pitch::new(p)
-                {
-                    note.pitch = new_pitch;
+                if let Some(p) = u.pitch {
+                    if let Some(new_pitch) = synth_sequencer::Pitch::new(p) {
+                        note.pitch = new_pitch;
+                    } else {
+                        items.push(BatchItemResult {
+                            index: i,
+                            success: false,
+                            id: None,
+                            error: Some(format!("invalid pitch value: {p}")),
+                        });
+                        continue;
+                    }
                 }
                 if let Some(s) = u.start_beat {
                     note.start = synth_sequencer::PatternTick(beats_to_ticks(s));
@@ -1370,11 +1315,7 @@ impl SynthBridge for AppSynthBridge {
         pattern_id: u32,
         notes: &[BridgeNoteData],
     ) -> Result<BatchResult, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern_mut(pid)
@@ -1416,11 +1357,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn clear_pattern(&self, pattern_id: u32) -> Result<usize, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern_mut(pid)
@@ -1434,11 +1371,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         patterns: &[BridgePatternData],
     ) -> Result<BatchResult, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
 
         let mut items = Vec::with_capacity(patterns.len());
         let mut succeeded = 0usize;
@@ -1471,11 +1404,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn create_tracks(&self, tracks: &[BridgeTrackData]) -> Result<BatchResult, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
 
         let mut items = Vec::with_capacity(tracks.len());
         let mut succeeded = 0usize;
@@ -1508,11 +1437,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         placements: &[BridgePlacementData],
     ) -> Result<BatchResult, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
 
         let mut items = Vec::with_capacity(placements.len());
         let mut succeeded = 0usize;
@@ -1568,11 +1493,7 @@ impl SynthBridge for AppSynthBridge {
         tracks: &[BridgeTrackData],
         placements: &[BridgeSongPlacement],
     ) -> Result<SetSongResult, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
 
         // Replace the entire song
         *song = synth_sequencer::Song::new(name).with_tempo(synth_core::Bpm::new(tempo));
@@ -1639,10 +1560,15 @@ impl SynthBridge for AppSynthBridge {
 
         // Also update engine transport tempo
         drop(song);
-        let _ = self
+        if !self
             .session
             .command_sender()
-            .send(EngineCommand::SetTempo(synth_core::Bpm::new(tempo)));
+            .send(EngineCommand::SetTempo(synth_core::Bpm::new(tempo)))
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "SetTempo",
+            });
+        }
 
         Ok(SetSongResult {
             patterns_created: pattern_ids.len(),
@@ -1693,6 +1619,7 @@ impl SynthBridge for AppSynthBridge {
         use crate::patch::ParamValue;
 
         // 1. Create or reuse instrument
+        let mut errors = Vec::new();
         let inst_id = if let Some(id) = spec.instrument_id {
             let iid = InstrumentId::new(id);
             if !self.session.instrument_exists(iid) {
@@ -1703,7 +1630,9 @@ impl SynthBridge for AppSynthBridge {
                 .clear_graph(iid)
                 .map_err(|e| McpBridgeError::Other(e.to_string()))?;
             // Rename
-            let _ = self.session.rename_instrument(iid, &spec.name);
+            if let Err(e) = self.session.rename_instrument(iid, &spec.name) {
+                errors.push(format!("rename: {e}"));
+            }
             iid
         } else {
             self.session
@@ -1711,29 +1640,28 @@ impl SynthBridge for AppSynthBridge {
                 .map_err(|e| McpBridgeError::Other(e.to_string()))?
         };
 
-        let mut errors = Vec::new();
-
         // 2. Set optional instrument params
-        if let Some(ch) = spec.midi_channel {
-            let _ = self
-                .session
-                .set_instrument_midi_channel(
-                    inst_id,
-                    MidiChannel::from_one_indexed(ch).unwrap_or(MidiChannel::CH1),
-                )
-                .map_err(|e| errors.push(format!("midi_channel: {e}")));
+        if let Some(ch) = spec.midi_channel
+            && let Err(e) = self.session.set_instrument_midi_channel(
+                inst_id,
+                MidiChannel::from_one_indexed(ch).unwrap_or(MidiChannel::CH1),
+            )
+        {
+            errors.push(format!("midi_channel: {e}"));
         }
-        if let Some(vol) = spec.volume {
-            let _ = self
+        if let Some(vol) = spec.volume
+            && let Err(e) = self
                 .session
                 .set_instrument_volume(inst_id, synth_core::Gain::new(vol))
-                .map_err(|e| errors.push(format!("volume: {e}")));
+        {
+            errors.push(format!("volume: {e}"));
         }
-        if let Some(pan) = spec.pan {
-            let _ = self
+        if let Some(pan) = spec.pan
+            && let Err(e) = self
                 .session
                 .set_instrument_pan(inst_id, synth_core::BipolarValue::new(pan))
-                .map_err(|e| errors.push(format!("pan: {e}")));
+        {
+            errors.push(format!("pan: {e}"));
         }
 
         // 3. Add modules (keep descriptors for port validation)
@@ -1934,11 +1862,7 @@ impl SynthBridge for AppSynthBridge {
     ) -> Result<BatchResult, McpBridgeError> {
         use synth_sequencer::{AutomationPoint, AutomationTarget, PatternTick, SeqInstrumentId};
 
-        let mut song_w = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song_w = self.shared.song.write();
         let pat_id = synth_sequencer::PatternId(pattern_id);
         let pattern = song_w
             .pattern_mut(pat_id)
@@ -1993,11 +1917,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         pattern_id: u32,
     ) -> Result<Vec<AutomationLaneInfo>, McpBridgeError> {
-        let song = self
-            .shared
-            .song
-            .read()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let song = self.shared.song.read();
         let pat_id = synth_sequencer::PatternId(pattern_id);
         let pattern = song
             .pattern(pat_id)
@@ -2023,11 +1943,7 @@ impl SynthBridge for AppSynthBridge {
         target: &str,
         instrument_id: u16,
     ) -> Result<Vec<AutomationPointInfo>, McpBridgeError> {
-        let song = self
-            .shared
-            .song
-            .read()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let song = self.shared.song.read();
         let pat_id = synth_sequencer::PatternId(pattern_id);
         let pattern = song
             .pattern(pat_id)
@@ -2056,11 +1972,7 @@ impl SynthBridge for AppSynthBridge {
         instrument_id: u16,
         beats: &[f32],
     ) -> Result<BatchResult, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pat_id = synth_sequencer::PatternId(pattern_id);
         let pattern = song
             .pattern_mut(pat_id)
@@ -2107,11 +2019,7 @@ impl SynthBridge for AppSynthBridge {
         target: &str,
         instrument_id: u16,
     ) -> Result<usize, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pat_id = synth_sequencer::PatternId(pattern_id);
         let pattern = song
             .pattern_mut(pat_id)
@@ -2127,11 +2035,7 @@ impl SynthBridge for AppSynthBridge {
     // === Track control ===
 
     fn set_track_volume(&self, track_id: u16, volume: f32) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let tid = synth_sequencer::TrackId(track_id);
         let track = song
             .track_mut(tid)
@@ -2141,11 +2045,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn set_track_pan(&self, track_id: u16, pan: f32) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let tid = synth_sequencer::TrackId(track_id);
         let track = song
             .track_mut(tid)
@@ -2156,11 +2056,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn set_track_mute(&self, track_id: u16, muted: bool) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let tid = synth_sequencer::TrackId(track_id);
         let track = song
             .track_mut(tid)
@@ -2170,11 +2066,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn set_track_solo(&self, track_id: u16, solo: bool) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let tid = synth_sequencer::TrackId(track_id);
         let track = song
             .track_mut(tid)
@@ -2188,11 +2080,7 @@ impl SynthBridge for AppSynthBridge {
         track_id: u16,
         instrument_id: Option<u16>,
     ) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let tid = synth_sequencer::TrackId(track_id);
         let track = song
             .track_mut(tid)
@@ -2202,11 +2090,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn rename_track(&self, track_id: u16, name: &str) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let tid = synth_sequencer::TrackId(track_id);
         let track = song
             .track_mut(tid)
@@ -2216,11 +2100,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn delete_track(&self, track_id: u16) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let tid = synth_sequencer::TrackId(track_id);
         song.delete_track(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
@@ -2230,11 +2110,7 @@ impl SynthBridge for AppSynthBridge {
     // === Pattern management ===
 
     fn rename_pattern(&self, pattern_id: u32, name: &str) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern_mut(pid)
@@ -2244,11 +2120,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn set_pattern_length(&self, pattern_id: u32, length_beats: f32) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern_mut(pid)
@@ -2258,11 +2130,7 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn duplicate_pattern(&self, pattern_id: u32) -> Result<u32, McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         song.duplicate_pattern(pid)
             .map(|new_id| new_id.0)
@@ -2272,11 +2140,7 @@ impl SynthBridge for AppSynthBridge {
     // === Song metadata ===
 
     fn set_song_author(&self, author: &str) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         song.author = author.to_string();
         Ok(())
     }
@@ -2286,11 +2150,7 @@ impl SynthBridge for AppSynthBridge {
         numerator: u8,
         denominator: u8,
     ) -> Result<(), McpBridgeError> {
-        let mut song = self
-            .shared
-            .song
-            .write()
-            .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+        let mut song = self.shared.song.write();
         song.default_time_signature = synth_sequencer::TimeSignature {
             numerator,
             denominator,
@@ -2385,11 +2245,7 @@ impl SynthBridge for AppSynthBridge {
     fn optimize_project(&self) -> Result<OptimizeResult, McpBridgeError> {
         // Remove unused patterns and tracks from the song
         let (removed_patterns, removed_tracks, used_instrument_ids) = {
-            let mut song = self
-                .shared
-                .song
-                .write()
-                .map_err(|_| McpBridgeError::SongLockPoisoned)?;
+            let mut song = self.shared.song.write();
             song.remove_unused()
         };
 
@@ -2400,9 +2256,9 @@ impl SynthBridge for AppSynthBridge {
             #[allow(clippy::cast_possible_truncation)]
             if !used_instrument_ids
                 .contains(&synth_sequencer::SeqInstrumentId(snap.id.as_u64() as u16))
+                && self.session.remove_instrument(snap.id).is_ok()
             {
                 removed_instruments.push(snap.name.clone());
-                let _ = self.session.remove_instrument(snap.id);
             }
         }
 
@@ -2567,56 +2423,61 @@ impl SynthBridge for AppSynthBridge {
                 AweParam::Temperature(Celsius::new(v))
             }
             "source_x" | "source_y" | "listener_x" | "listener_y" => {
-                // Read current state to get room bounds and modify one axis
-                let current =
+                // Read current state, build param, and update state in a single lock
+                // scope to avoid a race between two separate locks.
+                let mut state =
                     self.shared.awe_state.lock().map_err(|_| {
                         McpBridgeError::Other("AWE state lock poisoned".to_string())
                     })?;
-                let room = current.room;
+                let room = state.room;
                 let max_x = room.length().as_f32();
                 let max_y = room.width().as_f32();
                 let margin = 0.1;
-                match name {
+                let p = match name {
                     "source_x" => {
                         check_pos("source_x", v, margin, max_x - margin)?;
                         AweParam::SourcePos(Position3::new(
                             Meters::new(v),
-                            current.snapshot.source_pos.y(),
-                            current.snapshot.source_pos.z(),
+                            state.snapshot.source_pos.y(),
+                            state.snapshot.source_pos.z(),
                         ))
                     }
                     "source_y" => {
                         check_pos("source_y", v, margin, max_y - margin)?;
                         AweParam::SourcePos(Position3::new(
-                            current.snapshot.source_pos.x(),
+                            state.snapshot.source_pos.x(),
                             Meters::new(v),
-                            current.snapshot.source_pos.z(),
+                            state.snapshot.source_pos.z(),
                         ))
                     }
                     "listener_x" => {
                         check_pos("listener_x", v, margin, max_x - margin)?;
                         AweParam::ListenerPos(Position3::new(
                             Meters::new(v),
-                            current.snapshot.listener_pos.y(),
-                            current.snapshot.listener_pos.z(),
+                            state.snapshot.listener_pos.y(),
+                            state.snapshot.listener_pos.z(),
                         ))
                     }
                     "listener_y" => {
                         check_pos("listener_y", v, margin, max_y - margin)?;
                         AweParam::ListenerPos(Position3::new(
-                            current.snapshot.listener_pos.x(),
+                            state.snapshot.listener_pos.x(),
                             Meters::new(v),
-                            current.snapshot.listener_pos.z(),
+                            state.snapshot.listener_pos.z(),
                         ))
                     }
                     _ => unreachable!(),
-                }
+                };
+                apply_awe_param_to_state(&mut state, &p);
+                p
             }
             _ => return Err(McpBridgeError::InvalidAweParameter(name.to_string())),
         };
 
-        // Update shared state snapshot
-        if let Ok(mut state) = self.shared.awe_state.lock() {
+        // Update shared state snapshot (skip for position params — already updated above)
+        if !matches!(param, AweParam::SourcePos(_) | AweParam::ListenerPos(_))
+            && let Ok(mut state) = self.shared.awe_state.lock()
+        {
             apply_awe_param_to_state(&mut state, &param);
         }
 
@@ -2707,24 +2568,42 @@ impl SynthBridge for AppSynthBridge {
 
         // Send engine commands (same sequence as GUI)
         let sender = self.session.command_sender();
-        sender.send(EngineCommand::SetAweEnabled {
+        let mut failed = 0u32;
+        if !sender.send(EngineCommand::SetAweEnabled {
             enabled: state.enabled,
-        });
-        sender.send(EngineCommand::SetAweParameter {
+        }) {
+            failed += 1;
+        }
+        if !sender.send(EngineCommand::SetAweParameter {
             param: synth_awe::AweParam::RoomShape(state.room),
-        });
-        sender.send(EngineCommand::SetAweParameter {
+        }) {
+            failed += 1;
+        }
+        if !sender.send(EngineCommand::SetAweParameter {
             param: synth_awe::AweParam::Material(state.material),
-        });
-        sender.send(EngineCommand::SetAweState {
+        }) {
+            failed += 1;
+        }
+        if !sender.send(EngineCommand::SetAweState {
             snapshot: state.snapshot,
-        });
-        sender.send(EngineCommand::SetAweParameter {
+        }) {
+            failed += 1;
+        }
+        if !sender.send(EngineCommand::SetAweParameter {
             param: synth_awe::AweParam::SpatialEnabled(state.spatial_enabled),
-        });
-        sender.send(EngineCommand::SetAweParameter {
+        }) {
+            failed += 1;
+        }
+        if !sender.send(EngineCommand::SetAweParameter {
             param: synth_awe::AweParam::NoteMapping(state.note_mapping),
-        });
+        }) {
+            failed += 1;
+        }
+        if failed > 0 {
+            return Err(McpBridgeError::Other(format!(
+                "set_awe_preset: {failed} command(s) failed to send (queue full)"
+            )));
+        }
 
         Ok(awe_state_to_info(&state))
     }
@@ -2792,52 +2671,39 @@ impl SynthBridge for AppSynthBridge {
 
         // Send engine commands for rate, amount, target
         let sender = self.session.command_sender();
-        match index {
-            1 => {
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo1Rate(rate_hz),
-                });
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo1Amount(amt),
-                });
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo1Target(lfo_target),
-                });
-            }
-            2 => {
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo2Rate(rate_hz),
-                });
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo2Amount(amt),
-                });
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo2Target(lfo_target),
-                });
-            }
-            3 => {
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo3Rate(rate_hz),
-                });
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo3Amount(amt),
-                });
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo3Target(lfo_target),
-                });
-            }
-            4 => {
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo4Rate(rate_hz),
-                });
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo4Amount(amt),
-                });
-                sender.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Lfo4Target(lfo_target),
-                });
-            }
+        let mut failed = 0u32;
+        let (rate_param, amt_param, target_param) = match index {
+            1 => (
+                AweParam::Lfo1Rate(rate_hz),
+                AweParam::Lfo1Amount(amt),
+                AweParam::Lfo1Target(lfo_target),
+            ),
+            2 => (
+                AweParam::Lfo2Rate(rate_hz),
+                AweParam::Lfo2Amount(amt),
+                AweParam::Lfo2Target(lfo_target),
+            ),
+            3 => (
+                AweParam::Lfo3Rate(rate_hz),
+                AweParam::Lfo3Amount(amt),
+                AweParam::Lfo3Target(lfo_target),
+            ),
+            4 => (
+                AweParam::Lfo4Rate(rate_hz),
+                AweParam::Lfo4Amount(amt),
+                AweParam::Lfo4Target(lfo_target),
+            ),
             _ => unreachable!(),
+        };
+        for param in [rate_param, amt_param, target_param] {
+            if !sender.send(EngineCommand::SetAweParameter { param }) {
+                failed += 1;
+            }
+        }
+        if failed > 0 {
+            return Err(McpBridgeError::Other(format!(
+                "set_awe_lfo: {failed} command(s) failed to send (queue full)"
+            )));
         }
 
         Ok(())
@@ -3050,13 +2916,14 @@ impl SynthBridge for AppSynthBridge {
     // === Audio input ===
 
     fn list_input_devices(&self) -> Result<Vec<synth_mcp::types::InputDeviceInfo>, McpBridgeError> {
-        // Input devices are GUI-side state; return empty from bridge
-        // (real implementation would need access to AudioHostTrait)
+        // TODO: Stub — needs access to AudioHostTrait to enumerate real input devices.
+        // Return empty list until wired up to the audio subsystem.
         Ok(Vec::new())
     }
 
     fn get_input_state(&self) -> Result<synth_mcp::types::InputStateInfo, McpBridgeError> {
-        // Input state is GUI-side; return idle from bridge
+        // TODO: Stub — returns hardcoded idle state. Wire up to real audio input
+        // monitoring state once the bridge has access to AudioInputManager.
         Ok(synth_mcp::types::InputStateInfo {
             state: "idle".to_string(),
             peak_level: 0.0,

@@ -133,12 +133,12 @@ impl PolyModule for VectorMixer {
         let num_samples = context.samples.as_usize();
         self.output_buffer.resize(num_samples);
 
-        let in_a = inputs.get(PortName::intern("in_a"));
-        let in_b = inputs.get(PortName::intern("in_b"));
-        let in_c = inputs.get(PortName::intern("in_c"));
-        let in_d = inputs.get(PortName::intern("in_d"));
-        let x_cv = inputs.get(PortName::intern("x_cv"));
-        let y_cv = inputs.get(PortName::intern("y_cv"));
+        let in_a = inputs.get(PortName::IN_A);
+        let in_b = inputs.get(PortName::IN_B);
+        let in_c = inputs.get(PortName::IN_C);
+        let in_d = inputs.get(PortName::IN_D);
+        let x_cv = inputs.get(PortName::X_CV);
+        let y_cv = inputs.get(PortName::Y_CV);
 
         for i in 0..num_samples {
             // Apply CV modulation to XY

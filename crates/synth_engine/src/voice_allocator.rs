@@ -5,7 +5,7 @@
 //! - Voice stealing strategies
 //! - Glide/portamento support
 
-use crate::voice::{Voice, VoiceState};
+use crate::voice::{Voice, VoiceId, VoiceState};
 use synth_core::{Cents, MidiNote, SampleCount, SamplePosition, Seconds, Velocity, VoiceCount};
 
 /// Voice allocation mode.
@@ -95,7 +95,9 @@ impl VoiceAllocator {
     /// Create a new voice allocator.
     pub fn new(config: AllocatorConfig) -> Self {
         let num_voices = config.max_voices.as_usize();
-        let voices = (0..num_voices).map(|i| Voice::new(i as u32)).collect();
+        let voices = (0..num_voices)
+            .map(|i| Voice::new(VoiceId::new(i as u32)))
+            .collect();
 
         Self {
             config,
@@ -111,7 +113,7 @@ impl VoiceAllocator {
         let voices = (0..config.max_voices.as_usize())
             .map(|i| {
                 let mut v = template.clone_structure();
-                v.id = i as u32;
+                v.id = VoiceId::new(i as u32);
                 v
             })
             .collect();
@@ -132,7 +134,7 @@ impl VoiceAllocator {
         graph_template: &crate::graph::ModuleGraph,
     ) -> Self {
         let voices = (0..config.max_voices.as_usize())
-            .map(|i| Voice::from_graph(i as u32, graph_template.clone_structure()))
+            .map(|i| Voice::from_graph(VoiceId::new(i as u32), graph_template.clone_structure()))
             .collect();
 
         Self {
@@ -153,7 +155,7 @@ impl VoiceAllocator {
             let old_age = voice.age;
 
             // Replace with new graph
-            *voice = Voice::from_graph(i as u32, graph_template.clone_structure());
+            *voice = Voice::from_graph(VoiceId::new(i as u32), graph_template.clone_structure());
 
             // Restore state if voice was active (preserves playing notes during template changes)
             if old_state.is_active() {
@@ -199,7 +201,7 @@ impl VoiceAllocator {
     }
 
     /// Handle note on event.
-    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity) -> Option<u32> {
+    pub fn note_on(&mut self, note: MidiNote, velocity: Velocity) -> Option<VoiceId> {
         self.held_notes.retain(|(n, _)| *n != note);
         self.held_notes.push((note, velocity));
 
@@ -315,10 +317,10 @@ impl VoiceAllocator {
             for i in current_size..new_size {
                 let new_voice = if let Some(template) = self.voices.first() {
                     let mut v = template.clone_structure();
-                    v.id = i as u32;
+                    v.id = VoiceId::new(i as u32);
                     v
                 } else {
-                    Voice::new(i as u32)
+                    Voice::new(VoiceId::new(i as u32))
                 };
                 self.voices.push(new_voice);
             }
@@ -351,7 +353,8 @@ impl VoiceAllocator {
         } else {
             // Add new voices from graph template
             for i in current_size..new_size {
-                let new_voice = Voice::from_graph(i as u32, graph_template.clone_structure());
+                let new_voice =
+                    Voice::from_graph(VoiceId::new(i as u32), graph_template.clone_structure());
                 self.voices.push(new_voice);
             }
         }
@@ -360,7 +363,7 @@ impl VoiceAllocator {
     }
 
     /// Allocate voice for polyphonic mode.
-    fn allocate_poly(&mut self, note: MidiNote, velocity: Velocity) -> Option<u32> {
+    fn allocate_poly(&mut self, note: MidiNote, velocity: Velocity) -> Option<VoiceId> {
         // First, try to find an idle voice
         if let Some(voice) = self.voices.iter_mut().find(|v| v.is_available()) {
             voice.note_on(note, velocity, self.time);
@@ -397,7 +400,7 @@ impl VoiceAllocator {
         note: MidiNote,
         velocity: Velocity,
         retrigger: bool,
-    ) -> Option<u32> {
+    ) -> Option<VoiceId> {
         // Find active voice index or use first
         let voice_idx = self.voices.iter().position(|v| v.is_active()).unwrap_or(0);
 
@@ -423,7 +426,7 @@ impl VoiceAllocator {
     }
 
     /// Allocate all voices for unison mode.
-    fn allocate_unison(&mut self, note: MidiNote, velocity: Velocity) -> Option<u32> {
+    fn allocate_unison(&mut self, note: MidiNote, velocity: Velocity) -> Option<VoiceId> {
         let num_voices = self.voices.len();
         let detune_per_voice = self.config.unison_detune / num_voices as f32;
 
@@ -439,7 +442,7 @@ impl VoiceAllocator {
         }
 
         self.last_note = Some(note);
-        Some(0)
+        Some(VoiceId::new(0))
     }
 
     /// Find the best voice to steal based on strategy.

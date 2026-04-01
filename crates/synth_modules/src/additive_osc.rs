@@ -13,7 +13,7 @@ use synth_core::{
     ModuleType, Param, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor,
     ProcessContext, WidgetHint,
 };
-use synth_core::{Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
+use synth_core::{BipolarValue, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 
 /// Number of harmonics.
 const NUM_HARMONICS: usize = 32;
@@ -233,11 +233,12 @@ impl PolyModule for AdditiveOsc {
 
             // Apply frequency CV (1V/oct)
             let base_freq = if let Some(cv) = freq_cv {
-                self.note_freq.apply_cv(cv[i])
+                self.note_freq.apply_cv(BipolarValue::new(cv[i]))
             } else {
                 self.note_freq
             };
 
+            let mut active_harmonics = 0_usize;
             for h in 0..NUM_HARMONICS {
                 let amp = self.amplitudes[h];
                 if amp < 0.001 {
@@ -251,6 +252,8 @@ impl PolyModule for AdditiveOsc {
                     break;
                 }
 
+                active_harmonics += 1;
+
                 // Fast sine approximation (max error ~0.001, inaudible)
                 let phase = self.phases[h];
                 sample += crate::math::fast_sin_turns(phase) * amp;
@@ -259,8 +262,8 @@ impl PolyModule for AdditiveOsc {
                 self.phases[h] = (phase + freq * inv_sr).rem_euclid(1.0);
             }
 
-            // Normalize by approximate number of active harmonics
-            let normalization = crate::math::normalization_gain(NUM_HARMONICS);
+            // Normalize by actual number of active harmonics
+            let normalization = crate::math::normalization_gain(active_harmonics.max(1));
             self.output_buffer[i] = sample * normalization * level;
         }
 

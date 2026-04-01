@@ -39,6 +39,9 @@ pub struct TuringMachine {
     // Simple PRNG state
     rng_state: u32,
 
+    // Edge detection
+    prev_clock: f32,
+
     // Buffers
     pitch_buffer: AudioBuffer,
     gate_buffer: AudioBuffer,
@@ -60,6 +63,8 @@ impl TuringMachine {
             gate_active: false,
 
             rng_state: 12345,
+
+            prev_clock: 0.0,
 
             pitch_buffer: AudioBuffer::new(1024),
             gate_buffer: AudioBuffer::new(1024),
@@ -203,7 +208,7 @@ impl PolyModule for TuringMachine {
         self.pitch_buffer.resize(num_samples);
         self.gate_buffer.resize(num_samples);
 
-        let clock = inputs.get(PortName::intern("clock"));
+        let clock = inputs.get(PortName::CLOCK);
 
         // Calculate step timing from BPM
         let bpm = context.tempo.as_f32().max(20.0);
@@ -212,7 +217,8 @@ impl PolyModule for TuringMachine {
         for i in 0..num_samples {
             // Clock detection
             let clock_trigger = if let Some(clk) = clock {
-                crate::math::rising_edge(clk[i], if i == 0 { 0.0 } else { clk[i - 1] })
+                let prev = if i == 0 { self.prev_clock } else { clk[i - 1] };
+                crate::math::rising_edge(clk[i], prev)
             } else {
                 false
             };
@@ -240,6 +246,13 @@ impl PolyModule for TuringMachine {
 
             // Pitch CV (constant until next step)
             self.pitch_buffer[i] = self.current_cv.as_f32();
+        }
+
+        // Persist last clock sample for edge detection across buffers
+        if let Some(clk) = clock
+            && num_samples > 0
+        {
+            self.prev_clock = clk[num_samples - 1];
         }
 
         if let Some(out) = outputs.get_mut(&PortName::PITCH) {

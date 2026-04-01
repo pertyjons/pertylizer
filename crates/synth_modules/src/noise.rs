@@ -128,9 +128,8 @@ impl NoiseGenerator {
     fn violet_noise(&mut self) -> f32 {
         let white = Self::white_noise();
 
-        // Double differentiator
-        let diff1 = white - self.violet_prev[0].as_f32();
-        let output = diff1 - self.violet_prev[1].as_f32();
+        // Second difference: y[n] = x[n] - 2*x[n-1] + x[n-2]
+        let output = white - 2.0 * self.violet_prev[0].as_f32() + self.violet_prev[1].as_f32();
 
         self.violet_prev[1] = self.violet_prev[0];
         self.violet_prev[0] = FilterState::new(white);

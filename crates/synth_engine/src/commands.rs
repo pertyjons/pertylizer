@@ -472,8 +472,12 @@ pub enum EngineCommand {
     /// When None, traditional MIDI channel routing is used.
     SetFocusedInstrument(Option<InstrumentId>),
 
-    /// Bypass a module.
-    SetBypass { module: ModuleId, bypass: bool },
+    /// Bypass a module in a specific instrument (or all instruments if `None`).
+    SetBypass {
+        instrument_id: Option<InstrumentId>,
+        module: ModuleId,
+        bypass: bool,
+    },
 
     // === Visualizer control ===
     /// Add a visualizer module to an instrument's effect chain.
@@ -543,10 +547,10 @@ pub enum EngineCommand {
 
     /// Set the song for the sequencer.
     ///
-    /// The song is shared via Arc<RwLock<Song>> for thread-safe access.
+    /// The song is shared via `Arc<RwLock<Song>>` for thread-safe access.
     /// The sequencer will stop and reset when a new song is set.
     SetSong {
-        song: std::sync::Arc<std::sync::RwLock<synth_sequencer::Song>>,
+        song: std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>>,
     },
 
     // === Recording ===
@@ -1068,8 +1072,13 @@ impl std::fmt::Debug for EngineCommand {
             Self::SetMasterVolume(v) => write!(f, "SetMasterVolume({v})"),
             Self::SetGlideTime(t) => write!(f, "SetGlideTime({t})"),
             Self::SetFocusedInstrument(id) => write!(f, "SetFocusedInstrument({id:?})"),
-            Self::SetBypass { module, bypass } => f
+            Self::SetBypass {
+                instrument_id,
+                module,
+                bypass,
+            } => f
                 .debug_struct("SetBypass")
+                .field("instrument_id", instrument_id)
                 .field("module", module)
                 .field("bypass", bypass)
                 .finish(),

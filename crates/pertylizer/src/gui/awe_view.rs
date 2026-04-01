@@ -938,8 +938,8 @@ fn draw_sound_rings(
     source_x: f32,
     source_y: f32,
     time: f64,
+    room_l: f32,
     room_w: f32,
-    room_h: f32,
     scale: f32,
     offset: egui::Pos2,
     color: egui::Color32,
@@ -951,7 +951,7 @@ fn draw_sound_rings(
         return;
     }
 
-    let diag = (room_w * room_w + room_h * room_h).sqrt();
+    let diag = (room_l * room_l + room_w * room_w).sqrt();
     let max_radius = diag * 0.8;
     // Ring interval inversely proportional to level: louder = more frequent rings
     let ring_interval = 0.3 + 0.4 * (1.0 - audio_level) as f64;
@@ -997,11 +997,11 @@ fn draw_sound_rings(
             let mirror_sources: &[(f32, f32)] = match shape_kind {
                 RoomShapeKind::Box => &[
                     (-source_x, source_y),
-                    (2.0 * room_w - source_x, source_y),
+                    (2.0 * room_l - source_x, source_y),
                     (source_x, -source_y),
-                    (source_x, 2.0 * room_h - source_y),
+                    (source_x, 2.0 * room_w - source_y),
                 ],
-                _ => &[(source_x, -source_y), (source_x, 2.0 * room_h - source_y)],
+                _ => &[(source_x, -source_y), (source_x, 2.0 * room_w - source_y)],
             };
             for &(mx, my) in mirror_sources {
                 let dist_to_wall = ((mx - source_x).powi(2) + (my - source_y).powi(2)).sqrt() * 0.5;

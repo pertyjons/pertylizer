@@ -14,8 +14,8 @@ use synth_core::{
     ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{
-    BufferIndex, FrameCount, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate,
-    Velocity,
+    BipolarValue, BufferIndex, FrameCount, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName,
+    SampleRate, Velocity,
 };
 use synth_core::{MathAlgo, MathOscillatorParam, ModuleType, Param};
 
@@ -213,13 +213,16 @@ impl MathOscillator {
                 // Walsh function synthesis (sum of square waves with binary periods)
                 let num_terms = 2 + (a * 6.0) as i32;
                 let mut sum = 0.0;
+                let mut normalization = 0.0;
                 for i in 0..num_terms {
                     let period = 1 << i;
                     let walsh_t = (t * period as f32).floor() as i32;
                     let sign = if walsh_t % 2 == 0 { 1.0 } else { -1.0 };
-                    sum += sign / (i + 1) as f32;
+                    let weight = 1.0 / (i + 1) as f32;
+                    sum += sign * weight;
+                    normalization += weight;
                 }
-                sum * b * 2.0
+                sum / normalization * b * 2.0
             }
 
             MathAlgo::Pulsar => {
@@ -513,15 +516,15 @@ impl PolyModule for MathOscillator {
 
         // Get modulation inputs
         let fm_input = inputs.get(PortName::FM);
-        let mod_a = inputs.get(PortName::intern("param_a"));
-        let mod_b = inputs.get(PortName::intern("param_b"));
+        let mod_a = inputs.get(PortName::PARAM_A);
+        let mod_b = inputs.get(PortName::PARAM_B);
 
         for i in 0..context.samples.as_usize() {
             // Apply FM
             if let Some(fm) = fm_input {
                 let fm_val = fm[i];
                 // FM modulates frequency exponentially relative to base frequency
-                self.frequency = self.base_frequency.apply_fm(fm_val);
+                self.frequency = self.base_frequency.apply_fm(BipolarValue::new(fm_val));
             }
 
             // Apply param modulation

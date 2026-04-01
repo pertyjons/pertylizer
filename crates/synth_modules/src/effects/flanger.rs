@@ -174,11 +174,11 @@ impl AudioEffect for Flanger {
             let mod_delay_ms = delay_ms + lfo * max_mod_ms * depth;
             let delay_samples = (mod_delay_ms / 1000.0 * self.sample_rate.as_f32()).max(1.0);
 
-            // Write input + feedback to delay buffer
+            // Write input + feedback to delay buffer (soft-limit to prevent runaway)
             let feedback = self.feedback.as_f32();
             let write_idx = self.write_pos.as_usize();
-            self.buffer_l[write_idx] = in_l + self.feedback_l * feedback;
-            self.buffer_r[write_idx] = in_r + self.feedback_r * feedback;
+            self.buffer_l[write_idx] = in_l + crate::math::soft_clip(self.feedback_l * feedback);
+            self.buffer_r[write_idx] = in_r + crate::math::soft_clip(self.feedback_r * feedback);
 
             // Read from delay with interpolation
             let wet_l = self

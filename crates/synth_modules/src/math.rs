@@ -345,6 +345,7 @@ pub fn gaussian_window(phase: f32, sigma: f32) -> f32 {
 /// fade-in/fade-out (typical: 0.1).
 #[inline]
 pub fn trapezoid_window(phase: f32, ramp: f32) -> f32 {
+    let ramp = ramp.max(f32::EPSILON);
     if phase < ramp {
         phase / ramp
     } else if phase > 1.0 - ramp {

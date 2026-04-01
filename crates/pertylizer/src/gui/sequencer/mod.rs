@@ -5,7 +5,9 @@
 //! and a GUI input source for sending `InputCommand`s to the sequencer engine.
 
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+use parking_lot::RwLock;
 
 use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use synth_core::{Bpm, MidiNote, NormalizedValue, Semitones};
@@ -362,7 +364,7 @@ fn draw_transport_bar(
     let current_ticks = handle.state.transport.get_ticks();
     let current_tick = Tick(current_ticks);
     let tempo_f32 = handle.state.transport.get_tempo().as_f32();
-    let rec_state = RecordingState::from_u32(handle.state.transport.recording_state());
+    let rec_state = handle.state.transport.recording_state();
     let metro_on = handle.state.transport.is_metronome_on();
 
     // Read time signature and song name from song (non-blocking)
@@ -464,7 +466,7 @@ fn draw_transport_bar(
             } else if let Some(pattern_id) = view_state.opened_pattern {
                 // Arm — look up placement bounds and time signature
                 // Prefer placement on selected track, fall back to first placement
-                let bounds = song.try_read().ok().and_then(|s| {
+                let bounds = song.try_read().and_then(|s| {
                     let mut best: Option<(Tick, SeqDuration, SeqDuration, TrackId)> = None;
                     for p in s.arrangement() {
                         if p.pattern_id == pattern_id {
@@ -720,7 +722,7 @@ struct ArrangementData {
 
 /// Collect arrangement data from song (short read-lock, then release).
 fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData> {
-    let song = song.try_read().ok()?;
+    let song = song.try_read()?;
 
     let tracks: Vec<TrackInfo> = song
         .tracks()
@@ -846,9 +848,8 @@ fn draw_arrangement(
                         .color(t.colors.accent_green),
                 )
                 .clicked()
-                && let Ok(mut song_w) = song.write()
             {
-                let _ = song_w.create_track("Track 1");
+                let _ = song.write().create_track("Track 1");
             }
         });
         return None;
@@ -934,10 +935,11 @@ fn draw_arrangement(
                                     {
                                         let new_name = name_buf.clone();
                                         let tid = track.id;
-                                        if let Ok(mut song_w) = song.write()
-                                            && let Some(t) = song_w.track_mut(tid)
                                         {
-                                            t.name = new_name;
+                                            let mut song_w = song.write();
+                                            if let Some(t) = song_w.track_mut(tid) {
+                                                t.name = new_name;
+                                            }
                                         }
                                         view_state.editing_track_name = None;
                                     } else {
@@ -975,10 +977,7 @@ fn draw_arrangement(
                                         )
                                         .clicked()
                                     {
-                                        if let Ok(mut song_w) = song.write() {
-                                            song_w.delete_track(track.id);
-                                        }
-                                        // close even if write fails
+                                        song.write().delete_track(track.id);
                                         ui.close();
                                     }
                                 });
@@ -997,7 +996,7 @@ fn draw_arrangement(
                                     .button(RichText::new("M").size(10.0).color(m_color))
                                     .on_hover_text("Mute")
                                     .clicked()
-                                    && let Ok(mut song_w) = song.write()
+                                    && let mut song_w = song.write()
                                     && let Some(trk) = song_w.track_mut(track.id)
                                 {
                                     trk.toggle_mute();
@@ -1013,7 +1012,7 @@ fn draw_arrangement(
                                     .button(RichText::new("S").size(10.0).color(s_color))
                                     .on_hover_text("Solo")
                                     .clicked()
-                                    && let Ok(mut song_w) = song.write()
+                                    && let mut song_w = song.write()
                                     && let Some(trk) = song_w.track_mut(track.id)
                                 {
                                     trk.toggle_solo();
@@ -1033,8 +1032,8 @@ fn draw_arrangement(
                         .color(t.colors.accent_green),
                 )
                 .clicked()
-                && let Ok(mut song_w) = song.write()
             {
+                let mut song_w = song.write();
                 let count = song_w.track_count();
                 let _ = song_w.create_track(format!("Track {}", count + 1));
             }
@@ -1272,7 +1271,8 @@ fn draw_arrangement(
                     } else {
                         click_tick
                     };
-                    if let Ok(mut song_w) = song.write() {
+                    {
+                        let mut song_w = song.write();
                         let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
                         song_w.place_pattern(new_pat_id, target_track, Tick(bar_tick));
                         double_clicked_pattern = Some(new_pat_id);
@@ -1431,10 +1431,8 @@ fn draw_arrangement(
                 }) = view_state.drag.take()
             {
                 // Only move if something changed
-                if (current_tick != start_tick || current_track_id != track_id)
-                    && let Ok(mut song_w) = song.write()
-                {
-                    song_w.move_placement(
+                if current_tick != start_tick || current_track_id != track_id {
+                    song.write().move_placement(
                         pattern_id,
                         track_id,
                         start_tick,
@@ -1531,10 +1529,11 @@ fn draw_arrangement(
                         ] {
                             if ui.button(label).clicked() {
                                 let new_len = SeqDuration::WHOLE * bars;
-                                if let Ok(mut song_w) = song.write()
-                                    && let Some(pat) = song_w.pattern_mut(pat_id)
                                 {
-                                    pat.length = new_len;
+                                    let mut song_w = song.write();
+                                    if let Some(pat) = song_w.pattern_mut(pat_id) {
+                                        pat.length = new_len;
+                                    }
                                 }
                                 ui.close();
                             }
@@ -1542,34 +1541,32 @@ fn draw_arrangement(
                     });
 
                     if ui.button("Duplicate Pattern").clicked() {
-                        if let Ok(mut song_w) = song.write()
-                            && let Some(new_id) = song_w.duplicate_pattern(pat_id)
                         {
-                            let pattern_length = song_w
-                                .pattern(pat_id)
-                                .map_or(SeqDuration::WHOLE, |p| p.length);
-                            song_w.place_pattern(
-                                new_id,
-                                trk_id,
-                                Tick(start_tick + pattern_length.0 as u64),
-                            );
+                            let mut song_w = song.write();
+                            if let Some(new_id) = song_w.duplicate_pattern(pat_id) {
+                                let pattern_length = song_w
+                                    .pattern(pat_id)
+                                    .map_or(SeqDuration::WHOLE, |p| p.length);
+                                song_w.place_pattern(
+                                    new_id,
+                                    trk_id,
+                                    Tick(start_tick + pattern_length.0 as u64),
+                                );
+                            }
                         }
                         ui.close();
                     }
                     ui.separator();
                     if ui.button("Remove from Timeline").clicked() {
-                        if let Ok(mut song_w) = song.write() {
-                            song_w.remove_placement(pat_id, trk_id, Tick(start_tick));
-                        }
+                        song.write()
+                            .remove_placement(pat_id, trk_id, Tick(start_tick));
                         ui.close();
                     }
                     if ui
                         .button(RichText::new("Delete Pattern").color(t.colors.accent_red))
                         .clicked()
                     {
-                        if let Ok(mut song_w) = song.write() {
-                            song_w.delete_pattern(pat_id);
-                        }
+                        song.write().delete_pattern(pat_id);
                         ui.close();
                     }
                 } else {
@@ -1607,7 +1604,8 @@ fn draw_arrangement(
                             .button(format!("{} New Pattern Here", ri::ADD_LINE))
                             .clicked()
                         {
-                            if let Ok(mut song_w) = song.write() {
+                            {
+                                let mut song_w = song.write();
                                 let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
                                 song_w.place_pattern(new_pat_id, target_track, Tick(bar_tick));
                             }
@@ -1624,13 +1622,11 @@ fn draw_arrangement(
                                         .button(format!("{} ({:.0} beats)", pat.name, beats))
                                         .clicked()
                                     {
-                                        if let Ok(mut song_w) = song.write() {
-                                            song_w.place_pattern(
-                                                pat.id,
-                                                target_track,
-                                                Tick(bar_tick),
-                                            );
-                                        }
+                                        song.write().place_pattern(
+                                            pat.id,
+                                            target_track,
+                                            Tick(bar_tick),
+                                        );
                                         ui.close();
                                     }
                                 }
@@ -1740,7 +1736,7 @@ fn collect_piano_roll_data(
     song: &Arc<RwLock<Song>>,
     pattern_id: PatternId,
 ) -> Option<PianoRollData> {
-    let song = song.try_read().ok()?;
+    let song = song.try_read()?;
     let pattern = song.pattern(pattern_id)?;
 
     let mut pitch_min = Pitch::MAX;
@@ -1906,10 +1902,11 @@ fn draw_piano_roll(
                 if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     let new_name = name_buf.clone();
                     let pid = data.pattern_id;
-                    if let Ok(mut song_w) = song.write()
-                        && let Some(pat) = song_w.pattern_mut(pid)
                     {
-                        pat.name = new_name;
+                        let mut song_w = song.write();
+                        if let Some(pat) = song_w.pattern_mut(pid) {
+                            pat.name = new_name;
+                        }
                     }
                     view_state.editing_pattern_name = None;
                 } else {
@@ -2183,14 +2180,15 @@ fn draw_piano_roll(
             .clicked()
         {
             let grid = view_state.effective_grid(data.ticks_per_row);
-            if let Ok(mut song_w) = song.write()
-                && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
             {
-                pattern.quantize_selected(
-                    &view_state.selected_notes,
-                    grid,
-                    view_state.quantize_strength,
-                );
+                let mut song_w = song.write();
+                if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                    pattern.quantize_selected(
+                        &view_state.selected_notes,
+                        grid,
+                        view_state.quantize_strength,
+                    );
+                }
             }
         }
 
@@ -2218,7 +2216,7 @@ fn draw_piano_roll(
             )
             .on_hover_text("Humanize selected notes (random timing/velocity)")
             .clicked()
-            && let Ok(mut song_w) = song.write()
+            && let mut song_w = song.write()
             && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
         {
             pattern.humanize_notes(
@@ -2254,10 +2252,11 @@ fn draw_piano_roll(
             .clicked()
         {
             let grid = view_state.effective_grid(data.ticks_per_row);
-            if let Ok(mut song_w) = song.write()
-                && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
             {
-                pattern.apply_swing(&view_state.selected_notes, grid, view_state.swing_amount);
+                let mut song_w = song.write();
+                if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                    pattern.apply_swing(&view_state.selected_notes, grid, view_state.swing_amount);
+                }
             }
         }
 
@@ -2277,7 +2276,7 @@ fn draw_piano_roll(
             )
             .on_hover_text("Scale velocities of selected notes")
             .clicked()
-            && let Ok(mut song_w) = song.write()
+            && let mut song_w = song.write()
             && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
         {
             pattern.scale_velocities(
@@ -3114,27 +3113,28 @@ fn draw_piano_roll(
                 (false, false) => Semitones::new(-1.0),
                 (false, true) => Semitones::new(-12.0),
             };
-            if let Ok(mut song_w) = song.write()
-                && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
             {
-                let mut composite = Vec::new();
-                for note_id in &view_state.selected_notes {
-                    if let Some(note) = pattern.note(*note_id) {
-                        let old_pitch = note.pitch;
-                        if pattern.transpose_note(*note_id, semitones)
-                            && let Some(transposed) = pattern.note(*note_id)
-                        {
-                            composite.push(crate::undo::UndoAction::TransposeNote {
-                                pattern_id: data.pattern_id,
-                                note_id: *note_id,
-                                old_pitch,
-                                new_pitch: transposed.pitch,
-                            });
+                let mut song_w = song.write();
+                if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                    let mut composite = Vec::new();
+                    for note_id in &view_state.selected_notes {
+                        if let Some(note) = pattern.note(*note_id) {
+                            let old_pitch = note.pitch;
+                            if pattern.transpose_note(*note_id, semitones)
+                                && let Some(transposed) = pattern.note(*note_id)
+                            {
+                                composite.push(crate::undo::UndoAction::TransposeNote {
+                                    pattern_id: data.pattern_id,
+                                    note_id: *note_id,
+                                    old_pitch,
+                                    new_pitch: transposed.pitch,
+                                });
+                            }
                         }
                     }
-                }
-                if !composite.is_empty() {
-                    undo_manager.push(crate::undo::UndoAction::Composite(composite));
+                    if !composite.is_empty() {
+                        undo_manager.push(crate::undo::UndoAction::Composite(composite));
+                    }
                 }
             }
         }
@@ -3171,7 +3171,7 @@ fn draw_piano_roll(
         let mut inserted = false;
         if let Some(pitch_val) = pressed_note
             && let Some(pitch) = Pitch::new(pitch_val)
-            && let Ok(mut song_w) = song.write()
+            && let mut song_w = song.write()
             && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
         {
             let note_id = pattern.add_note(
@@ -3238,11 +3238,12 @@ fn handle_piano_roll_interaction(
         let tick = quantize_tick(raw_tick, data.ticks_per_row);
         let value = (1.0 - (pos.y - auto_y) / AUTOMATION_ZONE_HEIGHT).clamp(0.0, 1.0);
 
-        if let Ok(mut song_w) = song.write()
-            && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
         {
-            let lane = pattern.get_or_create_automation(target);
-            lane.add_point(AutomationPoint::new(tick, NormalizedValue::new(value)));
+            let mut song_w = song.write();
+            if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                let lane = pattern.get_or_create_automation(target);
+                lane.add_point(AutomationPoint::new(tick, NormalizedValue::new(value)));
+            }
         }
     }
 
@@ -3259,11 +3260,14 @@ fn handle_piano_roll_interaction(
             && let Some(idx) = automation_point_at_pos(lane, pos, tick_to_x, auto_y)
         {
             let point_tick = lane.points[idx].tick;
-            if let Ok(mut song_w) = song.write()
-                && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
-                && let Some(auto_lane) = pattern.automation.iter_mut().find(|l| l.target == target)
             {
-                auto_lane.remove_point(point_tick);
+                let mut song_w = song.write();
+                if let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                    && let Some(auto_lane) =
+                        pattern.automation.iter_mut().find(|l| l.target == target)
+                {
+                    auto_lane.remove_point(point_tick);
+                }
             }
         }
     }
@@ -3310,7 +3314,7 @@ fn handle_piano_roll_interaction(
                     let pitch_val = y_to_pitch(pos.y);
 
                     if !has_note_at(&data.notes, tick, pitch_val)
-                        && let Ok(mut song_w) = song.write()
+                        && let mut song_w = song.write()
                         && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                     {
                         let duration = if view_state.draw_note_length > 0 {
@@ -3408,10 +3412,11 @@ fn handle_piano_roll_interaction(
                     if note.end_tick.is_none() {
                         let implied_dur = (data.length_ticks.as_pattern_tick() - note.start_tick)
                             .max(SeqDuration(1));
-                        if let Ok(mut song_w) = song.write()
-                            && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                         {
-                            pattern.resize_note(note_id, implied_dur);
+                            let mut song_w = song.write();
+                            if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                                pattern.resize_note(note_id, implied_dur);
+                            }
                         }
                     }
                     // Calculate where on the note the user grabbed
@@ -3548,10 +3553,11 @@ fn handle_piano_roll_interaction(
             let note_x = tick_to_x(note.start_tick);
             if (note_x - pos.x).abs() < 15.0 {
                 *last_note_id = Some(note.note_id);
-                if let Ok(mut song_w) = song.write()
-                    && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                 {
-                    pattern.set_note_velocity(note.note_id, Velocity::new(new_vel));
+                    let mut song_w = song.write();
+                    if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                        pattern.set_note_velocity(note.note_id, Velocity::new(new_vel));
+                    }
                 }
             }
         }
@@ -3572,7 +3578,7 @@ fn handle_piano_roll_interaction(
             } => {
                 // Apply move to song
                 if (current_tick != original_tick || current_pitch != original_pitch)
-                    && let Ok(mut song_w) = song.write()
+                    && let mut song_w = song.write()
                     && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                 {
                     let mut composite = Vec::new();
@@ -3614,16 +3620,17 @@ fn handle_piano_roll_interaction(
                 {
                     let new_duration = (current_end_tick - note.start_tick).max(SeqDuration(1));
                     let old_duration = note.end_tick.map(|e| e - note.start_tick);
-                    if let Ok(mut song_w) = song.write()
-                        && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                     {
-                        pattern.resize_note(note_id, new_duration);
-                        undo_manager.push(crate::undo::UndoAction::ResizeNote {
-                            pattern_id: data.pattern_id,
-                            note_id,
-                            old_duration: old_duration.map(|d| SeqDuration(d.0)),
-                            new_duration: Some(new_duration),
-                        });
+                        let mut song_w = song.write();
+                        if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                            pattern.resize_note(note_id, new_duration);
+                            undo_manager.push(crate::undo::UndoAction::ResizeNote {
+                                pattern_id: data.pattern_id,
+                                note_id,
+                                old_duration: old_duration.map(|d| SeqDuration(d.0)),
+                                new_duration: Some(new_duration),
+                            });
+                        }
                     }
                 }
             }
@@ -3635,7 +3642,7 @@ fn handle_piano_roll_interaction(
                 // Create the note with the dragged duration (only if no duplicate)
                 let duration = (current_end_tick - start_tick).max(SeqDuration(1));
                 if !has_note_at(&data.notes, start_tick, pitch)
-                    && let Ok(mut song_w) = song.write()
+                    && let mut song_w = song.write()
                     && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                 {
                     let note_id = pattern.add_note(
@@ -3690,7 +3697,7 @@ fn handle_piano_roll_interaction(
                 // Apply automation point move
                 if (current_tick != original_tick
                     || (current_value.as_f32() - original_value.as_f32()).abs() > f32::EPSILON)
-                    && let Ok(mut song_w) = song.write()
+                    && let mut song_w = song.write()
                     && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                 {
                     let lane = pattern.get_or_create_automation(target);
@@ -3897,21 +3904,22 @@ fn delete_selected_notes(
     if selected.is_empty() {
         return;
     }
-    if let Ok(mut song_w) = song.write()
-        && let Some(pattern) = song_w.pattern_mut(pattern_id)
     {
-        let mut composite = Vec::new();
-        for note_id in selected.iter() {
-            if let Some(note) = pattern.note(*note_id) {
-                composite.push(crate::undo::UndoAction::RemoveNote {
-                    pattern_id,
-                    note: note.into(),
-                });
+        let mut song_w = song.write();
+        if let Some(pattern) = song_w.pattern_mut(pattern_id) {
+            let mut composite = Vec::new();
+            for note_id in selected.iter() {
+                if let Some(note) = pattern.note(*note_id) {
+                    composite.push(crate::undo::UndoAction::RemoveNote {
+                        pattern_id,
+                        note: note.into(),
+                    });
+                }
+                pattern.remove_note(*note_id);
             }
-            pattern.remove_note(*note_id);
-        }
-        if !composite.is_empty() {
-            undo_manager.push(crate::undo::UndoAction::Composite(composite));
+            if !composite.is_empty() {
+                undo_manager.push(crate::undo::UndoAction::Composite(composite));
+            }
         }
     }
     selected.clear();
@@ -3979,26 +3987,27 @@ fn paste_clipboard_notes(
 
     selected.clear();
 
-    if let Ok(mut song_w) = song.write()
-        && let Some(pattern) = song_w.pattern_mut(pattern_id)
     {
-        let mut composite = Vec::new();
-        for cn in &clipboard.notes {
-            let tick = paste_tick + cn.tick_offset;
-            let note_id = pattern.add_note(tick, cn.pitch, cn.velocity, cn.instrument);
-            if let Some(dur) = cn.duration {
-                pattern.resize_note(note_id, dur);
+        let mut song_w = song.write();
+        if let Some(pattern) = song_w.pattern_mut(pattern_id) {
+            let mut composite = Vec::new();
+            for cn in &clipboard.notes {
+                let tick = paste_tick + cn.tick_offset;
+                let note_id = pattern.add_note(tick, cn.pitch, cn.velocity, cn.instrument);
+                if let Some(dur) = cn.duration {
+                    pattern.resize_note(note_id, dur);
+                }
+                if let Some(note) = pattern.note(note_id) {
+                    composite.push(crate::undo::UndoAction::AddNote {
+                        pattern_id,
+                        note: note.into(),
+                    });
+                }
+                selected.insert(note_id);
             }
-            if let Some(note) = pattern.note(note_id) {
-                composite.push(crate::undo::UndoAction::AddNote {
-                    pattern_id,
-                    note: note.into(),
-                });
+            if !composite.is_empty() {
+                undo_manager.push(crate::undo::UndoAction::Composite(composite));
             }
-            selected.insert(note_id);
-        }
-        if !composite.is_empty() {
-            undo_manager.push(crate::undo::UndoAction::Composite(composite));
         }
     }
 }

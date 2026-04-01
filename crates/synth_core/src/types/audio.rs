@@ -311,6 +311,8 @@ impl FilterState {
     /// Applies gentle saturation to prevent harsh clipping.
     #[inline]
     pub fn soft_saturate(value: f32, threshold: f32) -> f32 {
+        // Clamp threshold to prevent near-zero denominator when close to 1.0
+        let threshold = threshold.min(0.99);
         if value.abs() < threshold || threshold >= 1.0 {
             value
         } else {

@@ -191,8 +191,8 @@ pub struct AudioCallbackContext {
     pub stream_time: f64,
     /// Total samples processed since stream started.
     pub sample_position: u64,
-    /// Estimated output latency (in seconds).
-    pub output_latency: f32,
+    /// Estimated output latency.
+    pub output_latency: crate::Seconds,
 }
 
 /// Errors that can occur in the audio system.

@@ -4,12 +4,14 @@
 //! into real-time events at audio sample rate precision.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+use parking_lot::RwLock;
 
 use synth_core::{Bpm, NormalizedValue, SampleCount, SampleRate};
 use synth_sequencer::{
     AutomationTarget, PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER,
-    Tick,
+    Tick, Velocity,
 };
 
 /// Minimum change threshold for automation value deduplication.
@@ -66,6 +68,10 @@ pub struct SequencerEngine {
     loop_end: Tick,
     /// Last emitted automation values (for deduplication).
     last_automation_values: HashMap<AutomationTarget, NormalizedValue>,
+    /// Pre-allocated scratch buffer for note collection (avoids per-tick allocation).
+    scratch_notes: Vec<(Pitch, Velocity, SeqInstrumentId, Option<Tick>)>,
+    /// Pre-allocated scratch buffer for automation collection (avoids per-tick allocation).
+    scratch_automation: Vec<(AutomationTarget, NormalizedValue)>,
 }
 
 impl SequencerEngine {
@@ -78,21 +84,20 @@ impl SequencerEngine {
             current_tick: Tick::ZERO,
             tick_accumulator: 0.0,
             sample_rate,
-            active_notes: Vec::new(),
+            active_notes: Vec::with_capacity(64),
             cached_tempo: default_tempo,
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
-            last_automation_values: HashMap::new(),
+            last_automation_values: HashMap::with_capacity(32),
+            scratch_notes: Vec::with_capacity(64),
+            scratch_automation: Vec::with_capacity(16),
         }
     }
 
     /// Create a sequencer engine with a shared song reference.
     pub fn with_song(song: Arc<RwLock<Song>>, sample_rate: SampleRate) -> Self {
-        let cached_tempo = song
-            .read()
-            .map(|s| s.default_tempo)
-            .unwrap_or(Bpm::new(120.0));
+        let cached_tempo = song.read().default_tempo;
 
         Self {
             song,
@@ -100,12 +105,14 @@ impl SequencerEngine {
             current_tick: Tick::ZERO,
             tick_accumulator: 0.0,
             sample_rate,
-            active_notes: Vec::new(),
+            active_notes: Vec::with_capacity(64),
             cached_tempo,
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
-            last_automation_values: HashMap::new(),
+            last_automation_values: HashMap::with_capacity(32),
+            scratch_notes: Vec::with_capacity(64),
+            scratch_automation: Vec::with_capacity(16),
         }
     }
 
@@ -188,7 +195,6 @@ impl SequencerEngine {
             let song_end = self
                 .song
                 .try_read()
-                .ok()
                 .map(|s| s.calculate_length())
                 .unwrap_or(Tick::ZERO);
             if song_end > Tick::ZERO {
@@ -275,21 +281,23 @@ impl SequencerEngine {
 
     /// Update the cached tempo from the song.
     fn update_cached_tempo(&mut self) {
-        if let Ok(song) = self.song.try_read() {
+        if let Some(song) = self.song.try_read() {
             self.cached_tempo = song.tempo_at(self.current_tick);
         }
     }
 
     /// Collect events that should trigger at the current tick.
     fn collect_events_at_tick(&mut self, events: &mut Vec<SequencerEvent>) {
+        // Clear scratch buffers (reuses existing heap allocation)
+        self.scratch_notes.clear();
+        self.scratch_automation.clear();
+
         // Collect note and automation data while holding the lock
-        let (notes_to_trigger, auto_events): (Vec<_>, Vec<_>) = {
-            let Ok(song) = self.song.try_read() else {
+        {
+            let Some(song) = self.song.try_read() else {
                 return;
             };
 
-            let mut notes = Vec::new();
-            let mut auto_vals = Vec::new();
             let any_solo = song.any_solo();
 
             for placement in song.arrangement() {
@@ -334,7 +342,7 @@ impl SequencerEngine {
 
                     let effective_instrument = track_instrument.unwrap_or(note.instrument);
 
-                    notes.push((
+                    self.scratch_notes.push((
                         transposed_pitch,
                         note.velocity,
                         effective_instrument,
@@ -345,16 +353,15 @@ impl SequencerEngine {
                 // Collect automation values at this tick
                 for lane in &pattern.automation {
                     if let Some(value) = lane.value_at(PatternTick(pattern_tick)) {
-                        auto_vals.push((lane.target.clone(), value));
+                        self.scratch_automation.push((lane.target.clone(), value));
                     }
                 }
             }
-
-            (notes, auto_vals)
-        }; // Lock released here
+        } // Lock released here
 
         // Now process the collected notes without holding the lock
-        for (pitch, velocity, instrument, end_tick) in notes_to_trigger {
+        for i in 0..self.scratch_notes.len() {
+            let (pitch, velocity, instrument, end_tick) = self.scratch_notes[i];
             self.active_notes.push(ActiveNote {
                 pitch,
                 instrument,
@@ -370,8 +377,9 @@ impl SequencerEngine {
         }
 
         // Emit automation parameter events (deduplicated)
-        for (target, value) in auto_events {
-            let changed = self.last_automation_values.get(&target).is_none_or(|last| {
+        for i in 0..self.scratch_automation.len() {
+            let (ref target, value) = self.scratch_automation[i];
+            let changed = self.last_automation_values.get(target).is_none_or(|last| {
                 (value.as_f32() - last.as_f32()).abs() > AUTOMATION_DEDUP_THRESHOLD
             });
 
@@ -379,7 +387,7 @@ impl SequencerEngine {
                 self.last_automation_values.insert(target.clone(), value);
                 events.push(SequencerEvent::Parameter {
                     tick: self.current_tick,
-                    target,
+                    target: target.clone(),
                     value,
                 });
             }

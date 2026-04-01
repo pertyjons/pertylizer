@@ -127,6 +127,8 @@ pub struct LoopRegion {
     /// Loop end frame (exclusive).
     pub end: FrameIndex,
     /// Crossfade length in samples to avoid clicks.
+    // Reserved for future crossfade implementation
+    #[allow(dead_code)]
     pub crossfade: SampleCount,
 }
 

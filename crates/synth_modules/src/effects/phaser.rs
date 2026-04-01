@@ -192,14 +192,14 @@ impl AudioEffect for Phaser {
 
             // Process left channel through all-pass cascade
             let feedback = self.feedback.as_f32();
-            let mut sample_l = in_l + self.feedback_l * feedback;
+            let mut sample_l = in_l + crate::math::soft_clip(self.feedback_l * feedback);
             for stage in &mut self.stages_l {
                 sample_l = stage.process(sample_l, coeff_l);
             }
             self.feedback_l = sample_l;
 
             // Process right channel with offset phase for stereo width
-            let mut sample_r = in_r + self.feedback_r * feedback;
+            let mut sample_r = in_r + crate::math::soft_clip(self.feedback_r * feedback);
             for stage in &mut self.stages_r {
                 sample_r = stage.process(sample_r, coeff_r);
             }

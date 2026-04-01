@@ -42,14 +42,15 @@ pub struct PhaseVocoder {
     frozen_right: Vec<Complex<f32>>,
     has_frozen: bool,
 
+    // Pre-allocated scratch buffers for pitch_shift_spectrum (avoid per-hop allocation)
+    temp_magnitudes: Vec<f32>,
+    temp_phases: Vec<f32>,
+
     // Pre-allocated buffers for interleaved -> deinterleaved (max block size)
     mono_in_l: Vec<f32>,
     mono_in_r: Vec<f32>,
     mono_out_l: Vec<f32>,
     mono_out_r: Vec<f32>,
-
-    // State
-    needs_rebuild: bool,
 }
 
 impl PhaseVocoder {
@@ -76,17 +77,17 @@ impl PhaseVocoder {
             frozen_right: vec![Complex::new(0.0, 0.0); complex_size],
             has_frozen: false,
 
+            temp_magnitudes: vec![0.0; complex_size],
+            temp_phases: vec![0.0; complex_size],
+
             mono_in_l: vec![0.0; MAX_BLOCK_SIZE],
             mono_in_r: vec![0.0; MAX_BLOCK_SIZE],
             mono_out_l: vec![0.0; MAX_BLOCK_SIZE],
             mono_out_r: vec![0.0; MAX_BLOCK_SIZE],
-
-            needs_rebuild: false,
         }
     }
 
     fn rebuild_stft(&mut self) {
-        self.needs_rebuild = false;
         let fft_size = self.fft_size_option.size();
         let hop_size = fft_size / 4;
         let complex_size = fft_size / 2 + 1;
@@ -101,23 +102,33 @@ impl PhaseVocoder {
         self.frozen_left = vec![Complex::new(0.0, 0.0); complex_size];
         self.frozen_right = vec![Complex::new(0.0, 0.0); complex_size];
         self.has_frozen = false;
+
+        self.temp_magnitudes = vec![0.0; complex_size];
+        self.temp_phases = vec![0.0; complex_size];
     }
 
     /// Pitch shifting via phase vocoder technique.
     /// `shift_ratio` = 2^(semitones/12), e.g. 1.0 = no shift, 2.0 = octave up.
+    ///
+    /// `temp_magnitudes` and `temp_phases` are pre-allocated scratch buffers
+    /// (must be >= spectrum.len()) to avoid per-hop heap allocation.
     fn pitch_shift_spectrum(
         spectrum: &mut [Complex<f32>],
         prev_phase: &mut [f32],
         phase_accum: &mut [f32],
         shift_ratio: f32,
         hop_size: usize,
+        temp_magnitudes: &mut [f32],
+        temp_phases: &mut [f32],
     ) {
         let n = spectrum.len();
         let expected_phase_diff = std::f32::consts::TAU * hop_size as f32;
 
-        // Work on a copy to allow resampling
-        let magnitudes: Vec<f32> = spectrum.iter().map(|c| c.norm()).collect();
-        let phases: Vec<f32> = spectrum.iter().map(|c| c.arg()).collect();
+        // Extract magnitudes and phases into pre-allocated scratch buffers
+        for (i, c) in spectrum.iter().enumerate() {
+            temp_magnitudes[i] = c.norm();
+            temp_phases[i] = c.arg();
+        }
 
         // Clear output
         for bin in spectrum.iter_mut() {
@@ -126,7 +137,7 @@ impl PhaseVocoder {
 
         for k in 0..n {
             // Compute instantaneous frequency
-            let phase_diff = phases[k] - prev_phase[k];
+            let phase_diff = temp_phases[k] - prev_phase[k];
             let expected = expected_phase_diff * (k as f32 / n as f32);
             let mut deviation = phase_diff - expected;
 
@@ -147,11 +158,11 @@ impl PhaseVocoder {
                     + deviation * shift_ratio;
                 phase_accum[new_bin] = new_phase;
 
-                let mag = magnitudes[k];
+                let mag = temp_magnitudes[k];
                 spectrum[new_bin] += Complex::new(mag * new_phase.cos(), mag * new_phase.sin());
             }
 
-            prev_phase[k] = phases[k];
+            prev_phase[k] = temp_phases[k];
         }
     }
 }
@@ -216,10 +227,6 @@ impl Describable for PhaseVocoder {
 
 impl AudioEffect for PhaseVocoder {
     fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext<'_>) {
-        if self.needs_rebuild {
-            self.rebuild_stft();
-        }
-
         let num_frames = input.len() / 2;
         let mix = self.mix.as_f32();
         let shift_ratio = 2.0f32.powf(self.pitch_shift.0 / 12.0);
@@ -241,6 +248,8 @@ impl AudioEffect for PhaseVocoder {
         let phase_accum_l = &mut self.phase_accum_left;
         let frozen_l = &self.frozen_left;
         let has_frozen = self.has_frozen;
+        let temp_mags = &mut self.temp_magnitudes;
+        let temp_phs = &mut self.temp_phases;
 
         self.stft_left.process(
             &self.mono_in_l[..num_frames],
@@ -255,6 +264,8 @@ impl AudioEffect for PhaseVocoder {
                         phase_accum_l,
                         shift_ratio,
                         hop_size,
+                        temp_mags,
+                        temp_phs,
                     );
                 }
             },
@@ -264,6 +275,8 @@ impl AudioEffect for PhaseVocoder {
         let prev_phase_r = &mut self.prev_phase_right;
         let phase_accum_r = &mut self.phase_accum_right;
         let frozen_r = &self.frozen_right;
+        let temp_mags = &mut self.temp_magnitudes;
+        let temp_phs = &mut self.temp_phases;
 
         self.stft_right.process(
             &self.mono_in_r[..num_frames],
@@ -278,6 +291,8 @@ impl AudioEffect for PhaseVocoder {
                         phase_accum_r,
                         shift_ratio,
                         hop_size,
+                        temp_mags,
+                        temp_phs,
                     );
                 }
             },
@@ -310,7 +325,7 @@ impl AudioEffect for PhaseVocoder {
                 PhaseVocoderParam::FftSize(f) => {
                     if f != self.fft_size_option {
                         self.fft_size_option = f;
-                        self.needs_rebuild = true;
+                        self.rebuild_stft();
                     }
                 }
                 PhaseVocoderParam::Mix(v) => self.mix = v,

@@ -236,16 +236,31 @@ impl TimeSignature {
         }
     }
 
-    /// Ticks per bar.
+    /// Ticks per bar. Returns a sensible default if numerator or denominator is zero.
     #[must_use]
     pub fn ticks_per_bar(&self) -> u32 {
-        TICKS_PER_QUARTER * self.numerator as u32 * 4 / self.denominator as u32
+        let num = if self.numerator == 0 {
+            4
+        } else {
+            self.numerator
+        } as u32;
+        let den = if self.denominator == 0 {
+            4
+        } else {
+            self.denominator
+        } as u32;
+        TICKS_PER_QUARTER * num * 4 / den
     }
 
-    /// Ticks per beat.
+    /// Ticks per beat. Returns a sensible default if denominator is zero.
     #[must_use]
     pub fn ticks_per_beat(&self) -> u32 {
-        TICKS_PER_QUARTER * 4 / self.denominator as u32
+        let den = if self.denominator == 0 {
+            4
+        } else {
+            self.denominator
+        } as u32;
+        TICKS_PER_QUARTER * 4 / den
     }
 }
 
