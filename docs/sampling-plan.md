@@ -1,7 +1,7 @@
 # Sampling & Audio Recording — Implementation Plan
 
-> **Date:** 2025-03-25
-> **Status:** Draft
+> **Date:** 2026-04-07
+> **Status:** Active
 > **Scope:** New `Sample` view, sample library, WAV import/export, sampler module, live audio input, project format v2
 
 ---
@@ -17,7 +17,7 @@
 7. [Project Format v2 (bundle format)](#7-project-format-v2-bundle-format)
 8. [Engine Commands & Events](#8-engine-commands--events)
 9. [MCP Integration (full remote control)](#9-mcp-integration-full-remote-control)
-10. [Implementation Phases](#10-implementation-phases)
+10. [Security & Quality Gates](#10-security--quality-gates)
 11. [Important Features You May Have Missed](#11-important-features-you-may-have-missed)
 12. [Future Feature Ideas](#12-future-feature-ideas)
 
@@ -279,9 +279,9 @@ The only addition needed is an input stream method:
 /// Start an input stream that writes captured audio into the provided ring buffer producers.
 /// Two producers are needed because ringbuf is SPSC: one for the engine (low-latency passthrough)
 /// and one for the GUI (metering + recording). The cpal callback pushes each sample to both.
-fn start_input(
-    &mut self,
-    device: Option<&str>,
+fn create_input_stream(
+    &self,
+    device_id: Option<&str>,
     config: &StreamConfig,
     engine_producer: ringbuf::HeapProd<f32>,
     gui_producer: ringbuf::HeapProd<f32>,
@@ -1029,192 +1029,195 @@ AI → stop_recording()
 
 - [x] = Done
 - [ ] = Not started
-- Priority: **P0** = Must have (broken without it), **P1** = Should have (significant gap), **P2** = Nice to have, **P3** = Future/stretch goal
+- Priority: **P0** = Must have (broken without it), **P1** = Should have (significant gap), **P2** = Nice to have, **P3
+  ** = Future/stretch goal
 
 ### Phase 1 — Foundation (sample data + WAV I/O)
 
-| Status | Item | Priority | Notes |
-|--------|------|----------|-------|
-| [x] | `synth_sampler` crate with workspace config | P0 | |
-| [x] | Core types: `SampleId`, `SampleMeta`, `Sample`, `LoopRegion`, `CropRegion`, `FrameIndex` | P0 | |
-| [x] | `SampleLibrary` with add/remove/get/list + `replace_data` + `add_with_id` | P0 | Added after review |
-| [x] | `load_wav()` and `save_wav()` using hound | P0 | 8/16/24-bit PCM + 32-bit float |
-| [x] | Basic sample rate conversion (linear interpolation) | P0 | |
-| [x] | Unit tests for WAV round-trip and library | P0 | 15 tests |
-| [ ] | Sinc interpolation resampling | P3 | Linear is sufficient for MVP |
+| Status | Item                                                                                     | Priority | Notes                          |
+|--------|------------------------------------------------------------------------------------------|----------|--------------------------------|
+| [x]    | `synth_sampler` crate with workspace config                                              | P0       |                                |
+| [x]    | Core types: `SampleId`, `SampleMeta`, `Sample`, `LoopRegion`, `CropRegion`, `FrameIndex` | P0       |                                |
+| [x]    | `SampleLibrary` with add/remove/get/list + `replace_data` + `add_with_id`                | P0       | Added after review             |
+| [x]    | `load_wav()` and `save_wav()` using hound                                                | P0       | 8/16/24-bit PCM + 32-bit float |
+| [x]    | Basic sample rate conversion (linear interpolation)                                      | P0       |                                |
+| [x]    | Unit tests for WAV round-trip and library                                                | P0       | 15 tests                       |
+| [ ]    | Sinc interpolation resampling                                                            | P3       | Linear is sufficient for MVP   |
 
 ### Phase 2 — Sample View (GUI)
 
-| Status | Item | Priority | Notes |
-|--------|------|----------|-------|
-| [x] | `AppView::Sample` navigation tab | P0 | |
-| [x] | Sample list panel (left sidebar) with name, duration, channels | P0 | |
-| [x] | Waveform display with zoom (scroll wheel) and scroll (drag) | P0 | Peak cache for perf |
-| [x] | Crop region overlay (dimmed areas) | P0 | Zoom/scroll-aware |
-| [x] | Loop region markers (green overlay + lines) | P0 | Zoom/scroll-aware, inverted-rect guard |
-| [x] | Properties panel (name, root note, loop, crop, sample info) | P0 | |
-| [x] | Toolbar: Import, Export, Zoom, Normalize, Reverse, Auto-trim, Delete | P0 | |
-| [x] | Waveform peak cache | P0 | |
-| [x] | Sample memory indicator (top bar + list footer) | P1 | |
-| [ ] | Draggable crop handles (mouse drag to set start/end) | P2 | Currently via DragValue only |
-| [ ] | Draggable loop markers (mouse drag in waveform) | P2 | Currently via DragValue only |
-| [ ] | Playback cursor during preview | P2 | |
-| [ ] | Selection region (click+drag for future cut/copy) | P3 | |
-| [ ] | Stereo L/R stacked/overlay display toggle | P3 | Currently mono mixdown |
+| Status | Item                                                                 | Priority | Notes                                  |
+|--------|----------------------------------------------------------------------|----------|----------------------------------------|
+| [x]    | `AppView::Sample` navigation tab                                     | P0       |                                        |
+| [x]    | Sample list panel (left sidebar) with name, duration, channels       | P0       |                                        |
+| [x]    | Waveform display with zoom (scroll wheel) and scroll (drag)          | P0       | Peak cache for perf                    |
+| [x]    | Crop region overlay (dimmed areas)                                   | P0       | Zoom/scroll-aware                      |
+| [x]    | Loop region markers (green overlay + lines)                          | P0       | Zoom/scroll-aware, inverted-rect guard |
+| [x]    | Properties panel (name, root note, loop, crop, sample info)          | P0       |                                        |
+| [x]    | Toolbar: Import, Export, Zoom, Normalize, Reverse, Auto-trim, Delete | P0       |                                        |
+| [x]    | Waveform peak cache                                                  | P0       |                                        |
+| [x]    | Sample memory indicator (top bar + list footer)                      | P1       |                                        |
+| [ ]    | Draggable crop handles (mouse drag to set start/end)                 | P2       | Currently via DragValue only           |
+| [ ]    | Draggable loop markers (mouse drag in waveform)                      | P2       | Currently via DragValue only           |
+| [ ]    | Playback cursor during preview                                       | P2       |                                        |
+| [ ]    | Selection region (click+drag for future cut/copy)                    | P3       |                                        |
+| [ ]    | Stereo L/R stacked/overlay display toggle                            | P3       | Currently mono mixdown                 |
 
 ### Phase 3 — Audio Input (recording)
 
-| Status | Item | Priority | Notes |
-|--------|------|----------|-------|
-| [x] | `create_input_stream()` on `AudioBackend` trait | P0 | Dual SPSC ring buffers |
-| [x] | CpalBackend input stream implementation | P0 | |
-| [x] | `AudioInputManager` with monitoring + recording state machine | P0 | |
-| [x] | Input device selector dropdown | P0 | Cached, not polled per frame |
-| [x] | Level meter in bottom bar | P0 | |
-| [x] | Monitor toggle | P0 | |
-| [x] | Record button + timer | P0 | |
-| [x] | Stop recording → create Sample | P0 | |
-| [x] | Large ring buffers (262k GUI, 16k engine) | P1 | Clock-drift drain-all |
-| [ ] | Recording countdown / pre-roll | P2 | |
-| [ ] | Latency warning badge (>20ms) | P2 | |
-| [ ] | Dedicated recording thread (instead of GUI drain) | P3 | MVP works with large buffer |
+| Status | Item                                                          | Priority | Notes                        |
+|--------|---------------------------------------------------------------|----------|------------------------------|
+| [x]    | `create_input_stream()` on `AudioBackend` trait               | P0       | Dual SPSC ring buffers       |
+| [x]    | CpalBackend input stream implementation                       | P0       |                              |
+| [x]    | `AudioInputManager` with monitoring + recording state machine | P0       |                              |
+| [x]    | Input device selector dropdown                                | P0       | Cached, not polled per frame |
+| [x]    | Level meter in bottom bar                                     | P0       |                              |
+| [x]    | Monitor toggle                                                | P0       |                              |
+| [x]    | Record button + timer                                         | P0       |                              |
+| [x]    | Stop recording → create Sample                                | P0       |                              |
+| [x]    | Large ring buffers (262k GUI, 16k engine)                     | P1       | Clock-drift drain-all        |
+| [ ]    | Recording countdown / pre-roll                                | P2       |                              |
+| [ ]    | Latency warning badge (>20ms)                                 | P2       |                              |
+| [ ]    | Dedicated recording thread (instead of GUI drain)             | P3       | MVP works with large buffer  |
 
 ### Phase 4 — Sampler Module (in Rack)
 
-| Status | Item | Priority | Notes |
-|--------|------|----------|-------|
-| [x] | `ModuleType::Sampler` variant | P0 | Prefix "sam" |
-| [x] | `SamplerParam` enum in synth_core | P0 | 8 params incl. StartOffset |
-| [x] | `SamplePlayer` DSP: pitch tracking, linear interpolation | P0 | |
-| [x] | Reverse playback + PingPong | P0 | Fixed after review |
-| [x] | Loop wrapping with modulo (handles high-speed overshoot) | P0 | Fixed after review |
-| [x] | Loop interpolation wrap (next-frame → loop_start) | P0 | Fixed after review |
-| [x] | `SamplerModule` as `PolyModule` | P0 | |
-| [x] | NoteOn/NoteOff with velocity sensitivity | P0 | |
-| [x] | FineTune works without pitch tracking | P0 | Fixed after review |
-| [x] | StartOffset parameter | P1 | |
-| [x] | `needs_sample_reload` flag on SampleSelect change | P0 | Fixed after review |
-| [x] | `get_param()` returns `None` for SampleSelect | P1 | Fixed after review |
-| [x] | Registered in module_factory | P0 | |
-| [ ] | Engine-side sample cache (`HashMap<SampleId, Arc<[f32]>>`) | P1 | Currently `load_sample()` called manually |
-| [ ] | `EngineCommand::LoadSample` / `UnloadSample` | P1 | `needs_sample_reload` flag exists but engine doesn't poll it |
-| [x] | Sample selector dropdown in Rack module panel | P1 | v0.252.0 |
-| [ ] | Mini waveform preview in Rack module panel | P2 | |
-| [ ] | Crossfade at loop points (`LoopRegion::crossfade`) | P2 | Field exists, DSP not implemented |
-| [ ] | Cubic Hermite interpolation | P2 | Linear is "classic sampler" quality |
-| [ ] | Anti-alias LP filter for pitch-up | P3 | |
+| Status | Item                                                       | Priority | Notes                                                        |
+|--------|------------------------------------------------------------|----------|--------------------------------------------------------------|
+| [x]    | `ModuleType::Sampler` variant                              | P0       | Prefix "sam"                                                 |
+| [x]    | `SamplerParam` enum in synth_core                          | P0       | 8 params incl. StartOffset                                   |
+| [x]    | `SamplePlayer` DSP: pitch tracking, linear interpolation   | P0       |                                                              |
+| [x]    | Reverse playback + PingPong                                | P0       | Fixed after review                                           |
+| [x]    | Loop wrapping with modulo (handles high-speed overshoot)   | P0       | Fixed after review                                           |
+| [x]    | Loop interpolation wrap (next-frame → loop_start)          | P0       | Fixed after review                                           |
+| [x]    | `SamplerModule` as `PolyModule`                            | P0       |                                                              |
+| [x]    | NoteOn/NoteOff with velocity sensitivity                   | P0       |                                                              |
+| [x]    | FineTune works without pitch tracking                      | P0       | Fixed after review                                           |
+| [x]    | StartOffset parameter                                      | P1       |                                                              |
+| [x]    | `needs_sample_reload` flag on SampleSelect change          | P0       | Fixed after review                                           |
+| [x]    | `get_param()` returns `None` for SampleSelect              | P1       | Fixed after review                                           |
+| [x]    | Registered in module_factory                               | P0       |                                                              |
+| [ ]    | Engine-side sample cache (`HashMap<SampleId, Arc<[f32]>>`) | P1       | Currently `load_sample()` called manually                    |
+| [ ]    | `EngineCommand::LoadSample` / `UnloadSample`               | P1       | `needs_sample_reload` flag exists but engine doesn't poll it |
+| [x]    | Sample selector dropdown in Rack module panel              | P1       | v0.252.0                                                     |
+| [ ]    | Mini waveform preview in Rack module panel                 | P2       |                                                              |
+| [ ]    | Crossfade at loop points (`LoopRegion::crossfade`)         | P2       | Field exists, DSP not implemented                            |
+| [ ]    | Cubic Hermite interpolation                                | P2       | Linear is "classic sampler" quality                          |
+| [ ]    | Anti-alias LP filter for pitch-up                          | P3       |                                                              |
 
 ### Phase 5 — Live Audio Input Module
 
-| Status | Item | Priority | Notes |
-|--------|------|----------|-------|
-| [x] | `ProcessContext<'a>` with `audio_input: Option<&'a [f32]>` | P0 | ~49 modules updated |
-| [x] | Engine drains consumer into buffer per block | P0 | Drain-all, no RT alloc |
-| [x] | `AudioInputModule` reads from ProcessContext | P0 | |
-| [x] | `EngineCommand::SetAudioInputConsumer` / `ClearAudioInputConsumer` | P0 | |
-| [x] | Registered in module_factory | P0 | Prefix "ain" |
-| [x] | Wire `SetAudioInputConsumer` from GUI monitoring start | P1 | v0.252.0 |
-| [x] | Monitoring/recording controls in Rack patch module panel | P1 | v0.252.0 — monitor toggle, rec button, peak meter, timer |
-| [ ] | UI "Live" indicator when input is active | P2 | |
-| [ ] | One-per-instrument limit | P2 | |
-| [ ] | Record from Rack view (post-effects) | P3 | |
+| Status | Item                                                               | Priority | Notes                                                    |
+|--------|--------------------------------------------------------------------|----------|----------------------------------------------------------|
+| [x]    | `ProcessContext<'a>` with `audio_input: Option<&'a [f32]>`         | P0       | ~49 modules updated                                      |
+| [x]    | Engine drains consumer into buffer per block                       | P0       | Drain-all, no RT alloc                                   |
+| [x]    | `AudioInputModule` reads from ProcessContext                       | P0       |                                                          |
+| [x]    | `EngineCommand::SetAudioInputConsumer` / `ClearAudioInputConsumer` | P0       |                                                          |
+| [x]    | Registered in module_factory                                       | P0       | Prefix "ain"                                             |
+| [x]    | Wire `SetAudioInputConsumer` from GUI monitoring start             | P1       | v0.252.0                                                 |
+| [x]    | Monitoring/recording controls in Rack patch module panel           | P1       | v0.252.0 — monitor toggle, rec button, peak meter, timer |
+| [ ]    | UI "Live" indicator when input is active                           | P2       |                                                          |
+| [ ]    | One-per-instrument limit                                           | P2       |                                                          |
+| [ ]    | Record from Rack view (post-effects)                               | P3       |                                                          |
 
 ### Phase 6 — Bundle Project Format
 
-| Status | Item | Priority | Notes |
-|--------|------|----------|-------|
-| [x] | `zip` crate dependency | P0 | v2.4, deflate |
-| [x] | `save_bundle()` — ZIP with project.json + samples/*.wav + metadata.json | P0 | |
-| [x] | `load_bundle()` — extract, restore samples with `add_with_id` | P0 | Preserves sample IDs |
-| [x] | Auto-detect ZIP vs JSON in `load_file()` | P0 | Magic bytes |
-| [x] | Smart save (bundle when samples exist, JSON otherwise) | P0 | |
-| [x] | Clear library before bundle load | P0 | Fixed after review |
-| [x] | Skip non-numeric WAV filenames in bundle | P0 | Fixed after review |
-| [ ] | `sample_refs` field in ProjectFile | P2 | Works without it (all samples saved) |
-| [ ] | Patch bundle format (`.pertpatch`) | P2 | |
-| [ ] | Sample deduplication | P2 | |
-| [ ] | v1 → v2 migration path | P2 | v1 JSON still loads fine |
+| Status | Item                                                                    | Priority | Notes                                |
+|--------|-------------------------------------------------------------------------|----------|--------------------------------------|
+| [x]    | `zip` crate dependency                                                  | P0       | v2.4, deflate                        |
+| [x]    | `save_bundle()` — ZIP with project.json + samples/*.wav + metadata.json | P0       |                                      |
+| [x]    | `load_bundle()` — extract, restore samples with `add_with_id`           | P0       | Preserves sample IDs                 |
+| [x]    | Auto-detect ZIP vs JSON in `load_file()`                                | P0       | Magic bytes                          |
+| [x]    | Smart save (bundle when samples exist, JSON otherwise)                  | P0       |                                      |
+| [x]    | Clear library before bundle load                                        | P0       | Fixed after review                   |
+| [x]    | Skip non-numeric WAV filenames in bundle                                | P0       | Fixed after review                   |
+| [ ]    | `sample_refs` field in ProjectFile                                      | P2       | Works without it (all samples saved) |
+| [ ]    | Patch bundle format (`.pertpatch`)                                      | P2       |                                      |
+| [ ]    | Sample deduplication                                                    | P2       |                                      |
+| [ ]    | v1 → v2 migration path                                                  | P2       | v1 JSON still loads fine             |
 
 ### Phase 7 — MCP Integration
 
-| Status | Item | Priority | Notes |
-|--------|------|----------|-------|
-| [x] | `SampleInfo`, `InputStateInfo`, `InputDeviceInfo` types | P0 | |
-| [x] | `list_samples` (with name filter) | P0 | |
-| [x] | `import_sample` | P0 | |
-| [x] | `delete_sample` | P0 | |
-| [x] | `rename_sample` | P0 | |
-| [x] | `set_sample_root_note` | P0 | |
-| [x] | `normalize_sample` | P0 | |
-| [x] | `reverse_sample` | P0 | |
-| [x] | `trim_sample_silence` | P0 | |
-| [x] | `list_input_devices` | P0 | Returns empty (GUI-side state) |
-| [x] | `get_input_state` | P0 | Returns idle (GUI-side state) |
-| [x] | Shared `SampleLibrary` between GUI and MCP | P0 | `Arc<RwLock<>>` |
-| [ ] | `get_sample_info` (detailed: peak, RMS, DC offset) | P1 | |
-| [ ] | `duplicate_sample` | P2 | |
-| [ ] | `export_sample` | P1 | |
-| [ ] | `set_sample_loop` | P1 | |
-| [ ] | `set_sample_crop` | P1 | |
-| [ ] | `normalize_sample` target_db argument | P2 | Currently always 0 dB |
-| [ ] | `set_input_device`, `start_monitoring`, `stop_monitoring` | P1 | Need GUI-side ops via McpSharedState |
-| [ ] | `start_recording`, `stop_recording` | P1 | Need GUI-side ops via McpSharedState |
-| [ ] | `assign_sample_to_module` | P1 | |
-| [ ] | `get_sampler_state` | P1 | |
-| [ ] | `set_sampler_parameter` | P1 | |
-| [ ] | `preview_sample`, `stop_preview` | P2 | |
-| [ ] | `pending_sample_ops` in McpSharedState | P1 | Needed for GUI-side MCP ops |
-| [ ] | MCP server instructions "Sampling" section | P2 | |
+| Status | Item                                                                           | Priority | Notes                                                   |
+|--------|--------------------------------------------------------------------------------|----------|---------------------------------------------------------|
+| [x]    | `SampleInfo`, `InputStateInfo`, `InputDeviceInfo` types                        | P0       |                                                         |
+| [x]    | `list_samples` (with name filter)                                              | P0       |                                                         |
+| [x]    | `import_sample`                                                                | P0       |                                                         |
+| [x]    | `delete_sample`                                                                | P0       |                                                         |
+| [x]    | `rename_sample`                                                                | P0       |                                                         |
+| [x]    | `set_sample_root_note`                                                         | P0       |                                                         |
+| [x]    | `normalize_sample`                                                             | P0       |                                                         |
+| [x]    | `reverse_sample`                                                               | P0       |                                                         |
+| [x]    | `trim_sample_silence`                                                          | P0       |                                                         |
+| [x]    | `list_input_devices`                                                           | P0       | Returns empty (GUI-side state)                          |
+| [x]    | `get_input_state`                                                              | P0       | Returns idle (GUI-side state)                           |
+| [x]    | Shared `SampleLibrary` between GUI and MCP                                     | P0       | `Arc<RwLock<>>`                                         |
+| [ ]    | Wire `list_input_devices` to real backend enumeration (not stubbed empty list) | P1       | `mcp_bridge` TODO: currently `Ok(Vec::new())`           |
+| [ ]    | Wire `get_input_state` to real monitoring/recording state (not hardcoded idle) | P1       | `mcp_bridge` TODO: currently returns static idle values |
+| [ ]    | `get_sample_info` (detailed: peak, RMS, DC offset)                             | P1       |                                                         |
+| [ ]    | `duplicate_sample`                                                             | P2       |                                                         |
+| [ ]    | `export_sample`                                                                | P1       |                                                         |
+| [ ]    | `set_sample_loop`                                                              | P1       |                                                         |
+| [ ]    | `set_sample_crop`                                                              | P1       |                                                         |
+| [ ]    | `normalize_sample` target_db argument                                          | P2       | Currently always 0 dB                                   |
+| [ ]    | `set_input_device`, `start_monitoring`, `stop_monitoring`                      | P1       | Need GUI-side ops via McpSharedState                    |
+| [ ]    | `start_recording`, `stop_recording`                                            | P1       | Need GUI-side ops via McpSharedState                    |
+| [ ]    | `assign_sample_to_module`                                                      | P1       |                                                         |
+| [ ]    | `get_sampler_state`                                                            | P1       |                                                         |
+| [ ]    | `set_sampler_parameter`                                                        | P1       |                                                         |
+| [ ]    | `preview_sample`, `stop_preview`                                               | P2       |                                                         |
+| [ ]    | `pending_sample_ops` in McpSharedState                                         | P1       | Needed for GUI-side MCP ops                             |
+| [ ]    | MCP server instructions "Sampling" section                                     | P2       |                                                         |
 
 ### Phase 8 — Polish & Integration
 
-| Status | Item | Priority | Notes |
-|--------|------|----------|-------|
-| [x] | Sample memory indicator in top bar | P1 | |
-| [x] | Version bump + history docs | P0 | v0.251.0, v0.252.0 |
-| [ ] | Sample preview in Rack view (click to audition) | P2 | |
-| [ ] | Drag-and-drop WAV from file manager | P2 | |
-| [ ] | Undo/redo for sample edits | P2 | |
-| [ ] | Sample usage tracking (which instruments use each) | P2 | |
-| [ ] | Warning on delete if in use | P2 | |
-| [ ] | Performance testing >10 min samples | P2 | |
-| [ ] | Memory management: unload unused, streaming | P3 | |
+| Status | Item                                               | Priority | Notes              |
+|--------|----------------------------------------------------|----------|--------------------|
+| [x]    | Sample memory indicator in top bar                 | P1       |                    |
+| [x]    | Version bump + history docs                        | P0       | v0.251.0, v0.252.0 |
+| [ ]    | Sample preview in Rack view (click to audition)    | P2       |                    |
+| [ ]    | Drag-and-drop WAV from file manager                | P2       |                    |
+| [ ]    | Undo/redo for sample edits                         | P2       |                    |
+| [ ]    | Sample usage tracking (which instruments use each) | P2       |                    |
+| [ ]    | Warning on delete if in use                        | P2       |                    |
+| [ ]    | Performance testing >10 min samples                | P2       |                    |
+| [ ]    | Memory management: unload unused, streaming        | P3       |                    |
 
 ### Section 11 — Important Features
 
-| Status | Item | Priority | Notes |
-|--------|------|----------|-------|
-| [x] | Root note / pitch mapping | P0 | In SamplerParam |
-| [x] | Sample rate conversion on import | P0 | Linear interpolation |
-| [ ] | Crossfade at loop points | P2 | Field exists, DSP missing |
-| [ ] | Anti-alias LP filter for pitch-up | P3 | |
-| [x] | One-shot / Sustain / Loop modes | P0 | |
-| [x] | Amplitude envelope integration (via patch graph) | P0 | |
-| [x] | Normalize function | P0 | |
-| [ ] | Monitoring latency warning | P2 | |
-| [x] | Silence detection / auto-trim | P0 | |
-| [x] | Memory pressure indicator | P1 | Top bar + list footer |
+| Status | Item                                             | Priority | Notes                     |
+|--------|--------------------------------------------------|----------|---------------------------|
+| [x]    | Root note / pitch mapping                        | P0       | In SamplerParam           |
+| [x]    | Sample rate conversion on import                 | P0       | Linear interpolation      |
+| [ ]    | Crossfade at loop points                         | P2       | Field exists, DSP missing |
+| [ ]    | Anti-alias LP filter for pitch-up                | P3       |                           |
+| [x]    | One-shot / Sustain / Loop modes                  | P0       |                           |
+| [x]    | Amplitude envelope integration (via patch graph) | P0       |                           |
+| [x]    | Normalize function                               | P0       |                           |
+| [ ]    | Monitoring latency warning                       | P2       |                           |
+| [x]    | Silence detection / auto-trim                    | P0       |                           |
+| [x]    | Memory pressure indicator                        | P1       | Top bar + list footer     |
 
 ### Section 12 — Future Feature Ideas
 
-| Status | Item | Priority | Notes |
-|--------|------|----------|-------|
-| [ ] | Multi-sample instruments (key/velocity layers) | P3 | |
-| [ ] | Sample slicing (drum loops → individual hits) | P3 | |
-| [ ] | Timestretch (phase vocoder / WSOLA) | P3 | |
-| [ ] | Granular sampler (GrainSource::Sample) | P3 | |
-| [ ] | Audio track in sequencer | P3 | |
-| [ ] | Resample (record engine output as sample) | P3 | |
+| Status | Item                                           | Priority | Notes |
+|--------|------------------------------------------------|----------|-------|
+| [ ]    | Multi-sample instruments (key/velocity layers) | P3       |       |
+| [ ]    | Sample slicing (drum loops → individual hits)  | P3       |       |
+| [ ]    | Timestretch (phase vocoder / WSOLA)            | P3       |       |
+| [ ]    | Granular sampler (GrainSource::Sample)         | P3       |       |
+| [ ]    | Audio track in sequencer                       | P3       |       |
+| [ ]    | Resample (record engine output as sample)      | P3       |       |
 
 ### Summary
 
-| Category | Done | Remaining | Total |
-|----------|------|-----------|-------|
-| P0 (must have) | 52 | 0 | 52 |
-| P1 (should have) | 11 | 11 | 22 |
-| P2 (nice to have) | 0 | 23 | 23 |
-| P3 (future) | 0 | 13 | 13 |
-| **Total** | **63** | **47** | **110** |
+| Category          | Done   | Remaining | Total   |
+|-------------------|--------|-----------|---------|
+| P0 (must have)    | 52     | 0         | 52      |
+| P1 (should have)  | 11     | 13        | 24      |
+| P2 (nice to have) | 0      | 23        | 23      |
+| P3 (future)       | 0      | 13        | 13      |
+| **Total**         | **63** | **49**    | **112** |
 
 All P0 items are complete. The most impactful remaining work is the P1 items:
 engine-side sample loading (`LoadSample` command), MCP recording/monitoring tools
@@ -1222,155 +1225,55 @@ engine-side sample loading (`LoadSample` command), MCP recording/monitoring tool
 
 ---
 
-## 10. Implementation Phases
+## 10. Security & Quality Gates
 
-### Phase 1 — Foundation (sample data + WAV I/O)
+This section defines cross-cutting requirements that apply to all phases. The
+implementation status tables above remain the single source of truth for phase
+progress.
 
-**Goal:** Load and save WAV files, core data types.
+### 10.1 Bundle I/O Security Requirements
 
-1. Create `synth_sampler` crate with workspace dependency
-2. Implement `SampleId`, `SampleMeta`, `Sample`, `LoopRegion`, `CropRegion`, `FrameIndex`, `PlaybackPosition`,
-   `PlaybackSpeed` types (re-export `ChannelCount` and `FrameCount` from `synth_core`; add `Serialize/Deserialize` to
-   `FrameCount` first)
-3. Implement `SampleLibrary` with add/remove/get/list
-4. Implement `load_wav()` and `save_wav()` using `hound`
-5. Implement basic sample rate conversion (linear interpolation)
-6. Add unit tests for WAV round-trip and library operations
+For `save_bundle()` / `load_bundle()` and all ZIP handling:
 
-**Deliverable:** Can load WAV files into memory and inspect metadata.
+1. Reject entries with absolute paths, `..`, drive-letter prefixes, or path separators that escape expected directories.
+2. Enforce hard size limits:
+    - per-entry compressed size
+    - per-entry uncompressed size
+    - total uncompressed size per bundle
+    - max number of entries
+3. Validate expected layout (`project.json`, `metadata.json`, `samples/*.wav`) and ignore unknown files by default.
+4. Validate WAV headers and channel/sample-rate ranges before allocation.
+5. Fail closed on malformed archives (no partial extraction side-effects).
 
----
+### 10.2 Real-Time Audio Quality Gates
 
-### Phase 2 — Sample View (GUI)
+For monitoring, recording, and live input routing:
 
-**Goal:** Browse, import, edit samples in a dedicated view.
+1. No allocations or blocking locks on the audio callback / engine audio thread.
+2. Ring-buffer overflow policy must be explicit and measurable (drop oldest/newest, with counters).
+3. Define and track runtime metrics:
+    - callback underruns/overruns (xruns)
+    - dropped input samples/frames
+    - max processing time per block
+4. Monitoring latency target and warning:
+    - target < 20 ms end-to-end for normal configs
+    - UI warning badge when estimated latency exceeds threshold
+5. Add a long-run stability test profile (>= 30 min monitoring/recording session).
 
-1. Add `AppView::Sample` to navigation
-2. Create `gui/sample_view.rs` with the layout described in section 5
-3. Implement sample list panel (left sidebar)
-4. Implement waveform display widget with zoom and scroll
-5. Implement crop handles (drag to set start/end)
-6. Implement loop region markers
-7. Implement properties panel (name, root note, loop settings)
-8. Implement toolbar actions: Import WAV, Export WAV, Delete, Normalize, Reverse, Auto-trim
-9. Implement waveform peak cache for rendering performance
-10. Wire up `SampleLibrary` to the GUI via `SynthSession`
-11. Add sample memory indicator to top bar (next to CPU meter)
+### 10.3 Definition of Done by Priority
 
-**Deliverable:** Fully functional sample browser and editor view.
+Before a priority bucket is considered complete:
 
----
-
-### Phase 3 — Audio Input (recording)
-
-**Goal:** Record audio from microphone/line-in.
-
-1. Add `start_input()` to `AudioBackend` trait (device enumeration already exists via `devices()`)
-2. Implement input stream in `CpalBackend` — cpal callback writes to **two** `HeapProd<f32>` (engine + GUI)
-3. Create `AudioInputManager` with dual ring buffers, monitoring and recording state machine
-4. Add input device selector dropdown to Sample view bottom bar
-5. Add level meter showing real-time input level
-6. Add Monitor toggle (pass input audio to output)
-7. Add Record button: starts capturing to a growing buffer
-8. On stop recording: create `Sample` from captured data and add to library
-9. Add recording countdown / pre-roll option
-
-**Deliverable:** Can record audio from microphone directly into sample library.
-
----
-
-### Phase 4 — Sampler Module (in Rack)
-
-**Goal:** Play samples as instruments in the patch editor.
-
-1. Add `ModuleType::Sampler` variant
-2. Implement `SamplerParam` enum in `synth_core`
-3. Implement `SamplePlayer` DSP with pitch tracking and interpolation
-4. Implement `SamplerModule` as `PolyModule` in `synth_modules`
-5. Add engine-side sample cache (`HashMap<SampleId, SampleCacheEntry>`)
-6. Add `EngineCommand::LoadSample` / `UnloadSample` handling
-7. Register in `module_factory.rs`
-8. Create module panel UI in Rack view with sample selector and mini waveform
-9. Wire NoteOn/NoteOff to sample playback with velocity sensitivity
-
-**Deliverable:** Can build patches using samples as sound sources alongside oscillators.
-
----
-
-### Phase 5 — Live Audio Input Module
-
-**Goal:** Route live audio input into the patch graph.
-
-1. **Refactor `ProcessContext` to `ProcessContext<'a>`** — add `audio_input: Option<&'a [f32]>` field.
-   Update `PolyModule::process()` and `AudioEffect::process()` trait signatures. This is a mechanical
-   change touching ~35 existing modules (signature only, no logic change). Do this first as a
-   standalone commit.
-2. Add `audio_input_buffer: Vec<f32>` and `audio_input_consumer: Option<HeapCons<f32>>` to `SynthEngine`
-3. In `SynthEngine::process()`, drain the consumer into `audio_input_buffer` once per block (before voice processing)
-4. Pass `audio_input` reference through `ProcessContext` to all voice modules
-5. Create `AudioInputModule` (implements `PolyModule`) — reads from `ProcessContext::audio_input`
-   instead of the ring buffer directly. All voice instances read the same immutable buffer.
-   Only runs in active voices (user must play a note to hear input — same as Noise module).
-6. Add `EngineCommand::SetAudioInputConsumer`
-7. Module has `"out"` port — can be connected to filters, effects, etc.
-8. Add to module factory as a special module (one per instrument max)
-9. UI shows input level and "Live" indicator when active
-10. Enable recording directly from the Rack view (records the input module's output post-effects)
-
-**Deliverable:** Real-time audio input usable as a signal source in any patch.
-
----
-
-### Phase 6 — Bundle Project Format
-
-**Goal:** Save/load projects with embedded samples.
-
-1. Add `zip` crate dependency
-2. Implement `save_bundle()` — ZIP with project.json + samples/ + metadata.json
-3. Implement `load_bundle()` — extract and load samples into library
-4. Auto-detect format in `load_file()` (ZIP magic bytes vs JSON)
-5. Update `ProjectFile` with `sample_refs` field
-6. Implement patch bundle format (`.pertpatch`) for single instruments with samples
-7. Handle sample deduplication (same sample used by multiple instruments)
-8. Migration: opening a v1 project still works, saving creates v2 bundle
-
-**Deliverable:** Projects with samples save/load as self-contained bundles.
-
----
-
-### Phase 7 — MCP Integration
-
-**Goal:** Full remote control of sampling via MCP (see [section 9](#9-mcp-integration-full-remote-control) for details).
-
-1. Extend `SynthBridge` trait with all sample library methods
-2. Implement `list_samples`, `get_sample_info`, `import_sample`, `delete_sample`, `rename_sample`, `duplicate_sample`,
-   `export_sample` tools
-3. Implement sample editing tools: `set_sample_root_note`, `set_sample_loop`, `set_sample_crop`, `normalize_sample`,
-   `reverse_sample`, `trim_silence`
-4. Implement audio input tools: `list_input_devices`, `get_input_state`, `set_input_device`, `start_monitoring`,
-   `stop_monitoring`, `start_recording`, `stop_recording`
-5. Implement sampler module tools: `assign_sample_to_module`, `get_sampler_state`, `set_sampler_parameter`,
-   `preview_sample`, `stop_preview`
-6. Extend `McpSharedState` with `pending_sample_ops` and `sample_library_snapshot` for bidirectional GUI sync
-7. Add rich AI descriptions with parameter ranges, units, and usage hints to all tools
-8. Update MCP server instructions with "Sampling" workflow section
-9. Test full AI workflow: import → edit → assign → play
-
-**Deliverable:** AI agents can fully manage samples, record audio, and build sampler instruments remotely.
-
----
-
-### Phase 8 — Polish & Integration
-
-**Goal:** Tie everything together, edge cases, UX refinement.
-
-1. Sample preview in the Rack view (click sample name to audition)
-2. Drag-and-drop: drag WAV files from OS file manager into Sample view
-3. Undo/redo for sample edits (crop, normalize, reverse)
-4. Sample usage tracking (show which instruments use each sample)
-5. Warning on delete if sample is in use
-6. Performance testing with large samples (>10 minutes)
-7. Memory management: unload unused samples, streaming for very large files
+1. **P0**:
+    - Feature works end-to-end in GUI and engine.
+    - Unit/integration tests exist for core behavior and edge cases.
+    - `cargo check` clean for touched crates.
+2. **P1**:
+    - Includes at least one regression test per bug class fixed.
+    - Clear observability (events/log counters) for operational debugging.
+3. **P2/P3**:
+    - Scope documented with constraints/trade-offs.
+    - No regressions to P0/P1 acceptance criteria.
 
 ---
 

@@ -72,6 +72,13 @@ impl BiquadState {
 }
 
 /// 3-band parametric EQ with low shelf, mid peak, and high shelf.
+///
+/// # Multiband processing
+///
+/// `synth_dsp::LinkwitzRiley` provides a phase-aligned crossover filter suitable
+/// for splitting audio into frequency bands. If this EQ is extended to multiband
+/// processing in the future, `LinkwitzRiley` can be used as the band-splitting
+/// stage before per-band processing.
 pub struct Eq {
     // Parameters
     low_freq: Hertz,

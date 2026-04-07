@@ -17,7 +17,7 @@ use synth_core::{
     Semitones, Velocity,
 };
 use synth_core::{FilterMode, FilterModel, FilterParam, ModuleType, Param};
-use synth_dsp::{AcidFilter, FluidFilter, ScreamerFilter, SvfCoeffs, SvfFilterType};
+use synth_dsp::{AcidFilter, FluidFilter, KarlsenFilter, ScreamerFilter, SvfCoeffs, SvfFilterType};
 
 /// State Variable Filter with multiple modes.
 #[derive(Clone)]
@@ -45,6 +45,7 @@ pub struct Filter {
     fluid: FluidFilter,
     screamer: ScreamerFilter,
     acid: AcidFilter,
+    karlsen: KarlsenFilter,
 
     // Mod matrix offsets (applied before processing, cleared after)
     /// Cutoff modulation offset in semitones.
@@ -75,6 +76,7 @@ impl Filter {
             fluid: FluidFilter::default(),
             screamer: ScreamerFilter::default(),
             acid: AcidFilter::default(),
+            karlsen: KarlsenFilter::new(),
             mod_offset_cutoff: Semitones::ZERO,
             mod_offset_resonance: NormalizedValue::MIN,
             output_buffer: AudioBuffer::new(1024),
@@ -110,6 +112,7 @@ impl Filter {
         self.fluid.reset();
         self.screamer.reset();
         self.acid.reset();
+        self.karlsen.reset();
     }
 
     #[inline]
@@ -163,6 +166,19 @@ impl Filter {
                     self.drive,
                     svf_type,
                 )
+            }
+            FilterModel::Karlsen => {
+                // Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/240-karlsen-fast-ladder.rst
+                // From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+                let driven = if self.drive.as_f32() > 1.0 {
+                    crate::math::soft_clip(input * self.drive.as_f32())
+                } else {
+                    input * self.drive.as_f32()
+                };
+                let normalized_cutoff =
+                    NormalizedValue::new(cutoff.as_f32() / (self.sample_rate.as_f32() * 0.5));
+                self.karlsen
+                    .process(driven, normalized_cutoff, NormalizedValue::new(resonance))
             }
         }
     }

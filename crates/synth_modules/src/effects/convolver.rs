@@ -21,6 +21,18 @@ const PARTITION_SIZE: usize = 512;
 const MAX_IR_SAMPLES: usize = 96_000;
 
 /// Convolution reverb with generated impulse responses.
+///
+/// # Dynamic convolution (future integration point)
+///
+/// The helpers `crate::math::buffer_rms` and `crate::math::dynamic_convolution_weights`
+/// provide the building blocks for dynamic (amplitude-dependent) convolution, where
+/// multiple IR buffers captured at different input levels are crossfaded based on the
+/// current input RMS. This convolver currently uses a single IR per type, so dynamic
+/// convolution would require storing multiple IR buffers per type and running parallel
+/// `PartitionedConvolver` instances with crossfade mixing.
+///
+/// TODO: Dynamic convolution support — requires multiple IR buffers per type and
+/// crossfade logic using `buffer_rms` / `dynamic_convolution_weights`.
 pub struct Convolver {
     // Parameters
     ir_type: ImpulseResponse,

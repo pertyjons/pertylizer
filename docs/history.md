@@ -1,5 +1,52 @@
 # Version History
 
+## [0.260.0] - 2026-04-07
+### MusicDSP feature plan: 26 algorithms from musicdsp.org
+
+**New voice modules (8):**
+- **Ladder Filter** — Moog-style 24dB/oct ladder (registered existing `LadderFilter`)
+- **Drift Generator** — smooth bounded random modulation for analog-style pitch/filter drift
+- **Chaotic Oscillators** — Rössler and Lorenz chaotic systems for complex modulation (X+Y outputs)
+- **Formant Filter** — vowel-shaping bandpass bank (A-E-I-O-U morphing with CV input)
+- **Fooglers** — micro 256-sample delay-line physical modeling synthesis
+- **Beat Detector** — envelope-based transient detection with gate output
+- **PADsynth** — ZynAddSubFX wavetable generation with bandwidth spreading per partial
+- **AM Formant** — vocal synthesis using amplitude modulation with formant frequency tables
+
+**New effects (2):**
+- **Tilt EQ** — single-knob spectral tilt equalizer
+- **Univibe** — Univox Univibe emulation with vactrol-modeled all-pass cascade
+
+**New options in existing modules:**
+- **DSF Saw** waveform in Oscillator (band-limited via harmonic summation)
+- **Karlsen** filter model in Filter (constant-Q 4-pole ladder)
+- **Variable Clip** distortion mode (arctan with drive-mapped hardness)
+- **Smooth Random** LFO waveform (cosine-interpolated random targets)
+- **Stereo Rotation** parameter in Mid-Side effect (2D rotation matrix)
+- **Dither** toggle in Stereo Output (24-bit noise-shaped dithering)
+
+**DSP primitives and analysis functions:**
+- Fast tanh (Padé approximation, replaces `f32::tanh` in `soft_clip`)
+- MinBLEP table, DSF sawtooth, Linkwitz-Riley crossover, Karlsen filter
+- Goertzel tone detection (wired into Pitch Tracker confidence)
+- Early reflections (wired into Reverb pre-FDN stage)
+- LPC analysis (autocorrelation + Levinson-Durbin), noise-shaped dither
+- Dynamic convolution weights, cubic/parabolic envelope curves
+- `Hertz::ZERO` constant added
+
+**Patch improvements (10):**
+- acid_bass → Karlsen filter, chaos_drone → ChaoticOsc modulation
+- deep_space_pad/vintage_lead → DriftGenerator, warm_evolving → Smooth Random LFO
+- string_ensemble → Univibe, vocal_pad → FormantFilter
+- spectral_drone → ChaoticOsc, screamer_lead → TiltEQ, stereo_unison_pad → MidSide rotation
+
+**Bug fixes:**
+- VariableClip hardness was 0-0.02 instead of 0-1 (drive/50 → drive)
+- ChaoticOsc Y output was constant per block + allocated in process()
+- Beat detector comment said "2nd-order" but was one-pole
+- LPC plan text said "warped autocorrelation" but implementation is standard
+- Missing musicdsp attribution comments in filter.rs, lfo.rs, distortion.rs
+
 ## [0.255.0] - 2026-04-07
 ### DSP fixes, new biquad filters, and project housekeeping
 - **New biquad filter types** — notch, peaking EQ, low shelf, high shelf added to `BiquadCoeffs` (RBJ Cookbook)

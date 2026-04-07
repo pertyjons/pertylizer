@@ -97,6 +97,8 @@ pub enum MixerParam {
     Mute(bool),
     /// Limiter enable toggle
     Limit(bool),
+    /// Dither enable toggle
+    Dither(bool),
 }
 
 impl MixerParam {
@@ -117,6 +119,7 @@ impl MixerParam {
             Self::Master(_) => "Master",
             Self::Mute(_) => "Mute",
             Self::Limit(_) => "Limit",
+            Self::Dither(_) => "Dither",
         }
     }
 
@@ -131,7 +134,7 @@ impl MixerParam {
             | Self::Input7(g)
             | Self::Input8(g)
             | Self::Master(g) => g.as_f32(),
-            Self::Mute(b) | Self::Limit(b) => {
+            Self::Mute(b) | Self::Limit(b) | Self::Dither(b) => {
                 if *b {
                     1.0
                 } else {
@@ -154,6 +157,7 @@ impl MixerParam {
             Self::Master(_) => Self::Master(Gain::new(value)),
             Self::Mute(_) => Self::Mute(value > 0.5),
             Self::Limit(_) => Self::Limit(value > 0.5),
+            Self::Dither(_) => Self::Dither(value > 0.5),
         }
     }
 }

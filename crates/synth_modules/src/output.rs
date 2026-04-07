@@ -45,6 +45,12 @@ pub struct StereoOutput {
     output_buffer: Vec<f32>,
     /// Mute state
     mute_state: MuteState,
+    /// Whether noise-shaped dithering is enabled
+    dither_enabled: bool,
+    /// Dither error feedback state for left channel (internal filter state, raw f32 OK)
+    dither_error_l: f32,
+    /// Dither error feedback state for right channel (internal filter state, raw f32 OK)
+    dither_error_r: f32,
 }
 
 impl StereoOutput {
@@ -59,6 +65,9 @@ impl StereoOutput {
             peak_r: Amplitude::ZERO,
             output_buffer: vec![0.0; 1024 * 2],
             mute_state: MuteState::Unmuted,
+            dither_enabled: false,
+            dither_error_l: 0.0,
+            dither_error_r: 0.0,
         }
     }
 
@@ -187,6 +196,17 @@ impl Describable for StereoOutput {
                     .default(0.0)
                     .widget(WidgetHint::Toggle),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "dither",
+                    Param::Mixer(MixerParam::Dither(false)),
+                    "Dither",
+                )
+                .description("Enable 24-bit noise-shaped dithering")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .widget(WidgetHint::Toggle),
+            )
             .tag("output")
             .tag("master")
             .tag("stereo")
@@ -253,13 +273,23 @@ impl PolyModule for StereoOutput {
                 self.soft_limit_stereo(gained)
             };
 
+            // Apply noise-shaped dither for 24-bit output if enabled
+            let final_sample = if self.dither_enabled {
+                StereoSample::new(
+                    crate::math::noise_shaped_dither(processed.left, 24, &mut self.dither_error_l),
+                    crate::math::noise_shaped_dither(processed.right, 24, &mut self.dither_error_r),
+                )
+            } else {
+                processed
+            };
+
             // Store in interleaved output buffer
-            self.output_buffer[i * 2] = processed.left;
-            self.output_buffer[i * 2 + 1] = processed.right;
+            self.output_buffer[i * 2] = final_sample.left;
+            self.output_buffer[i * 2 + 1] = final_sample.right;
 
             // Track peaks
-            peak_l.update_peak(processed.left);
-            peak_r.update_peak(processed.right);
+            peak_l.update_peak(final_sample.left);
+            peak_r.update_peak(final_sample.right);
         }
 
         // Update peak meters with decay
@@ -305,6 +335,9 @@ impl PolyModule for StereoOutput {
             Param::Mixer(MixerParam::Limit(l)) => {
                 self.limit_mode = LimitMode::from(l);
             }
+            Param::Mixer(MixerParam::Dither(d)) => {
+                self.dither_enabled = d;
+            }
             Param::Amplifier(AmplifierParam::Pan(p)) => {
                 self.pan = p;
             }
@@ -323,6 +356,9 @@ impl PolyModule for StereoOutput {
             } else {
                 0.0
             }),
+            Param::Mixer(MixerParam::Dither(_)) => {
+                Some(if self.dither_enabled { 1.0 } else { 0.0 })
+            }
             Param::Amplifier(AmplifierParam::Pan(_)) => Some(self.pan.as_f32()),
             _ => None,
         }
@@ -333,6 +369,7 @@ impl PolyModule for StereoOutput {
             Param::Mixer(MixerParam::Master(self.master_level)),
             Param::Mixer(MixerParam::Mute(self.mute_state.is_muted())),
             Param::Mixer(MixerParam::Limit(self.limit_mode.is_enabled())),
+            Param::Mixer(MixerParam::Dither(self.dither_enabled)),
             Param::Amplifier(AmplifierParam::Pan(self.pan)),
         ]
     }
@@ -345,6 +382,8 @@ impl PolyModule for StereoOutput {
         self.peak_l = Amplitude::ZERO;
         self.peak_r = Amplitude::ZERO;
         self.output_buffer.clear();
+        self.dither_error_l = 0.0;
+        self.dither_error_r = 0.0;
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}

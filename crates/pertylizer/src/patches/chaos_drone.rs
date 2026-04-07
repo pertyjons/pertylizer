@@ -7,8 +7,10 @@ use synth_core::ModuleType;
 pub fn patch_chaos_drone() -> Patch {
     let mut patch = Patch::new("Chaos Drone");
     patch.author = Some(Author::from("Pertylizer"));
-    patch.description =
-        Some("Evolving chaotic textures using the Lorenz strange attractor.".to_string());
+    patch.description = Some(
+        "Evolving chaotic textures using Lorenz attractor with Rossler chaotic modulation."
+            .to_string(),
+    );
     patch.notes = Some(
         r"
 SIGNAL FLOW:
@@ -26,7 +28,8 @@ then processed with reverb for an ethereal, spacious sound.
 
 MODULATION:
 An LFO slowly modulates Param A, causing the chaos to speed up and slow down
-over time, creating organic variation in the texture.
+over time, creating organic variation in the texture. A Rossler ChaoticOsc
+adds unpredictable filter cutoff modulation for extra evolving character.
 
 TRY: Play sustained notes and let the chaos evolve. Each note will sound
 different due to the chaotic nature of the algorithm.
@@ -119,7 +122,19 @@ different due to the chaotic nature of the algorithm.
             .build(),
     );
 
+    // ChaoticOsc - Rossler system for filter modulation (cha-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::ChaoticOsc)
+            .position(50.0, 350.0)
+            .param_choice("system", "rossler")
+            .param_f("rate", 0.5)
+            .param_f("chaos", 0.7)
+            .param_f("depth", 0.4)
+            .build(),
+    );
+
     // Connections
+    patch.add_connection("cha-1", "out", "flt-1", "cutoff_cv");
     patch.add_connection("mth-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");

@@ -18,15 +18,17 @@ pub enum Waveform {
     Sawtooth,
     Square,
     Pulse,
+    DsfSaw,
 }
 
 impl Waveform {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Sine,
         Self::Triangle,
         Self::Sawtooth,
         Self::Square,
         Self::Pulse,
+        Self::DsfSaw,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -36,6 +38,7 @@ impl Waveform {
             Self::Sawtooth => "Sawtooth",
             Self::Square => "Square",
             Self::Pulse => "Pulse",
+            Self::DsfSaw => "DSF Saw",
         }
     }
 
@@ -46,6 +49,7 @@ impl Waveform {
             Self::Sawtooth => "sawtooth",
             Self::Square => "square",
             Self::Pulse => "pulse",
+            Self::DsfSaw => "dsf_saw",
         }
     }
 
@@ -56,6 +60,7 @@ impl Waveform {
             "sawtooth" => Some(Self::Sawtooth),
             "square" => Some(Self::Square),
             "pulse" => Some(Self::Pulse),
+            "dsf_saw" => Some(Self::DsfSaw),
             // Legacy support: map noise to sine (use NoiseGenerator module instead)
             "noise" | "pink_noise" => Some(Self::Sine),
             _ => None,

@@ -17,14 +17,15 @@ SIGNAL FLOW:
 Wavetable Osc (Warm bank) -> Filter (Fluid, low morph) -> Amplifier -> Reverb -> Output
 
 The Warm wavetable contains soft analog-style variants with harmonic
-saturation. A very slow LFO gently sweeps through the table, creating
-subtle timbral shifts over time — perfect for ambient backgrounds.
+saturation. A smooth random LFO organically sweeps through the table,
+creating unpredictable timbral shifts over time — perfect for ambient
+backgrounds with a living, breathing quality.
 
 The Fluid filter at low morph adds gentle Oberheim warmth without
 coloring the sound too much. Deep reverb creates an immersive space.
 
 MODULATION:
-- LFO 1 -> Wavetable Position CV (very slow timbral drift)
+- LFO 1 -> Wavetable Position CV (organic random timbral drift)
 - LFO 2 -> Filter Cutoff CV (subtle filter movement)
 - Env 1 -> Amplifier (very slow fade in/out)
 
@@ -78,7 +79,7 @@ Layer multiple notes for rich ambient textures.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
             .position(50.0, 250.0)
-            .param_choice("waveform", "sine")
+            .param_choice("waveform", "smooth_random")
             .param_f("rate", 0.03)
             .param_f("depth", 0.5)
             .build(),

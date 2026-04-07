@@ -1064,7 +1064,8 @@ pub trait AudioEffect: Describable + Send {
 
 // Re-export waveform and filter types from typed_params
 pub use crate::params::{
-    DelayMode, DistortionMode, FilterMode, FilterModel, LfoWaveform, MathAlgo, Waveform,
+    ChaoticSystem, DelayMode, DistortionMode, FilterMode, FilterModel, LfoWaveform, MathAlgo,
+    Waveform,
 };
 
 // Type alias for backward compatibility
@@ -1103,6 +1104,15 @@ impl FilterModel {
         Self::ALL
             .iter()
             .map(|m| ChoiceOption::new(m.id(), m.name()))
+            .collect()
+    }
+}
+
+impl ChaoticSystem {
+    pub fn to_choices() -> Vec<ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|s| ChoiceOption::new(s.id(), s.name()))
             .collect()
     }
 }

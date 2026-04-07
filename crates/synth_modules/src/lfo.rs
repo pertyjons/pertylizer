@@ -31,6 +31,9 @@ pub struct Lfo {
     sample_rate: SampleRate,
     sh_value: f32,
     sh_trigger_prev: NormalizedValue,
+    /// Smooth random: current and target values for interpolation.
+    smooth_random_current: f32,
+    smooth_random_target: f32,
     sync_mode: SyncMode,
     sync_division: BeatDivision,
     retrigger_mode: RetriggerMode,
@@ -56,6 +59,8 @@ impl Lfo {
             sample_rate: SampleRate::DVD_QUALITY,
             sh_value: 0.0,
             sh_trigger_prev: NormalizedValue::MIN,
+            smooth_random_current: 0.0,
+            smooth_random_target: 0.0,
             sync_mode: SyncMode::Free,
             sync_division: BeatDivision::QUARTER,
             retrigger_mode: RetriggerMode::Continue,
@@ -89,6 +94,20 @@ impl Lfo {
                 }
                 self.sh_trigger_prev = NormalizedValue::new(trigger);
                 self.sh_value
+            }
+            LfoWaveform::SmoothRandom => {
+                // Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/269-smooth-random-lfo-generator.rst
+                // From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+                // Pick new target when phase wraps around
+                if phase < phase_inc {
+                    self.smooth_random_target = self.random();
+                }
+                // Cosine interpolation for smooth transitions
+                let t = phase;
+                let interp = 0.5 * (1.0 - (t * std::f32::consts::PI).cos());
+                self.smooth_random_current = self.smooth_random_current * (1.0 - interp)
+                    + self.smooth_random_target * interp;
+                self.smooth_random_current
             }
         };
 

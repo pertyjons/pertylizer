@@ -8,7 +8,7 @@ pub fn patch_vocal_pad() -> Patch {
     let mut patch = Patch::new("Vocal Pad");
     patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
-        "Ethereal vowel pad using the Formant wavetable with slow LFO position scanning."
+        "Ethereal vowel pad using the Formant wavetable with slow LFO position scanning and FormantFilter for vowel shaping."
             .to_string(),
     );
     patch.notes = Some(
@@ -82,6 +82,17 @@ Increase filter resonance for more vocal character.
             .build(),
     );
 
+    // Formant Filter - Vowel shaping (fmt-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::FormantFilter)
+            .position(600.0, 50.0)
+            .param_f("vowel", 0.3)
+            .param_f("cutoff", 1200.0)
+            .param_f("resonance", 0.6)
+            .param_f("mix", 0.4)
+            .build(),
+    );
+
     // Amplifier (amp-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
@@ -111,8 +122,10 @@ Increase filter resonance for more vocal character.
     // Connections
     patch.add_connection("wtb-1", "out", "flt-1", "in");
     patch.add_connection("lfo-1", "out", "wtb-1", "pos_cv");
-    patch.add_connection("flt-1", "out", "amp-1", "in");
+    patch.add_connection("flt-1", "out", "fmt-1", "in");
+    patch.add_connection("fmt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("lfo-1", "out", "fmt-1", "vowel_cv");
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
 

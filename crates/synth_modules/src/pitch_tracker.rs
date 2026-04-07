@@ -23,6 +23,14 @@ const RING_BUFFER_SIZE: usize = 2048;
 const ANALYSIS_HOP: usize = 512;
 
 /// Pitch tracker voice module.
+///
+/// # Spectral analysis via LPC
+///
+/// `crate::math::lpc_analysis` is available for offline/non-RT spectral envelope
+/// extraction (e.g., formant detection, spectral matching). It returns `Vec<f32>`
+/// which allocates on the heap, so it must NOT be called from `process()` or any
+/// audio-thread code path. Suitable for UI-driven analysis, preset generation, or
+/// background worker threads.
 #[derive(Clone)]
 pub struct PitchTracker {
     // Parameters
@@ -141,7 +149,31 @@ impl PitchTracker {
         }
 
         // Confidence: already normalized by sqrt(E1*E2) so it's in [0, 1]
-        self.current_confidence = best_corr.clamp(0.0, 1.0);
+        let autocorr_confidence = best_corr.clamp(0.0, 1.0);
+
+        // Refine confidence using Goertzel magnitude at the detected frequency.
+        // The Goertzel filter measures how much energy exists at exactly the
+        // estimated pitch. A strong peak there corroborates the autocorrelation
+        // result; a weak one suggests the estimate is unreliable.
+        let goertzel_confidence = if self.current_freq.as_f32() > 0.0 {
+            let mag = crate::math::goertzel_magnitude(
+                &self.ring_buffer,
+                self.current_freq,
+                self.sample_rate,
+            );
+            // Normalize: magnitude is proportional to energy; divide by
+            // buffer-length-scaled energy to get a 0–1 range.
+            let norm = mag / (energy.sqrt() + 1e-10);
+            norm.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
+        // Combine autocorrelation and Goertzel confidence (geometric mean
+        // biases toward agreement — both must be high for high confidence).
+        self.current_confidence = (autocorr_confidence * goertzel_confidence)
+            .sqrt()
+            .clamp(0.0, 1.0);
 
         // Update gate
         self.gate_open = self.current_confidence > self.sensitivity.as_f32();

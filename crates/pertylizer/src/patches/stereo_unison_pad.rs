@@ -8,7 +8,7 @@ pub fn patch_stereo_unison_pad() -> Patch {
     let mut patch = Patch::new("Stereo Unison Pad");
     patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
-        "Lush ambient pad using triangle unison with stereo outputs routed directly to amplifier."
+        "Lush ambient pad using triangle unison with stereo outputs, MidSide processing for enhanced width."
             .to_string(),
     );
     patch.notes = Some(
@@ -82,6 +82,18 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
             .param_f("level", 0.65)
+            .build(),
+    );
+
+    // MidSide - Stereo width and rotation (mds-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::MidSide)
+            .position(1200.0, 300.0)
+            .param_f("width", 0.65)
+            .param_f("mid_gain", 0.0)
+            .param_f("side_gain", 2.0)
+            .param_f("rotation", 0.15)
+            .param_f("mix", 0.8)
             .build(),
     );
 

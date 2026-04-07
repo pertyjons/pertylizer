@@ -88,6 +88,10 @@ impl RingMod {
                 sq -= poly_blep((p + 0.5).rem_euclid(1.0), dt);
                 sq
             }
+            Waveform::DsfSaw => {
+                // DSF saw approximation: fall back to naive saw for ring mod carrier
+                2.0 * p - 1.0
+            }
         }
     }
 }

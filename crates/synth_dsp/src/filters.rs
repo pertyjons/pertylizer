@@ -587,6 +587,147 @@ impl StereoBiquad {
     }
 }
 
+// ============================================================================
+// KARLSEN FAST LADDER (4-pole, constant Q)
+// ============================================================================
+
+/// Karlsen fast ladder filter (4-pole, constant Q).
+///
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Filters/240-karlsen-fast-ladder.rst>
+#[derive(Debug, Clone, Copy, Default)]
+pub struct KarlsenFilter {
+    buf: [f32; 4],
+}
+
+impl KarlsenFilter {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn reset(&mut self) {
+        self.buf = [0.0; 4];
+    }
+
+    /// Process one sample.
+    ///
+    /// * `cutoff` — normalized frequency (0.0–1.0)
+    /// * `resonance` — resonance amount (0.0–1.0)
+    #[inline]
+    pub fn process(
+        &mut self,
+        input: f32,
+        cutoff: NormalizedValue,
+        resonance: NormalizedValue,
+    ) -> f32 {
+        let cut = cutoff.as_f32().clamp(0.001, 0.999);
+        let res = resonance.as_f32().clamp(0.0, 0.99) * 4.0;
+
+        // Feedback with phase inversion for constant Q
+        let feedback = self.buf[3] * res;
+        let inp = input - feedback;
+        // Clamp to prevent blowup
+        let inp = inp.clamp(-4.0, 4.0);
+
+        // 4 cascaded one-pole lowpass stages
+        self.buf[0] += cut * (inp - self.buf[0]);
+        self.buf[1] += cut * (self.buf[0] - self.buf[1]);
+        self.buf[2] += cut * (self.buf[1] - self.buf[2]);
+        self.buf[3] += cut * (self.buf[2] - self.buf[3]);
+
+        self.buf[3]
+    }
+}
+
+// ============================================================================
+// LINKWITZ-RILEY CROSSOVER
+// ============================================================================
+
+/// 4th-order Linkwitz-Riley crossover filter.
+/// LP + HP sum to unity (all-pass). Uses two cascaded 2nd-order Butterworth sections.
+/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/266-4th-order-linkwitz-riley-filters.rst
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LinkwitzRiley {
+    // Two cascaded biquad stages for LP
+    lp1: [f32; 4], // x1, x2, y1, y2
+    lp2: [f32; 4],
+    // Two cascaded biquad stages for HP
+    hp1: [f32; 4],
+    hp2: [f32; 4],
+}
+
+impl LinkwitzRiley {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Process one sample, returns (lowpass, highpass) pair.
+    #[inline]
+    pub fn process(&mut self, input: f32, cutoff: Hertz, sample_rate: SampleRate) -> (f32, f32) {
+        let omega = std::f32::consts::TAU * cutoff.as_f32() / sample_rate.as_f32();
+        let sn = omega.sin();
+        let cs = omega.cos();
+        // Butterworth Q = 0.7071 (1/sqrt(2))
+        let alpha = sn / (2.0 * std::f32::consts::FRAC_1_SQRT_2);
+        let a0_inv = 1.0 / (1.0 + alpha);
+
+        // LP coefficients
+        let lp_b0 = ((1.0 - cs) * 0.5) * a0_inv;
+        let lp_b1 = (1.0 - cs) * a0_inv;
+        let lp_b2 = lp_b0;
+        let a1 = (-2.0 * cs) * a0_inv;
+        let a2 = (1.0 - alpha) * a0_inv;
+
+        // HP coefficients
+        let hp_b0 = ((1.0 + cs) * 0.5) * a0_inv;
+        let hp_b1 = -(1.0 + cs) * a0_inv;
+        let hp_b2 = hp_b0;
+
+        // Process LP stage 1
+        let lp_out1 = lp_b0 * input + lp_b1 * self.lp1[0] + lp_b2 * self.lp1[1]
+            - a1 * self.lp1[2]
+            - a2 * self.lp1[3];
+        self.lp1[1] = self.lp1[0];
+        self.lp1[0] = input;
+        self.lp1[3] = self.lp1[2];
+        self.lp1[2] = lp_out1;
+
+        // Process LP stage 2
+        let lp_out2 = lp_b0 * lp_out1 + lp_b1 * self.lp2[0] + lp_b2 * self.lp2[1]
+            - a1 * self.lp2[2]
+            - a2 * self.lp2[3];
+        self.lp2[1] = self.lp2[0];
+        self.lp2[0] = lp_out1;
+        self.lp2[3] = self.lp2[2];
+        self.lp2[2] = lp_out2;
+
+        // Process HP stage 1
+        let hp_out1 = hp_b0 * input + hp_b1 * self.hp1[0] + hp_b2 * self.hp1[1]
+            - a1 * self.hp1[2]
+            - a2 * self.hp1[3];
+        self.hp1[1] = self.hp1[0];
+        self.hp1[0] = input;
+        self.hp1[3] = self.hp1[2];
+        self.hp1[2] = hp_out1;
+
+        // Process HP stage 2
+        let hp_out2 = hp_b0 * hp_out1 + hp_b1 * self.hp2[0] + hp_b2 * self.hp2[1]
+            - a1 * self.hp2[2]
+            - a2 * self.hp2[3];
+        self.hp2[1] = self.hp2[0];
+        self.hp2[0] = hp_out1;
+        self.hp2[3] = self.hp2[2];
+        self.hp2[2] = hp_out2;
+
+        (lp_out2, hp_out2)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

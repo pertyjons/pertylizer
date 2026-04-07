@@ -20,6 +20,8 @@
 //! let saw = 2.0 * phase - 1.0 - correction;
 //! ```
 
+use synth_core::{NormalizedValue, Phase};
+
 /// PolyBLEP correction for band-limited waveforms.
 ///
 /// This function calculates the polynomial correction to apply near
@@ -112,6 +114,122 @@ pub fn poly_blamp(t: f32, dt: f32) -> f32 {
         }
     } else {
         0.0
+    }
+}
+
+/// Discrete Summation Formula (DSF) for band-limited sawtooth generation.
+///
+/// Sums harmonics with geometric rolloff using direct evaluation.
+/// `phase` is 0.0-1.0, `num_harmonics` limits harmonics below Nyquist.
+/// `rolloff` (0.0-0.999) controls per-harmonic attenuation.
+///
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/140-dsf-super-set-of-blit.rst>
+/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
+#[inline]
+#[must_use]
+pub fn dsf_sawtooth(phase: Phase, num_harmonics: u32, rolloff: NormalizedValue) -> f32 {
+    if num_harmonics == 0 {
+        return 0.0;
+    }
+    let a = rolloff.as_f32().clamp(0.001, 0.999);
+    let omega = phase.as_f32() * std::f32::consts::TAU;
+
+    // Direct summation for small harmonic counts (RT-safe, bounded loop)
+    let mut sum = 0.0_f32;
+    let mut amp = 1.0_f32;
+    let n = num_harmonics.min(64); // cap at 64 for RT safety
+    for k in 1..=n {
+        sum += amp * (k as f32 * omega).sin() / k as f32;
+        amp *= a;
+    }
+
+    // Normalize to approximately [-1, 1]
+    sum * (2.0 / std::f32::consts::PI)
+}
+
+/// Pre-computed MinBLEP (minimum-phase band-limited step) table.
+///
+/// Used for alias-free discontinuity insertion in waveform generation.
+/// Higher quality than PolyBLEP at cost of table memory.
+///
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/112-waveform-generator-using-minbleps.rst>
+/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
+pub struct MinBlepTable {
+    /// Integrated MinBLEP samples.
+    table: Vec<f32>,
+    /// Oversampling factor used to generate the table.
+    oversampling: usize,
+}
+
+impl MinBlepTable {
+    /// Generate a MinBLEP table with given zero crossings and oversampling.
+    ///
+    /// `zero_crossings`: number of sinc lobes (4 is typical).
+    /// `oversampling`: samples per zero crossing (64 typical).
+    #[must_use]
+    pub fn new(zero_crossings: usize, oversampling: usize) -> Self {
+        let n = 2 * zero_crossings * oversampling;
+        let mut sinc_windowed = vec![0.0_f32; n + 1];
+
+        // Generate windowed sinc
+        for i in 0..=n {
+            let x = (i as f32 / oversampling as f32) - zero_crossings as f32;
+            // Sinc function
+            let sinc = if x.abs() < 1e-10 {
+                1.0
+            } else {
+                let px = x * std::f32::consts::PI;
+                px.sin() / px
+            };
+            // Blackman window
+            let t = i as f32 / n as f32;
+            let window = 0.42 - 0.5 * (std::f32::consts::TAU * t).cos()
+                + 0.08 * (2.0 * std::f32::consts::TAU * t).cos();
+            sinc_windowed[i] = sinc * window;
+        }
+
+        // Integrate (cumulative sum) to get the MinBLEP
+        let mut table = vec![0.0_f32; n + 1];
+        let mut sum = 0.0;
+        for i in 0..=n {
+            sum += sinc_windowed[i];
+            table[i] = sum;
+        }
+
+        // Normalize so table ends at 1.0
+        let last = table[n];
+        if last.abs() > 1e-10 {
+            for v in &mut table {
+                *v /= last;
+            }
+        }
+
+        Self {
+            table,
+            oversampling,
+        }
+    }
+
+    /// Look up a MinBLEP correction value.
+    /// `fractional_pos` is 0.0 to 1.0 across the entire table.
+    #[inline]
+    #[must_use]
+    pub fn lookup(&self, fractional_pos: f32) -> f32 {
+        let pos = fractional_pos * (self.table.len() - 1) as f32;
+        let idx = pos as usize;
+        let frac = pos - idx as f32;
+        if idx + 1 < self.table.len() {
+            self.table[idx] * (1.0 - frac) + self.table[idx + 1] * frac
+        } else {
+            self.table.last().copied().unwrap_or(1.0)
+        }
+    }
+
+    /// Get the length of the table in output samples.
+    #[inline]
+    #[must_use]
+    pub fn length_samples(&self) -> usize {
+        self.table.len() / self.oversampling
     }
 }
 

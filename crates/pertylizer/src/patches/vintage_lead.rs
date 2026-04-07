@@ -7,7 +7,10 @@ use synth_core::ModuleType;
 pub fn patch_vintage_lead() -> Patch {
     let mut patch = Patch::new("Vintage Lead");
     patch.author = Some(Author::from("Pertylizer"));
-    patch.description = Some("Classic analog-style mono lead with vibrato and delay.".to_string());
+    patch.description = Some(
+        "Classic analog-style mono lead with vibrato, authentic analog drift, and delay."
+            .to_string(),
+    );
     patch.notes = Some(
         r#"
 SIGNAL FLOW:
@@ -18,10 +21,11 @@ modulated by a slow LFO, creating the classic "breathing" analog sound.
 The mixed signal passes through a resonant lowpass filter. The filter
 envelope provides the attack "bite" that helps notes stand out.
 
-VIBRATO:
+VIBRATO & DRIFT:
 A dedicated vibrato LFO modulates OSC1's pitch at about 5.5 Hz. The depth
-is subtle (1.5%) to add expression without being overbearing. Classic
-lead synths use this technique for a more human, expressive quality.
+is subtle (1.5%) to add expression without being overbearing. A DriftGenerator
+adds authentic analog pitch drift to both oscillators, recreating the subtle
+instability of vintage hardware oscillators.
 
 EFFECTS:
 The delay adds rhythmic interest and fills space between notes. The
@@ -155,7 +159,19 @@ to held notes. Use pitch bends for extra expressiveness.
             .build(),
     );
 
+    // DriftGenerator - Authentic analog pitch drift (drf-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::DriftGenerator)
+            .position(50.0, 600.0)
+            .param_f("rate", 0.15)
+            .param_f("depth", 0.08)
+            .param_f("smoothness", 0.7)
+            .build(),
+    );
+
     // Connections (using string IDs: type-instance)
+    patch.add_connection("drf-1", "out", "osc-1", "fm");
+    patch.add_connection("drf-1", "out", "osc-2", "fm");
     patch.add_connection("osc-1", "out", "mix-1", "in1");
     patch.add_connection("osc-2", "out", "mix-1", "in2");
     patch.add_connection("mix-1", "out", "flt-1", "in");

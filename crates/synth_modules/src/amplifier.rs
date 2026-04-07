@@ -399,6 +399,7 @@ impl PolyModule for Mixer {
                 MixerParam::Input8(l) => self.levels[7] = l,
                 MixerParam::Mute(m) => self.mute_state = MuteState::from(m),
                 MixerParam::Limit(l) => self.limit_mode = LimitMode::from(l),
+                MixerParam::Dither(_) => {} // Dither not yet implemented in amplifier
             }
         }
     }
@@ -429,6 +430,7 @@ impl PolyModule for Mixer {
                         0.0
                     }
                 }
+                MixerParam::Dither(_) => 0.0, // Dither not yet implemented in amplifier
             })
         } else {
             None

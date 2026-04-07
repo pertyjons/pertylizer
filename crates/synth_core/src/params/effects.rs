@@ -66,15 +66,19 @@ pub enum DistortionMode {
     Tube,
     Foldback,
     Bitcrush,
+    /// Variable hardness clipping (arctan-based, continuously adjustable).
+    /// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/104-variable-hardness-clipping-function.rst
+    VariableClip,
 }
 
 impl DistortionMode {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::SoftClip,
         Self::HardClip,
         Self::Tube,
         Self::Foldback,
         Self::Bitcrush,
+        Self::VariableClip,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -84,6 +88,7 @@ impl DistortionMode {
             Self::Tube => "Tube",
             Self::Foldback => "Foldback",
             Self::Bitcrush => "Bitcrush",
+            Self::VariableClip => "Variable",
         }
     }
 
@@ -94,6 +99,7 @@ impl DistortionMode {
             Self::Tube => "tube",
             Self::Foldback => "foldback",
             Self::Bitcrush => "bitcrush",
+            Self::VariableClip => "variable_clip",
         }
     }
 
@@ -695,6 +701,9 @@ pub enum MidSideParam {
     MidGain(Decibels),
     /// Side channel gain.
     SideGain(Decibels),
+    /// Stereo field rotation angle in degrees (-180 to +180).
+    /// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/255-stereo-field-rotation-via-transformation-matrix.rst
+    Rotation(BipolarValue),
     /// Dry/wet mix.
     Mix(NormalizedValue),
 }
@@ -709,6 +718,7 @@ impl MidSideParam {
             Self::Width(_) => "Width",
             Self::MidGain(_) => "Mid Gain",
             Self::SideGain(_) => "Side Gain",
+            Self::Rotation(_) => "Rotation",
             Self::Mix(_) => "Mix",
         }
     }
@@ -717,6 +727,7 @@ impl MidSideParam {
         match self {
             Self::Width(v) | Self::Mix(v) => v.as_f32(),
             Self::MidGain(db) | Self::SideGain(db) => db.as_f32(),
+            Self::Rotation(b) => b.as_f32(),
         }
     }
 
@@ -725,6 +736,7 @@ impl MidSideParam {
             Self::Width(_) => Self::Width(NormalizedValue::new(value)),
             Self::MidGain(_) => Self::MidGain(Decibels::new(value)),
             Self::SideGain(_) => Self::SideGain(Decibels::new(value)),
+            Self::Rotation(_) => Self::Rotation(BipolarValue::new(value)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
         }
     }
@@ -1263,5 +1275,116 @@ impl ReverseGateReverbParam {
 impl Default for ReverseGateReverbParam {
     fn default() -> Self {
         Self::Mix(NormalizedValue::MAX)
+    }
+}
+
+// ============================================================================
+// TILT EQ PARAMETERS
+// ============================================================================
+
+/// Tilt EQ parameter with typed value.
+///
+/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/267-simple-tilt-equalizer.rst
+/// From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum TiltEqParam {
+    /// Tilt amount (-1.0 = dark, 0.0 = flat, 1.0 = bright)
+    Tilt(BipolarValue),
+    /// Center frequency (pivot point)
+    CenterFreq(Hertz),
+    /// Dry/wet mix
+    Mix(NormalizedValue),
+}
+
+impl TiltEqParam {
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Tilt(_) => "Tilt",
+            Self::CenterFreq(_) => "Center",
+            Self::Mix(_) => "Mix",
+        }
+    }
+
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::Tilt(b) => b.as_f32(),
+            Self::CenterFreq(hz) => hz.as_f32(),
+            Self::Mix(v) => v.as_f32(),
+        }
+    }
+
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::Tilt(_) => Self::Tilt(BipolarValue::new(value)),
+            Self::CenterFreq(_) => Self::CenterFreq(Hertz::new(value)),
+            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
+        }
+    }
+}
+
+impl Default for TiltEqParam {
+    fn default() -> Self {
+        Self::Mix(NormalizedValue::MAX)
+    }
+}
+
+// ============================================================================
+// UNIVIBE PARAMETERS
+// ============================================================================
+
+/// Univibe effect parameter with typed value.
+///
+/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/277-univox-univibe-emulator.rst
+/// From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum UnivibeParam {
+    /// LFO rate (speed of sweep)
+    Rate(Hertz),
+    /// Depth of modulation (0.0 to 1.0)
+    Depth(NormalizedValue),
+    /// Feedback amount (0.0 to 0.95)
+    Feedback(NormalizedValue),
+    /// Dry/wet mix
+    Mix(NormalizedValue),
+}
+
+impl UnivibeParam {
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Rate(_) => "Rate",
+            Self::Depth(_) => "Depth",
+            Self::Feedback(_) => "Feedback",
+            Self::Mix(_) => "Mix",
+        }
+    }
+
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::Rate(hz) => hz.as_f32(),
+            Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v.as_f32(),
+        }
+    }
+
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::Rate(_) => Self::Rate(Hertz::new(value)),
+            Self::Depth(_) => Self::Depth(NormalizedValue::new(value)),
+            Self::Feedback(_) => Self::Feedback(NormalizedValue::new(value)),
+            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
+        }
+    }
+}
+
+impl Default for UnivibeParam {
+    fn default() -> Self {
+        Self::Mix(NormalizedValue::new(0.5))
     }
 }

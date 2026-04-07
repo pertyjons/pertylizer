@@ -169,6 +169,46 @@ pub fn create_voice_module(
             let d = m.descriptor();
             Some((Box::new(m), d))
         }
+        ModuleType::LadderFilter => {
+            let m = synth_modules::LadderFilter::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
+        ModuleType::DriftGenerator => {
+            let m = synth_modules::DriftGenerator::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
+        ModuleType::ChaoticOsc => {
+            let m = synth_modules::ChaoticOsc::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
+        ModuleType::FormantFilter => {
+            let m = synth_modules::FormantFilter::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
+        ModuleType::Fooglers => {
+            let m = synth_modules::Fooglers::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
+        ModuleType::BeatDetector => {
+            let m = synth_modules::BeatDetector::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
+        ModuleType::PadSynth => {
+            let m = synth_modules::PadSynth::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
+        ModuleType::AmFormant => {
+            let m = synth_modules::AmFormant::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
         // Effects and visualizers are not voice modules
         _ => None,
     }
@@ -285,6 +325,16 @@ pub fn create_effect(module_type: ModuleType) -> Option<(Box<dyn AudioEffect>, M
             let d = e.descriptor();
             Some((Box::new(e), d))
         }
+        ModuleType::TiltEq => {
+            let e = synth_modules::effects::TiltEq::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Univibe => {
+            let e = synth_modules::effects::Univibe::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
         _ => None,
     }
 }
@@ -351,6 +401,15 @@ pub const ALL_MODULE_TYPES: &[ModuleType] = &[
     ModuleType::FractalOsc,
     ModuleType::Sampler,
     ModuleType::AudioInput,
+    // MusicDSP additions
+    ModuleType::LadderFilter,
+    ModuleType::DriftGenerator,
+    ModuleType::ChaoticOsc,
+    ModuleType::FormantFilter,
+    ModuleType::Fooglers,
+    ModuleType::BeatDetector,
+    ModuleType::PadSynth,
+    ModuleType::AmFormant,
     // Effects
     ModuleType::Delay,
     ModuleType::Reverb,
@@ -373,6 +432,9 @@ pub const ALL_MODULE_TYPES: &[ModuleType] = &[
     ModuleType::SpectralBlur,
     ModuleType::ModalResonator,
     ModuleType::ReverseGateReverb,
+    // MusicDSP additions (effects)
+    ModuleType::TiltEq,
+    ModuleType::Univibe,
     // Visualizers
     ModuleType::Oscilloscope,
     ModuleType::LevelMeter,

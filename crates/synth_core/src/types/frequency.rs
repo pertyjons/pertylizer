@@ -25,6 +25,9 @@ impl Hertz {
         Self(hz)
     }
 
+    /// Zero frequency.
+    pub const ZERO: Self = Self(0.0);
+
     /// Standard concert pitch A4.
     pub const A4: Self = Self(440.0);
 

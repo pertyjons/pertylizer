@@ -71,6 +71,13 @@ impl Distortion {
             }
 
             DistortionType::Tube => crate::math::tube_saturate(driven),
+
+            DistortionType::VariableClip => {
+                // Variable hardness: drive (0..1) maps directly to hardness (0=soft, 1=hard)
+                // Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/104-variable-hardness-clipping-function.rst
+                // From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+                crate::math::variable_clip(driven, drive)
+            }
         }
     }
 

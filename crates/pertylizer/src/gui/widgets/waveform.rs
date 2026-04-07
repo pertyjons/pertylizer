@@ -13,6 +13,7 @@ pub enum WaveformType {
     Sawtooth,
     Square,
     Pulse,
+    DsfSaw,
 }
 
 impl WaveformType {
@@ -24,6 +25,7 @@ impl WaveformType {
             Self::Sawtooth,
             Self::Square,
             Self::Pulse,
+            Self::DsfSaw,
         ]
     }
 
@@ -35,6 +37,7 @@ impl WaveformType {
             Self::Sawtooth => "Saw",
             Self::Square => "Square",
             Self::Pulse => "Pulse",
+            Self::DsfSaw => "DSF Saw",
         }
     }
 
@@ -63,6 +66,15 @@ impl WaveformType {
                 } else {
                     -1.0
                 }
+            }
+            Self::DsfSaw => {
+                // Band-limited saw: softer transitions than raw sawtooth
+                let phase = x * std::f32::consts::TAU;
+                let mut sum = 0.0_f32;
+                for k in 1..=6 {
+                    sum += (k as f32 * phase).sin() / k as f32;
+                }
+                sum * (2.0 / std::f32::consts::PI)
             }
         }
     }

@@ -21,6 +21,7 @@ and a slow LFO (for movement).
 MODULATION:
 - LFO1 (0.1 Hz): Slowly modulates filter cutoff for evolving texture
 - LFO2 (0.08 Hz): Modulates OSC2 pitch for subtle detuning variation
+- DriftGenerator: Adds analog-style pitch drift to OSC2 for organic instability
 - Filter Envelope: Opens filter on attack, then settles
 
 The chorus effect adds width and dimension, while the reverb places the sound
@@ -162,7 +163,18 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
             .build(),
     );
 
+    // DriftGenerator - Analog-style pitch drift for OSC2 (drf-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::DriftGenerator)
+            .position(50.0, 550.0)
+            .param_f("rate", 0.1)
+            .param_f("depth", 0.15)
+            .param_f("smoothness", 0.8)
+            .build(),
+    );
+
     // Connections (using string IDs: type-instance)
+    patch.add_connection("drf-1", "out", "osc-2", "fm");
     patch.add_connection("osc-1", "out", "mix-1", "in1");
     patch.add_connection("osc-2", "out", "mix-1", "in2");
     patch.add_connection("mix-1", "out", "flt-1", "in");

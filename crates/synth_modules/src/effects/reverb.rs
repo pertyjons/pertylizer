@@ -18,6 +18,12 @@ use synth_dsp::FdnCore;
 /// Maximum pre-delay in seconds.
 const MAX_PRE_DELAY_SECS: f32 = 0.5;
 
+/// Maximum early reflection delay in samples (~50ms at 48kHz).
+const MAX_ER_DELAY_SAMPLES: usize = 2400;
+
+/// Number of early reflection taps.
+const NUM_ER_TAPS: usize = 6;
+
 /// 8-channel Feedback Delay Network reverb.
 pub struct Reverb {
     // Parameters
@@ -36,6 +42,12 @@ pub struct Reverb {
     // Pre-delay line
     pre_delay_buffer: Vec<f32>,
     pre_delay_index: usize,
+
+    // Early reflections
+    er_buffer: Vec<f32>,
+    er_write_index: usize,
+    /// Pre-calculated (delay_samples, gain) for each tap.
+    er_taps: [(f32, Gain); NUM_ER_TAPS],
 
     // State
     sample_rate: SampleRate,
@@ -61,6 +73,10 @@ impl Reverb {
             pre_delay_buffer: vec![0.0; 48000], // ~1 second at 48kHz
             pre_delay_index: 0,
 
+            er_buffer: vec![0.0; MAX_ER_DELAY_SAMPLES],
+            er_write_index: 0,
+            er_taps: [(0.0, Gain::new(0.0)); NUM_ER_TAPS],
+
             sample_rate: SampleRate::DVD_QUALITY,
             params_dirty: true,
         }
@@ -78,6 +94,19 @@ impl Reverb {
         let room_scale = 0.5 + self.room_size.as_f32() * 1.5;
 
         self.core.set_delay_times(scale, room_scale);
+
+        // Recalculate early reflection taps from room size.
+        // Map room_size (0..1) to reasonable room dimensions (2m..10m).
+        let dim_base = 2.0 + self.room_size.as_f32() * 8.0;
+        let room_width = dim_base;
+        let room_depth = dim_base * 1.2;
+        let room_height = 2.5 + self.room_size.as_f32() * 2.0;
+        self.er_taps = crate::math::early_reflection_taps(
+            room_width,
+            room_depth,
+            room_height,
+            self.sample_rate,
+        );
     }
 
     /// Scale all buffers for a new sample rate.
@@ -95,6 +124,17 @@ impl Reverb {
             self.pre_delay_buffer.resize(max_pre_delay, 0.0);
             self.pre_delay_index = 0;
         }
+
+        // Resize ER buffer for new sample rate
+        #[allow(clippy::cast_possible_truncation)]
+        let er_buf_size = ((0.05 * self.sample_rate.as_f32()) as usize).max(MAX_ER_DELAY_SAMPLES);
+        if self.er_buffer.len() != er_buf_size {
+            self.er_buffer.resize(er_buf_size, 0.0);
+            self.er_write_index = 0;
+        }
+
+        // Recalculate ER taps for new sample rate
+        self.params_dirty = true;
     }
 
     /// Compute the feedback gain from the decay parameter.
@@ -276,9 +316,25 @@ impl AudioEffect for Reverb {
                 dry.to_mono()
             };
 
+            // --- Early reflections ---
+            // Write pre-delayed input into ER buffer
+            let er_buf_len = self.er_buffer.len();
+            self.er_buffer[self.er_write_index] = pre_delayed;
+            let mut er_sum = 0.0f32;
+            for &(delay_samples, gain) in &self.er_taps {
+                #[allow(clippy::cast_possible_truncation)]
+                let delay_int = (delay_samples as usize).min(er_buf_len - 1);
+                let read_idx = (self.er_write_index + er_buf_len - delay_int) % er_buf_len;
+                er_sum += self.er_buffer[read_idx] * gain.as_f32();
+            }
+            self.er_write_index = (self.er_write_index + 1) % er_buf_len;
+
+            // Feed early reflections + pre-delayed signal into FDN
+            let fdn_input = pre_delayed + er_sum * 0.5;
+
             // --- FDN Processing (delegated to FdnCore) ---
             let wet = self.core.process_sample(
-                pre_delayed,
+                fdn_input,
                 feedback_gain,
                 lp_coeff,
                 hp_coeff,
@@ -298,6 +354,8 @@ impl AudioEffect for Reverb {
         self.core.clear();
         self.pre_delay_buffer.fill(0.0);
         self.pre_delay_index = 0;
+        self.er_buffer.fill(0.0);
+        self.er_write_index = 0;
     }
 
     fn set_mix(&mut self, mix: NormalizedValue) {

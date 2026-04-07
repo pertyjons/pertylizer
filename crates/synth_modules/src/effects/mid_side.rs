@@ -7,9 +7,9 @@
 //! - Dry/wet mix
 
 use synth_core::{
-    AudioEffect, Decibels, Describable, MidSideParam, ModuleCategory, ModuleDescriptor, ModuleType,
-    NormalizedValue, Param, ParameterDescriptor, ParameterUnit, ProcessContext, StereoSample,
-    WidgetHint,
+    AudioEffect, BipolarValue, Decibels, Describable, MidSideParam, ModuleCategory,
+    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
+    ProcessContext, StereoSample, WidgetHint,
 };
 
 /// Mid-Side stereo processing effect.
@@ -23,6 +23,8 @@ pub struct MidSide {
     mid_gain: Decibels,
     /// Side channel gain in dB.
     side_gain: Decibels,
+    /// Stereo field rotation (-1.0 to 1.0 maps to -180° to +180°).
+    rotation: BipolarValue,
     /// Dry/wet mix.
     mix: NormalizedValue,
 }
@@ -37,6 +39,7 @@ impl MidSide {
             width: Self::DEFAULT_WIDTH,
             mid_gain: Decibels::UNITY,
             side_gain: Decibels::UNITY,
+            rotation: BipolarValue::CENTER,
             mix: NormalizedValue::MAX,
         }
     }
@@ -101,6 +104,17 @@ impl Describable for MidSide {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "rotation",
+                    Param::MidSide(MidSideParam::Rotation(BipolarValue::CENTER)),
+                    "Rotation",
+                )
+                .description("Stereo field rotation (-180° to +180°)")
+                .range(-1.0, 1.0)
+                .default(0.0)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "mix",
                     Param::MidSide(MidSideParam::Mix(NormalizedValue::MAX)),
                     "Mix",
@@ -120,6 +134,12 @@ impl AudioEffect for MidSide {
         let mid_gain_linear = self.mid_gain.to_linear();
         let side_gain_linear = self.side_gain.to_linear();
 
+        // Stereo rotation: 2D rotation matrix
+        // Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/255-stereo-field-rotation-via-transformation-matrix.rst
+        let rotation_angle = self.rotation.as_f32() * std::f32::consts::PI; // -π to +π
+        let cos_r = rotation_angle.cos();
+        let sin_r = rotation_angle.sin();
+
         for frame in 0..context.samples.as_usize() {
             // Read input as stereo sample
             let dry = StereoSample::read_frame(input, frame);
@@ -133,7 +153,11 @@ impl AudioEffect for MidSide {
 
             // Apply width and decode back to stereo
             let (wet_l, wet_r) = crate::math::mid_side_decode(mid, side, width);
-            let wet = StereoSample::new(wet_l, wet_r);
+
+            // Apply stereo rotation (2D rotation matrix)
+            let rot_l = wet_l * cos_r - wet_r * sin_r;
+            let rot_r = wet_l * sin_r + wet_r * cos_r;
+            let wet = StereoSample::new(rot_l, rot_r);
 
             // Mix dry/wet
             let result = dry.blend(wet, mix);
@@ -164,6 +188,7 @@ impl AudioEffect for MidSide {
                 MidSideParam::SideGain(g) => {
                     self.side_gain = Decibels::new(g.as_f32().clamp(-12.0, 12.0));
                 }
+                MidSideParam::Rotation(r) => self.rotation = r,
                 MidSideParam::Mix(m) => self.mix = m,
             }
         }
@@ -175,6 +200,7 @@ impl AudioEffect for MidSide {
                 MidSideParam::Width(_) => self.width.as_f32(),
                 MidSideParam::MidGain(_) => self.mid_gain.as_f32(),
                 MidSideParam::SideGain(_) => self.side_gain.as_f32(),
+                MidSideParam::Rotation(_) => self.rotation.as_f32(),
                 MidSideParam::Mix(_) => self.mix.as_f32(),
             })
         } else {
@@ -187,6 +213,7 @@ impl AudioEffect for MidSide {
             Param::MidSide(MidSideParam::Width(self.width)),
             Param::MidSide(MidSideParam::MidGain(self.mid_gain)),
             Param::MidSide(MidSideParam::SideGain(self.side_gain)),
+            Param::MidSide(MidSideParam::Rotation(self.rotation)),
             Param::MidSide(MidSideParam::Mix(self.mix)),
         ]
     }

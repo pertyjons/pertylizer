@@ -345,7 +345,7 @@ mod tests {
     fn test_fdn_core_stability() {
         let mut fdn = FdnCore::new();
         // Feed an impulse and process many samples
-        fdn.process_sample(
+        let _ = fdn.process_sample(
             1.0,
             Gain::new(0.9),
             NormalizedValue::new(0.5),
@@ -393,7 +393,7 @@ mod tests {
         let mut fdn = FdnCore::new();
         // Feed some signal
         for _ in 0..100 {
-            fdn.process_sample(
+            let _ = fdn.process_sample(
                 1.0,
                 Gain::new(0.5),
                 NormalizedValue::new(0.3),

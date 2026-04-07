@@ -12,11 +12,17 @@
 //! - Comparison: `same_kind()` to compare param types ignoring values
 
 mod additive;
+mod am_formant;
+mod beat_detector;
+mod chaotic_osc;
 mod convolver;
+mod drift_generator;
 mod effects;
 mod envelope_follower;
 mod envelopes;
 mod filters;
+mod fooglers;
+mod formant_filter;
 mod fractal_osc;
 mod frequency_shifter;
 mod generative;
@@ -29,6 +35,7 @@ mod modules;
 mod mseg;
 mod noise;
 mod oscillators;
+mod padsynth;
 mod phase_vocoder;
 mod physical;
 mod pitch_tracker;
@@ -45,16 +52,23 @@ use serde::{Deserialize, Serialize};
 
 // Re-export all parameter types
 pub use additive::AdditiveParam;
+pub use am_formant::AmFormantParam;
+pub use beat_detector::BeatDetectorParam;
+pub use chaotic_osc::{ChaoticOscParam, ChaoticSystem};
 pub use convolver::{ConvolverParam, ImpulseResponse};
+pub use drift_generator::DriftGeneratorParam;
 pub use effects::{
     BbdDelayParam, ChorusParam, CompressorParam, DelayMode, DelayParam, DistortionMode,
     DistortionParam, EnsembleChorusParam, EqParam, FlangerParam, GranularFxParam, LimiterParam,
     MidSideParam, ModalResonatorParam, PhaserParam, ReverbParam, ReverseGateMode,
-    ReverseGateReverbParam, ReverseGateTrigger, ShimmerReverbParam, SpectralBlurParam,
+    ReverseGateReverbParam, ReverseGateTrigger, ShimmerReverbParam, SpectralBlurParam, TiltEqParam,
+    UnivibeParam,
 };
 pub use envelope_follower::EnvelopeFollowerParam;
 pub use envelopes::EnvelopeParam;
 pub use filters::{FilterMode, FilterModel, FilterParam};
+pub use fooglers::FooglersParam;
+pub use formant_filter::FormantFilterParam;
 pub use fractal_osc::FractalOscParam;
 pub use frequency_shifter::FrequencyShifterParam;
 pub use generative::{EuclideanParam, RandomGatesParam, TuringMachineParam, TuringScale};
@@ -72,6 +86,7 @@ pub use modules::{AmplifierParam, LevelMeterParam, MixerParam, OscilloscopeParam
 pub use mseg::MsegParam;
 pub use noise::{NoiseParam, NoiseType};
 pub use oscillators::{FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};
+pub use padsynth::PadSynthParam;
 pub use phase_vocoder::{FftSizeOption, PhaseVocoderParam};
 pub use physical::{
     BodyResonanceParam, KeyboardPannerParam, MechanicalNoiseParam, MechanicalNoiseType,
@@ -167,6 +182,18 @@ pub enum ModuleType {
     Sampler,
     // Audio input
     AudioInput,
+    // MusicDSP additions (voice modules)
+    LadderFilter,
+    DriftGenerator,
+    ChaoticOsc,
+    FormantFilter,
+    Fooglers,
+    BeatDetector,
+    PadSynth,
+    AmFormant,
+    // MusicDSP additions (effects)
+    TiltEq,
+    Univibe,
 }
 
 impl ModuleType {
@@ -224,6 +251,15 @@ impl ModuleType {
                 | Self::Sampler
                 // Audio input
                 | Self::AudioInput
+                // MusicDSP additions
+                | Self::LadderFilter
+                | Self::DriftGenerator
+                | Self::ChaoticOsc
+                | Self::FormantFilter
+                | Self::Fooglers
+                | Self::BeatDetector
+                | Self::PadSynth
+                | Self::AmFormant
         )
     }
 
@@ -256,6 +292,9 @@ impl ModuleType {
                 | Self::SpectralBlur
                 | Self::ModalResonator
                 | Self::ReverseGateReverb
+                // MusicDSP additions (effects)
+                | Self::TiltEq
+                | Self::Univibe
         )
     }
 
@@ -345,6 +384,17 @@ impl ModuleType {
             Self::FractalOsc => "Fractal Osc",
             Self::Sampler => "Sampler",
             Self::AudioInput => "Audio Input",
+            // MusicDSP additions
+            Self::LadderFilter => "Ladder Filter",
+            Self::DriftGenerator => "Drift Generator",
+            Self::ChaoticOsc => "Chaotic Osc",
+            Self::FormantFilter => "Formant Filter",
+            Self::Fooglers => "Fooglers",
+            Self::BeatDetector => "Beat Detector",
+            Self::PadSynth => "PADsynth",
+            Self::AmFormant => "AM Formant",
+            Self::TiltEq => "Tilt EQ",
+            Self::Univibe => "Univibe",
         }
     }
 
@@ -410,6 +460,17 @@ impl ModuleType {
             Self::FractalOsc => "frc",
             Self::Sampler => "sam",
             Self::AudioInput => "ain",
+            // MusicDSP additions
+            Self::LadderFilter => "ldr",
+            Self::DriftGenerator => "drf",
+            Self::ChaoticOsc => "cha",
+            Self::FormantFilter => "fmt",
+            Self::Fooglers => "fog",
+            Self::BeatDetector => "btd",
+            Self::PadSynth => "pad",
+            Self::AmFormant => "amf",
+            Self::TiltEq => "teq",
+            Self::Univibe => "uvb",
         }
     }
 
@@ -475,6 +536,17 @@ impl ModuleType {
             "frc" => Some(Self::FractalOsc),
             "sam" => Some(Self::Sampler),
             "ain" => Some(Self::AudioInput),
+            // MusicDSP additions
+            "ldr" => Some(Self::LadderFilter),
+            "drf" => Some(Self::DriftGenerator),
+            "cha" => Some(Self::ChaoticOsc),
+            "fmt" => Some(Self::FormantFilter),
+            "fog" => Some(Self::Fooglers),
+            "btd" => Some(Self::BeatDetector),
+            "pad" => Some(Self::PadSynth),
+            "amf" => Some(Self::AmFormant),
+            "teq" => Some(Self::TiltEq),
+            "uvb" => Some(Self::Univibe),
             _ => None,
         }
     }
@@ -561,6 +633,16 @@ pub enum Param {
     FractalOsc(FractalOscParam),
     // Sampler
     Sampler(SamplerParam),
+    // MusicDSP additions
+    DriftGenerator(DriftGeneratorParam),
+    ChaoticOsc(ChaoticOscParam),
+    FormantFilter(FormantFilterParam),
+    Fooglers(FooglersParam),
+    BeatDetector(BeatDetectorParam),
+    PadSynth(PadSynthParam),
+    AmFormant(AmFormantParam),
+    TiltEq(TiltEqParam),
+    Univibe(UnivibeParam),
 }
 
 impl Param {
@@ -633,6 +715,16 @@ impl Param {
             (Self::ReverseGateReverb(a), Self::ReverseGateReverb(b)) => a.same_kind(b),
             (Self::FractalOsc(a), Self::FractalOsc(b)) => a.same_kind(b),
             (Self::Sampler(a), Self::Sampler(b)) => a.same_kind(b),
+            // MusicDSP additions
+            (Self::DriftGenerator(a), Self::DriftGenerator(b)) => a.same_kind(b),
+            (Self::ChaoticOsc(a), Self::ChaoticOsc(b)) => a.same_kind(b),
+            (Self::FormantFilter(a), Self::FormantFilter(b)) => a.same_kind(b),
+            (Self::Fooglers(a), Self::Fooglers(b)) => a.same_kind(b),
+            (Self::BeatDetector(a), Self::BeatDetector(b)) => a.same_kind(b),
+            (Self::PadSynth(a), Self::PadSynth(b)) => a.same_kind(b),
+            (Self::AmFormant(a), Self::AmFormant(b)) => a.same_kind(b),
+            (Self::TiltEq(a), Self::TiltEq(b)) => a.same_kind(b),
+            (Self::Univibe(a), Self::Univibe(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -697,6 +789,16 @@ impl Param {
             Self::ReverseGateReverb(_) => ModuleType::ReverseGateReverb,
             Self::FractalOsc(_) => ModuleType::FractalOsc,
             Self::Sampler(_) => ModuleType::Sampler,
+            // MusicDSP additions
+            Self::DriftGenerator(_) => ModuleType::DriftGenerator,
+            Self::ChaoticOsc(_) => ModuleType::ChaoticOsc,
+            Self::FormantFilter(_) => ModuleType::FormantFilter,
+            Self::Fooglers(_) => ModuleType::Fooglers,
+            Self::BeatDetector(_) => ModuleType::BeatDetector,
+            Self::PadSynth(_) => ModuleType::PadSynth,
+            Self::AmFormant(_) => ModuleType::AmFormant,
+            Self::TiltEq(_) => ModuleType::TiltEq,
+            Self::Univibe(_) => ModuleType::Univibe,
         }
     }
 
@@ -760,6 +862,16 @@ impl Param {
             Self::ReverseGateReverb(p) => p.name(),
             Self::FractalOsc(p) => p.name(),
             Self::Sampler(p) => p.name(),
+            // MusicDSP additions
+            Self::DriftGenerator(p) => p.name(),
+            Self::ChaoticOsc(p) => p.name(),
+            Self::FormantFilter(p) => p.name(),
+            Self::Fooglers(p) => p.name(),
+            Self::BeatDetector(p) => p.name(),
+            Self::PadSynth(p) => p.name(),
+            Self::AmFormant(p) => p.name(),
+            Self::TiltEq(p) => p.name(),
+            Self::Univibe(p) => p.name(),
         }
     }
 
@@ -823,6 +935,16 @@ impl Param {
             Self::ReverseGateReverb(p) => p.as_f32(),
             Self::FractalOsc(p) => p.as_f32(),
             Self::Sampler(p) => p.as_f32(),
+            // MusicDSP additions
+            Self::DriftGenerator(p) => p.as_f32(),
+            Self::ChaoticOsc(p) => p.as_f32(),
+            Self::FormantFilter(p) => p.as_f32(),
+            Self::Fooglers(p) => p.as_f32(),
+            Self::BeatDetector(p) => p.as_f32(),
+            Self::PadSynth(p) => p.as_f32(),
+            Self::AmFormant(p) => p.as_f32(),
+            Self::TiltEq(p) => p.as_f32(),
+            Self::Univibe(p) => p.as_f32(),
         }
     }
 
@@ -886,6 +1008,16 @@ impl Param {
             Self::ReverseGateReverb(p) => Self::ReverseGateReverb(p.with_f32(value)),
             Self::FractalOsc(p) => Self::FractalOsc(p.with_f32(value)),
             Self::Sampler(p) => Self::Sampler(p.with_f32(value)),
+            // MusicDSP additions
+            Self::DriftGenerator(p) => Self::DriftGenerator(p.with_f32(value)),
+            Self::ChaoticOsc(p) => Self::ChaoticOsc(p.with_f32(value)),
+            Self::FormantFilter(p) => Self::FormantFilter(p.with_f32(value)),
+            Self::Fooglers(p) => Self::Fooglers(p.with_f32(value)),
+            Self::BeatDetector(p) => Self::BeatDetector(p.with_f32(value)),
+            Self::PadSynth(p) => Self::PadSynth(p.with_f32(value)),
+            Self::AmFormant(p) => Self::AmFormant(p.with_f32(value)),
+            Self::TiltEq(p) => Self::TiltEq(p.with_f32(value)),
+            Self::Univibe(p) => Self::Univibe(p.with_f32(value)),
         }
     }
 }

@@ -7,8 +7,10 @@ use synth_core::ModuleType;
 pub fn patch_string_ensemble() -> Patch {
     let mut patch = Patch::new("String Ensemble");
     patch.author = Some(Author::from("Pertylizer"));
-    patch.description =
-        Some("Rich, orchestral string section with vibrato and hall reverb.".to_string());
+    patch.description = Some(
+        "Rich, orchestral string section with vibrato, hall reverb, and Univibe warmth."
+            .to_string(),
+    );
     patch.notes = Some(
         r#"
 SIGNAL FLOW:
@@ -145,6 +147,17 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
             .param_f("room_size", 0.85) // Large hall
             .param_f("damping", 0.4)
             .param_f("mix", 0.4)
+            .build(),
+    );
+
+    // Univibe - Warm rotary-speaker modulation (uvb-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Univibe)
+            .position(2400.0, 50.0)
+            .param_f("rate", 0.6)
+            .param_f("depth", 0.35)
+            .param_f("feedback", 0.2)
+            .param_f("mix", 0.25)
             .build(),
     );
 

@@ -94,10 +94,19 @@ pub enum FilterModel {
     Fluid,
     Screamer,
     Acid,
+    /// Karlsen fast ladder filter with constant Q.
+    /// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/240-karlsen-fast-ladder.rst
+    Karlsen,
 }
 
 impl FilterModel {
-    pub const ALL: [Self; 4] = [Self::Standard, Self::Fluid, Self::Screamer, Self::Acid];
+    pub const ALL: [Self; 5] = [
+        Self::Standard,
+        Self::Fluid,
+        Self::Screamer,
+        Self::Acid,
+        Self::Karlsen,
+    ];
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -105,6 +114,7 @@ impl FilterModel {
             Self::Fluid => "Fluid",
             Self::Screamer => "Screamer",
             Self::Acid => "Acid",
+            Self::Karlsen => "Karlsen",
         }
     }
 
@@ -114,6 +124,7 @@ impl FilterModel {
             Self::Fluid => "fluid",
             Self::Screamer => "screamer",
             Self::Acid => "acid",
+            Self::Karlsen => "karlsen",
         }
     }
 
@@ -123,6 +134,7 @@ impl FilterModel {
             "fluid" => Some(Self::Fluid),
             "screamer" => Some(Self::Screamer),
             "acid" => Some(Self::Acid),
+            "karlsen" => Some(Self::Karlsen),
             _ => None,
         }
     }

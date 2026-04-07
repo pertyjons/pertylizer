@@ -17,15 +17,19 @@ pub enum LfoWaveform {
     Sawtooth,
     Square,
     SampleAndHold,
+    /// Smooth random: continuous random modulation without discontinuities.
+    /// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/269-smooth-random-lfo-generator.rst
+    SmoothRandom,
 }
 
 impl LfoWaveform {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Sine,
         Self::Triangle,
         Self::Sawtooth,
         Self::Square,
         Self::SampleAndHold,
+        Self::SmoothRandom,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -34,7 +38,8 @@ impl LfoWaveform {
             Self::Triangle => "Triangle",
             Self::Sawtooth => "Sawtooth",
             Self::Square => "Square",
-            Self::SampleAndHold => "S&H",
+            Self::SampleAndHold => "Sample & Hold",
+            Self::SmoothRandom => "Smooth Random",
         }
     }
 
@@ -45,6 +50,7 @@ impl LfoWaveform {
             Self::Sawtooth => "sawtooth",
             Self::Square => "square",
             Self::SampleAndHold => "sample_and_hold",
+            Self::SmoothRandom => "smooth_random",
         }
     }
 
@@ -55,6 +61,7 @@ impl LfoWaveform {
             "sawtooth" => Some(Self::Sawtooth),
             "square" => Some(Self::Square),
             "sample_and_hold" | "s&h" => Some(Self::SampleAndHold),
+            "smooth_random" | "random" => Some(Self::SmoothRandom),
             _ => None,
         }
     }

@@ -33,6 +33,8 @@ pub mod reverb;
 pub mod reverse_gate_reverb;
 pub mod shimmer_reverb;
 pub mod spectral_blur;
+pub mod tilt_eq;
+pub mod univibe;
 pub mod waveshaper;
 
 pub use bbd_delay::BbdDelay;
@@ -55,4 +57,6 @@ pub use reverb::Reverb;
 pub use reverse_gate_reverb::ReverseGateReverb;
 pub use shimmer_reverb::ShimmerReverb;
 pub use spectral_blur::SpectralBlur;
+pub use tilt_eq::TiltEq;
+pub use univibe::Univibe;
 pub use waveshaper::Waveshaper;

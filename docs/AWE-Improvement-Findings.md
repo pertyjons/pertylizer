@@ -2,6 +2,7 @@
 
 This document summarizes concrete ideas for improving the AWE experience, based on the current
 implementation in:
+
 - `crates/pertylizer/src/gui/awe_view.rs`
 - `crates/synth_awe/src/awe_engine.rs`
 - `crates/synth_awe/src/early_reflections.rs`
@@ -15,17 +16,20 @@ differentiation (visual and audio).
 ## 4.1 Rework Room Visualization (Visual)
 
 ### Depth and shape clarity
+
 - Add a subtle floor grid (1m and 5m steps) to give scale and reinforce dimensions.
 - Emphasize cutaway edges with a heavier front outline and lighter/dashed back edges.
 - Add a faint inner shadow on the cutaway edge to show thickness.
 - Add vertical "pins" from source/listener markers up to mid-height for stronger 3D cues.
 
 ### Shading and material cues
+
 - Introduce per-surface shading (floor, back wall, side wall) with stronger contrast.
 - Add a material-dependent tint overlay to walls/floor (not just the markers).
 - Use per-material textures/patterns (simple procedural line/dot patterns are enough).
 
 ### Animation improvements
+
 - Reflection path animation should scale with path length (distance / speed of sound),
   not only audio level.
 - Reflection path alpha should scale by per-path attenuation (distance + absorption).
@@ -35,33 +39,66 @@ differentiation (visual and audio).
 ## 4.2 Differentiate Effects More Clearly (Visual)
 
 ### Material identity
+
 - Map each material to a distinctive visual style (color + pattern + animation speed).
 - Add a small "absorption bar" visual in the info box: L/M/H absorption + diffusion.
 
 ### Reflection visualization
+
 - For non-Box shapes, show simplified reflection hints (e.g. cylinder arc reflection,
   dome/sphere mirror arcs) to make geometry-driven behavior visible.
 - Color-code reflection paths by frequency band (low/mid/high) to hint absorption.
 
-## 4.2 Differentiate Effects More Clearly (Audio)
+## 4.3 Differentiate Effects More Clearly (Audio)
 
 ### Early reflections
+
 - Add second-order reflections or a short diffusion stage after early reflections
   to increase density and provide clearer material signatures.
 - Apply stronger material-dependent damping per reflection path (distance + air absorption).
 
 ### Late reverb (FDN)
+
 - Increase material contrast by widening the mapping of absorption to LP/HP coefficients.
 - Introduce shape-dependent modulation (e.g. Tube = longer delay, lower diffusion;
   Dome/Sphere = higher diffusion).
 
 ### Room modes
-- Add tangential/oblique modes (more combs) for clearer room identity.
+
+- Tangential/oblique modes are already implemented; extend with higher-order mode sets
+  and shape-dependent weighting for clearer room identity.
 - Scale mode intensity by geometry (e.g. L-shape and Tube feel more resonant).
 
 ### Spatializer
+
 - Add a gentle EQ tilt or multi-band head shadow filter to make spatial cues more obvious.
 - Optionally add early/late spatial width differences (wider in late field).
+
+## Acceptance Criteria and RT Constraints
+
+To keep this document actionable and safe for the audio engine, evaluate each change against:
+
+1. Real-time safety:
+
+- No heap allocations or blocking locks on audio callback / engine audio thread.
+- Bounded processing cost per sample/block (no unbounded loops from room complexity).
+
+2. CPU budget:
+
+- Target < 10% extra DSP cost vs current AWE baseline at 48 kHz / 256 samples
+  with a representative preset.
+- If a feature exceeds budget, provide a quality toggle or reduced-complexity mode.
+
+3. Measurable audio differentiation:
+
+- Material/shape changes should produce measurable deltas (e.g. RT60, spectral centroid,
+  early reflection density) in offline analysis.
+- Keep output level-compensated in A/B tests to avoid loudness bias.
+
+4. Visual acceptance:
+
+- Reflection visuals should encode both path timing and attenuation (not only input level).
+- Geometry/material cues should remain readable at typical UI sizes without clutter.
 
 ## Suggested Quick Wins
 
@@ -74,25 +111,29 @@ differentiation (visual and audio).
 ## Long-term / Ambitious Ideas (Phase 3+)
 
 ### 13. Surface coupling / wall vibration
+
 Thin walls (drywall, wood panels) don't just absorb — they vibrate and re-radiate sound.
 Model as an extra LF feedback loop per surface, controlled by wall thickness, mass (kg/m²),
 and stiffness. Thin walls add "chest tone" and body to the reverb; the room "breathes" at
 low frequencies.
 
 ### 14. Wall openings & room coupling
+
 Define openings (doors, windows) on specific walls. An opening reduces reflections from that
 wall and adds HF loss from edge diffraction. Openings can connect to an exterior (absorption
 sink) or to a second room shape (extended portal concept). Struct: wall ID, position on wall,
 size in m², and target (Outside or coupled Room).
 
 ### 15. Weather effects (outdoor scenes)
+
 Wind, rain, and fog for outdoor or semi-outdoor spaces:
+
 - **Wind**: asymmetric delay modulation (downwind = shorter, upwind = longer), direction param
 - **Rain**: stochastic noise modulation of reflection times + increased diffuse absorption
 - **Fog**: extreme HF roll-off proportional to density
 
 ### 16. Acoustic focusing & caustics (curved surfaces)
+
 Concave surfaces (dome, sphere) focus sound toward focal points — dramatic gain boost at the
 center. Convex surfaces scatter. Per-reflection gain adjustment based on surface curvature at
 the reflection point. Sphere/dome rooms would exhibit strong convergent focusing.
-

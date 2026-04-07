@@ -8,7 +8,7 @@ pub fn patch_screamer_lead() -> Patch {
     let mut patch = Patch::new("Screamer Lead");
     patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
-        "Aggressive lead with Screamer filter's asymmetric diode clipping and high resonance."
+        "Aggressive lead with Screamer filter's asymmetric diode clipping, high resonance, and TiltEq presence."
             .to_string(),
     );
     patch.notes = Some(
@@ -103,6 +103,16 @@ Lower cutoff for darker, growling character.
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1200.0, 50.0)
             .param_f("master level", 0.7)
+            .build(),
+    );
+
+    // TiltEq - Presence boost (teq-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::TiltEq)
+            .position(1800.0, 50.0)
+            .param_f("tilt", 0.3)
+            .param_f("center_freq", 2000.0)
+            .param_f("mix", 1.0)
             .build(),
     );
 

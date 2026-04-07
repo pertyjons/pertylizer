@@ -8,7 +8,7 @@ pub fn patch_spectral_drone() -> Patch {
     let mut patch = Patch::new("Spectral Drone");
     patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
-        "Evolving drone using detuned saws and Frequency Shifter for inharmonic spectral content."
+        "Evolving drone using detuned saws, Frequency Shifter, and ChaoticOsc modulation for unpredictable spectral content."
             .to_string(),
     );
     patch.notes = Some(
@@ -133,6 +133,17 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
             .build(),
     );
 
+    // Chaotic Oscillator - Lorenz system modulation (cha-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::ChaoticOsc)
+            .position(50.0, 500.0)
+            .param_choice("system", "lorenz")
+            .param_f("rate", 0.3)
+            .param_f("chaos", 0.8)
+            .param_f("depth", 0.3)
+            .build(),
+    );
+
     // Connections
     // Both oscillators → Mixer
     patch.add_connection("osc-1", "out", "mix-1", "in1");
@@ -141,6 +152,7 @@ Set Shift to very small values (0.5-2 Hz) for subtle phasing/beating.
     patch.add_connection("mix-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("cha-1", "out", "flt-1", "cutoff_cv");
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
     // Note: FrequencyShifter and Reverb are auto-routed effects

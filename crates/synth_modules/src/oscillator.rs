@@ -180,6 +180,16 @@ impl Oscillator {
                 pulse -= poly_blep((p + (1.0 - pw)).rem_euclid(1.0), dt);
                 pulse
             }
+            Waveform::DsfSaw => {
+                #[allow(clippy::cast_possible_truncation)]
+                let num_harmonics =
+                    (self.sample_rate.as_f32() / (2.0 * freq.as_f32())).max(1.0) as u32;
+                synth_dsp::oscillators::dsf_sawtooth(
+                    Phase::new_unchecked(p),
+                    num_harmonics,
+                    NormalizedValue::new(0.95),
+                )
+            }
         };
 
         (sample, phase.advance(dt))

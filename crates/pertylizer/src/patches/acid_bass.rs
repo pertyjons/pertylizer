@@ -1,4 +1,4 @@
-//! Acid Bass - Classic 303-style acid bass with Steiner-Parker filter.
+//! Acid Bass - Classic 303-style acid bass with Karlsen ladder filter.
 
 use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
@@ -8,17 +8,16 @@ pub fn patch_acid_bass() -> Patch {
     let mut patch = Patch::new("Acid Bass");
     patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
-        "Squelchy acid bass with Acid filter's resonance-driven saturation and envelope sweep."
-            .to_string(),
+        "Squelchy acid bass with Karlsen ladder filter's resonance and envelope sweep.".to_string(),
     );
     patch.notes = Some(
         r#"
 SIGNAL FLOW:
-Square oscillator -> Filter (Acid, LP mode) -> Amplifier -> Distortion -> Output
+Square oscillator -> Filter (Karlsen, LP mode) -> Amplifier -> Distortion -> Output
 
-The Acid filter's variable saturation morphs from tanh to sine-fold as
-resonance increases, creating the characteristic squelchy acid character.
-A fast envelope sweep on the cutoff produces the classic 303 accent.
+The Karlsen ladder filter provides smooth resonance with a distinctive
+analog character. A fast envelope sweep on the cutoff produces the
+classic 303 accent with the Karlsen's warm saturation.
 
 MODULATION:
 - Env 2 -> Filter Cutoff (fast decay for squelchy sweep)
@@ -40,11 +39,11 @@ Switch filter type to BP for a thinner, more nasal acid sound.
             .build(),
     );
 
-    // Filter - Acid model, LP mode (flt-1)
+    // Filter - Karlsen model, LP mode (flt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
-            .filter_model("acid")
+            .filter_model("karlsen")
             .filter_mode("lowpass")
             .param_f("cutoff", 300.0)
             .param_f("resonance", 0.65)
