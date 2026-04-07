@@ -18,7 +18,7 @@ use std::f32::consts::PI;
 pub enum WindowType {
     Hann,
     Hamming,
-    BlackmanHarris,
+    BlackmanNuttall,
 }
 
 /// Fill a buffer with the specified window function.
@@ -37,7 +37,7 @@ pub fn fill_window(buf: &mut [f32], window: WindowType) {
         *sample = match window {
             WindowType::Hann => 0.5 * (1.0 - (2.0 * PI * x).cos()),
             WindowType::Hamming => 0.54 - 0.46 * (2.0 * PI * x).cos(),
-            WindowType::BlackmanHarris => {
+            WindowType::BlackmanNuttall => {
                 0.355_68 - 0.487_396 * (2.0 * PI * x).cos() + 0.144_232 * (4.0 * PI * x).cos()
                     - 0.012_604 * (6.0 * PI * x).cos()
             }
@@ -144,6 +144,7 @@ impl FftProcessor {
 pub struct StftProcessor {
     fft_size: usize,
     hop_size: usize,
+    wola_norm: f32,
     fft: FftProcessor,
 
     // Pre-allocated buffers
@@ -168,9 +169,28 @@ impl StftProcessor {
         let mut win = vec![0.0f32; fft_size];
         fill_window(&mut win, window);
 
+        // Compute WOLA normalization: sum of squared window at each hop position.
+        // For COLA-compliant combinations (e.g. Hann + 75% overlap), this sum is
+        // constant across all positions, so max == any position's sum and gives
+        // exact reconstruction. For non-COLA combos, max prevents overshoot at
+        // the cost of slight undergain — acceptable since this processor is
+        // designed for standard COLA configurations.
+        let num_hops = fft_size / hop_size;
+        let mut wola_norm = 0.0_f32;
+        for i in 0..fft_size {
+            let mut sum_sq = 0.0_f32;
+            for h in 0..num_hops {
+                let idx = (i + h * hop_size) % fft_size;
+                sum_sq += win[idx] * win[idx];
+            }
+            wola_norm = wola_norm.max(sum_sq);
+        }
+        let wola_norm = if wola_norm > 1e-10 { wola_norm } else { 1.0 };
+
         Self {
             fft_size,
             hop_size,
+            wola_norm,
             fft: FftProcessor::new(fft_size),
             window: win,
             input_ring: vec![0.0; fft_size],
@@ -206,7 +226,7 @@ impl StftProcessor {
     {
         let fft_size = self.fft_size;
         let hop_size = self.hop_size;
-        let norm = 1.0 / fft_size as f32;
+        let norm = 1.0 / (fft_size as f32 * self.wola_norm);
 
         for (i, &sample) in input.iter().enumerate() {
             // Write into input ring buffer
@@ -353,10 +373,10 @@ impl PartitionedConvolver {
         let norm = 1.0 / self.fft_size as f32;
 
         // Prepare zero-padded input: [previous_partition | current_partition]
-        // Copy previous partition_size samples (second half of input_buffer)
-        // and the new input block
+        // Copy previous partition from where we last wrote (before current input_pos)
+        let prev_pos = (self.input_pos + self.fft_size - ps) % self.fft_size;
         for i in 0..ps {
-            self.fft_in[i] = self.input_buffer[self.input_pos.wrapping_add(i) % self.fft_size];
+            self.fft_in[i] = self.input_buffer[(prev_pos + i) % self.fft_size];
         }
         let len = ps.min(input.len());
         self.fft_in[ps..ps + len].copy_from_slice(&input[..len]);

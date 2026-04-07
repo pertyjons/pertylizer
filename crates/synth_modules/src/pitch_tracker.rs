@@ -92,19 +92,28 @@ impl PitchTracker {
             return;
         }
 
-        // Normalized autocorrelation
+        // Normalized autocorrelation using sqrt(E1*E2) per lag
         let mut best_lag = 0;
         let mut best_corr = 0.0_f32;
 
         for lag in min_lag..=max_lag {
             let mut correlation = 0.0_f32;
+            let mut energy_a = 0.0_f32;
+            let mut energy_b = 0.0_f32;
             let analysis_len = RING_BUFFER_SIZE - lag;
             for i in 0..analysis_len {
                 let idx_a = (self.write_pos + i) % RING_BUFFER_SIZE;
                 let idx_b = (self.write_pos + i + lag) % RING_BUFFER_SIZE;
-                correlation += self.ring_buffer[idx_a] * self.ring_buffer[idx_b];
+                let a = self.ring_buffer[idx_a];
+                let b = self.ring_buffer[idx_b];
+                correlation += a * b;
+                energy_a += a * a;
+                energy_b += b * b;
             }
-            correlation /= analysis_len as f32;
+            let denom = (energy_a * energy_b).sqrt();
+            if denom > 1e-10 {
+                correlation /= denom;
+            }
 
             if correlation > best_corr {
                 best_corr = correlation;
@@ -131,24 +140,35 @@ impl PitchTracker {
             self.current_freq = Hertz::new(sr / best_lag as f32);
         }
 
-        // Confidence: normalized correlation relative to energy
-        self.current_confidence = (best_corr / (energy / RING_BUFFER_SIZE as f32)).clamp(0.0, 1.0);
+        // Confidence: already normalized by sqrt(E1*E2) so it's in [0, 1]
+        self.current_confidence = best_corr.clamp(0.0, 1.0);
 
         // Update gate
         self.gate_open = self.current_confidence > self.sensitivity.as_f32();
     }
 
-    /// Helper: compute autocorrelation at a given lag.
+    /// Helper: compute normalized autocorrelation at a given lag.
     #[inline]
     fn autocorr_at(&self, lag: usize) -> f32 {
         let analysis_len = RING_BUFFER_SIZE - lag;
         let mut correlation = 0.0_f32;
+        let mut energy_a = 0.0_f32;
+        let mut energy_b = 0.0_f32;
         for i in 0..analysis_len {
             let idx_a = (self.write_pos + i) % RING_BUFFER_SIZE;
             let idx_b = (self.write_pos + i + lag) % RING_BUFFER_SIZE;
-            correlation += self.ring_buffer[idx_a] * self.ring_buffer[idx_b];
+            let a = self.ring_buffer[idx_a];
+            let b = self.ring_buffer[idx_b];
+            correlation += a * b;
+            energy_a += a * a;
+            energy_b += b * b;
         }
-        correlation / analysis_len as f32
+        let denom = (energy_a * energy_b).sqrt();
+        if denom > 1e-10 {
+            correlation / denom
+        } else {
+            0.0
+        }
     }
 
     /// Convert frequency to 1V/octave CV (relative to C4 = MIDI 60).

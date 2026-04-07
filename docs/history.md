@@ -1,5 +1,18 @@
 # Version History
 
+## [0.255.0] - 2026-04-07
+### DSP fixes, new biquad filters, and project housekeeping
+- **New biquad filter types** — notch, peaking EQ, low shelf, high shelf added to `BiquadCoeffs` (RBJ Cookbook)
+- **Frequency shifter fix** — Hilbert all-pass chains now use correct first-order formula `y[n] = c*x[n] + x[n-1] - c*y[n-1]` with proper 2-element state per stage
+- **Phase vocoder fix** — corrected phase-difference normalization using `fft_size` for accurate pitch shifting
+- **Filter modulation fix** — cutoff modulation now uses exponential (semitone) scaling `2^(semi/12)` instead of linear
+- **Pitch tracker fix** — normalized autocorrelation uses per-lag `sqrt(E1*E2)` denominator for proper [0,1] confidence
+- **STFT WOLA normalization** — added weighted overlap-add normalization for correct reconstruction gain
+- **Spectral window rename** — `BlackmanHarris` → `BlackmanNuttall` to match actual coefficients
+- **Partitioned convolver fix** — corrected previous-partition read position in overlap-save
+- **Removed Dependabot** — deleted `.github/dependabot.yml`
+- **Added `docs/references.md`** — curated DSP, optimization, and open-source reference links from Awesome Audio DSP
+
 ## [0.254.0] - 2026-04-01
 ### Systematic code review — 149 fixes across 11 crates
 - **7 audio bugs fixed** — frequency shifter Hilbert chain, shimmer reverb double feedback, violet noise formula, MSEG loop click, filter env_amount dead parameter, compressor sidechain HPF, granular oscillator note pitch

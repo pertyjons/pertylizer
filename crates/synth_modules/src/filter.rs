@@ -120,8 +120,9 @@ impl Filter {
         cutoff_mod: Semitones,
         res_mod: NormalizedValue,
     ) -> f32 {
-        let cutoff_hz = (self.effective_cutoff().as_f32() * (1.0 + cutoff_mod.as_f32()))
-            .clamp(20.0, self.sample_rate.as_f32() * 0.49);
+        let cutoff_hz = (self.effective_cutoff().as_f32()
+            * (2.0_f32).powf(cutoff_mod.as_f32() / 12.0))
+        .clamp(20.0, self.sample_rate.as_f32() * 0.49);
         let cutoff = Hertz::new(cutoff_hz);
         // Clamp resonance to 0.99 max to prevent instability at self-oscillation
         let resonance =

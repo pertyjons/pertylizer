@@ -30,10 +30,11 @@ pub struct FrequencyShifter {
     mode: NormalizedValue,
 
     // Hilbert all-pass chains (stereo: L and R)
-    chain_a_l: [f32; NUM_STAGES],
-    chain_b_l: [f32; NUM_STAGES],
-    chain_a_r: [f32; NUM_STAGES],
-    chain_b_r: [f32; NUM_STAGES],
+    // Each stage stores [x[n-1], y[n-1]] for correct first-order all-pass
+    chain_a_l: [[f32; 2]; NUM_STAGES],
+    chain_b_l: [[f32; 2]; NUM_STAGES],
+    chain_a_r: [[f32; 2]; NUM_STAGES],
+    chain_b_r: [[f32; 2]; NUM_STAGES],
 
     // Shift oscillator phase
     osc_phase: Phase,
@@ -48,23 +49,31 @@ impl FrequencyShifter {
             shift: Hertz::new(0.0),
             mix: NormalizedValue::MAX,
             mode: NormalizedValue::MIN,
-            chain_a_l: [0.0; NUM_STAGES],
-            chain_b_l: [0.0; NUM_STAGES],
-            chain_a_r: [0.0; NUM_STAGES],
-            chain_b_r: [0.0; NUM_STAGES],
+            chain_a_l: [[0.0; 2]; NUM_STAGES],
+            chain_b_l: [[0.0; 2]; NUM_STAGES],
+            chain_a_r: [[0.0; 2]; NUM_STAGES],
+            chain_b_r: [[0.0; 2]; NUM_STAGES],
             osc_phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
         }
     }
 
     /// Process a sample through an all-pass chain, returning the output.
+    /// First-order all-pass: y[n] = c * x[n] + x[n-1] - c * y[n-1]
     #[inline]
-    fn process_chain(state: &mut [f32; NUM_STAGES], coeffs: &[f32; NUM_STAGES], input: f32) -> f32 {
+    fn process_chain(
+        state: &mut [[f32; 2]; NUM_STAGES],
+        coeffs: &[f32; NUM_STAGES],
+        input: f32,
+    ) -> f32 {
         let mut x = input;
         for i in 0..NUM_STAGES {
-            // First-order all-pass: y[n] = c * (x[n] - y[n-1]) + x[n-1]
-            let y = coeffs[i] * (x - state[i]) + state[i];
-            state[i] = y;
+            let c = coeffs[i];
+            let x_prev = state[i][0]; // x[n-1]
+            let y_prev = state[i][1]; // y[n-1]
+            let y = c * x + x_prev - c * y_prev;
+            state[i][0] = x;
+            state[i][1] = y;
             x = y;
         }
         x
@@ -182,10 +191,10 @@ impl AudioEffect for FrequencyShifter {
     }
 
     fn reset(&mut self) {
-        self.chain_a_l = [0.0; NUM_STAGES];
-        self.chain_b_l = [0.0; NUM_STAGES];
-        self.chain_a_r = [0.0; NUM_STAGES];
-        self.chain_b_r = [0.0; NUM_STAGES];
+        self.chain_a_l = [[0.0; 2]; NUM_STAGES];
+        self.chain_b_l = [[0.0; 2]; NUM_STAGES];
+        self.chain_a_r = [[0.0; 2]; NUM_STAGES];
+        self.chain_b_r = [[0.0; 2]; NUM_STAGES];
         self.osc_phase = Phase::ZERO;
     }
 

@@ -112,17 +112,19 @@ impl PhaseVocoder {
     ///
     /// `temp_magnitudes` and `temp_phases` are pre-allocated scratch buffers
     /// (must be >= spectrum.len()) to avoid per-hop heap allocation.
+    #[allow(clippy::too_many_arguments)]
     fn pitch_shift_spectrum(
         spectrum: &mut [Complex<f32>],
         prev_phase: &mut [f32],
         phase_accum: &mut [f32],
         shift_ratio: f32,
         hop_size: usize,
+        fft_size: usize,
         temp_magnitudes: &mut [f32],
         temp_phases: &mut [f32],
     ) {
         let n = spectrum.len();
-        let expected_phase_diff = std::f32::consts::TAU * hop_size as f32;
+        let expected_phase_diff = std::f32::consts::TAU * hop_size as f32 / fft_size as f32;
 
         // Extract magnitudes and phases into pre-allocated scratch buffers
         for (i, c) in spectrum.iter().enumerate() {
@@ -138,7 +140,7 @@ impl PhaseVocoder {
         for k in 0..n {
             // Compute instantaneous frequency
             let phase_diff = temp_phases[k] - prev_phase[k];
-            let expected = expected_phase_diff * (k as f32 / n as f32);
+            let expected = expected_phase_diff * k as f32;
             let mut deviation = phase_diff - expected;
 
             // Wrap to [-PI, PI]
@@ -147,14 +149,14 @@ impl PhaseVocoder {
                 deviation -= std::f32::consts::TAU;
             }
 
-            let true_freq = (k as f32 / n as f32) + deviation / expected_phase_diff;
+            let true_freq = k as f32 + deviation / expected_phase_diff;
 
             // Map to new bin
-            let new_bin = (true_freq * shift_ratio * n as f32) as usize;
+            let new_bin = (true_freq * shift_ratio) as usize;
             if new_bin < n {
                 // Accumulate phase
                 let new_phase = phase_accum[new_bin]
-                    + expected_phase_diff * (new_bin as f32 / n as f32)
+                    + expected_phase_diff * new_bin as f32
                     + deviation * shift_ratio;
                 phase_accum[new_bin] = new_phase;
 
@@ -264,6 +266,7 @@ impl AudioEffect for PhaseVocoder {
                         phase_accum_l,
                         shift_ratio,
                         hop_size,
+                        fft_size,
                         temp_mags,
                         temp_phs,
                     );
@@ -291,6 +294,7 @@ impl AudioEffect for PhaseVocoder {
                         phase_accum_r,
                         shift_ratio,
                         hop_size,
+                        fft_size,
                         temp_mags,
                         temp_phs,
                     );

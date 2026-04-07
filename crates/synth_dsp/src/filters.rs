@@ -185,6 +185,84 @@ impl BiquadCoeffs {
         )
     }
 
+    /// Create notch (band-reject) biquad coefficients.
+    #[must_use]
+    pub fn notch(center: Hertz, q: f32, sample_rate: SampleRate) -> Self {
+        let (_sin_omega, cos_omega, alpha) = Self::biquad_precompute(center, q, sample_rate);
+        Self::from_raw(
+            1.0,
+            -2.0 * cos_omega,
+            1.0,
+            1.0 + alpha,
+            -2.0 * cos_omega,
+            1.0 - alpha,
+        )
+    }
+
+    /// Create peaking EQ biquad coefficients (RBJ Cookbook).
+    ///
+    /// * `db_gain` - Gain in decibels (positive = boost, negative = cut)
+    #[must_use]
+    pub fn peaking(center: Hertz, q: f32, db_gain: f32, sample_rate: SampleRate) -> Self {
+        let omega = std::f32::consts::TAU * center.as_f32() / sample_rate.as_f32();
+        let sin_omega = omega.sin();
+        let cos_omega = omega.cos();
+        let a = 10.0_f32.powf(db_gain / 40.0);
+        let alpha = sin_omega / (2.0 * q.max(0.1));
+        Self::from_raw(
+            1.0 + alpha * a,
+            -2.0 * cos_omega,
+            1.0 - alpha * a,
+            1.0 + alpha / a,
+            -2.0 * cos_omega,
+            1.0 - alpha / a,
+        )
+    }
+
+    /// Create low-shelf biquad coefficients (RBJ Cookbook).
+    ///
+    /// * `slope` - Shelf slope S (1.0 = steepest without ringing, 0.5 = gentler)
+    /// * `db_gain` - Shelf gain in decibels
+    #[must_use]
+    pub fn low_shelf(cutoff: Hertz, slope: f32, db_gain: f32, sample_rate: SampleRate) -> Self {
+        let omega = std::f32::consts::TAU * cutoff.as_f32() / sample_rate.as_f32();
+        let sin_omega = omega.sin();
+        let cos_omega = omega.cos();
+        let a = 10.0_f32.powf(db_gain / 40.0);
+        let alpha = sin_omega / 2.0 * ((a + 1.0 / a) * (1.0 / slope.max(0.1) - 1.0) + 2.0).sqrt();
+        let two_sqrt_a_alpha = 2.0 * a.sqrt() * alpha;
+        Self::from_raw(
+            a * ((a + 1.0) - (a - 1.0) * cos_omega + two_sqrt_a_alpha),
+            2.0 * a * ((a - 1.0) - (a + 1.0) * cos_omega),
+            a * ((a + 1.0) - (a - 1.0) * cos_omega - two_sqrt_a_alpha),
+            (a + 1.0) + (a - 1.0) * cos_omega + two_sqrt_a_alpha,
+            -2.0 * ((a - 1.0) + (a + 1.0) * cos_omega),
+            (a + 1.0) + (a - 1.0) * cos_omega - two_sqrt_a_alpha,
+        )
+    }
+
+    /// Create high-shelf biquad coefficients (RBJ Cookbook).
+    ///
+    /// * `slope` - Shelf slope S (1.0 = steepest without ringing, 0.5 = gentler)
+    /// * `db_gain` - Shelf gain in decibels
+    #[must_use]
+    pub fn high_shelf(cutoff: Hertz, slope: f32, db_gain: f32, sample_rate: SampleRate) -> Self {
+        let omega = std::f32::consts::TAU * cutoff.as_f32() / sample_rate.as_f32();
+        let sin_omega = omega.sin();
+        let cos_omega = omega.cos();
+        let a = 10.0_f32.powf(db_gain / 40.0);
+        let alpha = sin_omega / 2.0 * ((a + 1.0 / a) * (1.0 / slope.max(0.1) - 1.0) + 2.0).sqrt();
+        let two_sqrt_a_alpha = 2.0 * a.sqrt() * alpha;
+        Self::from_raw(
+            a * ((a + 1.0) + (a - 1.0) * cos_omega + two_sqrt_a_alpha),
+            -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_omega),
+            a * ((a + 1.0) + (a - 1.0) * cos_omega - two_sqrt_a_alpha),
+            (a + 1.0) - (a - 1.0) * cos_omega + two_sqrt_a_alpha,
+            2.0 * ((a - 1.0) - (a + 1.0) * cos_omega),
+            (a + 1.0) - (a - 1.0) * cos_omega - two_sqrt_a_alpha,
+        )
+    }
+
     /// Process a single sample through the biquad filter.
     ///
     /// Uses Direct Form II transposed.
@@ -636,5 +714,125 @@ mod tests {
         );
         assert_eq!(result_reset.left, result_fresh.left);
         assert_eq!(result_reset.right, result_fresh.right);
+    }
+
+    // ========================================================================
+    // RBJ Cookbook coefficient verification tests
+    // Reference: 1 kHz, Q=0.707, sr=48000 Hz, gain=±6 dB
+    // Values computed from Robert Bristow-Johnson Audio EQ Cookbook formulas.
+    // ========================================================================
+
+    /// Helper: assert biquad coefficients match expected values within tolerance.
+    fn assert_coeffs(c: &BiquadCoeffs, b0: f32, b1: f32, b2: f32, a1: f32, a2: f32, tol: f32) {
+        assert!((c.b0 - b0).abs() < tol, "b0: got {}, expected {}", c.b0, b0);
+        assert!((c.b1 - b1).abs() < tol, "b1: got {}, expected {}", c.b1, b1);
+        assert!((c.b2 - b2).abs() < tol, "b2: got {}, expected {}", c.b2, b2);
+        assert!((c.a1 - a1).abs() < tol, "a1: got {}, expected {}", c.a1, a1);
+        assert!((c.a2 - a2).abs() < tol, "a2: got {}, expected {}", c.a2, a2);
+    }
+
+    const TEST_FREQ: Hertz = Hertz::new(1000.0);
+    const TEST_Q: f32 = 0.707;
+    const TEST_SR: SampleRate = SampleRate::DVD_QUALITY;
+    const TOL: f32 = 1e-4;
+
+    #[test]
+    fn test_biquad_lowpass_coeffs() {
+        let c = BiquadCoeffs::lowpass(TEST_FREQ, TEST_Q, TEST_SR);
+        assert_coeffs(&c, 0.003916, 0.007832, 0.003916, -1.815318, 0.830982, TOL);
+    }
+
+    #[test]
+    fn test_biquad_bandpass_coeffs() {
+        let c = BiquadCoeffs::bandpass(TEST_FREQ, TEST_Q, TEST_SR);
+        assert_coeffs(&c, 0.084509, 0.0, -0.084509, -1.815318, 0.830982, TOL);
+    }
+
+    #[test]
+    fn test_biquad_notch_coeffs() {
+        let c = BiquadCoeffs::notch(TEST_FREQ, TEST_Q, TEST_SR);
+        assert_coeffs(&c, 0.915491, -1.815318, 0.915491, -1.815318, 0.830982, TOL);
+    }
+
+    #[test]
+    fn test_biquad_peaking_boost_coeffs() {
+        let c = BiquadCoeffs::peaking(TEST_FREQ, TEST_Q, 6.0, TEST_SR);
+        assert_coeffs(&c, 1.061051, -1.861256, 0.816266, -1.861256, 0.877317, TOL);
+    }
+
+    #[test]
+    fn test_biquad_peaking_cut_coeffs() {
+        let c = BiquadCoeffs::peaking(TEST_FREQ, TEST_Q, -6.0, TEST_SR);
+        assert_coeffs(&c, 0.942462, -1.754162, 0.826837, -1.754162, 0.769299, TOL);
+    }
+
+    #[test]
+    fn test_biquad_peaking_reciprocal() {
+        // Boost and cut should be reciprocal: peaking(+G) * peaking(-G) ≈ unity
+        let boost = BiquadCoeffs::peaking(TEST_FREQ, TEST_Q, 6.0, TEST_SR);
+        let cut = BiquadCoeffs::peaking(TEST_FREQ, TEST_Q, -6.0, TEST_SR);
+
+        let mut bz1 = FilterState::ZERO;
+        let mut bz2 = FilterState::ZERO;
+        let mut cz1 = FilterState::ZERO;
+        let mut cz2 = FilterState::ZERO;
+
+        // Feed impulse through boost then cut
+        let mut output = boost.process(1.0, &mut bz1, &mut bz2);
+        output = cut.process(output, &mut cz1, &mut cz2);
+        for _ in 0..2000 {
+            output = boost.process(0.0, &mut bz1, &mut bz2);
+            output = cut.process(output, &mut cz1, &mut cz2);
+        }
+        // After settling, DC response of cascade should be near zero (impulse tail)
+        assert!(output.abs() < 1e-4, "cascade residual: {output}");
+    }
+
+    #[test]
+    fn test_biquad_low_shelf_coeffs() {
+        // RBJ Cookbook low shelf with slope S=1.0
+        let c = BiquadCoeffs::low_shelf(TEST_FREQ, 1.0, 6.0, TEST_SR);
+        assert_coeffs(&c, 1.032562, -1.838857, 0.828748, -1.844457, 0.855710, TOL);
+    }
+
+    #[test]
+    fn test_biquad_high_shelf_coeffs() {
+        // RBJ Cookbook high shelf with slope S=1.0
+        let c = BiquadCoeffs::high_shelf(TEST_FREQ, 1.0, 6.0, TEST_SR);
+        assert_coeffs(&c, 1.932341, -3.564119, 1.653523, -1.780867, 0.802613, TOL);
+    }
+
+    #[test]
+    fn test_biquad_notch_rejects_center() {
+        // A notch at 1 kHz should attenuate a 1 kHz sine to near zero
+        let c = BiquadCoeffs::notch(TEST_FREQ, TEST_Q, TEST_SR);
+        let mut z1 = FilterState::ZERO;
+        let mut z2 = FilterState::ZERO;
+
+        let mut last = 0.0_f32;
+        for i in 0..4000 {
+            let input = (std::f32::consts::TAU * 1000.0 * i as f32 / 48000.0).sin();
+            last = c.process(input, &mut z1, &mut z2);
+        }
+        assert!(last.abs() < 0.01, "notch output at center: {last}");
+    }
+
+    #[test]
+    fn test_biquad_shelf_dc_gain() {
+        // Low shelf +6 dB should boost DC by ~6 dB (factor ≈ 2.0 in amplitude)
+        let c = BiquadCoeffs::low_shelf(TEST_FREQ, 1.0, 6.0, TEST_SR);
+        let mut z1 = FilterState::ZERO;
+        let mut z2 = FilterState::ZERO;
+
+        let mut output = 0.0;
+        for _ in 0..5000 {
+            output = c.process(1.0, &mut z1, &mut z2);
+        }
+        // 6 dB ≈ 10^(6/20) ≈ 1.9953
+        let expected = 10.0_f32.powf(6.0 / 20.0);
+        assert!(
+            (output - expected).abs() < 0.05,
+            "low shelf DC gain: got {output}, expected {expected}"
+        );
     }
 }
