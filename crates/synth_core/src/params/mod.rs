@@ -58,11 +58,11 @@ pub use chaotic_osc::{ChaoticOscParam, ChaoticSystem};
 pub use convolver::{ConvolverParam, ImpulseResponse};
 pub use drift_generator::DriftGeneratorParam;
 pub use effects::{
-    BbdDelayParam, ChorusParam, CompressorParam, DelayMode, DelayParam, DistortionMode,
-    DistortionParam, EnsembleChorusParam, EqParam, FlangerParam, GranularFxParam, LimiterParam,
-    MidSideParam, ModalResonatorParam, PhaserParam, ReverbParam, ReverseGateMode,
+    BbdDelayParam, ChorusParam, CompressorParam, CrossoverParam, DelayMode, DelayParam,
+    DistortionMode, DistortionParam, EnsembleChorusParam, EqParam, FlangerParam, GranularFxParam,
+    LimiterParam, MidSideParam, ModalResonatorParam, PhaserParam, ReverbParam, ReverseGateMode,
     ReverseGateReverbParam, ReverseGateTrigger, ShimmerReverbParam, SpectralBlurParam, TiltEqParam,
-    UnivibeParam,
+    UnivibeParam, VocoderParam,
 };
 pub use envelope_follower::EnvelopeFollowerParam;
 pub use envelopes::EnvelopeParam;
@@ -85,7 +85,9 @@ pub use mod_matrix::{
 pub use modules::{AmplifierParam, LevelMeterParam, MixerParam, OscilloscopeParam};
 pub use mseg::MsegParam;
 pub use noise::{NoiseParam, NoiseType};
-pub use oscillators::{FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform};
+pub use oscillators::{
+    AntiAliasMode, FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform,
+};
 pub use padsynth::PadSynthParam;
 pub use phase_vocoder::{FftSizeOption, PhaseVocoderParam};
 pub use physical::{
@@ -194,6 +196,8 @@ pub enum ModuleType {
     // MusicDSP additions (effects)
     TiltEq,
     Univibe,
+    CrossoverSplitter,
+    Vocoder,
 }
 
 impl ModuleType {
@@ -295,6 +299,8 @@ impl ModuleType {
                 // MusicDSP additions (effects)
                 | Self::TiltEq
                 | Self::Univibe
+                | Self::CrossoverSplitter
+                | Self::Vocoder
         )
     }
 
@@ -395,6 +401,8 @@ impl ModuleType {
             Self::AmFormant => "AM Formant",
             Self::TiltEq => "Tilt EQ",
             Self::Univibe => "Univibe",
+            Self::CrossoverSplitter => "Crossover Splitter",
+            Self::Vocoder => "LPC Vocoder",
         }
     }
 
@@ -471,6 +479,8 @@ impl ModuleType {
             Self::AmFormant => "amf",
             Self::TiltEq => "teq",
             Self::Univibe => "uvb",
+            Self::CrossoverSplitter => "cxo",
+            Self::Vocoder => "vcd",
         }
     }
 
@@ -547,6 +557,8 @@ impl ModuleType {
             "amf" => Some(Self::AmFormant),
             "teq" => Some(Self::TiltEq),
             "uvb" => Some(Self::Univibe),
+            "cxo" => Some(Self::CrossoverSplitter),
+            "vcd" => Some(Self::Vocoder),
             _ => None,
         }
     }
@@ -643,6 +655,8 @@ pub enum Param {
     AmFormant(AmFormantParam),
     TiltEq(TiltEqParam),
     Univibe(UnivibeParam),
+    Crossover(CrossoverParam),
+    Vocoder(VocoderParam),
 }
 
 impl Param {
@@ -725,6 +739,8 @@ impl Param {
             (Self::AmFormant(a), Self::AmFormant(b)) => a.same_kind(b),
             (Self::TiltEq(a), Self::TiltEq(b)) => a.same_kind(b),
             (Self::Univibe(a), Self::Univibe(b)) => a.same_kind(b),
+            (Self::Crossover(a), Self::Crossover(b)) => a.same_kind(b),
+            (Self::Vocoder(a), Self::Vocoder(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -799,6 +815,8 @@ impl Param {
             Self::AmFormant(_) => ModuleType::AmFormant,
             Self::TiltEq(_) => ModuleType::TiltEq,
             Self::Univibe(_) => ModuleType::Univibe,
+            Self::Crossover(_) => ModuleType::CrossoverSplitter,
+            Self::Vocoder(_) => ModuleType::Vocoder,
         }
     }
 
@@ -872,6 +890,8 @@ impl Param {
             Self::AmFormant(p) => p.name(),
             Self::TiltEq(p) => p.name(),
             Self::Univibe(p) => p.name(),
+            Self::Crossover(p) => p.name(),
+            Self::Vocoder(p) => p.name(),
         }
     }
 
@@ -945,6 +965,8 @@ impl Param {
             Self::AmFormant(p) => p.as_f32(),
             Self::TiltEq(p) => p.as_f32(),
             Self::Univibe(p) => p.as_f32(),
+            Self::Crossover(p) => p.as_f32(),
+            Self::Vocoder(p) => p.as_f32(),
         }
     }
 
@@ -1018,6 +1040,8 @@ impl Param {
             Self::AmFormant(p) => Self::AmFormant(p.with_f32(value)),
             Self::TiltEq(p) => Self::TiltEq(p.with_f32(value)),
             Self::Univibe(p) => Self::Univibe(p.with_f32(value)),
+            Self::Crossover(p) => Self::Crossover(p.with_f32(value)),
+            Self::Vocoder(p) => Self::Vocoder(p.with_f32(value)),
         }
     }
 }

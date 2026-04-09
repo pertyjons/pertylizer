@@ -1,5 +1,33 @@
 # Version History
 
+## [0.261.0] - 2026-04-09
+### MusicDSP feature plan complete: all 26 algorithms fully exposed
+
+**New effect modules (2):**
+- **Crossover Splitter** — 4th-order Linkwitz-Riley phase-coherent LP/HP band splitting with independent gain control
+- **LPC Vocoder** — RT-safe Linear Predictive Coding spectral envelope analysis with all-pole filter (fixed-size arrays, no heap allocation in process)
+
+**New options in existing modules:**
+- **MinBLEP anti-aliasing** mode in Oscillator — lookup-table-based minimum-phase band-limited step, alternative to PolyBLEP for higher quality
+- **Dynamic Convolution** in Convolver — amplitude-dependent IR crossfade between soft/medium/loud impulse responses using buffer RMS detection
+
+**DSP improvements:**
+- `LinkwitzRileyCoeffs` — separated coefficient computation from per-sample processing (eliminates sin/cos per sample)
+- RT-safe LPC functions (`autocorrelation_fixed`, `levinson_durbin_fixed`, `lpc_analysis_fixed`) using `[f32; MAX_LPC_ORDER]` fixed-size arrays
+- Dynamic convolution RMS/weights cached per block instead of per sample
+- Vocoder filter state shift limited to effective order
+
+**Descriptor improvements:**
+- Added missing parameter descriptions to Convolver (IR Type, Mix, Pre-Delay, Decay, Brightness)
+- Added missing description to Vocoder mix parameter
+- Added audio port descriptors to Vocoder
+
+**Patch updates:**
+- Unison Supersaw — uses MinBLEP anti-aliasing for cleaner 7-voice unison
+- Granular Cathedral — dynamic convolution on hall reverb
+- Formant Voice — LPC Vocoder in effect chain for enhanced vocal character
+- Spectral Freeze Pad — Crossover Splitter for frequency-dependent processing
+
 ## [0.260.0] - 2026-04-07
 ### MusicDSP feature plan: 26 algorithms from musicdsp.org
 

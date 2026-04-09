@@ -265,6 +265,52 @@ impl FmMode {
 }
 
 // ============================================================================
+// ANTI-ALIAS MODE ENUM
+// ============================================================================
+
+/// Anti-aliasing mode for the oscillator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum AntiAliasMode {
+    /// Polynomial band-limited step (lightweight, good quality)
+    #[default]
+    PolyBlep,
+    /// Minimum-phase band-limited step (higher quality, uses lookup table)
+    MinBlep,
+}
+
+impl AntiAliasMode {
+    pub const ALL: [Self; 2] = [Self::PolyBlep, Self::MinBlep];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PolyBlep => "PolyBLEP",
+            Self::MinBlep => "MinBLEP",
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::PolyBlep => "polyblep",
+            Self::MinBlep => "minblep",
+        }
+    }
+
+    pub fn from_index(idx: usize) -> Self {
+        match idx {
+            1 => Self::MinBlep,
+            _ => Self::PolyBlep,
+        }
+    }
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::PolyBlep => 0,
+            Self::MinBlep => 1,
+        }
+    }
+}
+
+// ============================================================================
 // OSCILLATOR PARAMETER ENUM (with typed values)
 // ============================================================================
 
@@ -314,6 +360,8 @@ pub enum OscillatorParam {
     UnisonPhaseRandom(NormalizedValue),
     /// Cross-modulation amount from another oscillator (0.0 = off, 1.0 = full)
     CrossModAmount(NormalizedValue),
+    /// Anti-aliasing algorithm
+    AntiAlias(AntiAliasMode),
 }
 
 impl OscillatorParam {
@@ -339,6 +387,7 @@ impl OscillatorParam {
             Self::UnisonSpread(_) => "Uni Spread",
             Self::UnisonPhaseRandom(_) => "Uni Phase",
             Self::CrossModAmount(_) => "X-Mod",
+            Self::AntiAlias(_) => "Anti-Alias",
         }
     }
 
@@ -359,6 +408,8 @@ impl OscillatorParam {
             Self::UnisonSpread(v) => v.as_f32(),
             Self::UnisonPhaseRandom(v) => v.as_f32(),
             Self::CrossModAmount(v) => v.as_f32(),
+            #[allow(clippy::cast_precision_loss)]
+            Self::AntiAlias(m) => m.index() as f32,
         }
     }
 
@@ -382,6 +433,8 @@ impl OscillatorParam {
             Self::UnisonSpread(_) => Self::UnisonSpread(NormalizedValue::new(value)),
             Self::UnisonPhaseRandom(_) => Self::UnisonPhaseRandom(NormalizedValue::new(value)),
             Self::CrossModAmount(_) => Self::CrossModAmount(NormalizedValue::new(value)),
+            #[allow(clippy::cast_possible_truncation)]
+            Self::AntiAlias(_) => Self::AntiAlias(AntiAliasMode::from_index(value as usize)),
         }
     }
 

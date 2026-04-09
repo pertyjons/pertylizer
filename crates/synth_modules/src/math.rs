@@ -785,6 +785,75 @@ pub fn lpc_analysis(samples: &[f32], order: usize) -> Vec<f32> {
     levinson_durbin(&r, order)
 }
 
+// ── RT-safe LPC Analysis ────────────────────────────────────────────────
+
+/// Maximum LPC order for RT-safe analysis.
+pub const MAX_LPC_ORDER: usize = 32;
+
+/// RT-safe autocorrelation using a fixed-size output buffer.
+///
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst>
+/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
+#[inline]
+pub fn autocorrelation_fixed(samples: &[f32], order: usize, out: &mut [f32; MAX_LPC_ORDER + 1]) {
+    let order = order.min(MAX_LPC_ORDER);
+    for lag in 0..=order {
+        let mut sum = 0.0f32;
+        for i in 0..samples.len().saturating_sub(lag) {
+            sum += samples[i] * samples[i + lag];
+        }
+        out[lag] = sum;
+    }
+}
+
+/// RT-safe Levinson-Durbin recursion using fixed-size buffers.
+///
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst>
+/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
+#[inline]
+pub fn levinson_durbin_fixed(r: &[f32], order: usize, out: &mut [f32; MAX_LPC_ORDER]) {
+    let order = order.min(MAX_LPC_ORDER);
+    out.fill(0.0);
+
+    if order == 0 || r.is_empty() || r[0].abs() < 1e-10 {
+        return;
+    }
+
+    let mut a_prev = [0.0f32; MAX_LPC_ORDER];
+    let mut error = r[0];
+
+    for i in 0..order {
+        let mut sum = 0.0f32;
+        for j in 0..i {
+            sum += a_prev[j] * r[i - j];
+        }
+        let k = -(r[i + 1] + sum) / error;
+
+        out[i] = k;
+        for j in 0..i {
+            out[j] = a_prev[j] + k * a_prev[i - 1 - j];
+        }
+
+        error *= 1.0 - k * k;
+        if error.abs() < 1e-10 {
+            break;
+        }
+
+        a_prev[..=i].copy_from_slice(&out[..=i]);
+    }
+}
+
+/// RT-safe LPC analysis combining autocorrelation and Levinson-Durbin.
+///
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst>
+/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
+#[inline]
+pub fn lpc_analysis_fixed(samples: &[f32], order: usize, coeffs: &mut [f32; MAX_LPC_ORDER]) {
+    let mut r = [0.0f32; MAX_LPC_ORDER + 1];
+    autocorrelation_fixed(samples, order, &mut r);
+    levinson_durbin_fixed(&r, order, coeffs);
+}
+
 // ── Dynamic Convolution ──────────────────────────────────────────────────
 
 /// Dynamic convolution helper: select impulse response based on input amplitude.

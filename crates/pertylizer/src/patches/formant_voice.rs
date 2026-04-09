@@ -13,7 +13,8 @@ pub fn patch_formant_voice() -> Patch {
 SIGNAL FLOW:
 Formant synthesis creates vocal-like sounds by simulating the resonances
 of the human vocal tract. The formant algorithm generates a carrier
-wave with decaying resonant peaks at specific frequencies.
+wave with decaying resonant peaks at specific frequencies. An LPC
+Vocoder further shapes the spectral envelope for enhanced vocal character.
 
 PARAMETERS:
 - Param A: Formant frequency ratio (vowel character)
@@ -88,10 +89,20 @@ or "singing" effects. LFO modulation adds natural movement.
             .build(),
     );
 
+    // LPC Vocoder — spectral envelope shaping (vcd-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Vocoder)
+            .position(1600.0, 50.0)
+            .param_f("order", 0.6)
+            .param_f("window", 25.0)
+            .param_f("mix", 0.5)
+            .build(),
+    );
+
     // Chorus - Add width (chr-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Chorus)
-            .position(1600.0, 50.0)
+            .position(2000.0, 50.0)
             .param_f("rate", 0.6)
             .param_f("depth", 0.3)
             .param_f("mix", 0.3)
@@ -101,7 +112,7 @@ or "singing" effects. LFO modulation adds natural movement.
     // Reverb (rev-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Reverb)
-            .position(1600.0, 300.0)
+            .position(2000.0, 300.0)
             .param_f("room_size", 0.6)
             .param_f("damping", 0.4)
             .param_f("mix", 0.3)

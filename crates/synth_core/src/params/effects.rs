@@ -1388,3 +1388,113 @@ impl Default for UnivibeParam {
         Self::Mix(NormalizedValue::new(0.5))
     }
 }
+
+// ============================================================================
+// CROSSOVER SPLITTER PARAMETERS
+// ============================================================================
+
+/// Crossover splitter parameter with typed value.
+///
+/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/266-4th-order-linkwitz-riley-filters.rst
+/// From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum CrossoverParam {
+    /// Crossover frequency (Hz)
+    Frequency(Hertz),
+    /// Low band gain
+    LowGain(NormalizedValue),
+    /// High band gain
+    HighGain(NormalizedValue),
+    /// Dry/wet mix
+    Mix(NormalizedValue),
+}
+
+impl CrossoverParam {
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Frequency(_) => "Frequency",
+            Self::LowGain(_) => "Low Gain",
+            Self::HighGain(_) => "High Gain",
+            Self::Mix(_) => "Mix",
+        }
+    }
+
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::Frequency(hz) => hz.as_f32(),
+            Self::LowGain(v) | Self::HighGain(v) | Self::Mix(v) => v.as_f32(),
+        }
+    }
+
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::Frequency(_) => Self::Frequency(Hertz::new(value)),
+            Self::LowGain(_) => Self::LowGain(NormalizedValue::new(value)),
+            Self::HighGain(_) => Self::HighGain(NormalizedValue::new(value)),
+            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
+        }
+    }
+}
+
+impl Default for CrossoverParam {
+    fn default() -> Self {
+        Self::Mix(NormalizedValue::MAX)
+    }
+}
+
+// ============================================================================
+// VOCODER PARAMETERS
+// ============================================================================
+
+/// LPC Vocoder parameter with typed value.
+///
+/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst
+/// From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum VocoderParam {
+    /// LPC analysis order (4-32)
+    Order(NormalizedValue),
+    /// Analysis window size in milliseconds
+    WindowSize(Milliseconds),
+    /// Dry/wet mix
+    Mix(NormalizedValue),
+}
+
+impl VocoderParam {
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Order(_) => "Order",
+            Self::WindowSize(_) => "Window",
+            Self::Mix(_) => "Mix",
+        }
+    }
+
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::Order(v) | Self::Mix(v) => v.as_f32(),
+            Self::WindowSize(ms) => ms.as_f32(),
+        }
+    }
+
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::Order(_) => Self::Order(NormalizedValue::new(value)),
+            Self::WindowSize(_) => Self::WindowSize(Milliseconds::new(value)),
+            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
+        }
+    }
+}
+
+impl Default for VocoderParam {
+    fn default() -> Self {
+        Self::Mix(NormalizedValue::MAX)
+    }
+}

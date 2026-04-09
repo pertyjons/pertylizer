@@ -335,6 +335,16 @@ pub fn create_effect(module_type: ModuleType) -> Option<(Box<dyn AudioEffect>, M
             let d = e.descriptor();
             Some((Box::new(e), d))
         }
+        ModuleType::CrossoverSplitter => {
+            let e = synth_modules::effects::CrossoverSplitter::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
+        ModuleType::Vocoder => {
+            let e = synth_modules::effects::Vocoder::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
         _ => None,
     }
 }
@@ -435,6 +445,8 @@ pub const ALL_MODULE_TYPES: &[ModuleType] = &[
     // MusicDSP additions (effects)
     ModuleType::TiltEq,
     ModuleType::Univibe,
+    ModuleType::CrossoverSplitter,
+    ModuleType::Vocoder,
     // Visualizers
     ModuleType::Oscilloscope,
     ModuleType::LevelMeter,

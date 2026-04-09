@@ -6,9 +6,10 @@
 //! - Pre-delay, decay trim, brightness controls
 //! - Stereo processing (dual convolver)
 
+use crate::math::{buffer_rms, dynamic_convolution_weights};
 use synth_core::module_traits::ChoiceOption;
 use synth_core::{
-    AudioEffect, ConvolverParam, Describable, ImpulseResponse, Milliseconds, ModuleCategory,
+    AudioEffect, ConvolverParam, Describable, Gain, ImpulseResponse, Milliseconds, ModuleCategory,
     ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
     ProcessContext, SampleCount, SampleRate, StereoSample, WidgetHint,
 };
@@ -22,17 +23,9 @@ const MAX_IR_SAMPLES: usize = 96_000;
 
 /// Convolution reverb with generated impulse responses.
 ///
-/// # Dynamic convolution (future integration point)
-///
-/// The helpers `crate::math::buffer_rms` and `crate::math::dynamic_convolution_weights`
-/// provide the building blocks for dynamic (amplitude-dependent) convolution, where
-/// multiple IR buffers captured at different input levels are crossfaded based on the
-/// current input RMS. This convolver currently uses a single IR per type, so dynamic
-/// convolution would require storing multiple IR buffers per type and running parallel
-/// `PartitionedConvolver` instances with crossfade mixing.
-///
-/// TODO: Dynamic convolution support — requires multiple IR buffers per type and
-/// crossfade logic using `buffer_rms` / `dynamic_convolution_weights`.
+/// Supports dynamic convolution: when `dynamic_mode` > 0, three IR variants
+/// (soft/medium/loud) are convolved in parallel and crossfaded based on input
+/// RMS using `buffer_rms` and `dynamic_convolution_weights`.
 pub struct Convolver {
     // Parameters
     ir_type: ImpulseResponse,
@@ -40,10 +33,18 @@ pub struct Convolver {
     pre_delay_ms: Milliseconds,
     decay_trim: NormalizedValue,
     brightness: NormalizedValue,
+    dynamic_mode: NormalizedValue,
 
-    // Convolution engines (stereo)
+    // Convolution engines (stereo) — medium IR
     conv_left: PartitionedConvolver,
     conv_right: PartitionedConvolver,
+
+    // Dynamic convolution: soft IR (lower amplitude)
+    conv_soft_l: PartitionedConvolver,
+    conv_soft_r: PartitionedConvolver,
+    // Dynamic convolution: loud IR (higher amplitude)
+    conv_loud_l: PartitionedConvolver,
+    conv_loud_r: PartitionedConvolver,
 
     // Pre-delay buffer
     delay_buf_l: Vec<f32>,
@@ -62,22 +63,43 @@ pub struct Convolver {
     output_accum_r: Vec<f32>,
     accum_pos: usize,
 
+    // Accumulators for dynamic mode
+    output_soft_l: Vec<f32>,
+    output_soft_r: Vec<f32>,
+    output_loud_l: Vec<f32>,
+    output_loud_r: Vec<f32>,
+
+    // Cached dynamic weights (computed per block, not per sample)
+    dyn_lo: usize,
+    dyn_hi: usize,
+    dyn_cf: f32,
+
     // State
     sample_rate: SampleRate,
 }
 
 impl Convolver {
     pub fn new() -> Self {
-        let ir = Self::generate_ir(ImpulseResponse::Plate, SampleRate::DVD_QUALITY, 1.0);
+        let sr = SampleRate::DVD_QUALITY;
+        let ir_type = ImpulseResponse::Plate;
+        let ir = Self::generate_ir(ir_type, sr, 1.0);
+        let ir_soft = Self::generate_ir_soft(ir_type, sr, 1.0);
+        let ir_loud = Self::generate_ir_loud(ir_type, sr, 1.0);
         Self {
-            ir_type: ImpulseResponse::Plate,
+            ir_type,
             mix: NormalizedValue::new(0.3),
             pre_delay_ms: Milliseconds::new(0.0),
             decay_trim: NormalizedValue::MAX,
             brightness: NormalizedValue::new(0.8),
+            dynamic_mode: NormalizedValue::MIN,
 
             conv_left: PartitionedConvolver::new(PARTITION_SIZE, &ir),
             conv_right: PartitionedConvolver::new(PARTITION_SIZE, &ir),
+
+            conv_soft_l: PartitionedConvolver::new(PARTITION_SIZE, &ir_soft),
+            conv_soft_r: PartitionedConvolver::new(PARTITION_SIZE, &ir_soft),
+            conv_loud_l: PartitionedConvolver::new(PARTITION_SIZE, &ir_loud),
+            conv_loud_r: PartitionedConvolver::new(PARTITION_SIZE, &ir_loud),
 
             delay_buf_l: vec![0.0; 48_000],
             delay_buf_r: vec![0.0; 48_000],
@@ -93,7 +115,16 @@ impl Convolver {
             output_accum_r: vec![0.0; PARTITION_SIZE],
             accum_pos: 0,
 
-            sample_rate: SampleRate::DVD_QUALITY,
+            output_soft_l: vec![0.0; PARTITION_SIZE],
+            output_soft_r: vec![0.0; PARTITION_SIZE],
+            output_loud_l: vec![0.0; PARTITION_SIZE],
+            output_loud_r: vec![0.0; PARTITION_SIZE],
+
+            dyn_lo: 1,
+            dyn_hi: 1,
+            dyn_cf: 0.0,
+
+            sample_rate: sr,
         }
     }
 
@@ -141,15 +172,57 @@ impl Convolver {
         ir
     }
 
+    /// Generate a soft IR variant: shorter decay, lower amplitude.
+    fn generate_ir_soft(
+        ir_type: ImpulseResponse,
+        sample_rate: SampleRate,
+        decay_trim: f32,
+    ) -> Vec<f32> {
+        let mut ir = Self::generate_ir(ir_type, sample_rate, decay_trim);
+        let sr = sample_rate.as_f32();
+        for (i, sample) in ir.iter_mut().enumerate() {
+            let extra_decay = (-2.0 * i as f32 / sr).exp();
+            *sample *= 0.7 * extra_decay;
+        }
+        ir
+    }
+
+    /// Generate a loud IR variant: longer tail, slight saturation.
+    fn generate_ir_loud(
+        ir_type: ImpulseResponse,
+        sample_rate: SampleRate,
+        decay_trim: f32,
+    ) -> Vec<f32> {
+        let mut ir = Self::generate_ir(ir_type, sample_rate, decay_trim);
+        for sample in ir.iter_mut() {
+            let s = *sample * 1.3;
+            *sample = s / (1.0 + s.abs());
+        }
+        ir
+    }
+
     fn rebuild_ir(&mut self) {
-        let ir = Self::generate_ir(self.ir_type, self.sample_rate, self.decay_trim.as_f32());
+        let decay = self.decay_trim.as_f32();
+        let ir = Self::generate_ir(self.ir_type, self.sample_rate, decay);
+        let ir_soft = Self::generate_ir_soft(self.ir_type, self.sample_rate, decay);
+        let ir_loud = Self::generate_ir_loud(self.ir_type, self.sample_rate, decay);
+
         self.conv_left = PartitionedConvolver::new(PARTITION_SIZE, &ir);
         self.conv_right = PartitionedConvolver::new(PARTITION_SIZE, &ir);
+        self.conv_soft_l = PartitionedConvolver::new(PARTITION_SIZE, &ir_soft);
+        self.conv_soft_r = PartitionedConvolver::new(PARTITION_SIZE, &ir_soft);
+        self.conv_loud_l = PartitionedConvolver::new(PARTITION_SIZE, &ir_loud);
+        self.conv_loud_r = PartitionedConvolver::new(PARTITION_SIZE, &ir_loud);
+
         self.accum_pos = 0;
         self.input_accum_l.fill(0.0);
         self.input_accum_r.fill(0.0);
         self.output_accum_l.fill(0.0);
         self.output_accum_r.fill(0.0);
+        self.output_soft_l.fill(0.0);
+        self.output_soft_r.fill(0.0);
+        self.output_loud_l.fill(0.0);
+        self.output_loud_r.fill(0.0);
     }
 
     fn update_delay(&mut self) {
@@ -173,21 +246,25 @@ impl Describable for Convolver {
             .tag("reverb")
             .tag("convolution")
             .tag("ir")
-            .parameter(ParameterDescriptor::choice(
-                "ir_type",
-                Param::Convolver(ConvolverParam::Ir(ImpulseResponse::Plate)),
-                "IR Type",
-                ImpulseResponse::ALL
-                    .iter()
-                    .map(|i| ChoiceOption::new(i.id(), i.name()))
-                    .collect(),
-            ))
+            .parameter(
+                ParameterDescriptor::choice(
+                    "ir_type",
+                    Param::Convolver(ConvolverParam::Ir(ImpulseResponse::Plate)),
+                    "IR Type",
+                    ImpulseResponse::ALL
+                        .iter()
+                        .map(|i| ChoiceOption::new(i.id(), i.name()))
+                        .collect(),
+                )
+                .description("Impulse response type (Plate, Room, Spring, Hall)"),
+            )
             .parameter(
                 ParameterDescriptor::float(
                     "mix",
                     Param::Convolver(ConvolverParam::Mix(NormalizedValue::new(0.3))),
                     "Mix",
                 )
+                .description("Dry/wet mix")
                 .range(0.0, 1.0)
                 .default(0.3)
                 .unit(ParameterUnit::Percent)
@@ -199,6 +276,7 @@ impl Describable for Convolver {
                     Param::Convolver(ConvolverParam::PreDelay(Milliseconds::new(0.0))),
                     "Pre-Delay",
                 )
+                .description("Time before reverb onset")
                 .range(0.0, 200.0)
                 .default(0.0)
                 .unit(ParameterUnit::Milliseconds)
@@ -210,6 +288,7 @@ impl Describable for Convolver {
                     Param::Convolver(ConvolverParam::DecayTrim(NormalizedValue::MAX)),
                     "Decay",
                 )
+                .description("IR tail length trim")
                 .range(0.1, 1.0)
                 .default(1.0)
                 .widget(WidgetHint::Knob),
@@ -220,8 +299,20 @@ impl Describable for Convolver {
                     Param::Convolver(ConvolverParam::Brightness(NormalizedValue::new(0.8))),
                     "Brightness",
                 )
+                .description("High frequency content of reverb tail")
                 .range(0.0, 1.0)
                 .default(0.8)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "dynamic",
+                    Param::Convolver(ConvolverParam::DynamicMode(NormalizedValue::MIN)),
+                    "Dynamic",
+                )
+                .description("Dynamic convolution amount (amplitude-dependent IR)")
+                .range(0.0, 1.0)
+                .default(0.0)
                 .widget(WidgetHint::Knob),
             )
     }
@@ -259,31 +350,87 @@ impl AudioEffect for Convolver {
             self.accum_pos += 1;
 
             // When we've accumulated a full partition, run convolution
+            let dynamic = self.dynamic_mode.as_f32();
             if self.accum_pos >= PARTITION_SIZE {
                 self.accum_pos = 0;
                 self.conv_left
                     .process_block(&self.input_accum_l, &mut self.output_accum_l);
                 self.conv_right
                     .process_block(&self.input_accum_r, &mut self.output_accum_r);
+
+                if dynamic > 0.01 {
+                    self.conv_soft_l
+                        .process_block(&self.input_accum_l, &mut self.output_soft_l);
+                    self.conv_soft_r
+                        .process_block(&self.input_accum_r, &mut self.output_soft_r);
+                    self.conv_loud_l
+                        .process_block(&self.input_accum_l, &mut self.output_loud_l);
+                    self.conv_loud_r
+                        .process_block(&self.input_accum_r, &mut self.output_loud_r);
+
+                    let rms = buffer_rms(&self.input_accum_l);
+                    let levels = [Gain::new(0.0), Gain::new(0.33), Gain::new(0.66)];
+                    let (lo, hi, crossfade) = dynamic_convolution_weights(rms, &levels);
+                    self.dyn_lo = lo;
+                    self.dyn_hi = hi;
+                    self.dyn_cf = crossfade.as_f32();
+                }
             }
 
             // Read convolved output (from most recent full block)
-            let wet_l = if self.accum_pos < PARTITION_SIZE {
-                self.output_accum_l
-                    .get(self.accum_pos)
-                    .copied()
-                    .unwrap_or(0.0)
+            let pos = self.accum_pos;
+            let mut wet_l = if pos < PARTITION_SIZE {
+                self.output_accum_l.get(pos).copied().unwrap_or(0.0)
             } else {
                 0.0
             };
-            let wet_r = if self.accum_pos < PARTITION_SIZE {
-                self.output_accum_r
-                    .get(self.accum_pos)
-                    .copied()
-                    .unwrap_or(0.0)
+            let mut wet_r = if pos < PARTITION_SIZE {
+                self.output_accum_r.get(pos).copied().unwrap_or(0.0)
             } else {
                 0.0
             };
+
+            if dynamic > 0.01 && pos < PARTITION_SIZE {
+                let cf = self.dyn_cf;
+                let get = |idx: usize, buf_s: &[f32], buf_m: &[f32], buf_l: &[f32]| -> f32 {
+                    match idx {
+                        0 => buf_s.get(pos).copied().unwrap_or(0.0),
+                        2 => buf_l.get(pos).copied().unwrap_or(0.0),
+                        _ => buf_m.get(pos).copied().unwrap_or(0.0),
+                    }
+                };
+
+                let lo_l = get(
+                    self.dyn_lo,
+                    &self.output_soft_l,
+                    &self.output_accum_l,
+                    &self.output_loud_l,
+                );
+                let hi_l = get(
+                    self.dyn_hi,
+                    &self.output_soft_l,
+                    &self.output_accum_l,
+                    &self.output_loud_l,
+                );
+                let lo_r = get(
+                    self.dyn_lo,
+                    &self.output_soft_r,
+                    &self.output_accum_r,
+                    &self.output_loud_r,
+                );
+                let hi_r = get(
+                    self.dyn_hi,
+                    &self.output_soft_r,
+                    &self.output_accum_r,
+                    &self.output_loud_r,
+                );
+
+                let dyn_l = lo_l * (1.0 - cf) + hi_l * cf;
+                let dyn_r = lo_r * (1.0 - cf) + hi_r * cf;
+
+                wet_l = wet_l * (1.0 - dynamic) + dyn_l * dynamic;
+                wet_r = wet_r * (1.0 - dynamic) + dyn_r * dynamic;
+            }
 
             // Apply brightness (one-pole LP)
             self.lp_state_l += lp_coeff * (wet_l - self.lp_state_l);
@@ -319,6 +466,7 @@ impl AudioEffect for Convolver {
                     }
                 }
                 ConvolverParam::Brightness(v) => self.brightness = v,
+                ConvolverParam::DynamicMode(v) => self.dynamic_mode = v,
             }
         }
     }
@@ -332,6 +480,7 @@ impl AudioEffect for Convolver {
                 ConvolverParam::PreDelay(_) => self.pre_delay_ms.as_f32(),
                 ConvolverParam::DecayTrim(_) => self.decay_trim.as_f32(),
                 ConvolverParam::Brightness(_) => self.brightness.as_f32(),
+                ConvolverParam::DynamicMode(_) => self.dynamic_mode.as_f32(),
             })
         } else {
             None
@@ -345,6 +494,7 @@ impl AudioEffect for Convolver {
             Param::Convolver(ConvolverParam::PreDelay(self.pre_delay_ms)),
             Param::Convolver(ConvolverParam::DecayTrim(self.decay_trim)),
             Param::Convolver(ConvolverParam::Brightness(self.brightness)),
+            Param::Convolver(ConvolverParam::DynamicMode(self.dynamic_mode)),
         ]
     }
 
@@ -355,6 +505,10 @@ impl AudioEffect for Convolver {
     fn reset(&mut self) {
         self.conv_left.reset();
         self.conv_right.reset();
+        self.conv_soft_l.reset();
+        self.conv_soft_r.reset();
+        self.conv_loud_l.reset();
+        self.conv_loud_r.reset();
         self.delay_buf_l.fill(0.0);
         self.delay_buf_r.fill(0.0);
         self.delay_write = 0;
@@ -365,6 +519,10 @@ impl AudioEffect for Convolver {
         self.input_accum_r.fill(0.0);
         self.output_accum_l.fill(0.0);
         self.output_accum_r.fill(0.0);
+        self.output_soft_l.fill(0.0);
+        self.output_soft_r.fill(0.0);
+        self.output_loud_l.fill(0.0);
+        self.output_loud_r.fill(0.0);
     }
 
     fn set_mix(&mut self, mix: NormalizedValue) {

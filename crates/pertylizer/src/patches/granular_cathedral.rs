@@ -23,7 +23,7 @@ for warmth, then through the amp with a very slow pad envelope.
 EFFECTS CHAIN (auto-routed):
 1. Spectral Blur — smears the frequency spectrum for dreamlike quality
 2. Granular FX — re-granulates the audio for further texture
-3. Convolver (Hall) — massive cathedral impulse response
+3. Convolver (Hall) — massive cathedral impulse response with dynamic convolution
 4. Limiter — tames the dense layered output
 
 GRANULAR OSCILLATOR:
@@ -144,7 +144,7 @@ Change Convolver IR type to Spring for metallic quality.
             .build(),
     );
 
-    // Convolver — cathedral hall (cnv-1)
+    // Convolver — cathedral hall with dynamic convolution (cnv-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Convolver)
             .position(2050.0, 50.0)
@@ -153,6 +153,7 @@ Change Convolver IR type to Spring for metallic quality.
             .param_f("pre-delay", 30.0)
             .param_f("decay", 0.9)
             .param_f("brightness", 0.6)
+            .param_f("dynamic", 0.6)
             .build(),
     );
 

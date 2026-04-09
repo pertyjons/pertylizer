@@ -61,6 +61,8 @@ pub enum ConvolverParam {
     DecayTrim(NormalizedValue),
     /// Brightness (one-pole LP on wet signal).
     Brightness(NormalizedValue),
+    /// Enable dynamic convolution (amplitude-dependent IR crossfade).
+    DynamicMode(NormalizedValue),
 }
 
 impl ConvolverParam {
@@ -75,6 +77,7 @@ impl ConvolverParam {
             Self::PreDelay(_) => "Pre-Delay",
             Self::DecayTrim(_) => "Decay",
             Self::Brightness(_) => "Brightness",
+            Self::DynamicMode(_) => "Dynamic",
         }
     }
 
@@ -82,7 +85,9 @@ impl ConvolverParam {
     pub fn as_f32(&self) -> f32 {
         match self {
             Self::Ir(ir) => ir.index() as f32,
-            Self::Mix(v) | Self::DecayTrim(v) | Self::Brightness(v) => v.as_f32(),
+            Self::Mix(v) | Self::DecayTrim(v) | Self::Brightness(v) | Self::DynamicMode(v) => {
+                v.as_f32()
+            }
             Self::PreDelay(ms) => ms.as_f32(),
         }
     }
@@ -95,6 +100,7 @@ impl ConvolverParam {
             Self::PreDelay(_) => Self::PreDelay(Milliseconds::new(value)),
             Self::DecayTrim(_) => Self::DecayTrim(NormalizedValue::new(value)),
             Self::Brightness(_) => Self::Brightness(NormalizedValue::new(value)),
+            Self::DynamicMode(_) => Self::DynamicMode(NormalizedValue::new(value)),
         }
     }
 }

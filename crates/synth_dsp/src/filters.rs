@@ -667,64 +667,85 @@ impl LinkwitzRiley {
     }
 
     /// Process one sample, returns (lowpass, highpass) pair.
+    /// Recomputes coefficients per call — use `process_with_coeffs` for block processing.
     #[inline]
     pub fn process(&mut self, input: f32, cutoff: Hertz, sample_rate: SampleRate) -> (f32, f32) {
-        let omega = std::f32::consts::TAU * cutoff.as_f32() / sample_rate.as_f32();
-        let sn = omega.sin();
-        let cs = omega.cos();
-        // Butterworth Q = 0.7071 (1/sqrt(2))
-        let alpha = sn / (2.0 * std::f32::consts::FRAC_1_SQRT_2);
-        let a0_inv = 1.0 / (1.0 + alpha);
+        let coeffs = LinkwitzRileyCoeffs::new(cutoff, sample_rate);
+        self.process_with_coeffs(input, &coeffs)
+    }
 
-        // LP coefficients
-        let lp_b0 = ((1.0 - cs) * 0.5) * a0_inv;
-        let lp_b1 = (1.0 - cs) * a0_inv;
-        let lp_b2 = lp_b0;
-        let a1 = (-2.0 * cs) * a0_inv;
-        let a2 = (1.0 - alpha) * a0_inv;
-
-        // HP coefficients
-        let hp_b0 = ((1.0 + cs) * 0.5) * a0_inv;
-        let hp_b1 = -(1.0 + cs) * a0_inv;
-        let hp_b2 = hp_b0;
-
+    /// Process one sample with pre-computed coefficients.
+    #[inline]
+    pub fn process_with_coeffs(&mut self, input: f32, c: &LinkwitzRileyCoeffs) -> (f32, f32) {
         // Process LP stage 1
-        let lp_out1 = lp_b0 * input + lp_b1 * self.lp1[0] + lp_b2 * self.lp1[1]
-            - a1 * self.lp1[2]
-            - a2 * self.lp1[3];
+        let lp_out1 = c.lp_b0 * input + c.lp_b1 * self.lp1[0] + c.lp_b0 * self.lp1[1]
+            - c.a1 * self.lp1[2]
+            - c.a2 * self.lp1[3];
         self.lp1[1] = self.lp1[0];
         self.lp1[0] = input;
         self.lp1[3] = self.lp1[2];
         self.lp1[2] = lp_out1;
 
         // Process LP stage 2
-        let lp_out2 = lp_b0 * lp_out1 + lp_b1 * self.lp2[0] + lp_b2 * self.lp2[1]
-            - a1 * self.lp2[2]
-            - a2 * self.lp2[3];
+        let lp_out2 = c.lp_b0 * lp_out1 + c.lp_b1 * self.lp2[0] + c.lp_b0 * self.lp2[1]
+            - c.a1 * self.lp2[2]
+            - c.a2 * self.lp2[3];
         self.lp2[1] = self.lp2[0];
         self.lp2[0] = lp_out1;
         self.lp2[3] = self.lp2[2];
         self.lp2[2] = lp_out2;
 
         // Process HP stage 1
-        let hp_out1 = hp_b0 * input + hp_b1 * self.hp1[0] + hp_b2 * self.hp1[1]
-            - a1 * self.hp1[2]
-            - a2 * self.hp1[3];
+        let hp_out1 = c.hp_b0 * input + c.hp_b1 * self.hp1[0] + c.hp_b0 * self.hp1[1]
+            - c.a1 * self.hp1[2]
+            - c.a2 * self.hp1[3];
         self.hp1[1] = self.hp1[0];
         self.hp1[0] = input;
         self.hp1[3] = self.hp1[2];
         self.hp1[2] = hp_out1;
 
         // Process HP stage 2
-        let hp_out2 = hp_b0 * hp_out1 + hp_b1 * self.hp2[0] + hp_b2 * self.hp2[1]
-            - a1 * self.hp2[2]
-            - a2 * self.hp2[3];
+        let hp_out2 = c.hp_b0 * hp_out1 + c.hp_b1 * self.hp2[0] + c.hp_b0 * self.hp2[1]
+            - c.a1 * self.hp2[2]
+            - c.a2 * self.hp2[3];
         self.hp2[1] = self.hp2[0];
         self.hp2[0] = hp_out1;
         self.hp2[3] = self.hp2[2];
         self.hp2[2] = hp_out2;
 
         (lp_out2, hp_out2)
+    }
+}
+
+/// Pre-computed Linkwitz-Riley filter coefficients.
+#[derive(Debug, Clone, Copy)]
+pub struct LinkwitzRileyCoeffs {
+    lp_b0: f32,
+    lp_b1: f32,
+    hp_b0: f32,
+    hp_b1: f32,
+    a1: f32,
+    a2: f32,
+}
+
+impl LinkwitzRileyCoeffs {
+    /// Compute coefficients for a given cutoff and sample rate.
+    #[must_use]
+    pub fn new(cutoff: Hertz, sample_rate: SampleRate) -> Self {
+        let omega = std::f32::consts::TAU * cutoff.as_f32() / sample_rate.as_f32();
+        let sn = omega.sin();
+        let cs = omega.cos();
+        let alpha = sn / (2.0 * std::f32::consts::FRAC_1_SQRT_2);
+        let a0_inv = 1.0 / (1.0 + alpha);
+
+        Self {
+            lp_b0: ((1.0 - cs) * 0.5) * a0_inv,
+            lp_b1: (1.0 - cs) * a0_inv,
+            hp_b0: ((1.0 + cs) * 0.5) * a0_inv,
+            hp_b1: -(1.0 + cs) * a0_inv,
+            a1: (-2.0 * cs) * a0_inv,
+            a2: (1.0 - alpha) * a0_inv,
+        }
     }
 }
 

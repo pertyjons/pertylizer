@@ -143,10 +143,21 @@ Increase Spectral Blur time to max for extreme smearing.
             .build(),
     );
 
+    // Crossover Splitter — separate low/high frequency processing (cxo-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::CrossoverSplitter)
+            .position(2050.0, 400.0)
+            .param_f("frequency", 800.0)
+            .param_f("low gain", 0.8)
+            .param_f("high gain", 1.0)
+            .param_f("mix", 1.0)
+            .build(),
+    );
+
     // Limiter — control accumulated energy (lmt-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Limiter)
-            .position(2050.0, 400.0)
+            .position(2450.0, 400.0)
             .param_f("ceiling", -0.5)
             .param_f("look-ahead", 3.0)
             .param_f("release", 120.0)
@@ -168,7 +179,7 @@ Increase Spectral Blur time to max for extreme smearing.
     patch.add_group(
         "Spectral FX",
         Some("#D4A94A"),
-        &["pvc-1", "sbl-1", "shr-1", "lmt-1"],
+        &["pvc-1", "sbl-1", "shr-1", "cxo-1", "lmt-1"],
     );
 
     patch

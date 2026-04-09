@@ -13,7 +13,7 @@ pub fn patch_unison_supersaw() -> Patch {
     patch.notes = Some(
         r#"
 SIGNAL FLOW:
-Saw oscillator (7-voice unison) -> Filter (Lowpass) -> Amplifier -> Chorus -> Output
+Saw oscillator (7-voice unison, MinBLEP) -> Filter (Lowpass) -> Amplifier -> Chorus -> Output
 
 The oscillator's intra-voice unison generates 7 detuned sawtooth copies with
 full stereo spread. The mono sum goes through a lowpass filter for warmth,
@@ -38,7 +38,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
         "stereo".into(),
     ];
 
-    // Oscillator - 7-voice unison saw (osc-1)
+    // Oscillator - 7-voice unison saw with MinBLEP anti-aliasing (osc-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
@@ -48,6 +48,7 @@ aggressive, detuned character. Play chords for classic trance stabs.
             .param_f("uni detune", 25.0)
             .param_f("uni spread", 1.0)
             .param_f("uni phase", 1.0)
+            .param_choice("anti-alias", "minblep")
             .build(),
     );
 

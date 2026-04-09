@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use synth_core::{AntiAliasMode, FmMode, ModuleType, OscillatorParam, Param};
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
@@ -18,8 +19,13 @@ use synth_core::{
     BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate,
     Semitones, Velocity, VoiceCount, Waveform,
 };
-use synth_core::{FmMode, ModuleType, OscillatorParam, Param};
 use synth_dsp::oscillators::{poly_blamp, poly_blep};
+
+use std::sync::LazyLock;
+
+/// Shared MinBLEP lookup table (allocated once, read-only after init).
+static MINBLEP_TABLE: LazyLock<synth_dsp::oscillators::MinBlepTable> =
+    LazyLock::new(|| synth_dsp::oscillators::MinBlepTable::new(4, 64));
 
 /// Maximum number of unison voices per oscillator.
 const MAX_UNISON_VOICES: usize = 7;
@@ -56,6 +62,9 @@ pub struct Oscillator {
     /// Previous sync signal value for edge detection (persists across buffers).
     prev_sync: NormalizedValue,
 
+    // Anti-aliasing mode
+    aa_mode: AntiAliasMode,
+
     // Cross-modulation
     /// Cross-modulation amount (0.0 = off, 1.0 = full).
     cross_mod_amount: NormalizedValue,
@@ -88,6 +97,7 @@ impl Oscillator {
             unison_detune: Cents::new(10.0),
             unison_spread: NormalizedValue::CENTER,
             unison_phase_random: NormalizedValue::MAX,
+            aa_mode: AntiAliasMode::PolyBlep,
             cross_mod_amount: NormalizedValue::MIN,
             unison_detune_ratios: [1.0; MAX_UNISON_VOICES],
             unison_pans: [0.0; MAX_UNISON_VOICES],
@@ -139,6 +149,27 @@ impl Oscillator {
         }
     }
 
+    /// MinBLEP correction at a discontinuity point.
+    /// Returns the residual correction (similar to poly_blep but using the lookup table).
+    #[inline]
+    fn minblep_correction(phase: f32, dt: f32) -> f32 {
+        let table = &*MINBLEP_TABLE;
+        #[allow(clippy::cast_precision_loss)]
+        let table_len = table.length_samples() as f32;
+        // Distance from discontinuity in samples
+        let d = phase / dt;
+        if d < table_len {
+            table.lookup(d / table_len) - 1.0
+        } else {
+            let d2 = (1.0 - phase) / dt;
+            if d2 < table_len {
+                1.0 - table.lookup(d2 / table_len)
+            } else {
+                0.0
+            }
+        }
+    }
+
     /// Generate a single sample for one oscillator voice (no level applied).
     /// Returns the sample and the advanced phase.
     #[inline]
@@ -155,6 +186,7 @@ impl Oscillator {
         let sample = match self.waveform {
             Waveform::Sine => crate::math::fast_sin_turns(p),
             Waveform::Triangle => {
+                // Triangle uses BLAMP (not BLEP) — no MinBLEP alternative needed
                 let mut tri = Phase::new_unchecked(p).triangle();
                 let dist_to_peak = p - 0.25;
                 tri += poly_blamp(dist_to_peak, dt) * 4.0;
@@ -164,20 +196,39 @@ impl Oscillator {
             }
             Waveform::Sawtooth => {
                 let mut saw = Phase::new_unchecked(p).sawtooth();
-                saw -= poly_blep(p, dt);
+                match self.aa_mode {
+                    AntiAliasMode::PolyBlep => saw -= poly_blep(p, dt),
+                    AntiAliasMode::MinBlep => saw -= Self::minblep_correction(p, dt),
+                }
                 saw
             }
             Waveform::Square => {
                 let mut sq = Phase::new_unchecked(p).pulse(NormalizedValue::CENTER);
-                sq += poly_blep(p, dt);
-                sq -= poly_blep((p + 0.5).rem_euclid(1.0), dt);
+                match self.aa_mode {
+                    AntiAliasMode::PolyBlep => {
+                        sq += poly_blep(p, dt);
+                        sq -= poly_blep((p + 0.5).rem_euclid(1.0), dt);
+                    }
+                    AntiAliasMode::MinBlep => {
+                        sq += Self::minblep_correction(p, dt);
+                        sq -= Self::minblep_correction((p + 0.5).rem_euclid(1.0), dt);
+                    }
+                }
                 sq
             }
             Waveform::Pulse => {
                 let mut pulse = Phase::new_unchecked(p).pulse(effective_pulse_width);
                 let pw = effective_pulse_width.as_f32().clamp(0.01, 0.99);
-                pulse += poly_blep(p, dt);
-                pulse -= poly_blep((p + (1.0 - pw)).rem_euclid(1.0), dt);
+                match self.aa_mode {
+                    AntiAliasMode::PolyBlep => {
+                        pulse += poly_blep(p, dt);
+                        pulse -= poly_blep((p + (1.0 - pw)).rem_euclid(1.0), dt);
+                    }
+                    AntiAliasMode::MinBlep => {
+                        pulse += Self::minblep_correction(p, dt);
+                        pulse -= Self::minblep_correction((p + (1.0 - pw)).rem_euclid(1.0), dt);
+                    }
+                }
                 pulse
             }
             Waveform::DsfSaw => {
@@ -369,6 +420,18 @@ impl Describable for Oscillator {
                 .default(0.0)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::choice(
+                    "anti_alias",
+                    Param::Oscillator(OscillatorParam::AntiAlias(AntiAliasMode::PolyBlep)),
+                    "Anti-Alias",
+                    AntiAliasMode::ALL
+                        .iter()
+                        .map(|m| synth_core::module_traits::ChoiceOption::new(m.id(), m.name()))
+                        .collect(),
+                )
+                .description("Anti-aliasing algorithm"),
+            )
             .port(PortDescriptor::gate_input("sync", "Sync").description("Återställer fasen vid gate. Koppla: annan Oscillators output för hard sync-ljud"))
             .port(PortDescriptor::audio_output("out", "Out").description("Audio output (mono sum)"))
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Stereo left output"))
@@ -513,6 +576,7 @@ impl PolyModule for Oscillator {
                 }
                 OscillatorParam::UnisonPhaseRandom(v) => self.unison_phase_random = v,
                 OscillatorParam::CrossModAmount(v) => self.cross_mod_amount = v,
+                OscillatorParam::AntiAlias(m) => self.aa_mode = m,
             }
         }
     }
@@ -534,6 +598,8 @@ impl PolyModule for Oscillator {
                 OscillatorParam::UnisonSpread(_) => self.unison_spread.as_f32(),
                 OscillatorParam::UnisonPhaseRandom(_) => self.unison_phase_random.as_f32(),
                 OscillatorParam::CrossModAmount(_) => self.cross_mod_amount.as_f32(),
+                #[allow(clippy::cast_precision_loss)]
+                OscillatorParam::AntiAlias(_) => self.aa_mode.index() as f32,
             })
         } else {
             None
@@ -558,6 +624,7 @@ impl PolyModule for Oscillator {
             Param::Oscillator(OscillatorParam::UnisonSpread(self.unison_spread)),
             Param::Oscillator(OscillatorParam::UnisonPhaseRandom(self.unison_phase_random)),
             Param::Oscillator(OscillatorParam::CrossModAmount(self.cross_mod_amount)),
+            Param::Oscillator(OscillatorParam::AntiAlias(self.aa_mode)),
         ]
     }
 
