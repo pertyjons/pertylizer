@@ -1,5 +1,32 @@
 # Version History
 
+## [0.263.0] - 2026-04-10
+### Code quality cleanup for sampling MCP tools
+
+- Single-pass sample statistics in `get_sample_info` (was 3 separate iterations)
+- Struct update syntax in `duplicate_sample` (future-proof against new fields)
+- Eliminated read→write lock bounce in `set_sample_loop` and `set_sample_crop`
+- Removed redundant comments in `get_sampler_state`
+
+## [0.262.0] - 2026-04-09
+### MCP sampling tools: 8 new tools for sample editing and sampler control
+
+**New MCP tools (sample editing):**
+- `get_sample_info` — detailed sample statistics (peak, RMS, DC offset, memory usage, loop/crop in seconds)
+- `duplicate_sample` — clone a sample with new ID
+- `export_sample` — export sample to WAV file (16/24/32-bit)
+- `set_sample_loop` — configure loop region (start/end in seconds, crossfade)
+- `set_sample_crop` — set or remove crop region
+
+**New MCP tools (sampler module control):**
+- `assign_sample_to_module` — assign a sample to a Sampler module (sends both param and audio data)
+- `get_sampler_state` — read all sampler parameters (sample, pitch tracking, play mode, etc.)
+- `set_sampler_parameter` — set any sampler parameter by name with string values
+
+**New types:**
+- `DetailedSampleInfo` — extended sample info with audio statistics
+- `SamplerStateInfo` — sampler module state snapshot
+
 ## [0.261.0] - 2026-04-09
 ### MusicDSP feature plan complete: all 26 algorithms fully exposed
 

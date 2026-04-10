@@ -643,6 +643,53 @@ pub struct SampleInfo {
     pub source: String,
 }
 
+/// Detailed information about a sample including audio statistics.
+#[derive(Debug, Clone, Serialize)]
+pub struct DetailedSampleInfo {
+    /// Basic sample info.
+    #[serde(flatten)]
+    pub info: SampleInfo,
+    /// Peak amplitude (0.0 - 1.0+).
+    pub peak_level: f32,
+    /// RMS level.
+    pub rms_level: f32,
+    /// DC offset (average sample value).
+    pub dc_offset: f32,
+    /// Memory usage in bytes.
+    pub memory_bytes: usize,
+    /// Loop region start in seconds (if set).
+    pub loop_start_seconds: Option<f64>,
+    /// Loop region end in seconds (if set).
+    pub loop_end_seconds: Option<f64>,
+    /// Crop start in seconds (if set).
+    pub crop_start_seconds: Option<f64>,
+    /// Crop end in seconds (if set).
+    pub crop_end_seconds: Option<f64>,
+}
+
+/// State of a Sampler module in the rack.
+#[derive(Debug, Clone, Serialize)]
+pub struct SamplerStateInfo {
+    /// Currently assigned sample ID (0 if none).
+    pub sample_id: u64,
+    /// Name of assigned sample (empty if none).
+    pub sample_name: String,
+    /// Pitch tracking enabled.
+    pub pitch_tracking: bool,
+    /// Volume level (0.0 - 1.0).
+    pub level: f32,
+    /// Play mode: "one_shot", "sustain", or "loop".
+    pub play_mode: String,
+    /// Direction: "forward", "reverse", or "ping_pong".
+    pub direction: String,
+    /// Velocity sensitivity (0.0 - 1.0).
+    pub velocity_sensitivity: f32,
+    /// Fine tune in cents (-100 to +100).
+    pub fine_tune: f32,
+    /// Start offset (0.0 - 1.0).
+    pub start_offset: f32,
+}
+
 // ============================================================================
 // DISCOVERY TYPES
 // ============================================================================

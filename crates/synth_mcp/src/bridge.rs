@@ -18,10 +18,10 @@ use crate::error::McpBridgeError;
 use crate::types::{
     ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo, AwePresetInfo,
     AweStateInfo, BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo,
-    EngineStatus, ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo, InputStateInfo,
-    InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo,
-    PatchResourceData, PatternInfo, PlacementInfo, SampleInfo, SetSongResult, SongInfo, TrackInfo,
-    UiSnapshot,
+    DetailedSampleInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo,
+    InputStateInfo, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult,
+    ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, SampleInfo, SamplerStateInfo,
+    SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -659,6 +659,64 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Auto-trim silence from sample.
     fn trim_sample_silence(&self, id: u64) -> Result<(), McpBridgeError>;
+
+    /// Get detailed info for a sample including audio statistics.
+    fn get_sample_info(&self, id: u64) -> Result<DetailedSampleInfo, McpBridgeError>;
+
+    /// Duplicate a sample (new ID, same data).
+    fn duplicate_sample(&self, id: u64) -> Result<SampleInfo, McpBridgeError>;
+
+    /// Set loop region for a sample. Pass None to disable looping.
+    fn set_sample_loop(
+        &self,
+        id: u64,
+        enabled: bool,
+        start_seconds: Option<f64>,
+        end_seconds: Option<f64>,
+        crossfade_ms: Option<f64>,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Set crop region for a sample. Pass None values to remove crop.
+    fn set_sample_crop(
+        &self,
+        id: u64,
+        start_seconds: Option<f64>,
+        end_seconds: Option<f64>,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Export a sample to a WAV file.
+    fn export_sample(
+        &self,
+        id: u64,
+        path: &str,
+        bit_depth: Option<u8>,
+    ) -> Result<(), McpBridgeError>;
+
+    // === Sampler module ===
+
+    /// Assign a sample to a Sampler module.
+    fn assign_sample_to_module(
+        &self,
+        instrument_id: u64,
+        module_id: &str,
+        sample_id: u64,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Get the current state of a Sampler module.
+    fn get_sampler_state(
+        &self,
+        instrument_id: u64,
+        module_id: &str,
+    ) -> Result<SamplerStateInfo, McpBridgeError>;
+
+    /// Set a Sampler module parameter by name.
+    fn set_sampler_parameter(
+        &self,
+        instrument_id: u64,
+        module_id: &str,
+        param_name: &str,
+        value: &str,
+    ) -> Result<(), McpBridgeError>;
 
     // === Audio input ===
 

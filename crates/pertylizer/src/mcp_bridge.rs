@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use synth_core::{MidiNote, NormalizedValue, Param, PortDirection, Velocity};
+use synth_core::{MidiNote, NormalizedValue, Param, PortDirection, SampleCount, Velocity};
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
@@ -2910,6 +2910,425 @@ impl SynthBridge for AppSynthBridge {
                 }),
             );
         }
+        Ok(())
+    }
+
+    fn get_sample_info(
+        &self,
+        id: u64,
+    ) -> Result<synth_mcp::types::DetailedSampleInfo, McpBridgeError> {
+        let sample_id = synth_sampler::SampleId::new(id);
+        let lib = self
+            .sample_library
+            .read()
+            .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+        let sample = lib
+            .get(sample_id)
+            .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?;
+
+        let data = &sample.data;
+        let len = data.len();
+        let (peak_level, rms_level, dc_offset) = if len == 0 {
+            (0.0, 0.0, 0.0)
+        } else {
+            let (peak, sq_sum, dc_sum) = data.iter().fold(
+                (0.0_f32, 0.0_f32, 0.0_f32),
+                |(peak, sq, dc), &s| (peak.max(s.abs()), sq + s * s, dc + s),
+            );
+            let rms = (sq_sum / len as f32).sqrt();
+            let dc = dc_sum / len as f32;
+            (peak, rms, dc)
+        };
+        let memory_bytes = len * std::mem::size_of::<f32>();
+        let sr = f64::from(sample.meta.sample_rate.0);
+
+        let (loop_start_seconds, loop_end_seconds) = match &sample.meta.loop_region {
+            Some(region) => (
+                Some(region.start.0 as f64 / sr),
+                Some(region.end.0 as f64 / sr),
+            ),
+            None => (None, None),
+        };
+
+        let (crop_start_seconds, crop_end_seconds) = match &sample.meta.crop {
+            Some(region) => (
+                Some(region.start.0 as f64 / sr),
+                Some(region.end.0 as f64 / sr),
+            ),
+            None => (None, None),
+        };
+
+        let info = meta_to_sample_info(&sample.meta);
+        Ok(synth_mcp::types::DetailedSampleInfo {
+            info,
+            peak_level,
+            rms_level,
+            dc_offset,
+            memory_bytes,
+            loop_start_seconds,
+            loop_end_seconds,
+            crop_start_seconds,
+            crop_end_seconds,
+        })
+    }
+
+    fn duplicate_sample(&self, id: u64) -> Result<synth_mcp::types::SampleInfo, McpBridgeError> {
+        let sample_id = synth_sampler::SampleId::new(id);
+        let (cloned_data, cloned_meta) = {
+            let lib = self
+                .sample_library
+                .read()
+                .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+            let sample = lib
+                .get(sample_id)
+                .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?;
+            (Arc::clone(&sample.data), sample.meta.clone())
+        };
+
+        let new_meta = synth_sampler::SampleMeta {
+            id: synth_sampler::SampleId::new(0),
+            name: format!("{} (copy)", cloned_meta.name),
+            ..cloned_meta
+        };
+        let new_sample = synth_sampler::Sample::new(new_meta, cloned_data);
+
+        let mut lib = self
+            .sample_library
+            .write()
+            .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+        let new_id = lib.add(new_sample);
+        let new_meta = lib.get_meta(new_id).ok_or_else(|| {
+            McpBridgeError::Other("Failed to retrieve duplicated sample".to_string())
+        })?;
+        Ok(meta_to_sample_info(new_meta))
+    }
+
+    fn set_sample_loop(
+        &self,
+        id: u64,
+        enabled: bool,
+        start_seconds: Option<f64>,
+        end_seconds: Option<f64>,
+        crossfade_ms: Option<f64>,
+    ) -> Result<(), McpBridgeError> {
+        let sample_id = synth_sampler::SampleId::new(id);
+        let mut lib = self
+            .sample_library
+            .write()
+            .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+        if enabled {
+            let start_s = start_seconds.ok_or_else(|| {
+                McpBridgeError::Other("start_seconds required when enabled".to_string())
+            })?;
+            let end_s = end_seconds.ok_or_else(|| {
+                McpBridgeError::Other("end_seconds required when enabled".to_string())
+            })?;
+            let sample = lib
+                .get(sample_id)
+                .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?;
+            let sr = f64::from(sample.meta.sample_rate.0);
+            let start_frame = (start_s * sr) as usize;
+            let end_frame = (end_s * sr) as usize;
+            let crossfade_frames = crossfade_ms
+                .map(|ms| (ms / 1000.0 * sr) as usize)
+                .unwrap_or(0);
+            lib.update_loop(
+                sample_id,
+                Some(synth_sampler::LoopRegion {
+                    start: synth_sampler::FrameIndex::new(start_frame),
+                    end: synth_sampler::FrameIndex::new(end_frame),
+                    crossfade: SampleCount::new(crossfade_frames),
+                }),
+            );
+        } else {
+            lib.update_loop(sample_id, None);
+        }
+        Ok(())
+    }
+
+    fn set_sample_crop(
+        &self,
+        id: u64,
+        start_seconds: Option<f64>,
+        end_seconds: Option<f64>,
+    ) -> Result<(), McpBridgeError> {
+        let sample_id = synth_sampler::SampleId::new(id);
+        let mut lib = self
+            .sample_library
+            .write()
+            .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+        if start_seconds.is_none() && end_seconds.is_none() {
+            lib.update_crop(sample_id, None);
+        } else {
+            let sample = lib
+                .get(sample_id)
+                .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?;
+            let sr = f64::from(sample.meta.sample_rate.0);
+            let start_frame = start_seconds.map(|s| (s * sr) as usize).unwrap_or(0);
+            let end_frame = end_seconds
+                .map(|s| (s * sr) as usize)
+                .unwrap_or(sample.meta.frame_count.as_usize());
+            lib.update_crop(
+                sample_id,
+                Some(synth_sampler::CropRegion {
+                    start: synth_sampler::FrameIndex::new(start_frame),
+                    end: synth_sampler::FrameIndex::new(end_frame),
+                }),
+            );
+        }
+        Ok(())
+    }
+
+    fn export_sample(
+        &self,
+        id: u64,
+        path: &str,
+        bit_depth: Option<u8>,
+    ) -> Result<(), McpBridgeError> {
+        let sample_id = synth_sampler::SampleId::new(id);
+        let lib = self
+            .sample_library
+            .read()
+            .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+        let sample = lib
+            .get(sample_id)
+            .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?;
+        let depth = match bit_depth {
+            Some(24) => synth_sampler::BitDepth::Int24,
+            Some(32) => synth_sampler::BitDepth::Float32,
+            _ => synth_sampler::BitDepth::Int16,
+        };
+        synth_sampler::save_wav(sample, std::path::Path::new(path), depth)
+            .map_err(|e| McpBridgeError::Other(format!("Export failed: {e}")))?;
+        Ok(())
+    }
+
+    // === Sampler module control ===
+
+    fn assign_sample_to_module(
+        &self,
+        instrument_id: u64,
+        module_id: &str,
+        sample_id: u64,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let inst_id = InstrumentId::new(instrument_id);
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+
+        // Get sample data from library
+        let lib = self
+            .sample_library
+            .read()
+            .map_err(|_| McpBridgeError::Other("Sample library lock poisoned".to_string()))?;
+        let sampler_sample_id = synth_sampler::SampleId::new(sample_id);
+        let sample = lib
+            .get(sampler_sample_id)
+            .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {sample_id}")))?;
+        let data = Arc::clone(&sample.data);
+        let channels = sample.meta.channels;
+        let frame_count = sample.meta.frame_count.as_usize();
+        let root_note = sample.meta.root_note.unwrap_or(MidiNote::new(60));
+        drop(lib);
+
+        // Send SampleSelect param
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetModuleParameter {
+                instrument_id: Some(inst_id),
+                module_id: mid,
+                param: Param::Sampler(synth_core::SamplerParam::SampleSelect(
+                    synth_core::SampleId(sample_id),
+                )),
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "assign_sample_select",
+            });
+        }
+
+        // Send the actual audio data
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::LoadSampleData {
+                instrument_id: inst_id,
+                module_id: mid,
+                data,
+                channels,
+                frame_count,
+                root_note,
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "load_sample_data",
+            });
+        }
+
+        Ok(())
+    }
+
+    fn get_sampler_state(
+        &self,
+        instrument_id: u64,
+        module_id: &str,
+    ) -> Result<synth_mcp::types::SamplerStateInfo, McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+
+        let module = self.get_module_info(instrument_id, module_id)?;
+        let get_float = |name: &str| -> f32 {
+            module
+                .parameters
+                .iter()
+                .find(|p| p.name == name)
+                .map(|p| p.value)
+                .unwrap_or(0.0)
+        };
+
+        let sample_id_raw = get_float("Sample") as u64;
+        let pitch_tracking = get_float("Pitch Track") > 0.5;
+        let level = get_float("Level");
+        let play_mode_raw = get_float("Play Mode") as u8;
+        let direction_raw = get_float("Direction") as u8;
+        let velocity_sensitivity = get_float("Vel Sens");
+        let fine_tune = get_float("Fine Tune");
+        let start_offset = get_float("Start Offset");
+
+        let play_mode = match play_mode_raw {
+            0 => "one_shot",
+            1 => "sustain",
+            _ => "loop",
+        }
+        .to_string();
+
+        let direction = match direction_raw {
+            0 => "forward",
+            1 => "reverse",
+            _ => "ping_pong",
+        }
+        .to_string();
+
+        let sample_name = if sample_id_raw > 0 {
+            let lib = self
+                .sample_library
+                .read()
+                .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
+            lib.get_meta(synth_sampler::SampleId::new(sample_id_raw))
+                .map(|m| m.name.clone())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        Ok(synth_mcp::types::SamplerStateInfo {
+            sample_id: sample_id_raw,
+            sample_name,
+            pitch_tracking,
+            level,
+            play_mode,
+            direction,
+            velocity_sensitivity,
+            fine_tune,
+            start_offset,
+        })
+    }
+
+    fn set_sampler_parameter(
+        &self,
+        instrument_id: u64,
+        module_id: &str,
+        param_name: &str,
+        value: &str,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let inst_id = InstrumentId::new(instrument_id);
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+
+        let param = match param_name {
+            "pitch_tracking" | "pitch_track" => {
+                let b = value.parse::<bool>().map_err(|_| {
+                    McpBridgeError::Other(format!(
+                        "Invalid boolean value '{value}', expected 'true' or 'false'"
+                    ))
+                })?;
+                synth_core::SamplerParam::PitchTracking(b)
+            }
+            "level" => {
+                let v = value
+                    .parse::<f32>()
+                    .map_err(|_| McpBridgeError::Other(format!("Invalid float value '{value}'")))?;
+                synth_core::SamplerParam::Level(synth_core::Gain::new(v))
+            }
+            "play_mode" => {
+                let mode = match value {
+                    "one_shot" => synth_core::SamplerPlayMode::OneShot,
+                    "sustain" => synth_core::SamplerPlayMode::Sustain,
+                    "loop" => synth_core::SamplerPlayMode::Loop,
+                    _ => {
+                        return Err(McpBridgeError::Other(format!(
+                            "Invalid play_mode '{value}', expected one_shot/sustain/loop"
+                        )));
+                    }
+                };
+                synth_core::SamplerParam::PlayMode(mode)
+            }
+            "direction" => {
+                let dir = match value {
+                    "forward" => synth_core::PlayDirection::Forward,
+                    "reverse" => synth_core::PlayDirection::Reverse,
+                    "ping_pong" => synth_core::PlayDirection::PingPong,
+                    _ => {
+                        return Err(McpBridgeError::Other(format!(
+                            "Invalid direction '{value}', expected forward/reverse/ping_pong"
+                        )));
+                    }
+                };
+                synth_core::SamplerParam::Direction(dir)
+            }
+            "velocity_sensitivity" | "vel_sens" => {
+                let v = value
+                    .parse::<f32>()
+                    .map_err(|_| McpBridgeError::Other(format!("Invalid float value '{value}'")))?;
+                synth_core::SamplerParam::VelocitySensitivity(NormalizedValue::new(v))
+            }
+            "fine_tune" => {
+                let v = value
+                    .parse::<f32>()
+                    .map_err(|_| McpBridgeError::Other(format!("Invalid float value '{value}'")))?;
+                synth_core::SamplerParam::FineTune(synth_core::Cents::new(v))
+            }
+            "start_offset" => {
+                let v = value
+                    .parse::<f32>()
+                    .map_err(|_| McpBridgeError::Other(format!("Invalid float value '{value}'")))?;
+                synth_core::SamplerParam::StartOffset(NormalizedValue::new(v))
+            }
+            _ => {
+                return Err(McpBridgeError::ParameterNotFound(format!(
+                    "Unknown sampler parameter '{param_name}'. Available: pitch_tracking, level, \
+                     play_mode, direction, velocity_sensitivity, fine_tune, start_offset"
+                )));
+            }
+        };
+
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetModuleParameter {
+                instrument_id: Some(inst_id),
+                module_id: mid,
+                param: Param::Sampler(param),
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "set_sampler_parameter",
+            });
+        }
+
         Ok(())
     }
 

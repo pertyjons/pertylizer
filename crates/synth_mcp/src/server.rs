@@ -1329,6 +1329,80 @@ pub struct SetSampleRootNoteParam {
     pub note: u8,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetSampleLoopParam {
+    #[schemars(description = "Sample ID.")]
+    pub sample_id: u64,
+    #[schemars(description = "Enable or disable looping.")]
+    pub enabled: bool,
+    #[schemars(description = "Loop start time in seconds (required when enabled=true).")]
+    pub start_seconds: Option<f64>,
+    #[schemars(description = "Loop end time in seconds (required when enabled=true).")]
+    pub end_seconds: Option<f64>,
+    #[schemars(description = "Crossfade duration in milliseconds at loop boundary (default: 0).")]
+    pub crossfade_ms: Option<f64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetSampleCropParam {
+    #[schemars(description = "Sample ID.")]
+    pub sample_id: u64,
+    #[schemars(
+        description = "Crop start time in seconds. Omit both start and end to remove crop."
+    )]
+    pub start_seconds: Option<f64>,
+    #[schemars(description = "Crop end time in seconds. Omit both start and end to remove crop.")]
+    pub end_seconds: Option<f64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ExportSampleParam {
+    #[schemars(description = "Sample ID.")]
+    pub sample_id: u64,
+    #[schemars(description = "Absolute file path for the output WAV file.")]
+    pub path: String,
+    #[schemars(description = "Bit depth: 16, 24, or 32 (float). Default: 16.")]
+    pub bit_depth: Option<u8>,
+}
+
+// === Sampler module parameter structs ===
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AssignSampleParam {
+    #[schemars(description = "Instrument ID.")]
+    pub instrument_id: u64,
+    #[schemars(description = "Sampler module ID (e.g. \"sam-1\"). Must be a Sampler module.")]
+    pub module_id: String,
+    #[schemars(description = "Sample ID to assign. Use list_samples to find IDs.")]
+    pub sample_id: u64,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SamplerModuleParam {
+    #[schemars(description = "Instrument ID.")]
+    pub instrument_id: u64,
+    #[schemars(description = "Sampler module ID (e.g. \"sam-1\").")]
+    pub module_id: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetSamplerParameterParam {
+    #[schemars(description = "Instrument ID.")]
+    pub instrument_id: u64,
+    #[schemars(description = "Sampler module ID (e.g. \"sam-1\").")]
+    pub module_id: String,
+    #[schemars(
+        description = "Parameter name: pitch_tracking, level, play_mode, direction, \
+                       velocity_sensitivity, fine_tune, start_offset."
+    )]
+    pub param_name: String,
+    #[schemars(description = "Parameter value. Booleans: \"true\"/\"false\". \
+                       Enums: \"one_shot\"/\"sustain\"/\"loop\" for play_mode, \
+                       \"forward\"/\"reverse\"/\"ping_pong\" for direction. \
+                       Numbers: float value as string.")]
+    pub value: String,
+}
+
 // === MCP Server ===
 
 /// The MCP server that wraps a SynthBridge implementation.
@@ -1539,6 +1613,16 @@ impl SynthMcpServer {
             "normalize_sample" => normalize_sample(SampleIdParam),
             "reverse_sample" => reverse_sample(SampleIdParam),
             "trim_sample_silence" => trim_sample_silence(SampleIdParam),
+            "set_sample_loop" => set_sample_loop(SetSampleLoopParam),
+            "set_sample_crop" => set_sample_crop(SetSampleCropParam),
+            "export_sample" => export_sample(ExportSampleParam),
+            "get_sample_info" => get_sample_info(SampleIdParam),
+            "duplicate_sample" => duplicate_sample(SampleIdParam),
+
+            // Sampler module
+            "assign_sample_to_module" => assign_sample_to_module(AssignSampleParam),
+            "get_sampler_state" => get_sampler_state(SamplerModuleParam),
+            "set_sampler_parameter" => set_sampler_parameter(SetSamplerParameterParam),
 
             // Audio input
             "list_input_devices" => list_input_devices(NoParams),
@@ -3589,6 +3673,134 @@ impl SynthMcpServer {
     async fn trim_sample_silence(&self, params: Parameters<SampleIdParam>) -> String {
         match self.bridge.trim_sample_silence(params.0.sample_id) {
             Ok(()) => "OK: Silence trimmed".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Get detailed information about a sample including peak level, RMS, DC offset, \
+                       memory usage, and loop/crop regions in seconds."
+    )]
+    async fn get_sample_info(&self, params: Parameters<SampleIdParam>) -> String {
+        match self.bridge.get_sample_info(params.0.sample_id) {
+            Ok(info) => to_json(&info),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Create a copy of a sample with a new ID. The copy gets \" (copy)\" \
+                       appended to its name."
+    )]
+    async fn duplicate_sample(&self, params: Parameters<SampleIdParam>) -> String {
+        match self.bridge.duplicate_sample(params.0.sample_id) {
+            Ok(info) => to_json(&info),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set or disable the loop region for a sample. When enabled, provide start \
+                       and end times in seconds. Optional crossfade in milliseconds smooths the \
+                       loop boundary."
+    )]
+    async fn set_sample_loop(&self, params: Parameters<SetSampleLoopParam>) -> String {
+        match self.bridge.set_sample_loop(
+            params.0.sample_id,
+            params.0.enabled,
+            params.0.start_seconds,
+            params.0.end_seconds,
+            params.0.crossfade_ms,
+        ) {
+            Ok(()) => {
+                if params.0.enabled {
+                    "OK: Loop region set".to_string()
+                } else {
+                    "OK: Loop disabled".to_string()
+                }
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set or remove the crop region for a sample. Crop defines the audible \
+                       portion. Omit start_seconds and end_seconds to remove the crop and use \
+                       the full sample."
+    )]
+    async fn set_sample_crop(&self, params: Parameters<SetSampleCropParam>) -> String {
+        match self.bridge.set_sample_crop(
+            params.0.sample_id,
+            params.0.start_seconds,
+            params.0.end_seconds,
+        ) {
+            Ok(()) => "OK: Crop region updated".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Export a sample to a WAV file at the given path. Crop region is applied \
+                       if set. Bit depth: 16 (default), 24, or 32 (float)."
+    )]
+    async fn export_sample(&self, params: Parameters<ExportSampleParam>) -> String {
+        match self
+            .bridge
+            .export_sample(params.0.sample_id, &params.0.path, params.0.bit_depth)
+        {
+            Ok(()) => format!("OK: Sample exported to '{}'", params.0.path),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // ========================================================================
+    // SAMPLER MODULE TOOLS
+    // ========================================================================
+
+    #[tool(
+        description = "Assign a sample to a Sampler module in an instrument. The module must be \
+                       of type 'sampler' (prefix 'sam'). Use list_samples for sample IDs and \
+                       get_instrument_info for module IDs."
+    )]
+    async fn assign_sample_to_module(&self, params: Parameters<AssignSampleParam>) -> String {
+        match self.bridge.assign_sample_to_module(
+            params.0.instrument_id,
+            &params.0.module_id,
+            params.0.sample_id,
+        ) {
+            Ok(()) => "OK: Sample assigned to module".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Get the current state of a Sampler module: assigned sample, pitch tracking, \
+                       level, play mode, direction, velocity sensitivity, fine tune, start offset."
+    )]
+    async fn get_sampler_state(&self, params: Parameters<SamplerModuleParam>) -> String {
+        match self
+            .bridge
+            .get_sampler_state(params.0.instrument_id, &params.0.module_id)
+        {
+            Ok(state) => to_json(&state),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set a parameter on a Sampler module. Parameters: pitch_tracking (true/false), \
+                       level (0.0-1.0), play_mode (one_shot/sustain/loop), direction \
+                       (forward/reverse/ping_pong), velocity_sensitivity (0.0-1.0), \
+                       fine_tune (-100 to 100 cents), start_offset (0.0-1.0)."
+    )]
+    async fn set_sampler_parameter(&self, params: Parameters<SetSamplerParameterParam>) -> String {
+        match self.bridge.set_sampler_parameter(
+            params.0.instrument_id,
+            &params.0.module_id,
+            &params.0.param_name,
+            &params.0.value,
+        ) {
+            Ok(()) => format!("OK: {} set to {}", params.0.param_name, params.0.value),
             Err(e) => format!("Error: {e}"),
         }
     }

@@ -1023,7 +1023,7 @@ AI → stop_recording()
 
 ## Implementation Status
 
-> **Last updated:** 2026-03-25 — v0.252.0
+> **Last updated:** 2026-04-09 — v0.262.0
 
 ### Legend
 
@@ -1154,17 +1154,17 @@ AI → stop_recording()
 | [x]    | Shared `SampleLibrary` between GUI and MCP                                     | P0       | `Arc<RwLock<>>`                                         |
 | [ ]    | Wire `list_input_devices` to real backend enumeration (not stubbed empty list) | P1       | `mcp_bridge` TODO: currently `Ok(Vec::new())`           |
 | [ ]    | Wire `get_input_state` to real monitoring/recording state (not hardcoded idle) | P1       | `mcp_bridge` TODO: currently returns static idle values |
-| [ ]    | `get_sample_info` (detailed: peak, RMS, DC offset)                             | P1       |                                                         |
-| [ ]    | `duplicate_sample`                                                             | P2       |                                                         |
-| [ ]    | `export_sample`                                                                | P1       |                                                         |
-| [ ]    | `set_sample_loop`                                                              | P1       |                                                         |
-| [ ]    | `set_sample_crop`                                                              | P1       |                                                         |
+| [x]    | `get_sample_info` (detailed: peak, RMS, DC offset)                             | P1       | v0.262.0                                                |
+| [x]    | `duplicate_sample`                                                             | P2       | v0.262.0                                                |
+| [x]    | `export_sample`                                                                | P1       | v0.262.0                                                |
+| [x]    | `set_sample_loop`                                                              | P1       | v0.262.0                                                |
+| [x]    | `set_sample_crop`                                                              | P1       | v0.262.0                                                |
 | [ ]    | `normalize_sample` target_db argument                                          | P2       | Currently always 0 dB                                   |
 | [ ]    | `set_input_device`, `start_monitoring`, `stop_monitoring`                      | P1       | Need GUI-side ops via McpSharedState                    |
 | [ ]    | `start_recording`, `stop_recording`                                            | P1       | Need GUI-side ops via McpSharedState                    |
-| [ ]    | `assign_sample_to_module`                                                      | P1       |                                                         |
-| [ ]    | `get_sampler_state`                                                            | P1       |                                                         |
-| [ ]    | `set_sampler_parameter`                                                        | P1       |                                                         |
+| [x]    | `assign_sample_to_module`                                                      | P1       | v0.262.0                                                |
+| [x]    | `get_sampler_state`                                                            | P1       | v0.262.0                                                |
+| [x]    | `set_sampler_parameter`                                                        | P1       | v0.262.0                                                |
 | [ ]    | `preview_sample`, `stop_preview`                                               | P2       |                                                         |
 | [ ]    | `pending_sample_ops` in McpSharedState                                         | P1       | Needed for GUI-side MCP ops                             |
 | [ ]    | MCP server instructions "Sampling" section                                     | P2       |                                                         |
@@ -1214,14 +1214,14 @@ AI → stop_recording()
 | Category          | Done   | Remaining | Total   |
 |-------------------|--------|-----------|---------|
 | P0 (must have)    | 52     | 0         | 52      |
-| P1 (should have)  | 11     | 13        | 24      |
-| P2 (nice to have) | 0      | 23        | 23      |
+| P1 (should have)  | 19     | 5         | 24      |
+| P2 (nice to have) | 1      | 22        | 23      |
 | P3 (future)       | 0      | 13        | 13      |
-| **Total**         | **63** | **49**    | **112** |
+| **Total**         | **72** | **40**    | **112** |
 
-All P0 items are complete. The most impactful remaining work is the P1 items:
-engine-side sample loading (`LoadSample` command), MCP recording/monitoring tools
-(via `pending_sample_ops`), and the remaining MCP tools for sample editing.
+All P0 items are complete. Remaining P1 work: engine-side sample cache,
+MCP recording/monitoring tools (via `pending_sample_ops`), and wiring
+`list_input_devices`/`get_input_state` to real backend state.
 
 ---
 
