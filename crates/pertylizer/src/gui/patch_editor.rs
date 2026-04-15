@@ -1359,7 +1359,7 @@ impl PatchEditor {
                     return None;
                 }
                 let wid = Id::new((instrument_id, "module_window", mid.to_string()));
-                ui.ctx().memory(|mem| mem.area_rect(wid))
+                ui.memory(|mem| mem.area_rect(wid))
             })
             .collect();
 
@@ -1490,7 +1490,7 @@ impl PatchEditor {
             let window_id = egui::Id::new((instrument_id, "module_window", module_id.to_string()));
 
             // Create frame with dimming for disconnected modules
-            let frame = egui::Frame::window(&ui.ctx().style())
+            let frame = egui::Frame::window(&ui.global_style())
                 .stroke(egui::Stroke::new(
                     if is_selected { 2.0 } else { 1.0 },
                     if is_selected {
@@ -1500,8 +1500,7 @@ impl PatchEditor {
                     },
                 ))
                 .fill(
-                    ui.ctx()
-                        .style()
+                    ui.global_style()
                         .visuals
                         .window_fill()
                         .gamma_multiply(opacity),
@@ -1709,7 +1708,7 @@ impl PatchEditor {
                     });
 
                     // Request continuous repaint so the waveform updates
-                    ui.ctx().request_repaint();
+                    ui.request_repaint();
                     return;
                 }
 
@@ -2035,7 +2034,7 @@ impl PatchEditor {
             // Skip during the frame a patch/project was just loaded — egui's Area rects
             // are stale and would overwrite the freshly loaded saved positions.
             if !self.suppress_position_readback
-                && let Some(area_rect) = ui.ctx().memory(|mem| mem.area_rect(window_id))
+                && let Some(area_rect) = ui.memory(|mem| mem.area_rect(window_id))
                 && let Some(panel_state) = self.panels.get_mut(&module_id)
             {
                 let logical_pos = area_rect.min - area_origin + scroll_offset;
@@ -2869,8 +2868,8 @@ impl PatchEditor {
                 } else {
                     1.0
                 };
-                let frame = egui::Frame::window(&ui.ctx().style())
-                    .fill(ui.ctx().style().visuals.window_fill())
+                let frame = egui::Frame::window(&ui.global_style())
+                    .fill(ui.global_style().visuals.window_fill())
                     .stroke(egui::Stroke::new(
                         stroke_width,
                         base_color.gamma_multiply(0.6),
@@ -2984,7 +2983,7 @@ impl PatchEditor {
                 continue;
             }
 
-            if let Some(area_rect) = ui.ctx().memory(|mem| mem.area_rect(area_id))
+            if let Some(area_rect) = ui.memory(|mem| mem.area_rect(area_id))
                 && let Some(group_mut) = self.groups.get_mut(&group_id)
             {
                 let logical_pos = area_rect.min - area_origin + scroll_offset;
@@ -4610,7 +4609,7 @@ fn draw_module_panel_params(
                 2.0,
                 fill_color,
             );
-            ui.ctx().request_repaint();
+            ui.request_repaint();
         }
 
         // Recording timer

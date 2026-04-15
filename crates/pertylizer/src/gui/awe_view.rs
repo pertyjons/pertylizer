@@ -578,14 +578,14 @@ pub enum AweViewAction {
 /// Draw the AWE view.
 #[allow(clippy::too_many_lines)]
 pub fn draw_awe_view(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     handle: &mut EngineHandle,
     awe_enabled: &mut bool,
     ui_state: &mut AweUiState,
 ) -> AweViewAction {
     let mut action = AweViewAction::None;
     // Top toolbar
-    egui::TopBottomPanel::top("awe_toolbar").show(ctx, |ui| {
+    egui::Panel::top("awe_toolbar").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             let toggle_label = if *awe_enabled { "AWE: ON" } else { "AWE: OFF" };
             let toggle_color = if *awe_enabled {
@@ -747,17 +747,19 @@ pub fn draw_awe_view(
     });
 
     // Right side panel with controls
-    egui::SidePanel::right("awe_controls")
-        .min_width(220.0)
-        .default_width(260.0)
-        .show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                draw_controls(ui, handle, ui_state);
-            });
+    egui::Panel::right("awe_controls")
+        .min_size(220.0)
+        .default_size(260.0)
+        .show_inside(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .content_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    draw_controls(ui, handle, ui_state);
+                });
         });
 
     // Central panel — 2D floor plan
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         draw_floor_plan(ui, handle, ui_state);
     });
 
@@ -1061,7 +1063,7 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     // Animated time for rings and marching ants
     let time = ui.input(|i| i.time);
     if has_audio {
-        ui.ctx().request_repaint();
+        ui.request_repaint();
     }
 
     // Room dimensions

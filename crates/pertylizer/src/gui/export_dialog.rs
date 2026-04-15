@@ -170,7 +170,7 @@ pub fn show_export_dialog(
                             egui::DragValue::new(&mut secs)
                                 .range(0.1..=3600.0)
                                 .speed(0.5)
-                                .suffix(" sec"),
+                                .suffix(" s"),
                         );
                         state.duration_seconds = f64::from(secs);
                     });
@@ -182,7 +182,7 @@ pub fn show_export_dialog(
                         egui::DragValue::new(&mut state.tail_seconds)
                             .range(0.0..=30.0)
                             .speed(0.1)
-                            .suffix(" sec"),
+                            .suffix(" s"),
                     );
                     ui.end_row();
                 });
@@ -265,7 +265,7 @@ fn show_progress_ui(ui: &mut egui::Ui, progress: &ExportProgress) {
     }
 
     // Request repaint during export to keep progress updating
-    ui.ctx().request_repaint();
+    ui.request_repaint();
 }
 
 /// Truncate a path string for display.

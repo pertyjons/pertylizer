@@ -1,5 +1,36 @@
 # Version History
 
+## [0.267.0] - 2026-04-15
+### Fix: spectral effects panic on audio thread
+
+- `StftProcessor::process` now enforces the Hermitian constraint (DC and Nyquist bins purely real) before calling the inverse FFT. Spectral callbacks that rebuild bins via complex polar form (phase vocoder pitch-shift, spectral blur) could introduce non-zero imaginary parts at bin 0 or the last bin — either through bin reassignment (phase vocoder) or through `sin(π)` rounding (spectral blur). `realfft` rejected those spectra, triggering a `debug_assert!` panic on the audio thread during song playback.
+- Fix lives in the `synth_dsp` STFT layer so all current and future spectral effects are protected automatically.
+
+## [0.266.0] - 2026-04-15
+### More egui 0.34 polish
+
+- `Ui` now derefs to `Context`: 21 `ui.ctx().METHOD()` calls simplified to `ui.METHOD()` across `sequencer`, `patch_editor`, `awe_view`, `export_dialog` (request_repaint, input, memory, global_style, output_mut, pointer_latest_pos)
+- `ScrollArea::content_margin(Margin::same(6))` added to list-style scroll areas: sample list, AWE controls, patch browser, group template browser — better visual breathing room
+- Edit-menu items now display keyboard shortcuts right-aligned via `Button::shortcut_text(...)`: Undo (Ctrl+Z), Redo (Ctrl+Shift+Z), Copy (Ctrl+C), Paste (Ctrl+V), Duplicate (Ctrl+D). Removed redundant `on_hover_text` tooltips since the shortcut is now visible inline.
+
+## [0.265.0] - 2026-04-15
+### Leverage egui 0.34 features
+
+- `Context::text_edit_focused()` replaces manual `ctx.memory(|m| m.focused().is_some())` for keyboard shortcut gating
+- `DragValue::suffix(...)` inline units across sequencer (BPM, `%`), sample editor (`frames`), export dialog (`s`): removes separate `ui.label(unit)` widgets, producing tighter parameter rows
+- Normalized unit formatting — consistent leading space (`" %"`, `" s"`) for visual separation from the numeric value
+
+## [0.264.0] - 2026-04-15
+### egui 0.34 migration
+
+- Bumped `eframe` 0.33.3 → 0.34.1 to match `egui` 0.34, `egui-file-dialog` 0.13, `egui-remixicon` 0.34
+- `egui_file_dialog`: `Arc::new(|p| ...)` → `Filter::new(|p: &Path| ...)` for file filters (new API in 0.13)
+- `eframe::App`: implemented new `fn ui(&mut self, ui, frame)` (replaces deprecated `fn update`)
+- All top-level panels (`TopBottomPanel`, `SidePanel`, `CentralPanel`) migrated to `Panel::top/bottom/left/right` with `show_inside(ui, ...)` instead of deprecated `show(ctx, ...)`
+- View entry points (`draw_sample_view`, `draw_awe_view`, `draw_sequencer_view`) take `ui: &mut Ui` instead of `ctx: &Context`
+- Panel size methods renamed: `min_width/min_height` → `min_size`, `default_width/default_height` → `default_size`, `max_height` → `max_size`, `exact_width` → `exact_size`
+- Context method renames: `style/set_style` → `global_style/set_global_style`, `available_rect` → `content_rect`
+
 ## [0.263.0] - 2026-04-10
 ### Code quality cleanup for sampling MCP tools
 

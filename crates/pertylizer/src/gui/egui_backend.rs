@@ -169,7 +169,7 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 /// Setup custom egui style for synth look.
 /// Reads colors from the current theme, so call this after changing theme.
 pub fn setup_custom_style(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
     let t = theme();
     let colors = &t.colors;
 
@@ -214,7 +214,7 @@ pub fn setup_custom_style(ctx: &egui::Context) {
     style.spacing.slider_rail_height = t.style.slider_rail_height;
     style.spacing.interact_size.y = 18.0; // Taller click area for sliders
 
-    ctx.set_style(style);
+    ctx.set_global_style(style);
 }
 
 /// Main application state.
@@ -440,8 +440,10 @@ impl SynthApp {
 }
 
 impl eframe::App for SynthApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         use egui_remixicon::icons as ri;
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
 
         // Drain audio input ring buffer every frame (needed for peak metering and recording).
         // Must run regardless of active view so recording works from the patch editor too.
@@ -680,7 +682,7 @@ impl eframe::App for SynthApp {
         ctx.request_repaint();
 
         // Top menu bar
-        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+        egui::Panel::top("menu_bar").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     // --- Project ---
@@ -888,16 +890,20 @@ impl eframe::App for SynthApp {
                     let undo_label = format!("{} Undo", ri::ARROW_GO_BACK_LINE);
                     let redo_label = format!("{} Redo", ri::ARROW_GO_FORWARD_LINE);
                     if ui
-                        .add_enabled(self.undo_manager.can_undo(), egui::Button::new(&undo_label))
-                        .on_hover_text("Ctrl+Z")
+                        .add_enabled(
+                            self.undo_manager.can_undo(),
+                            egui::Button::new(&undo_label).shortcut_text("Ctrl+Z"),
+                        )
                         .clicked()
                     {
                         self.execute_undo();
                         ui.close();
                     }
                     if ui
-                        .add_enabled(self.undo_manager.can_redo(), egui::Button::new(&redo_label))
-                        .on_hover_text("Ctrl+Shift+Z")
+                        .add_enabled(
+                            self.undo_manager.can_redo(),
+                            egui::Button::new(&redo_label).shortcut_text("Ctrl+Shift+Z"),
+                        )
                         .clicked()
                     {
                         self.execute_redo();
@@ -910,9 +916,9 @@ impl eframe::App for SynthApp {
                     if ui
                         .add_enabled(
                             has_selection,
-                            egui::Button::new(format!("{} Copy", ri::FILE_COPY_LINE)),
+                            egui::Button::new(format!("{} Copy", ri::FILE_COPY_LINE))
+                                .shortcut_text("Ctrl+C"),
                         )
-                        .on_hover_text("Ctrl+C")
                         .clicked()
                     {
                         self.copy_selected_modules();
@@ -921,9 +927,9 @@ impl eframe::App for SynthApp {
                     if ui
                         .add_enabled(
                             !self.clipboard.is_empty(),
-                            egui::Button::new(format!("{} Paste", ri::CLIPBOARD_LINE)),
+                            egui::Button::new(format!("{} Paste", ri::CLIPBOARD_LINE))
+                                .shortcut_text("Ctrl+V"),
                         )
-                        .on_hover_text("Ctrl+V")
                         .clicked()
                     {
                         self.paste_modules_at_offset();
@@ -932,9 +938,9 @@ impl eframe::App for SynthApp {
                     if ui
                         .add_enabled(
                             has_selection,
-                            egui::Button::new(format!("{} Duplicate", ri::FILE_COPY_2_LINE)),
+                            egui::Button::new(format!("{} Duplicate", ri::FILE_COPY_2_LINE))
+                                .shortcut_text("Ctrl+D"),
                         )
-                        .on_hover_text("Ctrl+D")
                         .clicked()
                     {
                         self.duplicate_selected_modules();
@@ -1388,9 +1394,9 @@ impl eframe::App for SynthApp {
         // Bottom panel with keyboard (always visible)
         // Render keyboard content in Order::Middle so it has input priority over
         // module Areas (Order::Background) that may extend into the panel area.
-        egui::TopBottomPanel::bottom("keyboard_panel")
-            .min_height(120.0)
-            .show(ctx, |ui| {
+        egui::Panel::bottom("keyboard_panel")
+            .min_size(120.0)
+            .show_inside(ui, |ui| {
                 let layer_id =
                     egui::LayerId::new(egui::Order::Middle, egui::Id::new("keyboard_layer"));
                 ui.scope_builder(egui::UiBuilder::new().layer_id(layer_id), |ui| {
@@ -1404,14 +1410,14 @@ impl eframe::App for SynthApp {
             AppView::Rack => {
                 // Rack view: show the active instrument's patch editor
                 let Some(active_id) = self.active_instrument_id else {
-                    egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::CentralPanel::default().show_inside(ui, |ui| {
                         ui.centered_and_justified(|ui| {
                             ui.label("Select or create an instrument to begin patching");
                         });
                     });
                     return;
                 };
-                egui::CentralPanel::default().show(ctx, |ui| {
+                egui::CentralPanel::default().show_inside(ui, |ui| {
             // Get the active instrument's patch editor
             let Some(patch_editor) = self
                 .instruments
@@ -1834,7 +1840,7 @@ impl eframe::App for SynthApp {
                 }
 
                 let awe_action = crate::gui::awe_view::draw_awe_view(
-                    ctx,
+                    ui,
                     &mut self.handle,
                     &mut self.awe_enabled,
                     &mut self.awe_ui,
@@ -1861,7 +1867,7 @@ impl eframe::App for SynthApp {
             }
             AppView::Sequencer => {
                 crate::gui::sequencer::draw_sequencer_view(
-                    ctx,
+                    ui,
                     &mut self.handle,
                     &self.song,
                     &mut self.sequencer_view_state,
@@ -1889,7 +1895,7 @@ impl eframe::App for SynthApp {
                 }
 
                 let action = crate::gui::sample_view::draw_sample_view(
-                    ctx,
+                    ui,
                     &self.sample_library,
                     &mut self.sample_view_state,
                     &mut self.audio_input,
@@ -2908,7 +2914,7 @@ impl SynthApp {
         }
 
         // Skip if any text edit is focused (avoids intercepting text input)
-        if ctx.memory(|m| m.focused().is_some()) {
+        if ctx.text_edit_focused() {
             return;
         }
 

@@ -250,6 +250,15 @@ impl StftProcessor {
                 // Apply spectral processing
                 spectral_fn(&mut self.fft_out);
 
+                // realfft requires DC (bin 0) and Nyquist (last bin) to be purely
+                // real. Spectral callbacks that accumulate or reconstruct bins via
+                // complex polar form can introduce non-zero imaginary parts there
+                // (even just from sin(π) rounding). Enforce the constraint here so
+                // callbacks don't have to.
+                let last = self.fft_out.len() - 1;
+                self.fft_out[0].im = 0.0;
+                self.fft_out[last].im = 0.0;
+
                 // Inverse FFT
                 self.fft.inverse(&mut self.fft_out, &mut self.ifft_out);
 

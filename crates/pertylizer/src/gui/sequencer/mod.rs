@@ -500,7 +500,7 @@ fn draw_transport_bar(
         }
         // Request repaint during blinking states
         if matches!(rec_state, RecordingState::Armed | RecordingState::CountIn) {
-            ui.ctx().request_repaint();
+            ui.request_repaint();
         }
 
         // Metronome toggle
@@ -590,13 +590,13 @@ fn draw_transport_bar(
         ui.separator();
 
         // Tempo
-        ui.label(RichText::new("BPM").color(t.colors.text_dim));
         let mut tempo_val = tempo_f32;
         let tempo_response = ui.add(
             egui::DragValue::new(&mut tempo_val)
                 .range(20.0..=300.0)
                 .speed(0.5)
-                .fixed_decimals(1),
+                .fixed_decimals(1)
+                .suffix(" BPM"),
         );
         if tempo_response.changed() {
             handle.send(EngineCommand::SetTempo(Bpm::new(tempo_val)));
@@ -874,8 +874,8 @@ fn draw_arrangement(
     let mut double_clicked_pattern: Option<PatternId> = None;
 
     // ── Track header panel (left side, uses egui widgets) ──
-    egui::SidePanel::left("seq_track_headers")
-        .exact_width(TRACK_HEADER_WIDTH)
+    egui::Panel::left("seq_track_headers")
+        .exact_size(TRACK_HEADER_WIDTH)
         .resizable(false)
         .show_inside(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -1291,7 +1291,7 @@ fn draw_arrangement(
                     .find(|(_, (r, _, _, _))| r.contains(pos));
 
                 if let Some((pl, _)) = hovered_placement {
-                    ui.ctx().output_mut(|o| {
+                    ui.output_mut(|o| {
                         o.cursor_icon = CursorIcon::PointingHand;
                     });
                     // Tooltip with pattern info
@@ -1358,7 +1358,7 @@ fn draw_arrangement(
                 && let Some(pos) = ui.ctx().pointer_hover_pos()
                 && ruler_rect.contains(pos)
             {
-                ui.ctx().output_mut(|o| {
+                ui.output_mut(|o| {
                     o.cursor_icon = CursorIcon::PointingHand;
                 });
                 // Draw subtle hover indicator line
@@ -2160,7 +2160,7 @@ fn draw_piano_roll(
                 egui::DragValue::new(&mut vel_pct)
                     .range(1.0..=100.0)
                     .speed(1.0)
-                    .suffix("%"),
+                    .suffix(" %"),
             )
             .changed()
         {
@@ -2199,7 +2199,7 @@ fn draw_piano_roll(
                 egui::DragValue::new(&mut q_str_pct)
                     .range(0.0..=100.0)
                     .speed(1.0)
-                    .suffix("%")
+                    .suffix(" %")
                     .prefix("Str:"),
             )
             .on_hover_text("Quantize strength")
@@ -2236,7 +2236,7 @@ fn draw_piano_roll(
                 egui::DragValue::new(&mut sw_pct)
                     .range(0.0..=100.0)
                     .speed(1.0)
-                    .suffix("%"),
+                    .suffix(" %"),
             )
             .on_hover_text("Swing amount (offset even subdivisions)")
             .changed()
@@ -2265,7 +2265,7 @@ fn draw_piano_roll(
             egui::DragValue::new(&mut view_state.velocity_scale_pct)
                 .range(1..=200_u32)
                 .speed(1.0)
-                .suffix("%")
+                .suffix(" %")
                 .prefix("Vel×"),
         )
         .on_hover_text("Velocity scale factor");
@@ -2737,7 +2737,7 @@ fn draw_piano_roll(
                 }
 
                 // Request repaint during recording for live updates
-                ui.ctx().request_repaint();
+                ui.request_repaint();
             }
 
             // ── Ghost note for MoveNote drag ──
@@ -3224,7 +3224,7 @@ fn handle_piano_roll_interaction(
     view_pitch_max: Pitch,
     undo_manager: &mut crate::undo::UndoManager,
 ) {
-    let shift_held = ui.ctx().input(|i| i.modifiers.shift);
+    let shift_held = ui.input(|i| i.modifiers.shift);
 
     // ── Automation click handling ──
     if response.clicked()
@@ -3349,7 +3349,7 @@ fn handle_piano_roll_interaction(
 
     // ── Automation drag start ──
     if response.drag_started()
-        && let Some(pos) = ui.ctx().input(|i| i.pointer.press_origin())
+        && let Some(pos) = ui.input(|i| i.pointer.press_origin())
         && let Some(ar) = auto_rect
         && ar.contains(pos)
         && let Some(target) = &view_state.selected_automation
@@ -3371,7 +3371,7 @@ fn handle_piano_roll_interaction(
 
     // ── Velocity drag start ──
     if response.drag_started()
-        && let Some(pos) = ui.ctx().input(|i| i.pointer.press_origin())
+        && let Some(pos) = ui.input(|i| i.pointer.press_origin())
     {
         let vel_y = grid_rect.max.y;
         let vel_rect = Rect::from_min_size(
@@ -3388,7 +3388,7 @@ fn handle_piano_roll_interaction(
     // Without this, dragging straight up/down misses the note because the pointer
     // has already left the note rect by the time the drag threshold is reached.
     if response.drag_started()
-        && let Some(pos) = ui.ctx().input(|i| i.pointer.press_origin())
+        && let Some(pos) = ui.input(|i| i.pointer.press_origin())
         && grid_rect.contains(pos)
     {
         let vp_min = view_pitch_min;
@@ -3481,7 +3481,7 @@ fn handle_piano_roll_interaction(
     // ── Drag update ──
     // Use pointer_latest_pos for smooth tracking during drags
     if response.dragged()
-        && let Some(pos) = ui.ctx().pointer_latest_pos()
+        && let Some(pos) = ui.pointer_latest_pos()
     {
         match &mut view_state.drag {
             Some(DragState::MoveNote {
@@ -3538,7 +3538,7 @@ fn handle_piano_roll_interaction(
 
     // ── Velocity drag: apply velocity change in real-time ──
     if let Some(DragState::DragVelocity { last_note_id }) = &mut view_state.drag
-        && let Some(pos) = ui.ctx().pointer_latest_pos()
+        && let Some(pos) = ui.pointer_latest_pos()
     {
         // vel_y is grid_rect.max.y, VELOCITY_ZONE_HEIGHT below
         let vel_y = grid_rect.max.y;
@@ -4037,16 +4037,18 @@ fn velocity_color(vel: f32) -> Color32 {
 
 /// Draw the full sequencer view (transport + arrangement + piano roll).
 pub(crate) fn draw_sequencer_view(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     handle: &mut EngineHandle,
     song: &Arc<RwLock<Song>>,
     view_state: &mut SequencerViewState,
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
     undo_manager: &mut crate::undo::UndoManager,
 ) {
+    let ctx = ui.ctx().clone();
+
     // Transport bar at the top
-    let is_playing = egui::TopBottomPanel::top("sequencer_transport")
-        .show(ctx, |ui| draw_transport_bar(ui, handle, song, view_state))
+    let is_playing = egui::Panel::top("sequencer_transport")
+        .show_inside(ui, |ui| draw_transport_bar(ui, handle, song, view_state))
         .inner;
 
     // Request repaint during playback for smooth position updates
@@ -4106,15 +4108,15 @@ pub(crate) fn draw_sequencer_view(
         });
 
         // Use ~50% of available height for piano roll, with generous max
-        let available_height = ctx.available_rect().height();
+        let available_height = ctx.content_rect().height();
         let default_height = (available_height * 0.5).max(MIN_PIANO_ROLL_HEIGHT);
 
-        egui::TopBottomPanel::bottom("piano_roll")
+        egui::Panel::bottom("piano_roll")
             .resizable(true)
-            .default_height(default_height)
-            .min_height(150.0)
-            .max_height(available_height - 100.0)
-            .show(ctx, |ui| {
+            .default_size(default_height)
+            .min_size(150.0)
+            .max_size(available_height - 100.0)
+            .show_inside(ui, |ui| {
                 if let Some(data) = &piano_roll_data {
                     if !draw_piano_roll(
                         ui,
@@ -4140,7 +4142,7 @@ pub(crate) fn draw_sequencer_view(
     }
 
     // Main content: arrangement view
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         if let Some(data) = &arrangement_data {
             if let Some(pattern_id) = draw_arrangement(
                 ui,

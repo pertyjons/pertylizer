@@ -152,16 +152,17 @@ pub enum SampleViewAction {
 /// Draw the complete sample view.
 #[allow(clippy::too_many_lines)]
 pub fn draw_sample_view(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     library: &Arc<RwLock<SampleLibrary>>,
     state: &mut SampleViewState,
     audio_input: &mut AudioInputManager,
 ) -> SampleViewAction {
+    let ctx = ui.ctx().clone();
     let mut action = SampleViewAction::None;
     let t = theme();
 
     // ---- Toolbar (top) ----
-    egui::TopBottomPanel::top("sample_toolbar").show(ctx, |ui| {
+    egui::Panel::top("sample_toolbar").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             // Import
             if ui
@@ -300,10 +301,10 @@ pub fn draw_sample_view(
     });
 
     // ---- Sample list (left sidebar) ----
-    egui::SidePanel::left("sample_list_panel")
-        .default_width(180.0)
-        .min_width(140.0)
-        .show(ctx, |ui| {
+    egui::Panel::left("sample_list_panel")
+        .default_size(180.0)
+        .min_size(140.0)
+        .show_inside(ui, |ui| {
             ui.heading(
                 egui::RichText::new(format!("{} Samples", ri::MUSIC_FILL))
                     .color(t.colors.text_primary),
@@ -320,7 +321,9 @@ pub fn draw_sample_view(
                             .italics(),
                     );
                 } else {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .content_margin(egui::Margin::same(6))
+                        .show(ui, |ui| {
                         for meta in &metas {
                             let is_selected = state.selected_sample == Some(meta.id);
                             let duration = meta.duration_seconds();
@@ -399,9 +402,9 @@ pub fn draw_sample_view(
     // ---- Input monitor bar (bottom) ----
     audio_input.drain_gui_buffer();
 
-    egui::TopBottomPanel::bottom("sample_input_bar")
-        .min_height(28.0)
-        .show(ctx, |ui| {
+    egui::Panel::bottom("sample_input_bar")
+        .min_size(28.0)
+        .show_inside(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 // Input device selector
                 ui.label(egui::RichText::new("Input:").color(t.colors.text_secondary));
@@ -525,7 +528,7 @@ pub fn draw_sample_view(
         });
 
     // ---- Central panel: waveform + properties ----
-    egui::CentralPanel::default().show(ctx, |ui| {
+    egui::CentralPanel::default().show_inside(ui, |ui| {
         if let Some(id) = state.selected_sample {
             if let Ok(lib) = library.read() {
                 if let Some(sample) = lib.get(id) {
@@ -915,7 +918,12 @@ fn draw_properties(
                     let mut val = loop_region.start.0 as f32;
                     let max = loop_region.end.0.saturating_sub(1) as f32;
                     if ui
-                        .add(egui::DragValue::new(&mut val).range(0.0..=max).speed(100.0))
+                        .add(
+                            egui::DragValue::new(&mut val)
+                                .range(0.0..=max)
+                                .speed(100.0)
+                                .suffix(" frames"),
+                        )
                         .changed()
                     {
                         if let Ok(mut lib) = library.write() {
@@ -936,7 +944,8 @@ fn draw_properties(
                         .add(
                             egui::DragValue::new(&mut val)
                                 .range((loop_region.start.0 + 1) as f32..=max)
-                                .speed(100.0),
+                                .speed(100.0)
+                                .suffix(" frames"),
                         )
                         .changed()
                     {
@@ -1000,7 +1009,12 @@ fn draw_properties(
                     let mut val = crop.start.0 as f32;
                     let max = crop.end.0.saturating_sub(1) as f32;
                     if ui
-                        .add(egui::DragValue::new(&mut val).range(0.0..=max).speed(100.0))
+                        .add(
+                            egui::DragValue::new(&mut val)
+                                .range(0.0..=max)
+                                .speed(100.0)
+                                .suffix(" frames"),
+                        )
                         .changed()
                     {
                         if let Ok(mut lib) = library.write() {
@@ -1025,7 +1039,8 @@ fn draw_properties(
                         .add(
                             egui::DragValue::new(&mut val)
                                 .range((crop.start.0 + 1) as f32..=max)
-                                .speed(100.0),
+                                .speed(100.0)
+                                .suffix(" frames"),
                         )
                         .changed()
                     {

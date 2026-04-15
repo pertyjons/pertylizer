@@ -4,10 +4,9 @@
 //! about information, and patch management.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use eframe::egui::{self, Pos2, RichText};
-use egui_file_dialog::FileDialog;
+use egui_file_dialog::{FileDialog, Filter};
 
 use super::egui_backend::setup_custom_style;
 use super::theme::{ThemePreset, theme};
@@ -150,9 +149,9 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "Patch files",
-                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
-            .add_file_filter("All files", Arc::new(|_| true));
+            .add_file_filter("All files", Filter::new(|_: &Path| true));
         if let Some(dir) = initial_dir {
             dialog = dialog.initial_directory(dir.to_path_buf());
         }
@@ -166,7 +165,7 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "Patch files",
-                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
             .default_file_name(default_name);
         if let Some(dir) = initial_dir {
@@ -182,9 +181,9 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "Project files",
-                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
-            .add_file_filter("All files", Arc::new(|_| true));
+            .add_file_filter("All files", Filter::new(|_: &Path| true));
         if let Some(dir) = initial_dir {
             dialog = dialog.initial_directory(dir.to_path_buf());
         }
@@ -198,7 +197,7 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "Project files",
-                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
             .default_file_name(default_name);
         if let Some(dir) = initial_dir {
@@ -214,7 +213,7 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "WAV files",
-                Arc::new(|p| p.extension().is_some_and(|e| e == "wav")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
             )
             .default_file_name(default_name);
         if let Some(dir) = initial_dir {
@@ -230,9 +229,9 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "AWE presets",
-                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
-            .add_file_filter("All files", Arc::new(|_| true));
+            .add_file_filter("All files", Filter::new(|_: &Path| true));
         if let Some(dir) = initial_dir {
             dialog = dialog.initial_directory(dir.to_path_buf());
         }
@@ -246,7 +245,7 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "AWE presets",
-                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
             .default_file_name(default_name);
         if let Some(dir) = initial_dir {
@@ -262,9 +261,9 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "WAV files",
-                Arc::new(|p| p.extension().is_some_and(|e| e == "wav")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
             )
-            .add_file_filter("All files", Arc::new(|_| true));
+            .add_file_filter("All files", Filter::new(|_: &Path| true));
         if let Some(dir) = initial_dir {
             dialog = dialog.initial_directory(dir.to_path_buf());
         }
@@ -278,7 +277,7 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "WAV files",
-                Arc::new(|p| p.extension().is_some_and(|e| e == "wav")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
             )
             .default_file_name(default_name);
         if let Some(dir) = initial_dir {
@@ -294,9 +293,9 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "Group templates",
-                Arc::new(|p| p.extension().is_some_and(|e| e == "json")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
-            .add_file_filter("All files", Arc::new(|_| true));
+            .add_file_filter("All files", Filter::new(|_: &Path| true));
         if let Some(dir) = initial_dir {
             dialog = dialog.initial_directory(dir.to_path_buf());
         }
@@ -688,6 +687,7 @@ pub fn show_load_patch_dialog(
 
             egui::ScrollArea::vertical()
                 .max_height(400.0)
+                .content_margin(egui::Margin::same(6))
                 .show(ui, |ui| {
                     let dim = theme().colors.text_dim;
                     let mut any_match = false;
@@ -789,6 +789,7 @@ pub fn show_group_template_browser(
 
             egui::ScrollArea::vertical()
                 .max_height(380.0)
+                .content_margin(egui::Margin::same(6))
                 .show(ui, |ui| {
                     // Group by category
                     for category in GroupCategory::ALL {
