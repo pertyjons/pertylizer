@@ -588,30 +588,7 @@ impl SynthSession {
             })
             .ok_or_else(|| SessionError::ParameterNotFound(param_name.to_string()))?;
 
-        let f32_value = match value {
-            ParamValue::Float(f) => *f,
-            ParamValue::Int(i) => *i as f32,
-            ParamValue::Bool(b) => {
-                if *b {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            ParamValue::Choice(s) => {
-                if let Some(ref choices) = param_desc.choices {
-                    choices
-                        .iter()
-                        .position(|c| c.id == *s)
-                        .map(|i| i as f32)
-                        .unwrap_or(0.0)
-                } else {
-                    0.0
-                }
-            }
-        };
-
-        let param = param_desc.id.with_f32(f32_value);
+        let param = value.to_param(param_desc);
 
         let cmd = if let Some(effect_type) = EffectType::from_module_type(module_id.module_type) {
             EngineCommand::SetEffectParameter {

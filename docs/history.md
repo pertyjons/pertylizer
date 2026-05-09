@@ -1,5 +1,17 @@
 # Version History
 
+## [0.270.0] - 2026-05-09
+### Sampler save/load round-trip fixes
+
+A chain of bugs caused projects with samples to load back silent. Each step of save and load was dropping sampler state somewhere different. Fixes touch the Sampler module descriptor, project persistence, and the bundle load path.
+
+- **Sampler descriptor was missing three params.** The patch save loop iterates `descriptor.parameters`, so `sample_select`, `play_mode`, and `direction` were silently dropped from `project.json`. Added them in `synth_modules/src/sampler.rs`. `play_mode` and `direction` use `ParameterDescriptor::choice` (one_shot/sustain/loop, forward/reverse/ping_pong); `sample_select` uses a new `WidgetHint::Hidden` so the patch editor's existing custom sample-picker stays the only sample UI.
+- **`SamplerParam::SampleSelect` couldn't survive `f32` round-trip.** Save serialised every param via `Param::as_f32()`, but `SampleSelect`'s `as_f32()` returns 0.0 by design (a `u64` sample id has no meaningful float form). New `ParamValue::SampleId { sample_id: u64 }` variant — struct-form so it serialises as `{"sample_id": N}` and stays distinguishable from numbers under `#[serde(untagged)]`. New `ParamValue::{to_param, to_f32, from_param}` helpers centralise the `Param ↔ ParamValue` conversion across the three save/load sites (`session.rs`, `audio/export.rs`, `gui/patch_bridge.rs`) — sample ids now bypass the lossy f32 path everywhere.
+- **Bundle load applied `SampleSelect` but never pushed audio data.** Setting the param only stores the id on the module and flips `needs_sample_reload` — the engine still needs `EngineCommand::LoadSampleData` for the actual buffer, which only `assign_sample_to_module` was sending. New `send_loaded_sample_data()` runs at the end of `load_project_data()`, walking the project for sampler modules with `sample_select != 0` and dispatching `LoadSampleData` from the freshly-populated library.
+- **"Save" (Ctrl+S / menu) silently wrote plain JSON for projects with samples**, dropping all WAV data while keeping the `.zip` filename. Three save paths (`Save Project` menu button, `save_current_project()`, MCP `save_project`) now auto-detect samples and route through `bundle::save_bundle`. The menu handler now delegates to `save_current_project()` instead of duplicating the logic.
+- **`New Project` left stale samples in the library.** `reset_to_new_project()` now clears the library and invalidates the sample-view peak cache.
+- **`get_graph_diagnostics` flagged sampler-only instruments as silent.** Added `ModuleType::Sampler` to the `has_sound_source` list in `mcp_bridge.rs`.
+
 ## [0.269.0] - 2026-05-09
 ### Welcome screen + auto-create instrument on patch load
 

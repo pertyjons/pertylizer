@@ -326,6 +326,7 @@ impl SynthBridge for AppSynthBridge {
                     | synth_core::ModuleType::GranularOsc
                     | synth_core::ModuleType::FractalOsc
                     | synth_core::ModuleType::LaSynth
+                    | synth_core::ModuleType::Sampler
             )
         });
         let has_output = modules
@@ -684,6 +685,9 @@ impl SynthBridge for AppSynthBridge {
                                     value: match v {
                                         ParamValue::Float(f) => PatchParamValue::Float(*f),
                                         ParamValue::Int(i) => PatchParamValue::Int(*i),
+                                        ParamValue::SampleId { sample_id } => {
+                                            PatchParamValue::Int(*sample_id as i32)
+                                        }
                                         ParamValue::Bool(b) => PatchParamValue::Bool(*b),
                                         ParamValue::Choice(s) => PatchParamValue::Choice(s.clone()),
                                     },

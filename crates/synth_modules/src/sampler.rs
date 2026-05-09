@@ -191,6 +191,49 @@ impl Describable for Sampler {
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
             )
+            // SampleSelect, PlayMode, Direction must be in the descriptor so
+            // project save serializes them — the patch loop iterates
+            // descriptor.parameters and silently drops anything missing here.
+            // SampleSelect uses Hidden because the patch editor renders its
+            // own sample-picker combo box (see patch_editor.rs).
+            .parameter(
+                ParameterDescriptor::float(
+                    "sample_select",
+                    Param::Sampler(SamplerParam::SampleSelect(SampleId(0))),
+                    "Sample",
+                )
+                .description("Assigned sample (selected via the sample picker)")
+                .widget(WidgetHint::Hidden),
+            )
+            .parameter(
+                ParameterDescriptor::choice(
+                    "play_mode",
+                    Param::Sampler(SamplerParam::PlayMode(SamplerPlayMode::Sustain)),
+                    "Play Mode",
+                    vec![
+                        synth_core::module_traits::ChoiceOption::new("one_shot", "One-shot")
+                            .with_description("Plays the full sample, ignores note-off"),
+                        synth_core::module_traits::ChoiceOption::new("sustain", "Sustain")
+                            .with_description("Plays once, releases on note-off"),
+                        synth_core::module_traits::ChoiceOption::new("loop", "Loop")
+                            .with_description("Loops the loop region while held"),
+                    ],
+                )
+                .description("How the sample responds to note-on/off"),
+            )
+            .parameter(
+                ParameterDescriptor::choice(
+                    "direction",
+                    Param::Sampler(SamplerParam::Direction(PlayDirection::Forward)),
+                    "Direction",
+                    vec![
+                        synth_core::module_traits::ChoiceOption::new("forward", "Forward"),
+                        synth_core::module_traits::ChoiceOption::new("reverse", "Reverse"),
+                        synth_core::module_traits::ChoiceOption::new("ping_pong", "Ping-Pong"),
+                    ],
+                )
+                .description("Playback direction"),
+            )
             .port(PortDescriptor::audio_output("out", "Out").description("Sample audio output"))
     }
 }

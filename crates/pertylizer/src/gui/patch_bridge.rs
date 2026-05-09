@@ -357,37 +357,14 @@ pub fn apply_module_parameters(
             });
 
         if let Some(param_desc) = param_desc {
-            // Convert the ParamValue to f32 for patch_editor
-            let f32_value = match value {
-                ParamValue::Float(f) => *f,
-                ParamValue::Int(i) => *i as f32,
-                ParamValue::Bool(b) => {
-                    if *b {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                }
-                ParamValue::Choice(s) => {
-                    // Look up choice index
-                    if let Some(ref choices) = param_desc.choices {
-                        choices
-                            .iter()
-                            .position(|c| c.id == *s)
-                            .map(|i| i as f32)
-                            .unwrap_or(0.0)
-                    } else {
-                        0.0
-                    }
-                }
-            };
-
-            // Update patch_editor — use descriptor name (not patch file name) to match
-            // the key case used when param_values was initialized from the descriptor.
+            // GUI cache uses f32 (lossy for SampleId is fine — display only).
+            // Engine command uses to_param so SampleId round-trips losslessly.
+            let f32_value = value.to_f32(param_desc);
+            // Use descriptor name (not patch file name) — matches the key case
+            // used when param_values was initialized from the descriptor.
             patch_editor.set_parameter_by_name(module_id, &param_desc.name, f32_value);
 
-            // Create the Param with value and send to engine
-            let param = param_desc.id.with_f32(f32_value);
+            let param = value.to_param(param_desc);
 
             if let Some(et) = effect_type {
                 // Effects are per-instrument - send to this instrument's effect chain
@@ -480,7 +457,7 @@ pub fn create_patch_from_editor(
                 // param by kind, ensuring we always use the stable type_id.
                 for desc in &descriptor.parameters {
                     if let Some(ep) = engine_param_list.iter().find(|p| p.same_kind(&desc.id)) {
-                        param_map.insert(desc.type_id.clone(), ParamValue::Float(ep.as_f32()));
+                        param_map.insert(desc.type_id.clone(), ParamValue::from_param(ep));
                     }
                 }
             } else {

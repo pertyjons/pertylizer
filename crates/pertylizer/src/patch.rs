@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use synth_core::{BipolarValue, Bpm, Gain, Seconds, Semitones};
+use synth_core::{BipolarValue, Bpm, Gain, Param, ParameterDescriptor, Seconds, Semitones};
 use synth_engine::instrument::InstrumentId;
 use thiserror::Error;
 
@@ -381,6 +381,11 @@ impl GroupTemplate {
 /// **Variant order matters** for `#[serde(untagged)]`: Bool must come before
 /// numeric types (JSON `true`/`false` would match numbers otherwise), and
 /// Int before Float so integer JSON values deserialize as `Int` rather than `Float`.
+///
+/// `SampleId` is a struct variant so it serializes as `{"sample_id": N}` —
+/// distinguishable from plain numbers/strings under `untagged`. Plain `f32`
+/// can't represent a `u64` `SampleId` losslessly, so sampler assignments need
+/// their own variant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ParamValue {
@@ -388,6 +393,57 @@ pub enum ParamValue {
     Int(i32),
     Float(f32),
     Choice(String),
+    SampleId { sample_id: u64 },
+}
+
+impl ParamValue {
+    /// Convert to f32 for GUI/slider display. Lossy for `SampleId` (ids ≥ 2²⁴
+    /// lose precision); use [`to_param`](Self::to_param) for the engine.
+    pub fn to_f32(&self, desc: &ParameterDescriptor) -> f32 {
+        match self {
+            Self::Float(f) => *f,
+            Self::Int(i) => *i as f32,
+            Self::SampleId { sample_id } => *sample_id as f32,
+            Self::Bool(b) => {
+                if *b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Self::Choice(s) => desc
+                .choices
+                .as_ref()
+                .and_then(|cs| cs.iter().position(|c| c.id == *s))
+                .map(|i| i as f32)
+                .unwrap_or(0.0),
+        }
+    }
+
+    /// Convert to engine [`Param`], preserving full precision.
+    ///
+    /// Bypasses the f32 path for `SampleId` so u64 sample ids round-trip
+    /// losslessly — `SamplerParam::SampleSelect` would otherwise truncate
+    /// through the 24-bit f32 mantissa.
+    pub fn to_param(&self, desc: &ParameterDescriptor) -> Param {
+        if let Self::SampleId { sample_id } = self {
+            return Param::Sampler(synth_core::params::SamplerParam::SampleSelect(
+                synth_core::params::SampleId(*sample_id),
+            ));
+        }
+        desc.id.with_f32(self.to_f32(desc))
+    }
+
+    /// Build from an engine [`Param`], preserving the full sample id for
+    /// `SampleSelect` (which can't survive the f32 round-trip).
+    pub fn from_param(p: &Param) -> Self {
+        match p {
+            Param::Sampler(synth_core::params::SamplerParam::SampleSelect(sid)) => {
+                Self::SampleId { sample_id: sid.0 }
+            }
+            _ => Self::Float(p.as_f32()),
+        }
+    }
 }
 
 /// Connection between two modules.

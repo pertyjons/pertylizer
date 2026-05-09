@@ -578,30 +578,7 @@ fn apply_module_parameters(
             });
 
         if let Some(param_desc) = param_desc {
-            let f32_value = match value {
-                ParamValue::Float(f) => *f,
-                ParamValue::Int(i) => *i as f32,
-                ParamValue::Bool(b) => {
-                    if *b {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                }
-                ParamValue::Choice(s) => {
-                    if let Some(ref choices) = param_desc.choices {
-                        choices
-                            .iter()
-                            .position(|c| c.id == *s)
-                            .map(|i| i as f32)
-                            .unwrap_or(0.0)
-                    } else {
-                        0.0
-                    }
-                }
-            };
-
-            let param = param_desc.id.with_f32(f32_value);
+            let param = value.to_param(param_desc);
 
             if let Some(et) = effect_type {
                 handle.send_blocking(EngineCommand::SetEffectParameter {

@@ -382,6 +382,8 @@ pub enum WidgetHint {
     DecibelSlider,
     /// Pan control (-1 to +1).
     PanKnob,
+    /// Not rendered by the auto-renderer — module supplies its own UI.
+    Hidden,
 }
 
 /// Response curve for parameter mapping.

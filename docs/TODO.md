@@ -62,6 +62,15 @@ This enables AI to self-discover the full synth architecture without hardcoded k
 
 - [ ] Add Browse button in Settings dialog to change patches directory
 - [ ] Extract `magnitude_to_normalized_db()` into `synth_core` or `synth_dsp` — repeated in 4+ locations
+- [ ] Add ergonomic constructor `SamplerParam::sample_select(u64) -> Self` (or `Param::sample_select`) in
+  `synth_core/src/params/sampler.rs` — 4 call sites currently spell out
+  `Param::Sampler(SamplerParam::SampleSelect(SampleId(id)))` verbatim (`session.rs`, `mcp_bridge.rs`,
+  `gui/patch_editor.rs`, `gui/egui_backend.rs`)
+- [ ] Add `param_sample_id(name, id)` to `ModuleStateBuilder` in `pertylizer/src/patch.rs` for symmetry with
+  `param_f` / `param_i` / `param_b` / `param_choice` (no current callers — for API completeness)
+- [ ] Add `SampleId(u64)` variant to `PatchParamValue` in `synth_mcp/src/types.rs` — currently the MCP patch
+  resource view down-casts `u64 → i32` at `mcp_bridge.rs:687`, which silently truncates for sample ids ≥ 2³¹.
+  Inconsistent with the lossless rationale already documented for `ParamValue::SampleId`
 
 ### 1.6 Workflow quality of life
 

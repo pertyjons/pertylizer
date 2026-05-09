@@ -651,7 +651,18 @@ impl eframe::App for SynthApp {
                     }
                     ProjectAction::Save(path) => {
                         let proj = self.create_project_from_app();
-                        proj.save(&path)
+                        let has_samples =
+                            self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+                        let save_result = if has_samples {
+                            if let Ok(lib) = self.sample_library.read() {
+                                crate::bundle::save_bundle(&proj, &lib, &path)
+                            } else {
+                                proj.save(&path)
+                            }
+                        } else {
+                            proj.save(&path)
+                        };
+                        save_result
                             .map(|()| format!("Saved to {}", path.display()))
                             .map_err(|e| e.to_string())
                     }
@@ -787,28 +798,7 @@ impl eframe::App for SynthApp {
                         .button(format!("{} Save Project", ri::SAVE_LINE))
                         .clicked()
                     {
-                        if let Some(path) = self.current_project_path.clone() {
-                            let proj = self.create_project_from_app();
-                            match proj.save(&path) {
-                                Ok(()) => {
-                                    self.dirty = false;
-                                    self.settings.add_recent_project(path.clone());
-                                    self.settings.save();
-                                    self.dialog_state
-                                        .set_status(format!("Project saved: {}", path.display()));
-                                }
-                                Err(e) => {
-                                    self.dialog_state
-                                        .set_status(format!("Error saving project: {e}"));
-                                }
-                            }
-                        } else {
-                            // No path yet — open Save As dialog
-                            let default_name = "project.json".to_string();
-                            let initial_dir = self.resolve_project_dir();
-                            self.dialog_state
-                                .open_save_project_dialog(&default_name, initial_dir.as_deref());
-                        }
+                        self.save_current_project();
                         ui.close();
                     }
                     if ui
@@ -4255,6 +4245,43 @@ impl SynthApp {
         ))
     }
 
+    /// Send `LoadSampleData` for every Sampler module in the project that has
+    /// `SampleSelect != 0`. Setting the param only stores the id; the engine
+    /// also needs the audio buffer (mirrors `assign_sample_to_module`).
+    fn send_loaded_sample_data(&mut self, project: &ProjectFile) {
+        let Ok(lib) = self.sample_library.read() else {
+            return;
+        };
+        for inst_state in &project.instruments {
+            for module in &inst_state.patch.modules {
+                if module.module_type != synth_core::ModuleType::Sampler {
+                    continue;
+                }
+                let sample_id = match module.parameters.get("sample_select") {
+                    Some(crate::patch::ParamValue::SampleId { sample_id }) => *sample_id,
+                    _ => continue,
+                };
+                if sample_id == 0 {
+                    continue;
+                }
+                let Ok(mod_id) = module.id.parse::<ModuleId>() else {
+                    continue;
+                };
+                let Some(sample) = lib.get(synth_sampler::SampleId::new(sample_id)) else {
+                    continue;
+                };
+                self.handle.send(EngineCommand::LoadSampleData {
+                    instrument_id: inst_state.id,
+                    module_id: mod_id,
+                    data: std::sync::Arc::clone(&sample.data),
+                    channels: sample.meta.channels,
+                    frame_count: sample.meta.frame_count.as_usize(),
+                    root_note: sample.meta.root_note.unwrap_or(synth_core::MidiNote::new(60)),
+                });
+            }
+        }
+    }
+
     /// Load a project file, replacing all current state.
     fn load_project_data(&mut self, project: ProjectFile) {
         // 1. Stop sequencer playback
@@ -4381,6 +4408,10 @@ impl SynthApp {
             self.instruments.push(ui_inst);
         }
 
+        // 4b. Push audio data for any sampler that was loaded with a
+        // SampleSelect — set_param only stored the id on the module.
+        self.send_loaded_sample_data(&project);
+
         // 5. Replace song (move instead of clone since we own the project)
         {
             let mut song = self.song.write();
@@ -4446,6 +4477,10 @@ impl SynthApp {
             GlobalProjectState::default(),
         );
         self.load_project_data(project);
+        if let Ok(mut lib) = self.sample_library.write() {
+            lib.clear();
+        }
+        self.sample_view_state.invalidate_peaks();
         self.current_project_path = None;
         self.current_patch_name = "Init".to_string();
         self.current_patch_path = None;
@@ -4533,7 +4568,19 @@ impl SynthApp {
     fn save_current_project(&mut self) -> bool {
         if let Some(path) = self.current_project_path.clone() {
             let proj = self.create_project_from_app();
-            match proj.save(&path) {
+            // Bundle format whenever samples exist — otherwise the WAV data
+            // is silently dropped and the project loads back without audio.
+            let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+            let save_result = if has_samples {
+                if let Ok(lib) = self.sample_library.read() {
+                    crate::bundle::save_bundle(&proj, &lib, &path)
+                } else {
+                    proj.save(&path)
+                }
+            } else {
+                proj.save(&path)
+            };
+            match save_result {
                 Ok(()) => {
                     self.dirty = false;
                     self.settings.add_recent_project(path.clone());
