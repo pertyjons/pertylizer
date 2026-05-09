@@ -9,9 +9,9 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     AnnotateAble, Annotated, CallToolResult, Content, Implementation, ListResourceTemplatesResult,
-    ListResourcesResult, PaginatedRequestParams, RawAudioContent, RawContent, RawResource,
-    RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, ResourceContents,
-    ServerCapabilities, ServerInfo,
+    ListResourcesResult, PaginatedRequestParams, RawAudioContent, RawContent, RawImageContent,
+    RawResource, RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult,
+    ResourceContents, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -504,6 +504,36 @@ pub struct PreviewNoteParam {
         description = "Tail time in milliseconds after note-off (default 500). Extra time for release/reverb tails."
     )]
     pub tail_ms: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeNoteParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: u64,
+    #[schemars(description = "MIDI note number (0-127, where 60 = middle C)")]
+    pub note: u8,
+    #[schemars(description = "Velocity (0-127, where 127 = maximum)")]
+    pub velocity: u8,
+    #[schemars(
+        description = "Note duration in milliseconds (default 500). How long the note is held before release."
+    )]
+    pub duration_ms: Option<u32>,
+    #[schemars(
+        description = "Tail time in milliseconds after note-off (default 500). Extra time for release/reverb tails."
+    )]
+    pub tail_ms: Option<u32>,
+    #[schemars(
+        description = "Optional MIDI note for pitch-error measurement. When set, the fundamental detector restricts its search to ±tritone around this pitch so it isn't fooled by dominant sub-octaves (sub-bass) or strong upper harmonics (wave-folded patches). Defaults to the actually-played note (`note` shifted by the patch's octave_offset)."
+    )]
+    pub expected_note: Option<u8>,
+}
+
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
+pub struct TakeScreenshotParam {
+    #[schemars(
+        description = "Maximum time to wait for the GUI to deliver the screenshot, in milliseconds (default 2000, clamped to >=100)."
+    )]
+    pub timeout_ms: Option<u32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2118,6 +2148,71 @@ impl SynthMcpServer {
         ));
 
         Ok(CallToolResult::success(vec![text, audio]))
+    }
+
+    #[tool(
+        description = "Render a note offline and return quantitative analysis of the audio: detected fundamental, peak/RMS, DC offset, clip count, RMS and centroid envelopes over time, and top spectral peaks at attack/sustain/release. Use this instead of `preview_note` when you want metrics rather than audio bytes — far cheaper to inspect than a WAV roundtrip and gives consistent measurements across calls."
+    )]
+    async fn analyze_note(
+        &self,
+        params: Parameters<AnalyzeNoteParam>,
+    ) -> Result<CallToolResult, ErrorData> {
+        validate_midi_note(params.0.note).map_err(mcp_err)?;
+        validate_velocity(params.0.velocity).map_err(mcp_err)?;
+        let duration_ms = params.0.duration_ms.unwrap_or(500);
+        let tail_ms = params.0.tail_ms.unwrap_or(500);
+        #[expect(clippy::cast_precision_loss, reason = "millisecond values fit in f32")]
+        validate_range("duration_ms", duration_ms as f32, 1.0, 30000.0).map_err(mcp_err)?;
+        #[expect(clippy::cast_precision_loss, reason = "millisecond values fit in f32")]
+        validate_range("tail_ms", tail_ms as f32, 1.0, 30000.0).map_err(mcp_err)?;
+
+        if let Some(expected) = params.0.expected_note {
+            validate_midi_note(expected).map_err(mcp_err)?;
+        }
+
+        let result = self
+            .bridge
+            .analyze_note(
+                params.0.instrument_id,
+                params.0.note,
+                params.0.velocity,
+                duration_ms,
+                tail_ms,
+                params.0.expected_note,
+            )
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        let json = serde_json::to_string_pretty(&result)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        description = "Capture a screenshot of the current GUI window as a PNG. Useful for visually verifying the synth state, inspecting Mod Matrix slot configuration, or debugging layout. Requires the synth to be running with the gui-egui feature and the window to be actively rendering (minimized windows usually pause egui's update loop)."
+    )]
+    async fn take_screenshot(
+        &self,
+        params: Parameters<TakeScreenshotParam>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let timeout_ms = params.0.timeout_ms.unwrap_or(2000);
+        let png = self
+            .bridge
+            .take_screenshot(timeout_ms)
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+
+        use base64::Engine;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+
+        let image = RawContent::Image(RawImageContent {
+            data: encoded,
+            mime_type: "image/png".to_string(),
+            meta: None,
+        })
+        .no_annotation();
+
+        let text = Content::text(format!("Screenshot captured ({} bytes PNG)", png.len()));
+
+        Ok(CallToolResult::success(vec![text, image]))
     }
 
     #[tool(

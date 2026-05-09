@@ -513,6 +513,21 @@ impl eframe::App for SynthApp {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
 
+        // Register a repaint callback the MCP thread can use to wake us up
+        // when egui has paused its update loop. Idempotent — only set once.
+        #[cfg(feature = "mcp")]
+        if let Some(shared) = &self.mcp_shared {
+            shared
+                .gui_frame_counter
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if let Ok(mut guard) = shared.repaint_signal.lock()
+                && guard.is_none()
+            {
+                let ctx_clone = ctx.clone();
+                *guard = Some(std::sync::Arc::new(move || ctx_clone.request_repaint()));
+            }
+        }
+
         // Drain audio input ring buffer every frame (needed for peak metering and recording).
         // Must run regardless of active view so recording works from the patch editor too.
         self.audio_input.drain_gui_buffer();
@@ -618,6 +633,34 @@ impl eframe::App for SynthApp {
                 self.current_patch_name = name;
                 self.current_patch_path = None;
                 self.load_patch_data(&patch);
+            }
+        }
+
+        // Poll MCP pending screenshot request and deliver any captured image.
+        // The flag triggers a `ViewportCommand::Screenshot`; the result arrives
+        // as an `Event::Screenshot` on a subsequent frame, which we encode to
+        // PNG and signal back to the waiting MCP thread via condvar.
+        #[cfg(feature = "mcp")]
+        if let Some(shared) = &self.mcp_shared {
+            use std::sync::atomic::Ordering;
+            if shared.pending_screenshot.swap(false, Ordering::Relaxed) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+                ctx.request_repaint();
+            }
+
+            let captured = ctx.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(image) = captured {
+                let result = encode_color_image_to_png(&image);
+                let (lock, cvar) = &shared.screenshot_result;
+                if let Ok(mut guard) = lock.lock() {
+                    *guard = Some(result);
+                    cvar.notify_one();
+                }
             }
         }
 
@@ -3955,9 +3998,25 @@ impl SynthApp {
                 continue;
             }
 
+            // Fetch live module state so newly-added modules can have their
+            // current parameter values copied into the GUI's patch_editor —
+            // without this, MCP-applied patches would render with descriptor
+            // defaults regardless of what the engine actually runs.
+            let module_snapshots = self
+                .session
+                .state()
+                .shared_graph
+                .get_modules_for_instrument(inst_id);
+
             for (module_id, descriptor) in to_add {
                 let position = eframe::egui::Pos2::new(100.0, 100.0);
                 patch_editor.add_module_at(module_id, descriptor, position);
+
+                if let Some(snap) = module_snapshots.iter().find(|s| s.id == module_id) {
+                    for param in &snap.parameters {
+                        patch_editor.set_parameter_by_name(module_id, param.name(), param.as_f32());
+                    }
+                }
             }
 
             for module_id in to_remove {
@@ -4276,7 +4335,10 @@ impl SynthApp {
                     data: std::sync::Arc::clone(&sample.data),
                     channels: sample.meta.channels,
                     frame_count: sample.meta.frame_count.as_usize(),
-                    root_note: sample.meta.root_note.unwrap_or(synth_core::MidiNote::new(60)),
+                    root_note: sample
+                        .meta
+                        .root_note
+                        .unwrap_or(synth_core::MidiNote::new(60)),
                 });
             }
         }
@@ -4700,4 +4762,32 @@ impl SynthApp {
             .or_else(|| self.settings.directories.projects_dir.clone())
             .or_else(|| project::default_projects_dir().ok())
     }
+}
+
+/// Encode an egui `ColorImage` (premultiplied RGBA, row-major top-to-bottom)
+/// as a PNG byte stream for the `take_screenshot` MCP tool.
+#[cfg(feature = "mcp")]
+fn encode_color_image_to_png(image: &egui::ColorImage) -> Result<Vec<u8>, String> {
+    let [width, height] = image.size;
+    if width == 0 || height == 0 {
+        return Err(format!("empty screenshot ({width}x{height})"));
+    }
+
+    let mut bytes: Vec<u8> = Vec::with_capacity(width * height * 4);
+    for c in &image.pixels {
+        bytes.extend_from_slice(&c.to_array());
+    }
+
+    let mut buf = Vec::new();
+    let mut encoder = png::Encoder::new(&mut buf, width as u32, height as u32);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .map_err(|e| format!("png header: {e}"))?;
+    writer
+        .write_image_data(&bytes)
+        .map_err(|e| format!("png write: {e}"))?;
+    writer.finish().map_err(|e| format!("png finish: {e}"))?;
+    Ok(buf)
 }

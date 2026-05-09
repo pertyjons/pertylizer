@@ -3,6 +3,7 @@
 //! This module provides thread-safe primitives for sharing data
 //! between the real-time audio thread and the UI thread.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32 as StdAtomicU32, AtomicU64, Ordering};
 
@@ -10,6 +11,7 @@ use parking_lot::RwLock;
 
 use synth_core::{Amplitude, Bpm};
 
+use crate::instrument::InstrumentId;
 use crate::recording::RecordingState;
 use crate::shared_state::{InstrumentSnapshot, SharedGraphState};
 use crate::visualizers::VisualizationBuffer;
@@ -324,6 +326,10 @@ pub struct EngineState {
     pub effect_count: AtomicU32,
     /// Instrument metadata snapshots for MCP and multi-GUI access.
     pub instrument_snapshots: RwLock<Vec<InstrumentSnapshot>>,
+    /// Per-instrument keyboard octave offset, applied by note-rendering paths
+    /// that don't go through the GUI keyboard (e.g. MCP `preview_note`).
+    /// Set by `apply_patch` from `Patch::settings.octave_offset`. Default 0.
+    pub octave_offsets: RwLock<HashMap<InstrumentId, i32>>,
     /// Count of dropped note events (ring buffer overflow).
     pub event_drops: StdAtomicU32,
 }
@@ -342,6 +348,7 @@ impl EngineState {
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
             instrument_snapshots: RwLock::new(Vec::new()),
+            octave_offsets: RwLock::new(HashMap::new()),
             event_drops: StdAtomicU32::new(0),
         })
     }
@@ -362,6 +369,30 @@ impl EngineState {
             Some(crate::instrument::InstrumentId::new(value))
         }
     }
+
+    /// Set the keyboard octave offset for an instrument.
+    ///
+    /// Used by non-GUI note-rendering paths (e.g. MCP `preview_note`) so the
+    /// rendered audio matches what the user would hear when pressing the
+    /// corresponding key on the on-screen keyboard. Updated by `apply_patch`.
+    pub fn set_octave_offset(&self, instrument_id: InstrumentId, offset: i32) {
+        self.octave_offsets.write().insert(instrument_id, offset);
+    }
+
+    /// Get the keyboard octave offset for an instrument (0 if unset).
+    pub fn get_octave_offset(&self, instrument_id: InstrumentId) -> i32 {
+        self.octave_offsets
+            .read()
+            .get(&instrument_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Clear the stored octave offset for an instrument (use when the
+    /// instrument is removed).
+    pub fn clear_octave_offset(&self, instrument_id: InstrumentId) {
+        self.octave_offsets.write().remove(&instrument_id);
+    }
 }
 
 impl Default for EngineState {
@@ -378,6 +409,7 @@ impl Default for EngineState {
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
             instrument_snapshots: RwLock::new(Vec::new()),
+            octave_offsets: RwLock::new(HashMap::new()),
             event_drops: StdAtomicU32::new(0),
         }
     }

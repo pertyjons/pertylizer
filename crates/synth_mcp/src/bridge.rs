@@ -596,6 +596,36 @@ pub trait SynthBridge: Send + Sync + 'static {
         tail_ms: u32,
     ) -> Result<AudioPreview, McpBridgeError>;
 
+    /// Render a note offline and analyze the resulting f32 audio buffer.
+    ///
+    /// Same render path as `render_note_preview` (octave offset applied,
+    /// engine snapshot, etc.) but skips the WAV encoding and instead returns
+    /// quantitative metrics: fundamental frequency, peak/RMS, DC offset,
+    /// clip count, RMS and centroid envelopes over time, and top spectral
+    /// peaks at attack / sustain / release.
+    ///
+    /// `expected_note` (when `Some`) anchors `expected_fundamental_hz` to that
+    /// MIDI note instead of the actually-played one and narrows the
+    /// fundamental search to ±tritone around it. Useful when the loudest
+    /// spectral peak isn't the fundamental (sub-octave dominance, wave folding).
+    fn analyze_note(
+        &self,
+        instrument_id: u64,
+        note: u8,
+        velocity: u8,
+        duration_ms: u32,
+        tail_ms: u32,
+        expected_note: Option<u8>,
+    ) -> Result<crate::types::AnalyzeNoteResult, McpBridgeError>;
+
+    /// Capture a screenshot of the current GUI window as a PNG.
+    ///
+    /// Drives `egui`'s `ViewportCommand::Screenshot` from the MCP thread and
+    /// blocks until the GUI has produced the resulting image (or the timeout
+    /// fires). Only works when the synth is running with the `gui-egui`
+    /// feature and the window is actively rendering.
+    fn take_screenshot(&self, timeout_ms: u32) -> Result<Vec<u8>, McpBridgeError>;
+
     // === AWE (Acoustic World Engine) ===
 
     /// Get the current AWE state (room, material, all parameters, LFOs).

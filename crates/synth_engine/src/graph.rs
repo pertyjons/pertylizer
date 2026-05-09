@@ -494,17 +494,20 @@ impl ModuleGraph {
             .unwrap_or(0.0)
     }
 
-    /// Gather modulation source values from LFO, Envelope, and Kinetic modules.
-    /// Iterates nodes internally to avoid the borrow conflict that requires `collect::<Vec<_>>()`.
-    /// Returns (lfo_values, env_values, kinetic_pos, kinetic_vel, kinetic_acc).
-    pub fn gather_mod_source_values(&self) -> ([f32; 2], [f32; 2], f32, f32, f32) {
+    /// Gather modulation source values from LFO, Envelope, Kinetic, and
+    /// Envelope-Follower modules. Iterates nodes internally to avoid the
+    /// borrow conflict that requires `collect::<Vec<_>>()`. Returns
+    /// (lfo_values, env_values, kinetic_pos, kinetic_vel, kinetic_acc, efl_values).
+    pub fn gather_mod_source_values(&self) -> ([f32; 2], [f32; 2], f32, f32, f32, [f32; 2]) {
         let mut lfo_values = [0.0f32; 2];
         let mut env_values = [0.0f32; 2];
+        let mut efl_values = [0.0f32; 2];
         let mut kinetic_pos = 0.0f32;
         let mut kinetic_vel = 0.0f32;
         let mut kinetic_acc = 0.0f32;
         let mut lfo_count = 0u8;
         let mut env_count = 0u8;
+        let mut efl_count = 0u8;
 
         for (&module_id, node) in &self.nodes {
             match module_id.module_type {
@@ -523,6 +526,14 @@ impl ModuleGraph {
                         .map(|buf| if buf.is_empty() { 0.0 } else { buf[0] })
                         .unwrap_or(0.0);
                     env_count += 1;
+                }
+                ModuleType::EnvelopeFollower if efl_count < 2 => {
+                    efl_values[efl_count as usize] = node
+                        .outputs
+                        .get(&PortName::OUT)
+                        .map(|buf| if buf.is_empty() { 0.0 } else { buf[0] })
+                        .unwrap_or(0.0);
+                    efl_count += 1;
                 }
                 ModuleType::KineticModulator => {
                     kinetic_pos = node
@@ -549,6 +560,7 @@ impl ModuleGraph {
             kinetic_pos,
             kinetic_vel,
             kinetic_acc,
+            efl_values,
         )
     }
 

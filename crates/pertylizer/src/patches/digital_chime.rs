@@ -113,7 +113,7 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1150.0, 50.0)
-            .param_f("master level", 0.75)
+            .param_f("master", 0.75)
             .build(),
     );
 

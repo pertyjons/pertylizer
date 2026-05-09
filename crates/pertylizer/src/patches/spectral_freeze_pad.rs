@@ -100,7 +100,7 @@ Increase Spectral Blur time to max for extreme smearing.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1250.0, 50.0)
-            .param_f("master level", 0.7)
+            .param_f("master", 0.7)
             .build(),
     );
 

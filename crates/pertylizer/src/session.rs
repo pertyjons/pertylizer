@@ -153,6 +153,8 @@ impl SynthSession {
             let mut counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
             counters.retain(|&(inst_id, _), _| inst_id != instrument_id);
         }
+        // Drop any per-instrument metadata held in shared engine state.
+        self.state().clear_octave_offset(instrument_id);
 
         if !self
             .command_sender
@@ -716,6 +718,11 @@ impl SynthSession {
                 )),
             }
         }
+
+        // Mirror keyboard-relevant patch settings into engine state so non-GUI
+        // note-rendering paths (MCP `preview_note`) match live keyboard behavior.
+        self.state()
+            .set_octave_offset(instrument_id, patch.settings.octave_offset);
 
         result
     }

@@ -47,11 +47,12 @@ dubstep, EDM, or any music needing powerful low end.
     ];
 
     // Main OSC - Sawtooth for harmonics (osc-1)
+    // Level kept low so the sub clearly dominates the spectrum.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("sawtooth")
-            .param_f("level", 0.5)
+            .param_f("level", 0.3)
             .build(),
     );
 
@@ -65,13 +66,16 @@ dubstep, EDM, or any music needing powerful low end.
             .build(),
     );
 
-    // Filter - Lowpass (flt-1)
+    // Filter - Lowpass with key tracking so timbre stays consistent across the
+    // keyboard (without it, low notes lose their harmonics and high notes get
+    // shrill).
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
             .filter_mode("lowpass")
-            .param_f("cutoff", 300.0)
+            .param_f("cutoff", 500.0)
             .param_f("resonance", 0.4)
+            .param_f("key track", 0.5)
             .build(),
     );
 
@@ -116,8 +120,8 @@ dubstep, EDM, or any music needing powerful low end.
         ModuleBuilder::new(1, ModuleType::Distortion)
             .position(1600.0, 350.0)
             .distortion_mode("soft_clip")
-            .param_f("drive", 0.15)
-            .param_f("mix", 0.3)
+            .param_f("drive", 0.4)
+            .param_f("mix", 0.5)
             .build(),
     );
 
@@ -134,7 +138,7 @@ dubstep, EDM, or any music needing powerful low end.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1200.0, 50.0)
-            .param_f("master level", 0.8)
+            .param_f("master", 0.8)
             .build(),
     );
 

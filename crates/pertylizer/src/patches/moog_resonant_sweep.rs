@@ -169,7 +169,7 @@ bite. Works great for both bass lines and lead melodies.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1600.0, 50.0)
-            .param_f("master level", 0.75)
+            .param_f("master", 0.75)
             .build(),
     );
 

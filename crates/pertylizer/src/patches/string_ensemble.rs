@@ -174,7 +174,7 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1600.0, 50.0)
-            .param_f("master level", 0.8)
+            .param_f("master", 0.8)
             .build(),
     );
 

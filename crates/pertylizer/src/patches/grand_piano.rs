@@ -216,7 +216,7 @@ PLAYING TIPS:
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(2250.0, 50.0)
-            .param_f("master level", 0.85)
+            .param_f("master", 0.85)
             .build(),
     );
 

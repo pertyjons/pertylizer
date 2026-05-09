@@ -63,6 +63,7 @@
 //! host.stop()?;
 //! ```
 
+pub mod analysis;
 pub mod backends;
 pub mod export;
 pub mod input;

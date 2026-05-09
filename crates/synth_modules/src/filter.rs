@@ -66,7 +66,7 @@ impl Filter {
             cutoff: Hertz::new(1000.0),
             resonance: NormalizedValue::MIN,
             key_tracking: NormalizedValue::MIN,
-            env_amount: BipolarValue::MAX,
+            env_amount: BipolarValue::new(0.25),
             cutoff_mod_amount: BipolarValue::MAX,
             drive: Gain::UNITY,
             sample_rate: SampleRate::DVD_QUALITY,
@@ -275,6 +275,20 @@ impl Describable for Filter {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "env_amt",
+                    Param::Filter(FilterParam::EnvAmount(BipolarValue::new(0.25))),
+                    "Env Amt",
+                )
+                .description(
+                    "Envelope/CV amount in semitones (-1 = -48 st, +1 = +48 st). \
+                     Default 0.25 ≈ 1 octave at full envelope.",
+                )
+                .range(-1.0, 1.0)
+                .default(0.25)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "drive",
                     Param::Filter(FilterParam::Drive(Gain::UNITY)),
                     "Drive",
@@ -316,10 +330,16 @@ impl PolyModule for Filter {
         let cutoff_cv = inputs.reader(PortName::CUTOFF_CV, 0.0);
         let res_cv = inputs.reader(PortName::RESONANCE_CV, 0.0);
 
+        // Scale CV input to semitones. The Mod Matrix path uses ×48 (4 octaves
+        // at full scale); applying the same scale here means a direct cable from
+        // an envelope is just as expressive as routing through the matrix.
+        // `env_amount` (default 0.25 = 12 st = 1 octave at full env) acts as
+        // the per-filter "Env Amt" knob; `cv_amt` is a separate -1..+1
+        // attenuverter that also flips polarity.
         for i in 0..context.samples.as_usize() {
             let input = audio_in[i];
             let cutoff_mod = Semitones::new(
-                cutoff_cv[i] * self.cutoff_mod_amount.as_f32() * self.env_amount.as_f32(),
+                cutoff_cv[i] * self.cutoff_mod_amount.as_f32() * self.env_amount.as_f32() * 48.0,
             );
             let res_mod = NormalizedValue::new(res_cv[i]);
 
@@ -378,6 +398,7 @@ impl PolyModule for Filter {
             Param::Filter(FilterParam::KeyTracking(self.key_tracking)),
             Param::Filter(FilterParam::Drive(self.drive)),
             Param::Filter(FilterParam::CutoffMod(self.cutoff_mod_amount)),
+            Param::Filter(FilterParam::EnvAmount(self.env_amount)),
         ]
     }
 
@@ -401,7 +422,14 @@ impl PolyModule for Filter {
 
     fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
         match dest_index {
-            0 => self.mod_offset_cutoff = Semitones::new(self.mod_offset_cutoff.as_f32() + value),
+            // Cutoff modulation is in semitones. Mod-matrix amount is normalized
+            // (-1..1) and envelopes are 0..1, so the raw product is at most 1
+            // semitone — inaudible. Scale to ±48 semitones (4 octaves) so a full
+            // amount + full envelope yields a usable acid-style sweep.
+            0 => {
+                self.mod_offset_cutoff =
+                    Semitones::new(self.mod_offset_cutoff.as_f32() + value * 48.0)
+            }
             1 => {
                 self.mod_offset_resonance =
                     NormalizedValue::new(self.mod_offset_resonance.as_f32() + value)

@@ -679,16 +679,17 @@ impl Voice {
         let mod_wheel_val = self.mod_wheel.as_f32();
         let pitch_bend_val = self.pitch_bend.as_f32();
 
-        // Read LFO/Envelope/Kinetic outputs from previous block
-        // Uses internal graph iteration to avoid collect::<Vec<_>>() allocation
-        let (lfo_values, env_values, kinetic_pos, kinetic_vel, kinetic_acc) =
+        // Read LFO/Envelope/EFL/Kinetic outputs from previous block.
+        // Uses internal graph iteration to avoid collect::<Vec<_>>() allocation.
+        let (lfo_values, env_values, kinetic_pos, kinetic_vel, kinetic_acc, efl_values) =
             self.graph.gather_mod_source_values();
 
-        // Build source values array matching ModSource::ALL indices
+        // Build source values array matching ModSource::ALL indices.
         // ModSource::ALL: [None, Lfo(0), Lfo(1), Env(0), Env(1), Velocity, NoteNumber,
-        //   Aftertouch, ModWheel, PitchBend, PolyAftertouch, KineticPos, KineticVel, KineticAcc]
+        //   Aftertouch, ModWheel, PitchBend, PolyAftertouch, KineticPos, KineticVel, KineticAcc,
+        //   EnvFollower(0), EnvFollower(1)]
         let poly_aftertouch_val = self.poly_aftertouch.as_f32();
-        let source_values: [f32; 14] = [
+        let source_values: [f32; 16] = [
             0.0,                 // None
             lfo_values[0],       // Lfo(0)
             lfo_values[1],       // Lfo(1)
@@ -703,6 +704,8 @@ impl Voice {
             kinetic_pos,         // KineticPos
             kinetic_vel,         // KineticVel
             kinetic_acc,         // KineticAcc
+            efl_values[0],       // EnvFollower(0)
+            efl_values[1],       // EnvFollower(1)
         ];
 
         // We can't downcast dyn PolyModule to ModMatrix, so we read the slot config

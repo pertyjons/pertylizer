@@ -94,7 +94,7 @@ to control speed, or set it negative for a falling effect.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1200.0, 50.0)
-            .param_f("master level", 0.8)
+            .param_f("master", 0.8)
             .build(),
     );
 

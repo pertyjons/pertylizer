@@ -175,6 +175,20 @@ This enables AI to self-discover the full synth architecture without hardcoded k
   `batch_execute`)*
 - [x] Add "Discovery" tools for the AI to better understand available port types and valid parameter ranges *(v0.253.0 —
   `get_module_type_info`, `search_modules`, `list_port_types`, `check_connection`)*
+- [ ] **`take_screenshot` MCP tool — currently broken on Wayland.** Infrastructure is in place
+  (`ViewportCommand::Screenshot` → `Event::Screenshot` → PNG encode → condvar to MCP thread,
+  including a repaint-signal callback that MCP invokes from `request_screenshot`), but on Wayland the
+  compositor throttles `ctx.request_repaint()` from a non-GUI thread when the synth window doesn't
+  have focus, so the GUI thread stays paused (`gui_frame_counter` doesn't advance) and the request
+  times out. Tool returns a clear timeout error explaining the cause. Possible fixes to evaluate:
+  pipe a winit `EventLoopProxy::send_event()` through `mcp_shared` (forces wakeup independent of the
+  compositor's frame callbacks); or always force continuous repaint while MCP is connected
+  (CPU-wasteful when the window is hidden); or accept the limitation and document that the user
+  must focus the window before calling `take_screenshot`. Files involved:
+  `crates/pertylizer/src/mcp_shared.rs` (queue + repaint signal),
+  `crates/pertylizer/src/mcp_bridge.rs::request_screenshot`,
+  `crates/pertylizer/src/gui/egui_backend.rs` (poll, encode, deliver),
+  `crates/synth_mcp/src/server.rs::take_screenshot`.
 
 ---
 

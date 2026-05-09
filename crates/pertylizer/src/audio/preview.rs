@@ -1,7 +1,9 @@
 //! Offline audio preview rendering for MCP.
 //!
-//! Renders a single note on an instrument to an in-memory WAV buffer,
-//! used by the `preview_note` MCP tool to return audio content.
+//! Renders a single note on an instrument to an in-memory f32 buffer or WAV.
+//! The render path is split from WAV encoding so it can be reused by the
+//! `analyze_note` MCP tool, which runs offline analysis on the f32 buffer
+//! directly without needing WAV bytes.
 
 use std::sync::Arc;
 
@@ -22,19 +24,36 @@ const PREVIEW_SAMPLE_RATE: u32 = 44100;
 /// Buffer size in frames per render call.
 const BUFFER_SIZE: usize = 256;
 
-/// Render a note preview for the given instrument.
+/// Output of [`render_note_to_buffer`] — the raw f32 audio plus metadata.
+pub struct RenderedNote {
+    /// Stereo-interleaved f32 samples (L0, R0, L1, R1, ...).
+    pub samples: Vec<f32>,
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// Total duration including tail, in seconds.
+    pub duration_seconds: f32,
+    /// Channel count (always 2).
+    pub channels: u16,
+    /// Effective MIDI note that was actually played, after the patch's
+    /// `octave_offset` was applied. The caller may want to know this for
+    /// reporting, e.g. the `analyze_note` tool returns it as `note_played`.
+    pub effective_note: MidiNote,
+}
+
+/// Render a note on the given instrument into an in-memory f32 buffer.
 ///
 /// Snapshots the instrument's current module graph and parameters from the
-/// live engine state, creates a fresh offline engine, loads the patch,
-/// plays the note, and returns WAV data.
-pub fn render_note_preview(
+/// live engine state, creates a fresh offline engine, loads the patch, plays
+/// the note, and returns the rendered stereo-interleaved f32 samples (no WAV
+/// encoding).
+pub fn render_note_to_buffer(
     session: &SynthSession,
     instrument_id: InstrumentId,
     note: MidiNote,
     velocity: Velocity,
     duration_ms: u32,
     tail_ms: u32,
-) -> Result<AudioPreview, McpBridgeError> {
+) -> Result<RenderedNote, McpBridgeError> {
     // Validate instrument exists
     if !session.instrument_exists(instrument_id) {
         return Err(McpBridgeError::InstrumentNotFound(instrument_id.as_u64()));
@@ -42,6 +61,18 @@ pub fn render_note_preview(
 
     // Snapshot modules, connections, and parameters from the live engine
     let engine_state = session.state();
+
+    // Mirror the on-screen keyboard's octave shift (applied when the patch
+    // was loaded). Without this, a bass patch with `octave_offset = -2`
+    // would preview two octaves higher than what the user hears live.
+    let octave_offset = engine_state.get_octave_offset(instrument_id);
+    let effective_note = if octave_offset == 0 {
+        note
+    } else {
+        let shifted = i32::from(note.as_u8()) + octave_offset * 12;
+        MidiNote::new(shifted.clamp(0, 127) as u8)
+    };
+
     let modules = engine_state
         .shared_graph
         .get_modules_for_instrument(instrument_id);
@@ -150,7 +181,7 @@ pub fn render_note_preview(
 
     // Warm up: process one buffer to let engine initialize
     let channels: usize = 2;
-    let mut buffer = vec![0.0f32; BUFFER_SIZE * channels];
+    let mut block = vec![0.0f32; BUFFER_SIZE * channels];
     // Use a sentinel position for the warmup block so the engine does not see
     // a duplicate sample_position 0 when real rendering starts.
     let init_context = AudioCallbackContext {
@@ -161,7 +192,7 @@ pub fn render_note_preview(
         sample_position: u64::MAX,
         output_latency: synth_core::Seconds::ZERO,
     };
-    engine.process(&mut buffer, &init_context);
+    engine.process(&mut block, &init_context);
 
     // Calculate frame counts
     let note_frames = (f64::from(duration_ms) / 1000.0 * f64::from(PREVIEW_SAMPLE_RATE)) as u64;
@@ -175,22 +206,12 @@ pub fn render_note_preview(
     }
     let total_seconds = total_frames as f32 / PREVIEW_SAMPLE_RATE as f32;
 
-    // Create in-memory WAV writer (16-bit for smaller size)
-    let spec = hound::WavSpec {
-        channels: channels as u16,
-        sample_rate: PREVIEW_SAMPLE_RATE,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let mut wav_cursor = std::io::Cursor::new(Vec::with_capacity(
-        total_frames as usize * channels * 2 + 44,
-    ));
-    let mut writer = hound::WavWriter::new(&mut wav_cursor, spec)
-        .map_err(|e| McpBridgeError::Other(format!("WAV writer error: {e}")))?;
+    // Pre-allocate the output buffer for the entire render.
+    let mut samples: Vec<f32> = Vec::with_capacity(total_frames as usize * channels);
 
     // Send note on
     handle.send_blocking(EngineCommand::NoteOn {
-        note,
+        note: effective_note,
         velocity,
         channel: MidiChannel::CH1,
     });
@@ -203,7 +224,7 @@ pub fn render_note_preview(
         let this_buffer = remaining.min(BUFFER_SIZE);
         let sample_count = this_buffer * channels;
 
-        buffer.fill(0.0);
+        block.fill(0.0);
 
         let context = AudioCallbackContext {
             sample_rate: hw_sample_rate,
@@ -214,39 +235,88 @@ pub fn render_note_preview(
             output_latency: synth_core::Seconds::ZERO,
         };
 
-        engine.process(&mut buffer[..sample_count], &context);
+        engine.process(&mut block[..sample_count], &context);
 
         // Send note off after the specified duration
         if !note_off_sent && frames_written >= note_frames {
             handle.send_blocking(EngineCommand::NoteOff {
-                note,
+                note: effective_note,
                 channel: MidiChannel::CH1,
             });
             note_off_sent = true;
         }
 
-        // Write 16-bit samples
-        for &sample in &buffer[..sample_count] {
-            let clamped = sample.clamp(-1.0, 1.0);
-            #[allow(clippy::cast_possible_truncation)]
-            let int_val = (clamped * f32::from(i16::MAX)) as i16;
-            writer
-                .write_sample(int_val)
-                .map_err(|e| McpBridgeError::Other(format!("WAV write error: {e}")))?;
-        }
+        // Append this block's samples to the output buffer.
+        samples.extend_from_slice(&block[..sample_count]);
 
         frames_written += this_buffer as u64;
     }
 
-    // Finalize WAV
+    Ok(RenderedNote {
+        samples,
+        sample_rate: PREVIEW_SAMPLE_RATE,
+        duration_seconds: total_seconds,
+        channels: channels as u16,
+        effective_note,
+    })
+}
+
+/// Encode a stereo-interleaved (or mono) f32 buffer as a 16-bit signed WAV.
+///
+/// Samples outside ±1.0 are clamped before conversion. The resulting bytes
+/// are a complete in-memory WAV file (header + PCM data).
+pub fn encode_buffer_as_wav(
+    buffer: &[f32],
+    sample_rate: u32,
+    channels: u16,
+) -> Result<Vec<u8>, McpBridgeError> {
+    let spec = hound::WavSpec {
+        channels,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut wav_cursor = std::io::Cursor::new(Vec::with_capacity(buffer.len() * 2 + 44));
+    let mut writer = hound::WavWriter::new(&mut wav_cursor, spec)
+        .map_err(|e| McpBridgeError::Other(format!("WAV writer error: {e}")))?;
+
+    for &sample in buffer {
+        let clamped = sample.clamp(-1.0, 1.0);
+        #[allow(clippy::cast_possible_truncation)]
+        let int_val = (clamped * f32::from(i16::MAX)) as i16;
+        writer
+            .write_sample(int_val)
+            .map_err(|e| McpBridgeError::Other(format!("WAV write error: {e}")))?;
+    }
+
     writer
         .finalize()
         .map_err(|e| McpBridgeError::Other(format!("WAV finalize error: {e}")))?;
-    let wav_data = wav_cursor.into_inner();
+    Ok(wav_cursor.into_inner())
+}
+
+/// Render a note preview for the given instrument and return WAV bytes.
+///
+/// Thin wrapper that calls [`render_note_to_buffer`] and then encodes the
+/// resulting f32 buffer with [`encode_buffer_as_wav`]. Existing callers
+/// (e.g. the `preview_note` MCP tool) keep using this function unchanged.
+pub fn render_note_preview(
+    session: &SynthSession,
+    instrument_id: InstrumentId,
+    note: MidiNote,
+    velocity: Velocity,
+    duration_ms: u32,
+    tail_ms: u32,
+) -> Result<AudioPreview, McpBridgeError> {
+    let rendered =
+        render_note_to_buffer(session, instrument_id, note, velocity, duration_ms, tail_ms)?;
+
+    let wav_data =
+        encode_buffer_as_wav(&rendered.samples, rendered.sample_rate, rendered.channels)?;
 
     Ok(AudioPreview {
         wav_data,
-        sample_rate: PREVIEW_SAMPLE_RATE,
-        duration_seconds: total_seconds,
+        sample_rate: rendered.sample_rate,
+        duration_seconds: rendered.duration_seconds,
     })
 }

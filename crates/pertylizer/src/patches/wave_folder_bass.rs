@@ -51,13 +51,16 @@ Low values = warm, high values = aggressive and metallic.
             .build(),
     );
 
-    // Filter - Shape the bass (flt-1)
+    // Filter - Shape the bass. Cutoff is wide open so the wave-folder's added
+    // harmonics (the whole point of west-coast synthesis) stay audible; the
+    // filter env still sweeps the cv input.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
             .filter_mode("lowpass")
-            .param_f("cutoff", 600.0)
+            .param_f("cutoff", 1200.0)
             .param_f("resonance", 0.4)
+            .param_f("key track", 0.5)
             .build(),
     );
 
@@ -87,7 +90,7 @@ Low values = warm, high values = aggressive and metallic.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(850.0, 50.0)
-            .param_f("level", 0.8)
+            .param_f("level", 1.0)
             .build(),
     );
 
@@ -114,7 +117,7 @@ Low values = warm, high values = aggressive and metallic.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1200.0, 50.0)
-            .param_f("master level", 0.7)
+            .param_f("master", 0.9)
             .build(),
     );
 

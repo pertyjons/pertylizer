@@ -103,7 +103,7 @@ Turn on LFO modulating filter cutoff for slow movement.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1250.0, 50.0)
-            .param_f("master level", 0.75)
+            .param_f("master", 0.75)
             .build(),
     );
 

@@ -5,7 +5,9 @@
 
 use std::sync::Arc;
 
-use synth_core::{MidiNote, NormalizedValue, Param, PortDirection, SampleCount, Velocity};
+use synth_core::{
+    MidiNote, NormalizedValue, Param, ParameterUnit, PortDirection, SampleCount, Velocity,
+};
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
@@ -173,7 +175,7 @@ impl SynthBridge for AppSynthBridge {
                     }
                 }
 
-                // Get descriptor for parameter ranges
+                // Get descriptor for parameter ranges and units
                 let descriptor = self.session.module_descriptor(inst_id, m.id);
 
                 ModuleInfo {
@@ -185,34 +187,29 @@ impl SynthBridge for AppSynthBridge {
                         .parameters
                         .iter()
                         .map(|p| {
+                            // Match against the descriptor first so we can format the value
+                            // with its declared unit (the name-based fallback misformats
+                            // e.g. EFL attack/release stored as Milliseconds).
                             let name = p.name().to_string();
-                            let mut info = ParameterInfo {
-                                name: name.clone(),
-                                value: p.as_f32(),
-                                display: format_param_display(p),
-                                min: None,
-                                max: None,
-                                default: None,
-                                choices: None,
-                            };
-                            // Enrich with range from descriptor
-                            if let Some(ref desc) = descriptor {
+                            let pd = descriptor.as_ref().and_then(|desc| {
                                 let needle = normalize_param_name(&name);
-                                if let Some(pd) = desc
-                                    .parameters
+                                desc.parameters
                                     .iter()
                                     .find(|pd| normalize_param_name(&pd.name) == needle)
-                                {
-                                    info.min = Some(pd.range.min);
-                                    info.max = Some(pd.range.max);
-                                    info.default = Some(pd.range.default);
-                                    info.choices = pd
-                                        .choices
+                            });
+                            ParameterInfo {
+                                name: name.clone(),
+                                value: p.as_f32(),
+                                display: format_param_display(p, pd.map(|pd| pd.unit)),
+                                min: pd.map(|pd| pd.range.min),
+                                max: pd.map(|pd| pd.range.max),
+                                default: pd.map(|pd| pd.range.default),
+                                choices: pd.and_then(|pd| {
+                                    pd.choices
                                         .as_ref()
-                                        .map(|c| c.iter().map(|ch| ch.name.clone()).collect());
-                                }
+                                        .map(|c| c.iter().map(|ch| ch.name.clone()).collect())
+                                }),
                             }
-                            info
                         })
                         .collect(),
                     input_ports: inputs,
@@ -590,7 +587,7 @@ impl SynthBridge for AppSynthBridge {
             return Ok(ParameterInfo {
                 name: pd.name.clone(),
                 value,
-                display: format!("{value}"),
+                display: pd.unit.format(value),
                 min: Some(pd.range.min),
                 max: Some(pd.range.max),
                 default: Some(pd.range.default),
@@ -730,10 +727,23 @@ impl SynthBridge for AppSynthBridge {
             for patch in patches {
                 if patch.name.to_ascii_lowercase() == name_lower {
                     let patch_name = patch.name.clone();
+                    // Apply to engine immediately so audio works regardless of
+                    // whether the GUI tick happens to consume the queue.
+                    let inst_id = self
+                        .session
+                        .add_instrument(&patch.name)
+                        .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+                    let _ = self.session.apply_patch(inst_id, &patch);
+                    // Queue for GUI so it can update its current-patch label and
+                    // patch_editor cache on the next frame; reconcile_with_session
+                    // covers the parameter-state sync.
                     if let Ok(mut pending) = self.shared.pending_patch.lock() {
                         *pending = Some((patch, patch_name.clone()));
                     }
-                    return Ok(format!("OK: {patch_name} queued for loading"));
+                    return Ok(format!(
+                        "OK: {patch_name} loaded as instrument {}",
+                        inst_id.as_u64()
+                    ));
                 }
             }
         }
@@ -2293,6 +2303,30 @@ impl SynthBridge for AppSynthBridge {
             duration_ms,
             tail_ms,
         )
+    }
+
+    fn analyze_note(
+        &self,
+        instrument_id: u64,
+        note: u8,
+        velocity: u8,
+        duration_ms: u32,
+        tail_ms: u32,
+        expected_note: Option<u8>,
+    ) -> Result<synth_mcp::types::AnalyzeNoteResult, McpBridgeError> {
+        analyze_rendered_note(
+            &self.session,
+            instrument_id,
+            note,
+            velocity,
+            duration_ms,
+            tail_ms,
+            expected_note,
+        )
+    }
+
+    fn take_screenshot(&self, timeout_ms: u32) -> Result<Vec<u8>, McpBridgeError> {
+        self.request_screenshot(timeout_ms)
     }
 
     // === AWE (Acoustic World Engine) ===
@@ -4060,6 +4094,74 @@ impl AppSynthBridge {
             )),
         }
     }
+
+    /// Trigger a screenshot on the GUI thread and wait for the resulting PNG.
+    fn request_screenshot(&self, timeout_ms: u32) -> Result<Vec<u8>, McpBridgeError> {
+        use std::sync::atomic::Ordering;
+        use std::time::{Duration, Instant};
+
+        // Discard any stale result so we don't race with a previous request.
+        {
+            let (lock, _) = &self.shared.screenshot_result;
+            if let Ok(mut guard) = lock.lock() {
+                *guard = None;
+            }
+        }
+
+        let nudge = || {
+            if let Ok(guard) = self.shared.repaint_signal.lock()
+                && let Some(signal) = guard.as_ref()
+            {
+                signal();
+            }
+        };
+
+        let frame_at_start = self.shared.gui_frame_counter.load(Ordering::Relaxed);
+
+        // Signal the GUI to capture on its next frame and wake it up.
+        self.shared
+            .pending_screenshot
+            .store(true, Ordering::Relaxed);
+        nudge();
+
+        let (lock, cvar) = &self.shared.screenshot_result;
+        let mut guard = lock
+            .lock()
+            .map_err(|e| McpBridgeError::Other(format!("Lock error: {e}")))?;
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(100) as u64);
+
+        while guard.is_none() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                let frames_now = self.shared.gui_frame_counter.load(Ordering::Relaxed);
+                self.shared
+                    .pending_screenshot
+                    .store(false, Ordering::Relaxed);
+                return Err(McpBridgeError::Other(format!(
+                    "Timeout waiting for GUI screenshot. gui_frames went {frame_at_start} → {frames_now} during wait (no progress means GUI thread is paused — minimized window? wgpu/wayland frame-callback throttling?)"
+                )));
+            }
+            // Wake the GUI on a short cycle so the screenshot survives pauses
+            // in egui's update loop (idle compositor frame-callback throttling
+            // on Wayland is the typical culprit).
+            let pulse = remaining.min(Duration::from_millis(40));
+            let (g, _status) = cvar
+                .wait_timeout(guard, pulse)
+                .map_err(|e| McpBridgeError::Other(format!("Wait error: {e}")))?;
+            guard = g;
+            if guard.is_none() {
+                nudge();
+            }
+        }
+
+        match guard.take() {
+            Some(Ok(png)) => Ok(png),
+            Some(Err(e)) => Err(McpBridgeError::Other(e)),
+            None => Err(McpBridgeError::Other(
+                "No screenshot result delivered".to_string(),
+            )),
+        }
+    }
 }
 
 /// Try to insert a note from `BridgeNoteData` into a pattern.
@@ -4274,12 +4376,289 @@ fn compute_overlaps(modules: &[crate::mcp_shared::ModuleLayout]) -> Vec<UiOverla
     overlaps
 }
 
-/// Format a parameter value for human-readable display.
-fn format_param_display(param: &Param) -> String {
-    let value = param.as_f32();
-    let name_lower = param.name().to_ascii_lowercase();
+/// Render a note offline and compute analysis metrics from the f32 buffer.
+///
+/// Shared between the MCP bridge `analyze_note` method and any other caller
+/// that wants quantitative metrics rather than an opaque WAV blob.
+///
+/// `expected_note` (when `Some`) anchors `expected_fundamental_hz` to that
+/// MIDI note and narrows the fundamental search to ±tritone around it. This
+/// keeps the pitch metric meaningful for patches where the loudest spectral
+/// peak is not the fundamental (sub-bass with a dominant sub-osc, wave-folded
+/// patches with redistributed harmonics, etc.).
+fn analyze_rendered_note(
+    session: &SynthSession,
+    instrument_id: u64,
+    note: u8,
+    velocity: u8,
+    duration_ms: u32,
+    tail_ms: u32,
+    expected_note: Option<u8>,
+) -> Result<synth_mcp::types::AnalyzeNoteResult, McpBridgeError> {
+    use crate::audio::analysis;
+    use synth_core::types::StereoSample;
 
-    // Add units based on parameter type
+    let rendered = crate::audio::preview::render_note_to_buffer(
+        session,
+        InstrumentId::new(instrument_id),
+        MidiNote::new(note),
+        Velocity::from_midi(velocity),
+        duration_ms,
+        tail_ms,
+    )?;
+
+    // Mix stereo-interleaved buffer down to mono for analysis. Most metrics
+    // (fundamental, RMS, centroid) are channel-agnostic for the typical
+    // L=R bass patches; mono averaging is fine.
+    let channels = usize::from(rendered.channels);
+    let mono: Vec<f32> = match channels {
+        0 => Vec::new(),
+        1 => rendered.samples.clone(),
+        2 => {
+            let frames = rendered.samples.len() / 2;
+            StereoSample::iter_frames(&rendered.samples, frames)
+                .map(StereoSample::to_mono)
+                .collect()
+        }
+        n => rendered
+            .samples
+            .chunks_exact(n)
+            .map(|frame| frame.iter().sum::<f32>() / n as f32)
+            .collect(),
+    };
+    let sample_rate = rendered.sample_rate;
+
+    // Sample windows for the spectrum snapshots: 50 ms in for the attack
+    // (after the very fastest transient), middle of the held note for the
+    // sustain, and the last 200 ms (after note-off) for the release tail.
+    let total_samples = mono.len();
+    let note_samples = (f64::from(duration_ms) / 1000.0 * f64::from(sample_rate)) as usize;
+    let attack_start = (0.05 * f64::from(sample_rate)) as usize;
+    let attack_window = (0.10 * f64::from(sample_rate)) as usize;
+    let sustain_center = note_samples
+        .saturating_sub(attack_window / 2)
+        .min(total_samples);
+    let sustain_start = sustain_center
+        .saturating_sub(attack_window)
+        .min(total_samples.saturating_sub(attack_window));
+    let release_start = total_samples.saturating_sub(attack_window);
+
+    let attack_slice = mono
+        .get(
+            attack_start
+                ..attack_start
+                    .saturating_add(attack_window)
+                    .min(total_samples),
+        )
+        .unwrap_or(&[]);
+    let sustain_slice = mono
+        .get(
+            sustain_start
+                ..sustain_start
+                    .saturating_add(attack_window)
+                    .min(total_samples),
+        )
+        .unwrap_or(&[]);
+    let release_slice = mono.get(release_start..total_samples).unwrap_or(&[]);
+
+    let to_peaks =
+        |peaks: Vec<analysis::SpectrumPeak>| -> Vec<synth_mcp::types::AnalyzeSpectrumPeak> {
+            peaks.into_iter().map(Into::into).collect()
+        };
+
+    // Anchor pitch metrics. When the caller provides `expected_note`, narrow
+    // the fundamental search to ±tritone (1.4× either way) so the detector
+    // ignores sub-octave dominance and harmonic clutter. Otherwise sweep the
+    // full audible-bass range and report whatever peak is loudest.
+    let anchor_note = expected_note.unwrap_or(rendered.effective_note.as_u8());
+    let expected_fundamental = synth_core::types::Hertz::from_midi(anchor_note);
+    let expected_fundamental_hz = expected_fundamental.as_f32();
+    let (search_min, search_max) = match expected_note {
+        Some(_) if expected_fundamental_hz > 0.0 => {
+            let lo = expected_fundamental_hz / std::f32::consts::SQRT_2;
+            let hi = expected_fundamental_hz * std::f32::consts::SQRT_2;
+            (lo.max(20.0), hi.min(20_000.0))
+        }
+        _ => (25.0, 5500.0),
+    };
+
+    let pitch_slice = mono
+        .get(attack_start..note_samples.min(total_samples))
+        .unwrap_or(&mono);
+    let fundamental_hz =
+        analysis::fundamental_frequency(pitch_slice, sample_rate, search_min, search_max);
+    let pitch_error_cents = if fundamental_hz > 0.0 && expected_fundamental_hz > 0.0 {
+        expected_fundamental
+            .cents_between(synth_core::types::Hertz::new(fundamental_hz))
+            .as_f32()
+    } else {
+        0.0
+    };
+
+    let envelope_window_ms = 50.0;
+    let mut rms_envelope = analysis::rms_envelope(&mono, sample_rate, envelope_window_ms);
+    let mut centroid_envelope = analysis::centroid_envelope(&mono, sample_rate, envelope_window_ms);
+    let rms_overall = analysis::rms_overall(&mono);
+
+    // Trim trailing windows that have effectively decayed to silence: their
+    // centroid is dominated by quantization/numerical noise and gives the
+    // misleading "spike at the end" the agent flagged. Threshold = 5% of
+    // overall RMS or 1e-4, whichever is higher; never trim below 4 windows.
+    let noise_floor = (rms_overall * 0.05).max(1e-4);
+    while rms_envelope.len() > 4 {
+        let last = rms_envelope.last().copied().unwrap_or(0.0);
+        if last < noise_floor {
+            rms_envelope.pop();
+            centroid_envelope.pop();
+        } else {
+            break;
+        }
+    }
+
+    // Per-window pitch envelope. Uses a longer window than the rms/centroid
+    // envelopes because FFT bin resolution scales with window length: a
+    // 50 ms window at 44.1 kHz puts only 2-3 bins inside a one-tritone
+    // search band at C2 (~65 Hz), so spectral leakage from neighboring
+    // harmonics can flip the winning bin and produce false "drift". A
+    // 200 ms window quadruples the resolution (~5 Hz/bin) and tracks bass
+    // fundamentals stably. Same anchored search band as `fundamental_hz`.
+    let pitch_envelope_window_ms: f32 = 200.0;
+    let pitch_envelope = analysis::pitch_envelope(
+        &mono,
+        sample_rate,
+        pitch_envelope_window_ms,
+        search_min,
+        search_max,
+        1.0e-3,
+    );
+
+    // Stereo correlation needs the original interleaved buffer; only meaningful
+    // when there are at least two channels, otherwise mono is "perfectly
+    // correlated with itself" → 1.0.
+    let stereo_correlation = if rendered.channels >= 2 {
+        analysis::stereo_correlation(&rendered.samples)
+    } else {
+        1.0
+    };
+
+    let energy_bands: synth_mcp::types::AnalyzeEnergyBands =
+        analysis::energy_bands(&mono, sample_rate).into();
+    let harmonic_content: synth_mcp::types::AnalyzeHarmonicContent =
+        analysis::harmonic_content(&mono, sample_rate, fundamental_hz).into();
+    let envelope_estimate: synth_mcp::types::AnalyzeEnvelopeEstimate =
+        analysis::envelope_estimate(&rms_envelope, envelope_window_ms, duration_ms).into();
+
+    // Centroid trend over the held portion only. Slice `centroid_envelope` to
+    // the note-on duration so the release tail doesn't bias the regression.
+    let held_windows = ((f64::from(duration_ms) / f64::from(envelope_window_ms)).floor()) as usize;
+    let centroid_trend_slice = if held_windows > 0 && held_windows <= centroid_envelope.len() {
+        &centroid_envelope[..held_windows]
+    } else {
+        &centroid_envelope[..]
+    };
+    let centroid_trend_hz_per_sec =
+        analysis::centroid_trend(centroid_trend_slice, envelope_window_ms);
+
+    let peak_amplitude = analysis::peak_amplitude(&mono);
+    let dc_offset = analysis::dc_offset(&mono);
+    let clipped_samples = analysis::count_clipped(&mono, 0.999);
+
+    let flags = synth_mcp::types::AnalyzeFlags {
+        silent: peak_amplitude < 0.005,
+        clipping: clipped_samples > 0,
+        has_dc_offset: dc_offset.abs() > 0.01,
+        low_output: peak_amplitude < 0.05,
+        off_pitch: pitch_error_cents.abs() > 50.0,
+    };
+
+    Ok(synth_mcp::types::AnalyzeNoteResult {
+        note_requested: note,
+        note_played: rendered.effective_note.as_u8(),
+        velocity,
+        sample_rate,
+        duration_seconds: rendered.duration_seconds,
+        fundamental_hz,
+        expected_fundamental_hz,
+        pitch_error_cents,
+        peak_amplitude,
+        rms_overall,
+        dc_offset,
+        clipped_samples,
+        envelope_window_ms,
+        rms_envelope,
+        centroid_envelope,
+        spectrum_attack: to_peaks(analysis::spectrum_top_peaks(attack_slice, sample_rate, 8)),
+        spectrum_sustain: to_peaks(analysis::spectrum_top_peaks(sustain_slice, sample_rate, 8)),
+        spectrum_release: to_peaks(analysis::spectrum_top_peaks(release_slice, sample_rate, 8)),
+        pitch_envelope,
+        pitch_envelope_window_ms,
+        stereo_correlation,
+        energy_bands,
+        harmonic_content,
+        envelope_estimate,
+        centroid_trend_hz_per_sec,
+        flags,
+    })
+}
+
+impl From<crate::audio::analysis::SpectrumPeak> for synth_mcp::types::AnalyzeSpectrumPeak {
+    fn from(p: crate::audio::analysis::SpectrumPeak) -> Self {
+        Self {
+            freq_hz: p.freq_hz,
+            magnitude_db: p.magnitude_db,
+        }
+    }
+}
+
+impl From<crate::audio::analysis::EnergyBands> for synth_mcp::types::AnalyzeEnergyBands {
+    fn from(b: crate::audio::analysis::EnergyBands) -> Self {
+        Self {
+            sub: b.sub,
+            low: b.low,
+            mid: b.mid,
+            high: b.high,
+        }
+    }
+}
+
+impl From<crate::audio::analysis::HarmonicContent> for synth_mcp::types::AnalyzeHarmonicContent {
+    fn from(h: crate::audio::analysis::HarmonicContent) -> Self {
+        Self {
+            thd_db: h.thd_db,
+            odd_even_ratio_db: h.odd_even_ratio_db,
+            n_harmonics: h.n_harmonics,
+        }
+    }
+}
+
+impl From<crate::audio::analysis::EnvelopeEstimate> for synth_mcp::types::AnalyzeEnvelopeEstimate {
+    fn from(e: crate::audio::analysis::EnvelopeEstimate) -> Self {
+        Self {
+            attack_ms: e.attack_ms,
+            decay_ms: e.decay_ms,
+            sustain_level: e.sustain_level,
+            release_ms: e.release_ms,
+        }
+    }
+}
+
+/// Format a parameter value for human-readable display.
+///
+/// When `unit` is provided, defers to `ParameterUnit::format` so the declared
+/// unit on the parameter descriptor is honored. When the unit is `None` or
+/// `ParameterUnit::None`, falls back to a name-based heuristic that picks a
+/// reasonable suffix from the parameter's name. The heuristic should only be
+/// reached when the descriptor is unavailable; prefer to pass the unit.
+fn format_param_display(param: &Param, unit: Option<ParameterUnit>) -> String {
+    let value = param.as_f32();
+
+    if let Some(u) = unit
+        && u != ParameterUnit::None
+    {
+        return u.format(value);
+    }
+
+    let name_lower = param.name().to_ascii_lowercase();
     if name_lower.contains("frequency") || name_lower.contains("cutoff") || name_lower == "rate" {
         if value >= 1000.0 {
             format!("{:.1} kHz", value / 1000.0)

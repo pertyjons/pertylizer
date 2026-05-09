@@ -111,7 +111,7 @@ Set uni spread to 0 for mono collapse, then sweep back to 1.0.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(800.0, 50.0)
-            .param_f("master level", 0.7)
+            .param_f("master", 0.7)
             .build(),
     );
 

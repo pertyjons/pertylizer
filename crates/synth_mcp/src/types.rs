@@ -529,6 +529,166 @@ pub struct AudioPreview {
     pub duration_seconds: f32,
 }
 
+/// Single spectral peak (frequency and magnitude).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct AnalyzeSpectrumPeak {
+    /// Peak frequency in Hz (parabolically interpolated).
+    pub freq_hz: f32,
+    /// Magnitude in dB relative to the loudest peak in the window
+    /// (loudest = 0 dB, quieter peaks negative).
+    pub magnitude_db: f32,
+}
+
+/// Spectral energy split into 4 frequency bands. Use `sub`/`low` to confirm
+/// "is this actually a bass" vs `mid`/`high` for "leads / brightness". Each
+/// value is an RMS amplitude in 0.0..~1.0; not all four sum to `rms_overall`.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct AnalyzeEnergyBands {
+    /// 0-100 Hz energy (sub).
+    pub sub: f32,
+    /// 100-500 Hz energy (low/mid bass).
+    pub low: f32,
+    /// 500-2000 Hz energy (presence).
+    pub mid: f32,
+    /// 2000+ Hz energy (brilliance).
+    pub high: f32,
+}
+
+/// Harmonic structure of a tonal signal at a known fundamental. Tells you
+/// whether a saw is clean, a square is really squarey, whether tube
+/// saturation has added even-order content, etc.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct AnalyzeHarmonicContent {
+    /// Total harmonic distortion in dB (power ratio of harmonics to
+    /// fundamental). More negative = cleaner. -120 dB ≈ silent / no harmonics.
+    pub thd_db: f32,
+    /// Power ratio of odd harmonics to even harmonics in dB. Positive =
+    /// odd-dominant (square / clean clipping); negative = even-dominant
+    /// (asymmetric clipping, tube saturation, fold offsets). 0.0 when
+    /// either side is empty.
+    pub odd_even_ratio_db: f32,
+    /// Count of harmonics above the noise floor (capped at 20).
+    pub n_harmonics: u32,
+}
+
+/// Estimated ADSR-like envelope shape, derived from `rms_envelope`.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct AnalyzeEnvelopeEstimate {
+    /// Time from start to RMS peak, in ms.
+    pub attack_ms: f32,
+    /// Time from peak down to ~120 % of sustain level, in ms.
+    pub decay_ms: f32,
+    /// Average sustain RMS divided by peak RMS (0.0..1.0).
+    pub sustain_level: f32,
+    /// Time from note-off until RMS falls below 5 % of peak, in ms.
+    pub release_ms: f32,
+}
+
+/// Boolean quality flags. Cheap one-glance status for an LLM agent.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct AnalyzeFlags {
+    /// True when `peak_amplitude < 0.005` — patch produced essentially
+    /// nothing audible.
+    pub silent: bool,
+    /// True when `clipped_samples > 0` — the engine output reached
+    /// f32 fullscale at least once.
+    pub clipping: bool,
+    /// True when `|dc_offset| > 0.01` — patch is leaking DC.
+    pub has_dc_offset: bool,
+    /// True when `peak_amplitude < 0.05` — quieter than typical bus level,
+    /// likely needs a gain boost.
+    pub low_output: bool,
+    /// True when `pitch_error_cents.abs() > 50.0` — fundamental is more
+    /// than half a semitone away from the expected note.
+    pub off_pitch: bool,
+}
+
+/// Quantitative analysis of a rendered note. Returned by `analyze_note`.
+///
+/// All metrics are computed offline on the f32 audio buffer with no WAV
+/// roundtrip. Designed so an LLM agent can reason about a patch's behavior
+/// without downloading or decoding audio. Includes per-window pitch tracking,
+/// stereo correlation, banded energy, harmonic structure, an ADSR-like
+/// envelope estimate, centroid trend, and quick boolean flags.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeNoteResult {
+    /// MIDI note as requested by the caller.
+    pub note_requested: u8,
+    /// MIDI note actually played, after the patch's `octave_offset` was
+    /// applied. Differs from `note_requested` when the patch sets a non-zero
+    /// offset (e.g. bass patches with offset = -2).
+    pub note_played: u8,
+    /// Velocity used (0-127).
+    pub velocity: u8,
+    /// Sample rate of the rendered buffer in Hz.
+    pub sample_rate: u32,
+    /// Total render duration in seconds (note + tail).
+    pub duration_seconds: f32,
+    /// Detected fundamental frequency in Hz from the steady-state region of
+    /// the note. Returns 0.0 for silent or out-of-range signals.
+    pub fundamental_hz: f32,
+    /// Concert-pitch frequency (Hz) of `note_played`. Use as a reference for
+    /// `fundamental_hz` to spot detuning, octave errors, and pitch drift.
+    pub expected_fundamental_hz: f32,
+    /// Detected fundamental in cents relative to `expected_fundamental_hz`
+    /// (positive = sharp, negative = flat). 0.0 if either pitch is 0.
+    pub pitch_error_cents: f32,
+    /// Peak absolute amplitude across the whole render (1.0 = full scale).
+    pub peak_amplitude: f32,
+    /// Overall RMS amplitude of the whole render.
+    pub rms_overall: f32,
+    /// Mean of all samples (DC offset). Should be near zero in well-designed
+    /// patches; non-zero hints at a missing DC blocker.
+    pub dc_offset: f32,
+    /// Count of samples whose absolute value reached or exceeded 0.999 —
+    /// non-zero indicates clipping into the f32 fullscale ceiling.
+    pub clipped_samples: u32,
+    /// Window length in milliseconds used for `rms_envelope` and
+    /// `centroid_envelope`.
+    pub envelope_window_ms: f32,
+    /// RMS amplitude per non-overlapping window of `envelope_window_ms`.
+    pub rms_envelope: Vec<f32>,
+    /// Spectral centroid in Hz per non-overlapping window of
+    /// `envelope_window_ms`. A proxy for filter cutoff motion.
+    pub centroid_envelope: Vec<f32>,
+    /// Top spectrum peaks (up to 8) at the early/attack region (~50 ms in).
+    pub spectrum_attack: Vec<AnalyzeSpectrumPeak>,
+    /// Top spectrum peaks (up to 8) at the sustained mid-region.
+    pub spectrum_sustain: Vec<AnalyzeSpectrumPeak>,
+    /// Top spectrum peaks (up to 8) during the release tail. Empty when the
+    /// release window has fully decayed below the spectral floor — that's
+    /// not an error, just "the patch is silent by then".
+    pub spectrum_release: Vec<AnalyzeSpectrumPeak>,
+    /// Per-window fundamental frequency in Hz. Uses a longer window than
+    /// `rms_envelope` / `centroid_envelope` (see `pitch_envelope_window_ms`)
+    /// because FFT bin resolution scales with window length, and 50 ms is
+    /// too coarse to track bass fundamentals stably. 0.0 for silent windows.
+    /// Use this to detect pitch ramping or drift.
+    pub pitch_envelope: Vec<f32>,
+    /// Window length in milliseconds used for `pitch_envelope`. Differs from
+    /// `envelope_window_ms` because pitch detection needs more samples per
+    /// window than amplitude tracking does — typically 200 ms.
+    pub pitch_envelope_window_ms: f32,
+    /// Pearson correlation between L and R channels (-1..+1). 1.0 means
+    /// the patch is mono routed to both outs; lower values indicate true
+    /// stereo content.
+    pub stereo_correlation: f32,
+    /// RMS energy split into sub / low / mid / high bands.
+    pub energy_bands: AnalyzeEnergyBands,
+    /// Harmonic structure measured at the detected fundamental. Returns
+    /// zeros when `fundamental_hz` is 0.
+    pub harmonic_content: AnalyzeHarmonicContent,
+    /// Estimated ADSR-like envelope shape derived from `rms_envelope`.
+    pub envelope_estimate: AnalyzeEnvelopeEstimate,
+    /// Linear-regression slope of `centroid_envelope` over the held-note
+    /// region, in Hz/second. Positive = filter opening over the note,
+    /// negative = closing.
+    pub centroid_trend_hz_per_sec: f32,
+    /// Quick boolean flags an agent can branch on without reading the
+    /// raw numeric fields.
+    pub flags: AnalyzeFlags,
+}
+
 // === AWE (Acoustic World Engine) types ===
 
 /// Full AWE state returned by `get_awe_state`.

@@ -118,7 +118,7 @@ Play clusters of notes for dense, shimmering drones.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1550.0, 50.0)
-            .param_f("master level", 0.65)
+            .param_f("master", 0.65)
             .build(),
     );
 

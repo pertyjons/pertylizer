@@ -70,13 +70,15 @@ style bass lines. Try different octaves for different characters.
             .build(),
     );
 
-    // Amp Envelope - Punchy with curves (env-1)
+    // Amp Envelope - Punchy with curves (env-1).
+    // Lower sustain so the note actually decays rather than swelling on the
+    // tube distortion's saturation curve.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
             .position(850.0, 350.0)
             .param_f("attack", 0.002)
             .param_f("decay", 0.15)
-            .param_f("sustain", 0.6)
+            .param_f("sustain", 0.35)
             .param_f("release", 0.1)
             .param_f("atk_curve", -0.8) // Fast punch
             .param_f("dec_curve", -0.4) // Quick initial drop
@@ -102,7 +104,7 @@ style bass lines. Try different octaves for different characters.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(850.0, 50.0)
-            .param_f("level", 0.8)
+            .param_f("level", 1.0)
             .build(),
     );
 
@@ -130,7 +132,7 @@ style bass lines. Try different octaves for different characters.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1200.0, 50.0)
-            .param_f("master level", 0.8)
+            .param_f("master", 0.8)
             .build(),
     );
 

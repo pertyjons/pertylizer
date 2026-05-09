@@ -12,7 +12,7 @@ pub fn patch_spacey_bass() -> Patch {
         r#"
 SIGNAL FLOW:
 Two sawtooth oscillators create a thick, detuned sound. The second oscillator is
-slightly detuned (+7 cents) to create movement and width in the sound.
+slightly detuned (+7 cents) to create slow beating and width in the sound.
 
 Both oscillators feed into a lowpass filter with moderate resonance. The filter
 cutoff is modulated by both an envelope (for attack pluck) and an LFO (for
@@ -21,7 +21,6 @@ slow movement).
 MODULATION:
 - Filter envelope opens the filter on attack for that classic "wow" sound
 - Slow LFO adds subtle movement to the filter cutoff
-- LFO also modulates OSC1 for gentle vibrato
 
 ENVELOPE DESIGN:
 - Fast attack (5ms) for immediate response
@@ -107,7 +106,7 @@ and resonance for different tonal characters.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1200.0, 50.0)
-            .param_f("master level", 0.8)
+            .param_f("master", 0.8)
             .build(),
     );
 
@@ -123,8 +122,6 @@ and resonance for different tonal characters.
     patch.add_connection("env-2", "out", "flt-1", "cutoff_cv");
     // LFO -> Filter Cutoff CV (mixed with envelope)
     patch.add_connection("lfo-1", "out", "flt-1", "cutoff_cv");
-    // LFO -> Osc1 FM (vibrato)
-    patch.add_connection("lfo-1", "out", "osc-1", "fm");
     // Voice output: amp -> stereo output
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");

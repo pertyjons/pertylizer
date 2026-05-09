@@ -130,10 +130,15 @@ pub enum ModSource {
     KineticVel,
     /// Kinetic modulator acceleration output (-1 to 1).
     KineticAcc,
+    /// Envelope-follower output (0-1, index 0-based). Lets a follower drive a
+    /// destination through the matrix without forming a graph cycle (a direct
+    /// CV cable from the follower into a destination upstream of the
+    /// follower's own audio input is rejected by the topo sort).
+    EnvFollower(u8),
 }
 
 impl ModSource {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 16] = [
         Self::None,
         Self::Lfo(0),
         Self::Lfo(1),
@@ -148,6 +153,8 @@ impl ModSource {
         Self::KineticPos,
         Self::KineticVel,
         Self::KineticAcc,
+        Self::EnvFollower(0),
+        Self::EnvFollower(1),
     ];
 
     pub fn name(&self) -> &'static str {
@@ -168,6 +175,9 @@ impl ModSource {
             Self::KineticPos => "Kinetic Pos",
             Self::KineticVel => "Kinetic Vel",
             Self::KineticAcc => "Kinetic Acc",
+            Self::EnvFollower(0) => "Env Follower 1",
+            Self::EnvFollower(1) => "Env Follower 2",
+            Self::EnvFollower(_) => "Env Follower",
         }
     }
 
@@ -189,6 +199,9 @@ impl ModSource {
             Self::KineticPos => "kinetic_pos",
             Self::KineticVel => "kinetic_vel",
             Self::KineticAcc => "kinetic_acc",
+            Self::EnvFollower(0) => "efl1",
+            Self::EnvFollower(1) => "efl2",
+            Self::EnvFollower(_) => "efl",
         }
     }
 

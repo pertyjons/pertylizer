@@ -1,6 +1,6 @@
 [package]
 name = "pertylizer"
-version = "0.270.0"
+version = "0.271.0"
 edition = "2024"
 rust-version = "1.94"
 description = "Pertylizer — a modular synthesizer"
@@ -14,7 +14,7 @@ workspace = true
 [features]
 default = ["gui-egui", "mcp", "osc"]
 gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:egui-file-dialog", "dep:egui-remixicon"]
-mcp = ["dep:synth_mcp", "dep:tokio"]
+mcp = ["dep:synth_mcp", "dep:tokio", "dep:png"]
 osc = ["dep:synth_osc"]
 
 [dependencies]
@@ -67,6 +67,9 @@ egui-remixicon = { workspace = true, optional = true }
 # MCP server (optional)
 synth_mcp = { path = "../synth_mcp", optional = true }
 tokio = { workspace = true, optional = true }
+
+# PNG encoding for the take_screenshot MCP tool (only needed when GUI + MCP are both enabled).
+png = { version = "0.18", optional = true }
 
 # OSC telemetry (optional)
 synth_osc = { path = "../synth_osc", optional = true }
