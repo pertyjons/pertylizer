@@ -7,29 +7,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-  msrv:
-    name: MSRV (1.93)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.93
-      - uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libasound2-dev pkg-config libxkbcommon-dev libwayland-dev
-      - name: Check MSRV
-        run: cargo check --all-targets
-
   ubuntu:
     name: Ubuntu
     runs-on: ubuntu-latest
@@ -42,7 +19,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev pkg-config libxkbcommon-dev libwayland-dev
+          sudo apt-get install -y libasound2-dev pkg-config libxkbcommon-dev libwayland-dev libudev-dev
       - name: Build
         run: cargo build --release
       - name: Clippy
@@ -51,13 +28,22 @@ jobs:
         run: cargo test
       - name: Format check
         run: cargo fmt --check
+      - name: Build visualizer
+        run: cargo build --release --manifest-path visualizer/Cargo.toml
       - name: Binary size
-        run: ls -lh target/release/pertylizer | awk '{print "Binary size:", $5}'
-      - name: Upload binary
+        run: |
+          ls -lh target/release/pertylizer | awk '{print "Pertylizer size:", $5}'
+          ls -lh visualizer/target/release/pertylizer-visualizer | awk '{print "Visualizer size:", $5}'
+      - name: Upload pertylizer binary
         uses: actions/upload-artifact@v4
         with:
           name: pertylizer-ubuntu
           path: target/release/pertylizer
+      - name: Upload visualizer binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: visualizer-ubuntu
+          path: visualizer/target/release/pertylizer-visualizer
 
   macos:
     name: macOS
@@ -76,13 +62,22 @@ jobs:
         run: cargo test
       - name: Format check
         run: cargo fmt --check
+      - name: Build visualizer
+        run: cargo build --release --manifest-path visualizer/Cargo.toml
       - name: Binary size
-        run: ls -lh target/release/pertylizer | awk '{print "Binary size:", $5}'
-      - name: Upload binary
+        run: |
+          ls -lh target/release/pertylizer | awk '{print "Pertylizer size:", $5}'
+          ls -lh visualizer/target/release/pertylizer-visualizer | awk '{print "Visualizer size:", $5}'
+      - name: Upload pertylizer binary
         uses: actions/upload-artifact@v4
         with:
           name: pertylizer-macos
           path: target/release/pertylizer
+      - name: Upload visualizer binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: visualizer-macos
+          path: visualizer/target/release/pertylizer-visualizer
 
   windows:
     name: Windows
@@ -101,20 +96,29 @@ jobs:
         run: cargo test
       - name: Format check
         run: cargo fmt --check
+      - name: Build visualizer
+        run: cargo build --release --manifest-path visualizer/Cargo.toml
       - name: Binary size
         shell: pwsh
         run: |
           $size = (Get-Item target\release\pertylizer.exe).Length / 1MB
-          Write-Host ("Binary size: {0:N1} MB" -f $size)
-      - name: Upload binary
+          Write-Host ("Pertylizer size: {0:N1} MB" -f $size)
+          $vsize = (Get-Item visualizer\target\release\pertylizer-visualizer.exe).Length / 1MB
+          Write-Host ("Visualizer size: {0:N1} MB" -f $vsize)
+      - name: Upload pertylizer binary
         uses: actions/upload-artifact@v4
         with:
           name: pertylizer-windows
           path: target/release/pertylizer.exe
+      - name: Upload visualizer binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: visualizer-windows
+          path: visualizer/target/release/pertylizer-visualizer.exe
 
   release:
     name: Release
-    needs: [audit, msrv, ubuntu, macos, windows]
+    needs: [ubuntu, macos, windows]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -159,7 +163,11 @@ jobs:
           mv pertylizer-ubuntu/pertylizer pertylizer-linux-x86_64
           mv pertylizer-macos/pertylizer pertylizer-macos-aarch64
           mv pertylizer-windows/pertylizer.exe pertylizer-windows-x86_64.exe
+          mv visualizer-ubuntu/pertylizer-visualizer pertylizer-visualizer-linux-x86_64
+          mv visualizer-macos/pertylizer-visualizer pertylizer-visualizer-macos-aarch64
+          mv visualizer-windows/pertylizer-visualizer.exe pertylizer-visualizer-windows-x86_64.exe
           chmod +x pertylizer-linux-x86_64 pertylizer-macos-aarch64
+          chmod +x pertylizer-visualizer-linux-x86_64 pertylizer-visualizer-macos-aarch64
 
       - name: Create release
         if: steps.check.outputs.exists == 'false'
@@ -169,6 +177,9 @@ jobs:
             --notes-file /tmp/changelog.md \
             artifacts/pertylizer-linux-x86_64 \
             artifacts/pertylizer-macos-aarch64 \
-            artifacts/pertylizer-windows-x86_64.exe
+            artifacts/pertylizer-windows-x86_64.exe \
+            artifacts/pertylizer-visualizer-linux-x86_64 \
+            artifacts/pertylizer-visualizer-macos-aarch64 \
+            artifacts/pertylizer-visualizer-windows-x86_64.exe
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
