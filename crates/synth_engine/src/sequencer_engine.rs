@@ -472,7 +472,7 @@ mod tests {
         // Create a pattern with one note
         let pattern_id = song.create_pattern(Duration::WHOLE);
         if let Some(pattern) = song.pattern_mut(pattern_id) {
-            pattern.add_note(
+            let _ = pattern.add_note(
                 PatternTick(0),
                 Pitch::new(60).unwrap(),
                 Velocity::MF,

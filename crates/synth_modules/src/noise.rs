@@ -301,7 +301,7 @@ mod tests {
             for _ in 0..1000 {
                 let sample = noise.generate_sample();
                 assert!(
-                    sample >= -1.0 && sample <= 1.0,
+                    (-1.0..=1.0).contains(&sample),
                     "{:?} produced out-of-range sample: {}",
                     noise_type,
                     sample

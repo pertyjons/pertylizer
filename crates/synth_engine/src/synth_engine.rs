@@ -533,7 +533,11 @@ impl SynthEngine {
     /// with envelope modulation.
     #[cfg(test)]
     fn populate_default_voice_graph(graph: &mut ModuleGraph) {
-        use synth_core::{Cents, Hertz, Seconds as TypedSeconds};
+        use synth_core::{
+            AmplifierParam, Cents, EnvelopeParam, FilterParam, Hertz, LfoParam, LfoWaveform,
+            OscillatorParam, Seconds as TypedSeconds, Waveform,
+        };
+        use synth_modules::{Amplifier, Envelope, Filter, Lfo, Oscillator};
 
         // Add oscillators with Spacey Bass preset defaults
         let osc1_id = graph.add_module(Box::new({
@@ -2452,7 +2456,7 @@ impl AudioProcessor for SynthEngine {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::voice_allocator::AllocationMode;
+    use crate::voice_allocator::{AllocationMode, AllocatorConfig, VoiceAllocator};
     use synth_core::VoiceCount;
 
     /// Create a default instrument and add it to the engine via command.
@@ -2507,15 +2511,7 @@ mod tests {
             ..Default::default()
         };
         let (mut engine, mut handle) = SynthEngine::new();
-        add_instrument_with_config(
-            &mut engine,
-            &mut handle,
-            AllocatorConfig {
-                max_voices: VoiceCount::QUAD,
-                mode: AllocationMode::Polyphonic,
-                ..Default::default()
-            },
-        );
+        add_instrument_with_config(&mut engine, &mut handle, config);
 
         // Send multiple notes
         handle.note_on(MidiNote::C4, Velocity::new(0.8));

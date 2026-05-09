@@ -228,7 +228,7 @@ mod tests {
     use super::*;
     use synth_core::{SampleCount, SampleRate};
 
-    fn make_context(samples: usize) -> ProcessContext {
+    fn make_context<'a>(samples: usize) -> ProcessContext<'a> {
         ProcessContext {
             sample_rate: SampleRate::DVD_QUALITY,
             samples: SampleCount::new(samples),

@@ -2931,10 +2931,11 @@ impl SynthBridge for AppSynthBridge {
         let (peak_level, rms_level, dc_offset) = if len == 0 {
             (0.0, 0.0, 0.0)
         } else {
-            let (peak, sq_sum, dc_sum) = data.iter().fold(
-                (0.0_f32, 0.0_f32, 0.0_f32),
-                |(peak, sq, dc), &s| (peak.max(s.abs()), sq + s * s, dc + s),
-            );
+            let (peak, sq_sum, dc_sum) = data
+                .iter()
+                .fold((0.0_f32, 0.0_f32, 0.0_f32), |(peak, sq, dc), &s| {
+                    (peak.max(s.abs()), sq + s * s, dc + s)
+                });
             let rms = (sq_sum / len as f32).sqrt();
             let dc = dc_sum / len as f32;
             (peak, rms, dc)

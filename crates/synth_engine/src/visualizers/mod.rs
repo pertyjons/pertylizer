@@ -113,14 +113,10 @@ impl VisualizationBuffer {
         if let Some(mut prod_l) = self.samples_l_prod.try_lock()
             && let Some(mut prod_r) = self.samples_r_prod.try_lock()
         {
+            // Push samples, dropping any that don't fit (buffer full)
             let len = left.len().min(right.len());
-
-            // Push samples, dropping old ones if buffer is full
-            for i in 0..len {
-                // If buffer is full, we just skip (producer will overwrite oldest)
-                let _ = prod_l.try_push(left[i]);
-                let _ = prod_r.try_push(right[i]);
-            }
+            prod_l.push_slice(&left[..len]);
+            prod_r.push_slice(&right[..len]);
         }
     }
 
@@ -131,12 +127,20 @@ impl VisualizationBuffer {
         if let Some(mut prod_l) = self.samples_l_prod.try_lock()
             && let Some(mut prod_r) = self.samples_r_prod.try_lock()
         {
-            // Process interleaved pairs [L, R, L, R, ...]
-            for frame in interleaved.chunks(2) {
-                if frame.len() >= 2 {
-                    let _ = prod_l.try_push(frame[0]);
-                    let _ = prod_r.try_push(frame[1]);
+            // Deinterleave into stack buffers, then bulk-push.
+            // Larger blocks are chunked to avoid unbounded stack usage.
+            const CHUNK_FRAMES: usize = 1024;
+            let mut left = [0.0_f32; CHUNK_FRAMES];
+            let mut right = [0.0_f32; CHUNK_FRAMES];
+
+            for chunk in interleaved.chunks(CHUNK_FRAMES * 2) {
+                let frames = chunk.len() / 2;
+                for (i, frame) in chunk.chunks_exact(2).enumerate() {
+                    left[i] = frame[0];
+                    right[i] = frame[1];
                 }
+                prod_l.push_slice(&left[..frames]);
+                prod_r.push_slice(&right[..frames]);
             }
         }
     }

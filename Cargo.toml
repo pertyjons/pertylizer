@@ -33,16 +33,13 @@ serde_json = "1.0.149"
 thiserror = "2.0.18"
 
 # Audio I/O
-# Pinned to 0.17.1: cpal 0.17.3 requires alsa 0.11 (alsa-sys 0.4) which conflicts
-# with midir 0.10.3's dependency on alsa 0.9 (alsa-sys 0.3.1) via the `links = "alsa"` constraint.
-# Upgrade when midir releases a version compatible with alsa-sys 0.4.
-cpal = "0.17.1"
+cpal = "0.17.3"
 
 # MIDI I/O
-midir = "0.10.3"
+midir = "0.11.0"
 
 # Lock-free communication
-ringbuf = "0.4.8"
+ringbuf = "0.5.0"
 
 # Fast mutex for visualization buffers
 parking_lot = "0.12.5"
@@ -75,22 +72,22 @@ arrayvec = "0.7.6"
 dirs = "6.0.0"
 
 # MCP (Model Context Protocol)
-rmcp = { version = "1.2", features = ["server", "transport-io", "transport-streamable-http-server"] }
-tokio = { version = "1.50", features = ["rt-multi-thread", "macros", "io-std", "net"] }
+rmcp = { version = "1.6", features = ["server", "transport-io", "transport-streamable-http-server"] }
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "io-std", "net"] }
 schemars = "1.2"
 axum = "0.8"
 tokio-util = { version = "0.7", features = ["rt"] }
 
 # GUI - egui
-eframe = { version = "0.34.1", default-features = false, features = [
+eframe = { version = "0.34.2", default-features = false, features = [
     "default_fonts",
     "glow",
     "persistence",
     "wayland",
     "x11",
 ] }
-egui = { version = "0.34.1" }
-egui_extras = { version = "0.34.1" }
+egui = { version = "0.34.2" }
+egui_extras = { version = "0.34.2" }
 egui-file-dialog = { version = "0.13.0" }
 egui-remixicon = { version = "0.34.0" }
 

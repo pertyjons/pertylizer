@@ -706,11 +706,11 @@ mod tests {
 
     #[test]
     fn test_atomic_f32() {
-        let val = AtomicF32::new(3.14);
-        assert!((val.load() - 3.14).abs() < 0.001);
+        let val = AtomicF32::new(1.5);
+        assert!((val.load() - 1.5).abs() < 0.001);
 
-        val.store(2.71);
-        assert!((val.load() - 2.71).abs() < 0.001);
+        val.store(4.25);
+        assert!((val.load() - 4.25).abs() < 0.001);
     }
 
     #[test]

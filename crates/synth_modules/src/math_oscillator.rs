@@ -656,7 +656,7 @@ mod tests {
             for _ in 0..100 {
                 let sample = osc.generate_sample();
                 assert!(
-                    sample >= -2.0 && sample <= 2.0,
+                    (-2.0..=2.0).contains(&sample),
                     "Algorithm {:?} produced out-of-range sample: {}",
                     algo,
                     sample

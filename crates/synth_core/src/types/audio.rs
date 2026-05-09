@@ -1300,8 +1300,8 @@ mod tests {
         let mut noise = NoiseState::DEFAULT;
         let v1 = noise.next();
         let v2 = noise.next();
-        assert!(v1 >= -1.0 && v1 <= 1.0);
-        assert!(v2 >= -1.0 && v2 <= 1.0);
+        assert!((-1.0..=1.0).contains(&v1));
+        assert!((-1.0..=1.0).contains(&v2));
         assert!((v1 - v2).abs() > 0.001); // Should be different
     }
 

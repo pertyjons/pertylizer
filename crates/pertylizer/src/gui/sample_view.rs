@@ -324,48 +324,48 @@ pub fn draw_sample_view(
                     egui::ScrollArea::vertical()
                         .content_margin(egui::Margin::same(6))
                         .show(ui, |ui| {
-                        for meta in &metas {
-                            let is_selected = state.selected_sample == Some(meta.id);
-                            let duration = meta.duration_seconds();
+                            for meta in &metas {
+                                let is_selected = state.selected_sample == Some(meta.id);
+                                let duration = meta.duration_seconds();
 
-                            let label = format!(
-                                "{}\n{:.1}s  {}",
-                                meta.name,
-                                duration,
-                                match meta.channels {
-                                    synth_core::ChannelCount::Mono => "Mono",
-                                    synth_core::ChannelCount::Stereo => "Stereo",
-                                    synth_core::ChannelCount::Multi(n) =>
-                                    // borrow checker: can't return &str for format,
-                                    // so use a static match for common cases
-                                        if n <= 2 {
-                                            "Stereo"
-                                        } else {
-                                            "Multi"
-                                        },
+                                let label = format!(
+                                    "{}\n{:.1}s  {}",
+                                    meta.name,
+                                    duration,
+                                    match meta.channels {
+                                        synth_core::ChannelCount::Mono => "Mono",
+                                        synth_core::ChannelCount::Stereo => "Stereo",
+                                        synth_core::ChannelCount::Multi(n) =>
+                                        // borrow checker: can't return &str for format,
+                                        // so use a static match for common cases
+                                            if n <= 2 {
+                                                "Stereo"
+                                            } else {
+                                                "Multi"
+                                            },
+                                    }
+                                );
+
+                                let text_color = if is_selected {
+                                    t.colors.text_primary
+                                } else {
+                                    t.colors.text_secondary
+                                };
+
+                                let resp = ui.selectable_label(
+                                    is_selected,
+                                    egui::RichText::new(label).color(text_color),
+                                );
+
+                                if resp.clicked() && !is_selected {
+                                    state.selected_sample = Some(meta.id);
+                                    state.peaks_dirty = true;
+                                    state.scroll_offset = 0.0;
+                                    state.zoom = 1.0;
+                                    state.editing_name = false;
                                 }
-                            );
-
-                            let text_color = if is_selected {
-                                t.colors.text_primary
-                            } else {
-                                t.colors.text_secondary
-                            };
-
-                            let resp = ui.selectable_label(
-                                is_selected,
-                                egui::RichText::new(label).color(text_color),
-                            );
-
-                            if resp.clicked() && !is_selected {
-                                state.selected_sample = Some(meta.id);
-                                state.peaks_dirty = true;
-                                state.scroll_offset = 0.0;
-                                state.zoom = 1.0;
-                                state.editing_name = false;
                             }
-                        }
-                    });
+                        });
 
                     ui.separator();
 
@@ -639,11 +639,9 @@ fn draw_waveform(ui: &mut egui::Ui, state: &mut SampleViewState, sample: &synth_
     // Draw waveform from peaks
     if let Some(cache) = &state.peak_cache {
         let frame_count = sample.meta.frame_count.as_usize();
-        let scroll_peak = if cache.frames_per_peak > 0 {
-            (state.scroll_offset as usize) / cache.frames_per_peak
-        } else {
-            0
-        };
+        let scroll_peak = (state.scroll_offset as usize)
+            .checked_div(cache.frames_per_peak)
+            .unwrap_or(0);
         let visible_peaks = (width as usize).min(cache.peaks.len().saturating_sub(scroll_peak));
         let half_h = height / 2.0 - 4.0;
 

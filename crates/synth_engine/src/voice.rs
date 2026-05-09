@@ -837,10 +837,10 @@ mod tests {
 
     #[test]
     fn test_glide_state() {
-        let mut glide = GlideState::default();
-
-        // Start at 440 Hz
-        glide.current_freq = Hertz::A4;
+        let mut glide = GlideState {
+            current_freq: Hertz::A4,
+            ..Default::default()
+        };
 
         // Glide to 880 Hz (one octave up) over 0.1 seconds
         glide.start(Hertz::new(880.0), Seconds::new(0.1));
@@ -878,7 +878,7 @@ mod tests {
 
     #[test]
     fn test_microtonal_tuning() {
-        let mut voice = Voice::new(0);
+        let mut voice = Voice::new(VoiceId::new(0));
         voice.set_tuning_table(synth_core::tuning::TuningTable::just_intonation());
 
         // A4 should still be 440 Hz in just intonation

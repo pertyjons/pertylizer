@@ -441,10 +441,8 @@ impl CpalInputStream {
                     }
 
                     // Write to both ring buffers (drop samples if full)
-                    for &sample in data {
-                        let _ = engine_producer.try_push(sample);
-                        let _ = gui_producer.try_push(sample);
-                    }
+                    engine_producer.push_slice(data);
+                    gui_producer.push_slice(data);
 
                     let frames = data.len() / channels as usize;
                     position_clone.fetch_add(frames as u64, Ordering::Relaxed);

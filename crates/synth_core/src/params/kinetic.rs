@@ -639,7 +639,7 @@ mod tests {
                 let t = i as f32 / 100.0;
                 let vel = easing_velocity(curve, t, 0.5);
                 assert!(
-                    vel >= -1.1 && vel <= 1.1,
+                    (-1.1..=1.1).contains(&vel),
                     "{:?} vel out of range at t={t}: {vel}",
                     curve
                 );

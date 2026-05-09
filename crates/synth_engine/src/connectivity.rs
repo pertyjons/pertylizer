@@ -418,7 +418,9 @@ mod tests {
 
     #[test]
     fn test_module_error_severity() {
-        let warning = ModuleErrorKind::OutputClipping { peak_level: 1.5 };
+        let warning = ModuleErrorKind::OutputClipping {
+            peak_level: synth_core::Amplitude::new(1.5),
+        };
         assert!(warning.is_warning());
         assert!(!warning.is_critical());
 
@@ -435,7 +437,7 @@ mod tests {
 
         port.update_level(0.8, 0.5);
         assert!(port.is_active());
-        assert!(port.signal_level > 0.0);
+        assert!(port.signal_level > synth_core::Amplitude::ZERO);
     }
 
     #[test]

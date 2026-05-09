@@ -19,7 +19,7 @@ use synth_core::{
 };
 use synth_core::{EnvelopeParam, FilterParam, LfoParam, OscillatorParam};
 use synth_engine::graph::ModuleGraph;
-use synth_engine::voice::Voice;
+use synth_engine::voice::{Voice, VoiceId};
 use synth_modules::{
     AdditiveOsc, Amplifier, Envelope, Filter, FractalOscillator, GranularOsc, Lfo, MathOscillator,
     Oscillator, StereoOutput, WavetableOsc,
@@ -73,7 +73,7 @@ fn build_subtractive_voice() -> Voice {
     graph.set_param(lfo, Param::Lfo(LfoParam::Rate(Hertz::new(0.5))));
     graph.set_param(lfo, Param::Lfo(LfoParam::Depth(NormalizedValue::new(0.3))));
 
-    Voice::from_graph(0, graph)
+    Voice::from_graph(VoiceId::new(0), graph)
 }
 
 /// Heavy additive: 32-harmonic additive osc → Filter → Amp → Output.
@@ -91,7 +91,7 @@ fn build_additive_voice() -> Voice {
     graph.connect(amp, "out", output, "in").unwrap();
     graph.connect(env, "out", amp, "cv").unwrap();
 
-    Voice::from_graph(0, graph)
+    Voice::from_graph(VoiceId::new(0), graph)
 }
 
 /// Fractal oscillator: 64 partials → Amp → Output (stereo out_l/out_r).
@@ -108,7 +108,7 @@ fn build_fractal_voice() -> Voice {
     graph.connect(amp, "out", output, "in").unwrap();
     graph.connect(env, "out", amp, "cv").unwrap();
 
-    Voice::from_graph(0, graph)
+    Voice::from_graph(VoiceId::new(0), graph)
 }
 
 /// Wavetable oscillator → Filter → Amp → Output.
@@ -126,7 +126,7 @@ fn build_wavetable_voice() -> Voice {
     graph.connect(amp, "out", output, "in").unwrap();
     graph.connect(env, "out", amp, "cv").unwrap();
 
-    Voice::from_graph(0, graph)
+    Voice::from_graph(VoiceId::new(0), graph)
 }
 
 /// Granular oscillator → Amp → Output.
@@ -142,7 +142,7 @@ fn build_granular_voice() -> Voice {
     graph.connect(amp, "out", output, "in").unwrap();
     graph.connect(env, "out", amp, "cv").unwrap();
 
-    Voice::from_graph(0, graph)
+    Voice::from_graph(VoiceId::new(0), graph)
 }
 
 /// Math oscillator → Filter → Amp → Output.
@@ -160,7 +160,7 @@ fn build_math_voice() -> Voice {
     graph.connect(amp, "out", output, "in").unwrap();
     graph.connect(env, "out", amp, "cv").unwrap();
 
-    Voice::from_graph(0, graph)
+    Voice::from_graph(VoiceId::new(0), graph)
 }
 
 /// Dual oscillator with unison: 2x Saw (7 unison) → Filter → Amp → Output.
@@ -202,12 +202,12 @@ fn build_unison_voice() -> Voice {
         Param::Oscillator(OscillatorParam::Level(Gain::new(0.5))),
     );
 
-    Voice::from_graph(0, graph)
+    Voice::from_graph(VoiceId::new(0), graph)
 }
 
 // ── Benchmark runner ───────────────────────────────────────────────────────
 
-fn make_context() -> ProcessContext {
+fn make_context<'a>() -> ProcessContext<'a> {
     ProcessContext {
         sample_rate: SAMPLE_RATE,
         samples: SampleCount::new(BLOCK_SIZE),

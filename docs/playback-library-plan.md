@@ -9,7 +9,7 @@ pertylizer projects/songs with simultaneous sound effect playback.
 - Simultaneous one-shot sound effects (layered on top of music)
 - Low-latency, real-time safe audio mixing
 - No GUI dependency — headless operation
-- Cross-platform (Linux, macOS, Windows, WASM)
+- Cross-platform (Linux, macOS, Windows[playback-library-plan.md](playback-library-plan.md), WASM)
 - Minimal public API surface
 
 ## Non-Goals

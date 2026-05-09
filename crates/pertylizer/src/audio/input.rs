@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use ringbuf::HeapRb;
-use ringbuf::traits::{Consumer, Split};
+use ringbuf::traits::{Consumer, Observer, Split};
 
 use crate::audio::traits::{AudioHostTrait, AudioStream};
 use crate::audio::types::*;
@@ -150,10 +150,10 @@ impl AudioInputManager {
             return;
         };
 
-        self.read_buf.clear();
-        while let Some(sample) = consumer.try_pop() {
-            self.read_buf.push(sample);
-        }
+        let avail = consumer.occupied_len();
+        self.read_buf.resize(avail, 0.0);
+        let popped = consumer.pop_slice(&mut self.read_buf);
+        self.read_buf.truncate(popped);
 
         if self.read_buf.is_empty() {
             return;

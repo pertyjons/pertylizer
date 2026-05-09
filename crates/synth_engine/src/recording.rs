@@ -362,11 +362,9 @@ impl RecordingBuffer {
 
         // Apply quantization if enabled
         let grid = self.quantize_grid.0;
-        if grid > 0 {
-            let rounded = ((pattern_tick + grid / 2) / grid) * grid;
-            PatternTick(rounded)
-        } else {
-            PatternTick(pattern_tick)
+        match (pattern_tick + grid / 2).checked_div(grid) {
+            Some(quotient) => PatternTick(quotient * grid),
+            None => PatternTick(pattern_tick),
         }
     }
 

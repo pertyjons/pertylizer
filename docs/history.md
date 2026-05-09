@@ -1,5 +1,14 @@
 # Version History
 
+## [0.268.0] - 2026-05-09
+### Dependency upgrades + audio hot-path optimizations + rmcp tool filtering
+
+- **Upgrades**: `cpal` 0.17.1 → 0.17.3, `midir` 0.10.3 → 0.11.0, `rmcp` 1.2 → 1.6.0, `ringbuf` 0.4.8 → 0.5.0, `tokio` 1.50 → 1.52, `eframe`/`egui`/`egui_extras` 0.34.1 → 0.34.2. Removes the `cpal`/`midir` `alsa-sys` version conflict (now resolves to a single `alsa-sys` 0.4.0). All 964 workspace tests pass.
+- **Audio: ringbuf bulk slice APIs.** Replaced per-sample `try_push`/`try_pop` loops with `push_slice`/`pop_slice` (memcpy + single wraparound check instead of an atomic fence per sample). Sites: cpal input callback (`audio/backends/cpal_backend.rs`), `Visualizers::write_samples` and `write_interleaved` (the latter deinterleaves via a stack buffer), GUI buffer drain (`audio/input.rs`). Event-priority and metering producers stay on `try_push` (non-Copy enums).
+- **rmcp 1.6: cleaner `tool_router` wiring.** `#[tool_handler]` now takes `router = self.tool_router`, so the field is genuinely read by the macro — `#[allow(dead_code)]` removed.
+- **rmcp 1.6: tool filtering at construction.** New `SynthMcpServer::with_filter(bridge, &[&str])` and `with_registry_and_filter(...)` constructors use `ToolRouter::disable_route` to hide tools from `tools/list`. Enables read-only modes and deployment-specific tool surfaces without touching tool bodies.
+- **Code quality cleanups across `synth_engine`, `synth_modules`, and the GUI**: replaced manual `if div > 0 { a/div } else { fallback }` patterns with `checked_div(...).map_or(...)`, struct update syntax in tests, and minor refactors in `sample_view`, `sequencer`, `mcp_bridge`, `connectivity`, `recording`, `voice`, oscillator/effect modules. Removed obsolete `docs/musicdsp-feature-plan.md`.
+
 ## [0.267.0] - 2026-04-15
 ### Fix: spectral effects panic on audio thread
 

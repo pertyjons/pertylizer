@@ -262,13 +262,13 @@ mod tests {
         let mut osc = ChaoticOsc::new();
         osc.chaos = NormalizedValue::MAX;
         osc.depth = NormalizedValue::MAX;
-        let context = ProcessContext::test_default();
+        let context = ProcessContext::default();
         let mut outputs = HashMap::new();
         outputs.insert(PortName::OUT, AudioBuffer::new(256));
         let inputs = InputPorts::empty();
 
         for _ in 0..1000 {
-            osc.process(inputs.clone(), &mut outputs, &context);
+            osc.process(inputs, &mut outputs, &context);
         }
 
         if let Some(out) = outputs.get(&PortName::OUT) {

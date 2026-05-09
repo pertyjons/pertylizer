@@ -1266,11 +1266,9 @@ fn draw_arrangement(
                 if !hit_placement && let Some(row_idx) = y_to_row(pos.y) {
                     let target_track = data.tracks[row_idx].id;
                     let click_tick = x_to_tick(pos.x);
-                    let bar_tick = if ticks_per_bar > 0 {
-                        (click_tick / ticks_per_bar) * ticks_per_bar
-                    } else {
-                        click_tick
-                    };
+                    let bar_tick = click_tick
+                        .checked_div(ticks_per_bar)
+                        .map_or(click_tick, |q| q * ticks_per_bar);
                     {
                         let mut song_w = song.write();
                         let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
@@ -1409,11 +1407,11 @@ fn draw_arrangement(
             {
                 let raw_tick = x_to_tick(pos.x).saturating_sub(grab_offset_ticks.0);
                 // Snap to beat grid
-                *current_tick = Tick(if ticks_per_beat > 0 {
-                    (raw_tick / ticks_per_beat) * ticks_per_beat
-                } else {
+                *current_tick = Tick(
                     raw_tick
-                });
+                        .checked_div(ticks_per_beat)
+                        .map_or(raw_tick, |q| q * ticks_per_beat),
+                );
                 if let Some(row_idx) = y_to_row(pos.y) {
                     *current_track_id = data.tracks[row_idx].id;
                 }
@@ -1579,22 +1577,16 @@ fn draw_arrangement(
                     };
                     let click_tick = x_to_tick(hover_pos.x);
                     // Quantize to bar boundary
-                    let bar_tick = if ticks_per_bar > 0 {
-                        (click_tick / ticks_per_bar) * ticks_per_bar
-                    } else {
-                        click_tick
-                    };
+                    let bar_tick = click_tick
+                        .checked_div(ticks_per_bar)
+                        .map_or(click_tick, |q| q * ticks_per_bar);
 
                     if row_idx < data.tracks.len() {
                         let target_track = data.tracks[row_idx].id;
                         ui.label(
                             RichText::new(format!(
                                 "Bar {}",
-                                if ticks_per_bar > 0 {
-                                    bar_tick / ticks_per_bar + 1
-                                } else {
-                                    1
-                                }
+                                bar_tick.checked_div(ticks_per_bar).map_or(1, |q| q + 1)
                             ))
                             .color(t.colors.text_dim),
                         );

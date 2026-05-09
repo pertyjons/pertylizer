@@ -82,7 +82,7 @@ fn foldback_reflects_twice() {
 #[test]
 fn foldback_stays_bounded() {
     let result = foldback(50.0, 1.0);
-    assert!(result >= -1.0 && result <= 1.0);
+    assert!((-1.0..=1.0).contains(&result));
 }
 
 #[test]

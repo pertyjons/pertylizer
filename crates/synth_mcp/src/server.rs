@@ -1419,23 +1419,50 @@ pub struct SynthMcpServer {
 impl SynthMcpServer {
     /// Create a new MCP server backed by the given bridge (no session tracking).
     pub fn new(bridge: Arc<dyn SynthBridge>) -> Self {
+        Self::with_filter(bridge, &[])
+    }
+
+    /// Create a new MCP server with session tracking via a shared registry.
+    pub fn with_registry(bridge: Arc<dyn SynthBridge>, registry: McpSessionRegistry) -> Self {
+        Self::with_registry_and_filter(bridge, registry, &[])
+    }
+
+    /// Create a new MCP server with a list of tools hidden from the client.
+    ///
+    /// Disabled tools are excluded from `tools/list` and rejected at call time.
+    /// Use this to expose a focused tool surface (e.g. read-only mode, or
+    /// hiding categories like AWE/sampler that don't apply to the deployment).
+    pub fn with_filter(bridge: Arc<dyn SynthBridge>, disabled_tools: &[&'static str]) -> Self {
         Self {
             bridge,
-            tool_router: Self::tool_router(),
+            tool_router: Self::build_router(disabled_tools),
             registry: None,
             session_id: 0,
         }
     }
 
-    /// Create a new MCP server with session tracking via a shared registry.
-    pub fn with_registry(bridge: Arc<dyn SynthBridge>, registry: McpSessionRegistry) -> Self {
+    /// Like [`with_registry`](Self::with_registry) but also filters the tool
+    /// list to hide the named tools from the client.
+    pub fn with_registry_and_filter(
+        bridge: Arc<dyn SynthBridge>,
+        registry: McpSessionRegistry,
+        disabled_tools: &[&'static str],
+    ) -> Self {
         let session_id = registry.register();
         Self {
             bridge,
-            tool_router: Self::tool_router(),
+            tool_router: Self::build_router(disabled_tools),
             registry: Some(registry),
             session_id,
         }
+    }
+
+    fn build_router(disabled_tools: &[&'static str]) -> ToolRouter<Self> {
+        let mut router = Self::tool_router();
+        for name in disabled_tools {
+            router.disable_route(*name);
+        }
+        router
     }
 }
 
@@ -1639,7 +1666,7 @@ impl Drop for SynthMcpServer {
     }
 }
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for SynthMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(

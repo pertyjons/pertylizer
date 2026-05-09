@@ -207,14 +207,14 @@ mod tests {
     fn test_drift_generator_output_bounded() {
         let mut drift = DriftGenerator::new();
         drift.depth = NormalizedValue::MAX;
-        let context = ProcessContext::test_default();
+        let context = ProcessContext::default();
         let mut outputs = HashMap::new();
         outputs.insert(PortName::OUT, AudioBuffer::new(256));
         let inputs = InputPorts::empty();
 
         // Run several buffers to let drift accumulate
         for _ in 0..100 {
-            drift.process(inputs.clone(), &mut outputs, &context);
+            drift.process(inputs, &mut outputs, &context);
         }
 
         if let Some(out) = outputs.get(&PortName::OUT) {
