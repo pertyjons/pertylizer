@@ -1,5 +1,13 @@
 # Version History
 
+## [0.269.0] - 2026-05-09
+### Welcome screen + auto-create instrument on patch load
+
+- **Welcome landing view** in the Rack `CentralPanel` when no instrument exists yet. Replaces the bare "Select or create an instrument" label with discoverable action buttons: New Instrument, Open Project…, Open Patch…, Load Built-in Patch…, Import Sample…, plus the recent-projects list. Lives in the new `gui/welcome_view.rs` module; only renders in the Rack view (Sequencer/Sample keep their existing empty states).
+- **Auto-create instrument on patch load.** `load_patch_data()` previously bailed out with a silent `eprintln!` when `active_instrument_id` was `None`, so loading a patch on a fresh app did nothing. It now calls a new `add_new_instrument()` helper to create one on demand; the loaded patch's name then overwrites the placeholder name as before.
+- **Bug fix: dialogs from the welcome buttons never appeared.** The empty-rack arm used `return;` to skip the rest of the match, which also skipped `show_dialogs(ctx)` later in the same `App::ui` call — so file dialogs triggered from welcome buttons never rendered. Wrapped the view match in a `'view: { ... }` labeled block and replaced `return;` with `break 'view;` so dispatch reaches `show_dialogs`.
+- Extracted the "+ New Instrument" menu-button logic into `add_new_instrument()` so menu, welcome screen, and patch-load auto-create all share a single code path.
+
 ## [0.268.0] - 2026-05-09
 ### Dependency upgrades + audio hot-path optimizations + rmcp tool filtering
 

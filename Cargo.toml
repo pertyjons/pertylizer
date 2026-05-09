@@ -20,7 +20,7 @@ default-members = ["crates/pertylizer"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.94"
+rust-version = "1.95"
 authors = ["Per Jonsson"]
 license = "MIT"
 repository = "https://github.com/pertyjons/pertylizer"

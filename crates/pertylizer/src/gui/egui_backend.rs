@@ -401,6 +401,74 @@ impl SynthApp {
         self.dirty = true;
     }
 
+    /// Dispatch a welcome-screen action to the appropriate existing flow.
+    fn handle_welcome_action(&mut self, action: crate::gui::welcome_view::WelcomeAction) {
+        use crate::gui::welcome_view::WelcomeAction;
+        match action {
+            WelcomeAction::NewInstrument => {
+                self.add_new_instrument();
+            }
+            WelcomeAction::OpenProject => {
+                if self.dirty {
+                    self.unsaved_dialog.pending_action = Some(PendingAction::OpenProject);
+                    self.unsaved_dialog.open = true;
+                } else {
+                    let initial_dir = self.resolve_project_dir();
+                    self.dialog_state
+                        .open_open_project_dialog(initial_dir.as_deref());
+                }
+            }
+            WelcomeAction::OpenPatch => {
+                let initial_dir = self.resolve_open_dir();
+                self.dialog_state
+                    .open_open_patch_dialog(initial_dir.as_deref());
+            }
+            WelcomeAction::LoadBuiltinPatch => {
+                self.dialog_state.show_load_patch = true;
+            }
+            WelcomeAction::ImportSample => {
+                self.dialog_state.open_import_sample_dialog(None);
+            }
+            WelcomeAction::OpenRecent(path) => {
+                if self.dirty {
+                    self.unsaved_dialog.pending_action = Some(PendingAction::LoadProject(path));
+                    self.unsaved_dialog.open = true;
+                } else {
+                    self.load_recent_project(path);
+                }
+            }
+        }
+    }
+
+    /// Create a new instrument, register it in the engine and UI, and make it active.
+    /// Returns the new `InstrumentId` on success, or `None` if the session refused.
+    fn add_new_instrument(&mut self) -> Option<InstrumentId> {
+        let instrument_num = self.instruments.len() + 1;
+        let new_name = format!("Instrument {instrument_num}");
+        let new_channel =
+            MidiChannel::from_one_indexed(instrument_num as u8).unwrap_or(MidiChannel::CH1);
+
+        let new_id = self.session.add_instrument(&new_name).ok()?;
+
+        let id_val = new_id.as_u64() + 1;
+        if id_val > self.next_instrument_id {
+            self.next_instrument_id = id_val;
+        }
+
+        self.handle.send(EngineCommand::SetInstrumentMidiChannel {
+            instrument_id: new_id,
+            channel: new_channel,
+        });
+
+        let new_ui_instrument = InstrumentUiState::new(new_id, &new_name).with_channel(new_channel);
+        self.instruments.push(new_ui_instrument);
+        self.active_instrument_id = Some(new_id);
+        self.handle.set_focused_instrument(Some(new_id));
+        self.mark_dirty();
+
+        Some(new_id)
+    }
+
     /// Add a module via session and register it in the active patch editor.
     /// Returns the assigned `ModuleId` and descriptor, or `None` on failure.
     fn session_add_module(
@@ -1406,580 +1474,608 @@ impl eframe::App for SynthApp {
 
         // Main content - CentralPanel rendered LAST (normal egui order)
         // Module Areas are clipped to visible_rect in patch_editor.rs
-        match self.active_view {
-            AppView::Rack => {
-                // Rack view: show the active instrument's patch editor
-                let Some(active_id) = self.active_instrument_id else {
+        // Wrap in a labeled block so the welcome path can skip the rest of
+        // the Rack arm without `return;` — that would also skip show_dialogs
+        // below and prevent welcome-screen file dialogs from ever appearing.
+        'view: {
+            match self.active_view {
+                AppView::Rack => {
+                    // Rack view: show the active instrument's patch editor.
+                    // When no instrument exists yet, render the welcome landing
+                    // screen so the user can create one or open a project/patch
+                    // without first hunting for the "+ New Instrument" button.
+                    let Some(active_id) = self.active_instrument_id else {
+                        let recent = self.settings.recent_projects.clone();
+                        let mut welcome_action = None;
+                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                            let t = theme();
+                            welcome_action = crate::gui::welcome_view::show(ui, &t, &recent);
+                        });
+                        if let Some(action) = welcome_action {
+                            self.handle_welcome_action(action);
+                        }
+                        break 'view;
+                    };
                     egui::CentralPanel::default().show_inside(ui, |ui| {
-                        ui.centered_and_justified(|ui| {
-                            ui.label("Select or create an instrument to begin patching");
-                        });
-                    });
-                    return;
-                };
-                egui::CentralPanel::default().show_inside(ui, |ui| {
-            // Get the active instrument's patch editor
-            let Some(patch_editor) = self
-                .instruments
-                .iter_mut()
-                .find(|i| i.id == active_id)
-                .map(|i| &mut i.patch_editor)
-            else {
-                // No active instrument - show error message
-                ui.centered_and_justified(|ui| {
-                    ui.label("No active instrument selected");
-                });
-                return;
-            };
-
-            // Update sample list for sampler module dropdowns
-            if let Ok(lib) = self.sample_library.read() {
-                let list: Vec<(u64, String)> = lib
-                    .list()
-                    .iter()
-                    .map(|m| (m.id.0, m.name.clone()))
-                    .collect();
-                patch_editor.set_sample_list(list);
-            }
-
-            // Get effect chain order from shared state
-            let effect_chain_order: Vec<synth_engine::ModuleId> = self
-                .session
-                .list_instruments()
-                .iter()
-                .find(|s| s.id == active_id)
-                .map(|s| s.effect_chain_order.clone())
-                .unwrap_or_default();
-
-            let audio_input_snapshot = crate::gui::patch_editor::AudioInputSnapshot {
-                state: self.audio_input.state(),
-                peak_level: self.audio_input.peak_level(),
-                recorded_seconds: self.audio_input.recorded_seconds(),
-            };
-            let result = patch_editor.show(
-                ui,
-                &self.handle,
-                active_id.as_u64(),
-                &effect_chain_order,
-                &audio_input_snapshot,
-            );
-            let had_mutations = result.has_mutations();
-
-            // Handle parameter changes - send Param directly (carries its own value)
-            for (module_id, param) in result.param_changes {
-                // Check module category
-                let category = patch_editor
-                    .module_descriptor(module_id)
-                    .map(|d| d.category);
-
-                match category {
-                    Some(ModuleCategory::Effect) => {
-                        // Effect module - use SetEffectParameter (targets active instrument)
-                        if let Some(effect_type) =
-                            patch_bridge::get_effect_type_from_module(patch_editor, module_id)
-                        {
-                            self.handle.send(EngineCommand::SetEffectParameter {
-                                instrument_id: Some(active_id),
-                                effect_type,
-                                param,
+                        // Get the active instrument's patch editor
+                        let Some(patch_editor) = self
+                            .instruments
+                            .iter_mut()
+                            .find(|i| i.id == active_id)
+                            .map(|i| &mut i.patch_editor)
+                        else {
+                            // No active instrument - show error message
+                            ui.centered_and_justified(|ui| {
+                                ui.label("No active instrument selected");
                             });
+                            return;
+                        };
+
+                        // Update sample list for sampler module dropdowns
+                        if let Ok(lib) = self.sample_library.read() {
+                            let list: Vec<(u64, String)> = lib
+                                .list()
+                                .iter()
+                                .map(|m| (m.id.0, m.name.clone()))
+                                .collect();
+                            patch_editor.set_sample_list(list);
                         }
-                    }
-                    Some(
-                        ModuleCategory::Oscillator
-                        | ModuleCategory::Filter
-                        | ModuleCategory::Envelope
-                        | ModuleCategory::LFO
-                        | ModuleCategory::Amplifier
-                        | ModuleCategory::Mixer
-                        | ModuleCategory::Output
-                        | ModuleCategory::Sampler,
-                    ) => {
-                        // Voice/modular module - send to active instrument's voice graph
-                        // SetModuleParameter updates both the template AND all active voices
-                        self.handle.send(EngineCommand::SetModuleParameter {
-                            instrument_id: Some(active_id),
-                            module_id,
-                            param,
-                        });
 
-                        // If a SampleSelect param was changed, also load the sample data
-                        if let synth_core::Param::Sampler(
-                            synth_core::SamplerParam::SampleSelect(sample_id),
-                        ) = param
-                            && let Ok(lib) = self.sample_library.read()
-                            && let Some(sample) =
-                                lib.get(synth_sampler::SampleId::new(sample_id.0))
-                        {
-                            self.handle.send(EngineCommand::LoadSampleData {
-                                instrument_id: active_id,
-                                module_id,
-                                data: std::sync::Arc::clone(&sample.data),
-                                channels: sample.meta.channels,
-                                frame_count: sample.meta.frame_count.as_usize(),
-                                root_note: sample
-                                    .meta
-                                    .root_note
-                                    .unwrap_or(synth_core::MidiNote(60)),
-                            });
-                        }
-                    }
-                    _ => {}
-                }
-            }
+                        // Get effect chain order from shared state
+                        let effect_chain_order: Vec<synth_engine::ModuleId> = self
+                            .session
+                            .list_instruments()
+                            .iter()
+                            .find(|s| s.id == active_id)
+                            .map(|s| s.effect_chain_order.clone())
+                            .unwrap_or_default();
 
-            // Handle module removal
-            for module_id in result.modules_to_remove {
-                // Check if this module has a visualization buffer to clean up
-                let has_vis_buffer = patch_editor
-                    .module_descriptor(module_id)
-                    .is_some_and(|d| {
-                        d.category == ModuleCategory::Visualizer
-                            || d.type_id.0 == "signal_monitor"
-                            || d.type_id.0 == "inline_signal_monitor"
-                    });
+                        let audio_input_snapshot = crate::gui::patch_editor::AudioInputSnapshot {
+                            state: self.audio_input.state(),
+                            peak_level: self.audio_input.peak_level(),
+                            recorded_seconds: self.audio_input.recorded_seconds(),
+                        };
+                        let result = patch_editor.show(
+                            ui,
+                            &self.handle,
+                            active_id.as_u64(),
+                            &effect_chain_order,
+                            &audio_input_snapshot,
+                        );
+                        let had_mutations = result.has_mutations();
 
-                // Remove from session (registry + engine command)
-                if let Err(e) = self.session.remove_module(active_id, module_id) {
-                    eprintln!("Failed to remove module {module_id:?}: {e}");
-                    continue;
-                }
+                        // Handle parameter changes - send Param directly (carries its own value)
+                        for (module_id, param) in result.param_changes {
+                            // Check module category
+                            let category = patch_editor
+                                .module_descriptor(module_id)
+                                .map(|d| d.category);
 
-                patch_editor.remove_module(module_id);
-
-                // Clean up visualization buffer if needed
-                if has_vis_buffer {
-                    self.handle.remove_visualization_buffer(module_id);
-                }
-            }
-
-            // Handle new connections - now synced with engine
-            for connection in result.connections_to_add {
-                patch_editor.add_connection(connection);
-
-                self.undo_manager
-                    .push(crate::undo::UndoAction::AddConnection {
-                        instrument_id: active_id,
-                        connection,
-                    });
-
-                // Send Connect command to engine (active instrument's voice graph)
-                self.handle.send(EngineCommand::Connect {
-                    instrument_id: Some(active_id),
-                    from: PortId::new(connection.from_module, connection.from_port),
-                    to: PortId::new(connection.to_module, connection.to_port),
-                });
-            }
-
-            // Handle removed connections - send Disconnect commands to engine
-            for connection in result.connections_to_remove {
-                self.undo_manager
-                    .push(crate::undo::UndoAction::RemoveConnection {
-                        instrument_id: active_id,
-                        connection,
-                    });
-
-                self.handle.send(EngineCommand::Disconnect {
-                    instrument_id: Some(active_id),
-                    from: PortId::new(connection.from_module, connection.from_port),
-                    to: PortId::new(connection.to_module, connection.to_port),
-                });
-            }
-
-            // Handle bypass toggles - send SetBypass commands to engine
-            for (module_id, new_bypass_state) in result.bypass_toggles {
-                self.handle.send(EngineCommand::SetBypass {
-                    instrument_id: Some(active_id),
-                    module: module_id,
-                    bypass: new_bypass_state,
-                });
-            }
-
-            // Handle effect chain reorder requests
-            for (module_id, direction) in result.reorder_effects {
-                self.handle.send(EngineCommand::ReorderEffect {
-                    instrument_id: Some(active_id),
-                    module_id,
-                    direction,
-                });
-            }
-
-            // Handle audio input actions from patch module
-            if let Some(action) = result.audio_input_action {
-                use crate::gui::patch_editor::AudioInputAction;
-                match action {
-                    AudioInputAction::StartMonitoring => {
-                        if let Some(host) = &self.host {
-                            let device =
-                                self.sample_view_state.selected_input_device.as_deref();
-                            let config = synth_core::StreamConfig {
-                                sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
-                                buffer_size: synth_core::BufferSize::MEDIUM,
-                                channels: synth_core::ChannelCount::Stereo,
-                            };
-                            match self
-                                .audio_input
-                                .start_monitoring(host.as_ref(), device, &config)
-                            {
-                                Ok(()) => {
-                                    if let Some(consumer) =
-                                        self.audio_input.take_engine_consumer()
+                            match category {
+                                Some(ModuleCategory::Effect) => {
+                                    // Effect module - use SetEffectParameter (targets active instrument)
+                                    if let Some(effect_type) =
+                                        patch_bridge::get_effect_type_from_module(
+                                            patch_editor,
+                                            module_id,
+                                        )
                                     {
-                                        self.handle.send(
-                                            EngineCommand::SetAudioInputConsumer {
-                                                consumer,
-                                            },
-                                        );
+                                        self.handle.send(EngineCommand::SetEffectParameter {
+                                            instrument_id: Some(active_id),
+                                            effect_type,
+                                            param,
+                                        });
                                     }
                                 }
-                                Err(e) => {
-                                    self.dialog_state
-                                        .set_status(format!("Input error: {e}"));
+                                Some(
+                                    ModuleCategory::Oscillator
+                                    | ModuleCategory::Filter
+                                    | ModuleCategory::Envelope
+                                    | ModuleCategory::LFO
+                                    | ModuleCategory::Amplifier
+                                    | ModuleCategory::Mixer
+                                    | ModuleCategory::Output
+                                    | ModuleCategory::Sampler,
+                                ) => {
+                                    // Voice/modular module - send to active instrument's voice graph
+                                    // SetModuleParameter updates both the template AND all active voices
+                                    self.handle.send(EngineCommand::SetModuleParameter {
+                                        instrument_id: Some(active_id),
+                                        module_id,
+                                        param,
+                                    });
+
+                                    // If a SampleSelect param was changed, also load the sample data
+                                    if let synth_core::Param::Sampler(
+                                        synth_core::SamplerParam::SampleSelect(sample_id),
+                                    ) = param
+                                        && let Ok(lib) = self.sample_library.read()
+                                        && let Some(sample) =
+                                            lib.get(synth_sampler::SampleId::new(sample_id.0))
+                                    {
+                                        self.handle.send(EngineCommand::LoadSampleData {
+                                            instrument_id: active_id,
+                                            module_id,
+                                            data: std::sync::Arc::clone(&sample.data),
+                                            channels: sample.meta.channels,
+                                            frame_count: sample.meta.frame_count.as_usize(),
+                                            root_note: sample
+                                                .meta
+                                                .root_note
+                                                .unwrap_or(synth_core::MidiNote(60)),
+                                        });
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        // Handle module removal
+                        for module_id in result.modules_to_remove {
+                            // Check if this module has a visualization buffer to clean up
+                            let has_vis_buffer =
+                                patch_editor.module_descriptor(module_id).is_some_and(|d| {
+                                    d.category == ModuleCategory::Visualizer
+                                        || d.type_id.0 == "signal_monitor"
+                                        || d.type_id.0 == "inline_signal_monitor"
+                                });
+
+                            // Remove from session (registry + engine command)
+                            if let Err(e) = self.session.remove_module(active_id, module_id) {
+                                eprintln!("Failed to remove module {module_id:?}: {e}");
+                                continue;
+                            }
+
+                            patch_editor.remove_module(module_id);
+
+                            // Clean up visualization buffer if needed
+                            if has_vis_buffer {
+                                self.handle.remove_visualization_buffer(module_id);
+                            }
+                        }
+
+                        // Handle new connections - now synced with engine
+                        for connection in result.connections_to_add {
+                            patch_editor.add_connection(connection);
+
+                            self.undo_manager
+                                .push(crate::undo::UndoAction::AddConnection {
+                                    instrument_id: active_id,
+                                    connection,
+                                });
+
+                            // Send Connect command to engine (active instrument's voice graph)
+                            self.handle.send(EngineCommand::Connect {
+                                instrument_id: Some(active_id),
+                                from: PortId::new(connection.from_module, connection.from_port),
+                                to: PortId::new(connection.to_module, connection.to_port),
+                            });
+                        }
+
+                        // Handle removed connections - send Disconnect commands to engine
+                        for connection in result.connections_to_remove {
+                            self.undo_manager
+                                .push(crate::undo::UndoAction::RemoveConnection {
+                                    instrument_id: active_id,
+                                    connection,
+                                });
+
+                            self.handle.send(EngineCommand::Disconnect {
+                                instrument_id: Some(active_id),
+                                from: PortId::new(connection.from_module, connection.from_port),
+                                to: PortId::new(connection.to_module, connection.to_port),
+                            });
+                        }
+
+                        // Handle bypass toggles - send SetBypass commands to engine
+                        for (module_id, new_bypass_state) in result.bypass_toggles {
+                            self.handle.send(EngineCommand::SetBypass {
+                                instrument_id: Some(active_id),
+                                module: module_id,
+                                bypass: new_bypass_state,
+                            });
+                        }
+
+                        // Handle effect chain reorder requests
+                        for (module_id, direction) in result.reorder_effects {
+                            self.handle.send(EngineCommand::ReorderEffect {
+                                instrument_id: Some(active_id),
+                                module_id,
+                                direction,
+                            });
+                        }
+
+                        // Handle audio input actions from patch module
+                        if let Some(action) = result.audio_input_action {
+                            use crate::gui::patch_editor::AudioInputAction;
+                            match action {
+                                AudioInputAction::StartMonitoring => {
+                                    if let Some(host) = &self.host {
+                                        let device =
+                                            self.sample_view_state.selected_input_device.as_deref();
+                                        let config = synth_core::StreamConfig {
+                                            sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
+                                            buffer_size: synth_core::BufferSize::MEDIUM,
+                                            channels: synth_core::ChannelCount::Stereo,
+                                        };
+                                        match self.audio_input.start_monitoring(
+                                            host.as_ref(),
+                                            device,
+                                            &config,
+                                        ) {
+                                            Ok(()) => {
+                                                if let Some(consumer) =
+                                                    self.audio_input.take_engine_consumer()
+                                                {
+                                                    self.handle.send(
+                                                        EngineCommand::SetAudioInputConsumer {
+                                                            consumer,
+                                                        },
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                self.dialog_state
+                                                    .set_status(format!("Input error: {e}"));
+                                            }
+                                        }
+                                    }
+                                }
+                                AudioInputAction::StopMonitoring => {
+                                    self.handle.send(EngineCommand::ClearAudioInputConsumer);
+                                    self.audio_input.stop_monitoring();
+                                }
+                                AudioInputAction::StartRecording => {
+                                    self.audio_input.start_recording();
+                                }
+                                AudioInputAction::StopRecording => {
+                                    if let Some(data) = self.audio_input.stop_recording() {
+                                        let channels = self.audio_input.channels();
+                                        let sample_rate = self.audio_input.sample_rate();
+                                        let frame_count = if channels > 0 {
+                                            data.len() / channels as usize
+                                        } else {
+                                            0
+                                        };
+                                        let sample = synth_sampler::Sample::new(
+                                            synth_sampler::SampleMeta {
+                                                id: synth_sampler::SampleId::new(0),
+                                                name: format!(
+                                                    "Recording {:.1}s",
+                                                    frame_count as f64 / f64::from(sample_rate.0)
+                                                ),
+                                                sample_rate,
+                                                channels: synth_core::ChannelCount::from(channels),
+                                                frame_count: synth_core::SampleCount::new(
+                                                    frame_count,
+                                                ),
+                                                root_note: None,
+                                                loop_region: None,
+                                                crop: None,
+                                                source: synth_sampler::SampleSource::Recorded,
+                                            },
+                                            data.into(),
+                                        );
+                                        if let Ok(mut lib) = self.sample_library.write() {
+                                            let id = lib.add(sample);
+                                            self.sample_view_state.selected_sample = Some(id);
+                                            self.sample_view_state.invalidate_peaks();
+                                        }
+                                        self.dialog_state.set_status("Recording saved");
+                                    }
                                 }
                             }
                         }
-                    }
-                    AudioInputAction::StopMonitoring => {
-                        self.handle.send(EngineCommand::ClearAudioInputConsumer);
-                        self.audio_input.stop_monitoring();
-                    }
-                    AudioInputAction::StartRecording => {
-                        self.audio_input.start_recording();
-                    }
-                    AudioInputAction::StopRecording => {
-                        if let Some(data) = self.audio_input.stop_recording() {
-                            let channels = self.audio_input.channels();
-                            let sample_rate = self.audio_input.sample_rate();
-                            let frame_count = if channels > 0 {
-                                data.len() / channels as usize
-                            } else {
-                                0
+
+                        // Handle signal monitor insertions — create inline monitor and rewire
+                        for connection in result.insert_signal_monitor_at {
+                            // Create signal monitor module (same DSP, different GUI descriptor)
+                            let mut m = synth_modules::SignalMonitor::new();
+
+                            // Build an inline descriptor: compact type_id, no parameters, just ports
+                            let inline_descriptor =
+                                synth_core::ModuleDescriptor::new("inline_signal_monitor", "Mon")
+                                    .description("Inline signal monitor (compact pass-through)")
+                                    .category(synth_core::ModuleCategory::Utility)
+                                    .port(synth_core::PortDescriptor::audio_input("in", "In"))
+                                    .port(synth_core::PortDescriptor::audio_output("out", "Out"));
+
+                            let monitor_id = {
+                                let mut counters = self.session.counters_lock();
+                                let counter = counters
+                                    .entry((active_id, synth_core::ModuleType::SignalMonitor))
+                                    .or_insert(0);
+                                *counter += 1;
+                                ModuleId::new(TypedModuleType::SignalMonitor, *counter)
                             };
-                            let sample = synth_sampler::Sample::new(
-                                synth_sampler::SampleMeta {
-                                    id: synth_sampler::SampleId::new(0),
-                                    name: format!(
-                                        "Recording {:.1}s",
-                                        frame_count as f64 / f64::from(sample_rate.0)
-                                    ),
-                                    sample_rate,
-                                    channels: synth_core::ChannelCount::from(channels),
-                                    frame_count: synth_core::SampleCount::new(frame_count),
-                                    root_note: None,
-                                    loop_region: None,
-                                    crop: None,
-                                    source: synth_sampler::SampleSource::Recorded,
-                                },
-                                data.into(),
+
+                            // Position between the two connected modules
+                            let from_pos = patch_editor
+                                .get_module_data(connection.from_module)
+                                .map(|(_, pos, _)| pos);
+                            let to_pos = patch_editor
+                                .get_module_data(connection.to_module)
+                                .map(|(_, pos, _)| pos);
+                            let mid_pos = match (from_pos, to_pos) {
+                                (Some(a), Some(b)) => {
+                                    egui::Pos2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)
+                                }
+                                (Some(a), None) => egui::Pos2::new(a.x + 200.0, a.y),
+                                _ => egui::Pos2::new(100.0, 100.0),
+                            };
+
+                            patch_editor.add_module_at(
+                                monitor_id,
+                                inline_descriptor.clone(),
+                                mid_pos,
                             );
-                            if let Ok(mut lib) = self.sample_library.write() {
-                                let id = lib.add(sample);
-                                self.sample_view_state.selected_sample = Some(id);
-                                self.sample_view_state.invalidate_peaks();
+
+                            // Register in session so reconciliation doesn't remove it
+                            self.session.register_descriptor(
+                                active_id,
+                                monitor_id,
+                                inline_descriptor,
+                            );
+
+                            // Create shared vis buffer and inject into module
+                            let buffer = std::sync::Arc::new(
+                                synth_engine::visualizers::VisualizationBuffer::new(4096),
+                            );
+                            self.handle
+                                .add_visualization_buffer(monitor_id, buffer.clone());
+                            m.set_vis_sink(buffer);
+
+                            let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+                            self.handle.send(EngineCommand::AddModuleInstance {
+                                instrument_id: Some(active_id),
+                                id: monitor_id,
+                                module,
+                            });
+
+                            // Wire: original_from → monitor "in", monitor "out" → original_to
+                            let conn_in = synth_engine::graph::Connection::new(
+                                connection.from_module,
+                                connection.from_port,
+                                monitor_id,
+                                "in",
+                            );
+                            let conn_out = synth_engine::graph::Connection::new(
+                                monitor_id,
+                                "out",
+                                connection.to_module,
+                                connection.to_port,
+                            );
+
+                            for c in [conn_in, conn_out] {
+                                patch_editor.add_connection(c);
+                                self.handle.send(EngineCommand::Connect {
+                                    instrument_id: Some(active_id),
+                                    from: PortId::new(c.from_module, c.from_port),
+                                    to: PortId::new(c.to_module, c.to_port),
+                                });
                             }
-                            self.dialog_state.set_status("Recording saved");
                         }
-                    }
-                }
-            }
 
-            // Handle signal monitor insertions — create inline monitor and rewire
-            for connection in result.insert_signal_monitor_at {
-                // Create signal monitor module (same DSP, different GUI descriptor)
-                let mut m = synth_modules::SignalMonitor::new();
+                        // Handle quick-add requests (right-click on port → add module)
+                        for request in result.quick_add_requests {
+                            Self::handle_quick_add(
+                                &self.session,
+                                &mut self.handle,
+                                active_id,
+                                patch_editor,
+                                request,
+                            );
+                        }
 
-                // Build an inline descriptor: compact type_id, no parameters, just ports
-                let inline_descriptor = synth_core::ModuleDescriptor::new(
-                    "inline_signal_monitor",
-                    "Mon",
-                )
-                .description("Inline signal monitor (compact pass-through)")
-                .category(synth_core::ModuleCategory::Utility)
-                .port(synth_core::PortDescriptor::audio_input("in", "In"))
-                .port(synth_core::PortDescriptor::audio_output("out", "Out"));
+                        // Handle background context menu add (right-click on empty space or cable)
+                        if let Some((selection, world_pos, inline_cable)) = result.context_add {
+                            Self::handle_context_add(
+                                &self.session,
+                                &mut self.handle,
+                                active_id,
+                                patch_editor,
+                                selection,
+                                world_pos,
+                                inline_cable,
+                            );
+                        }
 
-                let monitor_id = {
-                    let mut counters = self.session.counters_lock();
-                    let counter = counters
-                        .entry((active_id, synth_core::ModuleType::SignalMonitor))
-                        .or_insert(0);
-                    *counter += 1;
-                    ModuleId::new(TypedModuleType::SignalMonitor, *counter)
-                };
+                        // Handle group template actions (open browser / save template)
+                        if let Some(action) = result.group_template_action {
+                            match action {
+                                GroupTemplateAction::OpenBrowser { drop_pos } => {
+                                    self.dialog_state.show_group_templates = true;
+                                    self.dialog_state.group_template_drop_pos = Some(drop_pos);
+                                    self.dialog_state.group_template_selected = None;
+                                }
+                                GroupTemplateAction::SaveGroup { group_id } => {
+                                    self.dialog_state.show_save_group_template = true;
+                                    self.dialog_state.group_template_save_group = Some(group_id);
+                                    if let Some(name) = patch_editor.group_name(group_id) {
+                                        self.dialog_state.group_template_save_name = name;
+                                    }
+                                    self.dialog_state.group_template_save_description.clear();
+                                    self.dialog_state.group_template_save_category =
+                                        GroupCategory::default();
+                                }
+                            }
+                        }
 
-                // Position between the two connected modules
-                let from_pos = patch_editor
-                    .get_module_data(connection.from_module)
-                    .map(|(_, pos, _)| pos);
-                let to_pos = patch_editor
-                    .get_module_data(connection.to_module)
-                    .map(|(_, pos, _)| pos);
-                let mid_pos = match (from_pos, to_pos) {
-                    (Some(a), Some(b)) => egui::Pos2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0),
-                    (Some(a), None) => egui::Pos2::new(a.x + 200.0, a.y),
-                    _ => egui::Pos2::new(100.0, 100.0),
-                };
+                        // Handle auto-layout request (from GUI menu or MCP)
+                        if (result.request_auto_layout || mcp_auto_layout)
+                            && let Some(canvas_rect) = result.canvas_rect
+                        {
+                            patch_editor.apply_auto_layout(canvas_rect, &effect_chain_order);
+                            self.mark_dirty();
+                        }
 
-                patch_editor.add_module_at(monitor_id, inline_descriptor.clone(), mid_pos);
-
-                // Register in session so reconciliation doesn't remove it
-                self.session
-                    .register_descriptor(active_id, monitor_id, inline_descriptor);
-
-                // Create shared vis buffer and inject into module
-                let buffer = std::sync::Arc::new(
-                    synth_engine::visualizers::VisualizationBuffer::new(4096),
-                );
-                self.handle
-                    .add_visualization_buffer(monitor_id, buffer.clone());
-                m.set_vis_sink(buffer);
-
-                let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-                self.handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(active_id),
-                    id: monitor_id,
-                    module,
-                });
-
-                // Wire: original_from → monitor "in", monitor "out" → original_to
-                let conn_in = synth_engine::graph::Connection::new(
-                    connection.from_module,
-                    connection.from_port,
-                    monitor_id,
-                    "in",
-                );
-                let conn_out = synth_engine::graph::Connection::new(
-                    monitor_id,
-                    "out",
-                    connection.to_module,
-                    connection.to_port,
-                );
-
-                for c in [conn_in, conn_out] {
-                    patch_editor.add_connection(c);
-                    self.handle.send(EngineCommand::Connect {
-                        instrument_id: Some(active_id),
-                        from: PortId::new(c.from_module, c.from_port),
-                        to: PortId::new(c.to_module, c.to_port),
+                        // Mark dirty if any mutations occurred
+                        if had_mutations {
+                            self.mark_dirty();
+                        }
                     });
                 }
-            }
-
-            // Handle quick-add requests (right-click on port → add module)
-            for request in result.quick_add_requests {
-                Self::handle_quick_add(
-                    &self.session,
-                    &mut self.handle,
-                    active_id,
-                    patch_editor,
-                    request,
-                );
-            }
-
-            // Handle background context menu add (right-click on empty space or cable)
-            if let Some((selection, world_pos, inline_cable)) = result.context_add {
-                Self::handle_context_add(
-                    &self.session,
-                    &mut self.handle,
-                    active_id,
-                    patch_editor,
-                    selection,
-                    world_pos,
-                    inline_cable,
-                );
-            }
-
-            // Handle group template actions (open browser / save template)
-            if let Some(action) = result.group_template_action {
-                match action {
-                    GroupTemplateAction::OpenBrowser { drop_pos } => {
-                        self.dialog_state.show_group_templates = true;
-                        self.dialog_state.group_template_drop_pos = Some(drop_pos);
-                        self.dialog_state.group_template_selected = None;
-                    }
-                    GroupTemplateAction::SaveGroup { group_id } => {
-                        self.dialog_state.show_save_group_template = true;
-                        self.dialog_state.group_template_save_group = Some(group_id);
-                        if let Some(name) = patch_editor.group_name(group_id) {
-                            self.dialog_state.group_template_save_name = name;
-                        }
-                        self.dialog_state.group_template_save_description.clear();
-                        self.dialog_state.group_template_save_category = GroupCategory::default();
-                    }
-                }
-            }
-
-            // Handle auto-layout request (from GUI menu or MCP)
-            if (result.request_auto_layout || mcp_auto_layout)
-                && let Some(canvas_rect) = result.canvas_rect
-            {
-                patch_editor.apply_auto_layout(canvas_rect, &effect_chain_order);
-                self.mark_dirty();
-            }
-
-            // Mark dirty if any mutations occurred
-            if had_mutations {
-                self.mark_dirty();
-            }
-                });
-            }
-            AppView::AcousticWorld => {
-                // Scan user presets on first view
-                if !self.awe_ui.user_presets_loaded {
-                    let dir = self
-                        .settings
-                        .directories
-                        .awe_presets_dir
-                        .clone()
-                        .or_else(|| crate::project::default_awe_presets_dir().ok());
-                    if let Some(dir) = dir {
-                        self.awe_ui.scan_user_presets(&dir);
-                    } else {
-                        self.awe_ui.user_presets_loaded = true;
-                    }
-                }
-
-                let awe_action = crate::gui::awe_view::draw_awe_view(
-                    ui,
-                    &mut self.handle,
-                    &mut self.awe_enabled,
-                    &mut self.awe_ui,
-                );
-                match awe_action {
-                    crate::gui::awe_view::AweViewAction::SavePreset => {
-                        self.dialog_state.show_save_awe_preset = true;
-                        self.dialog_state.awe_preset_save_name.clear();
-                        self.dialog_state.awe_preset_save_description.clear();
-                        self.dialog_state.awe_preset_save_tags.clear();
-                    }
-                    crate::gui::awe_view::AweViewAction::LoadPreset => {
+                AppView::AcousticWorld => {
+                    // Scan user presets on first view
+                    if !self.awe_ui.user_presets_loaded {
                         let dir = self
                             .settings
                             .directories
                             .awe_presets_dir
                             .clone()
                             .or_else(|| crate::project::default_awe_presets_dir().ok());
-                        self.dialog_state
-                            .open_open_awe_preset_dialog(dir.as_deref());
+                        if let Some(dir) = dir {
+                            self.awe_ui.scan_user_presets(&dir);
+                        } else {
+                            self.awe_ui.user_presets_loaded = true;
+                        }
                     }
-                    crate::gui::awe_view::AweViewAction::None => {}
-                }
-            }
-            AppView::Sequencer => {
-                crate::gui::sequencer::draw_sequencer_view(
-                    ui,
-                    &mut self.handle,
-                    &self.song,
-                    &mut self.sequencer_view_state,
-                    &self.instruments,
-                    &mut self.undo_manager,
-                );
-            }
-            AppView::Sample => {
-                // Refresh input device cache on demand (not every frame)
-                if self.sample_view_state.devices_dirty {
-                    self.sample_view_state.cached_input_devices = self
-                        .host
-                        .as_ref()
-                        .and_then(|h| h.devices().ok())
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|d| {
-                            matches!(
-                                d.device_type,
-                                synth_core::DeviceType::Input | synth_core::DeviceType::Duplex
-                            )
-                        })
-                        .collect();
-                    self.sample_view_state.devices_dirty = false;
-                }
 
-                let action = crate::gui::sample_view::draw_sample_view(
-                    ui,
-                    &self.sample_library,
-                    &mut self.sample_view_state,
-                    &mut self.audio_input,
-                );
-                match action {
-                    crate::gui::sample_view::SampleViewAction::None => {}
-                    crate::gui::sample_view::SampleViewAction::ImportWav => {
-                        self.dialog_state.open_import_sample_dialog(None);
+                    let awe_action = crate::gui::awe_view::draw_awe_view(
+                        ui,
+                        &mut self.handle,
+                        &mut self.awe_enabled,
+                        &mut self.awe_ui,
+                    );
+                    match awe_action {
+                        crate::gui::awe_view::AweViewAction::SavePreset => {
+                            self.dialog_state.show_save_awe_preset = true;
+                            self.dialog_state.awe_preset_save_name.clear();
+                            self.dialog_state.awe_preset_save_description.clear();
+                            self.dialog_state.awe_preset_save_tags.clear();
+                        }
+                        crate::gui::awe_view::AweViewAction::LoadPreset => {
+                            let dir = self
+                                .settings
+                                .directories
+                                .awe_presets_dir
+                                .clone()
+                                .or_else(|| crate::project::default_awe_presets_dir().ok());
+                            self.dialog_state
+                                .open_open_awe_preset_dialog(dir.as_deref());
+                        }
+                        crate::gui::awe_view::AweViewAction::None => {}
                     }
-                    crate::gui::sample_view::SampleViewAction::ExportWav { name } => {
-                        let wav_name = format!("{name}.wav");
-                        self.dialog_state.open_export_sample_dialog(&wav_name, None);
+                }
+                AppView::Sequencer => {
+                    crate::gui::sequencer::draw_sequencer_view(
+                        ui,
+                        &mut self.handle,
+                        &self.song,
+                        &mut self.sequencer_view_state,
+                        &self.instruments,
+                        &mut self.undo_manager,
+                    );
+                }
+                AppView::Sample => {
+                    // Refresh input device cache on demand (not every frame)
+                    if self.sample_view_state.devices_dirty {
+                        self.sample_view_state.cached_input_devices = self
+                            .host
+                            .as_ref()
+                            .and_then(|h| h.devices().ok())
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|d| {
+                                matches!(
+                                    d.device_type,
+                                    synth_core::DeviceType::Input | synth_core::DeviceType::Duplex
+                                )
+                            })
+                            .collect();
+                        self.sample_view_state.devices_dirty = false;
                     }
-                    crate::gui::sample_view::SampleViewAction::StartMonitoring => {
-                        if let Some(host) = &self.host {
-                            let device = self.sample_view_state.selected_input_device.as_deref();
-                            let config = synth_core::StreamConfig {
-                                sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
-                                buffer_size: synth_core::BufferSize::MEDIUM,
-                                channels: synth_core::ChannelCount::Stereo,
-                            };
-                            match self
-                                .audio_input
-                                .start_monitoring(host.as_ref(), device, &config)
-                            {
-                                Ok(()) => {
-                                    // Send engine consumer so ProcessContext::audio_input works
-                                    if let Some(consumer) = self.audio_input.take_engine_consumer()
-                                    {
-                                        self.handle.send(EngineCommand::SetAudioInputConsumer {
-                                            consumer,
-                                        });
+
+                    let action = crate::gui::sample_view::draw_sample_view(
+                        ui,
+                        &self.sample_library,
+                        &mut self.sample_view_state,
+                        &mut self.audio_input,
+                    );
+                    match action {
+                        crate::gui::sample_view::SampleViewAction::None => {}
+                        crate::gui::sample_view::SampleViewAction::ImportWav => {
+                            self.dialog_state.open_import_sample_dialog(None);
+                        }
+                        crate::gui::sample_view::SampleViewAction::ExportWav { name } => {
+                            let wav_name = format!("{name}.wav");
+                            self.dialog_state.open_export_sample_dialog(&wav_name, None);
+                        }
+                        crate::gui::sample_view::SampleViewAction::StartMonitoring => {
+                            if let Some(host) = &self.host {
+                                let device =
+                                    self.sample_view_state.selected_input_device.as_deref();
+                                let config = synth_core::StreamConfig {
+                                    sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
+                                    buffer_size: synth_core::BufferSize::MEDIUM,
+                                    channels: synth_core::ChannelCount::Stereo,
+                                };
+                                match self.audio_input.start_monitoring(
+                                    host.as_ref(),
+                                    device,
+                                    &config,
+                                ) {
+                                    Ok(()) => {
+                                        // Send engine consumer so ProcessContext::audio_input works
+                                        if let Some(consumer) =
+                                            self.audio_input.take_engine_consumer()
+                                        {
+                                            self.handle.send(
+                                                EngineCommand::SetAudioInputConsumer { consumer },
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.dialog_state.set_status(format!("Input error: {e}"));
                                     }
                                 }
-                                Err(e) => {
-                                    self.dialog_state.set_status(format!("Input error: {e}"));
-                                }
                             }
                         }
-                    }
-                    crate::gui::sample_view::SampleViewAction::StopMonitoring => {
-                        self.handle.send(EngineCommand::ClearAudioInputConsumer);
-                        self.audio_input.stop_monitoring();
-                    }
-                    crate::gui::sample_view::SampleViewAction::StartRecording => {
-                        self.audio_input.start_recording();
-                    }
-                    crate::gui::sample_view::SampleViewAction::StopRecording => {
-                        if let Some(data) = self.audio_input.stop_recording() {
-                            let channels = self.audio_input.channels();
-                            let sample_rate = self.audio_input.sample_rate();
-                            let frame_count = if channels > 0 {
-                                data.len() / channels as usize
-                            } else {
-                                0
-                            };
-                            let sample = synth_sampler::Sample::new(
-                                synth_sampler::SampleMeta {
-                                    id: synth_sampler::SampleId::new(0),
-                                    name: format!(
-                                        "Recording {:.1}s",
-                                        frame_count as f64 / f64::from(sample_rate.0)
-                                    ),
-                                    sample_rate,
-                                    channels: synth_core::ChannelCount::from(channels),
-                                    frame_count: synth_core::SampleCount::new(frame_count),
-                                    root_note: None,
-                                    loop_region: None,
-                                    crop: None,
-                                    source: synth_sampler::SampleSource::Recorded,
-                                },
-                                data.into(),
-                            );
-                            if let Ok(mut lib) = self.sample_library.write() {
-                                let id = lib.add(sample);
-                                self.sample_view_state.selected_sample = Some(id);
-                                self.sample_view_state.invalidate_peaks();
+                        crate::gui::sample_view::SampleViewAction::StopMonitoring => {
+                            self.handle.send(EngineCommand::ClearAudioInputConsumer);
+                            self.audio_input.stop_monitoring();
+                        }
+                        crate::gui::sample_view::SampleViewAction::StartRecording => {
+                            self.audio_input.start_recording();
+                        }
+                        crate::gui::sample_view::SampleViewAction::StopRecording => {
+                            if let Some(data) = self.audio_input.stop_recording() {
+                                let channels = self.audio_input.channels();
+                                let sample_rate = self.audio_input.sample_rate();
+                                let frame_count = if channels > 0 {
+                                    data.len() / channels as usize
+                                } else {
+                                    0
+                                };
+                                let sample = synth_sampler::Sample::new(
+                                    synth_sampler::SampleMeta {
+                                        id: synth_sampler::SampleId::new(0),
+                                        name: format!(
+                                            "Recording {:.1}s",
+                                            frame_count as f64 / f64::from(sample_rate.0)
+                                        ),
+                                        sample_rate,
+                                        channels: synth_core::ChannelCount::from(channels),
+                                        frame_count: synth_core::SampleCount::new(frame_count),
+                                        root_note: None,
+                                        loop_region: None,
+                                        crop: None,
+                                        source: synth_sampler::SampleSource::Recorded,
+                                    },
+                                    data.into(),
+                                );
+                                if let Ok(mut lib) = self.sample_library.write() {
+                                    let id = lib.add(sample);
+                                    self.sample_view_state.selected_sample = Some(id);
+                                    self.sample_view_state.invalidate_peaks();
+                                }
+                                self.dialog_state.set_status("Recording saved");
                             }
-                            self.dialog_state.set_status("Recording saved");
                         }
                     }
                 }
             }
-        }
+        } // end 'view block
 
         // Dialogs
         self.show_dialogs(ctx);
@@ -2464,30 +2560,7 @@ impl SynthApp {
                     )
                     .clicked()
                 {
-                    let instrument_num = self.instruments.len() + 1;
-                    let new_name = format!("Instrument {instrument_num}");
-                    let new_channel = MidiChannel::from_one_indexed(instrument_num as u8)
-                        .unwrap_or(MidiChannel::CH1);
-
-                    if let Ok(new_id) = self.session.add_instrument(&new_name) {
-                        // Keep UI counter in sync with session counter
-                        let id_val = new_id.as_u64() + 1;
-                        if id_val > self.next_instrument_id {
-                            self.next_instrument_id = id_val;
-                        }
-
-                        self.handle.send(EngineCommand::SetInstrumentMidiChannel {
-                            instrument_id: new_id,
-                            channel: new_channel,
-                        });
-
-                        let new_ui_instrument =
-                            InstrumentUiState::new(new_id, &new_name).with_channel(new_channel);
-                        self.instruments.push(new_ui_instrument);
-                        self.active_instrument_id = Some(new_id);
-                        self.handle.set_focused_instrument(Some(new_id));
-                        self.mark_dirty();
-                    }
+                    self.add_new_instrument();
                     ui.close();
                 }
 
@@ -3751,17 +3824,27 @@ impl SynthApp {
     }
 
     /// Load a patch into the active instrument's rack view.
+    /// If no instrument is active, one is auto-created so the user can load a
+    /// patch into a fresh project without first clicking "+ New Instrument".
     fn load_patch_data(&mut self, patch: &Patch) {
         self.mark_dirty();
 
         // Delegate to patch_bridge for the main loading logic
-        // Load into the active instrument's patch editor
-        let Some(active_id) = self.active_instrument_id else {
-            eprintln!("Warning: Cannot load patch - no active instrument selected");
-            return;
+        // Load into the active instrument's patch editor (auto-create if none)
+        let active_id = match self.active_instrument_id {
+            Some(id) => id,
+            None => match self.add_new_instrument() {
+                Some(id) => id,
+                None => {
+                    self.dialog_state
+                        .set_status("Cannot load patch: failed to create instrument".to_string());
+                    return;
+                }
+            },
         };
         let Some(instrument) = self.instruments.iter_mut().find(|i| i.id == active_id) else {
-            eprintln!("Warning: Cannot load patch - no active instrument found");
+            self.dialog_state
+                .set_status("Cannot load patch: active instrument missing".to_string());
             return;
         };
 

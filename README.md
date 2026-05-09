@@ -8,6 +8,11 @@
 A modular audio synthesizer written in Rust with a real-time egui GUI, pattern sequencer, spatial audio engine, 3D
 visualizer, and MCP integration for AI-assisted sound design.
 
+## Screenshots
+
+See [`screenshots/README.md`](screenshots/README.md) for a visual tour of the patch editor, sequencer, Acoustic World
+Engine, and 3D visualizer.
+
 ## Features
 
 ### Synthesis

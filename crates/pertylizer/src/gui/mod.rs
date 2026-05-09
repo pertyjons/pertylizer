@@ -63,6 +63,9 @@ pub mod sequencer;
 pub mod sample_view;
 
 #[cfg(feature = "gui-egui")]
+pub mod welcome_view;
+
+#[cfg(feature = "gui-egui")]
 pub(crate) mod clipboard;
 
 use crate::audio::{AudioHostTrait, StreamConfig};
