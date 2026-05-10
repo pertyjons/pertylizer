@@ -366,8 +366,8 @@ fn buffer_length_matches_requested_duration() {
 #[test]
 fn analyze_note_result_schema_is_extensible() {
     use synth_mcp::types::{
-        AnalyzeEnergyBands, AnalyzeEnvelopeEstimate, AnalyzeFlags, AnalyzeHarmonicContent,
-        AnalyzeNoteResult,
+        AnalysisSignalMode, AnalyzeEnergyBands, AnalyzeEnvelopeEstimate, AnalyzeFlags,
+        AnalyzeHarmonicContent, AnalyzeNoteResult,
     };
     let r = AnalyzeNoteResult {
         note_requested: 60,
@@ -376,6 +376,9 @@ fn analyze_note_result_schema_is_extensible() {
         sample_rate: 44_100,
         duration_seconds: 1.0,
         fundamental_hz: 440.0,
+        analysis_signal_mode: AnalysisSignalMode::MaxAbsStereo,
+        fundamental_left: Some(440.0),
+        fundamental_right: Some(441.0),
         expected_fundamental_hz: 440.0,
         pitch_error_cents: 0.0,
         peak_amplitude: 0.5,

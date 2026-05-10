@@ -4595,6 +4595,32 @@ pub fn analyze_rendered_buffer(
         0.0
     };
 
+    // Per-channel fundamentals. For stereo input we re-run pitch detection
+    // on the left and right channels independently using the SAME release/
+    // sustain slice region (`attack_start..note_samples`) and the SAME
+    // anchored search band as `fundamental_hz`. This lets the caller spot
+    // wide-stereo patches where L and R carry different fundamentals — the
+    // pooled `fundamental_hz` (computed on max(|L|,|R|)) reports a single
+    // value that mixes both. For mono input both fields are `None` and the
+    // analysis_signal_mode reflects that.
+    let (analysis_signal_mode, fundamental_left, fundamental_right) = if rendered.channels >= 2 {
+        let left_slice = left_samples
+            .get(attack_start..note_samples.min(left_samples.len()))
+            .unwrap_or(&left_samples);
+        let right_slice = right_samples
+            .get(attack_start..note_samples.min(right_samples.len()))
+            .unwrap_or(&right_samples);
+        let f_l = analysis::fundamental_frequency(left_slice, sample_rate, search_min, search_max);
+        let f_r = analysis::fundamental_frequency(right_slice, sample_rate, search_min, search_max);
+        (
+            synth_mcp::types::AnalysisSignalMode::MaxAbsStereo,
+            Some(f_l),
+            Some(f_r),
+        )
+    } else {
+        (synth_mcp::types::AnalysisSignalMode::Mono, None, None)
+    };
+
     let envelope_window_ms = 50.0;
     let rms_envelope = analysis::rms_envelope(&mono, sample_rate, envelope_window_ms);
     // Centroid envelope tracks brightness motion; use the phase-robust
@@ -4737,6 +4763,9 @@ pub fn analyze_rendered_buffer(
         sample_rate,
         duration_seconds: rendered.duration_seconds,
         fundamental_hz,
+        analysis_signal_mode,
+        fundamental_left,
+        fundamental_right,
         expected_fundamental_hz,
         pitch_error_cents,
         peak_amplitude,

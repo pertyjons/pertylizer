@@ -1,6 +1,6 @@
 //! Serializable response types for MCP tools.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Information about an instrument.
 #[derive(Debug, Clone, Serialize)]
@@ -603,6 +603,20 @@ pub struct AnalyzeFlags {
     pub off_pitch: bool,
 }
 
+/// Which signal `fundamental_hz` (and the spectral metrics derived from
+/// the same buffer) was computed on. Lets the caller distinguish the
+/// "true mono" case from the synthesized phase-robust signal used for
+/// stereo input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnalysisSignalMode {
+    /// Mono input — analysis ran on the single channel.
+    Mono,
+    /// Stereo input — analysis ran on a synthetic max(|L|,|R|) signal
+    /// to survive anti-phase content. The synthetic signal preserves
+    /// each frame's sign from the channel with the larger magnitude.
+    MaxAbsStereo,
+}
+
 /// Quantitative analysis of a rendered note. Returned by `analyze_note`.
 ///
 /// All metrics are computed offline on the f32 audio buffer with no WAV
@@ -625,8 +639,26 @@ pub struct AnalyzeNoteResult {
     /// Total render duration in seconds (note + tail).
     pub duration_seconds: f32,
     /// Detected fundamental frequency in Hz from the steady-state region of
-    /// the note. Returns 0.0 for silent or out-of-range signals.
+    /// the note. Computed on the buffer described by `analysis_signal_mode`
+    /// — for stereo input that's the synthetic max(|L|,|R|) signal, not the
+    /// L+R mono mix, so anti-phase tonal content survives. Returns 0.0 for
+    /// silent or out-of-range signals.
     pub fundamental_hz: f32,
+    /// Which signal `fundamental_hz` and the spectral metrics
+    /// (`spectrum_*`, `energy_bands`, `harmonic_content`, `pitch_envelope`,
+    /// `centroid_envelope`) were derived from. For stereo input that's a
+    /// synthetic max(|L|,|R|) buffer; for mono input it's the single
+    /// channel directly.
+    pub analysis_signal_mode: AnalysisSignalMode,
+    /// Pitch detection on the left channel only. `None` for mono input.
+    /// Use together with `fundamental_right` to spot wide-stereo patches
+    /// where L and R carry different fundamentals and the pooled
+    /// `fundamental_hz` is misleading.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fundamental_left: Option<f32>,
+    /// Pitch detection on the right channel only. `None` for mono input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fundamental_right: Option<f32>,
     /// Concert-pitch frequency (Hz) of `note_played`. Use as a reference for
     /// `fundamental_hz` to spot detuning, octave errors, and pitch drift.
     pub expected_fundamental_hz: f32,

@@ -21,6 +21,7 @@ use synth_core::MidiNote;
 
 use pertylizer::audio::preview::RenderedNote;
 use pertylizer::mcp_bridge::analyze_rendered_buffer;
+use synth_mcp::types::AnalysisSignalMode;
 
 const SAMPLE_RATE: u32 = 44_100;
 
@@ -266,5 +267,137 @@ fn fundamental_detected_for_antiphase_tonal_signal() {
         err_ratio < 0.05,
         "fundamental should be near 220 Hz (±5 %), got {f0} ({:.1} %)",
         err_ratio * 100.0
+    );
+}
+
+// -------------------------------------------------------------------------
+// Diagnostic: per-channel fundamentals + analysis_signal_mode tag. Lets the
+// caller distinguish the wide-stereo case (L and R have different
+// fundamentals) from the typical L=R / anti-phase case where the pooled
+// `fundamental_hz` is meaningful.
+// -------------------------------------------------------------------------
+
+#[test]
+fn fundamental_per_channel_distinct_tones() {
+    // Stereo signal with 220 Hz on L and 330 Hz on R. The synthetic
+    // analysis_signal (max(|L|,|R|)) blends both, so `fundamental_hz`
+    // reports a single value that picks whichever peak ends up loudest in
+    // the combined spectrum (here both channels have equal amplitude, so
+    // we don't pin a specific winner — see the assertion below). The
+    // per-channel detectors run on each channel in isolation and must
+    // recover 220 Hz and 330 Hz respectively.
+    let sr = SAMPLE_RATE;
+    let note_ms = 800u32;
+    let total_ms = 1000u32;
+    let total_frames = (f64::from(total_ms) / 1000.0 * f64::from(sr)) as usize;
+    let note_frames = (f64::from(note_ms) / 1000.0 * f64::from(sr)) as u64;
+    let samples = synth_stereo(total_frames, |i| {
+        let t = i as f32 / sr as f32;
+        let l = (TAU * 220.0 * t).sin() * 0.5;
+        let r = (TAU * 330.0 * t).sin() * 0.5;
+        (l, r)
+    });
+    let rendered = make_stereo_rendered(samples, note_frames, total_frames, sr);
+    // No `expected_note` — the wide search range catches both tones.
+    let result = analyze_rendered_buffer(&rendered, 57, 100, note_ms, None);
+
+    assert_eq!(
+        result.analysis_signal_mode,
+        AnalysisSignalMode::MaxAbsStereo,
+        "stereo input should report MaxAbsStereo"
+    );
+
+    let f_l = result.fundamental_left.expect("fundamental_left set");
+    let f_r = result.fundamental_right.expect("fundamental_right set");
+    let err_l = (f_l - 220.0).abs() / 220.0;
+    let err_r = (f_r - 330.0).abs() / 330.0;
+    assert!(
+        err_l < 0.05,
+        "fundamental_left should be ~220 Hz (±5 %), got {f_l} ({:.1} %)",
+        err_l * 100.0
+    );
+    assert!(
+        err_r < 0.05,
+        "fundamental_right should be ~330 Hz (±5 %), got {f_r} ({:.1} %)",
+        err_r * 100.0
+    );
+
+    // Documented behavior of the pooled `fundamental_hz` on this input:
+    // the per-sample max(|L|,|R|) signal flips between L and R sample-by-
+    // sample, picking whichever channel has the larger instantaneous
+    // magnitude. With equal amplitudes that biases toward the higher
+    // frequency (its peaks come more often), so the resulting spectrum
+    // is dominated by the 330 Hz peak — the observed value is ~330 Hz.
+    // This assertion nails current behavior down so regressions are
+    // visible; the per-channel asserts above are the real contract for
+    // the new fields.
+    let f0 = result.fundamental_hz;
+    let err_pooled = (f0 - 330.0).abs() / 330.0;
+    assert!(
+        err_pooled < 0.05,
+        "pooled fundamental_hz on equal-amplitude L=220/R=330 stereo \
+         currently lands ~330 Hz (R wins on max-abs); got {f0} ({:.1} %)",
+        err_pooled * 100.0
+    );
+}
+
+#[test]
+fn analysis_signal_mode_mono_for_mono_input() {
+    let total_frames = SAMPLE_RATE as usize;
+    let note_frames = (SAMPLE_RATE as f32 * 0.7) as u64;
+    let samples = synth_mono(total_frames, |i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        (TAU * 220.0 * t).sin() * 0.5
+    });
+    let rendered = make_mono_rendered(samples, note_frames, total_frames, SAMPLE_RATE);
+    let result = analyze_rendered_buffer(&rendered, 57, 100, 700, None);
+
+    assert_eq!(
+        result.analysis_signal_mode,
+        AnalysisSignalMode::Mono,
+        "mono input should tag analysis_signal_mode = Mono"
+    );
+    assert!(
+        result.fundamental_left.is_none(),
+        "mono input must not populate fundamental_left, got {:?}",
+        result.fundamental_left
+    );
+    assert!(
+        result.fundamental_right.is_none(),
+        "mono input must not populate fundamental_right, got {:?}",
+        result.fundamental_right
+    );
+}
+
+#[test]
+fn analysis_signal_mode_stereo_for_stereo_input() {
+    // Reuse the anti-phase 220 Hz signal from the Bug 5 test — any stereo
+    // input is enough to verify the tag is set and per-channel fields are
+    // populated.
+    let sr = SAMPLE_RATE;
+    let note_ms = 800u32;
+    let total_ms = 1000u32;
+    let total_frames = (f64::from(total_ms) / 1000.0 * f64::from(sr)) as usize;
+    let note_frames = (f64::from(note_ms) / 1000.0 * f64::from(sr)) as u64;
+    let samples = synth_stereo(total_frames, |i| {
+        let t = i as f32 / sr as f32;
+        let s = (TAU * 220.0 * t).sin() * 0.5;
+        (s, -s)
+    });
+    let rendered = make_stereo_rendered(samples, note_frames, total_frames, sr);
+    let result = analyze_rendered_buffer(&rendered, 57, 100, note_ms, Some(57));
+
+    assert_eq!(
+        result.analysis_signal_mode,
+        AnalysisSignalMode::MaxAbsStereo,
+        "stereo input should tag analysis_signal_mode = MaxAbsStereo"
+    );
+    assert!(
+        result.fundamental_left.is_some(),
+        "stereo input must populate fundamental_left"
+    );
+    assert!(
+        result.fundamental_right.is_some(),
+        "stereo input must populate fundamental_right"
     );
 }
