@@ -1586,19 +1586,14 @@ impl eframe::App for SynthApp {
 
                             match category {
                                 Some(ModuleCategory::Effect) => {
-                                    // Effect module - use SetEffectParameter (targets active instrument)
-                                    if let Some(effect_type) =
-                                        patch_bridge::get_effect_type_from_module(
-                                            patch_editor,
-                                            module_id,
-                                        )
-                                    {
-                                        self.handle.send(EngineCommand::SetEffectParameter {
-                                            instrument_id: Some(active_id),
-                                            effect_type,
-                                            param,
-                                        });
-                                    }
+                                    // Effect module - use SetEffectParameter (targets active instrument).
+                                    // Routing is by ModuleId so duplicate effects of the same type
+                                    // can be tuned independently.
+                                    self.handle.send(EngineCommand::SetEffectParameter {
+                                        instrument_id: Some(active_id),
+                                        module_id,
+                                        param,
+                                    });
                                 }
                                 Some(
                                     ModuleCategory::Oscillator

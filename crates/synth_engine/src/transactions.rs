@@ -513,20 +513,20 @@ impl EngineCommand {
             },
             Self::SetEffectParameter {
                 instrument_id,
-                effect_type,
+                module_id,
                 param,
             } => Self::SetEffectParameter {
                 instrument_id: *instrument_id,
-                effect_type: *effect_type,
+                module_id: *module_id,
                 param: *param,
             },
             Self::SetEffectEnabled {
                 instrument_id,
-                effect_type,
+                module_id,
                 enabled,
             } => Self::SetEffectEnabled {
                 instrument_id: *instrument_id,
-                effect_type: *effect_type,
+                module_id: *module_id,
                 enabled: *enabled,
             },
             // Instrument management commands

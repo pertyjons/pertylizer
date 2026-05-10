@@ -26,8 +26,8 @@ use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, Visualizati
 use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
 use synth_core::{
     AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue, CcNumber, Gain,
-    MidiNote, ModuleType, NormalizedValue, Param, PolyModule as PolyModuleTrait, ProcessContext,
-    SampleCount, SampleRate, Seconds, StreamInfo, Velocity,
+    MidiNote, NormalizedValue, Param, PolyModule as PolyModuleTrait, ProcessContext, SampleCount,
+    SampleRate, Seconds, StreamInfo, Velocity,
 };
 use synth_sequencer::{AutoInstrumentParam, AutomationTarget, SequencerEvent};
 
@@ -234,17 +234,17 @@ impl EngineHandle {
     ///
     /// # Arguments
     /// * `instrument_id` - Target instrument's effect chain (None for future global master bus)
-    /// * `effect_type` - The type of effect to modify
+    /// * `module_id` - The id of the effect slot to modify
     /// * `param` - The parameter to set
     pub fn set_effect_parameter(
         &mut self,
         instrument_id: Option<InstrumentId>,
-        effect_type: crate::commands::EffectType,
+        module_id: ModuleId,
         param: synth_core::Param,
     ) -> bool {
         self.send(EngineCommand::SetEffectParameter {
             instrument_id,
-            effect_type,
+            module_id,
             param,
         })
     }
@@ -490,18 +490,6 @@ impl SynthEngine {
         (engine, handle)
     }
 
-    /// Find an effect slot by its module type in a specific instrument's effect chain.
-    fn find_effect_by_type(
-        &mut self,
-        instrument_id: InstrumentId,
-        module_type: ModuleType,
-    ) -> Option<&mut EffectSlot> {
-        self.instruments
-            .iter_mut()
-            .find(|i| i.id() == instrument_id)
-            .and_then(|inst| inst.effect_chain_mut().find_effect_by_type(module_type))
-    }
-
     /// Rebuild all voices for all instruments.
     ///
     /// Each instrument uses its own voice_graph as the template.
@@ -514,7 +502,6 @@ impl SynthEngine {
     }
 
     /// Find an effect slot by its module ID in a specific instrument's effect chain.
-    #[allow(dead_code)] // Useful for targeted effect updates
     fn find_effect_by_id(
         &mut self,
         instrument_id: InstrumentId,
@@ -803,17 +790,17 @@ impl SynthEngine {
             }
             EngineCommand::SetEffectParameter {
                 instrument_id,
-                effect_type,
+                module_id,
                 param,
             } => {
-                self.handle_set_effect_param(instrument_id, effect_type, param);
+                self.handle_set_effect_param(instrument_id, module_id, param);
             }
             EngineCommand::SetEffectEnabled {
                 instrument_id,
-                effect_type,
+                module_id,
                 enabled,
             } => {
-                self.handle_set_effect_enabled(instrument_id, effect_type, enabled);
+                self.handle_set_effect_enabled(instrument_id, module_id, enabled);
             }
             EngineCommand::AddVisualizer {
                 instrument_id,
@@ -1603,14 +1590,19 @@ impl SynthEngine {
                 Box::new(self.instruments.iter_mut())
             };
 
+        // Capture the iterator's instrument_ids so we can also refresh the
+        // shared_graph snapshot after mutating bypass state. Without this,
+        // offline tooling (e.g. analyze_note) would still see the old bypass
+        // state and render with the wrong topology.
+        let mut touched: Vec<InstrumentId> = Vec::new();
         for instrument in target_instruments {
-            // Try effect chain first
-            if let Some(slot) = instrument
-                .effect_chain_mut()
-                .find_effect_by_type(module.module_type)
-            {
+            touched.push(instrument.id());
+
+            // Try effect chain first — match by ModuleId so duplicate effects
+            // of the same type can be bypassed independently.
+            if let Some(slot) = instrument.effect_chain_mut().find_effect_by_id(module) {
                 slot.state = crate::effect_chain::EnabledState::from(!bypass);
-                return;
+                continue;
             }
 
             // Also set bypass on voice graph modules (osc, filter, env, LFO)
@@ -1619,51 +1611,58 @@ impl SynthEngine {
                 voice.graph.set_bypass(module, bypass);
             }
         }
+        for inst_id in touched {
+            self.update_shared_graph(Some(inst_id));
+        }
     }
 
     fn handle_set_effect_param(
         &mut self,
         instrument_id: Option<InstrumentId>,
-        effect_type: crate::commands::EffectType,
+        module_id: ModuleId,
         param: Param,
     ) {
-        let mt = effect_type.to_module_type();
         match instrument_id {
             Some(inst_id) => {
-                if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
+                if let Some(slot) = self.find_effect_by_id(inst_id, module_id) {
                     slot.effect.set_param(param);
                     slot.state = crate::effect_chain::EnabledState::Active;
                 }
             }
             None => {
-                if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
+                if let Some(slot) = self.master_effects.find_effect_by_id(module_id) {
                     slot.effect.set_param(param);
                     slot.state = crate::effect_chain::EnabledState::Active;
                 }
             }
         }
+        // Mirror the change into shared_graph so offline tooling
+        // (e.g. analyze_note) sees the new parameter and bypass state.
+        self.update_shared_graph(instrument_id);
     }
 
     fn handle_set_effect_enabled(
         &mut self,
         instrument_id: Option<InstrumentId>,
-        effect_type: crate::commands::EffectType,
+        module_id: ModuleId,
         enabled: bool,
     ) {
-        let mt = effect_type.to_module_type();
         let state = crate::effect_chain::EnabledState::from(enabled);
         match instrument_id {
             Some(inst_id) => {
-                if let Some(slot) = self.find_effect_by_type(inst_id, mt) {
+                if let Some(slot) = self.find_effect_by_id(inst_id, module_id) {
                     slot.state = state;
                 }
             }
             None => {
-                if let Some(slot) = self.master_effects.find_effect_by_type(mt) {
+                if let Some(slot) = self.master_effects.find_effect_by_id(module_id) {
                     slot.state = state;
                 }
             }
         }
+        // Mirror the change into shared_graph so offline tooling
+        // (e.g. analyze_note) sees the new bypass state.
+        self.update_shared_graph(instrument_id);
     }
 
     fn handle_add_visualizer(
@@ -1733,6 +1732,9 @@ impl SynthEngine {
             }
         }
         self.update_shared_instruments();
+        // Mirror the new effect slot into shared_graph so offline tooling
+        // sees the latest chain composition and per-effect parameters.
+        self.update_shared_graph(instrument_id);
     }
 
     fn handle_remove_effect(&mut self, instrument_id: Option<InstrumentId>, id: ModuleId) {
@@ -1749,6 +1751,9 @@ impl SynthEngine {
             }
         }
         self.update_shared_instruments();
+        // Drop the removed effect slot from shared_graph so offline tooling
+        // does not keep rendering with a stale snapshot.
+        self.update_shared_graph(instrument_id);
     }
 
     fn handle_reorder_effect(
@@ -1776,6 +1781,9 @@ impl SynthEngine {
             }
         }
         self.update_shared_instruments();
+        // Refresh shared_graph so the effect_chain_order observed by offline
+        // tooling reflects the new slot order.
+        self.update_shared_graph(instrument_id);
     }
 
     // ========================================================================
@@ -1934,6 +1942,31 @@ impl SynthEngine {
                 );
                 snapshot.parameters = module.get_params();
                 snapshot.bypass_state = if graph.is_bypassed(id) {
+                    synth_core::BypassState::Bypassed
+                } else {
+                    synth_core::BypassState::Active
+                };
+                shared.set_module(snapshot);
+            }
+        }
+
+        // Also export effect chain slots so offline tooling (e.g. analyze_note)
+        // can reproduce the full per-instrument signal flow, not just the voice
+        // graph. Visualizers are skipped — they don't modify audio. Slot
+        // ordering in the chain is preserved by passing it explicitly through
+        // ConnectionSnapshot below.
+        let chain = instrument.effect_chain();
+        for slot in chain.slots() {
+            if let crate::effect_chain::ChainSlot::Effect(effect_slot) = slot {
+                let descriptor = effect_slot.effect.descriptor();
+                let mut snapshot = ModuleStateSnapshot::new(
+                    effect_slot.module_id,
+                    instrument_id,
+                    effect_slot.module_type,
+                    descriptor.name.to_string(),
+                );
+                snapshot.parameters = effect_slot.effect.get_params();
+                snapshot.bypass_state = if effect_slot.state.is_bypassed() {
                     synth_core::BypassState::Bypassed
                 } else {
                     synth_core::BypassState::Active
@@ -2457,7 +2490,7 @@ impl AudioProcessor for SynthEngine {
 mod tests {
     use super::*;
     use crate::voice_allocator::{AllocationMode, AllocatorConfig, VoiceAllocator};
-    use synth_core::VoiceCount;
+    use synth_core::{ModuleType, VoiceCount};
 
     /// Create a default instrument and add it to the engine via command.
     fn add_default_instrument(engine: &mut SynthEngine, handle: &mut EngineHandle) {

@@ -530,18 +530,24 @@ pub enum EngineCommand {
     /// The Param contains both the parameter type and its value.
     /// - `instrument_id: Some(id)` - Target a specific instrument's effect chain
     /// - `instrument_id: None` - (Reserved for future global master bus)
+    ///
+    /// The effect is identified by its `ModuleId` so that multiple effects
+    /// of the same type in a single chain can be targeted independently.
     SetEffectParameter {
         instrument_id: Option<InstrumentId>,
-        effect_type: EffectType,
+        module_id: ModuleId,
         param: Param,
     },
 
     /// Enable or disable an effect.
     /// - `instrument_id: Some(id)` - Target a specific instrument's effect chain
     /// - `instrument_id: None` - (Reserved for future global master bus)
+    ///
+    /// The effect is identified by its `ModuleId` so that multiple effects
+    /// of the same type in a single chain can be targeted independently.
     SetEffectEnabled {
         instrument_id: Option<InstrumentId>,
-        effect_type: EffectType,
+        module_id: ModuleId,
         enabled: bool,
     },
 
@@ -1123,22 +1129,22 @@ impl std::fmt::Debug for EngineCommand {
                 .finish(),
             Self::SetEffectParameter {
                 instrument_id,
-                effect_type,
+                module_id,
                 param,
             } => f
                 .debug_struct("SetEffectParameter")
                 .field("instrument_id", instrument_id)
-                .field("effect_type", effect_type)
+                .field("module_id", module_id)
                 .field("param", param)
                 .finish(),
             Self::SetEffectEnabled {
                 instrument_id,
-                effect_type,
+                module_id,
                 enabled,
             } => f
                 .debug_struct("SetEffectEnabled")
                 .field("instrument_id", instrument_id)
-                .field("effect_type", effect_type)
+                .field("module_id", module_id)
                 .field("enabled", enabled)
                 .finish(),
             Self::ArmRecord {

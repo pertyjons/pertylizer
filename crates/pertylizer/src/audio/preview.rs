@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, MidiNote, Velocity};
-use synth_engine::commands::{EffectType, PortId};
+use synth_engine::commands::{InstrumentParam, PortId};
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::{EngineCommand, SynthEngine};
 
@@ -38,6 +38,14 @@ pub struct RenderedNote {
     /// `octave_offset` was applied. The caller may want to know this for
     /// reporting, e.g. the `analyze_note` tool returns it as `note_played`.
     pub effective_note: MidiNote,
+    /// Frame index at which note-off was sent. Useful for downstream analysis
+    /// that wants to anchor "release tail" relative to the actual note-off
+    /// event rather than the absolute end of the render.
+    pub note_off_frame: u64,
+    /// Non-fatal warnings emitted during the offline render: modules that
+    /// could not be instantiated, connections that failed to resolve, etc.
+    /// Empty when the render was clean.
+    pub warnings: Vec<String>,
 }
 
 /// Render a note on the given instrument into an in-memory f32 buffer.
@@ -86,6 +94,26 @@ pub fn render_note_to_buffer(
         ));
     }
 
+    // Snapshot the instrument's "soft" state (volume, pan, solo, mute, MIDI
+    // channel) and the effect-chain processing order. Without these, offline
+    // renders ignore the live mix state and the effect chain falls back to
+    // insertion order rather than the chain's actual slot order.
+    let inst_snapshot = engine_state
+        .instrument_snapshots
+        .read()
+        .iter()
+        .find(|s| s.id == instrument_id)
+        .cloned();
+
+    // Effect-chain order: ordered list of effect ModuleIds. Used to add
+    // effects in the right processing order. Empty when no snapshot.
+    let effect_chain_order: Vec<synth_engine::commands::ModuleId> = inst_snapshot
+        .as_ref()
+        .map(|s| s.effect_chain_order.clone())
+        .unwrap_or_default();
+
+    let mut warnings: Vec<String> = Vec::new();
+
     // Create a fresh offline engine
     let (mut engine, mut handle) = SynthEngine::new();
 
@@ -96,13 +124,84 @@ pub fn render_note_to_buffer(
         .map_err(|e| McpBridgeError::Other(format!("Failed to create preview instrument: {e}")))?;
     tmp_session.reset_counters_for_instrument(InstrumentId::FIRST);
 
-    // Load modules into the offline engine
-    for module_snap in &modules {
-        // Skip visualizer modules (they need GUI)
-        if module_snap.module_type.is_visualizer() {
-            continue;
+    // Helper to apply parameters + bypass for a given module snapshot.
+    let apply_module_state = |handle: &mut synth_engine::EngineHandle,
+                              module_snap: &synth_engine::ModuleStateSnapshot,
+                              descriptor: &synth_core::ModuleDescriptor,
+                              warnings: &mut Vec<String>| {
+        let module_id = module_snap.id;
+        let is_effect = module_id.module_type.is_effect();
+        for desc_param in &descriptor.parameters {
+            if let Some(ep) = module_snap
+                .parameters
+                .iter()
+                .find(|p| p.same_kind(&desc_param.id))
+            {
+                let param = desc_param.id.with_f32(ep.as_f32());
+                let sent = if is_effect {
+                    handle.send_blocking(EngineCommand::SetEffectParameter {
+                        instrument_id: Some(InstrumentId::FIRST),
+                        module_id,
+                        param,
+                    })
+                } else {
+                    handle.send_blocking(EngineCommand::SetModuleParameter {
+                        instrument_id: Some(InstrumentId::FIRST),
+                        module_id,
+                        param,
+                    })
+                };
+                if !sent {
+                    warnings.push(format!(
+                        "preview: failed to enqueue parameter for module {module_id}"
+                    ));
+                }
+            }
         }
 
+        // Mirror bypass state from the live snapshot. Effects use
+        // SetEffectEnabled (which inverts: enabled = !bypassed); voice-graph
+        // modules use SetBypass directly.
+        let is_bypassed = matches!(module_snap.bypass_state, synth_core::BypassState::Bypassed);
+        if is_bypassed {
+            if is_effect {
+                handle.send_blocking(EngineCommand::SetEffectEnabled {
+                    instrument_id: Some(InstrumentId::FIRST),
+                    module_id,
+                    enabled: false,
+                });
+            } else {
+                handle.send_blocking(EngineCommand::SetBypass {
+                    instrument_id: Some(InstrumentId::FIRST),
+                    module: module_id,
+                    bypass: true,
+                });
+            }
+        }
+    };
+
+    // Split modules into voice-graph and effect-chain buckets so we can
+    // process them in the right order. add_module_with_id dispatches on
+    // module_type.is_effect() under the hood, but we need effect-chain
+    // processing order (from the live chain) to be preserved.
+    let mut voice_modules: Vec<&synth_engine::ModuleStateSnapshot> = Vec::new();
+    let mut effect_modules: std::collections::HashMap<
+        synth_engine::commands::ModuleId,
+        &synth_engine::ModuleStateSnapshot,
+    > = std::collections::HashMap::new();
+    for m in &modules {
+        if m.module_type.is_visualizer() {
+            continue;
+        }
+        if m.module_type.is_effect() {
+            effect_modules.insert(m.id, m);
+        } else {
+            voice_modules.push(m);
+        }
+    }
+
+    // Load voice-graph modules first.
+    for module_snap in &voice_modules {
         let module_id = module_snap.id;
         let descriptor = match tmp_session.add_module_with_id(
             InstrumentId::FIRST,
@@ -111,39 +210,57 @@ pub fn render_note_to_buffer(
         ) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("Preview: failed to add module {module_id}: {e}");
+                warnings.push(format!("preview: failed to add module {module_id}: {e}"));
                 continue;
             }
         };
-
-        // Apply parameters from the live engine snapshot
-        let effect_type = EffectType::from_module_type(module_id.module_type);
-        for desc_param in &descriptor.parameters {
-            // Find matching parameter in the snapshot by kind
-            if let Some(ep) = module_snap
-                .parameters
-                .iter()
-                .find(|p| p.same_kind(&desc_param.id))
-            {
-                let param = desc_param.id.with_f32(ep.as_f32());
-                if let Some(et) = effect_type {
-                    handle.send_blocking(EngineCommand::SetEffectParameter {
-                        instrument_id: Some(InstrumentId::FIRST),
-                        effect_type: et,
-                        param,
-                    });
-                } else {
-                    handle.send_blocking(EngineCommand::SetModuleParameter {
-                        instrument_id: Some(InstrumentId::FIRST),
-                        module_id,
-                        param,
-                    });
-                }
-            }
-        }
+        apply_module_state(&mut handle, module_snap, &descriptor, &mut warnings);
     }
 
-    // Load connections
+    // Load effects in chain order so the offline chain mirrors the live one.
+    // Any effects that are present in the snapshot but not in the chain order
+    // (shouldn't happen) are added afterwards in arbitrary order.
+    let mut handled: std::collections::HashSet<synth_engine::commands::ModuleId> =
+        std::collections::HashSet::new();
+    for module_id in &effect_chain_order {
+        if let Some(module_snap) = effect_modules.get(module_id) {
+            handled.insert(*module_id);
+            let descriptor = match tmp_session.add_module_with_id(
+                InstrumentId::FIRST,
+                *module_id,
+                module_id.module_type,
+            ) {
+                Ok(d) => d,
+                Err(e) => {
+                    warnings.push(format!("preview: failed to add effect {module_id}: {e}"));
+                    continue;
+                }
+            };
+            apply_module_state(&mut handle, module_snap, &descriptor, &mut warnings);
+        }
+    }
+    for (module_id, module_snap) in &effect_modules {
+        if handled.contains(module_id) {
+            continue;
+        }
+        warnings.push(format!(
+            "preview: effect {module_id} present but missing from chain order — appending"
+        ));
+        let descriptor = match tmp_session.add_module_with_id(
+            InstrumentId::FIRST,
+            *module_id,
+            module_id.module_type,
+        ) {
+            Ok(d) => d,
+            Err(e) => {
+                warnings.push(format!("preview: failed to add effect {module_id}: {e}"));
+                continue;
+            }
+        };
+        apply_module_state(&mut handle, module_snap, &descriptor, &mut warnings);
+    }
+
+    // Load connections (voice graph internal — effects are wired implicitly).
     for conn in &connections {
         // Skip connections involving visualizer modules
         if conn.from_module.module_type.is_visualizer()
@@ -151,11 +268,17 @@ pub fn render_note_to_buffer(
         {
             continue;
         }
-        handle.send_blocking(EngineCommand::Connect {
+        let sent = handle.send_blocking(EngineCommand::Connect {
             instrument_id: Some(InstrumentId::FIRST),
             from: PortId::new(conn.from_module, conn.from_port),
             to: PortId::new(conn.to_module, conn.to_port),
         });
+        if !sent {
+            warnings.push(format!(
+                "preview: failed to enqueue connection {} → {}",
+                conn.from_module, conn.to_module
+            ));
+        }
     }
 
     // Enable the instrument
@@ -167,6 +290,29 @@ pub fn render_note_to_buffer(
         instrument_id: InstrumentId::FIRST,
         channel: MidiChannel::CH1,
     });
+
+    // Mirror live instrument volume/pan/solo. Mute is intentionally NOT
+    // mirrored — a muted instrument would render silence, which makes the
+    // analysis useless. We keep the offline instrument enabled so the user
+    // gets a real measurement of the patch even when it is muted in the live
+    // mix; analysis tools that need the muted state can read it from the
+    // RenderedNote metadata if we add it later.
+    if let Some(snap) = inst_snapshot.as_ref() {
+        handle.send_blocking(EngineCommand::SetInstrumentParameter {
+            instrument_id: InstrumentId::FIRST,
+            param: InstrumentParam::Volume(snap.volume),
+        });
+        handle.send_blocking(EngineCommand::SetInstrumentParameter {
+            instrument_id: InstrumentId::FIRST,
+            param: InstrumentParam::Pan(snap.pan),
+        });
+        // Solo from a single instrument is meaningless in an offline render
+        // (only one instrument exists), but mirror it for completeness.
+        handle.send_blocking(EngineCommand::SetInstrumentParameter {
+            instrument_id: InstrumentId::FIRST,
+            param: InstrumentParam::Solo(snap.solo),
+        });
+    }
 
     // Set up stream
     let hw_sample_rate = HwSampleRate(PREVIEW_SAMPLE_RATE);
@@ -218,10 +364,24 @@ pub fn render_note_to_buffer(
 
     let mut frames_written: u64 = 0;
     let mut note_off_sent = false;
+    let mut note_off_frame: u64 = note_frames;
 
     while frames_written < total_frames {
         let remaining = (total_frames - frames_written) as usize;
-        let this_buffer = remaining.min(BUFFER_SIZE);
+        // Bound the block size to never cross the note-off boundary in a
+        // single process() call. Without this, NoteOff is sent *after* the
+        // block that crossed the boundary has already been rendered with the
+        // note still held, plus the command sits in the queue until the
+        // next process() — adding up to two block-lengths of false sustain.
+        // By trimming the block at exactly note_frames, the NoteOff command
+        // is queued before the engine drains commands for the next block,
+        // so the note releases at the precise sample boundary.
+        let block_cap = if !note_off_sent && frames_written < note_frames {
+            (note_frames - frames_written) as usize
+        } else {
+            usize::MAX
+        };
+        let this_buffer = remaining.min(BUFFER_SIZE).min(block_cap);
         let sample_count = this_buffer * channels;
 
         block.fill(0.0);
@@ -237,19 +397,26 @@ pub fn render_note_to_buffer(
 
         engine.process(&mut block[..sample_count], &context);
 
-        // Send note off after the specified duration
-        if !note_off_sent && frames_written >= note_frames {
-            handle.send_blocking(EngineCommand::NoteOff {
-                note: effective_note,
-                channel: MidiChannel::CH1,
-            });
-            note_off_sent = true;
-        }
-
         // Append this block's samples to the output buffer.
         samples.extend_from_slice(&block[..sample_count]);
 
         frames_written += this_buffer as u64;
+
+        // Send note-off the moment we've rendered up to (and not past) the
+        // note-off boundary. Sending here — after the block but before the
+        // next iteration — ensures the next process() call drains the
+        // NoteOff command before producing any post-note-off samples.
+        if !note_off_sent && frames_written >= note_frames {
+            let sent = handle.send_blocking(EngineCommand::NoteOff {
+                note: effective_note,
+                channel: MidiChannel::CH1,
+            });
+            if !sent {
+                warnings.push("preview: failed to enqueue NoteOff".to_string());
+            }
+            note_off_sent = true;
+            note_off_frame = frames_written;
+        }
     }
 
     Ok(RenderedNote {
@@ -258,6 +425,8 @@ pub fn render_note_to_buffer(
         duration_seconds: total_seconds,
         channels: channels as u16,
         effective_note,
+        note_off_frame,
+        warnings,
     })
 }
 

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use synth_core::{AudioCallbackContext, AudioProcessor, audio::SampleRate as HwSampleRate};
-use synth_engine::commands::{EffectType, PortId};
+use synth_engine::commands::PortId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::{EngineCommand, SynthEngine};
 
@@ -496,12 +496,10 @@ fn load_patch_modules(
             };
 
         // Apply parameters
-        let effect_type = EffectType::from_module_type(module_id.module_type);
         apply_module_parameters(
             module_id,
             &descriptor,
             &module_state.parameters,
-            effect_type,
             handle,
             instrument_id,
         );
@@ -555,15 +553,17 @@ fn load_patch_modules(
 
 /// Apply parameters to a module without GUI types.
 ///
-/// Simplified version of `patch_bridge::apply_module_parameters`.
+/// Simplified version of `patch_bridge::apply_module_parameters`. Routes
+/// effect-chain modules through `SetEffectParameter` and voice-graph modules
+/// through `SetModuleParameter` based on the module type.
 fn apply_module_parameters(
     module_id: synth_engine::ModuleId,
     descriptor: &synth_core::ModuleDescriptor,
     parameters: &BTreeMap<String, ParamValue>,
-    effect_type: Option<EffectType>,
     handle: &mut synth_engine::EngineHandle,
     instrument_id: InstrumentId,
 ) {
+    let is_effect = module_id.module_type.is_effect();
     for (param_name, value) in parameters {
         // Match on type_id first (stable JSON key), fall back to name for legacy files.
         let param_desc = descriptor
@@ -580,10 +580,10 @@ fn apply_module_parameters(
         if let Some(param_desc) = param_desc {
             let param = value.to_param(param_desc);
 
-            if let Some(et) = effect_type {
+            if is_effect {
                 handle.send_blocking(EngineCommand::SetEffectParameter {
                     instrument_id: Some(instrument_id),
-                    effect_type: et,
+                    module_id,
                     param,
                 });
             } else {

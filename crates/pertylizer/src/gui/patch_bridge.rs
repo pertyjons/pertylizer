@@ -11,7 +11,7 @@ use std::sync::Arc;
 use eframe::egui::Pos2;
 
 use crate::gui::keyboard::PianoKeyboard;
-use crate::gui::patch_editor::{EffectType, PatchEditor};
+use crate::gui::patch_editor::PatchEditor;
 use crate::patch::{
     Author, ConnectionState, ExposedPortState, GroupId, GroupTemplate, ModuleState, ParamValue,
     Patch, Position,
@@ -233,14 +233,10 @@ fn load_module(
 
     patch_editor.add_module_at(module_id, descriptor.clone(), position);
 
-    // Determine effect type for parameter routing
-    let effect_type = EffectType::from_module_type(module_id.module_type);
-
     apply_module_parameters(
         module_id,
         &descriptor,
         &module_state.parameters,
-        effect_type,
         patch_editor,
         handle,
         instrument_id,
@@ -288,7 +284,6 @@ fn load_signal_monitor(
         module_id,
         &descriptor,
         &module_state.parameters,
-        None,
         patch_editor,
         handle,
         instrument_id,
@@ -333,15 +328,19 @@ fn load_visualizer(
 }
 
 /// Apply parameters to a module during patch loading.
+///
+/// Routes effect-chain modules through `SetEffectParameter` (so duplicate
+/// effects of the same type can be targeted by `ModuleId`) and voice-graph
+/// modules through `SetModuleParameter`.
 pub fn apply_module_parameters(
     module_id: ModuleId,
     descriptor: &ModuleDescriptor,
     parameters: &BTreeMap<String, ParamValue>,
-    effect_type: Option<EffectType>,
     patch_editor: &mut PatchEditor,
     handle: &mut EngineHandle,
     instrument_id: InstrumentId,
 ) {
+    let is_effect = module_id.module_type.is_effect();
     for (param_name, value) in parameters {
         // Find the parameter descriptor by type_id (stable JSON key),
         // falling back to name for legacy files.
@@ -366,11 +365,11 @@ pub fn apply_module_parameters(
 
             let param = value.to_param(param_desc);
 
-            if let Some(et) = effect_type {
+            if is_effect {
                 // Effects are per-instrument - send to this instrument's effect chain
                 handle.send(EngineCommand::SetEffectParameter {
                     instrument_id: Some(instrument_id),
-                    effect_type: et,
+                    module_id,
                     param,
                 });
             } else {
@@ -503,14 +502,6 @@ pub fn create_patch_from_editor(
     patch
 }
 
-/// Get the EffectType for a module from its ModuleId.
-pub fn get_effect_type_from_module(
-    _patch_editor: &PatchEditor,
-    module_id: ModuleId,
-) -> Option<EffectType> {
-    EffectType::from_module_type(module_id.module_type)
-}
-
 /// Insert a group template into an existing instrument, remapping all IDs.
 ///
 /// `drop_pos` is the top-left origin (world coords) where the template's
@@ -614,12 +605,10 @@ pub fn insert_group_template(
             }
         };
 
-        let effect_type = EffectType::from_module_type(module_type);
         apply_module_parameters(
             module_id,
             &descriptor,
             &module_state.parameters,
-            effect_type,
             patch_editor,
             handle,
             instrument_id,
@@ -798,12 +787,10 @@ pub fn paste_clipboard_modules(
             }
         };
 
-        let effect_type = EffectType::from_module_type(module_type);
         apply_module_parameters(
             module_id,
             &descriptor,
             &module_state.parameters,
-            effect_type,
             patch_editor,
             handle,
             instrument_id,

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use synth_core::{BipolarValue, Gain, ModuleCategory, ModuleDescriptor, ModuleType, PortName};
-use synth_engine::commands::{EffectType, PortId};
+use synth_engine::commands::PortId;
 use synth_engine::instrument::{Instrument, InstrumentId, MidiChannel};
 use synth_engine::shared_state::InstrumentSnapshot;
 use synth_engine::state::EngineState;
@@ -592,10 +592,10 @@ impl SynthSession {
 
         let param = value.to_param(param_desc);
 
-        let cmd = if let Some(effect_type) = EffectType::from_module_type(module_id.module_type) {
+        let cmd = if module_id.module_type.is_effect() {
             EngineCommand::SetEffectParameter {
                 instrument_id: Some(instrument_id),
-                effect_type,
+                module_id,
                 param,
             }
         } else {
