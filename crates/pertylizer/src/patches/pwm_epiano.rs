@@ -46,7 +46,7 @@ Velocity controls brightness — play soft for mellow, hard for punchy.
         ModuleBuilder::new(1, ModuleType::WavetableOsc)
             .position(50.0, 50.0)
             .param_choice("table", "pwm")
-            .param_f("position", 0.15)
+            .param_f("position", 0.0)
             .param_f("level", 0.8)
             .build(),
     );

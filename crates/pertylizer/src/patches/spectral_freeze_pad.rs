@@ -61,7 +61,7 @@ Increase Spectral Blur time to max for extreme smearing.
             .param_f("brightness", 0.8)
             .param_f("stretch", 0.1)
             .param_f("randomize", 0.2)
-            .param_f("level", 0.75)
+            .param_f("level", 1.0)
             .build(),
     );
 
@@ -92,7 +92,7 @@ Increase Spectral Blur time to max for extreme smearing.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(850.0, 50.0)
-            .param_f("level", 0.6)
+            .param_f("level", 2.0)
             .build(),
     );
 
@@ -100,7 +100,7 @@ Increase Spectral Blur time to max for extreme smearing.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1250.0, 50.0)
-            .param_f("master", 0.7)
+            .param_f("master", 1.0)
             .build(),
     );
 

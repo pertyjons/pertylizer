@@ -292,7 +292,7 @@ impl Describable for Oscillator {
                     "Frequency",
                 )
                 .description("Base frequency")
-                .range(20.0, 20000.0)
+                .range(1.0, 20000.0)
                 .default(440.0)
                 .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::FrequencySlider)
@@ -551,7 +551,7 @@ impl PolyModule for Oscillator {
             match osc_param {
                 OscillatorParam::Waveform(w) => self.waveform = w,
                 OscillatorParam::Frequency(f) => {
-                    self.frequency = Hertz::new(f.as_f32().clamp(20.0, 20000.0));
+                    self.frequency = Hertz::new(f.as_f32().clamp(1.0, 20000.0));
                 }
                 OscillatorParam::Detune(d) => self.detune = d.clamp_detune(),
                 OscillatorParam::Octave(o) => self.octave = o,

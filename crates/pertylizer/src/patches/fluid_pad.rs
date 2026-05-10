@@ -98,7 +98,7 @@ Increase drive for warmer, more saturated character.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(850.0, 50.0)
-            .param_f("level", 0.65)
+            .param_f("level", 1.5)
             .build(),
     );
 
@@ -130,7 +130,7 @@ Increase drive for warmer, more saturated character.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1200.0, 50.0)
-            .param_f("master", 0.7)
+            .param_f("master", 0.9)
             .build(),
     );
 

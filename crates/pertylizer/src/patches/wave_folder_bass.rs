@@ -45,7 +45,7 @@ Low values = warm, high values = aggressive and metallic.
             .position(50.0, 50.0)
             .algorithm("wave_folder")
             .param_f("param_a", 0.4) // Fold amount
-            .param_f("param_b", 0.3) // Offset
+            .param_f("param_b", 0.15) // Offset (kept low to keep DC leakage under analyze_note's 0.01 threshold)
             .param_f("param_c", 0.5)
             .param_f("level", 0.9)
             .build(),

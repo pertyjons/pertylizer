@@ -84,8 +84,8 @@ give each note maximum impact and punch.
         ModuleBuilder::new(1, ModuleType::Envelope)
             .position(850.0, 350.0)
             .param_f("attack", 0.001)
-            .param_f("decay", 0.15)
-            .param_f("sustain", 0.3)
+            .param_f("decay", 0.1)
+            .param_f("sustain", 0.1)
             .param_f("release", 0.1)
             .param_f("atk_curve", -1.0) // Maximum instant punch
             .param_f("dec_curve", -0.8) // Fast initial drop

@@ -34,10 +34,10 @@ a sampled/synthesized attack transient blended with a sustained waveform,
 giving each note a natural, evolving character.
 
 ENVELOPE DESIGN:
-- Medium attack (10ms) for smooth onset
-- Long decay (800ms) to sustain for pad-like sustain
-- High sustain (0.7) for held notes
-- Long release (1.5s) for smooth fade
+- Fast attack (10ms) for snappy onset
+- Short decay (200ms) to silence for percussive pluck
+- Zero sustain — held notes still decay to silence
+- Short release (400ms) for clean tail
 
 TRY: Adjust Attack Type to hear different transients (0=click, 0.33=noise,
 0.66=pluck, 1.0=hammer). Lower X-Fade Time for more percussive character.
@@ -77,14 +77,14 @@ TRY: Adjust Attack Type to hear different transients (0=click, 0.33=noise,
             .build(),
     );
 
-    // Amp Envelope (env-1)
+    // Amp Envelope - percussive pluck (env-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
             .position(1250.0, 350.0)
             .param_f("attack", 0.01)
-            .param_f("decay", 0.8)
-            .param_f("sustain", 0.7)
-            .param_f("release", 1.5)
+            .param_f("decay", 0.2)
+            .param_f("sustain", 0.0)
+            .param_f("release", 0.4)
             .build(),
     );
 

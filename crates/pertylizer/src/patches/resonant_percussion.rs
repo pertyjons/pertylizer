@@ -3,7 +3,7 @@
 use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
-/// Resonant Percussion — MechanicalNoise excites ModalResonator with ReverseGateReverb drama.
+/// Resonant Percussion — Noise + MechanicalNoise excite ModalResonator with ReverseGateReverb drama.
 pub fn patch_resonant_percussion() -> Patch {
     let mut patch = Patch::new("Resonant Percussion");
     patch.author = Some(Author::from("Pertylizer"));
@@ -15,9 +15,10 @@ pub fn patch_resonant_percussion() -> Patch {
     patch.notes = Some(
         r#"
 SIGNAL FLOW:
-A Mechanical Noise module generates short hammer-strike bursts — brief,
-broadband noise impulses that simulate physical excitation. This feeds
-through a fast percussive envelope into the amplifier.
+White Noise (envelope-shaped) + Mechanical Noise hammer transient → Mixer →
+Amplifier. The noise provides sustained broadband excitation; the mechanical
+hammer adds an attack click. Together they drive the modal resonator with
+enough energy to ring out audibly.
 
 EFFECTS CHAIN (auto-routed):
 1. EQ — shapes the excitation spectrum, boosting mids for body
@@ -25,6 +26,10 @@ EFFECTS CHAIN (auto-routed):
    pitched metallic/wooden percussion tones from the noise
 3. Reverse/Gate Reverb — dramatic reverse reverb swells that build
    up before each hit, creating an otherworldly effect
+
+NOISE:
+- Type = White (broadband excitation)
+- Level = 0.6 (sustains the resonator's ring)
 
 MECHANICAL NOISE:
 - Type = Hammer (short broadband impact)
@@ -53,15 +58,34 @@ Switch ReverseGateReverb mode to Gate for rhythmic gating.
 
     patch.settings.octave_offset = -1;
 
-    // Mechanical Noise - hammer strikes (mec-1)
+    // White Noise - sustained broadband excitation (nse-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Noise)
+            .position(50.0, 50.0)
+            .param_choice("type", "white")
+            .param_f("level", 0.6)
+            .build(),
+    );
+
+    // Mechanical Noise - hammer transient click (mec-1)
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::MechanicalNoise)
-            .position(50.0, 50.0)
+            .position(50.0, 250.0)
             .param_choice("type", "hammer")
             .param_f("duration", 15.0)
             .param_f("cutoff", 5000.0)
             .param_f("vel sens", 0.8)
             .param_f("level", 0.7)
+            .build(),
+    );
+
+    // Mixer - combine noise sources (mix-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Mixer)
+            .position(250.0, 50.0)
+            .param_f("master", 0.9)
+            .param_f("input_1", 0.8)
+            .param_f("input_2", 0.7)
             .build(),
     );
 
@@ -137,14 +161,20 @@ Switch ReverseGateReverb mode to Gate for rhythmic gating.
     );
 
     // === Connections ===
-    // MechanicalNoise → Amp → Output
-    patch.add_connection("mec-1", "out", "amp-1", "in");
+    // Noise + MechanicalNoise → Mixer → Amp → Output
+    patch.add_connection("nse-1", "out", "mix-1", "in1");
+    patch.add_connection("mec-1", "out", "mix-1", "in2");
+    patch.add_connection("mix-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
 
     // Groups
-    patch.add_group("Exciter", Some("#D96A4A"), &["mec-1", "env-1"]);
+    patch.add_group(
+        "Exciter",
+        Some("#D96A4A"),
+        &["nse-1", "mec-1", "mix-1", "env-1"],
+    );
     patch.add_group("Output", Some("#4A9D8F"), &["amp-1", "out-1"]);
     patch.add_group("Effects", Some("#8B6BAE"), &["equ-1", "mdr-1", "rgr-1"]);
 

@@ -1,33 +1,35 @@
-//! Vocal Pad - Ethereal vowel pad using formant wavetable scanning.
+//! Vocal Pad - Ethereal vowel pad using a warm wavetable shaped by a FormantFilter.
 
 use crate::patch::{Author, ModuleBuilder, Patch};
 use synth_core::ModuleType;
 
-/// Vocal Pad - Lush choir-like pad with formant wavetable morphing.
+/// Vocal Pad - Lush choir-like pad with a warm source shaped by a FormantFilter.
 pub fn patch_vocal_pad() -> Patch {
     let mut patch = Patch::new("Vocal Pad");
     patch.author = Some(Author::from("Pertylizer"));
     patch.description = Some(
-        "Ethereal vowel pad using the Formant wavetable with slow LFO position scanning and FormantFilter for vowel shaping."
+        "Ethereal vowel pad using the Warm wavetable as a harmonically-rich source, shaped by a FormantFilter with slow LFO vowel sweeping."
             .to_string(),
     );
     patch.notes = Some(
         r#"
 SIGNAL FLOW:
-Wavetable Osc (Formant bank) -> Filter (Fluid) -> Amplifier -> Reverb -> Output
+Wavetable Osc (Warm bank) -> Filter (Fluid) -> FormantFilter -> Amplifier -> Reverb -> Output
 
-The Formant wavetable contains vowel shapes (a/e/i/o/u) that morph
-smoothly as the position scans through them. A slow LFO sweeps the
-position, creating an evolving choir-like texture.
+The Warm wavetable provides a rich harmonic source with a strong
+fundamental. The FormantFilter shapes it into vowel-like resonances
+(a/e/i/o/u), with a slow LFO sweeping the vowel position to create
+an evolving choir-like texture.
 
 The Fluid filter adds warm Oberheim-style character with gentle resonance.
 
 MODULATION:
-- LFO 1 -> Wavetable Position CV (slow vowel sweep)
+- LFO 1 -> FormantFilter Vowel CV (slow vowel sweep)
+- LFO 1 -> Wavetable Position CV (subtle timbral motion)
 - Env 1 -> Amplifier (slow pad envelope)
 
 TRY: Change LFO rate for faster/slower vowel morphing.
-Increase filter resonance for more vocal character.
+Increase FormantFilter resonance for more vocal character.
 "#
         .to_string(),
     );
@@ -39,11 +41,14 @@ Increase filter resonance for more vocal character.
         "evolving".into(),
     ];
 
-    // Wavetable Oscillator - Formant bank (wtb-1)
+    // Wavetable Oscillator - Warm bank (wtb-1)
+    // Note: the "Formant" wavetable bank bakes in formant emphasis around 800/1200 Hz
+    // relative to a 130 Hz reference, which suppresses the fundamental at C5 and above.
+    // Use the "Warm" bank as the source and let the FormantFilter shape the vowel character.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::WavetableOsc)
             .position(50.0, 50.0)
-            .param_choice("table", "formant")
+            .param_choice("table", "warm")
             .param_f("position", 0.2)
             .param_f("level", 0.8)
             .build(),
@@ -97,7 +102,7 @@ Increase filter resonance for more vocal character.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(800.0, 50.0)
-            .param_f("level", 0.65)
+            .param_f("level", 1.2)
             .build(),
     );
 

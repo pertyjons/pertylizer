@@ -41,14 +41,31 @@ to control speed, or set it negative for a falling effect.
     ];
 
     // Math Oscillator - Shepard tone (mth-1)
+    //
+    // The Shepard algorithm's internal `t` is the oscillator's phase, which
+    // resets every cycle — so without an external modulator on `param_a`
+    // (the Gaussian window center), the spectrum never sweeps. We park
+    // `param_a` at 0.0 here and let the LFO sawtooth sweep it 0→~1 over
+    // several seconds, producing the continuous rising illusion.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::MathOscillator)
             .position(50.0, 50.0)
             .algorithm("shepard")
-            .param_f("param_a", 0.5) // Center frequency
-            .param_f("param_b", 0.7) // Rising speed
+            .param_f("param_a", 0.0) // Window center — driven by LFO sawtooth
+            .param_f("param_b", 0.7) // Rising speed (legacy; algorithm-internal)
             .param_f("param_c", 0.5)
-            .param_f("level", 0.7)
+            .param_f("level", 1.0)
+            .build(),
+    );
+
+    // LFO - Slow rising sawtooth that sweeps the Shepard window center
+    // upward across the octave register, driving the perpetual rise. (lfo-1)
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Lfo)
+            .position(50.0, 350.0)
+            .waveform("sawtooth")
+            .param_f("rate", 0.25) // 4-second sweep cycle
+            .param_f("depth", 1.0)
             .build(),
     );
 
@@ -102,6 +119,8 @@ to control speed, or set it negative for a falling effect.
     patch.add_connection("mth-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
+    // LFO sweeps the Shepard window center → continuous rising spectrum.
+    patch.add_connection("lfo-1", "out", "mth-1", "param_a");
     // Voice output: amp -> stereo output
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");

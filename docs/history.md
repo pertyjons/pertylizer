@@ -1,5 +1,24 @@
 # Version History
 
+## [0.272.0] - 2026-05-10
+### analyze_note pitch confidence + patch tuning sweep + analysis bug fixes
+
+- **Pitch detection: prominence-based confidence.** New public `fundamental_frequency_with_confidence` (and internal `fundamental_in_mags_with_confidence`) in `audio/analysis.rs` returns `(freq, confidence ∈ 0.0..=1.0)`. Confidence is computed from the prominence of the loudest in-range bin over the next-loudest bin at least 3 bins away (so parabolic-interpolation neighbours of the same peak don't count). Tonal signals score near 1.0; noise/multi-peak spectra (e.g. Karplus delay-lines with strong octave partials) drop toward 0.0. Old `fundamental_frequency` keeps its single-return signature for back-compat.
+- **Doc fix on `fundamental_left/right_confidence`.** The fields were documented as `None` "when the channel produced no detectable peak", but the stereo branch always returns `Some(_)` (the analyser returns `0.0` confidence rather than no value). Doc now correctly reads "None for mono input; 0.0 means no reliable detectable peak."
+- **Bug fix: `centroid_envelope` windows overlapped.** The slice was `[start..start+fft_size]` but should have been `[start..start+raw_n]`. At 44.1 kHz a 50 ms requested window was actually pulling in ~93 ms of audio per slot, smearing centroid envelopes. `MagnitudeWorkspace` already zero-pads up to `fft_size` internally, so feeding it exactly `raw_n` samples is the correct contract.
+- **Oscillator frequency range lowered to 1 Hz** (was 20 Hz). Allows sub-audio LFO-style use of the regular oscillator. Both the descriptor range and the runtime clamp updated.
+- **Patch tuning sweep — driven by `analyze_note` feedback.** Many built-in patches were under the analyser's `low_output` threshold or had detectable DC offset; corrected at the source rather than by post-gain.
+  - Master/amp gain raised on patches that measured too quiet: `auto_wah_bass`, `bytebeat_glitch`, `chaos_drone`, `ethereal_shimmer_pad`, `fluid_pad`, `noise_sweep`, `ring_mod_drone`, `spectral_freeze_pad`, `stereo_unison_pad`.
+  - **DC-leak fixes**: `vintage_lead` pulse_width 0.3 → 0.5 so the LFO PWM sweep stays centred (asymmetric pulse + PWM was producing measurable DC at the bus); `wave_folder_bass` `param_b` offset 0.3 → 0.15 to keep the wave-folder's mean output under the 0.01 DC threshold.
+  - **`vocal_pad` reworked**: the Formant wavetable bank bakes in formant emphasis around 800/1200 Hz relative to a 130 Hz reference, which suppresses the fundamental at C5 and above. Source switched to the Warm bank, vowel character now produced by the FormantFilter (which is also where the LFO sweep lives). Amp 0.65 → 1.2.
+  - **`resonant_percussion` rebuilt**: the bare MechanicalNoise hammer didn't supply enough sustained energy for the modal resonator to ring out audibly. Added a White Noise source + 2-input Mixer alongside the hammer transient — the resonator now gets both attack and sustain.
+  - **`shepard_riser`**: added an LFO sawtooth driving `param_a` (the Shepard window-center). The MathOscillator's internal `t` is the oscillator phase, which resets every cycle, so without an external modulator on the window center the spectrum never swept and the "rising" illusion never materialised. LFO at 0.25 Hz (4 s sweep cycle) gives the perpetual rise.
+  - **`la_synth_pluck`**: envelope was pad-shaped (decay 800 ms, sustain 0.7, release 1.5 s) despite the patch name. Now actually percussive: decay 200 ms, sustain 0.0, release 400 ms.
+  - **`auto_wah_bass`**: base cutoff 400 → 700 Hz so the saw harmonics aren't choked at low fundamentals; amp 1.0 → 1.5 because the Acid filter's resonance + drive structure attenuates more than expected at low pitches. The whole personality of the patch is the EFL-driven sweep — it needed enough signal under it to actually move.
+  - **`granular_cathedral`**: grain source saw → square — rich odd harmonics give the dense grain cloud the organ/cathedral character the name promises.
+  - **`punchy_stab`**: tighter envelope (decay 0.15 → 0.1 s, sustain 0.3 → 0.1) — actually punchy now.
+  - **`pwm_epiano`**: position 0.15 → 0.0 to start at the cleanest end of the PWM table.
+
 ## [0.271.0] - 2026-05-09
 ### MCP `analyze_note` + filter env CV scaling + patch param fixes
 

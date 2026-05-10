@@ -54,12 +54,14 @@ to held notes. Use pitch bends for extra expressiveness.
     );
 
     // OSC2 - Pulse with PWM (osc-2)
+    // Base pulse_width = 0.5 (symmetric square) so the LFO PWM sweep stays
+    // centred and the patch's DC mean stays under analyze_note's 0.01 threshold.
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Oscillator)
             .position(50.0, 50.0)
             .waveform("pulse")
             .param_f("level", 0.4)
-            .param_f("pulse_width", 0.3)
+            .param_f("pulse_width", 0.5)
             .build(),
     );
 

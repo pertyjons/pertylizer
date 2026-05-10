@@ -75,12 +75,17 @@ sensitivity for subtler tracking, raise it for more dramatic swells.
     // Env Amt = 0.5 gives a 2-octave wah range (24 semitones at full
     // follower output), which is more expressive than the 1-octave default
     // for a patch whose entire personality is the filter sweep.
+    //
+    // Base cutoff = 700 Hz (raised from 400 Hz): at the typical bass register
+    // C1-C2 the saw fundamental sits around 32-65 Hz, and a 400 Hz cutoff was
+    // letting through only ~12 harmonics, leaving the EFL with too little
+    // signal to track and the patch under analyze_note's low_output floor.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
             .filter_model("acid")
             .filter_mode("lowpass")
-            .param_f("cutoff", 400.0)
+            .param_f("cutoff", 700.0)
             .param_f("resonance", 0.6)
             .param_f("drive", 2.0)
             .param_f("env_amt", 0.5)
@@ -99,10 +104,13 @@ sensitivity for subtler tracking, raise it for more dramatic swells.
     );
 
     // Amplifier (amp-1)
+    // Level = 1.5 (raised from 1.0): the Acid filter's resonance + drive
+    // structure attenuates more than expected at low fundamentals, leaving the
+    // patch under the low_output threshold even with the wider 700 Hz cutoff.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(850.0, 50.0)
-            .param_f("level", 1.0)
+            .param_f("level", 1.5)
             .build(),
     );
 

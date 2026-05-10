@@ -92,7 +92,7 @@ different effect speeds. Great for transitions, buildups, and risers.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(750.0, 50.0)
-            .param_f("level", 0.6)
+            .param_f("level", 1.8)
             .build(),
     );
 
@@ -129,7 +129,7 @@ different effect speeds. Great for transitions, buildups, and risers.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1100.0, 50.0)
-            .param_f("master", 0.8)
+            .param_f("master", 0.95)
             .build(),
     );
 

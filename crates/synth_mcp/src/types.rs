@@ -660,9 +660,9 @@ pub struct AnalyzeNoteResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fundamental_right: Option<f32>,
     /// Confidence in `fundamental_left` in `0.0..=1.0`. Same prominence-based
-    /// metric as `pitch_confidence`. `None` for mono input or when the left
-    /// channel produced no detectable peak. Low values mean the channel is
-    /// noisy/atonal even when `fundamental_left` reports a non-zero number.
+    /// metric as `pitch_confidence`. `None` for mono input; `0.0` means no
+    /// reliable detectable peak. Low values mean the channel is noisy/atonal
+    /// even when `fundamental_left` reports a non-zero number.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fundamental_left_confidence: Option<f32>,
     /// Confidence in `fundamental_right` in `0.0..=1.0`. See

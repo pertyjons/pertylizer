@@ -294,8 +294,27 @@ fn fundamental_in_mags(
     min_hz: f32,
     max_hz: f32,
 ) -> f32 {
+    fundamental_in_mags_with_confidence(mags, sample_rate, fft_size, min_hz, max_hz).0
+}
+
+/// Like [`fundamental_in_mags`] but also returns a confidence in `0.0..=1.0`.
+///
+/// Confidence is computed from the *prominence* of the loudest in-range bin
+/// over the next-loudest bin that is far enough away not to be a parabolic-
+/// interpolation neighbor. For a clean tonal signal the loudest bin towers
+/// over everything else (confidence near 1.0); for noise or a signal with
+/// multiple competing peaks (e.g. a Karplus delay-line with a strong octave
+/// partial) the second-best bin is comparable in magnitude and confidence
+/// drops toward 0.0.
+fn fundamental_in_mags_with_confidence(
+    mags: &[f32],
+    sample_rate: u32,
+    fft_size: usize,
+    min_hz: f32,
+    max_hz: f32,
+) -> (f32, f32) {
     if mags.len() < 3 || sample_rate == 0 || min_hz < 0.0 || max_hz <= min_hz {
-        return 0.0;
+        return (0.0, 0.0);
     }
     let sr = sample_rate as f32;
     let fsz = fft_size as f32;
@@ -307,7 +326,7 @@ fn fundamental_in_mags(
     let max_bin = max_bin_inclusive.min(last_bin);
 
     if min_bin > max_bin {
-        return 0.0;
+        return (0.0, 0.0);
     }
 
     let mut best_bin = min_bin;
@@ -320,9 +339,33 @@ fn fundamental_in_mags(
     }
 
     if best_mag <= 0.0 {
-        return 0.0;
+        return (0.0, 0.0);
     }
-    parabolic_refine_bin(mags, best_bin) * bin_hz
+
+    // Find the next-best peak that is at least `min_separation` bins away
+    // from `best_bin` to avoid counting the parabolic interpolation
+    // neighbours of the same peak.
+    const MIN_SEPARATION: usize = 3;
+    let mut second_best: f32 = 0.0;
+    for k in min_bin..=max_bin {
+        if best_bin >= k && best_bin - k < MIN_SEPARATION {
+            continue;
+        }
+        if k > best_bin && k - best_bin < MIN_SEPARATION {
+            continue;
+        }
+        if mags[k] > second_best {
+            second_best = mags[k];
+        }
+    }
+
+    // Prominence-based confidence: 1.0 when the second-best peak is silent,
+    // approaching 0 when the second-best peak matches the best. Clamp so
+    // numerical noise can't push it slightly negative.
+    let confidence = (1.0 - (second_best / best_mag)).clamp(0.0, 1.0);
+
+    let freq = parabolic_refine_bin(mags, best_bin) * bin_hz;
+    (freq, confidence)
 }
 
 /// Detect the fundamental frequency in Hz using FFT-peak with parabolic
@@ -335,16 +378,30 @@ fn fundamental_in_mags(
 /// - the loudest bin in range has zero magnitude.
 #[must_use]
 pub fn fundamental_frequency(samples: &[f32], sample_rate: u32, min_hz: f32, max_hz: f32) -> f32 {
+    fundamental_frequency_with_confidence(samples, sample_rate, min_hz, max_hz).0
+}
+
+/// Like [`fundamental_frequency`] but additionally returns a confidence
+/// estimate in `0.0..=1.0` based on how much the loudest in-range bin
+/// dominates the next-loudest non-adjacent bin. Treat
+/// `pitch_error_cents` cautiously when this is below ~0.3.
+#[must_use]
+pub fn fundamental_frequency_with_confidence(
+    samples: &[f32],
+    sample_rate: u32,
+    min_hz: f32,
+    max_hz: f32,
+) -> (f32, f32) {
     if sample_rate == 0 || min_hz < 0.0 || max_hz <= min_hz {
-        return 0.0;
+        return (0.0, 0.0);
     }
     let fft_size = pick_fft_size(samples.len());
     if fft_size == 0 || samples.len() < fft_size {
-        return 0.0;
+        return (0.0, 0.0);
     }
     let mut workspace = MagnitudeWorkspace::new(fft_size);
     let mags = workspace.magnitudes(&samples[..fft_size]);
-    fundamental_in_mags(&mags, sample_rate, fft_size, min_hz, max_hz)
+    fundamental_in_mags_with_confidence(&mags, sample_rate, fft_size, min_hz, max_hz)
 }
 
 /// Block-wise RMS over consecutive non-overlapping windows of `window_ms`
@@ -395,7 +452,12 @@ pub fn centroid_envelope(samples: &[f32], sample_rate: u32, window_ms: f32) -> V
     let mut out = Vec::with_capacity(num_windows);
     for w in 0..num_windows {
         let start = w * raw_n;
-        let end = (start + fft_size).min(samples.len());
+        // Slice exactly raw_n samples (= the requested window) and let
+        // MagnitudeWorkspace zero-pad up to fft_size internally. Slicing
+        // up to start+fft_size as we previously did meant adjacent windows
+        // overlapped by (fft_size - raw_n) samples — e.g. a 50 ms window
+        // at 44.1 kHz pulled in 93 ms of audio per window.
+        let end = (start + raw_n).min(samples.len());
         let mags = workspace.magnitudes(&samples[start..end]);
 
         // Skip DC bin. f64 accumulators avoid loss of precision on long
@@ -1156,5 +1218,156 @@ mod tests {
     fn centroid_trend_too_short() {
         let env = [500.0_f32, 600.0];
         assert_eq!(centroid_trend(&env, 100.0), 0.0);
+    }
+
+    // ------------------------------------------------------------------
+    // Tests for code-review fixes (centroid window, pitch confidence)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn pitch_confidence_high_for_pure_sine() {
+        // A pure 440 Hz sine should have very high confidence — no other
+        // significant peaks in the spectrum compete.
+        let s = sine(440.0, 1.0, 44_100, 8192);
+        let (freq, conf) = fundamental_frequency_with_confidence(&s, 44_100, 100.0, 1000.0);
+        assert!((freq - 440.0).abs() < 5.0, "freq = {freq}");
+        assert!(
+            conf > 0.9,
+            "pure sine should have confidence > 0.9, got {conf}"
+        );
+    }
+
+    #[test]
+    fn pitch_confidence_low_for_white_noise() {
+        // White noise has no dominant peak; confidence should be low.
+        // Use a deterministic LCG so the test is reproducible.
+        let mut state: u64 = 0x1234_5678_9abc_def0;
+        let noise: Vec<f32> = (0..8192)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                let s = (state >> 32) as i32 as f32 / i32::MAX as f32;
+                s * 0.5
+            })
+            .collect();
+        let (_freq, conf) = fundamental_frequency_with_confidence(&noise, 44_100, 100.0, 5000.0);
+        assert!(
+            conf < 0.5,
+            "white noise should have confidence < 0.5, got {conf}"
+        );
+    }
+
+    #[test]
+    fn pitch_confidence_low_for_two_equal_peaks() {
+        // Sum of two pure sines at 440 Hz and 880 Hz with equal amplitude.
+        // The detector picks one as the fundamental, but the confidence
+        // should be near 0 because the second peak is exactly as loud.
+        let sr: u32 = 44_100;
+        let n = 8192;
+        let s1 = sine(440.0, 0.5, sr, n);
+        let s2 = sine(880.0, 0.5, sr, n);
+        let mixed: Vec<f32> = s1.iter().zip(s2.iter()).map(|(a, b)| a + b).collect();
+        let (_freq, conf) = fundamental_frequency_with_confidence(&mixed, sr, 100.0, 2000.0);
+        assert!(
+            conf < 0.2,
+            "two-equal-peaks should have low confidence (≈0), got {conf}"
+        );
+    }
+
+    #[test]
+    fn pitch_confidence_zero_for_silent() {
+        let silent = vec![0.0_f32; 4096];
+        let (freq, conf) = fundamental_frequency_with_confidence(&silent, 44_100, 100.0, 1000.0);
+        assert_eq!(freq, 0.0);
+        assert_eq!(conf, 0.0);
+    }
+
+    #[test]
+    fn fundamental_frequency_back_compat() {
+        // The old single-return API must keep working unchanged.
+        let s = sine(440.0, 1.0, 44_100, 8192);
+        let f = fundamental_frequency(&s, 44_100, 100.0, 1000.0);
+        assert!((f - 440.0).abs() < 5.0, "f = {f}");
+    }
+
+    #[test]
+    fn centroid_envelope_window_does_not_overlap() {
+        // Regression test for finding #7. Build a buffer of exactly 8 raw
+        // windows (8 × 50 ms = 400 ms at 44.1 kHz). The first half is a
+        // 200 Hz sine, the second half a 4000 Hz sine. With the previous
+        // bug, the FFT slice for window N pulled in samples from window
+        // N+1 (because fft_size > raw_n), so the centroid mid-buffer
+        // would smear across the boundary. After the fix, each window
+        // sees only its own raw_n samples.
+        let sr = 44_100u32;
+        let raw_n = 2_205_usize; // 50 ms
+        let total = 8 * raw_n;
+        let mut buf = Vec::with_capacity(total);
+        let half = total / 2;
+        for i in 0..total {
+            let t = (i as f32) / (sr as f32);
+            let v = if i < half {
+                (TAU * 200.0 * t).sin()
+            } else {
+                (TAU * 4000.0 * t).sin()
+            };
+            buf.push(v);
+        }
+        let env = centroid_envelope(&buf, sr, 50.0);
+        assert_eq!(env.len(), 8, "expected 8 windows, got {}", env.len());
+        // Windows 0..3 should be near 200 Hz (well below 1000 Hz);
+        // windows 4..7 should be near 4000 Hz (well above 1000 Hz).
+        for (i, c) in env.iter().enumerate().take(4) {
+            assert!(
+                *c < 1000.0,
+                "window {i} expected to track 200 Hz tone, centroid = {c}"
+            );
+        }
+        for (i, c) in env.iter().enumerate().skip(4) {
+            assert!(
+                *c > 1500.0,
+                "window {i} expected to track 4000 Hz tone, centroid = {c}"
+            );
+        }
+    }
+
+    #[test]
+    fn centroid_envelope_step_at_window_boundary_is_clean() {
+        // Strict test: the centroid at the LAST window of the low-frequency
+        // half should be close to 200 Hz, and the FIRST window of the
+        // high-frequency half should be close to 4000 Hz. With the old
+        // overlapping-window bug, window 3 (the last low-freq one) would
+        // have been smeared by samples from the first high-freq window.
+        let sr = 44_100u32;
+        let raw_n = 2_205_usize;
+        let total = 8 * raw_n;
+        let mut buf = Vec::with_capacity(total);
+        let half = total / 2;
+        for i in 0..total {
+            let t = (i as f32) / (sr as f32);
+            let v = if i < half {
+                (TAU * 200.0 * t).sin()
+            } else {
+                (TAU * 4000.0 * t).sin()
+            };
+            buf.push(v);
+        }
+        let env = centroid_envelope(&buf, sr, 50.0);
+        // Last low-frequency window must NOT be contaminated by the
+        // high-frequency content that follows. Previous bug would push
+        // this centroid up dramatically.
+        assert!(
+            env[3] < 600.0,
+            "last low-freq window centroid leaked: {}",
+            env[3]
+        );
+        // First high-frequency window must NOT be pulled down by leftover
+        // low-frequency content.
+        assert!(
+            env[4] > 2500.0,
+            "first high-freq window centroid pulled down: {}",
+            env[4]
+        );
     }
 }

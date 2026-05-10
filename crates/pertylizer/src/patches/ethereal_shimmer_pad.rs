@@ -54,7 +54,7 @@ Turn on LFO modulating filter cutoff for slow movement.
             .param_f("brightness", 0.6)
             .param_f("stretch", 0.05)
             .param_f("randomize", 0.15)
-            .param_f("level", 0.8)
+            .param_f("level", 1.0)
             .build(),
     );
 
@@ -95,7 +95,7 @@ Turn on LFO modulating filter cutoff for slow movement.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(850.0, 50.0)
-            .param_f("level", 0.65)
+            .param_f("level", 2.0)
             .build(),
     );
 
@@ -103,7 +103,7 @@ Turn on LFO modulating filter cutoff for slow movement.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1250.0, 50.0)
-            .param_f("master", 0.75)
+            .param_f("master", 1.0)
             .build(),
     );
 
