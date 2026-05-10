@@ -810,12 +810,23 @@ pub fn autocorrelation_fixed(samples: &[f32], order: usize, out: &mut [f32; MAX_
 ///
 /// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst>
 /// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
+///
+/// Reflection coefficients `k` are clamped to (-0.95, 0.95) for two
+/// reasons: it keeps the resulting all-pole filter strictly stable (poles
+/// inside the unit circle), and it leaves enough margin from the unit
+/// circle that the filter doesn't ring out to extreme f32 values on
+/// impulse-like or non-stationary input. Without this guard the LPC
+/// Vocoder fed by the MathOscillator "formant" carrier produced |k| ≥ 1,
+/// the all-pole filter grew exponentially until f32 overflowed to ±∞ and
+/// ultimately NaN, and the offline render saturated. The 0.95 threshold
+/// is the same conservative value used in well-known LPC implementations
+/// (e.g. Praat) for the same numerical-conditioning reasons.
 #[inline]
 pub fn levinson_durbin_fixed(r: &[f32], order: usize, out: &mut [f32; MAX_LPC_ORDER]) {
     let order = order.min(MAX_LPC_ORDER);
     out.fill(0.0);
 
-    if order == 0 || r.is_empty() || r[0].abs() < 1e-10 {
+    if order == 0 || r.is_empty() || r[0].abs() < 1e-10 || !r[0].is_finite() {
         return;
     }
 
@@ -827,7 +838,14 @@ pub fn levinson_durbin_fixed(r: &[f32], order: usize, out: &mut [f32; MAX_LPC_OR
         for j in 0..i {
             sum += a_prev[j] * r[i - j];
         }
-        let k = -(r[i + 1] + sum) / error;
+        let k_raw = -(r[i + 1] + sum) / error;
+        // Clamp to stability range; bail entirely if the recursion produced a
+        // non-finite value (autocorrelation matrix is too degenerate to model).
+        if !k_raw.is_finite() {
+            out.fill(0.0);
+            return;
+        }
+        let k = k_raw.clamp(-0.95, 0.95);
 
         out[i] = k;
         for j in 0..i {
@@ -835,7 +853,7 @@ pub fn levinson_durbin_fixed(r: &[f32], order: usize, out: &mut [f32; MAX_LPC_OR
         }
 
         error *= 1.0 - k * k;
-        if error.abs() < 1e-10 {
+        if error.abs() < 1e-10 || !error.is_finite() {
             break;
         }
 

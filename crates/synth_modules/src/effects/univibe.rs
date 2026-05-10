@@ -20,6 +20,19 @@ const NUM_STAGES: usize = 4;
 const STAGE_FREQS: [f32; NUM_STAGES] = [300.0, 600.0, 1200.0, 2400.0];
 
 /// Single first-order all-pass filter.
+///
+/// Transposed direct-form II for the all-pass H(z) = (a + z⁻¹) / (1 + a·z⁻¹).
+/// Pole at z = −a, so the filter is stable for |a| < 1 — which the bilinear-
+/// derived `coeff` always satisfies (mathematically `tan(ω) − 1` and
+/// `tan(ω) + 1` give a ratio in [−1, 1]).
+///
+/// The previous implementation used a different recurrence whose effective
+/// state-update pole was `coeff·(1 − coeff)`. That magnitude exceeds 1 once
+/// `coeff` drops below ~−0.62, which Univibe routinely lands in for the
+/// 300/600/1200 Hz stages (negative coefficients near −0.92 / −0.84 / −0.71).
+/// The state grew exponentially, overflowed f32 to ±∞ within ~200 samples,
+/// and arithmetic on ∞ produced NaN — surfacing as runaway clipping in
+/// `analyze_note` (peak 1.0, centroid pinned at Nyquist).
 #[derive(Clone, Copy, Default)]
 struct AllPass {
     state_l: f32,
@@ -29,11 +42,11 @@ struct AllPass {
 impl AllPass {
     #[inline]
     fn process_stereo(&mut self, input_l: f32, input_r: f32, coeff: f32) -> (f32, f32) {
-        let out_l = coeff * (input_l - self.state_l) + self.state_l;
-        self.state_l = coeff * (out_l - input_l) + input_l;
+        let out_l = coeff * input_l + self.state_l;
+        self.state_l = input_l - coeff * out_l;
 
-        let out_r = coeff * (input_r - self.state_r) + self.state_r;
-        self.state_r = coeff * (out_r - input_r) + input_r;
+        let out_r = coeff * input_r + self.state_r;
+        self.state_r = input_r - coeff * out_r;
 
         (out_l, out_r)
     }
@@ -266,5 +279,89 @@ impl AudioEffect for Univibe {
 
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn univibe_creation() {
+        let univibe = Univibe::new();
+        assert!((univibe.rate.as_f32() - 2.0).abs() < 0.001);
+        assert_eq!(univibe.stages.len(), NUM_STAGES);
+    }
+
+    fn ctx_with_rate(sr: u32, frames: usize) -> ProcessContext<'static> {
+        ProcessContext {
+            sample_rate: SampleRate::new(sr as f32),
+            samples: SampleCount::new(frames),
+            ..ProcessContext::default()
+        }
+    }
+
+    /// Regression: Univibe used to overflow to ±∞ within ~200 samples because
+    /// the AllPass topology had an unstable pole at `coeff·(1 − coeff)` for
+    /// negative `coeff`. Catch any future regression by running the effect
+    /// with default-ish parameters across both 44.1 and 48 kHz and asserting
+    /// finite output.
+    #[test]
+    fn univibe_stable_no_nan() {
+        for sr in [44100u32, 48000] {
+            let mut univibe = Univibe::new();
+            univibe.set_sample_rate(SampleRate::new(sr as f32));
+
+            let frames = 256;
+            let context = ctx_with_rate(sr, frames);
+            let input = vec![0.5f32; frames * 2];
+            let mut output = vec![0.0f32; frames * 2];
+
+            for _ in 0..400 {
+                univibe.process(&input, &mut output, &context);
+            }
+
+            for sample in &output {
+                assert!(
+                    sample.is_finite(),
+                    "Univibe output non-finite at sr={sr}: {sample}"
+                );
+                assert!(
+                    sample.abs() < 4.0,
+                    "Univibe output exploded at sr={sr}: |{sample}| ≥ 4"
+                );
+            }
+        }
+    }
+
+    /// Cover the stress range — high feedback and depth — to make sure the
+    /// stable topology holds even when the LFO pushes coefficients to their
+    /// extremes.
+    #[test]
+    fn univibe_stable_extreme_params() {
+        let mut univibe = Univibe::new();
+        univibe.set_param(Param::Univibe(UnivibeParam::Feedback(NormalizedValue::new(
+            0.95,
+        ))));
+        univibe.set_param(Param::Univibe(UnivibeParam::Depth(NormalizedValue::new(
+            1.0,
+        ))));
+        univibe.set_param(Param::Univibe(UnivibeParam::Rate(Hertz::new(10.0))));
+
+        let frames = 256;
+        let context = ctx_with_rate(44100, frames);
+        let input = vec![1.0f32; frames * 2];
+        let mut output = vec![0.0f32; frames * 2];
+
+        for _ in 0..400 {
+            univibe.process(&input, &mut output, &context);
+        }
+
+        for sample in &output {
+            assert!(
+                sample.is_finite(),
+                "Univibe output non-finite at extreme params: {sample}"
+            );
+        }
     }
 }

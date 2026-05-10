@@ -94,11 +94,14 @@ ambient music, ballads, or as a bed under other instruments.
             .build(),
     );
 
-    // Amplifier (amp-1)
+    // Amplifier (amp-1).
+    // Level bumped 0.65 → 1.4 so the voice graph clears the 0.05 `low_output`
+    // threshold (post-voice shimmer/reverb in the effect chain isn't visible
+    // to `analyze_note`, re-audit 2026-05-10).
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(850.0, 50.0)
-            .param_f("level", 0.65)
+            .param_f("level", 1.4)
             .build(),
     );
 

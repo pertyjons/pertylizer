@@ -81,11 +81,14 @@ Longer envelope decay for Rhodes-like tine sustain.
             .build(),
     );
 
-    // Amplifier (amp-1)
+    // Amplifier (amp-1).
+    // Level 0.7 → 1.5 to clear the 0.05 `low_output` threshold (re-audit
+    // 2026-05-10: the Fluid filter morph is intentionally dense but the
+    // voice-graph peak had drifted to 0.039).
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(850.0, 50.0)
-            .param_f("level", 0.7)
+            .param_f("level", 1.5)
             .build(),
     );
 

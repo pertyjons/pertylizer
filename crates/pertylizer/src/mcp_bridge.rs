@@ -4428,6 +4428,24 @@ pub fn analyze_rendered_buffer(
     use crate::audio::analysis;
     use synth_core::types::StereoSample;
 
+    // Sanitize non-finite samples up-front. If a voice or effect module
+    // misbehaves and produces NaN/±∞, every downstream metric (peak/RMS/DC,
+    // FFT, etc.) silently returns NaN, which the JSON serializer then
+    // turns into `null`. Replacing non-finite samples with 0 here keeps the
+    // metrics meaningful — `clipped_samples` still records the saturated
+    // range, so a runaway DSP doesn't disappear from the report.
+    let rendered_samples_owned: Vec<f32>;
+    let samples_slice: &[f32] = if rendered.samples.iter().all(|s| s.is_finite()) {
+        &rendered.samples
+    } else {
+        rendered_samples_owned = rendered
+            .samples
+            .iter()
+            .map(|&s| if s.is_finite() { s } else { 0.0 })
+            .collect();
+        &rendered_samples_owned
+    };
+
     // Mix stereo-interleaved buffer down to mono for time-domain metrics
     // (peak, RMS, DC). Per-channel and mid/side decompositions below capture
     // stereo-specific behavior. Spectral / pitch analysis uses a separate
@@ -4436,15 +4454,14 @@ pub fn analyze_rendered_buffer(
     let channels = usize::from(rendered.channels);
     let mono: Vec<f32> = match channels {
         0 => Vec::new(),
-        1 => rendered.samples.clone(),
+        1 => samples_slice.to_vec(),
         2 => {
-            let frames = rendered.samples.len() / 2;
-            StereoSample::iter_frames(&rendered.samples, frames)
+            let frames = samples_slice.len() / 2;
+            StereoSample::iter_frames(samples_slice, frames)
                 .map(StereoSample::to_mono)
                 .collect()
         }
-        n => rendered
-            .samples
+        n => samples_slice
             .chunks_exact(n)
             .map(|frame| frame.iter().sum::<f32>() / n as f32)
             .collect(),
@@ -4452,12 +4469,12 @@ pub fn analyze_rendered_buffer(
     let sample_rate = rendered.sample_rate;
 
     // Per-channel decomposition for stereo signals. We compute these from
-    // the original interleaved buffer so anti-phase content cannot cancel.
+    // the (sanitized) interleaved buffer so anti-phase content cannot cancel.
     let (left_samples, right_samples): (Vec<f32>, Vec<f32>) = if rendered.channels >= 2 {
-        let frames = rendered.samples.len() / channels;
+        let frames = samples_slice.len() / channels;
         let mut l = Vec::with_capacity(frames);
         let mut r = Vec::with_capacity(frames);
-        for frame in rendered.samples.chunks_exact(channels) {
+        for frame in samples_slice.chunks_exact(channels) {
             l.push(frame[0]);
             r.push(frame[1]);
         }
@@ -4484,9 +4501,9 @@ pub fn analyze_rendered_buffer(
     // m≈0 in the mono mix but max-abs equals the original amplitude on every
     // sample). For mono input the signal is identical to `mono`.
     let analysis_signal: Vec<f32> = if rendered.channels >= 2 {
-        let frames = rendered.samples.len() / channels;
+        let frames = samples_slice.len() / channels;
         let mut sig = Vec::with_capacity(frames);
-        for frame in rendered.samples.chunks_exact(channels) {
+        for frame in samples_slice.chunks_exact(channels) {
             // Preserve mono sign (so DC / odd-symmetry detection stays sane)
             // by picking the channel with the larger magnitude.
             let l = frame[0];

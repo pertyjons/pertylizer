@@ -118,11 +118,14 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
             .build(),
     );
 
-    // Amplifier (amp-1)
+    // Amplifier (amp-1).
+    // Level 0.6 → 1.5 to clear the 0.05 `low_output` threshold; the 1.7 s
+    // attack means the analysis window only catches the swell, so we need
+    // headroom in the voice-graph gain (re-audit 2026-05-10).
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(1250.0, 50.0)
-            .param_f("level", 0.6)
+            .param_f("level", 1.5)
             .build(),
     );
 

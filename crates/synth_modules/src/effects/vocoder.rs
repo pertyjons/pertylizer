@@ -70,12 +70,22 @@ impl Vocoder {
     }
 
     /// Apply all-pole filter to a single sample using current LPC coefficients.
+    ///
+    /// Belt-and-suspenders NaN guard: if numerical conditioning makes the
+    /// filter blow up despite the Levinson-Durbin reflection-coefficient
+    /// clamp upstream, reset the state and pass the dry sample through
+    /// instead of letting ±∞ / NaN propagate to the output.
     #[inline]
     fn filter_sample(&mut self, input: f32) -> f32 {
         let order = self.cached_order;
         let mut output = input;
         for i in 0..order {
             output -= self.coeffs[i] * self.filter_state[i];
+        }
+        if !output.is_finite() {
+            self.filter_state.fill(0.0);
+            self.coeffs.fill(0.0);
+            return input;
         }
         for i in (1..order).rev() {
             self.filter_state[i] = self.filter_state[i - 1];
@@ -230,5 +240,106 @@ impl AudioEffect for Vocoder {
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
         self.update_window_len();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use synth_core::SampleCount;
+
+    fn ctx_with_rate(sr: u32, frames: usize) -> ProcessContext<'static> {
+        ProcessContext {
+            sample_rate: SampleRate::new(sr as f32),
+            samples: SampleCount::new(frames),
+            ..ProcessContext::default()
+        }
+    }
+
+    #[test]
+    fn vocoder_creation() {
+        let v = Vocoder::new();
+        assert_eq!(v.cached_order, 18); // 4 + 0.5*28 = 18
+    }
+
+    /// Regression: Vocoder + non-stationary input (impulse-like or
+    /// formant-style decaying carriers) used to feed Levinson-Durbin a
+    /// degenerate autocorrelation matrix → reflection coefficients with
+    /// |k| ≥ 1 → unstable all-pole filter → ±∞ → NaN. Now the
+    /// reflection coefficients are clamped and the filter has a NaN guard.
+    #[test]
+    fn vocoder_stable_on_decaying_carrier() {
+        let mut v = Vocoder::new();
+        v.set_sample_rate(SampleRate::new(44100.0));
+
+        // Synthesize a formant-like decaying carrier: each phase cycle of
+        // 200 samples carries a sin·exp(-t·k) burst (similar shape to the
+        // MathOscillator "formant" algorithm that originally exposed this).
+        let frames = 256;
+        let mut input = vec![0.0f32; frames * 2];
+        for f in 0..frames {
+            let t = (f % 200) as f32 / 200.0;
+            let s = (std::f32::consts::TAU * t * 11.0).sin() * (-t * 7.0).exp();
+            input[f * 2] = s;
+            input[f * 2 + 1] = s;
+        }
+        let mut output = vec![0.0f32; frames * 2];
+        let context = ctx_with_rate(44100, frames);
+
+        for _ in 0..200 {
+            v.process(&input, &mut output, &context);
+        }
+
+        for sample in &output {
+            assert!(
+                sample.is_finite(),
+                "Vocoder output non-finite on decaying carrier: {sample}"
+            );
+            // The clamped Levinson-Durbin keeps the filter strictly stable
+            // (poles inside the unit circle), but a high-Q resonator on a
+            // peaky carrier can still ring loud. We just want to catch
+            // unbounded growth — anything finite within ~50× input is fine,
+            // anything truly exploding will hit the NaN guard.
+            assert!(
+                sample.abs() < 50.0,
+                "Vocoder output exploded on decaying carrier: |{sample}| ≥ 50"
+            );
+        }
+    }
+
+    /// Make sure a clean sine wave still passes through stably across both
+    /// 44.1 and 48 kHz at high LPC order.
+    #[test]
+    fn vocoder_stable_on_sine() {
+        for sr in [44100u32, 48000] {
+            let mut v = Vocoder::new();
+            v.set_sample_rate(SampleRate::new(sr as f32));
+            v.set_param(Param::Vocoder(VocoderParam::Order(NormalizedValue::new(1.0))));
+            v.set_param(Param::Vocoder(VocoderParam::WindowSize(
+                Milliseconds::new(50.0),
+            )));
+
+            let frames = 256;
+            let mut input = vec![0.0f32; frames * 2];
+            for f in 0..frames {
+                let s =
+                    (std::f32::consts::TAU * 220.0 * f as f32 / sr as f32).sin() * 0.7;
+                input[f * 2] = s;
+                input[f * 2 + 1] = s;
+            }
+            let mut output = vec![0.0f32; frames * 2];
+            let context = ctx_with_rate(sr, frames);
+
+            for _ in 0..200 {
+                v.process(&input, &mut output, &context);
+            }
+
+            for sample in &output {
+                assert!(
+                    sample.is_finite(),
+                    "Vocoder output non-finite on sine at sr={sr}: {sample}"
+                );
+            }
+        }
     }
 }

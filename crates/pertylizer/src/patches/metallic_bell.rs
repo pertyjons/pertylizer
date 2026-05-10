@@ -92,11 +92,14 @@ Lower notes sound gong-like, higher notes chime-like.
             .build(),
     );
 
-    // Amplifier (amp-1)
+    // Amplifier (amp-1).
+    // Level 0.55 → 1.6 to clear the 0.05 `low_output` threshold — peak had
+    // dropped to 0.032 (re-audit 2026-05-10) because the ring-mod/wavetable
+    // bell partials are sparse so RMS is well below peak.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(1150.0, 50.0)
-            .param_f("level", 0.55)
+            .param_f("level", 1.6)
             .build(),
     );
 

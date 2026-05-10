@@ -81,11 +81,14 @@ Adjust the position envelope decay for longer/shorter timbral sweeps.
             .build(),
     );
 
-    // Amplifier (amp-1)
+    // Amplifier (amp-1).
+    // Level 0.6 → 1.5 to clear the 0.05 `low_output` threshold; the chime
+    // peak had drifted to 0.038 in the 2026-05-10 re-audit because the
+    // wavetable's transient-heavy character means RMS sits well below peak.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(800.0, 50.0)
-            .param_f("level", 0.6)
+            .param_f("level", 1.5)
             .build(),
     );
 

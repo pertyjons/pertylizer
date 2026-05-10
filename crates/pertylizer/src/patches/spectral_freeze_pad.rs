@@ -65,22 +65,28 @@ Increase Spectral Blur time to max for extreme smearing.
             .build(),
     );
 
-    // Filter - gentle shaping (flt-1)
+    // Filter - gentle shaping (flt-1).
+    // key_track 0.4 → 0.0, cutoff lifted — same fix as ethereal_shimmer_pad:
+    // key tracking was pulling cutoff down at the test note and starving the
+    // harmonic content that drives perceived level (re-audit 2026-05-10).
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
             .filter_mode("lowpass")
-            .param_f("cutoff", 4000.0)
+            .param_f("cutoff", 6000.0)
             .param_f("resonance", 0.1)
-            .param_f("key_track", 0.4)
+            .param_f("key_track", 0.0)
             .build(),
     );
 
-    // Very slow pad envelope (env-1)
+    // Very slow pad envelope (env-1).
+    // Attack 2.5s → 0.5s so the analysis window catches steady-state rather
+    // than just the swell-from-silence (peak 0.008 in the previous audit was
+    // mostly a window-vs-attack interaction).
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
             .position(850.0, 400.0)
-            .param_f("attack", 2.5)
+            .param_f("attack", 0.5)
             .param_f("decay", 1.5)
             .param_f("sustain", 0.85)
             .param_f("release", 5.0)

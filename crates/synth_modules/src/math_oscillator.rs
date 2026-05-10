@@ -56,6 +56,9 @@ pub struct MathOscillator {
     // Bytebeat state
     time_counter: u32,
 
+    // Shepard-tone per-layer phase accumulators
+    shepard_phases: [f32; 6],
+
     // Output buffer
     output_buffer: AudioBuffer,
 }
@@ -81,6 +84,7 @@ impl MathOscillator {
             write_pos: BufferIndex::ZERO,
             burst_remaining: FrameCount::ZERO,
             time_counter: 0,
+            shepard_phases: [0.0; 6],
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -246,20 +250,42 @@ impl MathOscillator {
             }
 
             MathAlgo::Shepard => {
-                // Shepard tone (infinite rising/falling)
-                let num_octaves = 6;
-                let speed = (b - 0.5) * 2.0; // -1 to 1
+                // Shepard tone — six logarithmically-spaced sine layers spanning
+                // six octaves. Each layer carries its own phase accumulator so the
+                // sines integrate at their true frequency (the parent `t` is one
+                // wrapping phase ramp and cannot drive multiple frequencies at
+                // once without emitting the partial-cycle DC bias / clicks the
+                // earlier implementation produced).
+                //
+                // - param_a (`a`): sweep position in [0, 1). External modulation
+                //   advances it; the algorithm wraps via `rem_euclid` so any
+                //   sawtooth/LFO range produces a continuous rise (or fall).
+                // - param_b (`b`): Gaussian envelope width (0.15..0.65,
+                //   default 0.4 at b=0.5). Centered at `pos = 0.5` so the bottom
+                //   and top registers fade out near the wrap boundaries —
+                //   that's what makes the rise sound continuous rather than
+                //   discontinuous when a register snaps from top to bottom.
+                const NUM_LAYERS: usize = 6;
+                let sweep = a.rem_euclid(1.0);
+                let center = 0.5;
+                let width = 0.15 + b * 0.5;
+                let two_w_sq = 2.0 * width * width;
+                let base_freq = self.frequency.as_f32();
+                let inv_sr = 1.0 / self.sample_rate.as_f32();
                 let mut sum = 0.0;
-                for i in 0..num_octaves {
-                    let oct_offset = i as f32 / num_octaves as f32;
-                    let moving_oct = (oct_offset + t * speed * 0.1).rem_euclid(1.0);
-                    // Gaussian amplitude envelope over frequency register
-                    let center = a;
-                    let amp = (-((moving_oct - center) * 3.0).powi(2)).exp();
-                    let freq_mult = 2.0f32.powf(moving_oct * num_octaves as f32 - 3.0);
-                    sum += amp * (TAU * t * freq_mult).sin();
+                let mut weight = 0.0;
+                for i in 0..NUM_LAYERS {
+                    let layer_offset = i as f32 / NUM_LAYERS as f32;
+                    let pos = (layer_offset + sweep).rem_euclid(1.0);
+                    let centered = pos - center;
+                    let amp = (-(centered * centered) / two_w_sq).exp();
+                    let freq_mult = 2.0f32.powf(pos * NUM_LAYERS as f32 - 3.0);
+                    let phase_inc = base_freq * freq_mult * inv_sr;
+                    self.shepard_phases[i] = (self.shepard_phases[i] + phase_inc).rem_euclid(1.0);
+                    sum += amp * (TAU * self.shepard_phases[i]).sin();
+                    weight += amp;
                 }
-                sum / num_octaves as f32
+                if weight > 1e-6 { sum / weight } else { 0.0 }
             }
 
             // ================================================================
@@ -389,6 +415,7 @@ impl MathOscillator {
         self.logistic_x = 0.5;
         self.last_sample = 0.0;
         self.time_counter = 0;
+        self.shepard_phases = [0.0; 6];
     }
 
     /// Trigger a burst for Karplus-Strong.
@@ -682,5 +709,130 @@ mod tests {
 
         osc.set_note(MidiNote::C4); // C4
         assert!((osc.frequency.as_f32() - 261.63).abs() < 1.0);
+    }
+
+    /// Render N samples of the current configuration, returning peak / RMS / mean.
+    fn render_metrics(osc: &mut MathOscillator, n: usize) -> (f32, f32, f32) {
+        let mut peak: f32 = 0.0;
+        let mut sum_sq = 0.0_f64;
+        let mut sum = 0.0_f64;
+        for _ in 0..n {
+            let s = osc.generate_sample();
+            peak = peak.max(s.abs());
+            sum_sq += (s as f64) * (s as f64);
+            sum += s as f64;
+        }
+        let rms = (sum_sq / n as f64).sqrt() as f32;
+        let mean = (sum / n as f64) as f32;
+        (peak, rms, mean)
+    }
+
+    #[test]
+    fn shepard_dc_low_across_sweep() {
+        // The previous broken implementation leaked +0.06 of DC at param_a = 0
+        // (lowest register dominated by a partial-sine ramp). With per-layer
+        // phase accumulators the long-term mean of every sweep position must
+        // sit comfortably below the analyzer's 0.01 has_dc_offset threshold.
+        let mut osc = MathOscillator::new();
+        osc.algo = MathAlgo::Shepard;
+        osc.sample_rate = SampleRate::DVD_QUALITY;
+        osc.set_note(MidiNote::new(36));
+
+        // Three seconds — same window analyze_note uses for the audit.
+        let samples = osc.sample_rate.as_f32() as usize * 3;
+
+        for sweep_norm in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
+            osc.reset_state();
+            osc.var_a = NormalizedValue::new(sweep_norm);
+            osc.var_b = NormalizedValue::CENTER; // default width
+            let (peak, _rms, mean) = render_metrics(&mut osc, samples);
+            assert!(
+                mean.abs() < 0.005,
+                "Shepard DC at param_a={sweep_norm} too high: {mean}"
+            );
+            assert!(
+                (0.05..=1.0).contains(&peak),
+                "Shepard peak at param_a={sweep_norm} out of audible range: {peak}"
+            );
+        }
+    }
+
+    #[test]
+    fn shepard_layer_phase_increments_track_sweep() {
+        // Hallmark of a real Shepard: each layer integrates at its own
+        // frequency, and the layer-to-frequency assignment shifts with
+        // sweep. The broken implementation reused the parent oscillator's
+        // phase for every layer, so the per-layer phase increments were
+        // effectively constant in sweep. With the fix, advancing sweep by
+        // 1/6 cyclically permutes the layer frequencies — so the *set* of
+        // observed phase increments stays the same, but the assignment to
+        // layer index i changes.
+        let mut osc = MathOscillator::new();
+        osc.algo = MathAlgo::Shepard;
+        osc.sample_rate = SampleRate::DVD_QUALITY;
+        osc.set_note(MidiNote::new(36));
+
+        fn observe_increments(osc: &mut MathOscillator, sweep: f32) -> [f32; 6] {
+            osc.reset_state();
+            osc.var_a = NormalizedValue::new(sweep);
+            osc.var_b = NormalizedValue::CENTER;
+            // After one sample each layer's phase has advanced by exactly
+            // one phase increment (initial phases are 0).
+            let _ = osc.generate_sample();
+            osc.shepard_phases
+        }
+
+        let inc_a = observe_increments(&mut osc, 0.0);
+        let inc_b = observe_increments(&mut osc, 1.0 / 6.0);
+
+        // Layer i at sweep=1/6 sits at register pos=(i+1)/6 mod 1 → its
+        // increment must match layer (i+1) % 6 at sweep=0 (which is at the
+        // same register pos). Confirms the cyclic register-shift property
+        // and rules out a regression where layer frequencies were tied to
+        // layer index alone.
+        for i in 0..6 {
+            let mapped = (i + 1) % 6;
+            let diff = (inc_b[i] - inc_a[mapped]).abs();
+            assert!(
+                diff < 1e-6,
+                "layer {i} at sweep=1/6 should match layer {mapped} at sweep=0: {} vs {}",
+                inc_b[i],
+                inc_a[mapped],
+            );
+        }
+
+        // And at least one layer increment must differ between sweep=0 and
+        // some intermediate sweep position (e.g. 1/12) — proves the layers
+        // aren't pinned to fixed frequencies.
+        let inc_c = observe_increments(&mut osc, 1.0 / 12.0);
+        let mut max_diff = 0.0_f32;
+        for i in 0..6 {
+            max_diff = max_diff.max((inc_c[i] - inc_a[i]).abs());
+        }
+        assert!(
+            max_diff > 1e-5,
+            "layer increments are sweep-insensitive (broken-algo regression)"
+        );
+    }
+
+    #[test]
+    fn shepard_finite_and_bounded() {
+        // Sweep param_a across the full unit interval at every sample for an
+        // extended render and confirm we never produce non-finite or
+        // out-of-range samples (regression for partial-cycle DC clamping).
+        let mut osc = MathOscillator::new();
+        osc.algo = MathAlgo::Shepard;
+        osc.sample_rate = SampleRate::DVD_QUALITY;
+        osc.set_note(MidiNote::new(36));
+        osc.reset_state();
+
+        let sr = osc.sample_rate.as_f32() as usize;
+        for s in 0..(sr * 2) {
+            osc.var_a = NormalizedValue::new((s as f32 / sr as f32).rem_euclid(1.0));
+            osc.var_b = NormalizedValue::new(((s as f32 / sr as f32) * 0.5 + 0.25).clamp(0.0, 1.0));
+            let v = osc.generate_sample();
+            assert!(v.is_finite(), "non-finite at s={s}");
+            assert!(v.abs() <= 1.0, "out of range at s={s}: {v}");
+        }
     }
 }

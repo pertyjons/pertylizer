@@ -50,14 +50,19 @@ Adjust bias for asymmetric harmonics. Slow LFO rate for ambient sweeps.
             .build(),
     );
 
-    // Waveshaper - Fold (wsh-1)
+    // Waveshaper - Fold (wsh-1).
+    // Lives in the effect chain (auto-routed). Bias zeroed (was 0.15) to
+    // remove the +0.26 DC offset the asymmetric fold was producing on the
+    // sustained portion of the note (re-audit 2026-05-10). The "fold"
+    // character is preserved via drive + mix; symmetric folding is just as
+    // valid west-coast tone.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Waveshaper)
             .position(1600.0, 50.0)
             .waveshaper_curve("fold")
             .param_f("drive", 0.4)
             .param_f("mix", 0.6)
-            .param_f("bias", 0.15)
+            .param_f("bias", 0.0)
             .param_f("symmetry", 0.0)
             .build(),
     );
@@ -122,6 +127,7 @@ Adjust bias for asymmetric harmonics. Slow LFO rate for ambient sweeps.
 
     // Connections
     // Note: lfo-1 -> filter cutoff is routed via Mod Matrix, no cable needed.
+    // Waveshaper is in the effect chain (auto-routed after voice output).
     patch.add_connection("osc-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");

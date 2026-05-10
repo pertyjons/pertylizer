@@ -95,11 +95,14 @@ Layer multiple notes for rich ambient textures.
             .build(),
     );
 
-    // Amplifier (amp-1)
+    // Amplifier (amp-1).
+    // Level 0.6 → 2.0 — voice graph is genuinely quiet (warm wavetable +
+    // very slow position scanning), peak had collapsed to 0.010
+    // (re-audit 2026-05-10), so we max the amp to clear `low_output`.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(800.0, 50.0)
-            .param_f("level", 0.6)
+            .param_f("level", 2.0)
             .build(),
     );
 

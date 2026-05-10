@@ -98,11 +98,14 @@ Increase FormantFilter resonance for more vocal character.
             .build(),
     );
 
-    // Amplifier (amp-1)
+    // Amplifier (amp-1).
+    // Level 1.2 → 1.8, master 0.7 → 0.9 below — peak had drifted back to
+    // 0.033 (re-audit 2026-05-10), this clears the 0.05 `low_output`
+    // threshold without saturating the formant filter character.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(800.0, 50.0)
-            .param_f("level", 1.2)
+            .param_f("level", 1.8)
             .build(),
     );
 
@@ -120,7 +123,7 @@ Increase FormantFilter resonance for more vocal character.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1150.0, 50.0)
-            .param_f("master", 0.7)
+            .param_f("master", 0.9)
             .build(),
     );
 

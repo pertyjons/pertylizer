@@ -27,7 +27,7 @@ EFFECTS CHAIN (auto-routed):
 4. Limiter — tames the dense layered output
 
 GRANULAR OSCILLATOR:
-- Source = Square (rich odd harmonics for organ-like cathedral grains)
+- Source = Saw (rich harmonics for interesting grains)
 - Grain Size = 80ms (medium grains for smooth texture)
 - Density = 0.7 (dense cloud)
 - Position Spread = 0.3 (varied grain positions)
@@ -61,7 +61,7 @@ Change Convolver IR type to Spring for metallic quality.
             .param_f("pan spread", 0.5)
             .param_b("freeze", false)
             .param_choice("window", "hann")
-            .param_choice("source", "square")
+            .param_choice("source", "saw")
             .param_f("level", 0.8)
             .build(),
     );

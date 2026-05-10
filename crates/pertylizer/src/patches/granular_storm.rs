@@ -147,14 +147,19 @@ Increase Phaser feedback to 0.9 for extreme sweeps.
             .build(),
     );
 
-    // Mid/Side — extreme stereo width (mds-1)
+    // Mid/Side — wide stereo without phase inversion (mds-1).
+    // mid gain -2 dB + side gain +4 dB combined with the granular pan
+    // spread was producing `stereo_correlation` ≈ -0.48 (more energy in
+    // side than mid → mono summing partially cancels). Brought levels back
+    // toward unity so the patch is wide AND mono-compatible
+    // (re-audit 2026-05-10).
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::MidSide)
             .position(2050.0, 50.0)
-            .param_f("width", 0.85)
-            .param_f("mid gain", -2.0)
-            .param_f("side gain", 4.0)
-            .param_f("mix", 0.9)
+            .param_f("width", 0.7)
+            .param_f("mid gain", 0.0)
+            .param_f("side gain", 1.5)
+            .param_f("mix", 0.8)
             .build(),
     );
 

@@ -120,7 +120,7 @@ pub struct GranularOsc {
 
 impl GranularOsc {
     pub fn new() -> Self {
-        Self {
+        let mut osc = Self {
             grain_size: Milliseconds::new(50.0),
             density: NormalizedValue::new(0.5),
             position: NormalizedValue::MIN,
@@ -143,7 +143,14 @@ impl GranularOsc {
             rng: Xorshift32::new(42),
 
             output_buffer: AudioBuffer::new(1024),
-        }
+        };
+        // Fill the source buffer up-front so the first render produces audio
+        // even if no one calls `set_sample_rate` before `process` and the
+        // patch's stored `source` matches the constructor default (in which
+        // case `set_param`'s equality skip would have left the buffer as
+        // zeros, producing silent grains).
+        osc.fill_source_buffer();
+        osc
     }
 
     /// Fill the source buffer with the selected waveform at a fixed base pitch.
@@ -521,5 +528,75 @@ impl PolyModule for GranularOsc {
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A freshly-constructed GranularOsc must already have a populated source
+    /// buffer. Otherwise the offline `analyze_note` preview path renders
+    /// silence whenever the patch's stored source matches the constructor
+    /// default — `set_param`'s equality skip suppresses the only fill site
+    /// that runs before the first `process` call.
+    #[test]
+    fn source_buffer_is_populated_at_construction() {
+        let osc = GranularOsc::new();
+        let nonzero = osc
+            .source_buffer
+            .iter()
+            .take(osc.source_len)
+            .any(|s| s.abs() > 1e-6);
+        assert!(
+            nonzero,
+            "GranularOsc::new() left source_buffer as all zeros — \
+             grains will be silent until something forces a refill"
+        );
+        assert!(
+            osc.source_len > 0,
+            "GranularOsc::new() left source_len at 0"
+        );
+    }
+
+    /// Setting Source(Saw) on a freshly constructed module (whose default
+    /// source is already Saw) must not regress to silence even though the
+    /// equality check in `set_param` skips the explicit refill — the buffer
+    /// from `new()` is the safety net.
+    #[test]
+    fn setting_source_to_default_leaves_buffer_valid() {
+        let mut osc = GranularOsc::new();
+        osc.set_param(Param::GranularOsc(GranularParam::Source(GrainSource::Saw)));
+        let nonzero = osc
+            .source_buffer
+            .iter()
+            .take(osc.source_len)
+            .any(|s| s.abs() > 1e-6);
+        assert!(
+            nonzero,
+            "Setting Source(Saw) on a fresh module produced an empty buffer"
+        );
+    }
+
+    /// All five GrainSource variants must produce non-empty buffers when
+    /// applied via set_param after construction. Previously only sources
+    /// that *differed* from the default Saw triggered a fill, leaving Saw
+    /// silently broken.
+    #[test]
+    fn every_grain_source_produces_nonzero_buffer() {
+        for source in GrainSource::ALL {
+            let mut osc = GranularOsc::new();
+            osc.set_param(Param::GranularOsc(GranularParam::Source(source)));
+            let nonzero = osc
+                .source_buffer
+                .iter()
+                .take(osc.source_len)
+                .any(|s| s.abs() > 1e-6);
+            assert!(
+                nonzero,
+                "GrainSource::{:?} produced an all-zero buffer",
+                source
+            );
+        }
     }
 }

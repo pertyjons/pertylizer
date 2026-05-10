@@ -102,11 +102,15 @@ Switch ReverseGateReverb mode to Gate for rhythmic gating.
             .build(),
     );
 
-    // Amplifier (amp-1)
+    // Amplifier (amp-1).
+    // Level 0.8 → 2.0 — peak had collapsed back to 0.011 (re-audit
+    // 2026-05-10) because the modal-resonator excitation is sparse and
+    // RMS is well below peak. Maxed amp gain so the percussion clears
+    // `low_output` once the modal ringing settles.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(450.0, 50.0)
-            .param_f("level", 0.8)
+            .param_f("level", 2.0)
             .build(),
     );
 

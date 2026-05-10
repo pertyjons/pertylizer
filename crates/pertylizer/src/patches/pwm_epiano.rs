@@ -74,13 +74,18 @@ Velocity controls brightness — play soft for mellow, hard for punchy.
             .build(),
     );
 
-    // Position Envelope - PWM sweep on attack (env-2)
+    // Position Envelope - PWM sweep on attack (env-2).
+    // Sustain → 0 so the pulse settles back to symmetric square during the
+    // held portion of the note. Without this the env-2 output sat at 0.1
+    // throughout sustain and tipped DC offset back over the analyzer's
+    // 0.01 threshold (re-audit 2026-05-10). The attack still gets the
+    // hollow-to-thin PWM sweep that the patch is designed around.
     patch.add_module(
         ModuleBuilder::new(2, ModuleType::Envelope)
             .position(50.0, 250.0)
             .param_f("attack", 0.001)
             .param_f("decay", 0.6)
-            .param_f("sustain", 0.1)
+            .param_f("sustain", 0.0)
             .param_f("release", 0.3)
             .build(),
     );

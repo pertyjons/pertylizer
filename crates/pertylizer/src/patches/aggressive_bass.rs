@@ -60,13 +60,18 @@ style bass lines. Try different octaves for different characters.
             .build(),
     );
 
-    // Filter - Resonant lowpass (flt-1)
+    // Filter - Resonant lowpass (flt-1).
+    // Resonance lowered 0.6 → 0.45 to clear the borderline DC offset
+    // (~0.014) that the 2026-05-10 re-audit surfaced at C0; with
+    // octave_offset = -2 the filter sees a 16 Hz square + sub, where high
+    // resonance was leaking a small DC asymmetry into the limited
+    // analysis window. The "wah" character is still preserved.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
             .filter_mode("lowpass")
             .param_f("cutoff", 400.0)
-            .param_f("resonance", 0.6)
+            .param_f("resonance", 0.45)
             .build(),
     );
 

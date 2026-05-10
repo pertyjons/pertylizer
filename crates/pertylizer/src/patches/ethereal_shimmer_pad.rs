@@ -58,14 +58,18 @@ Turn on LFO modulating filter cutoff for slow movement.
             .build(),
     );
 
-    // Filter - gentle lowpass shaping (flt-1)
+    // Filter - gentle lowpass shaping (flt-1).
+    // key_track 0.5 → 0.0 — re-audit 2026-05-10 showed peak had slipped back
+    // under the 0.05 `low_output` threshold; key tracking was pulling the
+    // cutoff down at C4 and starving the upper harmonics that the additive
+    // osc relies on for level. cutoff also raised so brightness stays.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Filter)
             .position(450.0, 50.0)
             .filter_mode("lowpass")
-            .param_f("cutoff", 3500.0)
+            .param_f("cutoff", 6000.0)
             .param_f("resonance", 0.15)
-            .param_f("key_track", 0.5)
+            .param_f("key_track", 0.0)
             .build(),
     );
 

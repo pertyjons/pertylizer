@@ -1,5 +1,48 @@
 # Version History
 
+## [0.273.0] - 2026-05-10
+### Patch-analysis closeout — DSP stability fixes (Univibe, Vocoder, GranularOsc, Shepard) + final patch tuning sweep
+
+The 2026-05-10 re-audit (see `docs/patch-analysis-plan.md`) surfaced two critical
+runaway-DSP regressions and a long tail of below-threshold patches. This version
+closes the audit: every flagged row resolved, all engine bugs fixed at the
+source rather than worked around in patches, and regression tests cover the
+stability properties going forward.
+
+#### DSP fixes (engine)
+
+- **Univibe AllPass instability** in `crates/synth_modules/src/effects/univibe.rs`. The 1st-order all-pass topology had an effective state-update pole at `coeff·(1 − coeff)`; for the negative coefficients Univibe routinely lands in (the 300/600/1200 Hz stages with `mod_freq < sr/4`, where `coeff = (tan ω − 1)/(tan ω + 1)` sits between roughly −0.94 and −0.71), `|coeff·(1 − coeff)|` exceeds 1 and the filter goes unstable — state grew exponentially, overflowed f32 to ±∞ within ~200 samples, ∞ ÷ ∞ produced NaN, and the `dry·(1−mix) + wet·mix` lerp propagated NaN through `0·NaN` even when mix was 0. Rebuilt as the standard transposed-direct-form-II 1st-order all-pass (`out = c·x + s; s = x − c·out`), pole at `z = −c`, stable for `|c| < 1` (which the bilinear-derived coefficient always satisfies). Added regression tests `univibe_stable_no_nan` and `univibe_stable_extreme_params` (sweep across 44.1/48 kHz; assert all output samples finite and bounded).
+- **Vocoder LPC instability** in `crates/synth_modules/src/math.rs::levinson_durbin_fixed`. Reflection coefficients could exit (−1, 1) when the autocorrelation matrix was ill-conditioned — which the LPC Vocoder hits constantly on a quasi-impulsive carrier (`MathOscillator::Formant` is a `sin·exp(-t·k)` decay, formerly the `formant_voice` carrier). `|k| ≥ 1` puts the all-pole filter's poles outside the unit circle → exponential growth → ±∞ → NaN. Now clamped to (−0.95, 0.95), the same conservative threshold Praat and other LPC implementations use; bails out (zero coefficients) on non-finite intermediates. Belt-and-suspenders NaN guard in `crates/synth_modules/src/effects/vocoder.rs::filter_sample` resets state and passes dry input through if the filter output ever becomes non-finite. New tests `vocoder_stable_on_decaying_carrier` and `vocoder_stable_on_sine`.
+- **`GranularOsc` source-buffer-fill bug** in `crates/synth_modules/src/granular_osc.rs`. `new()` was allocating `source_buffer` as zeros and only filling it on a *source change*. The offline `analyze_note` preview path creates a fresh `GranularOsc`, applies the patch snapshot's `source = Saw` (which equals the constructor default), and `set_param`'s equality skip suppressed the only fill site that would have run before the first `process` call — silent grains whenever a patch's stored source matched the default, regardless of waveform. `new()` now calls `fill_source_buffer()` directly so the buffer is valid from construction. The `granular_cathedral` patch's `source = "saw" → "square"` workaround was reverted; the patch is back to its intended saw character (peak 0.223, all flags clean). Regression tests cover all five `GrainSource` variants.
+- **`MathAlgo::Shepard` rewritten** in `crates/synth_modules/src/math_oscillator.rs`. The previous algorithm reused the parent oscillator's wrapping phase variable to drive all six octave layers, so each "sine" was actually a partial cycle that reset every parent cycle. At low frequencies (the bottom layer ran at 1/8 of the parent fundamental, i.e. ~8 Hz at C2) it produced enough partial-cycle DC bias to fire `has_dc_offset`, and the constructive/destructive interference of the broken partials kept the peak at 0.021 (`low_output`). The new algorithm gives each layer its own phase accumulator (`shepard_phases: [f32; 6]` state) and integrates at the layer's true frequency `base_freq * 2^(pos*6 - 3)`. `param_a` is now sweep position (0..1, wrapped via `rem_euclid`) so the patch's existing LFO sawtooth feeds it directly; `param_b` controls the Gaussian envelope width centered at `pos = 0.5` (which fades layers in/out near the wrap boundaries — that's what makes the rise sound continuous). Live: peak 0.054 (was 0.021), DC −0.00004 (was +0.012), all flags clean. Three regression tests: `shepard_dc_low_across_sweep`, `shepard_finite_and_bounded`, `shepard_layer_phase_increments_track_sweep` (the third proves the cyclic register-shift property — layer i at sweep=1/6 has the increment that layer (i+1) % 6 had at sweep=0, which is what defines a true Shepard tone vs. fixed-frequency layers with moving amplitude).
+- **`analyze_rendered_buffer` sanitizes non-finite samples** in `crates/pertylizer/src/mcp_bridge.rs`. When a voice or effect module produces NaN/±∞, every downstream metric silently turned into JSON `null`, which is how the original Univibe + Vocoder runaways disappeared into "all metrics null" reports instead of surfacing as a real DSP anomaly. Replacing non-finite samples with 0 up-front keeps the metrics meaningful — `clipped_samples` still records the saturated range, so future runaway DSP shows up as real numbers.
+
+#### Patch tuning sweep (post-re-audit)
+
+Every `⚠`/`low_output`/`has_dc_offset` row from the re-audit fixed at the patch
+level. All values verified live after synth restart.
+
+- **Critical structural rewrites:**
+  - `string_ensemble`: replaced the MathOscillator SuperSaw (which produced 110 232 clipped samples in offline rendering pre-Univibe-fix) with a 7-voice unison `Oscillator` + sub saw — equivalent character, mono-compatible.
+  - `formant_voice`: replaced the `MathOscillator(formant)` carrier (the source of the Vocoder NaN bursts) with a `Sawtooth → FormantFilter → Amp` chain, the proper signal flow for vocal synthesis. After the LPC fix the original `MathOscillator(formant)` would also work, but the new chain is structurally cleaner.
+  - `glitch_pad`: wired the Waveshaper into the effect chain (it was dangling) and zeroed the +0.15 fold bias that was leaking +0.26 DC. Live DC is now ~0.000005 (was +0.257).
+- **DC-leak fixes:** `aggressive_bass` filter resonance 0.6 → 0.45; `pwm_epiano` env-2 sustain 0.1 → 0.0 (PWM now settles back to a symmetric square during the held portion).
+- **Voice-graph gain bumps to clear `low_output`:** `ambient_keys` 0.65→1.4, `fluid_keys` 0.7→1.5, `deep_space_pad` 0.6→1.5, `fractal_cosmos` 0.7→1.6 (master 0.8→0.9), `vocal_pad` 1.2→1.8 (master 0.7→0.9), `digital_chime` 0.6→1.5, `metallic_bell` 0.55→1.6, `pitch_following_drone` 0.6→1.5 (master 0.7→0.9), `warm_evolving` 0.6→2.0, `resonant_percussion` 0.8→2.0.
+- **`ethereal_shimmer_pad` / `spectral_freeze_pad`:** filter cutoff raised to 6000 Hz and `key_track` zeroed — key tracking was starving the additive harmonics that the perceived level depends on. Spectral Freeze attack also shortened from 2.5 s → 0.5 s so the analysis window catches steady-state.
+- **`granular_storm` stereo correlation fix:** MidSide width 0.85 → 0.7, mid gain −2 dB → 0 dB, side gain +4 dB → +1.5 dB. Stereo correlation went from −0.48 (anti-phase, mono-incompatible) to +0.18 (decorrelated wide).
+
+#### Roll-up
+
+`docs/patch-analysis-plan.md` final state: **53 ✅ / 0 ⚠ / 2 🔧 / 5 ⏭** across
+all 60 built-in patches. The two 🔧 rows are `shepard_riser` and
+`granular_cathedral` (both engine-level fixes landed this version, both with
+regression tests). The five ⏭ rows are analyzer/effect-chain caveats and one
+borderline finite-window LFO artefact:
+
+- `sub_bass` — the detector picks the 32 Hz second harmonic at C0=16.35 Hz; not a synth bug.
+- `ethereal_shimmer_pad` / `spectral_freeze_pad` / `resonant_percussion` — perceived loudness comes from effect-chain modules (chorus + shimmer / phase vocoder + shimmer / gate + reverb) that the offline preview doesn't render. Voice-graph alone sits below the 0.05 peak threshold.
+- `unison_pwm_strings` — DC +0.0099 sits just under the 0.01 threshold, finite-window LFO PWM artefact.
+
 ## [0.272.0] - 2026-05-10
 ### analyze_note pitch confidence + patch tuning sweep + analysis bug fixes
 

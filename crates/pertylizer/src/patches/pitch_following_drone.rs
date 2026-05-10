@@ -122,11 +122,15 @@ Lower ModalResonator decay for percussive resonance pings.
             .build(),
     );
 
-    // Amplifier (amp-1)
+    // Amplifier (amp-1).
+    // Level 0.6 → 1.5, master 0.7 → 0.9 — peak had drifted back to 0.028
+    // (re-audit 2026-05-10), pitch-tracking voice graph still works but the
+    // granular cross-modulation reduces RMS so we need extra voice-graph
+    // gain to clear `low_output`.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(1250.0, 50.0)
-            .param_f("level", 0.6)
+            .param_f("level", 1.5)
             .build(),
     );
 
@@ -134,7 +138,7 @@ Lower ModalResonator decay for percussive resonance pings.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::StereoOutput)
             .position(1650.0, 50.0)
-            .param_f("master", 0.7)
+            .param_f("master", 0.9)
             .build(),
     );
 
