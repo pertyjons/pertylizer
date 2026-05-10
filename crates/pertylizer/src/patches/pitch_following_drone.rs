@@ -20,9 +20,9 @@ together. The sawtooth provides a stable drone foundation while the
 granular source adds textural complexity with sine grains.
 
 A Pitch Tracker analyzes the mixed output and generates a pitch CV
-that feeds back to modulate the granular oscillator's frequency.
-This creates a self-referencing feedback loop where the detected
-pitch influences the granular texture, causing gentle evolution.
+that feeds back into the sawtooth oscillator's FM input. This
+creates a self-referencing cross-modulation loop where the detected
+pitch nudges the carrier, causing gentle harmonic evolution.
 
 EFFECTS CHAIN (auto-routed):
 1. Modal Resonator — adds resonant body character to the drone,
@@ -180,8 +180,8 @@ Lower ModalResonator decay for percussive resonance pings.
     // Pitch Tracker analyzes the mixer output
     patch.add_connection("mix-1", "out", "ptr-1", "in");
 
-    // Pitch Tracker pitch CV → Granular FM (self-modulation feedback)
-    patch.add_connection("ptr-1", "pitch_cv", "grn-1", "freq_cv");
+    // Pitch Tracker pitch CV → Oscillator FM (self-modulation feedback)
+    patch.add_connection("ptr-1", "pitch_cv", "osc-1", "fm");
 
     // Mixer → Filter → Amp → Output
     patch.add_connection("mix-1", "out", "flt-1", "in");

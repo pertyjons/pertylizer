@@ -1,5 +1,57 @@
 # Version History
 
+## [0.275.0] - 2026-05-10
+### Example-patch audit: fix four broken patches + make `get_graph_diagnostics` effect-chain and Mod Matrix aware
+
+Auditing all 60 example patches with `get_graph_diagnostics` produced a flood
+of warnings — most of them false positives. The diagnostic walked the voice
+graph only and didn't know that effect modules are auto-wired in the
+post-voice effect chain, nor that the Mod Matrix references its modulator
+sources (LFO, Envelope, EnvFollower, Kinetic) by parameter slot rather than
+by cable. After teaching the diagnostic about both, four patches still had
+real disconnections — three of which had hand-written notes describing
+modulation that the actual patch graph never delivered.
+
+#### Patch fixes (`crates/pertylizer/src/patches/`)
+
+- **Granular Cathedral** — `lfo-1` had no connections at all. Notes claimed
+  the LFO swept grain position, but `GranularOsc` has no CV inputs. Wired
+  `lfo-1.out → flt-1.cutoff_cv` and rewrote the notes to describe the
+  filter sweep that actually happens.
+- **Granular Storm** — same issue; same fix (`lfo-1.out → flt-1.cutoff_cv`).
+- **Pitch Following Drone** — `ptr-1.pitch_cv → grn-1.freq_cv` silently
+  dropped at load because `GranularOsc` has no `freq_cv` port. Rerouted to
+  `ptr-1.pitch_cv → osc-1.fm` so the self-modulating cross-modulation
+  described in the patch notes actually happens.
+- **Euclidean Texture** — `euc-1` received clock but its `gate`/`accent`
+  outputs went nowhere. Wired `euc-1.accent → flt-1.res_cv` to match the
+  "accent output modulates filter resonance" line in the notes.
+
+#### Diagnostic — `mcp_bridge.rs::get_graph_diagnostics`
+
+The "no connections" / "signal dead-end" warnings now skip:
+
+- Effect-chain modules (`ModuleType::is_effect()`) — auto-wired in series
+  outside the voice graph, never have explicit cables.
+- `ModMatrix` and `KineticModulator` — they route via parameter slots, not
+  cables.
+- Modules referenced as a Mod Matrix slot source. Two new free functions
+  walk `Param::ModMatrix(ModMatrixParam::SlotSource(...))` for each
+  `ModMatrix` snapshot and resolve `ModSource::Lfo(i)` / `Envelope(i)` /
+  `EnvFollower(i)` / `KineticPos|Vel|Acc` back to a `ModuleId` via
+  `ModuleId::new(...)` so the prefix convention lives in one place.
+
+Per-module `has_input` / `has_output_conn` now read from
+`ModuleStateSnapshot::has_inputs()` / `has_outputs()`, which use pre-computed
+per-port connection counts. Drops the inner
+`connections.iter().any(|c| c.to_module.to_string() == id_str)` scan —
+two linear passes plus a `String` allocation per connection — down to a
+`HashMap` check.
+
+Net effect: every example patch except the four fixed ones now reports a
+clean `Graph looks healthy` from `get_graph_diagnostics`, and remaining
+warnings are real.
+
 ## [0.274.0] - 2026-05-10
 ### Analyze view — floating GUI surface for the `analyze_note` pipeline
 

@@ -185,6 +185,9 @@ Increase LFO rate for faster generative patterns.
     // Random Gates CV → Filter cutoff (random filter sweeps)
     patch.add_connection("rgt-1", "cv", "flt-1", "cutoff_cv");
 
+    // Euclidean accent → Filter resonance (rhythmic accent emphasis)
+    patch.add_connection("euc-1", "accent", "flt-1", "res_cv");
+
     // Main signal path: Osc → Filter → Amp → Output
     patch.add_connection("osc-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");

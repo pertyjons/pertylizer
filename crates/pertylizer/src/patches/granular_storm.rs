@@ -17,8 +17,8 @@ pub fn patch_granular_storm() -> Patch {
 SIGNAL FLOW:
 A Granular Oscillator generates chaotic, dense grain clouds using a
 square wave source for harsh digital texture. High density and wide
-pitch/pan spread create a wall of granular noise. An LFO modulates
-the grain position for constant movement.
+pitch/pan spread create a wall of granular noise. A sawtooth LFO
+sweeps the bandpass filter cutoff for constant movement.
 
 EFFECTS CHAIN (auto-routed):
 1. Granular FX — re-granulates the output for extreme density
@@ -183,6 +183,9 @@ Increase Phaser feedback to 0.9 for extreme sweeps.
     patch.add_connection("env-1", "out", "amp-1", "cv");
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
+
+    // LFO → Filter cutoff — sweeps the bandpass for constant motion
+    patch.add_connection("lfo-1", "out", "flt-1", "cutoff_cv");
 
     // Groups
     patch.add_group(

@@ -3,10 +3,12 @@
 //! `AppSynthBridge` implements `SynthBridge` by reading from `EngineState`
 //! (shared graph, meters, transport) and sending commands via `CommandSender`.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use synth_core::{
-    MidiNote, NormalizedValue, Param, ParameterUnit, PortDirection, SampleCount, Velocity,
+    MidiNote, ModMatrixParam, ModSource, NormalizedValue, Param, ParameterUnit, PortDirection,
+    SampleCount, Velocity,
 };
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
@@ -356,23 +358,38 @@ impl SynthBridge for AppSynthBridge {
             });
         }
 
+        // Collect module IDs referenced as sources by any Mod Matrix slot.
+        // The Mod Matrix routes via parameter slots (not cables), so these
+        // modules are "in use" even with no cable connections.
+        let mod_matrix_sources = collect_mod_matrix_sources(&modules);
+
         // Check for disconnected modules
         for module in &modules {
             let id_str = module.id.to_string();
-            let has_input = connections
-                .iter()
-                .any(|c| c.to_module.to_string() == id_str);
-            let has_output_conn = connections
-                .iter()
-                .any(|c| c.from_module.to_string() == id_str);
 
-            // ModMatrix and KineticModulator work via parameters, not cables
-            let works_via_params = matches!(
+            // Effect-chain modules are auto-wired in series outside the voice
+            // graph — they legitimately have no voice-graph cables.
+            if module.id.module_type.is_effect() {
+                continue;
+            }
+
+            // ModMatrix and KineticModulator route via parameters, not cables.
+            if matches!(
                 module.id.module_type,
                 synth_core::ModuleType::ModMatrix | synth_core::ModuleType::KineticModulator
-            );
+            ) {
+                continue;
+            }
 
-            if !has_input && !has_output_conn && !works_via_params {
+            // Modulator referenced by a Mod Matrix slot is in use.
+            if mod_matrix_sources.contains(&id_str) {
+                continue;
+            }
+
+            let has_input = module.has_inputs();
+            let has_output_conn = module.has_outputs();
+
+            if !has_input && !has_output_conn {
                 diagnostics.push(GraphDiagnostic {
                     severity: DiagnosticSeverity::Warning,
                     module_id: Some(id_str.clone()),
@@ -3636,6 +3653,76 @@ impl SynthBridge for AppSynthBridge {
             })
         }
     }
+}
+
+/// Collect module IDs referenced as sources by any enabled Mod Matrix slot.
+///
+/// The Mod Matrix routes via parameter slots rather than cables, so an LFO,
+/// Envelope, or Envelope Follower selected in `Slot N Source` is considered
+/// "in use" by the diagnostic even if it has no cable connections.
+fn collect_mod_matrix_sources(
+    modules: &[synth_engine::ModuleStateSnapshot],
+) -> HashSet<String> {
+    let mut sources = HashSet::new();
+    for module in modules {
+        if module.id.module_type != synth_core::ModuleType::ModMatrix {
+            continue;
+        }
+
+        let mut enabled = [true; synth_core::MAX_MOD_MATRIX_SLOTS];
+        let mut slot_source: [Option<ModSource>; synth_core::MAX_MOD_MATRIX_SLOTS] =
+            [None; synth_core::MAX_MOD_MATRIX_SLOTS];
+
+        for param in &module.parameters {
+            if let Param::ModMatrix(mmx) = param {
+                match mmx {
+                    ModMatrixParam::SlotEnabled(slot, en) => {
+                        if let Some(cell) = enabled.get_mut(*slot as usize) {
+                            *cell = *en;
+                        }
+                    }
+                    ModMatrixParam::SlotSource(slot, src) => {
+                        if let Some(cell) = slot_source.get_mut(*slot as usize) {
+                            *cell = Some(*src);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        for (slot, source) in slot_source.iter().enumerate() {
+            if !enabled[slot] {
+                continue;
+            }
+            let Some(source) = source else { continue };
+            if let Some(id) = mod_source_to_module_id(*source) {
+                sources.insert(id);
+            }
+        }
+    }
+    sources
+}
+
+/// Map a `ModSource` variant to the module ID it references, if any.
+/// Returns `None` for global sources (Velocity, ModWheel, etc.).
+///
+/// `ModSource` indexes its source families from 0; `ModuleId` instances start
+/// at 1, hence the `+ 1` offset.
+fn mod_source_to_module_id(source: ModSource) -> Option<String> {
+    use synth_core::ModuleType;
+    let typed = match source {
+        ModSource::Lfo(i) => ModuleId::new(ModuleType::Lfo, u16::from(i) + 1),
+        ModSource::Envelope(i) => ModuleId::new(ModuleType::Envelope, u16::from(i) + 1),
+        ModSource::EnvFollower(i) => {
+            ModuleId::new(ModuleType::EnvelopeFollower, u16::from(i) + 1)
+        }
+        ModSource::KineticPos | ModSource::KineticVel | ModSource::KineticAcc => {
+            ModuleId::new(ModuleType::KineticModulator, 1)
+        }
+        _ => return None,
+    };
+    Some(typed.to_string())
 }
 
 fn meta_to_sample_info(meta: &synth_sampler::SampleMeta) -> synth_mcp::types::SampleInfo {

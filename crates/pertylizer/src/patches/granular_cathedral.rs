@@ -16,7 +16,7 @@ pub fn patch_granular_cathedral() -> Patch {
         r#"
 SIGNAL FLOW:
 A Granular Oscillator generates dense clouds of grains from a sawtooth
-source waveform. An LFO slowly sweeps the grain position, creating
+source waveform. An LFO slowly sweeps the filter cutoff, creating
 evolving timbral movement. The grains pass through a lowpass filter
 for warmth, then through the amp with a very slow pad envelope.
 
@@ -175,6 +175,9 @@ Change Convolver IR type to Spring for metallic quality.
     patch.add_connection("env-1", "out", "amp-1", "cv");
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
+
+    // LFO → Filter cutoff for slow timbral sweep
+    patch.add_connection("lfo-1", "out", "flt-1", "cutoff_cv");
 
     // Groups
     patch.add_group(
