@@ -1,5 +1,127 @@
 # Version History
 
+## [0.274.0] - 2026-05-10
+### Analyze view — floating GUI surface for the `analyze_note` pipeline
+
+A dedicated, theme-integrated analyze window so patches can be iterated
+without going through an LLM client. Reads `AnalyzeNoteResult` from the
+existing `analyze_rendered_buffer` path and presents it on six plot panes
+plus a status strip. Triggered from the Edit menu's "Analyze Patch…" entry
+or via Ctrl/Cmd-Shift-A. See `docs/analyze-view-plan.md` for the full
+design.
+
+#### Surface
+
+- **Floating window** (`crates/pertylizer/src/gui/analyze.rs`, new file).
+  Single instance, re-targeted to the active instrument every frame. Wired
+  into `SynthApp` in `crates/pertylizer/src/gui/egui_backend.rs`. Window is
+  resizable; height growth handled via `vscroll(true)` + a previous-frame
+  inner-height capture (`last_window_height`) so the body can size plots
+  without feeding `ui.available_height()` back through egui's `Resize`
+  widget — that feedback loop was forcing the window to grow whenever
+  re-analyze populated the body.
+- **Render off the UI thread.** `render_note_to_buffer` +
+  `analyze_rendered_buffer` run in a `std::thread::spawn` worker; the main
+  thread polls `JoinHandle::is_finished()` per frame and drains stale
+  results when the user re-targets mid-flight.
+
+#### Body — six plot panes
+
+Two-column grid (left = time-domain, right = frequency / structure), all
+six plots share the same `plot_h` so rows align across columns. Painter
+draws directly via `egui::Painter`; no `egui_plot` dependency.
+
+- **Waveform** — min/max bucketing per pixel column so transients survive
+  decimation. L/R/L/R/Sum/M-S toggle. Stereo and M/S split the rect into
+  stacked halves with a centre line. Yellow vertical marker at
+  `note_off_frame`. Pin overlay rendered with reduced alpha so current
+  draws on top.
+- **Envelope** — `rms_envelope` polyline + ADSR markers (A/D/off/R) anchored
+  against `duration_seconds` so the markers stay aligned with the curve.
+  Y scale shared across current and pin (cached on the snapshot at
+  construction).
+- **Pitch track** — `pitch_envelope` polyline with silent windows broken
+  out (line skips zero entries instead of pinning to the floor). Green
+  reference line at `expected_fundamental_hz`. Per-channel
+  `fundamental_left/right` with confidence percentages in the footer for
+  stereo input. Y range padded 5 % so flat traces aren't drawn on the
+  border.
+- **Spectrum** — overlaid attack/sustain/release peaks on a log-frequency
+  X axis (20 Hz → Nyquist) and dB Y axis (-60..0). Decade gridlines
+  (100 Hz / 1 kHz / 10 kHz). `analysis_signal_mode` shown as a small
+  badge with a tooltip explaining the synthetic max(|L|,|R|) signal used
+  for stereo input.
+- **Harmonics** — bar chart of partials 1×–10× the detected fundamental,
+  read from `spectrum_sustain` via nearest peak within ±5 % of each
+  partial frequency. Bars below the noise floor render as a thin tick on
+  the floor. THD / odd-even ratio / `n_harmonics` / f₀ in the footer.
+- **Stereo** — goniometer (L vs R rotated 45° so vertical = mono,
+  horizontal = anti-phase, decimated to ≤4 k points) plus L/R/M/S meter
+  bars and width/correlation readouts.
+
+#### Status strip + interactions
+
+- **Coloured chips** for `flags` (PASS / SILENT / CLIPPING / DC / LOW OUT
+  / OFF PITCH) + headline numerics (peak, rms, DC, pitch error in cents
+  with confidence, stereo correlation, clipped-sample count when non-zero).
+  Chip palettes derive from theme accent colours (darkened to 35 %).
+- **A/B compare.** Pin captures the current snapshot as the reference.
+  Repin replaces it; Unpin clears it. The pin's traces overlay the current
+  in every plot (orange vs cyan). Status-strip metrics get typed deltas
+  per metric type:
+    - Magnitudes (peak, rms): percent change.
+    - Signed values (DC, stereo correlation): absolute delta only —
+      percent flips sign when the baseline crosses zero.
+    - Pitch error: cents delta.
+    - Counts (clipped samples): integer delta.
+- **Hover tooltips + crosshair** on waveform, envelope, pitch, spectrum,
+  and harmonics. Each shows the exact value at the cursor (timestamp +
+  L/R, RMS, Hz with cents-from-expected, peak dB across regions, partial
+  bar).
+- **Info popups** — every pane title has an ⓘ button that opens a
+  description of what the plot shows (axes, decimation strategy, marker
+  meaning).
+- **Header** — note / velocity / duration / tail / optional expected-note
+  inputs; Re-analyze, Pin/Repin, Unpin buttons; kebab menu (right-aligned)
+  with "Copy as JSON" (`serde_json::to_string_pretty(&result)` →
+  `ctx.copy_text`) and "Save WAV…" (encodes the rendered buffer with
+  `encode_buffer_as_wav` and writes via a self-owned `egui_file_dialog`).
+- **Bottom strip** — centroid trend (Hz/s) with tooltip explaining the
+  filter-motion semantic, trimmed-tail-windows count, collapsible
+  warnings list (hidden when `warnings.is_empty()`), and a muted debug
+  accordion.
+
+#### Theming, layout, performance
+
+- All colours and font sizes pull from the global `theme()` at the start
+  of the frame into a single `PaneTheme` struct that's passed down to
+  every pane and helper. One `parking_lot` read lock per frame instead
+  of 6+ scattered acquisitions.
+- **Cached derived values on `AnalysisSnapshot`** (built once at
+  construction, immutable thereafter): `partials_db: [f32; 10]` for the
+  harmonics bars, `rms_envelope_peak` for the envelope Y-scale, and
+  `pitch_range_hz: Option<(f32, f32)>` for the pitch Y-range. Replaces
+  per-frame scans of the immutable spectrum/envelope/pitch arrays.
+- Static `PARTIAL_LABELS: [&str; 10]` for the harmonics x-axis ticks so
+  the bar labels don't allocate every repaint.
+- Pitch-tooltip cents calculation routed through
+  `synth_core::types::Hertz::cents_between` — uses the project's `Cents`
+  newtype instead of an inline `1200 * log2(...)`.
+- WAV save dialog handles cancel/close states and releases the encoded
+  buffer; previously a multi-MB `Vec<u8>` could sit until the next save
+  attempt.
+
+#### Plan + cleanup
+
+- `docs/patch-analysis-plan.md` removed (the closeout in v0.273.0
+  resolved every action item).
+- `docs/analyze-view-plan.md` rewritten from a high-level spec into the
+  implemented design (`AnalysisSnapshot` shape, worker-thread cancellation
+  story, typed delta semantics, scrolling/resize behaviour).
+- Pre-existing whitespace drift in
+  `crates/synth_modules/src/effects/{univibe,vocoder}.rs` test modules
+  picked up by `cargo fmt`.
+
 ## [0.273.0] - 2026-05-10
 ### Patch-analysis closeout — DSP stability fixes (Univibe, Vocoder, GranularOsc, Shepard) + final patch tuning sweep
 

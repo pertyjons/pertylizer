@@ -305,6 +305,10 @@ struct SynthApp {
 
     /// Audio input manager for recording.
     audio_input: crate::audio::input::AudioInputManager,
+
+    /// Floating analyze window. Single instance, re-targeted to the active
+    /// instrument each frame.
+    analyze_window: crate::gui::analyze::AnalyzeWindow,
 }
 
 impl SynthApp {
@@ -393,6 +397,7 @@ impl SynthApp {
             sample_library: config.sample_library,
             sample_view_state: crate::gui::sample_view::SampleViewState::new(),
             audio_input: crate::audio::input::AudioInputManager::new(),
+            analyze_window: crate::gui::analyze::AnalyzeWindow::new(),
         }
     }
 
@@ -800,6 +805,13 @@ impl eframe::App for SynthApp {
         // ── Copy/Paste/Duplicate keyboard shortcuts ──
         self.handle_clipboard_shortcuts(ctx);
 
+        // ── Analyze window shortcut (Ctrl/Cmd + Shift + A) ──
+        self.handle_analyze_shortcut(ctx);
+
+        // ── Analyze window — runs every frame so the worker-thread poll can
+        //    drain even when the window itself is closed. ──
+        self.render_analyze_window(ctx);
+
         // Request continuous repaint for meters
         ctx.request_repaint();
 
@@ -1054,6 +1066,18 @@ impl eframe::App for SynthApp {
                         .clicked()
                     {
                         self.optimize_project();
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add(
+                            egui::Button::new(format!("{} Analyze Patch…", ri::FILE_SEARCH_LINE))
+                                .shortcut_text("Ctrl+Shift+A"),
+                        )
+                        .on_hover_text("Open the offline analyze view for the active instrument")
+                        .clicked()
+                    {
+                        self.analyze_window.open();
                         ui.close();
                     }
                 });
@@ -2990,6 +3014,34 @@ impl SynthApp {
             &mut self.pressed_keys,
             active_channel,
         );
+    }
+
+    /// Handle Ctrl/Cmd+Shift+A — toggle the analyze window.
+    fn handle_analyze_shortcut(&mut self, ctx: &egui::Context) {
+        if ctx.text_edit_focused() {
+            return;
+        }
+        let toggle =
+            ctx.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::A));
+        if toggle {
+            self.analyze_window.toggle_open();
+        }
+    }
+
+    /// Re-target the analyze window to the active instrument, then render it.
+    /// Always runs (even when closed) so the worker-thread poll can drain a
+    /// finished render if the user closed the window mid-flight.
+    fn render_analyze_window(&mut self, ctx: &egui::Context) {
+        if let Some(active_id) = self.active_instrument_id
+            && let Some(name) = self
+                .instruments
+                .iter()
+                .find(|i| i.id == active_id)
+                .map(|i| i.name.clone())
+        {
+            self.analyze_window.set_target(active_id, name);
+        }
+        self.analyze_window.show(ctx, &self.session);
     }
 
     /// Handle Ctrl+Z (undo) and Ctrl+Shift+Z (redo) keyboard shortcuts.

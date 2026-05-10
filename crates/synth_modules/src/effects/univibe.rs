@@ -340,9 +340,9 @@ mod tests {
     #[test]
     fn univibe_stable_extreme_params() {
         let mut univibe = Univibe::new();
-        univibe.set_param(Param::Univibe(UnivibeParam::Feedback(NormalizedValue::new(
-            0.95,
-        ))));
+        univibe.set_param(Param::Univibe(UnivibeParam::Feedback(
+            NormalizedValue::new(0.95),
+        )));
         univibe.set_param(Param::Univibe(UnivibeParam::Depth(NormalizedValue::new(
             1.0,
         ))));

@@ -66,6 +66,9 @@ pub mod sample_view;
 pub mod welcome_view;
 
 #[cfg(feature = "gui-egui")]
+pub mod analyze;
+
+#[cfg(feature = "gui-egui")]
 pub(crate) mod clipboard;
 
 use crate::audio::{AudioHostTrait, StreamConfig};

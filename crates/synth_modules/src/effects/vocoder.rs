@@ -314,16 +314,17 @@ mod tests {
         for sr in [44100u32, 48000] {
             let mut v = Vocoder::new();
             v.set_sample_rate(SampleRate::new(sr as f32));
-            v.set_param(Param::Vocoder(VocoderParam::Order(NormalizedValue::new(1.0))));
-            v.set_param(Param::Vocoder(VocoderParam::WindowSize(
-                Milliseconds::new(50.0),
-            )));
+            v.set_param(Param::Vocoder(VocoderParam::Order(NormalizedValue::new(
+                1.0,
+            ))));
+            v.set_param(Param::Vocoder(VocoderParam::WindowSize(Milliseconds::new(
+                50.0,
+            ))));
 
             let frames = 256;
             let mut input = vec![0.0f32; frames * 2];
             for f in 0..frames {
-                let s =
-                    (std::f32::consts::TAU * 220.0 * f as f32 / sr as f32).sin() * 0.7;
+                let s = (std::f32::consts::TAU * 220.0 * f as f32 / sr as f32).sin() * 0.7;
                 input[f * 2] = s;
                 input[f * 2 + 1] = s;
             }
