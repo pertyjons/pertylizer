@@ -4395,9 +4395,6 @@ fn analyze_rendered_note(
     tail_ms: u32,
     expected_note: Option<u8>,
 ) -> Result<synth_mcp::types::AnalyzeNoteResult, McpBridgeError> {
-    use crate::audio::analysis;
-    use synth_core::types::StereoSample;
-
     let rendered = crate::audio::preview::render_note_to_buffer(
         session,
         InstrumentId::new(instrument_id),
@@ -4407,9 +4404,35 @@ fn analyze_rendered_note(
         tail_ms,
     )?;
 
-    // Mix stereo-interleaved buffer down to mono for analysis. Most metrics
-    // (fundamental, RMS, centroid) are channel-agnostic for the typical
-    // L=R bass patches; mono averaging is fine.
+    Ok(analyze_rendered_buffer(
+        &rendered,
+        note,
+        velocity,
+        duration_ms,
+        expected_note,
+    ))
+}
+
+/// Pure analysis pass over an already-rendered audio buffer. Split out from
+/// [`analyze_rendered_note`] so tests can drive analysis with synthesized
+/// signals (anti-phase tones, clipped tails, etc.) without spinning up the
+/// full audio engine.
+#[doc(hidden)]
+pub fn analyze_rendered_buffer(
+    rendered: &crate::audio::preview::RenderedNote,
+    note: u8,
+    velocity: u8,
+    duration_ms: u32,
+    expected_note: Option<u8>,
+) -> synth_mcp::types::AnalyzeNoteResult {
+    use crate::audio::analysis;
+    use synth_core::types::StereoSample;
+
+    // Mix stereo-interleaved buffer down to mono for time-domain metrics
+    // (peak, RMS, DC). Per-channel and mid/side decompositions below capture
+    // stereo-specific behavior. Spectral / pitch analysis uses a separate
+    // `analysis_signal` (see Bug 5) so anti-phase tonal content does not
+    // cancel in the mono mix.
     let channels = usize::from(rendered.channels);
     let mono: Vec<f32> = match channels {
         0 => Vec::new(),
@@ -4428,38 +4451,109 @@ fn analyze_rendered_note(
     };
     let sample_rate = rendered.sample_rate;
 
-    // Sample windows for the spectrum snapshots: 50 ms in for the attack
-    // (after the very fastest transient), middle of the held note for the
-    // sustain, and the last 200 ms (after note-off) for the release tail.
+    // Per-channel decomposition for stereo signals. We compute these from
+    // the original interleaved buffer so anti-phase content cannot cancel.
+    let (left_samples, right_samples): (Vec<f32>, Vec<f32>) = if rendered.channels >= 2 {
+        let frames = rendered.samples.len() / channels;
+        let mut l = Vec::with_capacity(frames);
+        let mut r = Vec::with_capacity(frames);
+        for frame in rendered.samples.chunks_exact(channels) {
+            l.push(frame[0]);
+            r.push(frame[1]);
+        }
+        (l, r)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let (mid_samples, side_samples): (Vec<f32>, Vec<f32>) = if rendered.channels >= 2 {
+        let len = left_samples.len();
+        let mut mid = Vec::with_capacity(len);
+        let mut side = Vec::with_capacity(len);
+        for i in 0..len {
+            mid.push((left_samples[i] + right_samples[i]) * 0.5);
+            side.push((left_samples[i] - right_samples[i]) * 0.5);
+        }
+        (mid, side)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
+    // Bug 5 fix: spectral / pitch / energy analysis runs on a "phase-robust"
+    // signal that survives anti-phase stereo content. Per-sample max(|L|, |R|)
+    // preserves energy regardless of channel polarity (a 180°-out tone has
+    // m≈0 in the mono mix but max-abs equals the original amplitude on every
+    // sample). For mono input the signal is identical to `mono`.
+    let analysis_signal: Vec<f32> = if rendered.channels >= 2 {
+        let frames = rendered.samples.len() / channels;
+        let mut sig = Vec::with_capacity(frames);
+        for frame in rendered.samples.chunks_exact(channels) {
+            // Preserve mono sign (so DC / odd-symmetry detection stays sane)
+            // by picking the channel with the larger magnitude.
+            let l = frame[0];
+            let r = frame[1];
+            let v = if l.abs() >= r.abs() { l } else { r };
+            sig.push(v);
+        }
+        sig
+    } else {
+        mono.clone()
+    };
+
+    // Sample windows for the spectrum snapshots. Attack: 50–150 ms in,
+    // capturing the onset transient. Sustain: actual middle of the held
+    // portion, NOT the last 100 ms (which we used to do incorrectly).
+    // Release: starts 25 ms after note-off — that's where the decay tail
+    // and any release-trigger transient sits, instead of "last 100 ms of
+    // total render" (which often missed the note-off entirely).
     let total_samples = mono.len();
     let note_samples = (f64::from(duration_ms) / 1000.0 * f64::from(sample_rate)) as usize;
     let attack_start = (0.05 * f64::from(sample_rate)) as usize;
     let attack_window = (0.10 * f64::from(sample_rate)) as usize;
-    let sustain_center = note_samples
-        .saturating_sub(attack_window / 2)
+    let nominal_window = attack_window;
+    // True midpoint of the held note, biased so the window stays inside the
+    // hold even for very short notes. Sustain is allowed to slide back to fit
+    // a full window (it stays inside the held portion either way).
+    let sustain_center = note_samples / 2;
+    let sustain_start_target = sustain_center.saturating_sub(nominal_window / 2);
+    let sustain_max_start = total_samples.saturating_sub(nominal_window.min(total_samples));
+    let sustain_start = sustain_start_target.min(sustain_max_start);
+    let sustain_end = sustain_start
+        .saturating_add(nominal_window)
         .min(total_samples);
-    let sustain_start = sustain_center
-        .saturating_sub(attack_window)
-        .min(total_samples.saturating_sub(attack_window));
-    let release_start = total_samples.saturating_sub(attack_window);
+    // Bug 4 fix: anchor release relative to the actual note-off frame from
+    // the render (see RenderedNote::note_off_frame), with a 25 ms
+    // post-note-off offset. Never let the window slide BACKWARD past
+    // note_off+offset — that would pull sustain audio into the release slice
+    // on short tails. Instead, allow a shorter slice (the analysis helpers
+    // tolerate any length) and let the slice end at total_samples.
+    let release_offset_samples = (0.025 * f64::from(sample_rate)) as usize;
+    let note_off_sample = rendered.note_off_frame as usize;
+    let release_start = note_off_sample
+        .saturating_add(release_offset_samples)
+        .min(total_samples);
+    let release_end = release_start
+        .saturating_add(nominal_window)
+        .min(total_samples);
 
-    let attack_slice = mono
-        .get(
-            attack_start
-                ..attack_start
-                    .saturating_add(attack_window)
-                    .min(total_samples),
-        )
+    let attack_clamped = attack_start.min(total_samples);
+    let attack_end = attack_clamped
+        .saturating_add(nominal_window)
+        .min(total_samples);
+
+    let attack_slice = analysis_signal
+        .get(attack_clamped..attack_end)
         .unwrap_or(&[]);
-    let sustain_slice = mono
-        .get(
-            sustain_start
-                ..sustain_start
-                    .saturating_add(attack_window)
-                    .min(total_samples),
-        )
+    let sustain_slice = analysis_signal
+        .get(sustain_start..sustain_end)
         .unwrap_or(&[]);
-    let release_slice = mono.get(release_start..total_samples).unwrap_or(&[]);
+    let release_slice = analysis_signal
+        .get(release_start..release_end)
+        .unwrap_or(&[]);
+
+    let sr_f32 = sample_rate as f32;
+    let attack_window_start_ms = attack_clamped as f32 * 1000.0 / sr_f32;
+    let sustain_window_start_ms = sustain_start as f32 * 1000.0 / sr_f32;
+    let release_window_start_ms = release_start as f32 * 1000.0 / sr_f32;
 
     let to_peaks =
         |peaks: Vec<analysis::SpectrumPeak>| -> Vec<synth_mcp::types::AnalyzeSpectrumPeak> {
@@ -4482,11 +4576,17 @@ fn analyze_rendered_note(
         _ => (25.0, 5500.0),
     };
 
-    let pitch_slice = mono
+    // Pitch analysis uses `analysis_signal` so anti-phase tonal content
+    // does not cancel — see Bug 5 note above.
+    let pitch_slice = analysis_signal
         .get(attack_start..note_samples.min(total_samples))
-        .unwrap_or(&mono);
-    let fundamental_hz =
-        analysis::fundamental_frequency(pitch_slice, sample_rate, search_min, search_max);
+        .unwrap_or(&analysis_signal);
+    let (fundamental_hz, pitch_confidence) = analysis::fundamental_frequency_with_confidence(
+        pitch_slice,
+        sample_rate,
+        search_min,
+        search_max,
+    );
     let pitch_error_cents = if fundamental_hz > 0.0 && expected_fundamental_hz > 0.0 {
         expected_fundamental
             .cents_between(synth_core::types::Hertz::new(fundamental_hz))
@@ -4496,20 +4596,26 @@ fn analyze_rendered_note(
     };
 
     let envelope_window_ms = 50.0;
-    let mut rms_envelope = analysis::rms_envelope(&mono, sample_rate, envelope_window_ms);
-    let mut centroid_envelope = analysis::centroid_envelope(&mono, sample_rate, envelope_window_ms);
+    let rms_envelope = analysis::rms_envelope(&mono, sample_rate, envelope_window_ms);
+    // Centroid envelope tracks brightness motion; use the phase-robust
+    // signal so anti-phase content still produces a meaningful spectrum.
+    let mut centroid_envelope =
+        analysis::centroid_envelope(&analysis_signal, sample_rate, envelope_window_ms);
     let rms_overall = analysis::rms_overall(&mono);
 
-    // Trim trailing windows that have effectively decayed to silence: their
-    // centroid is dominated by quantization/numerical noise and gives the
-    // misleading "spike at the end" the agent flagged. Threshold = 5% of
-    // overall RMS or 1e-4, whichever is higher; never trim below 4 windows.
+    // Trim only the centroid envelope tail. The raw `rms_envelope` is left
+    // alone so `envelope_estimate` (which infers release length from RMS
+    // decay) can see the full tail. Threshold = 5 % of overall RMS or 1e-4,
+    // whichever is higher; never trim below 4 windows. Report how many were
+    // trimmed so the agent can interpret a short centroid_envelope.
     let noise_floor = (rms_overall * 0.05).max(1e-4);
-    while rms_envelope.len() > 4 {
-        let last = rms_envelope.last().copied().unwrap_or(0.0);
-        if last < noise_floor {
-            rms_envelope.pop();
+    let mut trimmed_tail_windows: u32 = 0;
+    while centroid_envelope.len() > 4 {
+        let last_idx = centroid_envelope.len() - 1;
+        let last_rms = rms_envelope.get(last_idx).copied().unwrap_or(0.0);
+        if last_rms < noise_floor {
             centroid_envelope.pop();
+            trimmed_tail_windows += 1;
         } else {
             break;
         }
@@ -4524,7 +4630,7 @@ fn analyze_rendered_note(
     // fundamentals stably. Same anchored search band as `fundamental_hz`.
     let pitch_envelope_window_ms: f32 = 200.0;
     let pitch_envelope = analysis::pitch_envelope(
-        &mono,
+        &analysis_signal,
         sample_rate,
         pitch_envelope_window_ms,
         search_min,
@@ -4542,9 +4648,9 @@ fn analyze_rendered_note(
     };
 
     let energy_bands: synth_mcp::types::AnalyzeEnergyBands =
-        analysis::energy_bands(&mono, sample_rate).into();
+        analysis::energy_bands(&analysis_signal, sample_rate).into();
     let harmonic_content: synth_mcp::types::AnalyzeHarmonicContent =
-        analysis::harmonic_content(&mono, sample_rate, fundamental_hz).into();
+        analysis::harmonic_content(&analysis_signal, sample_rate, fundamental_hz).into();
     let envelope_estimate: synth_mcp::types::AnalyzeEnvelopeEstimate =
         analysis::envelope_estimate(&rms_envelope, envelope_window_ms, duration_ms).into();
 
@@ -4563,15 +4669,68 @@ fn analyze_rendered_note(
     let dc_offset = analysis::dc_offset(&mono);
     let clipped_samples = analysis::count_clipped(&mono, 0.999);
 
-    let flags = synth_mcp::types::AnalyzeFlags {
-        silent: peak_amplitude < 0.005,
-        clipping: clipped_samples > 0,
-        has_dc_offset: dc_offset.abs() > 0.01,
-        low_output: peak_amplitude < 0.05,
-        off_pitch: pitch_error_cents.abs() > 50.0,
+    // Per-channel and mid/side metrics (only when stereo).
+    let (peak_left, peak_right, rms_left, rms_right, dc_left, dc_right, clipped_l, clipped_r) =
+        if rendered.channels >= 2 {
+            (
+                Some(analysis::peak_amplitude(&left_samples)),
+                Some(analysis::peak_amplitude(&right_samples)),
+                Some(analysis::rms_overall(&left_samples)),
+                Some(analysis::rms_overall(&right_samples)),
+                Some(analysis::dc_offset(&left_samples)),
+                Some(analysis::dc_offset(&right_samples)),
+                Some(analysis::count_clipped(&left_samples, 0.999)),
+                Some(analysis::count_clipped(&right_samples, 0.999)),
+            )
+        } else {
+            (None, None, None, None, None, None, None, None)
+        };
+    // Bug 3 fix: stereo_width is a continuous 0..1 measure
+    // `side_rms / (mid_rms + side_rms)`. 0 = mono (energy in mid only),
+    // ~0.5 = typical stereo, 1 = anti-phase / fully decorrelated (energy
+    // in side only). The earlier `s / m` form returned 0 for anti-phase
+    // signals — semantically "mono", the OPPOSITE of what they are.
+    let (mid_rms, side_rms, stereo_width) = if rendered.channels >= 2 {
+        let m = analysis::rms_overall(&mid_samples);
+        let s = analysis::rms_overall(&side_samples);
+        let denom = m + s;
+        let w = if denom > 1.0e-9 { s / denom } else { 0.0 };
+        (Some(m), Some(s), Some(w))
+    } else {
+        (None, None, None)
     };
 
-    Ok(synth_mcp::types::AnalyzeNoteResult {
+    // Stereo-aware flags: clipping if EITHER channel clipped, DC if EITHER
+    // channel exceeds threshold, silent only if BOTH channels are silent.
+    // Per-channel data takes precedence over the mono mix when present.
+    let stereo_clipping = clipped_l.unwrap_or(0) > 0 || clipped_r.unwrap_or(0) > 0;
+    let stereo_dc = dc_left.unwrap_or(0.0).abs() > 0.01 || dc_right.unwrap_or(0.0).abs() > 0.01;
+    let stereo_silent = match (peak_left, peak_right) {
+        (Some(l), Some(r)) => l < 0.005 && r < 0.005,
+        _ => peak_amplitude < 0.005,
+    };
+    let stereo_low_output = match (peak_left, peak_right) {
+        (Some(l), Some(r)) => l.max(r) < 0.05,
+        _ => peak_amplitude < 0.05,
+    };
+
+    // off_pitch only fires when we are confident in the detected fundamental.
+    // A low confidence (e.g. 0.2) means the loudest in-range bin is barely
+    // taller than competing peaks — typical for filter-resonance latching
+    // (Screamer Lead) or Karplus delay-line octave doubling.
+    const PITCH_CONFIDENCE_THRESHOLD: f32 = 0.3;
+    let off_pitch_real =
+        pitch_error_cents.abs() > 50.0 && pitch_confidence >= PITCH_CONFIDENCE_THRESHOLD;
+
+    let flags = synth_mcp::types::AnalyzeFlags {
+        silent: stereo_silent,
+        clipping: clipped_samples > 0 || stereo_clipping,
+        has_dc_offset: dc_offset.abs() > 0.01 || stereo_dc,
+        low_output: stereo_low_output,
+        off_pitch: off_pitch_real,
+    };
+
+    synth_mcp::types::AnalyzeNoteResult {
         note_requested: note,
         note_played: rendered.effective_note.as_u8(),
         velocity,
@@ -4598,7 +4757,28 @@ fn analyze_rendered_note(
         envelope_estimate,
         centroid_trend_hz_per_sec,
         flags,
-    })
+        peak_left,
+        peak_right,
+        rms_left,
+        rms_right,
+        dc_left,
+        dc_right,
+        clipped_left: clipped_l,
+        clipped_right: clipped_r,
+        mid_rms,
+        side_rms,
+        stereo_width,
+        pitch_confidence: Some(pitch_confidence),
+        trimmed_tail_windows: if trimmed_tail_windows > 0 {
+            Some(trimmed_tail_windows)
+        } else {
+            None
+        },
+        attack_window_start_ms: Some(attack_window_start_ms),
+        sustain_window_start_ms: Some(sustain_window_start_ms),
+        release_window_start_ms: Some(release_window_start_ms),
+        warnings: rendered.warnings.clone(),
+    }
 }
 
 impl From<crate::audio::analysis::SpectrumPeak> for synth_mcp::types::AnalyzeSpectrumPeak {

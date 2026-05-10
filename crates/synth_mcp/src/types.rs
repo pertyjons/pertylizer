@@ -687,6 +687,74 @@ pub struct AnalyzeNoteResult {
     /// Quick boolean flags an agent can branch on without reading the
     /// raw numeric fields.
     pub flags: AnalyzeFlags,
+    /// Per-channel peak amplitudes (left, right). Present when the render
+    /// was stereo. Useful for catching anti-phase content that cancels in
+    /// the mono mix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_left: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_right: Option<f32>,
+    /// Per-channel RMS amplitudes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rms_left: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rms_right: Option<f32>,
+    /// Per-channel DC offsets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dc_left: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dc_right: Option<f32>,
+    /// Per-channel clipped-sample counts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clipped_left: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clipped_right: Option<u32>,
+    /// Mid (sum/2) channel RMS. High values mean energy is centered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mid_rms: Option<f32>,
+    /// Side ((L−R)/2) channel RMS. High values mean energy is wide / decorrelated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub side_rms: Option<f32>,
+    /// Stereo width estimate in 0..1: `side_rms / (mid_rms + side_rms)`.
+    /// 0 = mono (all energy in mid), ~0.5 = typical stereo, 1 = anti-phase
+    /// or fully decorrelated (all energy in side). Returns 0 when both
+    /// mid and side RMS are below ~1e-9 (silent). Complementary to
+    /// `stereo_correlation`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stereo_width: Option<f32>,
+    /// Confidence in the detected fundamental, in 0.0..1.0. Computed from
+    /// the prominence of the loudest in-range bin over the next-loudest
+    /// non-adjacent peak. Low values mean the spectrum is noisy or has
+    /// multiple competing peaks; treat `pitch_error_cents` with skepticism
+    /// when this is below ~0.3.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch_confidence: Option<f32>,
+    /// Number of trailing rms_envelope/centroid_envelope windows that were
+    /// trimmed from `centroid_envelope` because they decayed to noise. The
+    /// raw `rms_envelope` is no longer trimmed; this counter tells you how
+    /// much of the tail was suppressed in the centroid.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trimmed_tail_windows: Option<u32>,
+    /// Time offset (ms) at which the attack-spectrum window starts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attack_window_start_ms: Option<f32>,
+    /// Time offset (ms) at which the sustain-spectrum window starts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sustain_window_start_ms: Option<f32>,
+    /// Time offset (ms) at which the release-spectrum window starts.
+    /// Anchored relative to the absolute render start (i.e., 0 = first
+    /// sample), so values larger than `duration_ms` are post-note-off.
+    /// Never slips backward past the note-off boundary to fit a full
+    /// window when the tail is short — the slice is allowed to be
+    /// shorter than 100 ms instead. Tail too short for the 25 ms offset
+    /// pegs this at the end of the render.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_window_start_ms: Option<f32>,
+    /// Non-fatal warnings collected during the offline render — module
+    /// instantiation failures, skipped modules, missing connections, etc.
+    /// An empty vector is omitted from the JSON.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
 }
 
 // === AWE (Acoustic World Engine) types ===
