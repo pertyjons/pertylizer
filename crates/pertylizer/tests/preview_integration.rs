@@ -379,6 +379,8 @@ fn analyze_note_result_schema_is_extensible() {
         analysis_signal_mode: AnalysisSignalMode::MaxAbsStereo,
         fundamental_left: Some(440.0),
         fundamental_right: Some(441.0),
+        fundamental_left_confidence: Some(0.95),
+        fundamental_right_confidence: Some(0.95),
         expected_fundamental_hz: 440.0,
         pitch_error_cents: 0.0,
         peak_amplitude: 0.5,

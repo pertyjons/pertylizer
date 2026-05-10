@@ -659,6 +659,16 @@ pub struct AnalyzeNoteResult {
     /// Pitch detection on the right channel only. `None` for mono input.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fundamental_right: Option<f32>,
+    /// Confidence in `fundamental_left` in `0.0..=1.0`. Same prominence-based
+    /// metric as `pitch_confidence`. `None` for mono input or when the left
+    /// channel produced no detectable peak. Low values mean the channel is
+    /// noisy/atonal even when `fundamental_left` reports a non-zero number.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fundamental_left_confidence: Option<f32>,
+    /// Confidence in `fundamental_right` in `0.0..=1.0`. See
+    /// `fundamental_left_confidence`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fundamental_right_confidence: Option<f32>,
     /// Concert-pitch frequency (Hz) of `note_played`. Use as a reference for
     /// `fundamental_hz` to spot detuning, octave errors, and pitch drift.
     pub expected_fundamental_hz: f32,

@@ -322,6 +322,22 @@ fn fundamental_per_channel_distinct_tones() {
         err_r * 100.0
     );
 
+    // Both channels carry a single clean sine, so confidence should be high.
+    let c_l = result
+        .fundamental_left_confidence
+        .expect("fundamental_left_confidence set");
+    let c_r = result
+        .fundamental_right_confidence
+        .expect("fundamental_right_confidence set");
+    assert!(
+        c_l > 0.7,
+        "fundamental_left_confidence should be high for a clean sine, got {c_l}"
+    );
+    assert!(
+        c_r > 0.7,
+        "fundamental_right_confidence should be high for a clean sine, got {c_r}"
+    );
+
     // Documented behavior of the pooled `fundamental_hz` on this input:
     // the per-sample max(|L|,|R|) signal flips between L and R sample-by-
     // sample, picking whichever channel has the larger instantaneous
@@ -367,6 +383,14 @@ fn analysis_signal_mode_mono_for_mono_input() {
         "mono input must not populate fundamental_right, got {:?}",
         result.fundamental_right
     );
+    assert!(
+        result.fundamental_left_confidence.is_none(),
+        "mono input must not populate fundamental_left_confidence"
+    );
+    assert!(
+        result.fundamental_right_confidence.is_none(),
+        "mono input must not populate fundamental_right_confidence"
+    );
 }
 
 #[test]
@@ -399,5 +423,61 @@ fn analysis_signal_mode_stereo_for_stereo_input() {
     assert!(
         result.fundamental_right.is_some(),
         "stereo input must populate fundamental_right"
+    );
+    assert!(
+        result.fundamental_left_confidence.is_some(),
+        "stereo input must populate fundamental_left_confidence"
+    );
+    assert!(
+        result.fundamental_right_confidence.is_some(),
+        "stereo input must populate fundamental_right_confidence"
+    );
+}
+
+#[test]
+fn fundamental_per_channel_confidence_drops_for_noisy_channel() {
+    // Left: clean 220 Hz sine — high confidence expected.
+    // Right: deterministic broadband noise — low confidence expected.
+    // The new per-channel confidence fields let the caller see that the
+    // right-channel fundamental (whatever number it picks) is unreliable
+    // even when fundamental_right itself is non-zero.
+    let sr = SAMPLE_RATE;
+    let note_ms = 800u32;
+    let total_ms = 1000u32;
+    let total_frames = (f64::from(total_ms) / 1000.0 * f64::from(sr)) as usize;
+    let note_frames = (f64::from(note_ms) / 1000.0 * f64::from(sr)) as u64;
+
+    let samples = synth_stereo(total_frames, |i| {
+        let t = i as f32 / sr as f32;
+        let left = (TAU * 220.0 * t).sin() * 0.5;
+        // Deterministic LCG-style pseudo-noise in [-0.5, 0.5].
+        let bits = (i as u32)
+            .wrapping_mul(1_664_525)
+            .wrapping_add(1_013_904_223);
+        let right = bits as f32 / u32::MAX as f32 - 0.5;
+        (left, right)
+    });
+    let rendered = make_stereo_rendered(samples, note_frames, total_frames, sr);
+    let result = analyze_rendered_buffer(&rendered, 57, 100, note_ms, Some(57));
+
+    let c_l = result
+        .fundamental_left_confidence
+        .expect("fundamental_left_confidence set");
+    let c_r = result
+        .fundamental_right_confidence
+        .expect("fundamental_right_confidence set");
+
+    assert!(
+        c_l > 0.7,
+        "clean-tone left channel should have high confidence, got {c_l}"
+    );
+    assert!(
+        c_r < c_l,
+        "noisy right channel must have lower confidence than clean left \
+         channel; got c_l={c_l}, c_r={c_r}"
+    );
+    assert!(
+        c_r < 0.5,
+        "noisy right channel should have low confidence (<0.5), got {c_r}"
     );
 }

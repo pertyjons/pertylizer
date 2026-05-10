@@ -4603,22 +4603,46 @@ pub fn analyze_rendered_buffer(
     // pooled `fundamental_hz` (computed on max(|L|,|R|)) reports a single
     // value that mixes both. For mono input both fields are `None` and the
     // analysis_signal_mode reflects that.
-    let (analysis_signal_mode, fundamental_left, fundamental_right) = if rendered.channels >= 2 {
+    let (
+        analysis_signal_mode,
+        fundamental_left,
+        fundamental_right,
+        fundamental_left_confidence,
+        fundamental_right_confidence,
+    ) = if rendered.channels >= 2 {
         let left_slice = left_samples
             .get(attack_start..note_samples.min(left_samples.len()))
             .unwrap_or(&left_samples);
         let right_slice = right_samples
             .get(attack_start..note_samples.min(right_samples.len()))
             .unwrap_or(&right_samples);
-        let f_l = analysis::fundamental_frequency(left_slice, sample_rate, search_min, search_max);
-        let f_r = analysis::fundamental_frequency(right_slice, sample_rate, search_min, search_max);
+        let (f_l, c_l) = analysis::fundamental_frequency_with_confidence(
+            left_slice,
+            sample_rate,
+            search_min,
+            search_max,
+        );
+        let (f_r, c_r) = analysis::fundamental_frequency_with_confidence(
+            right_slice,
+            sample_rate,
+            search_min,
+            search_max,
+        );
         (
             synth_mcp::types::AnalysisSignalMode::MaxAbsStereo,
             Some(f_l),
             Some(f_r),
+            Some(c_l),
+            Some(c_r),
         )
     } else {
-        (synth_mcp::types::AnalysisSignalMode::Mono, None, None)
+        (
+            synth_mcp::types::AnalysisSignalMode::Mono,
+            None,
+            None,
+            None,
+            None,
+        )
     };
 
     let envelope_window_ms = 50.0;
@@ -4766,6 +4790,8 @@ pub fn analyze_rendered_buffer(
         analysis_signal_mode,
         fundamental_left,
         fundamental_right,
+        fundamental_left_confidence,
+        fundamental_right_confidence,
         expected_fundamental_hz,
         pitch_error_cents,
         peak_amplitude,
