@@ -16,161 +16,23 @@
 //! analyze` pipeline that the `analyze_mix_bus` and `analyze_section` MCP
 //! tools depend on.
 
+mod common;
+
 use std::sync::Arc;
 
 use parking_lot::RwLock;
 
+use synth_core::AudioProcessor;
 use synth_core::audio::SampleRate as HwSampleRate;
-use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
 use synth_engine::SynthEngine;
-use synth_engine::instrument::InstrumentId;
-use synth_sequencer::{
-    Duration as SeqDuration, PatternTick, Pitch, SeqInstrumentId, Song, Tick, Velocity,
-};
+use synth_sequencer::Song;
 
 use pertylizer::audio::arrangement_render::render_arrangement_to_buffer;
 use pertylizer::audio::mix_analysis::analyze_mix_buffer;
 use pertylizer::mcp_shared::McpSharedState;
-use pertylizer::patch::{ModuleBuilder, Patch};
 use pertylizer::session::SynthSession;
 
-const TEST_SR: u32 = 44_100;
-
-/// Minimal sustaining patch — same shape as `preview_integration.rs`'s
-/// `sustain_patch_no_envelope` so we can rely on it producing audible output
-/// when a note is held. Sawtooth oscillator → amp (envelope-gated) → output.
-fn sustain_patch() -> Patch {
-    let mut patch = Patch::new("ArrangementRenderTest");
-    patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Oscillator)
-            .waveform("sawtooth")
-            .param_f("level", 0.5)
-            .build(),
-    );
-    patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Envelope)
-            .param_f("attack", 0.005)
-            .param_f("decay", 0.0)
-            .param_f("sustain", 1.0)
-            .param_f("release", 0.05)
-            .build(),
-    );
-    patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Amplifier)
-            .param_f("level", 1.0)
-            .build(),
-    );
-    patch.add_module(
-        ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .param_f("master", 1.0)
-            .build(),
-    );
-    patch.add_connection("osc-1", "out", "amp-1", "in");
-    patch.add_connection("env-1", "out", "amp-1", "cv");
-    patch.add_connection("amp-1", "left", "out-1", "in_l");
-    patch.add_connection("amp-1", "right", "out-1", "in_r");
-    patch
-}
-
-/// Engine + session set up with one instrument, drained so the shared graph
-/// snapshot reflects the patch.
-struct Rig {
-    _engine: SynthEngine,
-    _handle: synth_engine::EngineHandle,
-    session: SynthSession,
-}
-
-fn setup_with_patch(patch: &Patch) -> Rig {
-    let (mut engine, handle) = SynthEngine::new();
-    let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
-    session
-        .add_instrument_with_id(InstrumentId::FIRST, "Test")
-        .expect("add instrument");
-
-    let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
-        channels: synth_core::ChannelCount::Stereo,
-        output_latency: std::time::Duration::ZERO,
-        input_latency: None,
-    };
-    engine.on_stream_start(&stream_info);
-
-    let mut block = vec![0.0f32; 256 * 2];
-    let context = AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
-        frames: 256,
-        channels: 2,
-        stream_time: 0.0,
-        sample_position: 0,
-        output_latency: synth_core::Seconds::ZERO,
-    };
-    engine.process(&mut block, &context);
-
-    let _ = session.apply_patch(InstrumentId::FIRST, patch);
-
-    // Drain so add_module / connect / set_param commands land in shared state.
-    for _ in 0..16 {
-        block.fill(0.0);
-        engine.process(&mut block, &context);
-    }
-
-    Rig {
-        _engine: engine,
-        _handle: handle,
-        session,
-    }
-}
-
-/// Build a song with one 4-beat pattern playing a C major arpeggio on the
-/// default instrument (SeqInstrumentId(0) ↔ InstrumentId::FIRST), placed on a
-/// single track at tick 0. At the default 120 BPM this spans exactly 2 s.
-fn build_arpeggio_song() -> Arc<RwLock<Song>> {
-    let mut song = Song::new("Arpeggio");
-    // Whole-note pattern = 4 × 960 = 3840 ticks at 4/4.
-    let pattern_id = song.create_pattern(SeqDuration::WHOLE);
-    {
-        let pattern = song
-            .pattern_mut(pattern_id)
-            .expect("pattern just created should exist");
-        let pitches = [60u8, 64, 67, 72];
-        for (i, midi) in pitches.iter().enumerate() {
-            let start = PatternTick(i as u32 * 960);
-            let nid = pattern.add_note(
-                start,
-                Pitch::new(*midi).expect("valid MIDI note"),
-                Velocity::MF,
-                SeqInstrumentId(0),
-            );
-            // Each note holds for almost the whole beat so the renderer has
-            // sustained content to measure on, then releases before the next.
-            if let Some(note) = pattern.note_mut(nid) {
-                note.duration = Some(SeqDuration(900));
-            }
-        }
-    }
-
-    let track_id = song.create_track("T1");
-    if let Some(track) = song.track_mut(track_id) {
-        track.instrument = Some(SeqInstrumentId(0));
-    }
-    assert!(
-        song.place_pattern(pattern_id, track_id, Tick(0)),
-        "place_pattern should succeed"
-    );
-
-    Arc::new(RwLock::new(song))
-}
-
-/// RMS of a stereo-interleaved buffer's left channel.
-fn left_rms(stereo: &[f32]) -> f32 {
-    let lefts: Vec<f32> = stereo.chunks_exact(2).map(|f| f[0]).collect();
-    if lefts.is_empty() {
-        return 0.0;
-    }
-    let sq: f32 = lefts.iter().map(|s| s * s).sum();
-    (sq / lefts.len() as f32).sqrt()
-}
+use common::{TEST_SR, build_arpeggio_song, left_rms, setup_with_patch, sustain_patch};
 
 #[test]
 fn renders_audible_arrangement_from_engine_snapshot() {

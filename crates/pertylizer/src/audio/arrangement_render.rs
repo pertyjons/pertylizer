@@ -50,6 +50,15 @@ const CHANNELS: usize = 2;
 /// — comfortably above any reasonable analysis window.
 const MAX_RENDER_SECONDS: f32 = 300.0;
 
+/// Fixed seed for `fastrand`'s thread-local RNG at the start of every offline
+/// render. Several DSP modules pull from `fastrand` during processing —
+/// noise/LFO-S&H output, oscillator phase randomization on note-on, mechanical
+/// noise, drift. Without a deterministic seed, two consecutive renders of the
+/// same song-state diverge by enough to mask sub-dB mix differences (see
+/// `docs/mcp-music-tools-plan.md` §8.1). `fastrand`'s free functions use a
+/// thread-local RNG, so reseeding here doesn't disturb the audio thread.
+pub(crate) const OFFLINE_RENDER_SEED: u64 = 0x5EED_5EED_5EED_5EED;
+
 /// Output of [`render_arrangement_to_buffer`].
 pub struct RenderedArrangement {
     /// Stereo-interleaved f32 samples (L0, R0, L1, R1, ...).
@@ -100,6 +109,8 @@ pub(crate) fn render_arrangement_to_buffer_with_song(
             "Arrangement range invalid: end_tick ({end_tick}) must be greater than start_tick ({start_tick})"
         )));
     }
+
+    fastrand::seed(OFFLINE_RENDER_SEED);
 
     let mut warnings: Vec<String> = Vec::new();
 

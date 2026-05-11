@@ -1,8 +1,8 @@
 # MCP Music Tools — Plan
 
-> **Date:** 2026-05-11 (updated 2026-05-11 after Tier-1 partial ship and post-ship live-test pass)
-> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0**; remaining Tier-1+ pending.
-> Post-ship live testing surfaced determinism + auto-categorization issues — see §8.
+> **Date:** 2026-05-11 (updated 2026-05-11 after Tier-1 partial ship, post-ship live-test pass, and §8.1 determinism fix)
+> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix landed post-v0.277.0**; remaining Tier-1+ pending.
+> Post-ship live testing surfaced determinism + auto-categorization issues — see §8. §8.1 fixed; §8.2 and §8.3 still open.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
 
 ---
@@ -337,9 +337,10 @@ Decision point comes with the `true_peak` work in §0; flag here so it's remembe
 Re-ran the full tool suite against the "Tung Synthpop" arrangement after the v0.277.0 ship. Three new findings,
 ordered by impact.
 
-### 8.1 Offline render is not deterministic — HIGH
+### 8.1 Offline render is not deterministic — HIGH ✅ **Fixed post-v0.277.0**
 
-Four consecutive `analyze_section` calls on the same `[start_tick, end_tick)` against the same song-state produced:
+Four consecutive `analyze_section` calls on the same `[start_tick, end_tick)` against the same song-state had
+produced:
 
 | Call | RMS dBFS | LUFS-I | clipped samples |
 |------|----------|--------|-----------------|
@@ -348,29 +349,38 @@ Four consecutive `analyze_section` calls on the same `[start_tick, end_tick)` ag
 | 3 (master only) | -3.492 | -4.816 | 181 642 |
 | 4 (master only) | -3.404 | -4.520 | 183 770 |
 
-LUFS-I spread: **0.44 dB**. Clipped-samples spread: **10 %**. RMS spread: **~0.3 dB**.
+LUFS-I spread of **0.44 dB**, clipped-samples spread of **10 %**, and RMS spread of **~0.3 dB** were large enough
+to mask real 0.5 dB mix changes — exactly the decisions the tools are sold on.
 
-Same input → same output is a load-bearing assumption for every A/B use case the tools are sold on (verse vs.
-chorus, before vs. after a knob tweak, master vs. per-track sum). The current spread is large enough to mask real
-0.5 dB changes — i.e. exactly the kind of mix decision the tools are supposed to surface.
+**Root cause.** Several DSP modules pull from `fastrand::f32()` during processing:
 
-Likely sources to investigate, in order of suspicion:
+- `Oscillator::note_on` randomizes phase by `fastrand::f32() * unison_phase_random` (default 1.0).
+- `Noise`, `MathOscillator` noise mode, `MechanicalNoise`, `LFO` S&H, `DriftGenerator` pull every sample.
 
-1. **Voice-slot allocation** in `SynthEngine` — if voice picking depends on iteration order over a `HashMap` or
-   on a "first free" search that varies with prior state, the slot-to-instrument mapping changes per call.
-2. **Effect initial state** — reverb diffusion buffers, chorus delay lines, filter state. Are they fully zeroed
-   on offline-engine construction?
-3. **Seek precision** — `start_tick` → first-sample conversion: any rounding that depends on accumulated state
-   from a prior render would re-enter as drift.
-4. **Floating-point summation order** in `Mixer` or master sum — if N voices' contributions sum in a different
-   order, the FP rounding differs. Usually < 0.01 dB; could be ruled in/out with a single test.
+`fastrand`'s free functions use a thread-local RNG seeded once per thread at first use. Two consecutive offline
+renders on the same MCP-bridge thread therefore started from whatever RNG state the previous render had left
+behind, so phase + noise contributions drifted between calls.
 
-Concrete plan: write a `#[test]` that runs `render_arrangement_to_buffer` twice in a row against a fresh
-`SynthSession` and asserts bit-exact equality of the resulting `samples: Vec<f32>`. If it fails (very likely),
-binary-search the divergence point.
+**Fix.** Reseed `fastrand`'s thread-local RNG with a fixed constant at the start of every offline render entry
+point — `render_arrangement_to_buffer_with_song` (covers `analyze_mix_bus`, `analyze_section`, and the per-track
+contribution loop) and `render_note_to_buffer` (covers `analyze_note`). The shared seed lives as
+`pub(crate) const OFFLINE_RENDER_SEED` in `arrangement_render.rs`. The live audio thread is unaffected: it has its
+own thread-local RNG.
 
-Until this is fixed, the per-track contribution work from v0.277.0 is also affected — each soloed render carries
-the same uncertainty, so `rms_share` is approximate to within a few percent.
+**Secondary bug surfaced.** With renders made deterministic, `voice_module_bypass_replicated_in_offline_render`
+revealed that `ModuleGraph::clone_structure()` did not copy the `bypassed: HashSet`. Voices rebuilt from a
+template after a module was bypassed silently un-bypassed that module. The previous test only passed because
+random phase noise between renders exceeded the 1e-3 threshold the assertion compared against. Fixed by cloning
+the `bypassed` set inside `clone_structure`. This also tightens the live engine, where re-allocations after a
+bypass had carried the same latent bug.
+
+**Coverage.** `crates/pertylizer/tests/arrangement_render_determinism.rs` asserts bit-exact equality of repeated
+renders for a sustained sawtooth patch, a noise-source patch (which hammers `fastrand` every sample), and the
+downstream `analyze_mix_buffer` LUFS-I / RMS / clipped-samples readouts.
+
+**Consequence for v0.277.0 per-track work.** `rms_share` is now exact across repeated `analyze_section` calls
+with `include_per_track = true`. Master ≈ per-track sum is also bit-exact-reproducible (modulo the inherent
+solo-flag accounting; no longer modulo RNG drift).
 
 ### 8.2 Drop the manual `InstrumentCategory` requirement — auto-infer it instead
 
@@ -444,6 +454,6 @@ whether any of them is hot internally without correlating with `analyze_note`. T
 
 ### 8.4 Cross-reference
 
-§8.1 supersedes the implicit "renders are deterministic" assumption in §4 Cross-cutting design notes; add a
-caveat there once §8.1 is investigated. §8.2 supersedes the "manual `set_instrument_category` required"
-implication in v0.277.0's `analyze_harmony` doc. §8.3 is a doc-only update plus an optional additive field.
+§8.1 is now fixed; §4's "deterministic output for a given project state" claim once again holds end-to-end on
+the offline render path. §8.2 supersedes the "manual `set_instrument_category` required" implication in
+v0.277.0's `analyze_harmony` doc. §8.3 is a doc-only update plus an optional additive field.

@@ -67,6 +67,9 @@ pub fn render_note_to_buffer(
         return Err(McpBridgeError::InstrumentNotFound(instrument_id.as_u64()));
     }
 
+    // Deterministic offline render — see `OFFLINE_RENDER_SEED` docstring.
+    fastrand::seed(crate::audio::arrangement_render::OFFLINE_RENDER_SEED);
+
     // Snapshot modules, connections, and parameters from the live engine
     let engine_state = session.state();
 

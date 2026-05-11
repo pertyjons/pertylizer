@@ -587,6 +587,11 @@ impl ModuleGraph {
 
         // Clone all connections
         new_graph.connections = self.connections.clone();
+        // Bypass state is part of the graph structure — voices rebuilt from a
+        // template after a module is bypassed must inherit that bypass, or
+        // subsequent `add_module` calls (which trigger a voice rebuild) would
+        // silently unmute previously bypassed modules.
+        new_graph.bypassed = self.bypassed.clone();
         new_graph.order_dirty = true;
 
         new_graph
@@ -935,5 +940,20 @@ mod tests {
         // This should fail because oscillators don't have audio inputs
         // (they're sources, not processors)
         // A real test would use Filter or Amplifier
+    }
+
+    #[test]
+    fn clone_structure_preserves_bypass() {
+        let mut graph = ModuleGraph::new();
+        let id = graph.add_module(Box::new(Oscillator::new()));
+        graph.set_bypass(id, true);
+        assert!(graph.is_bypassed(id));
+
+        let cloned = graph.clone_structure();
+        assert!(
+            cloned.is_bypassed(id),
+            "clone_structure must carry bypass state — otherwise a voice \
+             rebuilt from a bypassed template silently un-bypasses modules"
+        );
     }
 }
