@@ -1,8 +1,34 @@
 # MCP Music Tools — Plan
 
-> **Date:** 2026-05-11
-> **Status:** Proposal
+> **Date:** 2026-05-11 (updated 2026-05-11 after Tier 0 ship)
+> **Status:** **Tier 0 shipped in v0.276.0**; Tier 1+ pending.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
+
+---
+
+## 0. Status snapshot
+
+### Shipped — v0.276.0 (Tier 0)
+
+| Tool | Version | Notes |
+|------|---------|-------|
+| `analyze_harmony` | v0.276.0 | Walks notes by tick, identifies chord symbols (18 templates incl. m7/maj7/dom7/sus/dim/aug/power), infers key via Krumhansl-Schmuckler over 24 major/minor keys, returns in-key ratio, out-of-scale pitch classes, composite stability score. Pattern or arrangement scope. Returns chord events with `start_bar`/`start_beat` (1-indexed). Default grouping: 1 quarter-note for pattern scope, 1 bar for arrangement scope. Consecutive identical chord events are merged. |
+| `analyze_mix_bus` | v0.276.0 | Renders N seconds (default 10, max 300) of the master bus offline from `start_tick` (default 0). Returns sample peak, RMS, crest factor, integrated LUFS (ITU-R BS.1770-4 K-weighted + 400 ms gating, 75 % overlap, abs −70 / rel −10 gates), 4-band frequency-balance RMS (sub/low/mid/high) windowed across the full buffer, stereo correlation, mid/side RMS, stereo width, mono-compatibility score, clipped-sample count. Includes `start_bar`/`end_bar`/`start_beat`/`end_beat`. |
+| `analyze_section` | v0.276.0 | Same metrics as `analyze_mix_bus` but takes explicit `[start_tick, end_tick)`. Per-track contribution breakdown deferred (see §6). |
+
+### Deferred / in-progress
+
+- **Per-track contribution breakdown for `analyze_section`** — Tier-0 ships master-only. Deliberate scoping decision to ship a complete and tested master path first; per-track stems land as a follow-up.
+- **`true_peak` (inter-sample peak)** — currently reports sample peak; inter-sample peak would catch over-shoots that emerge after DA conversion. Important for mixes that already clip on sample-peak (the test song clipped at 22 % of samples in chorus).
+- **LUFS-S / LUFS-M (momentary / short-term)** — only integrated LUFS shipped. Momentary LUFS would help locate the hottest spot inside a section.
+
+### Tier 0 follow-up commits
+
+- `aa48cde` — `analyze_harmony` + plan
+- `ef2f767` — `analyze_mix_bus` + `analyze_section` + offline arrangement renderer (v0.276.0)
+- `869308e` — integration test for the offline arrangement renderer
+- `cf34b3b` — cleanup pass: bug fixes, dedupe, tighten visibility
+- `41d8bf6` — live-testing follow-ups: fix Seek-overrun, fix `analyze_harmony` token bloat, add bar/beat positions, fix single-note chord mislabeling
 
 ---
 
@@ -83,43 +109,54 @@ the only granularity available for note edits.
 
 Sorted by how much each tool removes a current blind spot, weighted by how often the AI hits that blind spot.
 
-### Tier 0 — Biggest impact, build first
+### Tier 0 — Biggest impact, build first  ✅ **Shipped in v0.276.0**
 
-1. **`analyze_mix_bus`** — Without this, every mix decision the AI makes is a guess. The single tool that converts
-   Pertylizer from "AI can build sounds" into "AI can hear its own music". LUFS + per-band energy + true peak +
-   stereo correlation covers ~80 % of mix-bus debugging.
-2. **`analyze_section`** — `analyze_mix_bus` over an arbitrary arrangement range, *with* per-track contribution
-   breakdown. This is what lets the AI answer "why is the chorus muddy?" by pointing at the actual offending track.
-3. **`analyze_harmony`** — Currently the AI generates chord progressions by writing MIDI notes and has no feedback
+1. ✅ **`analyze_mix_bus`** — Without this, every mix decision the AI makes is a guess. The single tool that converts
+   Pertylizer from "AI can build sounds" into "AI can hear its own music". LUFS + per-band energy + sample peak +
+   stereo correlation covers ~80 % of mix-bus debugging. *(True peak deferred — see §0.)*
+2. ✅ **`analyze_section`** — `analyze_mix_bus` over an arbitrary arrangement range. *(Per-track contribution
+   breakdown deferred — see §0.)*
+3. ✅ **`analyze_harmony`** — Currently the AI generates chord progressions by writing MIDI notes and has no feedback
    on whether the result is in a key, harmonically static, or accidentally dissonant. Chord-symbol + key inference
    converts notes back into the language the AI plans in.
 
 ### Tier 1 — High impact, build next
 
-4. **`analyze_pattern`** — Cheap, no audio rendering. Density, range, velocity variance, repetition factor. Lets
+4. **Per-track contribution breakdown for `analyze_section`** — deferred from Tier 0. Live testing shows
+   `analyze_mix_bus` reports clipping and high LUFS, but the AI can't tell *which* track is the offender. Two
+   sub-options: (a) N+1 renders (master + each track soloed) — simple, correct, O(N) slower; (b) engine change to
+   tap per-instrument output pre-master — fast, invasive. Recommendation: ship (a) first.
+5. **`exclude_drums_from_harmony`** (or a `drum_track_ids` parameter on `analyze_harmony`) — live testing surfaced
+   that drum/percussion MIDI pitches pollute chord identification. The "Tung Synthpop" test song reports `F#m7b5`
+   on bar 1 because the hi-hat plays MIDI 42 (F#2) on top of an Am pad; the analyzer correctly identifies the
+   pitch set but it's musically wrong. Either honor an instrument category flag or expose a parameter to skip
+   percussion tracks.
+6. **`analyze_pattern`** — Cheap, no audio rendering. Density, range, velocity variance, repetition factor. Lets
    the AI verify "is this pattern interesting?" without rendering, and is a prerequisite for sane
    `generate_variation` heuristics.
-5. **`analyze_instrument_range`** — Catches the bug class where a patch sounds great at C4 in `analyze_note` and
+7. **`analyze_instrument_range`** — Catches the bug class where a patch sounds great at C4 in `analyze_note` and
    falls apart at C6 or C2. Especially important once an AI is committing patches into a project without a human
    playing test notes.
-6. **`render_section_to_wav`** — Even without immediate analysis tools layered on top, this unlocks the AI sending
+8. **`render_section_to_wav`** — Even without immediate analysis tools layered on top, this unlocks the AI sending
    audio back to a human or feeding it to a separate model. Building block under `compare_to_reference`.
+9. **True-peak + LUFS-S/M for `analyze_mix_bus`** — sample-peak misses inter-sample peaks; LUFS-S/M locate the
+   hottest moments. Cheap additions on top of the already-shipped LUFS-I pipeline.
 
 ### Tier 2 — Quality-of-life and composition
 
-7. **`generate_chord`**, **`transpose_notes`**, **`quantize_notes_to_scale`**, **`quantize_notes_to_grid`** —
-   Symbolic helpers that turn a 20-tool-call sequence into a 1-tool-call sequence. Not unlocking any new
-   capability, but a large reduction in token-cost-per-musical-idea.
-8. **`analyze_groove`** — Useful once the AI is past "write the right notes" and into "make it feel good".
-   Less load-bearing than harmony analysis because timing problems are easier for humans to flag than harmonic ones.
-9. **`analyze_velocity_response`** — Patch-QA, narrower than `analyze_instrument_range`.
+10. **`generate_chord`**, **`transpose_notes`**, **`quantize_notes_to_scale`**, **`quantize_notes_to_grid`** —
+    Symbolic helpers that turn a 20-tool-call sequence into a 1-tool-call sequence. Not unlocking any new
+    capability, but a large reduction in token-cost-per-musical-idea.
+11. **`analyze_groove`** — Useful once the AI is past "write the right notes" and into "make it feel good".
+    Less load-bearing than harmony analysis because timing problems are easier for humans to flag than harmonic ones.
+12. **`analyze_velocity_response`** — Patch-QA, narrower than `analyze_instrument_range`.
 
 ### Tier 3 — Specialized, build only when needed
 
-10. **`analyze_arrangement`** — Useful for long-form composition; less critical for the typical 1-4 minute project.
-11. **`compare_to_reference`** — Powerful for "make it sound like" prompts but requires the user to bring a
+13. **`analyze_arrangement`** — Useful for long-form composition; less critical for the typical 1-4 minute project.
+14. **`compare_to_reference`** — Powerful for "make it sound like" prompts but requires the user to bring a
     reference. Build after `render_section_to_wav` is in place.
-12. **`compare_patterns`**, **`compare_patches`**, **`humanize_notes`**, **`generate_variation`**,
+15. **`compare_patterns`**, **`compare_patches`**, **`humanize_notes`**, **`generate_variation`**,
     **`analyze_track`**, **`get_mix_meters`** — Each solves a narrower problem. Pick up as concrete user demand
     appears.
 
@@ -151,14 +188,55 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 
 ---
 
-## 5. Suggested implementation order (concrete)
+## 5. Implementation order — actual vs. planned
 
-1. `analyze_mix_bus` — reuses `analyze_note`'s analysis primitives (FFT, banding, peak/RMS) over a longer buffer.
-   Smallest delta to ship.
-2. `analyze_section` — adds offline arrangement rendering and per-track soloed sub-renders.
-3. `analyze_harmony` + `analyze_pattern` — pure symbolic analysis on sequencer data, no audio path. Can ship in
-   parallel with §2 since they touch different modules.
-4. `analyze_instrument_range` — wraps `analyze_note` in a sweep loop with a compact per-note summary.
-5. `render_section_to_wav` — generalization of §2 that writes the buffer out instead of analyzing it.
-6. Symbolic helpers (Tier 2 §7) — landed together as one PR; they share validation and scale/key infrastructure.
-7. Remaining Tier 2 / Tier 3 tools picked up by demand.
+**Tier 0 (shipped):**
+
+1. ✅ `analyze_harmony` — landed first as the symbolic / no-audio path. Smallest delta to ship.
+2. ✅ Offline arrangement renderer (`crates/pertylizer/src/audio/arrangement_render.rs`) — the new infrastructure
+   that both audio tools sit on. Drives `SequencerEngine` + `SynthEngine` over a tick range, captures the master
+   bus.
+3. ✅ `analyze_mix_bus` + `analyze_section` — share the renderer and the mix-bus analyzer
+   (`crates/pertylizer/src/audio/mix_analysis.rs`: LUFS-I, peak/RMS/crest, banded energy, stereo correlation,
+   mid/side, mono-compat, clip count).
+
+**Tier 1 (next):**
+
+4. Per-track contribution breakdown for `analyze_section` (deferred from Tier 0).
+5. Drum-track filtering on `analyze_harmony` (surfaced by live testing).
+6. `analyze_pattern` — pure symbolic, fast win.
+7. `analyze_instrument_range` — sweep on top of `analyze_note`.
+8. `render_section_to_wav` — generalization of the renderer that writes out instead of analyzing.
+9. True-peak + LUFS-S/M on `analyze_mix_bus`.
+
+**Tier 2 / Tier 3** — picked up by demand.
+
+---
+
+## 6. Lessons from live testing
+
+Validating Tier 0 against a real 60-bar synthpop arrangement surfaced a handful of issues. Fixes for #1–#4 shipped
+in `41d8bf6`; #5 is a deliberate Tier-1 follow-up.
+
+1. **Seek-overrun in the offline renderer** — `EngineCommand::Seek` issued before `EngineCommand::Play` was
+   silently undone, because `SequencerEngine::play` resets `current_tick = 0` on the Stopped → Playing transition.
+   All `analyze_section` calls effectively rendered from tick 0 regardless of the requested `start_tick`, making
+   section comparisons useless. Fix: send Play *before* Seek so the reset happens first and Seek overrides it.
+2. **`analyze_harmony` token bloat** — Full-arrangement analysis at the default 1-quarter-note grouping produced
+   77 KB of JSON and overran the MCP response-size limit. Fix: default to 1-bar grouping for arrangement scope
+   (pattern scope keeps quarter-note), and merge consecutive `HarmonyChordEvent`s with the same chord symbol +
+   `in_key` flag into single spans. `stats.chord_event_count` still reports the raw per-window count.
+3. **Tick-based output is hard to read** — `start_tick: 76800` is meaningless without mental conversion. Fix:
+   every chord event and every audio-section result now also carries `start_bar` / `start_beat` (1-indexed) via
+   `Tick::to_bar_beat_tick` and `Song::time_signature_at`.
+4. **Single-note windows mislabeled as `X(oct)` / `interval_octave`** — the catch-all 1-pitch-class template
+   matched any monophonic note as if it were a chord, and also caught 2-note non-chordal dyads (e.g. G+A reported
+   as `G(oct)`). Fix: dropped the `interval_octave` template; `identify_chord` returns `None` for inputs with
+   fewer than 2 distinct pitch classes. `in_key` no longer short-circuits on `chord = None`, so a single note
+   still gets checked against the inferred key.
+5. **Drum tracks pollute harmonic analysis** — bar 1 of the test song reports `F#m7b5` because the hi-hat plays
+   MIDI 42 (F#2) on top of an Am pad. The pitch set is correct; the musical interpretation isn't. Tier-1 work:
+   add a way to exclude percussion tracks from chord identification (see §3 Tier 1, item 5).
+6. **The test song clips at ~22 % of samples in the chorus** and reads **−5 LUFS-I** — 9 dB hotter than streaming
+   norms (−14 LUFS for Spotify). Not a tool bug, but evidence that the tools are pointing at real and useful
+   problems.
