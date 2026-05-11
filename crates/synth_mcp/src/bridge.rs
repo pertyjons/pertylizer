@@ -632,12 +632,19 @@ pub trait SynthBridge: Send + Sync + 'static {
     ///
     /// `grouping_ticks` is the chord-detection resolution in ticks (default 960
     /// = one quarter note at the engine's PPQN).
+    ///
+    /// `exclude_drums` (default `true`) drops notes from tracks whose
+    /// instrument has category `Drums`, so percussion MIDI pitches don't
+    /// pollute chord identification. `exclude_track_ids` is an explicit list
+    /// of track IDs to drop in addition. Both apply only to arrangement scope.
     fn analyze_harmony(
         &self,
         pattern_id: Option<u32>,
         arrangement_start_tick: Option<u64>,
         arrangement_end_tick: Option<u64>,
         grouping_ticks: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
     ) -> Result<crate::types::AnalyzeHarmonyResult, McpBridgeError>;
 
     /// Render `duration_seconds` of the master bus offline and return
@@ -653,12 +660,18 @@ pub trait SynthBridge: Send + Sync + 'static {
     ) -> Result<crate::types::AnalyzeMixBusResult, McpBridgeError>;
 
     /// Render an explicit arrangement range `[start_tick, end_tick)` offline
-    /// and return the same metrics as `analyze_mix_bus`. Per-track stem
-    /// breakdown is reserved for a future version.
+    /// and return the same metrics as `analyze_mix_bus`.
+    ///
+    /// When `include_per_track` is `Some(true)`, the bridge does N additional
+    /// soloed renders (one per audible track that overlaps the range) and
+    /// returns a `TrackContribution` for each so the caller can see which
+    /// track owns which share of the mix's energy. Cost scales linearly with
+    /// the track count of the section.
     fn analyze_section(
         &self,
         start_tick: u64,
         end_tick: u64,
+        include_per_track: Option<bool>,
     ) -> Result<crate::types::AnalyzeSectionResult, McpBridgeError>;
 
     // === AWE (Acoustic World Engine) ===

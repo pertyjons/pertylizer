@@ -1,24 +1,24 @@
 # MCP Music Tools — Plan
 
-> **Date:** 2026-05-11 (updated 2026-05-11 after Tier 0 ship)
-> **Status:** **Tier 0 shipped in v0.276.0**; Tier 1+ pending.
+> **Date:** 2026-05-11 (updated 2026-05-11 after Tier-1 partial ship and post-ship live-test pass)
+> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0**; remaining Tier-1+ pending.
+> Post-ship live testing surfaced determinism + auto-categorization issues — see §8.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
 
 ---
 
 ## 0. Status snapshot
 
-### Shipped — v0.276.0 (Tier 0)
+### Shipped — v0.276.0 (Tier 0) and v0.277.0 (Tier-1 first wave)
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| `analyze_harmony` | v0.276.0 | Walks notes by tick, identifies chord symbols (18 templates incl. m7/maj7/dom7/sus/dim/aug/power), infers key via Krumhansl-Schmuckler over 24 major/minor keys, returns in-key ratio, out-of-scale pitch classes, composite stability score. Pattern or arrangement scope. Returns chord events with `start_bar`/`start_beat` (1-indexed). Default grouping: 1 quarter-note for pattern scope, 1 bar for arrangement scope. Consecutive identical chord events are merged. |
+| `analyze_harmony` | v0.276.0 + v0.277.0 | Walks notes by tick, identifies chord symbols (18 templates incl. m7/maj7/dom7/sus/dim/aug/power), infers key via Krumhansl-Schmuckler over 24 major/minor keys, returns in-key ratio, out-of-scale pitch classes, composite stability score. Pattern or arrangement scope. Returns chord events with `start_bar`/`start_beat` (1-indexed). Default grouping: 1 quarter-note for pattern scope, 1 bar for arrangement scope. Consecutive identical chord events are merged. **v0.277.0 added drum-track filtering**: `exclude_drums` (default true) drops notes from `InstrumentCategory::Drums` tracks; `exclude_track_ids` accepts an explicit drop list. Arrangement scope only. |
 | `analyze_mix_bus` | v0.276.0 | Renders N seconds (default 10, max 300) of the master bus offline from `start_tick` (default 0). Returns sample peak, RMS, crest factor, integrated LUFS (ITU-R BS.1770-4 K-weighted + 400 ms gating, 75 % overlap, abs −70 / rel −10 gates), 4-band frequency-balance RMS (sub/low/mid/high) windowed across the full buffer, stereo correlation, mid/side RMS, stereo width, mono-compatibility score, clipped-sample count. Includes `start_bar`/`end_bar`/`start_beat`/`end_beat`. |
-| `analyze_section` | v0.276.0 | Same metrics as `analyze_mix_bus` but takes explicit `[start_tick, end_tick)`. Per-track contribution breakdown deferred (see §6). |
+| `analyze_section` | v0.276.0 + v0.277.0 | Same metrics as `analyze_mix_bus` but takes explicit `[start_tick, end_tick)`. **v0.277.0 added per-track contribution breakdown**: `include_per_track` (default false) opts in to one extra soloed render per audible track that overlaps the section, returning `TrackContribution { track_id, track_name, instrument_id, peak, peak_dbfs, rms, rms_dbfs, lufs_integrated, energy_bands, clipped_samples, rms_share }`. Soloing is implemented by cloning the song, setting only the target track's `solo = true`, and rendering via `render_arrangement_to_buffer_with_song`. |
 
 ### Deferred / in-progress
 
-- **Per-track contribution breakdown for `analyze_section`** — Tier-0 ships master-only. Deliberate scoping decision to ship a complete and tested master path first; per-track stems land as a follow-up.
 - **`true_peak` (inter-sample peak)** — currently reports sample peak; inter-sample peak would catch over-shoots that emerge after DA conversion. Important for mixes that already clip on sample-peak (the test song clipped at 22 % of samples in chorus).
 - **LUFS-S / LUFS-M (momentary / short-term)** — only integrated LUFS shipped. Momentary LUFS would help locate the hottest spot inside a section.
 
@@ -122,15 +122,13 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 
 ### Tier 1 — High impact, build next
 
-4. **Per-track contribution breakdown for `analyze_section`** — deferred from Tier 0. Live testing shows
-   `analyze_mix_bus` reports clipping and high LUFS, but the AI can't tell *which* track is the offender. Two
-   sub-options: (a) N+1 renders (master + each track soloed) — simple, correct, O(N) slower; (b) engine change to
-   tap per-instrument output pre-master — fast, invasive. Recommendation: ship (a) first.
-5. **`exclude_drums_from_harmony`** (or a `drum_track_ids` parameter on `analyze_harmony`) — live testing surfaced
-   that drum/percussion MIDI pitches pollute chord identification. The "Tung Synthpop" test song reports `F#m7b5`
-   on bar 1 because the hi-hat plays MIDI 42 (F#2) on top of an Am pad; the analyzer correctly identifies the
-   pitch set but it's musically wrong. Either honor an instrument category flag or expose a parameter to skip
-   percussion tracks.
+4. ✅ **Per-track contribution breakdown for `analyze_section`** — shipped in v0.277.0. Implements approach (a):
+   N+1 renders (master + each audible track soloed). Returns one `TrackContribution` per audible track in
+   `AnalyzeSectionResult.per_track`. Renderer factored into `render_arrangement_to_buffer_with_song` so the per-track
+   variants run against song clones with overridden solo flags, not the live shared instance.
+5. ✅ **Drum-track filtering on `analyze_harmony`** — shipped in v0.277.0. Two new parameters:
+   `exclude_drums` (default true) honours `InstrumentCategory::Drums`; `exclude_track_ids` is an explicit drop list.
+   Both apply to arrangement scope only; pattern scope warns when filters are passed.
 6. **`analyze_pattern`** — Cheap, no audio rendering. Density, range, velocity variance, repetition factor. Lets
    the AI verify "is this pattern interesting?" without rendering, and is a prerequisite for sane
    `generate_variation` heuristics.
@@ -200,10 +198,10 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
    (`crates/pertylizer/src/audio/mix_analysis.rs`: LUFS-I, peak/RMS/crest, banded energy, stereo correlation,
    mid/side, mono-compat, clip count).
 
-**Tier 1 (next):**
+**Tier 1:**
 
-4. Per-track contribution breakdown for `analyze_section` (deferred from Tier 0).
-5. Drum-track filtering on `analyze_harmony` (surfaced by live testing).
+4. ✅ Per-track contribution breakdown for `analyze_section` — v0.277.0.
+5. ✅ Drum-track filtering on `analyze_harmony` — v0.277.0.
 6. `analyze_pattern` — pure symbolic, fast win.
 7. `analyze_instrument_range` — sweep on top of `analyze_note`.
 8. `render_section_to_wav` — generalization of the renderer that writes out instead of analyzing.
@@ -235,8 +233,217 @@ in `41d8bf6`; #5 is a deliberate Tier-1 follow-up.
    fewer than 2 distinct pitch classes. `in_key` no longer short-circuits on `chord = None`, so a single note
    still gets checked against the inferred key.
 5. **Drum tracks pollute harmonic analysis** — bar 1 of the test song reports `F#m7b5` because the hi-hat plays
-   MIDI 42 (F#2) on top of an Am pad. The pitch set is correct; the musical interpretation isn't. Tier-1 work:
-   add a way to exclude percussion tracks from chord identification (see §3 Tier 1, item 5).
+   MIDI 42 (F#2) on top of an Am pad. The pitch set is correct; the musical interpretation isn't. ✅ Fixed in
+   v0.277.0: `analyze_harmony` now defaults to `exclude_drums = true`, dropping notes from `InstrumentCategory::Drums`
+   tracks. An `exclude_track_ids` parameter lets callers drop additional tracks by ID.
 6. **The test song clips at ~22 % of samples in the chorus** and reads **−5 LUFS-I** — 9 dB hotter than streaming
    norms (−14 LUFS for Spotify). Not a tool bug, but evidence that the tools are pointing at real and useful
    problems.
+
+---
+
+## 7. Deferred technical follow-ups from the v0.277.0 ship
+
+Surfaced by the post-ship simplify pass. None are blockers; ordered by expected impact. Pick up alongside the next
+Tier-1 item that touches the same code.
+
+### 7.1 Reuse one `SynthEngine` across the N per-track renders — high impact
+
+`render_per_track_contributions` (`crates/pertylizer/src/mcp_bridge.rs`) currently calls
+`render_arrangement_to_buffer_with_song` once per audible track. Each call spins up a brand-new offline
+`SynthEngine` and replays every instrument's full module graph, connections, parameters, effect chain, bypass
+states, and volume/pan into it via `send_blocking`. For an N-track section that work is repeated N times even
+though only the per-track `solo` flags differ between iterations.
+
+Plan: factor the engine construction + instrument-load out of `render_arrangement_to_buffer_with_song` into a
+`OfflineEngineSession` that owns the engine and exposes `render_range(song_arc, start, end) -> RenderedArrangement`.
+The per-track loop builds it once and calls `render_range` N times. Between iterations, send a `Stop` (to flush
+note/voice state) and a fresh `SetSong` / `Seek` / `Play`. The sequencer will pick up the updated solo flags on the
+next tick.
+
+This is the single biggest win for `analyze_section` with `include_per_track = true` on real songs.
+
+### 7.2 Parallelize the per-track renders with rayon — medium impact
+
+The N renders in `render_per_track_contributions` are independent (each its own engine + soloed song clone, no
+shared mutable state). Today they run serially in a `for` loop. After §7.1 lands, swap to `par_iter` over
+`targets`, scaled to `min(N, num_cpus)`. Watch peak memory — each worker holds one `OfflineEngineSession` plus a
+`Song` snapshot — but for 8–16 tracks on modern hardware this trades RAM for near-linear wall-clock improvement.
+
+Cleanest order: do §7.1 first so each rayon worker reuses its own engine within its slice.
+
+### 7.3 `HarmonyScope` enum to fix `analyze_song_harmony` argument sprawl — medium impact
+
+`analyze_song_harmony` now takes 8 arguments and carries `#[allow(clippy::too_many_arguments)]`. Two of those
+arguments (`exclude_drums`, `exclude_track_ids`) are only meaningful in arrangement scope; pattern scope
+currently emits a runtime warning if they're passed. Both the lint allow and the runtime warning are symptoms of
+mixing two scope-shaped variants into one flat parameter list.
+
+Plan: introduce
+
+```rust
+enum HarmonyScope {
+    Pattern { pattern_id: PatternId },
+    Arrangement {
+        start: Option<u64>,
+        end: Option<u64>,
+        exclude_drums: bool,
+        exclude_track_ids: HashSet<TrackId>,
+    },
+}
+```
+
+at the bridge boundary. The MCP server's `AnalyzeHarmonyParam` flat struct (which the JSON-schema layer requires)
+maps into the enum inside the bridge. The runtime "ignored in pattern scope" warning becomes a compile-time
+impossibility, and the `#[allow]` lint disappears. Touches `synth_mcp::bridge`, the bridge impl, and the
+arrangement-vs-pattern branch in `analyze_song_harmony`.
+
+### 7.4 `Song::tracks_mut` / `Song::set_solo_only` helpers in `synth_sequencer` — low impact
+
+The current solo-flag handling clears all flags via a Vec-of-IDs loop, then per render flips one flag and flips it
+back. Two upstream helpers would shrink the call site and become reusable elsewhere in the project:
+
+- `pub fn tracks_mut(&mut self) -> impl Iterator<Item = &mut SequencerTrack>` — symmetric with the existing
+  `tracks()` at `crates/synth_sequencer/src/song.rs:228`.
+- `pub fn set_solo_only(&mut self, target: TrackId)` — atomic "make this the only soloed track".
+
+Both are small additions to `Song`; the per-track contribution loop becomes one line per iteration. Bundle with
+§7.1 since both touch the same loop.
+
+### 7.5 `Arc<RwLock<Song>>` constructor helper — low impact, project-wide
+
+Grep finds ~9 sites that wrap a `Song` in `Arc::new(parking_lot::RwLock::new(...))` verbatim
+(`crates/pertylizer/src/audio/export.rs:214`, `main.rs:83`, `mcp_shared.rs:56`, sequencer tests, the per-track
+render loop, etc.). A `synth_sequencer::shared_song(Song) -> Arc<RwLock<Song>>` constructor would deduplicate
+the pattern. Strictly cosmetic; not on any hot path. Pick up as a drive-by when next touching one of those sites.
+
+### 7.6 `TrackContribution` field drift vs. `MixBusMetrics` — keep an eye on it
+
+`TrackContribution` duplicates 9 of `MixBusMetrics`'s numeric fields. When §0's deferred items land (`true_peak`,
+LUFS-S/M, etc.), the new fields will need to be added in two places. Two options when that happens:
+
+1. Embed a `MixBusMetrics` inside `TrackContribution` and add only the identity/share fields (`track_id`,
+   `track_name`, `instrument_id`, `rms_share`) at the outer level. Cleanest, but changes the response shape — MCP
+   clients keyed on the current flat layout would need to update.
+2. Keep the flat layout and add a small `#[cfg(test)]` test that asserts both structs declare the same superset of
+   audio-metric fields, so drift fails CI.
+
+Decision point comes with the `true_peak` work in §0; flag here so it's remembered.
+
+---
+
+## 8. Issues surfaced by live testing on 2026-05-11 (post-v0.277.0)
+
+Re-ran the full tool suite against the "Tung Synthpop" arrangement after the v0.277.0 ship. Three new findings,
+ordered by impact.
+
+### 8.1 Offline render is not deterministic — HIGH
+
+Four consecutive `analyze_section` calls on the same `[start_tick, end_tick)` against the same song-state produced:
+
+| Call | RMS dBFS | LUFS-I | clipped samples |
+|------|----------|--------|-----------------|
+| 1 (master only) | -3.377 | -4.447 | 184 348 |
+| 2 (master inside per-track call) | -3.669 | -4.889 | 167 015 |
+| 3 (master only) | -3.492 | -4.816 | 181 642 |
+| 4 (master only) | -3.404 | -4.520 | 183 770 |
+
+LUFS-I spread: **0.44 dB**. Clipped-samples spread: **10 %**. RMS spread: **~0.3 dB**.
+
+Same input → same output is a load-bearing assumption for every A/B use case the tools are sold on (verse vs.
+chorus, before vs. after a knob tweak, master vs. per-track sum). The current spread is large enough to mask real
+0.5 dB changes — i.e. exactly the kind of mix decision the tools are supposed to surface.
+
+Likely sources to investigate, in order of suspicion:
+
+1. **Voice-slot allocation** in `SynthEngine` — if voice picking depends on iteration order over a `HashMap` or
+   on a "first free" search that varies with prior state, the slot-to-instrument mapping changes per call.
+2. **Effect initial state** — reverb diffusion buffers, chorus delay lines, filter state. Are they fully zeroed
+   on offline-engine construction?
+3. **Seek precision** — `start_tick` → first-sample conversion: any rounding that depends on accumulated state
+   from a prior render would re-enter as drift.
+4. **Floating-point summation order** in `Mixer` or master sum — if N voices' contributions sum in a different
+   order, the FP rounding differs. Usually < 0.01 dB; could be ruled in/out with a single test.
+
+Concrete plan: write a `#[test]` that runs `render_arrangement_to_buffer` twice in a row against a fresh
+`SynthSession` and asserts bit-exact equality of the resulting `samples: Vec<f32>`. If it fails (very likely),
+binary-search the divergence point.
+
+Until this is fixed, the per-track contribution work from v0.277.0 is also affected — each soloed render carries
+the same uncertainty, so `rms_share` is approximate to within a few percent.
+
+### 8.2 Drop the manual `InstrumentCategory` requirement — auto-infer it instead
+
+The v0.277.0 default `exclude_drums: true` on `analyze_harmony` is a silent no-op when no instruments have
+`category == Drums` — which is the realistic case, since `set_instrument_category` is barely used. On the test
+song every instrument is `Uncategorized`, so the default call still produces the `F#m7b5` bug it was supposed
+to fix. The user has no warning indicating the filter was inert.
+
+Two paths, ordered by ambition:
+
+**8.2a Minimum fix:** when `exclude_drums = true` and no `Drums`-categorized tracks exist, push a warning:
+`"exclude_drums=true had no effect — no instruments are categorized as Drums. Use set_instrument_category or
+pass exclude_track_ids."` Cheap, transparent, but still requires manual action to actually fix the analysis.
+
+**8.2b Better fix: `infer_instrument_category(instrument_id) -> Category` with a layered fallback.** Live testing
+verified the signals are strong enough to do this without any audio rendering:
+
+| Layer | Signal | Cost | Example from test song |
+|-------|--------|------|------------------------|
+| 1. Name match | "kick", "snare", "hat", "drum", "perc", "cymbal", "tom", "clap" on instrument *or* track name | free | "Kick", "Snare", "Hat" → instant Drums |
+| 2. Module graph | `Noise` source + no `Oscillator` → percussion noise | free | Hi-Hat: 5-module graph `Noise → Env → Flt → Amp → Out`, no oscillator |
+| 3. Envelope shape | sustain ≈ 0 AND decay + release < 200 ms | free | Hat ADSR: A=1 ms, D=50 ms, S=0 %, R=30 ms |
+| 4. Pattern form | `distinct_pitches ≤ 2 AND max_duration < 1 beat` across all placements | free | Hat pattern: 32 notes all MIDI 42, duration 0.25 beats |
+| 5. analyze_note signal | low `pitch_confidence` + high centroid + sustain ≈ 0 | one render | Hat: confidence 0.20, centroid 13.6 kHz, RMS dies in 150 ms |
+
+Layers 1–4 are free (no rendering). Layer 5 exists for borderline cases but isn't needed in practice. The test
+song's three drum tracks (Kick, Snare, Hat) get picked up by layer 1 alone — name match.
+
+Concrete shape:
+
+```rust
+pub fn infer_instrument_category(
+    instrument: &InstrumentSnapshot,
+    track: Option<&SequencerTrack>,
+    patterns_used: &[&Pattern],
+) -> (InstrumentCategory, f32 /* confidence */);
+```
+
+`analyze_harmony`'s default behaviour changes from "filter tracks where `category == Drums`" to "filter tracks
+where `infer_instrument_category` returns `Drums` with confidence ≥ threshold". The warning then names the
+auto-detected drum tracks transparently, e.g. `"Auto-excluded 3 track(s) inferred as drums: Kick(0) [name], Snare(1) [name], Hat(2) [name]"`.
+
+This makes the manual `set_instrument_category` workflow optional — useful for overrides, not mandatory for the
+default analysis to work. It also unblocks other future tools (`analyze_groove` could auto-pick drum tracks;
+`analyze_pattern` could classify pattern shape).
+
+Recommendation: ship 8.2b. It's a small standalone module (~150 lines), fully testable, and removes a sharp
+edge in the harmony tool's UX.
+
+### 8.3 Per-track contribution: clarify pan-law output, optionally add `pre_master_peak` — LOW/MED
+
+Per-track renders on center-panned tracks report `peak = 0.7071068` (= 1/√2), which is the constant-power pan-law
+attenuation kicking in for L = R = 1.0 inputs. That's correct but confusing: a user reading "Kick peak -3 dBFS"
+might think the kick is hot to -3, when in fact the kick's internal signal is at 0 dBFS and the -3 dB is the
+pan-law cost of being center.
+
+Two parts:
+
+1. **Documentation:** add a sentence to the `analyze_section` tool description and `TrackContribution` doc:
+   `"Track peak/RMS reflect the track's contribution to the master mix, including pan-law attenuation
+   (-3 dB at center pan). For internal patch peak, run analyze_note against the instrument directly."`
+2. **Optional new field `pre_master_peak: f32`:** what the track's peak would be if it were the only audible
+   track *and* not pan-attenuated — i.e. the actual internal-signal peak the patch is producing. Lets a user
+   see "this kick is clipping internally before any pan/sum even happens". Cheap to compute (we already have
+   the soloed render; just don't apply the pan/track-volume in the analysis step, or run it on an
+   unpanned-copy).
+
+Live testing showed Kick + Sub Bass + Aggro Bass + Stab all reported exactly 0.7071 — the user can't tell
+whether any of them is hot internally without correlating with `analyze_note`. The doc fix is mandatory;
+`pre_master_peak` is a quality-of-life add.
+
+### 8.4 Cross-reference
+
+§8.1 supersedes the implicit "renders are deterministic" assumption in §4 Cross-cutting design notes; add a
+caveat there once §8.1 is investigated. §8.2 supersedes the "manual `set_instrument_category` required"
+implication in v0.277.0's `analyze_harmony` doc. §8.3 is a doc-only update plus an optional additive field.

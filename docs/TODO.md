@@ -172,10 +172,14 @@ Open questions: persistence format (inline vs. sidecar), max length, whether to 
 ### 6.1 MCP & AI Interaction
 
 Tier-0 music-analysis tools shipped in v0.276.0 (`analyze_harmony`,
-`analyze_mix_bus`, `analyze_section`). Roadmap for the remaining tiers lives
-in `docs/mcp-music-tools-plan.md`.
+`analyze_mix_bus`, `analyze_section`); Tier-1 follow-ups for drum-track
+filtering and per-track contribution breakdown shipped in v0.277.0.
+Roadmap for the remaining tiers lives in `docs/mcp-music-tools-plan.md`.
 
-- [ ] Per-track stem breakdown for `analyze_section` (currently master-only)
+- [x] Per-track stem breakdown for `analyze_section` — v0.277.0
+      (`include_per_track` parameter).
+- [x] Drum-track filtering for `analyze_harmony` — v0.277.0
+      (`exclude_drums` defaults to true; `exclude_track_ids` for explicit drops).
 - [ ] Tier 1: `analyze_pattern` (symbolic pattern stats — density, polyphony,
       rhythmic and velocity variance), `analyze_instrument_range` (sweep an
       instrument across MIDI range; flag aliasing, energy loss, pitch

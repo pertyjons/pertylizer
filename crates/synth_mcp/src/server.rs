@@ -524,6 +524,10 @@ pub struct AnalyzeSectionParam {
     pub start_tick: u64,
     #[schemars(description = "Absolute tick where the section ends (exclusive).")]
     pub end_tick: u64,
+    #[schemars(
+        description = "When true, return a per-track contribution breakdown (peak, RMS, LUFS, banded energy, clipped sample count, and RMS share) for every audible track whose placements overlap the section. Costs one extra offline render per track, so leave off for fast master-only analysis and turn on when investigating which track is clipping, dominating, or masking. Default false."
+    )]
+    pub include_per_track: Option<bool>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -544,6 +548,14 @@ pub struct AnalyzeHarmonyParam {
         description = "Chord-detection window size in ticks (default 960 = one quarter note at 960 PPQN). Smaller values produce more, finer chord events; larger values aggregate."
     )]
     pub grouping_ticks: Option<u32>,
+    #[schemars(
+        description = "Exclude notes from tracks whose instrument has category 'Drums' (default true). Percussion MIDI pitches otherwise pollute chord identification — a hi-hat at MIDI 42 (F#) on top of an Am pad gets reported as F#m7b5. Has no effect in pattern scope. Set false to include all tracks regardless of category."
+    )]
+    pub exclude_drums: Option<bool>,
+    #[schemars(
+        description = "Explicit list of track IDs to exclude from chord identification, e.g. for tracks with category 'Uncategorized' that are nonetheless percussion. Combined with exclude_drums. Arrangement scope only."
+    )]
+    pub exclude_track_ids: Option<Vec<u16>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2236,13 +2248,14 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Render an explicit arrangement range [start_tick, end_tick) offline and return the same mix-bus metrics as analyze_mix_bus (LUFS-I, peak/RMS, crest, banded energy, stereo correlation, mid/side, mono-compatibility, clipped samples). Use this when you want to A/B verses vs. choruses, compare a buildup to a drop, or inspect a specific musical passage rather than a fixed-duration window from the song start. Per-track contribution breakdown is reserved for a future version."
+        description = "Render an explicit arrangement range [start_tick, end_tick) offline and return the same mix-bus metrics as analyze_mix_bus (LUFS-I, peak/RMS, crest, banded energy, stereo correlation, mid/side, mono-compatibility, clipped samples). Use this when you want to A/B verses vs. choruses, compare a buildup to a drop, or inspect a specific musical passage rather than a fixed-duration window from the song start. Pass `include_per_track: true` to also receive a per-track breakdown (one soloed render per track) so you can tell which track is responsible for clipping, dominant energy, or sub-bass — costs roughly O(track_count) extra render time."
     )]
     async fn analyze_section(&self, params: Parameters<AnalyzeSectionParam>) -> String {
-        match self
-            .bridge
-            .analyze_section(params.0.start_tick, params.0.end_tick)
-        {
+        match self.bridge.analyze_section(
+            params.0.start_tick,
+            params.0.end_tick,
+            params.0.include_per_track,
+        ) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
@@ -2257,6 +2270,8 @@ impl SynthMcpServer {
             params.0.arrangement_start_tick,
             params.0.arrangement_end_tick,
             params.0.grouping_ticks,
+            params.0.exclude_drums,
+            params.0.exclude_track_ids,
         ) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),

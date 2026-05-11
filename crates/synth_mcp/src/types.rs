@@ -1236,9 +1236,46 @@ pub struct AnalyzeMixBusResult {
     pub warnings: Vec<String>,
 }
 
+/// Per-track contribution to a section's master mix. Returned in
+/// `AnalyzeSectionResult.per_track` when the caller asks for a breakdown.
+///
+/// Each entry is the result of re-rendering the same `[start_tick, end_tick)`
+/// range with one track soloed, so it shows what that track sounds like in
+/// isolation (with its own track gain / pan / effects). Use this to answer
+/// "which track is responsible for the chorus clipping?" or "which track owns
+/// the sub-bass energy?".
+#[derive(Debug, Clone, Serialize)]
+pub struct TrackContribution {
+    /// Sequencer track ID.
+    pub track_id: u16,
+    /// Track name.
+    pub track_name: String,
+    /// Assigned instrument's seq ID (matches `InstrumentInfo.id` value).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instrument_id: Option<u16>,
+    /// Sample peak across both channels of the soloed render, linear.
+    pub peak: f32,
+    /// Sample peak in dBFS (silence reported as -200.0).
+    pub peak_dbfs: f32,
+    /// Overall RMS of the soloed render, linear.
+    pub rms: f32,
+    /// Overall RMS in dBFS (silence reported as -200.0).
+    pub rms_dbfs: f32,
+    /// Integrated LUFS of the soloed render (silence reported as -200.0).
+    pub lufs_integrated: f32,
+    /// 4-band RMS energy of the soloed render (sub/low/mid/high).
+    pub energy_bands: AnalyzeEnergyBands,
+    /// Count of samples that hit the ±0.999 ceiling in the soloed render —
+    /// pinpoints the actual offender when the master mix clips.
+    pub clipped_samples: u32,
+    /// Fraction of the summed-track RMS that this track contributes,
+    /// `0.0..=1.0`. Sums to ~1.0 across all returned tracks; quick way to spot
+    /// dominant elements without comparing absolute RMS values.
+    pub rms_share: f32,
+}
+
 /// Output of `analyze_section`. Same metrics as `analyze_mix_bus` but the
-/// tick range is explicit. Per-track contribution breakdown is not yet
-/// implemented — that will land in a follow-up version.
+/// tick range is explicit. Optionally includes a per-track breakdown.
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyzeSectionResult {
     /// 1-indexed bar number at `start_tick`.
@@ -1254,6 +1291,13 @@ pub struct AnalyzeSectionResult {
     pub end_tick: u64,
     /// Mix-bus metrics for the section.
     pub metrics: MixBusMetrics,
+    /// Per-track contribution breakdown, one entry per audible track whose
+    /// placements overlap the section. Empty when the caller did not request
+    /// a breakdown. Each entry comes from a separate offline render with only
+    /// that track soloed; the cost is therefore O(N) in the number of tracks
+    /// covering the section.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub per_track: Vec<TrackContribution>,
     /// Non-fatal warnings emitted during the render.
     pub warnings: Vec<String>,
 }

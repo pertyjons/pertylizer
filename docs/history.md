@@ -1,5 +1,78 @@
 # Version History
 
+## [0.277.0] - 2026-05-11
+### Tier-1 follow-ups: drum-track filter for `analyze_harmony`, per-track breakdown for `analyze_section`
+
+Two follow-ups motivated by live testing of the v0.276.0 Tier-0 tools on a real
+60-bar synthpop arrangement. Both items were already flagged in
+`docs/mcp-music-tools-plan.md` §3 Tier 1 (items 4 and 5) and §6 Lessons.
+
+#### `analyze_harmony` — drum-track filtering
+
+Two new optional parameters:
+
+- `exclude_drums: Option<bool>` — default **true**. Drops notes from tracks
+  whose instrument has category `Drums` before chord identification. Fixes the
+  bar-1 `F#m7b5` mislabel that surfaced when a GM hi-hat on MIDI 42 was
+  analyzed on top of an Am pad in the test song.
+- `exclude_track_ids: Option<Vec<u16>>` — explicit drop list, combined with
+  the drum filter. Use this for percussion that hasn't been categorized via
+  `set_instrument_category`. Arrangement scope only; pattern scope emits a
+  warning and ignores the list (a pattern is not bound to a single track).
+
+The filter resolves drum tracks by joining `Song.tracks()` → `SeqInstrumentId`
+against the engine's `instrument_snapshots` (`category == Drums`).
+Arrangement-mode `placements_in_range` walking now skips excluded tracks. A
+warning entry names the dropped tracks so callers can verify what was filtered.
+
+#### `analyze_section` — per-track contribution breakdown
+
+New optional `include_per_track: bool` parameter (default false to keep
+master-only the cheap path). When true, the bridge:
+
+1. Renders the master mix as before.
+2. Snapshots track metadata, identifies every track whose placements overlap
+   `[start_tick, end_tick)`, and filters out muted / non-soloed tracks under
+   the song's live solo state.
+3. For each remaining track, clones the song, sets only that track's `solo =
+   true`, and re-renders the same range through the new
+   `render_arrangement_to_buffer_with_song` variant.
+4. Runs the mix-bus analyzer on each soloed buffer.
+5. Computes `rms_share = track_rms / sum(track_rms)` so the entries form a
+   partition of total energy.
+
+New `TrackContribution` type: track_id, track_name, instrument_id, peak,
+peak_dbfs, rms, rms_dbfs, lufs_integrated, energy_bands, clipped_samples,
+rms_share. Returned in `AnalyzeSectionResult.per_track` (omitted from JSON
+when empty via `skip_serializing_if`).
+
+`render_arrangement_to_buffer_with_song` is now the underlying primitive;
+the original `render_arrangement_to_buffer` becomes a thin wrapper over it
+that defaults to `shared.song`. Live engine and offline render share song
+data read-only, so cloning the song into a fresh `Arc<RwLock<Song>>` for
+per-track work cannot race the live audio thread.
+
+#### Tests
+
+Five new integration tests in
+`crates/pertylizer/tests/analyze_tier1_follow_ups.rs`:
+
+- `analyze_harmony_default_excludes_drum_tracks` — verifies the F#m7b5 → Am
+  reproduction case under default filtering.
+- `analyze_harmony_explicit_disable_lets_drums_pollute` — confirms
+  `exclude_drums = false` restores the buggy behavior on demand.
+- `analyze_harmony_excludes_by_track_id` — explicit track-ID exclusion works
+  even when no instrument is tagged `Drums`.
+- `analyze_section_per_track_breakdown_emits_one_entry_per_track` — two-track
+  song produces two contributions; each is audible when soloed; shares sum
+  to 1.0.
+- `analyze_section_without_per_track_flag_returns_empty_breakdown` —
+  `None` and `Some(false)` both produce an empty breakdown.
+
+`analyze_song_harmony` and `analyze_section_impl` are now `#[doc(hidden)] pub`
+so integration tests can call them with a real `SynthSession` + `McpSharedState`
+without going through the full `AppSynthBridge` boilerplate.
+
 ## [0.276.0] - 2026-05-11
 ### Tier-0 AI music tools: `analyze_harmony`, `analyze_mix_bus`, `analyze_section`
 

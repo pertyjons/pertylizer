@@ -2349,13 +2349,18 @@ impl SynthBridge for AppSynthBridge {
         arrangement_start_tick: Option<u64>,
         arrangement_end_tick: Option<u64>,
         grouping_ticks: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
     ) -> Result<AnalyzeHarmonyResult, McpBridgeError> {
         analyze_song_harmony(
+            &self.session,
             &self.shared,
             pattern_id,
             arrangement_start_tick,
             arrangement_end_tick,
             grouping_ticks,
+            exclude_drums,
+            exclude_track_ids,
         )
     }
 
@@ -2371,8 +2376,15 @@ impl SynthBridge for AppSynthBridge {
         &self,
         start_tick: u64,
         end_tick: u64,
+        include_per_track: Option<bool>,
     ) -> Result<AnalyzeSectionResult, McpBridgeError> {
-        analyze_section_impl(&self.session, &self.shared, start_tick, end_tick)
+        analyze_section_impl(
+            &self.session,
+            &self.shared,
+            start_tick,
+            end_tick,
+            include_per_track,
+        )
     }
 
     // === AWE (Acoustic World Engine) ===
@@ -4507,14 +4519,19 @@ fn merge_consecutive_chord_events(events: Vec<HarmonyChordEvent>) -> Vec<Harmony
 }
 
 /// Implementation of the `analyze_harmony` bridge method.
-fn analyze_song_harmony(
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_song_harmony(
+    session: &SynthSession,
     shared: &McpSharedState,
     pattern_id: Option<u32>,
     arrangement_start_tick: Option<u64>,
     arrangement_end_tick: Option<u64>,
     grouping_ticks: Option<u32>,
+    exclude_drums: Option<bool>,
+    exclude_track_ids: Option<Vec<u16>>,
 ) -> Result<AnalyzeHarmonyResult, McpBridgeError> {
-    use synth_sequencer::PatternId;
+    use synth_sequencer::{PatternId, SeqInstrumentId, TrackId};
 
     let song = shared.song.read();
     let default_grouping = if pattern_id.is_some() {
@@ -4525,6 +4542,11 @@ fn analyze_song_harmony(
     let grouping = grouping_ticks
         .filter(|g| *g > 0)
         .unwrap_or(default_grouping);
+    let exclude_drums = exclude_drums.unwrap_or(true);
+    let explicit_excluded: std::collections::HashSet<TrackId> = exclude_track_ids
+        .as_deref()
+        .map(|ids| ids.iter().copied().map(TrackId).collect())
+        .unwrap_or_default();
     let mut warnings: Vec<String> = Vec::new();
 
     // Lock in the time signature once per request so chord-event bar/beat
@@ -4541,6 +4563,11 @@ fn analyze_song_harmony(
 
     let (scope, notes, range_start, range_end) = match pattern_id {
         Some(pid) => {
+            if !explicit_excluded.is_empty() {
+                warnings.push(
+                    "exclude_track_ids is ignored in pattern scope — a pattern is not tied to a specific track".to_string(),
+                );
+            }
             let pid_typed = PatternId(pid);
             let Some(pattern) = song.pattern(pid_typed) else {
                 return Err(McpBridgeError::Other(format!("Pattern {pid} not found")));
@@ -4579,10 +4606,54 @@ fn analyze_song_harmony(
                 )));
             }
 
+            // Resolve which tracks to skip. A track is excluded when either:
+            //   1. It appears in the explicit `exclude_track_ids` list, or
+            //   2. `exclude_drums` is true and its assigned instrument has
+            //      category `Drums` in the engine's instrument snapshots.
+            // Tracks with no instrument assignment are never auto-excluded by
+            // the drum filter (we can't determine their category).
+            let drum_track_ids: std::collections::HashSet<TrackId> = if exclude_drums {
+                let engine_state = session.state();
+                let snapshots = engine_state.instrument_snapshots.read();
+                let drum_seq_ids: std::collections::HashSet<SeqInstrumentId> = snapshots
+                    .iter()
+                    .filter(|s| s.category == synth_engine::InstrumentCategory::Drums)
+                    .map(|s| SeqInstrumentId(s.seq_instrument_id))
+                    .collect();
+                song.tracks()
+                    .filter_map(|t| {
+                        let seq = t.instrument?;
+                        drum_seq_ids.contains(&seq).then_some(t.id)
+                    })
+                    .collect()
+            } else {
+                std::collections::HashSet::new()
+            };
+            let excluded_tracks: std::collections::HashSet<TrackId> = drum_track_ids
+                .iter()
+                .chain(explicit_excluded.iter())
+                .copied()
+                .collect();
+            if !excluded_tracks.is_empty() {
+                let names: Vec<String> = song
+                    .tracks()
+                    .filter(|t| excluded_tracks.contains(&t.id))
+                    .map(|t| format!("{}({})", t.name, t.id.0))
+                    .collect();
+                warnings.push(format!(
+                    "Excluded {} track(s) from harmony analysis: {}",
+                    excluded_tracks.len(),
+                    names.join(", ")
+                ));
+            }
+
             let mut notes: Vec<crate::harmony::AnalysisNote> = Vec::new();
             for placement in
                 song.placements_in_range(synth_sequencer::Tick(start), synth_sequencer::Tick(end))
             {
+                if excluded_tracks.contains(&placement.track_id) {
+                    continue;
+                }
                 let Some(pattern) = song.pattern(placement.pattern_id) else {
                     continue;
                 };
@@ -4811,12 +4882,15 @@ fn analyze_mix_bus_impl(
 
 /// `analyze_section` bridge implementation. Renders an explicit
 /// `[start_tick, end_tick)` arrangement range offline and returns
-/// mix-bus metrics.
-fn analyze_section_impl(
+/// mix-bus metrics. When `include_per_track` is true, also re-renders each
+/// audible track soloed in turn and returns per-track contribution metrics.
+#[doc(hidden)]
+pub fn analyze_section_impl(
     session: &SynthSession,
     shared: &McpSharedState,
     start_tick: u64,
     end_tick: u64,
+    include_per_track: Option<bool>,
 ) -> Result<AnalyzeSectionResult, McpBridgeError> {
     let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer(
         session, shared, start_tick, end_tick,
@@ -4831,6 +4905,14 @@ fn analyze_section_impl(
         .time_signature_at(synth_sequencer::Tick(rendered.start_tick));
     let (start_bar, start_beat) = tick_to_bar_beat_1based(rendered.start_tick, ts);
     let (end_bar, end_beat) = tick_to_bar_beat_1based(rendered.end_tick, ts);
+
+    let mut warnings = rendered.warnings;
+    let per_track = if include_per_track.unwrap_or(false) {
+        render_per_track_contributions(session, shared, start_tick, end_tick, &mut warnings)?
+    } else {
+        Vec::new()
+    };
+
     Ok(AnalyzeSectionResult {
         start_bar,
         start_beat,
@@ -4839,8 +4921,115 @@ fn analyze_section_impl(
         start_tick: rendered.start_tick,
         end_tick: rendered.end_tick,
         metrics,
-        warnings: rendered.warnings,
+        per_track,
+        warnings,
     })
+}
+
+/// Resolve which tracks have placements overlapping the section and
+/// re-render each one soloed against a cloned song. Warnings from each
+/// soloed render are accumulated into `warnings`.
+fn render_per_track_contributions(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    start_tick: u64,
+    end_tick: u64,
+    warnings: &mut Vec<String>,
+) -> Result<Vec<synth_mcp::types::TrackContribution>, McpBridgeError> {
+    use synth_sequencer::TrackId;
+
+    struct TargetMeta {
+        track_id: TrackId,
+        name: String,
+        instrument_id: Option<u16>,
+    }
+
+    // Snapshot under one read; the N renders below each clone the song and
+    // take their own write locks, so the shared read must not span them.
+    let (targets, mut base_song) = {
+        let song = shared.song.read();
+        let any_solo = song.any_solo();
+        let mut covered: std::collections::HashSet<TrackId> = std::collections::HashSet::new();
+        for placement in song.placements_in_range(
+            synth_sequencer::Tick(start_tick),
+            synth_sequencer::Tick(end_tick),
+        ) {
+            covered.insert(placement.track_id);
+        }
+        let mut targets: Vec<TargetMeta> = covered
+            .into_iter()
+            .filter_map(|tid| {
+                let t = song.track(tid)?;
+                t.is_audible(any_solo).then_some(TargetMeta {
+                    track_id: tid,
+                    name: t.name.clone(),
+                    instrument_id: t.instrument.map(|s| s.0),
+                })
+            })
+            .collect();
+        targets.sort_by_key(|t| t.track_id.0);
+        (targets, song.clone())
+    };
+
+    if targets.is_empty() {
+        warnings.push(
+            "include_per_track requested but no audible tracks overlap the section".to_string(),
+        );
+        return Ok(Vec::new());
+    }
+
+    // Clear every solo flag once. The per-iteration loop then only needs to
+    // flip the target's flag, render, and flip it back — no full sweep, no
+    // per-iteration song clone.
+    for tid in base_song.tracks().map(|t| t.id).collect::<Vec<_>>() {
+        if let Some(track) = base_song.track_mut(tid) {
+            track.solo = false;
+        }
+    }
+    let song_arc = std::sync::Arc::new(parking_lot::RwLock::new(base_song));
+
+    let mut contributions: Vec<synth_mcp::types::TrackContribution> =
+        Vec::with_capacity(targets.len());
+
+    for target in &targets {
+        if let Some(track) = song_arc.write().track_mut(target.track_id) {
+            track.solo = true;
+        }
+        let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_song(
+            session, &song_arc, start_tick, end_tick,
+        )?;
+        if let Some(track) = song_arc.write().track_mut(target.track_id) {
+            track.solo = false;
+        }
+        for w in &rendered.warnings {
+            warnings.push(format!("{}({}): {w}", target.name, target.track_id.0));
+        }
+        let analysis =
+            crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
+
+        contributions.push(synth_mcp::types::TrackContribution {
+            track_id: target.track_id.0,
+            track_name: target.name.clone(),
+            instrument_id: target.instrument_id,
+            peak: analysis.peak,
+            peak_dbfs: analysis.peak_dbfs,
+            rms: analysis.rms,
+            rms_dbfs: analysis.rms_dbfs,
+            lufs_integrated: analysis.lufs_integrated,
+            energy_bands: analysis.energy_bands.into(),
+            clipped_samples: analysis.clipped_samples,
+            rms_share: 0.0,
+        });
+    }
+
+    let total_rms: f32 = contributions.iter().map(|c| c.rms).sum();
+    if total_rms > 0.0 {
+        for c in contributions.iter_mut() {
+            c.rms_share = (c.rms / total_rms).clamp(0.0, 1.0);
+        }
+    }
+
+    Ok(contributions)
 }
 
 /// Pure analysis pass over an already-rendered audio buffer. Split out from

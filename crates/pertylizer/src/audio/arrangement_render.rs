@@ -22,12 +22,14 @@
 
 use std::sync::Arc;
 
+use parking_lot::RwLock;
+
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor};
 use synth_engine::commands::{InstrumentParam, PortId};
 use synth_engine::instrument::MidiChannel;
 use synth_engine::{EngineCommand, SynthEngine};
-use synth_sequencer::Tick;
+use synth_sequencer::{Song, Tick};
 
 use synth_mcp::error::McpBridgeError;
 
@@ -79,6 +81,20 @@ pub fn render_arrangement_to_buffer(
     start_tick: u64,
     end_tick: u64,
 ) -> Result<RenderedArrangement, McpBridgeError> {
+    render_arrangement_to_buffer_with_song(session, &shared.song, start_tick, end_tick)
+}
+
+/// Render an arrangement range against an explicit `Song` handle.
+///
+/// Identical to [`render_arrangement_to_buffer`] except the sequencer source is
+/// supplied directly. Used by `analyze_section` to render per-track soloed
+/// variants from a cloned `Song` without mutating the live shared instance.
+pub(crate) fn render_arrangement_to_buffer_with_song(
+    session: &SynthSession,
+    song: &Arc<RwLock<Song>>,
+    start_tick: u64,
+    end_tick: u64,
+) -> Result<RenderedArrangement, McpBridgeError> {
     if end_tick <= start_tick {
         return Err(McpBridgeError::Other(format!(
             "Arrangement range invalid: end_tick ({end_tick}) must be greater than start_tick ({start_tick})"
@@ -90,7 +106,7 @@ pub fn render_arrangement_to_buffer(
     // Wall-clock duration of the tick range, computed via the song's own
     // tick→second conversion so tempo changes inside the range are honoured.
     let duration_seconds = {
-        let song = shared.song.read();
+        let song = song.read();
         let start_s = song.tick_to_seconds(Tick(start_tick));
         let end_s = song.tick_to_seconds(Tick(end_tick));
         let dur = (end_s - start_s).max(0.0) as f32;
@@ -154,11 +170,11 @@ pub fn render_arrangement_to_buffer(
         );
     }
 
-    // The shared Song is read-only from the sequencer's perspective
-    // (`SequencerEngine` only does try_read), so handing the live Arc to the
-    // offline engine is safe even while the live engine runs.
+    // The supplied Song is read-only from the sequencer's perspective
+    // (`SequencerEngine` only does try_read), so handing an Arc to the offline
+    // engine is safe even when it points at the live shared instance.
     handle.send_blocking(EngineCommand::SetSong {
-        song: Arc::clone(&shared.song),
+        song: Arc::clone(song),
     });
 
     let hw_sample_rate = HwSampleRate(RENDER_SAMPLE_RATE);
