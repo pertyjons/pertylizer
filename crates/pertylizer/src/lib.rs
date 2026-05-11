@@ -13,6 +13,7 @@
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::similar_names)]
 
+pub mod analysis;
 pub mod audio;
 pub mod bundle;
 pub mod group_templates;
