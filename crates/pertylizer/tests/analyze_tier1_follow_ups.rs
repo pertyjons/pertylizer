@@ -63,6 +63,42 @@ fn sustain_patch(name: &str) -> Patch {
     patch
 }
 
+/// Patch with a noise source + percussive envelope — the shape the
+/// instrument-profile inference looks for when the user has *not* manually
+/// tagged the instrument as drums. Connections mirror `sustain_patch` so the
+/// engine accepts the graph.
+fn kick_patch(name: &str) -> Patch {
+    let mut patch = Patch::new(name);
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Noise)
+            .param_f("level", 1.0)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Envelope)
+            .param_f("attack", 0.001)
+            .param_f("decay", 0.05)
+            .param_f("sustain", 0.0)
+            .param_f("release", 0.05)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Amplifier)
+            .param_f("level", 1.0)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
+            .param_f("master", 1.0)
+            .build(),
+    );
+    patch.add_connection("nse-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("amp-1", "left", "out-1", "in_l");
+    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch
+}
+
 struct TwoInstrumentRig {
     _engine: SynthEngine,
     _handle: synth_engine::EngineHandle,
@@ -108,6 +144,60 @@ fn setup_two_instruments(drum_category: InstrumentCategory) -> TwoInstrumentRig 
 
     let _ = session.apply_patch(melodic, &sustain_patch("Pad"));
     let _ = session.apply_patch(percussion, &sustain_patch("Drums"));
+
+    for _ in 0..16 {
+        block.fill(0.0);
+        engine.process(&mut block, &context);
+    }
+
+    TwoInstrumentRig {
+        _engine: engine,
+        _handle: handle,
+        session,
+    }
+}
+
+/// Variant of `setup_two_instruments` that does *not* call
+/// `set_instrument_category` on the drum instrument and gives it a true
+/// noise+percussive-envelope patch. Used to verify the auto-inference path
+/// in `analyze_harmony` (§8.2b regression target).
+fn setup_pad_and_uncategorized_kick() -> TwoInstrumentRig {
+    let (mut engine, handle) = SynthEngine::new();
+    let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+
+    let melodic = InstrumentId::new(0);
+    let percussion = InstrumentId::new(1);
+    session
+        .add_instrument_with_id(melodic, "Pad")
+        .expect("add melodic instrument");
+    // Note: percussion deliberately keeps the default Uncategorized category
+    // so the inference layer is the only thing that can classify it.
+    session
+        .add_instrument_with_id(percussion, "Track 5")
+        .expect("add drum instrument");
+
+    let stream_info = synth_core::StreamInfo {
+        sample_rate: HwSampleRate(TEST_SR),
+        buffer_size: synth_core::BufferSize(256),
+        channels: synth_core::ChannelCount::Stereo,
+        output_latency: std::time::Duration::ZERO,
+        input_latency: None,
+    };
+    engine.on_stream_start(&stream_info);
+
+    let mut block = vec![0.0f32; 256 * 2];
+    let context = AudioCallbackContext {
+        sample_rate: HwSampleRate(TEST_SR),
+        frames: 256,
+        channels: 2,
+        stream_time: 0.0,
+        sample_position: 0,
+        output_latency: synth_core::Seconds::ZERO,
+    };
+    engine.process(&mut block, &context);
+
+    let _ = session.apply_patch(melodic, &sustain_patch("Pad"));
+    let _ = session.apply_patch(percussion, &kick_patch("Track 5"));
 
     for _ in 0..16 {
         block.fill(0.0);
@@ -218,6 +308,59 @@ fn analyze_harmony_default_excludes_drum_tracks() {
     assert!(
         drum_track_excluded,
         "expected an 'Excluded ... Drums' warning, got {:?}",
+        result.warnings
+    );
+}
+
+/// §8.2b regression target — when no instrument has been manually tagged
+/// `Drums`, the auto-inference must still classify a Noise+percussive-
+/// envelope instrument as drums and drop its track from harmony analysis.
+/// Before §8.2b the drum filter was a silent no-op in this case and the
+/// F#m7b5 bug returned.
+#[test]
+fn analyze_harmony_default_excludes_uncategorized_inferred_drums() {
+    let rig = setup_pad_and_uncategorized_kick();
+    let song = build_drum_pollution_song();
+    let shared = McpSharedState::with_song(song);
+
+    let result = analyze_song_harmony(
+        &rig.session,
+        &shared,
+        None,
+        Some(0),
+        Some(3840),
+        Some(3840),
+        None, // exclude_drums defaults to true
+        None,
+    )
+    .expect("harmony analysis should succeed");
+
+    let chord_symbols: Vec<&str> = result
+        .chords
+        .iter()
+        .filter_map(|c| c.symbol.as_deref())
+        .collect();
+    assert!(
+        chord_symbols.iter().any(|s| s == &"Am"),
+        "auto-inference should produce Am, got {chord_symbols:?}"
+    );
+    assert!(
+        chord_symbols
+            .iter()
+            .all(|s| !s.starts_with("F#") && !s.contains("m7b5")),
+        "auto-inference should not produce F#m7b5, got {chord_symbols:?}"
+    );
+    // Warning must mention the inferred-drums signal trail so a user can
+    // see *why* a track was dropped without checking the inference output
+    // separately.
+    let warning_mentions_inference = result.warnings.iter().any(|w| {
+        w.contains("Excluded")
+            && w.contains("drums conf=")
+            && (w.contains("graph:noise-no-osc") || w.contains("envelope:percussive"))
+    });
+    assert!(
+        warning_mentions_inference,
+        "expected an inference-tagged drum warning, got {:?}",
         result.warnings
     );
 }

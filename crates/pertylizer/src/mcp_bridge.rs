@@ -4608,17 +4608,30 @@ pub fn analyze_song_harmony(
 
             // Resolve which tracks to skip. A track is excluded when either:
             //   1. It appears in the explicit `exclude_track_ids` list, or
-            //   2. `exclude_drums` is true and its assigned instrument has
-            //      category `Drums` in the engine's instrument snapshots.
-            // Tracks with no instrument assignment are never auto-excluded by
-            // the drum filter (we can't determine their category).
+            //   2. `exclude_drums` is true and `infer_all_profiles` classifies
+            //      its assigned instrument as Drums with confidence >= 0.6.
+            //      Manual `set_instrument_category` still wins (it produces
+            //      role Drums with confidence 1.0 via manual-override), but
+            //      the inference also catches percussion that was never
+            //      manually tagged — closing the §8.2 silent-no-op.
+            // Tracks with no instrument assignment are never auto-excluded.
+            let mut drum_profiles: std::collections::HashMap<
+                SeqInstrumentId,
+                crate::analysis::InstrumentProfile,
+            > = std::collections::HashMap::new();
             let drum_track_ids: std::collections::HashSet<TrackId> = if exclude_drums {
                 let engine_state = session.state();
-                let snapshots = engine_state.instrument_snapshots.read();
-                let drum_seq_ids: std::collections::HashSet<SeqInstrumentId> = snapshots
-                    .iter()
-                    .filter(|s| s.category == synth_engine::InstrumentCategory::Drums)
-                    .map(|s| SeqInstrumentId(s.seq_instrument_id))
+                let profiles = crate::analysis::infer_all_profiles(&song, engine_state);
+                let drum_seq_ids: std::collections::HashSet<SeqInstrumentId> = profiles
+                    .into_iter()
+                    .filter(|p| {
+                        p.role.role == crate::analysis::Role::Drums && p.role.confidence >= 0.6
+                    })
+                    .map(|p| {
+                        let seq = SeqInstrumentId(p.instrument_id);
+                        drum_profiles.insert(seq, p);
+                        seq
+                    })
                     .collect();
                 song.tracks()
                     .filter_map(|t| {
@@ -4635,15 +4648,36 @@ pub fn analyze_song_harmony(
                 .copied()
                 .collect();
             if !excluded_tracks.is_empty() {
-                let names: Vec<String> = song
+                let descriptions: Vec<String> = song
                     .tracks()
                     .filter(|t| excluded_tracks.contains(&t.id))
-                    .map(|t| format!("{}({})", t.name, t.id.0))
+                    .map(|t| {
+                        let base = format!("{}({})", t.name, t.id.0);
+                        // Attach signal trail only for drum-auto-excludes —
+                        // explicit excludes have no inference behind them.
+                        if drum_track_ids.contains(&t.id)
+                            && let Some(seq) = t.instrument
+                            && let Some(profile) = drum_profiles.get(&seq)
+                        {
+                            let sigs = profile
+                                .role
+                                .signals
+                                .iter()
+                                .map(|s| format!("{}:{}", s.axis, s.detail))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            return format!(
+                                "{base} [drums conf={:.2}; {sigs}]",
+                                profile.role.confidence
+                            );
+                        }
+                        base
+                    })
                     .collect();
                 warnings.push(format!(
                     "Excluded {} track(s) from harmony analysis: {}",
                     excluded_tracks.len(),
-                    names.join(", ")
+                    descriptions.join(", ")
                 ));
             }
 
