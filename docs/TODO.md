@@ -12,24 +12,28 @@ project/patch files:
 - [ ] `VelocityAmpSensitivity` — velocity → amplitude mapping sensitivity
 - [ ] `VelocityFilterSensitivity` — velocity → filter cutoff mapping sensitivity
 
-### 0.3 Miscellaneous
-
-- [x] Fix padding on the label Voices in Topbar so it always shows 3 digits wide, as the CPU label does.
-
 ---
 
-## ★ MCP: Enrich tool metadata for AI discovery
+## ★ Description fields on user-facing entities (for AI context)
 
-`list_module_types` returns module types but lacks the context an AI needs to build patches autonomously:
+Add an optional free-text `description: String` field on user-facing entities so the user (or AI) can record
+*intent* — what a thing is for, not just what it is. The structural data (graph, notes, params) already tells you
+*what*; descriptions capture the *why*, which is otherwise unrecoverable.
 
-- [x] **Parameter ranges** — return min/max/default for every parameter (e.g. `cutoff: 20.0–20000.0 Hz, default 1000.0`)
-- [x] **Enum/discrete values** — list named options for discrete params (e.g.
-  `waveform: 0=Sine, 1=Saw, 2=Square, 3=Triangle`)
-- [x] **Port types** — mark ports as audio/cv/gate and input/output so AI knows what to connect
-- [x] **Signal flow hints** — describe typical patch topology (e.g. `osc → filter → amp → out`, `env → amp.cv_gain`)
-- [x] **Parameter units** — annotate with Hz, dB, ms, 0.0–1.0 normalized, etc.
+Phase 1 — start narrow where the payoff is highest:
 
-This enables AI to self-discover the full synth architecture without hardcoded knowledge.
+- [ ] `Patch` — describe role/character (e.g. `"verse bass, sub-heavy, sidechained to kick"`)
+- [ ] `Pattern` — describe musical function (e.g. `"chorus drop, half-time feel"`)
+- [ ] Expose via `synth_mcp` resources and include in `get_graph_diagnostics` / `analyze_note` output so AI
+  actually sees them
+- [ ] Editable from GUI (patch header, pattern properties dialog)
+
+Phase 2 — extend if Phase 1 proves useful:
+
+- [ ] `Track`, individual modules, `Sample` entries, `Song`
+- [ ] Consider per-module-instance notes vs. per-module-type docs (different concepts)
+
+Open questions: persistence format (inline vs. sidecar), max length, whether to surface descriptions in tooltips.
 
 ---
 
@@ -74,8 +78,6 @@ This enables AI to self-discover the full synth architecture without hardcoded k
 
 ### 1.6 Workflow quality of life
 
-- [x] Reorder effect chain — up/down arrows on effect modules, visual chain cables, auto-aligned vertical column *(
-  v0.237.0)*
 - [ ] A/B comparison — quick-switch between two patch versions to compare sound
 - [ ] Parameter locking — lock parameters to prevent accidental changes
 - [ ] Favorite modules — quick access to frequently used modules in "Add Module"
@@ -171,24 +173,6 @@ This enables AI to self-discover the full synth architecture without hardcoded k
 
 - [ ] Enable AI to "play freely" via MCP to autonomously generate complete songs and arrangements
 - [ ] Implement real-time parameter interpolation (gliding) to allow smoother AI-driven sound design
-- [x] Support batching of MCP commands to reduce latency and overhead during complex generations *(v0.253.0 —
-  `batch_execute`)*
-- [x] Add "Discovery" tools for the AI to better understand available port types and valid parameter ranges *(v0.253.0 —
-  `get_module_type_info`, `search_modules`, `list_port_types`, `check_connection`)*
-- [ ] **`take_screenshot` MCP tool — currently broken on Wayland.** Infrastructure is in place
-  (`ViewportCommand::Screenshot` → `Event::Screenshot` → PNG encode → condvar to MCP thread,
-  including a repaint-signal callback that MCP invokes from `request_screenshot`), but on Wayland the
-  compositor throttles `ctx.request_repaint()` from a non-GUI thread when the synth window doesn't
-  have focus, so the GUI thread stays paused (`gui_frame_counter` doesn't advance) and the request
-  times out. Tool returns a clear timeout error explaining the cause. Possible fixes to evaluate:
-  pipe a winit `EventLoopProxy::send_event()` through `mcp_shared` (forces wakeup independent of the
-  compositor's frame callbacks); or always force continuous repaint while MCP is connected
-  (CPU-wasteful when the window is hidden); or accept the limitation and document that the user
-  must focus the window before calling `take_screenshot`. Files involved:
-  `crates/pertylizer/src/mcp_shared.rs` (queue + repaint signal),
-  `crates/pertylizer/src/mcp_bridge.rs::request_screenshot`,
-  `crates/pertylizer/src/gui/egui_backend.rs` (poll, encode, deliver),
-  `crates/synth_mcp/src/server.rs::take_screenshot`.
 
 ---
 
@@ -198,29 +182,13 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 
 ### 7.0 AWE acoustic engine — prioritized plan
 
-#### Phase 1 — Quick wins (high impact, low complexity)
-
-- [x] **1. Pre-delay** — new `PreDelay(Milliseconds)` param (0–200ms), delay before first reflection
-- [x] **2. Air absorption** — new `AirAbsorption(NormalizedValue)` param, distance-proportional LP filtering per
-  reflection
-- [x] **3. Stereo width** — new `Width(NormalizedValue)` param (currently hardcoded to 1.0 in FDN)
-- [x] **4. Wet signal EQ** — new `HighCut(Hertz)` and `LowCut(Hertz)` params, biquad filters on wet output
-- [x] **5. FDN internal modulation** — new `ModulationDepth(NormalizedValue)` and `ModulationRate(Hertz)` params, chorus
-  inside FDN to break metallic character
-- [x] **6. Temperature → speed of sound** — new `Temperature(Celsius)` param, formula `v = 331.3 + 0.606 * T`, affects
-  all delay calculations
-
 #### Phase 2 — Medium complexity
 
 - [ ] **7. Per-surface materials** — `MaterialConfig { floor, walls, ceiling }` instead of single global `Material`, ISM
   uses correct material per reflection
 - [ ] **8. Second-order reflections** — extend ISM from 6 to ~30 taps (configurable `ReflectionOrder(u8)` 1–3)
-- [x] **9. Extended room modes** — add tangential modes `f = c/2 * sqrt((n/L)² + (m/W)²)` and axial overtones, ~12 total
-  combs instead of 3
 - [ ] **10. Resonant objects** — sympathetic resonance from objects in the room (strings, membranes, plates, Helmholtz
   cavities, loose panels, chimes), implemented as bandpass + feedback at object frequency
-- [x] **11. Eyring RT60** — replace Sabine `RT60 = 0.161V/(Sα)` with Eyring `RT60 = -0.161V/(S*ln(1-α))` for better
-  accuracy at high absorption
 - [ ] **12. Doppler effect** — track radial velocity between source/listener, shift pitch via variable delay read speed:
   `ratio = v_sound / (v_sound + v_radial)`
 

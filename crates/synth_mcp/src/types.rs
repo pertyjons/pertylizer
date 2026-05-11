@@ -1046,3 +1046,118 @@ pub struct InputDeviceInfo {
     /// Number of input channels.
     pub input_channels: u16,
 }
+
+// ---------------------------------------------------------------------------
+// analyze_harmony result types
+// ---------------------------------------------------------------------------
+
+/// What was analyzed by `analyze_harmony` — either a single pattern or an
+/// arrangement range.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum HarmonyScope {
+    /// A pattern, identified by its `PatternId` value.
+    Pattern { pattern_id: u32 },
+    /// An arrangement range in absolute ticks (`[start_tick, end_tick)`).
+    Arrangement { start_tick: u64, end_tick: u64 },
+}
+
+/// One identified chord event inside `AnalyzeHarmonyResult.chords`.
+///
+/// The window `[start_tick, end_tick)` is the grouping window the analyzer
+/// used; chord identification is based on every pitch that sounded inside it.
+#[derive(Debug, Clone, Serialize)]
+pub struct HarmonyChordEvent {
+    /// Window start in absolute ticks (or pattern-relative ticks for pattern
+    /// scope).
+    pub start_tick: u64,
+    /// Window end (exclusive).
+    pub end_tick: u64,
+    /// Unique MIDI notes (0-127) that sounded at any point in the window,
+    /// sorted ascending. Empty windows are omitted.
+    pub midi_notes: Vec<u8>,
+    /// Chord symbol e.g. `"Cm7"`, `"F#maj7"`, `"Bbsus4"`. `None` when the
+    /// pitch set didn't match any known chord template.
+    pub symbol: Option<String>,
+    /// Root pitch class (0..12, C = 0). `None` when `symbol` is `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<u8>,
+    /// Quality name e.g. `"minor7"`, `"sus4"`. `None` when `symbol` is `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<String>,
+    /// True when every note in the window belongs to the inferred key's scale.
+    pub in_key: bool,
+}
+
+/// Inferred key entry. `analyze_harmony` returns one top match plus up to two
+/// runner-ups.
+#[derive(Debug, Clone, Serialize)]
+pub struct HarmonyKeyEstimate {
+    /// Tonic pitch class (0..12, C = 0).
+    pub tonic: u8,
+    /// Tonic name e.g. `"C"`, `"F#"`.
+    pub tonic_name: String,
+    /// `"major"` or `"minor"`.
+    pub mode: String,
+    /// Combined human-readable label e.g. `"C major"`, `"F# minor"`.
+    pub label: String,
+    /// Krumhansl-Schmuckler Pearson correlation in `-1.0..=1.0`. Higher = better fit.
+    pub correlation: f32,
+}
+
+/// Aggregate counters for `analyze_harmony`.
+#[derive(Debug, Clone, Serialize)]
+pub struct HarmonyStats {
+    /// Total notes considered.
+    pub total_notes: u32,
+    /// Number of non-empty grouping windows.
+    pub chord_event_count: u32,
+    /// Distinct chord symbols across all events.
+    pub distinct_chord_count: u32,
+    /// How many events were identified to a chord symbol.
+    pub identified_chord_count: u32,
+    /// Lowest MIDI note encountered, or 0 if no notes.
+    pub pitch_range_low: u8,
+    /// Highest MIDI note encountered, or 0 if no notes.
+    pub pitch_range_high: u8,
+    /// Mean polyphony across non-empty windows (1.0 = monophonic).
+    pub avg_polyphony: f32,
+    /// Grouping resolution the analyzer used (ticks per window).
+    pub grouping_ticks: u32,
+}
+
+/// Quantitative harmonic analysis of a pattern or arrangement range. Returned
+/// by `analyze_harmony`.
+///
+/// Pure symbolic — no audio rendering involved. Walks notes in time order,
+/// groups overlapping notes into chord events on a configurable resolution,
+/// labels each event with a chord symbol when one matches, and infers the
+/// most likely key using Krumhansl-Schmuckler key-profile correlation.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeHarmonyResult {
+    /// What was analyzed (pattern id or arrangement range).
+    pub scope: HarmonyScope,
+    /// Sequence of chord events in time order.
+    pub chords: Vec<HarmonyChordEvent>,
+    /// Most likely key, or `None` for empty input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inferred_key: Option<HarmonyKeyEstimate>,
+    /// Top alternative keys (up to 2) after the inferred one.
+    pub key_candidates: Vec<HarmonyKeyEstimate>,
+    /// Pitch-class histogram, weighted by note duration (in ticks). Index 0 = C.
+    pub pitch_class_histogram: [f32; 12],
+    /// Fraction of note-weight (by duration) inside the inferred key's scale
+    /// (0.0..=1.0). 0.0 if `inferred_key` is `None`.
+    pub in_key_ratio: f32,
+    /// Pitch classes (0..12) with non-zero weight that fall outside the inferred
+    /// key's scale. Empty if `inferred_key` is `None`.
+    pub out_of_scale_pitch_classes: Vec<u8>,
+    /// Composite 0.0..=1.0 score combining in-key ratio, chord-identification
+    /// ratio, and key-correlation strength. Higher = more harmonically settled.
+    pub harmonic_stability_score: f32,
+    /// Counters and summary stats.
+    pub stats: HarmonyStats,
+    /// Warnings encountered during analysis (e.g. empty patterns, range with
+    /// no notes). Empty when analysis ran cleanly.
+    pub warnings: Vec<String>,
+}

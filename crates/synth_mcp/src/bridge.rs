@@ -618,13 +618,27 @@ pub trait SynthBridge: Send + Sync + 'static {
         expected_note: Option<u8>,
     ) -> Result<crate::types::AnalyzeNoteResult, McpBridgeError>;
 
-    /// Capture a screenshot of the current GUI window as a PNG.
+    /// Symbolic harmonic analysis of a pattern or arrangement range.
     ///
-    /// Drives `egui`'s `ViewportCommand::Screenshot` from the MCP thread and
-    /// blocks until the GUI has produced the resulting image (or the timeout
-    /// fires). Only works when the synth is running with the `gui-egui`
-    /// feature and the window is actively rendering.
-    fn take_screenshot(&self, timeout_ms: u32) -> Result<Vec<u8>, McpBridgeError>;
+    /// Walks notes in time order, groups overlapping notes into chord events
+    /// on a configurable resolution, labels each event with a chord symbol
+    /// when one matches a known template, and infers the most likely key.
+    ///
+    /// Scope is selected by which fields are `Some`:
+    /// - `pattern_id = Some(p)` analyzes a single pattern (other args ignored).
+    /// - otherwise analyzes the arrangement range
+    ///   `[arrangement_start_tick, arrangement_end_tick)` across all tracks.
+    ///   When both are `None`, the full arrangement is analyzed.
+    ///
+    /// `grouping_ticks` is the chord-detection resolution in ticks (default 960
+    /// = one quarter note at the engine's PPQN).
+    fn analyze_harmony(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        grouping_ticks: Option<u32>,
+    ) -> Result<crate::types::AnalyzeHarmonyResult, McpBridgeError>;
 
     // === AWE (Acoustic World Engine) ===
 

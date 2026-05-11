@@ -18,6 +18,7 @@ pub mod bundle;
 pub mod group_templates;
 #[cfg(feature = "gui-egui")]
 pub mod gui;
+pub mod harmony;
 pub mod io;
 #[cfg(feature = "mcp")]
 pub mod mcp_bridge;

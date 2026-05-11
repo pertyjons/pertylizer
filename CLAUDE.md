@@ -12,6 +12,17 @@ Active development — **no backward compatibility required**. Break APIs freely
 
 ### `git commit`
 
+Before committing, ensure the working tree is clean:
+
+```bash
+cargo fmt --check
+cargo build
+cargo clippy --all-targets
+cargo test
+```
+
+Then:
+
 ```bash
 git add --all
 git commit -m "<short description of changes>"

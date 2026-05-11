@@ -4,7 +4,7 @@
 //! the `AppSynthBridge` (MCP side) and `SynthApp` (GUI side).
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use synth_awe::AweState;
@@ -22,15 +22,6 @@ pub enum ProjectAction {
     /// Load a project from a file.
     Load(PathBuf),
 }
-
-/// PNG bytes on success or a failure description, signalled by the GUI thread
-/// in response to a screenshot request.
-pub type ScreenshotResult = Result<Vec<u8>, String>;
-
-/// Callback the MCP thread can invoke to wake up the egui update loop.
-/// egui pauses its update loop when nothing interactive is happening, so
-/// background requests (screenshot, etc.) need to nudge it back into a frame.
-pub type RepaintSignal = Arc<dyn Fn() + Send + Sync>;
 
 /// Shared state for communication between MCP bridge and GUI.
 pub struct McpSharedState {
@@ -54,17 +45,6 @@ pub struct McpSharedState {
     pub awe_state: Mutex<AweState>,
     /// Pending AWE state change from MCP (consumed by GUI each frame).
     pub pending_awe_state: Mutex<Option<AweState>>,
-    /// Screenshot requested by MCP (consumed by GUI each frame).
-    pub pending_screenshot: AtomicBool,
-    /// Result of the last screenshot request, signaled via condvar.
-    /// `Ok(png_bytes)` on success, `Err(message)` on encoding failure.
-    pub screenshot_result: (Mutex<Option<ScreenshotResult>>, Condvar),
-    /// Set by the GUI on first frame, called by MCP to wake the GUI thread
-    /// when it has paused its update loop.
-    pub repaint_signal: Mutex<Option<RepaintSignal>>,
-    /// Frame counter incremented by the GUI each `ui()` call. Useful for
-    /// diagnosing whether the GUI thread is actually rendering.
-    pub gui_frame_counter: AtomicU64,
 }
 
 impl McpSharedState {
@@ -81,10 +61,6 @@ impl McpSharedState {
             project_action_result: (Mutex::new(None), Condvar::new()),
             awe_state: Mutex::new(AweState::default()),
             pending_awe_state: Mutex::new(None),
-            pending_screenshot: AtomicBool::new(false),
-            screenshot_result: (Mutex::new(None), Condvar::new()),
-            repaint_signal: Mutex::new(None),
-            gui_frame_counter: AtomicU64::new(0),
         }
     }
 
@@ -102,10 +78,6 @@ impl McpSharedState {
             project_action_result: (Mutex::new(None), Condvar::new()),
             awe_state: Mutex::new(AweState::default()),
             pending_awe_state: Mutex::new(None),
-            pending_screenshot: AtomicBool::new(false),
-            screenshot_result: (Mutex::new(None), Condvar::new()),
-            repaint_signal: Mutex::new(None),
-            gui_frame_counter: AtomicU64::new(0),
         }
     }
 

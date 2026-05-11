@@ -9,9 +9,9 @@ use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
     AnnotateAble, Annotated, CallToolResult, Content, Implementation, ListResourceTemplatesResult,
-    ListResourcesResult, PaginatedRequestParams, RawAudioContent, RawContent, RawImageContent,
-    RawResource, RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult,
-    ResourceContents, ServerCapabilities, ServerInfo,
+    ListResourcesResult, PaginatedRequestParams, RawAudioContent, RawContent, RawResource,
+    RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, ResourceContents,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -507,6 +507,26 @@ pub struct PreviewNoteParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeHarmonyParam {
+    #[schemars(
+        description = "Pattern ID to analyze. When set, the arrangement_* fields are ignored and analysis runs on that pattern's notes in pattern-relative ticks. Leave unset to analyze the arrangement instead."
+    )]
+    pub pattern_id: Option<u32>,
+    #[schemars(
+        description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0 (song beginning). Ignored when pattern_id is set."
+    )]
+    pub arrangement_start_tick: Option<u64>,
+    #[schemars(
+        description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length. Ignored when pattern_id is set."
+    )]
+    pub arrangement_end_tick: Option<u64>,
+    #[schemars(
+        description = "Chord-detection window size in ticks (default 960 = one quarter note at 960 PPQN). Smaller values produce more, finer chord events; larger values aggregate."
+    )]
+    pub grouping_ticks: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeNoteParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
     pub instrument_id: u64,
@@ -526,14 +546,6 @@ pub struct AnalyzeNoteParam {
         description = "Optional MIDI note for pitch-error measurement. When set, the fundamental detector restricts its search to ±tritone around this pitch so it isn't fooled by dominant sub-octaves (sub-bass) or strong upper harmonics (wave-folded patches). Defaults to the actually-played note (`note` shifted by the patch's octave_offset)."
     )]
     pub expected_note: Option<u8>,
-}
-
-#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
-pub struct TakeScreenshotParam {
-    #[schemars(
-        description = "Maximum time to wait for the GUI to deliver the screenshot, in milliseconds (default 2000, clamped to >=100)."
-    )]
-    pub timeout_ms: Option<u32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1684,6 +1696,9 @@ impl SynthMcpServer {
             // Audio input
             "list_input_devices" => list_input_devices(NoParams),
             "get_input_state" => get_input_state(NoParams),
+
+            // Music analysis
+            "analyze_harmony" => analyze_harmony(AnalyzeHarmonyParam),
         ])
     }
 }
@@ -2188,31 +2203,18 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Capture a screenshot of the current GUI window as a PNG. Useful for visually verifying the synth state, inspecting Mod Matrix slot configuration, or debugging layout. Requires the synth to be running with the gui-egui feature and the window to be actively rendering (minimized windows usually pause egui's update loop)."
+        description = "Symbolic harmonic analysis of a pattern or arrangement range. Walks notes in time order, groups simultaneous notes into chord events, identifies chord symbols (e.g. Cm7, F7sus4), infers the most likely key via Krumhansl-Schmuckler correlation, and reports an in-key ratio, out-of-scale pitch classes, and a composite harmonic stability score. Pure symbolic — no audio rendering. Use to verify chord progressions, spot accidentally out-of-key notes, and reason about the harmonic shape of generated music. Pass `pattern_id` for one pattern, or omit it (with optional `arrangement_start_tick` / `arrangement_end_tick`) for an arrangement range."
     )]
-    async fn take_screenshot(
-        &self,
-        params: Parameters<TakeScreenshotParam>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let timeout_ms = params.0.timeout_ms.unwrap_or(2000);
-        let png = self
-            .bridge
-            .take_screenshot(timeout_ms)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        use base64::Engine;
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
-
-        let image = RawContent::Image(RawImageContent {
-            data: encoded,
-            mime_type: "image/png".to_string(),
-            meta: None,
-        })
-        .no_annotation();
-
-        let text = Content::text(format!("Screenshot captured ({} bytes PNG)", png.len()));
-
-        Ok(CallToolResult::success(vec![text, image]))
+    async fn analyze_harmony(&self, params: Parameters<AnalyzeHarmonyParam>) -> String {
+        match self.bridge.analyze_harmony(
+            params.0.pattern_id,
+            params.0.arrangement_start_tick,
+            params.0.arrangement_end_tick,
+            params.0.grouping_ticks,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
     }
 
     #[tool(

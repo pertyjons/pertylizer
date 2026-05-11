@@ -21,9 +21,10 @@ use synth_mcp::bridge::{
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
-    ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, AweLfoInfo, AwePresetInfo,
-    AweStateInfo, BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionCheckResult,
-    ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
+    AnalyzeHarmonyResult, ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo,
+    AweLfoInfo, AwePresetInfo, AweStateInfo, BatchItemResult, BatchResult, BuildInstrumentResult,
+    ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo,
+    GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope, HarmonyStats,
     InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo,
     ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
     PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo,
@@ -2342,8 +2343,20 @@ impl SynthBridge for AppSynthBridge {
         )
     }
 
-    fn take_screenshot(&self, timeout_ms: u32) -> Result<Vec<u8>, McpBridgeError> {
-        self.request_screenshot(timeout_ms)
+    fn analyze_harmony(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        grouping_ticks: Option<u32>,
+    ) -> Result<AnalyzeHarmonyResult, McpBridgeError> {
+        analyze_song_harmony(
+            &self.shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            grouping_ticks,
+        )
     }
 
     // === AWE (Acoustic World Engine) ===
@@ -3660,9 +3673,7 @@ impl SynthBridge for AppSynthBridge {
 /// The Mod Matrix routes via parameter slots rather than cables, so an LFO,
 /// Envelope, or Envelope Follower selected in `Slot N Source` is considered
 /// "in use" by the diagnostic even if it has no cable connections.
-fn collect_mod_matrix_sources(
-    modules: &[synth_engine::ModuleStateSnapshot],
-) -> HashSet<String> {
+fn collect_mod_matrix_sources(modules: &[synth_engine::ModuleStateSnapshot]) -> HashSet<String> {
     let mut sources = HashSet::new();
     for module in modules {
         if module.id.module_type != synth_core::ModuleType::ModMatrix {
@@ -3714,9 +3725,7 @@ fn mod_source_to_module_id(source: ModSource) -> Option<String> {
     let typed = match source {
         ModSource::Lfo(i) => ModuleId::new(ModuleType::Lfo, u16::from(i) + 1),
         ModSource::Envelope(i) => ModuleId::new(ModuleType::Envelope, u16::from(i) + 1),
-        ModSource::EnvFollower(i) => {
-            ModuleId::new(ModuleType::EnvelopeFollower, u16::from(i) + 1)
-        }
+        ModSource::EnvFollower(i) => ModuleId::new(ModuleType::EnvelopeFollower, u16::from(i) + 1),
         ModSource::KineticPos | ModSource::KineticVel | ModSource::KineticAcc => {
             ModuleId::new(ModuleType::KineticModulator, 1)
         }
@@ -4181,74 +4190,6 @@ impl AppSynthBridge {
             )),
         }
     }
-
-    /// Trigger a screenshot on the GUI thread and wait for the resulting PNG.
-    fn request_screenshot(&self, timeout_ms: u32) -> Result<Vec<u8>, McpBridgeError> {
-        use std::sync::atomic::Ordering;
-        use std::time::{Duration, Instant};
-
-        // Discard any stale result so we don't race with a previous request.
-        {
-            let (lock, _) = &self.shared.screenshot_result;
-            if let Ok(mut guard) = lock.lock() {
-                *guard = None;
-            }
-        }
-
-        let nudge = || {
-            if let Ok(guard) = self.shared.repaint_signal.lock()
-                && let Some(signal) = guard.as_ref()
-            {
-                signal();
-            }
-        };
-
-        let frame_at_start = self.shared.gui_frame_counter.load(Ordering::Relaxed);
-
-        // Signal the GUI to capture on its next frame and wake it up.
-        self.shared
-            .pending_screenshot
-            .store(true, Ordering::Relaxed);
-        nudge();
-
-        let (lock, cvar) = &self.shared.screenshot_result;
-        let mut guard = lock
-            .lock()
-            .map_err(|e| McpBridgeError::Other(format!("Lock error: {e}")))?;
-        let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(100) as u64);
-
-        while guard.is_none() {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                let frames_now = self.shared.gui_frame_counter.load(Ordering::Relaxed);
-                self.shared
-                    .pending_screenshot
-                    .store(false, Ordering::Relaxed);
-                return Err(McpBridgeError::Other(format!(
-                    "Timeout waiting for GUI screenshot. gui_frames went {frame_at_start} → {frames_now} during wait (no progress means GUI thread is paused — minimized window? wgpu/wayland frame-callback throttling?)"
-                )));
-            }
-            // Wake the GUI on a short cycle so the screenshot survives pauses
-            // in egui's update loop (idle compositor frame-callback throttling
-            // on Wayland is the typical culprit).
-            let pulse = remaining.min(Duration::from_millis(40));
-            let (g, _status) = cvar
-                .wait_timeout(guard, pulse)
-                .map_err(|e| McpBridgeError::Other(format!("Wait error: {e}")))?;
-            guard = g;
-            if guard.is_none() {
-                nudge();
-            }
-        }
-
-        match guard.take() {
-            Some(Ok(png)) => Ok(png),
-            Some(Err(e)) => Err(McpBridgeError::Other(e)),
-            None => Err(McpBridgeError::Other(
-                "No screenshot result delivered".to_string(),
-            )),
-        }
-    }
 }
 
 /// Try to insert a note from `BridgeNoteData` into a pattern.
@@ -4498,6 +4439,214 @@ fn analyze_rendered_note(
         duration_ms,
         expected_note,
     ))
+}
+
+/// Default chord-detection window when the caller leaves `grouping_ticks`
+/// unset — one quarter note at the engine's 960 PPQN.
+const DEFAULT_HARMONY_GROUPING_TICKS: u32 = 960;
+
+/// Pattern-relative end tick to assign to open-ended notes (no `duration`).
+/// The full grouping window so the note contributes weight to exactly one
+/// chord event.
+fn synthetic_note_end(start: u32, length_ticks: u32, grouping_ticks: u32) -> u32 {
+    start
+        .saturating_add(grouping_ticks)
+        .min(length_ticks.max(start.saturating_add(grouping_ticks)))
+}
+
+/// Implementation of the `analyze_harmony` bridge method.
+fn analyze_song_harmony(
+    shared: &McpSharedState,
+    pattern_id: Option<u32>,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
+    grouping_ticks: Option<u32>,
+) -> Result<AnalyzeHarmonyResult, McpBridgeError> {
+    use synth_sequencer::PatternId;
+
+    let song = shared.song.read();
+    let grouping = grouping_ticks
+        .filter(|g| *g > 0)
+        .unwrap_or(DEFAULT_HARMONY_GROUPING_TICKS);
+    let mut warnings: Vec<String> = Vec::new();
+
+    let (scope, notes, range_start, range_end) = match pattern_id {
+        Some(pid) => {
+            let pid_typed = PatternId(pid);
+            let Some(pattern) = song.pattern(pid_typed) else {
+                return Err(McpBridgeError::Other(format!("Pattern {pid} not found")));
+            };
+            let length_ticks = pattern.length.0;
+            let mut notes = Vec::with_capacity(pattern.notes().len());
+            for n in pattern.notes() {
+                let start_pt = n.start.0;
+                let end_pt = match n.duration {
+                    Some(d) => start_pt.saturating_add(d.0),
+                    None => synthetic_note_end(start_pt, length_ticks, grouping),
+                };
+                notes.push(crate::harmony::AnalysisNote {
+                    pitch: n.pitch,
+                    start_tick: u64::from(start_pt),
+                    end_tick: u64::from(end_pt),
+                });
+            }
+            if notes.is_empty() {
+                warnings.push(format!("Pattern {pid} contains no notes"));
+            }
+            (
+                HarmonyScope::Pattern { pattern_id: pid },
+                notes,
+                0u64,
+                u64::from(length_ticks),
+            )
+        }
+        None => {
+            // Arrangement scope.
+            let song_end = song.calculate_length().0;
+            let start = arrangement_start_tick.unwrap_or(0);
+            let end = arrangement_end_tick.unwrap_or(song_end);
+            if end <= start {
+                return Err(McpBridgeError::Other(format!(
+                    "Arrangement range invalid: end ({end}) must be greater than start ({start})"
+                )));
+            }
+
+            let mut notes: Vec<crate::harmony::AnalysisNote> = Vec::new();
+            for placement in
+                song.placements_in_range(synth_sequencer::Tick(start), synth_sequencer::Tick(end))
+            {
+                let Some(pattern) = song.pattern(placement.pattern_id) else {
+                    continue;
+                };
+                let placement_start = placement.start.0;
+                let pattern_len = pattern.length.0;
+                for n in pattern.notes() {
+                    let n_start = n.start.0;
+                    let n_end_pt = match n.duration {
+                        Some(d) => n_start.saturating_add(d.0),
+                        None => synthetic_note_end(n_start, pattern_len, grouping),
+                    };
+                    let abs_start = placement_start.saturating_add(u64::from(n_start));
+                    let abs_end = placement_start.saturating_add(u64::from(n_end_pt));
+                    // Skip notes that fall completely outside the requested
+                    // range before transposition — saves work in the analyzer.
+                    if abs_end <= start || abs_start >= end {
+                        continue;
+                    }
+                    let transposed = n.pitch.transpose(placement.transpose);
+                    let Some(pitch) = transposed else {
+                        warnings.push(format!(
+                            "Note at tick {abs_start} dropped: transpose out of MIDI range"
+                        ));
+                        continue;
+                    };
+                    notes.push(crate::harmony::AnalysisNote {
+                        pitch,
+                        start_tick: abs_start,
+                        end_tick: abs_end,
+                    });
+                }
+            }
+            if notes.is_empty() {
+                warnings.push("No notes found in arrangement range".to_string());
+            }
+            (
+                HarmonyScope::Arrangement {
+                    start_tick: start,
+                    end_tick: end,
+                },
+                notes,
+                start,
+                end,
+            )
+        }
+    };
+
+    drop(song);
+
+    let opts = crate::harmony::AnalysisOptions {
+        grouping_ticks: u64::from(grouping),
+        range_start_tick: range_start,
+        range_end_tick: range_end,
+    };
+    let analysis = crate::harmony::analyze(&notes, &opts);
+
+    // Convert the harmony module's output into the serializable MCP types.
+    let mut distinct = std::collections::HashSet::new();
+    let mut identified = 0u32;
+    let chords: Vec<HarmonyChordEvent> = analysis
+        .events
+        .iter()
+        .map(|e| {
+            let (symbol, root, quality) = match &e.chord {
+                Some(c) => {
+                    distinct.insert(c.symbol.clone());
+                    identified += 1;
+                    (
+                        Some(c.symbol.clone()),
+                        Some(c.root),
+                        Some(c.quality.to_string()),
+                    )
+                }
+                None => (None, None, None),
+            };
+            HarmonyChordEvent {
+                start_tick: e.start_tick,
+                end_tick: e.end_tick,
+                midi_notes: e.midi_notes.clone(),
+                symbol,
+                root,
+                quality,
+                in_key: e.in_key,
+            }
+        })
+        .collect();
+
+    let to_key_estimate = |k: &crate::harmony::KeyEstimate| HarmonyKeyEstimate {
+        tonic: k.tonic,
+        tonic_name: synth_sequencer::NoteName::from_midi(k.tonic).to_string(),
+        mode: k.mode.to_string(),
+        label: k.label(),
+        correlation: k.correlation,
+    };
+
+    let avg_polyphony = if chords.is_empty() {
+        0.0
+    } else {
+        chords
+            .iter()
+            .map(|c| c.midi_notes.len() as f32)
+            .sum::<f32>()
+            / chords.len() as f32
+    };
+    let (lo, hi) = analysis.pitch_range.unwrap_or((0, 0));
+    let stats = HarmonyStats {
+        total_notes: analysis.total_notes,
+        chord_event_count: chords.len() as u32,
+        distinct_chord_count: distinct.len() as u32,
+        identified_chord_count: identified,
+        pitch_range_low: lo,
+        pitch_range_high: hi,
+        avg_polyphony,
+        grouping_ticks: grouping,
+    };
+
+    Ok(AnalyzeHarmonyResult {
+        scope,
+        chords,
+        inferred_key: analysis.inferred_key.as_ref().map(to_key_estimate),
+        key_candidates: analysis
+            .key_candidates
+            .iter()
+            .map(to_key_estimate)
+            .collect(),
+        pitch_class_histogram: analysis.histogram,
+        in_key_ratio: analysis.in_key_ratio,
+        out_of_scale_pitch_classes: analysis.out_of_scale_pcs,
+        harmonic_stability_score: analysis.harmonic_stability_score,
+        stats,
+        warnings,
+    })
 }
 
 /// Pure analysis pass over an already-rendered audio buffer. Split out from
