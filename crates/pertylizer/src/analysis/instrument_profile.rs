@@ -119,18 +119,49 @@ pub enum Texture {
     Unused,
 }
 
-/// A single signal that contributed to a classification decision. Vocabulary
-/// is intentionally tiny so a UI/tool can render it without surprises.
+/// Which input fed into a classification decision. Closed set — a UI/tool
+/// can render this without surprises.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalAxis {
+    Name,
+    Graph,
+    Envelope,
+    Pattern,
+    Manual,
+    Decision,
+}
+
+impl SignalAxis {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::Graph => "graph",
+            Self::Envelope => "envelope",
+            Self::Pattern => "pattern",
+            Self::Manual => "manual",
+            Self::Decision => "decision",
+        }
+    }
+}
+
+impl std::fmt::Display for SignalAxis {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A single signal that contributed to a classification decision.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct ProfileSignal {
-    /// "name" | "graph" | "envelope" | "pattern" | "manual" | "decision".
-    pub axis: &'static str,
+    pub axis: SignalAxis,
     /// e.g. "kick", "noise-no-osc", "percussive", "atonal", ...
     pub detail: &'static str,
 }
 
 impl ProfileSignal {
-    const fn new(axis: &'static str, detail: &'static str) -> Self {
+    const fn new(axis: SignalAxis, detail: &'static str) -> Self {
         Self { axis, detail }
     }
 }
@@ -439,26 +470,25 @@ pub fn classify_role(
     register: Register,
     texture: Texture,
 ) -> RoleInference {
-    // Each candidate produces (role, base_confidence, bonus_step, signals).
-    // The first candidate whose gate matches wins. Bonus signals are counted
-    // independently from the gate so a confident classification can reach 1.0.
+    // First matching gate wins. Bonus signals are counted on top of the
+    // gate so a confident classification can reach 1.0.
 
     // 1. Drums.
     let drum_gate = pitch_role == PitchRole::Atonal
         && (envelope == EnvelopeShape::Percussive || graph.has_noise_source);
     if drum_gate {
-        let mut signals = vec![ProfileSignal::new("decision", "drums-gate")];
+        let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "drums-gate")];
         let mut bonus = 0;
         if name_hint == Some(Role::Drums) {
-            signals.push(ProfileSignal::new("name", "drums"));
+            signals.push(ProfileSignal::new(SignalAxis::Name, "drums"));
             bonus += 1;
         }
         if envelope == EnvelopeShape::Percussive {
-            signals.push(ProfileSignal::new("envelope", "percussive"));
+            signals.push(ProfileSignal::new(SignalAxis::Envelope, "percussive"));
             bonus += 1;
         }
         if graph.has_noise_source && !graph.has_oscillator && !graph.has_sampler {
-            signals.push(ProfileSignal::new("graph", "noise-no-osc"));
+            signals.push(ProfileSignal::new(SignalAxis::Graph, "noise-no-osc"));
             bonus += 1;
         }
         let conf = (0.6_f32 + 0.2_f32 * bonus as f32).min(1.0);
@@ -470,18 +500,21 @@ pub fn classify_role(
         && matches!(register, Register::Sub | Register::Bass)
         && matches!(texture, Texture::Monophonic | Texture::Polyphonic);
     if bass_gate {
-        let mut signals = vec![ProfileSignal::new("decision", "bass-gate")];
+        let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "bass-gate")];
         let mut bonus = 0;
         if name_hint == Some(Role::Bass) {
-            signals.push(ProfileSignal::new("name", "bass"));
+            signals.push(ProfileSignal::new(SignalAxis::Name, "bass"));
             bonus += 1;
         }
         if graph.has_oscillator {
-            signals.push(ProfileSignal::new("graph", "oscillator"));
+            signals.push(ProfileSignal::new(SignalAxis::Graph, "oscillator"));
             bonus += 1;
         }
         if matches!(envelope, EnvelopeShape::Sustained | EnvelopeShape::Plucked) {
-            signals.push(ProfileSignal::new("envelope", "sustained-or-plucked"));
+            signals.push(ProfileSignal::new(
+                SignalAxis::Envelope,
+                "sustained-or-plucked",
+            ));
             bonus += 1;
         }
         let conf = (0.6_f32 + 0.15_f32 * bonus as f32).min(1.0);
@@ -490,14 +523,14 @@ pub fn classify_role(
 
     // 3. Pad.
     if envelope == EnvelopeShape::Evolving && texture == Texture::Chordal {
-        let mut signals = vec![ProfileSignal::new("decision", "pad-gate")];
+        let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "pad-gate")];
         let mut bonus = 0;
         if name_hint == Some(Role::Pad) {
-            signals.push(ProfileSignal::new("name", "pad"));
+            signals.push(ProfileSignal::new(SignalAxis::Name, "pad"));
             bonus += 1;
         }
         if graph.osc_count >= 2 {
-            signals.push(ProfileSignal::new("graph", "thick"));
+            signals.push(ProfileSignal::new(SignalAxis::Graph, "thick"));
             bonus += 1;
         }
         let conf = (0.7_f32 + 0.15_f32 * bonus as f32).min(1.0);
@@ -509,14 +542,14 @@ pub fn classify_role(
         && matches!(texture, Texture::Polyphonic | Texture::Chordal)
         && pitch_role == PitchRole::Tonal
     {
-        let mut signals = vec![ProfileSignal::new("decision", "keys-gate")];
+        let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "keys-gate")];
         let mut bonus = 0;
         if name_hint == Some(Role::Keys) {
-            signals.push(ProfileSignal::new("name", "keys"));
+            signals.push(ProfileSignal::new(SignalAxis::Name, "keys"));
             bonus += 1;
         }
         if graph.has_oscillator {
-            signals.push(ProfileSignal::new("graph", "oscillator"));
+            signals.push(ProfileSignal::new(SignalAxis::Graph, "oscillator"));
             bonus += 1;
         }
         let conf = (0.6_f32 + 0.15_f32 * bonus as f32).min(1.0);
@@ -525,14 +558,14 @@ pub fn classify_role(
 
     // 5. Pluck.
     if envelope == EnvelopeShape::Plucked && texture == Texture::Monophonic {
-        let mut signals = vec![ProfileSignal::new("decision", "pluck-gate")];
+        let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "pluck-gate")];
         let mut bonus = 0;
         if name_hint == Some(Role::Pluck) {
-            signals.push(ProfileSignal::new("name", "pluck"));
+            signals.push(ProfileSignal::new(SignalAxis::Name, "pluck"));
             bonus += 1;
         }
         if graph.has_physical {
-            signals.push(ProfileSignal::new("graph", "physical"));
+            signals.push(ProfileSignal::new(SignalAxis::Graph, "physical"));
             bonus += 1;
         }
         let conf = (0.6_f32 + 0.15_f32 * bonus as f32).min(1.0);
@@ -544,14 +577,14 @@ pub fn classify_role(
         && texture == Texture::Monophonic
         && matches!(register, Register::Mid | Register::High)
     {
-        let mut signals = vec![ProfileSignal::new("decision", "lead-gate")];
+        let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "lead-gate")];
         let mut bonus = 0;
         if name_hint == Some(Role::Lead) {
-            signals.push(ProfileSignal::new("name", "lead"));
+            signals.push(ProfileSignal::new(SignalAxis::Name, "lead"));
             bonus += 1;
         }
         if graph.has_oscillator {
-            signals.push(ProfileSignal::new("graph", "oscillator"));
+            signals.push(ProfileSignal::new(SignalAxis::Graph, "oscillator"));
             bonus += 1;
         }
         let conf = (0.6_f32 + 0.15_f32 * bonus as f32).min(1.0);
@@ -560,10 +593,10 @@ pub fn classify_role(
 
     // 7. FX.
     if pitch_role == PitchRole::Atonal && envelope != EnvelopeShape::Percussive {
-        let mut signals = vec![ProfileSignal::new("decision", "fx-gate")];
+        let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "fx-gate")];
         let mut bonus = 0;
         if name_hint == Some(Role::FX) {
-            signals.push(ProfileSignal::new("name", "fx"));
+            signals.push(ProfileSignal::new(SignalAxis::Name, "fx"));
             bonus += 1;
         }
         let conf = (0.5_f32 + 0.15_f32 * bonus as f32).min(1.0);
@@ -574,7 +607,7 @@ pub fn classify_role(
     RoleInference {
         role: Role::Unknown,
         confidence: 0.0,
-        signals: vec![ProfileSignal::new("decision", "unknown")],
+        signals: vec![ProfileSignal::new(SignalAxis::Decision, "unknown")],
     }
 }
 
@@ -591,7 +624,7 @@ fn apply_name_override(
     let confidence = match name_hint {
         Some(hint) if hint == role => base_confidence.clamp(0.85, 1.0),
         Some(_) => {
-            signals.push(ProfileSignal::new("name", "name-conflict"));
+            signals.push(ProfileSignal::new(SignalAxis::Name, "name-conflict"));
             (base_confidence - 0.2).max(0.0)
         }
         None => base_confidence,
@@ -630,7 +663,7 @@ pub fn infer_instrument_profile(
             role: RoleInference {
                 role,
                 confidence: 1.0,
-                signals: vec![ProfileSignal::new("manual", "manual-override")],
+                signals: vec![ProfileSignal::new(SignalAxis::Manual, "manual-override")],
             },
             envelope_shape: envelope_shape(modules),
             pitch_role: pitch_role_from_stats(&stats),
@@ -673,21 +706,32 @@ fn map_category_to_role(cat: InstrumentCategory) -> Role {
     }
 }
 
-/// Profile every instrument present in `engine_state.instrument_snapshots`.
-/// Returns one entry per instrument in snapshot order.
+/// Profile every instrument that at least one of the song's tracks routes
+/// to. Instruments with no track assignment are skipped — they can't
+/// contribute to any analysis that walks `song.tracks()`, and skipping them
+/// also avoids one `shared_graph` lock acquisition per orphan instrument.
 ///
 /// Acquires the `instrument_snapshots` read-lock once and the shared graph's
-/// internal lock once per instrument. Does not block on the audio thread.
+/// internal lock once per profiled instrument. Does not block on the audio
+/// thread.
 #[must_use]
 pub fn infer_all_profiles(song: &Song, engine_state: &EngineState) -> Vec<InstrumentProfile> {
+    let referenced: HashSet<SeqInstrumentId> = song.tracks().filter_map(|t| t.instrument).collect();
+    if referenced.is_empty() {
+        return Vec::new();
+    }
+
     let snapshots = engine_state.instrument_snapshots.read();
-    let mut profiles: Vec<InstrumentProfile> = Vec::with_capacity(snapshots.len());
+    let mut profiles: Vec<InstrumentProfile> = Vec::with_capacity(referenced.len());
 
     for snapshot in snapshots.iter() {
+        let seq_id = SeqInstrumentId(snapshot.seq_instrument_id);
+        if !referenced.contains(&seq_id) {
+            continue;
+        }
         let modules = engine_state
             .shared_graph
             .get_modules_for_instrument(snapshot.id);
-        let seq_id = SeqInstrumentId(snapshot.seq_instrument_id);
         let tracks: Vec<&SequencerTrack> = song
             .tracks()
             .filter(|t| t.instrument == Some(seq_id))

@@ -4,4 +4,6 @@
 
 pub mod instrument_profile;
 
-pub use instrument_profile::*;
+pub use instrument_profile::{
+    InstrumentProfile, ProfileSignal, Role, RoleInference, SignalAxis, infer_all_profiles,
+};

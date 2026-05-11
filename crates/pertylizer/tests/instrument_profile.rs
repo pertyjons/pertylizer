@@ -3,22 +3,16 @@
 //! directly — no audio engine required — so the heuristics can be exercised
 //! across a wide range of patches cheaply.
 
-use std::collections::HashMap;
-
 use synth_core::params::EnvelopeParam;
 use synth_core::types::{NormalizedValue, Seconds};
-use synth_core::{
-    BipolarValue, BypassState, Gain, MidiChannel, ModuleType, MuteState, Param, SoloState,
-};
+use synth_core::{BipolarValue, Gain, MidiChannel, ModuleType, Param};
 use synth_engine::instrument::InstrumentId;
-use synth_engine::{
-    InstrumentCategory, InstrumentSnapshot, ModuleConnectivityStatus, ModuleId, ModuleStateSnapshot,
-};
+use synth_engine::{InstrumentCategory, InstrumentSnapshot, ModuleId, ModuleStateSnapshot};
 
 use pertylizer::analysis::instrument_profile::{
     EnvelopeShape, GraphSignals, NoteRef, PatternStats, PitchRole, ProfileSignal, Register, Role,
-    Texture, classify_role, envelope_shape, graph_signals, infer_instrument_profile, pattern_stats,
-    pitch_role_from_stats, register_from_stats, role_from_name, texture_from_stats,
+    SignalAxis, Texture, classify_role, envelope_shape, graph_signals, infer_instrument_profile,
+    pattern_stats, pitch_role_from_stats, register_from_stats, role_from_name, texture_from_stats,
 };
 
 // ---------------------------------------------------------------------------
@@ -30,21 +24,12 @@ fn instrument_id(seq: u16) -> InstrumentId {
 }
 
 fn module(seq: u16, module_type: ModuleType, instance: u16) -> ModuleStateSnapshot {
-    ModuleStateSnapshot {
-        id: ModuleId::new(module_type, instance),
-        instrument_id: instrument_id(seq),
+    ModuleStateSnapshot::new(
+        ModuleId::new(module_type, instance),
+        instrument_id(seq),
         module_type,
-        name: format!("{module_type:?}-{instance}"),
-        bypass_state: BypassState::Active,
-        mute_state: MuteState::Unmuted,
-        solo_state: SoloState::Normal,
-        connectivity: ModuleConnectivityStatus::Connected,
-        parameters: Vec::new(),
-        input_connection_counts: HashMap::new(),
-        output_connection_counts: HashMap::new(),
-        cpu_usage: Default::default(),
-        output_levels: HashMap::new(),
-    }
+        format!("{module_type:?}-{instance}"),
+    )
 }
 
 fn envelope_module(seq: u16, instance: u16, a: f32, d: f32, s: f32, r: f32) -> ModuleStateSnapshot {
@@ -84,7 +69,7 @@ fn note(pitch: u8, start: u64, duration: Option<u64>) -> NoteRef {
     }
 }
 
-fn signal(axis: &'static str, detail: &'static str) -> ProfileSignal {
+fn signal(axis: SignalAxis, detail: &'static str) -> ProfileSignal {
     ProfileSignal { axis, detail }
 }
 
@@ -514,7 +499,10 @@ fn name_conflict_lowers_confidence_and_records_signal() {
         Texture::Monophonic,
     );
     assert_eq!(r.role, Role::Bass);
-    assert!(r.signals.contains(&signal("name", "name-conflict")));
+    assert!(
+        r.signals
+            .contains(&signal(SignalAxis::Name, "name-conflict"))
+    );
 }
 
 #[test]

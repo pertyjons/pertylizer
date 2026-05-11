@@ -4615,34 +4615,28 @@ pub fn analyze_song_harmony(
             //      the inference also catches percussion that was never
             //      manually tagged — closing the §8.2 silent-no-op.
             // Tracks with no instrument assignment are never auto-excluded.
-            let mut drum_profiles: std::collections::HashMap<
+            let drum_profiles: std::collections::HashMap<
                 SeqInstrumentId,
                 crate::analysis::InstrumentProfile,
-            > = std::collections::HashMap::new();
-            let drum_track_ids: std::collections::HashSet<TrackId> = if exclude_drums {
-                let engine_state = session.state();
-                let profiles = crate::analysis::infer_all_profiles(&song, engine_state);
-                let drum_seq_ids: std::collections::HashSet<SeqInstrumentId> = profiles
+            > = if exclude_drums {
+                crate::analysis::infer_all_profiles(&song, session.state())
                     .into_iter()
                     .filter(|p| {
                         p.role.role == crate::analysis::Role::Drums && p.role.confidence >= 0.6
                     })
-                    .map(|p| {
-                        let seq = SeqInstrumentId(p.instrument_id);
-                        drum_profiles.insert(seq, p);
-                        seq
-                    })
-                    .collect();
-                song.tracks()
-                    .filter_map(|t| {
-                        let seq = t.instrument?;
-                        drum_seq_ids.contains(&seq).then_some(t.id)
-                    })
+                    .map(|p| (SeqInstrumentId(p.instrument_id), p))
                     .collect()
             } else {
-                std::collections::HashSet::new()
+                std::collections::HashMap::new()
             };
-            let excluded_tracks: std::collections::HashSet<TrackId> = drum_track_ids
+            let auto_excluded_tracks: std::collections::HashSet<TrackId> = song
+                .tracks()
+                .filter_map(|t| {
+                    let seq = t.instrument?;
+                    drum_profiles.contains_key(&seq).then_some(t.id)
+                })
+                .collect();
+            let excluded_tracks: std::collections::HashSet<TrackId> = auto_excluded_tracks
                 .iter()
                 .chain(explicit_excluded.iter())
                 .copied()
@@ -4653,10 +4647,9 @@ pub fn analyze_song_harmony(
                     .filter(|t| excluded_tracks.contains(&t.id))
                     .map(|t| {
                         let base = format!("{}({})", t.name, t.id.0);
-                        // Attach signal trail only for drum-auto-excludes —
-                        // explicit excludes have no inference behind them.
-                        if drum_track_ids.contains(&t.id)
-                            && let Some(seq) = t.instrument
+                        // Signal trail only for drum-auto-excludes — explicit
+                        // excludes have no inference behind them.
+                        if let Some(seq) = t.instrument
                             && let Some(profile) = drum_profiles.get(&seq)
                         {
                             let sigs = profile
