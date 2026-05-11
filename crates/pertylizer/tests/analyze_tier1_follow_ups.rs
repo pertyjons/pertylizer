@@ -242,11 +242,18 @@ fn build_drum_pollution_song() -> Arc<RwLock<Song>> {
     let drum_pattern_id = song.create_pattern(SeqDuration(bar));
     {
         let pat = song.pattern_mut(drum_pattern_id).expect("drum pattern");
+        // Deliberately set the note's instrument to a value that does NOT
+        // match the drum track's instrument (SeqInstrumentId(1)). Real
+        // projects routinely leave `Note.instrument` at a default that
+        // doesn't correspond to the placement's track — routing is decided
+        // by the track, not the note. The inference path must not rely on
+        // `note.instrument` matching, or it sees an empty note pool for
+        // every instrument and silently classifies everything as Unknown.
         let nid = pat.add_note(
             PatternTick(0),
             Pitch::new(42).unwrap(), // F#2 — classic GM hi-hat
             Velocity::MF,
-            SeqInstrumentId(1),
+            SeqInstrumentId(0),
         );
         if let Some(n) = pat.note_mut(nid) {
             n.duration = Some(SeqDuration(bar - 60));

@@ -736,7 +736,7 @@ pub fn infer_all_profiles(song: &Song, engine_state: &EngineState) -> Vec<Instru
             .tracks()
             .filter(|t| t.instrument == Some(seq_id))
             .collect();
-        let notes = collect_notes_for_instrument(song, seq_id, &tracks);
+        let notes = collect_notes_for_instrument(song, &tracks);
         profiles.push(infer_instrument_profile(
             snapshot, &modules, &tracks, &notes,
         ));
@@ -748,11 +748,12 @@ pub fn infer_all_profiles(song: &Song, engine_state: &EngineState) -> Vec<Instru
 /// a list of [`NoteRef`]s with absolute song-tick start times and the
 /// placement's transpose applied. Notes whose transpose pushes them outside
 /// the MIDI range are silently dropped.
-fn collect_notes_for_instrument(
-    song: &Song,
-    seq_id: SeqInstrumentId,
-    tracks: &[&SequencerTrack],
-) -> Vec<NoteRef> {
+///
+/// Note routing follows track assignment — every note in a placement on a
+/// track plays through that track's instrument. `Note.instrument` is left
+/// alone by most editing paths (it gets a default value), so we deliberately
+/// don't filter on it.
+fn collect_notes_for_instrument(song: &Song, tracks: &[&SequencerTrack]) -> Vec<NoteRef> {
     let mut notes: Vec<NoteRef> = Vec::new();
     for track in tracks {
         for placement in song.placements_on_track(track.id) {
@@ -760,11 +761,6 @@ fn collect_notes_for_instrument(
                 continue;
             };
             for note in pattern.notes() {
-                // The pattern may contain notes for other instruments; only
-                // pick up notes routed to this instrument.
-                if note.instrument != seq_id {
-                    continue;
-                }
                 let Some(transposed) = note.pitch.transpose(placement.transpose) else {
                     continue;
                 };
