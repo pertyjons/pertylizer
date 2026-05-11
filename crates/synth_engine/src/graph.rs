@@ -6,7 +6,7 @@
 //! - Processing order calculation
 //! - Signal routing during audio processing
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use crate::ModuleId;
 use synth_core::{
@@ -68,8 +68,12 @@ impl std::fmt::Debug for GraphNode {
 
 /// The module graph for a voice or effect chain.
 pub struct ModuleGraph {
-    /// All modules in the graph.
-    nodes: HashMap<ModuleId, GraphNode>,
+    /// All modules in the graph. `BTreeMap` so iteration order is
+    /// deterministic across fresh instances — `HashMap`'s per-instance
+    /// `RandomState` breaks offline-render bit-exactness whenever any
+    /// module consumes a shared RNG in iteration order (Oscillator
+    /// `note_on` does, via `fastrand` for unison phase).
+    nodes: BTreeMap<ModuleId, GraphNode>,
     /// All connections.
     connections: HashSet<Connection>,
     /// Processing order (topologically sorted).
@@ -85,6 +89,8 @@ pub struct ModuleGraph {
     input_buffers: Vec<(PortName, AudioBuffer)>,
     /// Pre-built incoming connection lookup: module_id → Vec<(from_module, from_port, to_port)>.
     /// Rebuilt when graph topology changes (order_dirty), not per frame.
+    /// Each Vec is sorted in `calculate_processing_order` so input-summation
+    /// order is stable — fp addition is non-associative.
     incoming_map: HashMap<ModuleId, Vec<(ModuleId, PortName, PortName)>>,
     /// Pre-allocated vec for gathering incoming connections (used as temp during rebuild).
     incoming_cache: Vec<(ModuleId, PortName, PortName)>,
@@ -94,10 +100,13 @@ pub struct ModuleGraph {
     bypassed: HashSet<ModuleId>,
     /// Pool of reusable AudioBuffers to avoid per-frame heap allocations.
     buffer_pool: Vec<AudioBuffer>,
-    /// Scratch storage for topological sort: in-degree per module.
-    topo_in_degree: HashMap<ModuleId, usize>,
-    /// Scratch storage for topological sort: adjacency list.
-    topo_adjacency: HashMap<ModuleId, Vec<ModuleId>>,
+    /// Scratch storage for topological sort: in-degree per module. `BTreeMap`
+    /// to keep the Kahn-seed iteration deterministic across instances; see
+    /// `nodes`.
+    topo_in_degree: BTreeMap<ModuleId, usize>,
+    /// Scratch storage for topological sort: adjacency list. Same reason as
+    /// `topo_in_degree`; each Vec is also sorted post-build.
+    topo_adjacency: BTreeMap<ModuleId, Vec<ModuleId>>,
     /// Scratch storage for topological sort: processing queue.
     topo_queue: VecDeque<ModuleId>,
 }
@@ -106,7 +115,7 @@ impl ModuleGraph {
     /// Create a new empty graph.
     pub fn new() -> Self {
         Self {
-            nodes: HashMap::new(),
+            nodes: BTreeMap::new(),
             connections: HashSet::new(),
             processing_order: Vec::new(),
             instance_counters: HashMap::new(),
@@ -118,8 +127,8 @@ impl ModuleGraph {
             cached_output_id: None,
             bypassed: HashSet::new(),
             buffer_pool: Vec::with_capacity(16),
-            topo_in_degree: HashMap::with_capacity(16),
-            topo_adjacency: HashMap::with_capacity(16),
+            topo_in_degree: BTreeMap::new(),
+            topo_adjacency: BTreeMap::new(),
             topo_queue: VecDeque::with_capacity(16),
         }
     }
@@ -711,7 +720,14 @@ impl ModuleGraph {
             }
         }
 
-        // Find all nodes with in-degree 0
+        // Sort adjacency Vecs so neighbor traversal is independent of
+        // `HashSet<Connection>` iteration order — otherwise ties in the
+        // topo sort resolve differently across fresh graph instances.
+        for adj in self.topo_adjacency.values_mut() {
+            adj.sort_unstable();
+        }
+
+        // Find all nodes with in-degree 0.
         for (&id, &deg) in &self.topo_in_degree {
             if deg == 0 {
                 self.topo_queue.push_back(id);
@@ -749,6 +765,12 @@ impl ModuleGraph {
                 .entry(conn.to_module)
                 .or_insert_with(|| Vec::with_capacity(4))
                 .push((conn.from_module, conn.from_port, conn.to_port));
+        }
+
+        // Sort so input-summation order is stable — fp addition is
+        // non-associative.
+        for incoming in self.incoming_map.values_mut() {
+            incoming.sort_unstable();
         }
 
         // Cache the output module ID (avoids per-frame search)

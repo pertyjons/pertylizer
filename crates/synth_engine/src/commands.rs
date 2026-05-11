@@ -26,7 +26,7 @@ use synth_sequencer::{PatternId, Tick, TrackId};
 ///
 /// The type prefix is a 3-letter code from ModuleType::prefix().
 /// The instance number starts at 1 and is unique per type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleId {
     pub module_type: ModuleType,
     pub instance: u16,

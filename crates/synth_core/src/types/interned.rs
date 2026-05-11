@@ -168,7 +168,7 @@ impl InternPool {
 /// - Comparison is a single `u32` equality check (O(1), no string comparison)
 /// - Pre-defined port names (IN, OUT, etc.) are compile-time constants
 /// - Custom port names require a one-time interning during initialization
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct PortName(u32);
 
 impl PortName {

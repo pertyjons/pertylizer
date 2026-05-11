@@ -5,11 +5,6 @@
 //! This is the load-bearing assumption behind `analyze_section` A/B use
 //! cases (verse vs chorus, before vs after a knob tweak, master vs the
 //! per-track sum).
-//!
-//! Surfaced by live testing on 2026-05-11: four consecutive
-//! `analyze_section` calls on the same range produced ~0.44 dB LUFS-I
-//! spread, ~10 % clipped-samples spread, ~0.3 dB RMS spread. See
-//! `docs/mcp-music-tools-plan.md` §8.1.
 
 mod common;
 
@@ -20,7 +15,9 @@ use pertylizer::audio::mix_analysis::analyze_mix_buffer;
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
 
-use common::{build_arpeggio_song, first_divergence, setup_with_patch, sustain_patch};
+use common::{
+    add_env_amp_out_tail, assert_bit_exact, build_arpeggio_song, setup_with_patch, sustain_patch,
+};
 
 #[test]
 fn offline_render_is_bit_exact_across_calls() {
@@ -38,29 +35,23 @@ fn offline_render_is_bit_exact_across_calls() {
     let third = render_arrangement_to_buffer(&rig.session, &shared, start_tick, end_tick)
         .expect("third render should succeed");
 
-    if let Some(idx) = first_divergence(&first.samples, &second.samples) {
-        let frame = idx / 2;
-        let seconds = frame as f32 / first.sample_rate as f32;
-        let a = first.samples[idx];
-        let b = second.samples[idx];
-        panic!(
-            "render-1 and render-2 diverge at sample {idx} (frame {frame}, t={seconds:.4}s): \
-             {a} vs {b} (bits: {:#x} vs {:#x})",
-            a.to_bits(),
-            b.to_bits()
-        );
-    }
-
-    if let Some(idx) = first_divergence(&first.samples, &third.samples) {
-        let frame = idx / 2;
-        panic!("render-1 and render-3 diverge at sample {idx} (frame {frame})");
-    }
+    assert_bit_exact(
+        "render-1 vs render-2",
+        &first.samples,
+        &second.samples,
+        first.sample_rate,
+    );
+    assert_bit_exact(
+        "render-1 vs render-3",
+        &first.samples,
+        &third.samples,
+        first.sample_rate,
+    );
 }
 
-/// A noise-driven patch hammers `fastrand::f32()` on every sample. If
-/// the offline render didn't reseed deterministically the per-sample
-/// values would diverge by O(1) immediately. This complements the
-/// sawtooth test (which only diverges at note-on phase randomization).
+/// Noise hammers `fastrand::f32()` on every sample, so a non-reseeded
+/// renderer diverges by O(1) immediately — complements the sawtooth test
+/// which only diverges at note-on phase randomization.
 fn noise_patch() -> Patch {
     let mut patch = Patch::new("DeterminismNoise");
     patch.add_module(
@@ -68,28 +59,8 @@ fn noise_patch() -> Patch {
             .param_f("level", 0.5)
             .build(),
     );
-    patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Envelope)
-            .param_f("attack", 0.005)
-            .param_f("decay", 0.0)
-            .param_f("sustain", 1.0)
-            .param_f("release", 0.05)
-            .build(),
-    );
-    patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Amplifier)
-            .param_f("level", 1.0)
-            .build(),
-    );
-    patch.add_module(
-        ModuleBuilder::new(1, ModuleType::StereoOutput)
-            .param_f("master", 1.0)
-            .build(),
-    );
+    add_env_amp_out_tail(&mut patch);
     patch.add_connection("noise-1", "out", "amp-1", "in");
-    patch.add_connection("env-1", "out", "amp-1", "cv");
-    patch.add_connection("amp-1", "left", "out-1", "in_l");
-    patch.add_connection("amp-1", "right", "out-1", "in_r");
     patch
 }
 
@@ -104,12 +75,64 @@ fn offline_render_is_bit_exact_for_noise_patch() {
     let second = render_arrangement_to_buffer(&rig.session, &shared, 0, 3840)
         .expect("second noise render should succeed");
 
-    if let Some(idx) = first_divergence(&first.samples, &second.samples) {
-        let frame = idx / 2;
-        let a = first.samples[idx];
-        let b = second.samples[idx];
-        panic!("noise patch diverges at sample {idx} (frame {frame}): {a} vs {b}");
-    }
+    assert_bit_exact(
+        "noise render-1 vs render-2",
+        &first.samples,
+        &second.samples,
+        first.sample_rate,
+    );
+}
+
+/// Two oscillators with phase randomization. Each `note_on` consumes
+/// `fastrand` for unison phase, so whichever oscillator iterates first in
+/// `ModuleGraph::note_on` ends up with a different phase. Catches any
+/// regression in `nodes` iteration determinism.
+fn dual_osc_patch() -> Patch {
+    let mut patch = Patch::new("DeterminismDualOsc");
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscillator)
+            .waveform("sawtooth")
+            .param_f("level", 0.4)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(2, ModuleType::Oscillator)
+            .waveform("sawtooth")
+            .param_f("level", 0.4)
+            .param_f("detune", 7.0)
+            .build(),
+    );
+    add_env_amp_out_tail(&mut patch);
+    patch.add_connection("osc-1", "out", "amp-1", "in");
+    patch.add_connection("osc-2", "out", "amp-1", "in");
+    patch
+}
+
+#[test]
+fn offline_render_is_bit_exact_for_dual_oscillator_patch() {
+    let rig = setup_with_patch(&dual_osc_patch());
+    let song = build_arpeggio_song();
+    let shared = McpSharedState::with_song(song);
+
+    let first = render_arrangement_to_buffer(&rig.session, &shared, 0, 3840)
+        .expect("first dual-osc render should succeed");
+    let second = render_arrangement_to_buffer(&rig.session, &shared, 0, 3840)
+        .expect("second dual-osc render should succeed");
+    let third = render_arrangement_to_buffer(&rig.session, &shared, 0, 3840)
+        .expect("third dual-osc render should succeed");
+
+    assert_bit_exact(
+        "dual-osc render-1 vs render-2",
+        &first.samples,
+        &second.samples,
+        first.sample_rate,
+    );
+    assert_bit_exact(
+        "dual-osc render-1 vs render-3",
+        &first.samples,
+        &third.samples,
+        first.sample_rate,
+    );
 }
 
 #[test]

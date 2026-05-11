@@ -108,7 +108,14 @@ pub use wavetable::{WavetableParam, WavetableSelect};
 // ============================================================================
 
 /// Strongly-typed module type identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// Variant declaration order is load-bearing: `Ord` is derived, and
+/// `ModuleGraph` orders nodes by `(ModuleType, instance)` to keep offline
+/// renders bit-exact across calls. Reordering or inserting variants
+/// changes the processing order for any voice graph that mixes the
+/// affected types, which silently changes audio output for existing
+/// patches. Append new variants at the end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModuleType {
     Oscillator,

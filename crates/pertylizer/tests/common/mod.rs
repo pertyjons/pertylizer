@@ -24,17 +24,11 @@ use pertylizer::session::SynthSession;
 
 pub const TEST_SR: u32 = 44_100;
 
-/// Minimal sustaining patch: sawtooth → amp (envelope-gated) → output.
-/// Produces audible content when a note is held — used as the default
-/// patch for arrangement-render smoke and determinism tests.
-pub fn sustain_patch() -> Patch {
-    let mut patch = Patch::new("ArrangementRenderTest");
-    patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Oscillator)
-            .waveform("sawtooth")
-            .param_f("level", 0.5)
-            .build(),
-    );
+/// Append env-1 (snappy ADSR), amp-1, and out-1 to `patch`, plus the three
+/// connections that wire the amp envelope and stereo output. The caller is
+/// expected to have added a source module and connected its output to
+/// `amp-1.in` beforehand.
+pub fn add_env_amp_out_tail(patch: &mut Patch) {
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Envelope)
             .param_f("attack", 0.005)
@@ -53,10 +47,24 @@ pub fn sustain_patch() -> Patch {
             .param_f("master", 1.0)
             .build(),
     );
-    patch.add_connection("osc-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
     patch.add_connection("amp-1", "left", "out-1", "in_l");
     patch.add_connection("amp-1", "right", "out-1", "in_r");
+}
+
+/// Minimal sustaining patch: sawtooth → amp (envelope-gated) → output.
+/// Produces audible content when a note is held — used as the default
+/// patch for arrangement-render smoke and determinism tests.
+pub fn sustain_patch() -> Patch {
+    let mut patch = Patch::new("ArrangementRenderTest");
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscillator)
+            .waveform("sawtooth")
+            .param_f("level", 0.5)
+            .build(),
+    );
+    add_env_amp_out_tail(&mut patch);
+    patch.add_connection("osc-1", "out", "amp-1", "in");
     patch
 }
 
@@ -167,4 +175,20 @@ pub fn first_divergence(a: &[f32], b: &[f32]) -> Option<usize> {
     a.iter()
         .zip(b.iter())
         .position(|(x, y)| x.to_bits() != y.to_bits())
+}
+
+/// Panic with a sample-index/frame/timestamp report if `a` and `b` are not
+/// bit-exact equal. `label` distinguishes the comparison in test output.
+pub fn assert_bit_exact(label: &str, a: &[f32], b: &[f32], sample_rate: u32) {
+    if let Some(idx) = first_divergence(a, b) {
+        let frame = idx / 2;
+        let seconds = frame as f32 / sample_rate as f32;
+        let (x, y) = (a[idx], b[idx]);
+        panic!(
+            "{label} diverge at sample {idx} (frame {frame}, t={seconds:.4}s): \
+             {x} vs {y} (bits: {:#x} vs {:#x})",
+            x.to_bits(),
+            y.to_bits()
+        );
+    }
 }

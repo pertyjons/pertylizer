@@ -1,8 +1,8 @@
 # MCP Music Tools — Plan
 
-> **Date:** 2026-05-11 (updated 2026-05-11 after Tier-1 partial ship, post-ship live-test pass, and §8.1 determinism fix)
-> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix landed post-v0.277.0**; remaining Tier-1+ pending.
-> Post-ship live testing surfaced determinism + auto-categorization issues — see §8. §8.1 fixed; §8.2 and §8.3 still open.
+> **Date:** 2026-05-11 (updated 2026-05-11 after Tier-1 partial ship, post-ship live-test pass, and two rounds of §8.1 determinism fix)
+> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix landed in two rounds post-v0.277.0**; remaining Tier-1+ pending.
+> Post-ship live testing surfaced determinism + auto-categorization issues — see §8. §8.1 fully fixed end-to-end through the MCP bridge; §8.2 and §8.3 still open.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
 
 ---
@@ -337,7 +337,13 @@ Decision point comes with the `true_peak` work in §0; flag here so it's remembe
 Re-ran the full tool suite against the "Tung Synthpop" arrangement after the v0.277.0 ship. Three new findings,
 ordered by impact.
 
-### 8.1 Offline render is not deterministic — HIGH ✅ **Fixed post-v0.277.0**
+### 8.1 Offline render is not deterministic — HIGH ✅ **Fixed end-to-end through the MCP bridge**
+
+Took two rounds. Round 1 (the `fastrand`-reseed fix) closed the bulk of the gap but missed a deeper architectural
+source of nondeterminism; Round 2 caught the rest. The full story is preserved here because each round revealed
+the next, and the residual symptoms after Round 1 are exactly what someone hunting a similar bug would see.
+
+#### Round 1: `fastrand` thread-local RNG state
 
 Four consecutive `analyze_section` calls on the same `[start_tick, end_tick)` against the same song-state had
 produced:
@@ -367,20 +373,84 @@ contribution loop) and `render_note_to_buffer` (covers `analyze_note`). The shar
 `pub(crate) const OFFLINE_RENDER_SEED` in `arrangement_render.rs`. The live audio thread is unaffected: it has its
 own thread-local RNG.
 
-**Secondary bug surfaced.** With renders made deterministic, `voice_module_bypass_replicated_in_offline_render`
-revealed that `ModuleGraph::clone_structure()` did not copy the `bypassed: HashSet`. Voices rebuilt from a
-template after a module was bypassed silently un-bypassed that module. The previous test only passed because
-random phase noise between renders exceeded the 1e-3 threshold the assertion compared against. Fixed by cloning
-the `bypassed` set inside `clone_structure`. This also tightens the live engine, where re-allocations after a
-bypass had carried the same latent bug.
+**Secondary bug surfaced.** With renders made (mostly) deterministic,
+`voice_module_bypass_replicated_in_offline_render` revealed that `ModuleGraph::clone_structure()` did not copy the
+`bypassed: HashSet`. Voices rebuilt from a template after a module was bypassed silently un-bypassed that module.
+The previous test only passed because random phase noise between renders exceeded the 1e-3 threshold the
+assertion compared against. Fixed by cloning the `bypassed` set inside `clone_structure`. This also tightens the
+live engine, where re-allocations after a bypass had carried the same latent bug.
 
 **Coverage.** `crates/pertylizer/tests/arrangement_render_determinism.rs` asserts bit-exact equality of repeated
-renders for a sustained sawtooth patch, a noise-source patch (which hammers `fastrand` every sample), and the
+renders for a sustained sawtooth patch and a noise-source patch (which hammers `fastrand` every sample), plus
 downstream `analyze_mix_buffer` LUFS-I / RMS / clipped-samples readouts.
 
-**Consequence for v0.277.0 per-track work.** `rms_share` is now exact across repeated `analyze_section` calls
-with `include_per_track = true`. Master ≈ per-track sum is also bit-exact-reproducible (modulo the inherent
-solo-flag accounting; no longer modulo RNG drift).
+#### Round 2: HashMap iteration order across fresh `SynthEngine` instances
+
+Re-running `analyze_section` through the MCP bridge after Round 1 still produced non-bit-exact results, just at
+a much smaller magnitude — ~**0.10 dB LUFS-I spread, ~500 sample clipped-count spread** across three
+back-to-back calls on the same range. The Round 1 test suite passed because it reused the same `SynthSession`
+across renders; the bridge does not.
+
+**Why the test path passed but the bridge did not.** Each `analyze_section` MCP call lands in
+`render_arrangement_to_buffer_with_song`, which builds a **fresh** `SynthEngine` per call and loads every
+instrument's voice graph into it. The render is then run on that throwaway engine. Two such engines — built
+moments apart on the same thread, from the same `Patch` snapshots — are not equivalent. The reason: every
+`ModuleGraph::new()` constructs a `HashMap<ModuleId, GraphNode>` whose hasher is seeded by `RandomState`, and
+`RandomState`'s seed is itself drawn from a per-process RNG that advances on each construction. Iteration over
+`self.nodes.values_mut()` (used by `note_on`, `note_off`, `reset`, `gather_mod_source_values`,
+`clone_structure`, and the topo-sort seed set) therefore visits modules in a different order on each fresh
+graph.
+
+That mattered specifically because `Oscillator::note_on` calls `fastrand::f32()` for unison phase
+randomization. With two oscillators in a voice, "osc-1 then osc-2" vs. "osc-2 then osc-1" consumes the same two
+RNG values but assigns them to different oscillators — so the two voices produce different summed waveforms.
+Round 1's reseed gave each render the same starting RNG state, but consumption order varied per fresh graph,
+so phases drifted.
+
+The same story affected:
+
+- **Topological sort.** `topo_in_degree: HashMap<ModuleId, usize>` was iterated to find the Kahn-seed set of
+  zero-in-degree modules. Different iteration order → different `processing_order` for any graph where two or
+  more modules tied on in-degree (typical: every patch has multiple in-degree-0 sources — Oscillator, Envelope,
+  LFO, …).
+- **Per-port input summation.** `incoming_map` is built from `&self.connections` (a `HashSet`) into a `Vec<…>`
+  per destination module. The Vec inherits the HashSet's iteration order. When two outputs feed the same input
+  port (e.g. two oscillators → `amp-1.in`), `process_module` sums them in Vec order, and floating-point
+  addition is non-associative — different orders yielded last-ULP-different sums each frame, drifting
+  downstream filter state.
+
+**Fix.** Replace `nodes`, `topo_in_degree`, and `topo_adjacency` in `crates/synth_engine/src/graph.rs` with
+`BTreeMap` keyed by `ModuleId`. Sort each adjacency Vec and each `incoming_map` Vec at the end of
+`calculate_processing_order` so any remaining `HashSet<Connection>` iteration order is normalized before it
+reaches DSP. Required deriving `PartialOrd, Ord` on `ModuleId`, `ModuleType`, and `PortName` (all small `Copy`
+types — comparison is free). Hot-path impact assessed and dismissed: `nodes.get(&id)` becomes O(log n) for
+n ≤ ~16 modules per voice — roughly four cache-friendly comparisons vs. one hash, indistinguishable in
+practice. `calculate_processing_order` runs on topology change only, never per frame, so the new sorts are free.
+
+The `Ord` derive on `ModuleType` makes its source variant order load-bearing for determinism: reordering or
+inserting variants now changes `ModuleId` ordering, which would silently change audio output for existing
+patches that use the affected types. Doc-commented at the enum declaration to make the constraint visible.
+
+**Live verification.** Four consecutive `analyze_section` calls on `[76800, 92160)` after the Round 2 fix:
+
+| Call | RMS | LUFS-I | clipped samples |
+|------|-----|--------|-----------------|
+| 1 (master only) | 0.6583361 | -4.899891 | 170 663 |
+| 2 (master only) | 0.6583361 | -4.899891 | 170 663 |
+| 3 (master only) | 0.6583361 | -4.899891 | 170 663 |
+| 4 (master inside per-track call, N+1 renders) | 0.6583361 | -4.899891 | 170 663 |
+
+**Bit-exact.** Including the N+1-render variant where each per-track contribution kicks off another fresh
+`SynthEngine` — the `BTreeMap` ordering survives the loop, and the master render hasn't shifted by a single
+sample.
+
+**Coverage.** Added `offline_render_is_bit_exact_for_dual_oscillator_patch` to the determinism test suite. Two
+oscillators with phase randomization is the smallest patch that exposes `note_on` iteration-order dependence —
+the existing single-Oscillator `sustain_patch` could not have caught the Round 2 regression.
+
+**Consequence for v0.277.0 per-track work.** `rms_share` is exact across repeated `analyze_section` calls with
+`include_per_track = true`. Master ≈ per-track sum is bit-exact-reproducible (modulo the inherent solo-flag
+accounting; no longer modulo RNG drift or HashMap iteration drift).
 
 ### 8.2 Drop the manual `InstrumentCategory` requirement — auto-infer it instead
 
@@ -454,6 +524,7 @@ whether any of them is hot internally without correlating with `analyze_note`. T
 
 ### 8.4 Cross-reference
 
-§8.1 is now fixed; §4's "deterministic output for a given project state" claim once again holds end-to-end on
-the offline render path. §8.2 supersedes the "manual `set_instrument_category` required" implication in
-v0.277.0's `analyze_harmony` doc. §8.3 is a doc-only update plus an optional additive field.
+§8.1 is now fully fixed (Round 1 + Round 2); §4's "deterministic output for a given project state" claim holds
+bit-exact end-to-end through the MCP bridge, not just inside the determinism unit tests. §8.2 supersedes the
+"manual `set_instrument_category` required" implication in v0.277.0's `analyze_harmony` doc. §8.3 is a doc-only
+update plus an optional additive field.
