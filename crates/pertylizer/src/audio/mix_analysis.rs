@@ -23,6 +23,20 @@ use crate::audio::analysis::{
     EnergyBands, energy_bands, peak_amplitude, rms_overall, stereo_correlation,
 };
 
+/// Sentinel substitute for `-inf` so JSON consumers don't have to handle
+/// non-finite values. Reported by `lin_to_db` and the LUFS path for silence.
+pub const SILENT_FLOOR_DBFS: f32 = -200.0;
+
+/// Sample amplitude that counts as clipping for the `clipped_samples` metric.
+/// Slightly below 1.0 catches loud-but-not-quite-fullscale floats that any
+/// downstream int16 conversion would also wrap.
+const CLIP_THRESHOLD: f32 = 0.999;
+
+/// Window length used by `energy_bands_windowed` so band energy reflects the
+/// whole buffer rather than the head-truncated 65 K FFT cap. ~1 s at any
+/// reasonable sample rate.
+const BAND_WINDOW_SECONDS: f32 = 1.0;
+
 /// Output of [`analyze_mix_buffer`]. All dB fields are dBFS unless noted.
 #[derive(Debug, Clone, Copy)]
 pub struct MixAnalysis {
@@ -71,9 +85,7 @@ pub fn analyze_mix_buffer(stereo: &[f32], sample_rate: u32) -> MixAnalysis {
     let rms_dbfs = lin_to_db(rms);
     let crest_factor_db = (peak_dbfs - rms_dbfs).max(0.0);
 
-    // Mono mix-down for band analysis (preserve the L+R energy without
-    // dividing by 2 so banded energy stays comparable to RMS).
-    let mut mono = Vec::with_capacity(n_frames);
+    // Mid (L+R)/2 doubles as the mono mix-down for band analysis.
     let mut mid = Vec::with_capacity(n_frames);
     let mut side = Vec::with_capacity(n_frames);
     let mut left_sum_sq = 0.0_f64;
@@ -82,19 +94,18 @@ pub fn analyze_mix_buffer(stereo: &[f32], sample_rate: u32) -> MixAnalysis {
     for frame in stereo.chunks_exact(2) {
         let l = frame[0];
         let r = frame[1];
-        if l.abs() >= 0.999 {
+        if l.abs() >= CLIP_THRESHOLD {
             clipped += 1;
         }
-        if r.abs() >= 0.999 {
+        if r.abs() >= CLIP_THRESHOLD {
             clipped += 1;
         }
-        mono.push((l + r) * 0.5);
         mid.push((l + r) * 0.5);
         side.push((l - r) * 0.5);
         left_sum_sq += f64::from(l) * f64::from(l);
         right_sum_sq += f64::from(r) * f64::from(r);
     }
-    let bands = energy_bands(&mono, sample_rate);
+    let bands = energy_bands_windowed(&mid, sample_rate);
     let correlation = stereo_correlation(stereo);
     let mid_rms = rms_overall(&mid);
     let side_rms = rms_overall(&side);
@@ -136,11 +147,11 @@ pub fn analyze_mix_buffer(stereo: &[f32], sample_rate: u32) -> MixAnalysis {
 fn zero_analysis() -> MixAnalysis {
     MixAnalysis {
         peak: 0.0,
-        peak_dbfs: -200.0,
+        peak_dbfs: SILENT_FLOOR_DBFS,
         rms: 0.0,
-        rms_dbfs: -200.0,
+        rms_dbfs: SILENT_FLOOR_DBFS,
         crest_factor_db: 0.0,
-        lufs_integrated: -200.0,
+        lufs_integrated: SILENT_FLOOR_DBFS,
         energy_bands: EnergyBands {
             sub: 0.0,
             low: 0.0,
@@ -161,7 +172,50 @@ fn lin_to_db(linear: f32) -> f32 {
     if linear > 0.0 {
         20.0 * linear.log10()
     } else {
-        -200.0
+        SILENT_FLOOR_DBFS
+    }
+}
+
+/// `energy_bands` averaged over non-overlapping ~1 s windows. The underlying
+/// FFT caps at 65 K bins (≈1.5 s at 44.1 kHz), so calling it directly on a
+/// multi-minute buffer would silently truncate to the head. Windowing covers
+/// the whole buffer and yields a stable band balance.
+fn energy_bands_windowed(mono: &[f32], sample_rate: u32) -> EnergyBands {
+    if mono.is_empty() || sample_rate == 0 {
+        return EnergyBands {
+            sub: 0.0,
+            low: 0.0,
+            mid: 0.0,
+            high: 0.0,
+        };
+    }
+    let window = (BAND_WINDOW_SECONDS * sample_rate as f32) as usize;
+    if mono.len() <= window {
+        return energy_bands(mono, sample_rate);
+    }
+    let mut sub = 0.0f32;
+    let mut low = 0.0f32;
+    let mut mid = 0.0f32;
+    let mut high = 0.0f32;
+    let mut count = 0u32;
+    for chunk in mono.chunks(window) {
+        if chunk.len() < window / 4 {
+            // Tail chunk too short to give a stable FFT — skip.
+            continue;
+        }
+        let b = energy_bands(chunk, sample_rate);
+        sub += b.sub;
+        low += b.low;
+        mid += b.mid;
+        high += b.high;
+        count += 1;
+    }
+    let n = count.max(1) as f32;
+    EnergyBands {
+        sub: sub / n,
+        low: low / n,
+        mid: mid / n,
+        high: high / n,
     }
 }
 
@@ -218,12 +272,12 @@ fn k_weight_inplace(samples: &mut [f32]) {
 fn lufs_integrated(stereo: &[f32], sample_rate: u32) -> f32 {
     let n_frames = stereo.len() / 2;
     if n_frames == 0 || sample_rate == 0 {
-        return -200.0;
+        return SILENT_FLOOR_DBFS;
     }
     let block_samples = (sample_rate as usize * 4) / 10; // 400 ms
     let hop_samples = block_samples / 4; // 75% overlap → 100 ms hop
     if n_frames < block_samples {
-        return -200.0;
+        return SILENT_FLOOR_DBFS;
     }
 
     // Deinterleave to per-channel buffers so we can filter independently.
@@ -256,13 +310,13 @@ fn lufs_integrated(stereo: &[f32], sample_rate: u32) -> f32 {
             let lk = -0.691 + 10.0 * weighted.log10();
             block_loudness.push(lk as f32);
         } else {
-            block_loudness.push(-200.0);
+            block_loudness.push(SILENT_FLOOR_DBFS);
         }
         start += hop_samples;
     }
 
     if block_loudness.is_empty() {
-        return -200.0;
+        return SILENT_FLOOR_DBFS;
     }
 
     // Absolute gate: drop blocks below -70 LUFS.
@@ -272,7 +326,7 @@ fn lufs_integrated(stereo: &[f32], sample_rate: u32) -> f32 {
         .filter(|l| *l > -70.0)
         .collect();
     if gated_abs.is_empty() {
-        return -200.0;
+        return SILENT_FLOOR_DBFS;
     }
 
     // Compute mean energy of absolute-gated blocks then derive the relative
@@ -290,7 +344,7 @@ fn lufs_integrated(stereo: &[f32], sample_rate: u32) -> f32 {
         .filter(|l| f64::from(*l) > relative_threshold)
         .collect();
     if gated_rel.is_empty() {
-        return -200.0;
+        return SILENT_FLOOR_DBFS;
     }
 
     let final_energy: f64 = gated_rel

@@ -25,11 +25,10 @@ use synth_mcp::types::{
     AutomationLaneInfo, AutomationPointInfo, AweLfoInfo, AwePresetInfo, AweStateInfo,
     BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo,
     DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent,
-    HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MixBusMetrics, MixEnergyBands,
-    ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo,
-    PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo,
-    PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap,
-    UiSnapshot,
+    HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MixBusMetrics, ModuleInfo,
+    ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo,
+    PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo, PlacementInfo, SetSongResult,
+    SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -4462,13 +4461,10 @@ fn analyze_rendered_note(
 /// unset — one quarter note at the engine's 960 PPQN.
 const DEFAULT_HARMONY_GROUPING_TICKS: u32 = 960;
 
-/// Pattern-relative end tick to assign to open-ended notes (no `duration`).
-/// The full grouping window so the note contributes weight to exactly one
-/// chord event.
-fn synthetic_note_end(start: u32, length_ticks: u32, grouping_ticks: u32) -> u32 {
-    start
-        .saturating_add(grouping_ticks)
-        .min(length_ticks.max(start.saturating_add(grouping_ticks)))
+/// End tick for an open-ended note (no `duration`): one grouping window
+/// past `start` so the note contributes weight to exactly one chord event.
+fn synthetic_note_end(start: u32, grouping_ticks: u32) -> u32 {
+    start.saturating_add(grouping_ticks)
 }
 
 /// Implementation of the `analyze_harmony` bridge method.
@@ -4499,7 +4495,7 @@ fn analyze_song_harmony(
                 let start_pt = n.start.0;
                 let end_pt = match n.duration {
                     Some(d) => start_pt.saturating_add(d.0),
-                    None => synthetic_note_end(start_pt, length_ticks, grouping),
+                    None => synthetic_note_end(start_pt, grouping),
                 };
                 notes.push(crate::harmony::AnalysisNote {
                     pitch: n.pitch,
@@ -4518,7 +4514,6 @@ fn analyze_song_harmony(
             )
         }
         None => {
-            // Arrangement scope.
             let song_end = song.calculate_length().0;
             let start = arrangement_start_tick.unwrap_or(0);
             let end = arrangement_end_tick.unwrap_or(song_end);
@@ -4536,17 +4531,14 @@ fn analyze_song_harmony(
                     continue;
                 };
                 let placement_start = placement.start.0;
-                let pattern_len = pattern.length.0;
                 for n in pattern.notes() {
                     let n_start = n.start.0;
                     let n_end_pt = match n.duration {
                         Some(d) => n_start.saturating_add(d.0),
-                        None => synthetic_note_end(n_start, pattern_len, grouping),
+                        None => synthetic_note_end(n_start, grouping),
                     };
                     let abs_start = placement_start.saturating_add(u64::from(n_start));
                     let abs_end = placement_start.saturating_add(u64::from(n_end_pt));
-                    // Skip notes that fall completely outside the requested
-                    // range before transposition — saves work in the analyzer.
                     if abs_end <= start || abs_start >= end {
                         continue;
                     }
@@ -4684,12 +4676,7 @@ fn mix_metrics_from_analysis(
         rms_dbfs: analysis.rms_dbfs,
         crest_factor_db: analysis.crest_factor_db,
         lufs_integrated: analysis.lufs_integrated,
-        energy_bands: MixEnergyBands {
-            sub: analysis.energy_bands.sub,
-            low: analysis.energy_bands.low,
-            mid: analysis.energy_bands.mid,
-            high: analysis.energy_bands.high,
-        },
+        energy_bands: analysis.energy_bands.into(),
         stereo_correlation: analysis.stereo_correlation,
         mid_rms: analysis.mid_rms,
         side_rms: analysis.side_rms,

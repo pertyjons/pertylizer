@@ -1166,20 +1166,6 @@ pub struct AnalyzeHarmonyResult {
 // analyze_mix_bus / analyze_section result types
 // ---------------------------------------------------------------------------
 
-/// 4-band frequency-balance RMS energies. Reported by `analyze_mix_bus` and
-/// `analyze_section` for the mono mix-down of the master bus.
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct MixEnergyBands {
-    /// RMS energy 0-100 Hz.
-    pub sub: f32,
-    /// RMS energy 100-500 Hz.
-    pub low: f32,
-    /// RMS energy 500-2000 Hz.
-    pub mid: f32,
-    /// RMS energy 2000+ Hz.
-    pub high: f32,
-}
-
 /// Mix-bus metrics common to `analyze_mix_bus` and `analyze_section`.
 ///
 /// All `*_dbfs` fields use `-200.0` as a substitute for `-inf` so JSON
@@ -1203,8 +1189,8 @@ pub struct MixBusMetrics {
     pub crest_factor_db: f32,
     /// Integrated loudness (ITU-R BS.1770-4 LUFS).
     pub lufs_integrated: f32,
-    /// 4-band RMS energy on the mono mix-down.
-    pub energy_bands: MixEnergyBands,
+    /// 4-band RMS energy on the mono mix-down (sub/low/mid/high).
+    pub energy_bands: AnalyzeEnergyBands,
     /// Pearson correlation between L and R channels, [-1.0, 1.0].
     pub stereo_correlation: f32,
     /// RMS of the (L+R)/2 component.

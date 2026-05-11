@@ -12,7 +12,7 @@
 use synth_sequencer::{NoteName, Pitch};
 
 /// Pitch class (0..=11), semitones above C.
-pub type PitchClass = u8;
+pub(crate) type PitchClass = u8;
 
 // ---------------------------------------------------------------------------
 // Scales
@@ -21,87 +21,64 @@ pub type PitchClass = u8;
 /// A scale template: ordered semitone offsets from the tonic.
 #[must_use]
 #[derive(Debug, Clone, Copy)]
-pub struct ScaleTemplate {
+pub(crate) struct ScaleTemplate {
     pub name: &'static str,
-    pub mode: ScaleMode,
     pub intervals: &'static [u8],
-}
-
-/// Mode classification — major-flavored or minor-flavored for chord-key fit.
-#[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScaleMode {
-    Major,
-    Minor,
-    Other,
 }
 
 /// All scale templates considered by `infer_key`. Order is significant only
 /// for tie-breaking — keep major and natural minor first.
-pub const SCALES: &[ScaleTemplate] = &[
+pub(crate) const SCALES: &[ScaleTemplate] = &[
     ScaleTemplate {
         name: "major",
-        mode: ScaleMode::Major,
         intervals: &[0, 2, 4, 5, 7, 9, 11],
     },
     ScaleTemplate {
         name: "minor",
-        mode: ScaleMode::Minor,
         intervals: &[0, 2, 3, 5, 7, 8, 10],
     },
     ScaleTemplate {
         name: "harmonic_minor",
-        mode: ScaleMode::Minor,
         intervals: &[0, 2, 3, 5, 7, 8, 11],
     },
     ScaleTemplate {
         name: "melodic_minor",
-        mode: ScaleMode::Minor,
         intervals: &[0, 2, 3, 5, 7, 9, 11],
     },
     ScaleTemplate {
         name: "dorian",
-        mode: ScaleMode::Minor,
         intervals: &[0, 2, 3, 5, 7, 9, 10],
     },
     ScaleTemplate {
         name: "phrygian",
-        mode: ScaleMode::Minor,
         intervals: &[0, 1, 3, 5, 7, 8, 10],
     },
     ScaleTemplate {
         name: "lydian",
-        mode: ScaleMode::Major,
         intervals: &[0, 2, 4, 6, 7, 9, 11],
     },
     ScaleTemplate {
         name: "mixolydian",
-        mode: ScaleMode::Major,
         intervals: &[0, 2, 4, 5, 7, 9, 10],
     },
     ScaleTemplate {
         name: "locrian",
-        mode: ScaleMode::Other,
         intervals: &[0, 1, 3, 5, 6, 8, 10],
     },
     ScaleTemplate {
         name: "pentatonic_major",
-        mode: ScaleMode::Major,
         intervals: &[0, 2, 4, 7, 9],
     },
     ScaleTemplate {
         name: "pentatonic_minor",
-        mode: ScaleMode::Minor,
         intervals: &[0, 3, 5, 7, 10],
     },
     ScaleTemplate {
         name: "blues",
-        mode: ScaleMode::Minor,
         intervals: &[0, 3, 5, 6, 7, 10],
     },
     ScaleTemplate {
         name: "chromatic",
-        mode: ScaleMode::Other,
         intervals: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
     },
 ];
@@ -376,7 +353,7 @@ impl KeyEstimate {
 ///
 /// `weights[i]` is the total weight (typically duration in ticks) of pitch class `i`.
 #[must_use]
-pub fn weighted_pitch_class_histogram(notes: &[(Pitch, f32)]) -> [f32; 12] {
+pub(crate) fn weighted_pitch_class_histogram(notes: &[(Pitch, f32)]) -> [f32; 12] {
     let mut hist = [0.0f32; 12];
     for &(pitch, weight) in notes {
         hist[(pitch.as_midi() % 12) as usize] += weight;
@@ -387,7 +364,7 @@ pub fn weighted_pitch_class_histogram(notes: &[(Pitch, f32)]) -> [f32; 12] {
 /// Infer the most likely key using Krumhansl-Schmuckler correlation against
 /// all 24 major/minor keys. Returns the top match and up to two runner-ups.
 #[must_use]
-pub fn infer_key(histogram: &[f32; 12]) -> Vec<KeyEstimate> {
+pub(crate) fn infer_key(histogram: &[f32; 12]) -> Vec<KeyEstimate> {
     let total: f32 = histogram.iter().sum();
     if total <= 0.0 {
         return Vec::new();
@@ -443,7 +420,7 @@ fn pearson_correlation(x: &[f32; 12], y: &[f32; 12]) -> f32 {
 
 /// Fraction of histogram weight that falls inside the given key (0.0..=1.0).
 #[must_use]
-pub fn in_key_ratio(histogram: &[f32; 12], tonic: PitchClass, scale: &ScaleTemplate) -> f32 {
+pub(crate) fn in_key_ratio(histogram: &[f32; 12], tonic: PitchClass, scale: &ScaleTemplate) -> f32 {
     let total: f32 = histogram.iter().sum();
     if total <= 0.0 {
         return 0.0;
@@ -459,7 +436,7 @@ pub fn in_key_ratio(histogram: &[f32; 12], tonic: PitchClass, scale: &ScaleTempl
 
 /// Pitch classes (0..12) with non-zero weight that do not belong to the scale.
 #[must_use]
-pub fn out_of_scale_pitch_classes(
+pub(crate) fn out_of_scale_pitch_classes(
     histogram: &[f32; 12],
     tonic: PitchClass,
     scale: &ScaleTemplate,
@@ -472,7 +449,7 @@ pub fn out_of_scale_pitch_classes(
 
 /// Look up a scale template by name (case-sensitive). Returns major scale if
 /// the name is unknown, to keep the analyzer robust.
-pub fn scale_by_name(name: &str) -> &'static ScaleTemplate {
+pub(crate) fn scale_by_name(name: &str) -> &'static ScaleTemplate {
     SCALES.iter().find(|s| s.name == name).unwrap_or(&SCALES[0])
 }
 
@@ -539,7 +516,6 @@ pub struct AnalysisOutput {
 pub fn analyze(notes: &[AnalysisNote], opts: &AnalysisOptions) -> AnalysisOutput {
     let grouping = opts.grouping_ticks.max(1);
 
-    // Trim notes to the analysis range.
     let trimmed: Vec<AnalysisNote> = notes
         .iter()
         .filter_map(|n| {
@@ -553,14 +529,12 @@ pub fn analyze(notes: &[AnalysisNote], opts: &AnalysisOptions) -> AnalysisOutput
         })
         .collect();
 
-    // Weighted pitch-class histogram by duration.
     let hist_pairs: Vec<(Pitch, f32)> = trimmed
         .iter()
         .map(|n| (n.pitch, (n.end_tick - n.start_tick) as f32))
         .collect();
     let histogram = weighted_pitch_class_histogram(&hist_pairs);
 
-    // Key inference.
     let mut all_keys = infer_key(&histogram);
     let inferred_key = if all_keys.is_empty() {
         None
@@ -569,7 +543,6 @@ pub fn analyze(notes: &[AnalysisNote], opts: &AnalysisOptions) -> AnalysisOutput
     };
     let key_candidates = all_keys;
 
-    // Pick scale template that pairs with the inferred mode.
     let scale_for_key: Option<&'static ScaleTemplate> = inferred_key.as_ref().map(|k| {
         if k.mode == "major" {
             scale_by_name("major")
@@ -586,13 +559,11 @@ pub fn analyze(notes: &[AnalysisNote], opts: &AnalysisOptions) -> AnalysisOutput
         _ => (0.0, Vec::new()),
     };
 
-    // Walk windows.
     let mut events = Vec::new();
     let mut cursor = opts.range_start_tick;
     while cursor < opts.range_end_tick {
         let window_end = (cursor + grouping).min(opts.range_end_tick);
 
-        // Collect notes that overlap [cursor, window_end).
         let mut window_pitches: Vec<Pitch> = Vec::new();
         let mut seen = [false; 128];
         for n in &trimmed {
@@ -629,8 +600,6 @@ pub fn analyze(notes: &[AnalysisNote], opts: &AnalysisOptions) -> AnalysisOutput
         cursor = window_end;
     }
 
-    // Stability score: weighted combo of in_key_ratio, identification ratio,
-    // and clamped key correlation.
     let identified = events.iter().filter(|e| e.chord.is_some()).count();
     let id_ratio = if events.is_empty() {
         0.0

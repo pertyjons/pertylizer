@@ -117,13 +117,7 @@ pub fn render_arrangement_to_buffer(
         ));
     }
 
-    // Snapshot the live engine state. We hold this read lock throughout the
-    // patch-load phase since the snapshot data needs to stay valid; we drop
-    // it before starting the render loop.
     let engine_state = session.state();
-
-    // Collect the list of live instrument IDs. `instrument_snapshots` is the
-    // authoritative ordered list (live engine uses the same Vec).
     let live_instruments: Vec<synth_engine::shared_state::InstrumentSnapshot> = engine_state
         .instrument_snapshots
         .read()
@@ -136,13 +130,11 @@ pub fn render_arrangement_to_buffer(
         ));
     }
 
-    // Build an isolated offline engine.
     let (mut engine, mut handle) = SynthEngine::new();
     let tmp_session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
 
-    // Mirror each instrument: add to the offline session with the live
-    // instrument's ID (so the sequencer's SeqInstrumentId → InstrumentId
-    // mapping continues to work), then load voice graph + effects.
+    // Use each instrument's live ID so the sequencer's SeqInstrumentId →
+    // InstrumentId mapping survives into the offline engine.
     for inst_snap in &live_instruments {
         if let Err(e) = tmp_session.add_instrument_with_id(inst_snap.id, &inst_snap.name) {
             warnings.push(format!(
@@ -162,8 +154,9 @@ pub fn render_arrangement_to_buffer(
         );
     }
 
-    // Share the live Song with the offline engine. Read-only from the
-    // sequencer's perspective — `SequencerEngine` only does try_read().
+    // The shared Song is read-only from the sequencer's perspective
+    // (`SequencerEngine` only does try_read), so handing the live Arc to the
+    // offline engine is safe even while the live engine runs.
     handle.send_blocking(EngineCommand::SetSong {
         song: Arc::clone(&shared.song),
     });
@@ -171,7 +164,6 @@ pub fn render_arrangement_to_buffer(
         tick: Tick(start_tick),
     });
 
-    // Audio stream setup (matches preview.rs).
     let hw_sample_rate = HwSampleRate(RENDER_SAMPLE_RATE);
     let stream_info = synth_core::StreamInfo {
         sample_rate: hw_sample_rate,
@@ -182,8 +174,8 @@ pub fn render_arrangement_to_buffer(
     };
     engine.on_stream_start(&stream_info);
 
-    // Warm-up block. Sentinel sample_position keeps the engine from seeing a
-    // duplicate position 0 when the real render begins.
+    // Sentinel sample_position in the warm-up block keeps the engine from
+    // seeing a duplicate position 0 when the real render begins.
     let mut block = vec![0.0f32; BUFFER_SIZE * CHANNELS];
     let warmup_ctx = AudioCallbackContext {
         sample_rate: hw_sample_rate,
@@ -207,7 +199,6 @@ pub fn render_arrangement_to_buffer(
         let this_buffer = remaining.min(BUFFER_SIZE);
         let sample_count = this_buffer * CHANNELS;
 
-        // Re-zero the leading slice so the engine writes into a clean block.
         block[..sample_count].fill(0.0);
 
         let context = AudioCallbackContext {
