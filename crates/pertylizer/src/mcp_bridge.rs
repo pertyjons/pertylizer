@@ -4457,14 +4457,53 @@ fn analyze_rendered_note(
     ))
 }
 
-/// Default chord-detection window when the caller leaves `grouping_ticks`
-/// unset — one quarter note at the engine's 960 PPQN.
-const DEFAULT_HARMONY_GROUPING_TICKS: u32 = 960;
+/// Default chord-detection window for pattern-scope analysis: one quarter
+/// note at 960 PPQN. Patterns are short enough that fine resolution keeps
+/// the output compact.
+const DEFAULT_PATTERN_GROUPING_TICKS: u32 = 960;
+
+/// Default chord-detection window for arrangement-scope analysis: one bar
+/// (assumed 4/4). Arrangements span many bars and a per-quarter resolution
+/// blows past the MCP response-size limit; per-bar resolution keeps the
+/// chord-event list readable. Callers can override with a smaller value.
+const DEFAULT_ARRANGEMENT_GROUPING_TICKS: u32 = 3840;
 
 /// End tick for an open-ended note (no `duration`): one grouping window
 /// past `start` so the note contributes weight to exactly one chord event.
 fn synthetic_note_end(start: u32, grouping_ticks: u32) -> u32 {
     start.saturating_add(grouping_ticks)
+}
+
+/// Convert an absolute tick to 1-indexed (bar, beat) under the given time
+/// signature. `Tick::to_bar_beat_tick` returns 0-indexed values; we shift
+/// to 1-indexed for human readability ("Bar 1 beat 1" = song start).
+fn tick_to_bar_beat_1based(tick: u64, time_sig: synth_sequencer::TimeSignature) -> (u32, u32) {
+    let (bar, beat, _) = synth_sequencer::Tick(tick).to_bar_beat_tick(time_sig);
+    (bar + 1, beat + 1)
+}
+
+/// Merge consecutive `HarmonyChordEvent`s that share a chord symbol (or are
+/// both unidentified) into single spans. Keeps the chord-event list compact
+/// when a chord is held for several grouping windows.
+fn merge_consecutive_chord_events(events: Vec<HarmonyChordEvent>) -> Vec<HarmonyChordEvent> {
+    let mut out: Vec<HarmonyChordEvent> = Vec::with_capacity(events.len());
+    for e in events {
+        if let Some(last) = out.last_mut()
+            && last.symbol == e.symbol
+            && last.in_key == e.in_key
+        {
+            last.end_tick = e.end_tick;
+            for m in e.midi_notes {
+                if !last.midi_notes.contains(&m) {
+                    last.midi_notes.push(m);
+                }
+            }
+            last.midi_notes.sort_unstable();
+            continue;
+        }
+        out.push(e);
+    }
+    out
 }
 
 /// Implementation of the `analyze_harmony` bridge method.
@@ -4478,10 +4517,27 @@ fn analyze_song_harmony(
     use synth_sequencer::PatternId;
 
     let song = shared.song.read();
+    let default_grouping = if pattern_id.is_some() {
+        DEFAULT_PATTERN_GROUPING_TICKS
+    } else {
+        DEFAULT_ARRANGEMENT_GROUPING_TICKS
+    };
     let grouping = grouping_ticks
         .filter(|g| *g > 0)
-        .unwrap_or(DEFAULT_HARMONY_GROUPING_TICKS);
+        .unwrap_or(default_grouping);
     let mut warnings: Vec<String> = Vec::new();
+
+    // Lock in the time signature once per request so chord-event bar/beat
+    // formatting is consistent across the whole scope. Mid-arrangement time
+    // signature changes will report bar/beat under the time signature at the
+    // scope start; that's accurate enough for the typical case where TS
+    // changes are rare.
+    let default_ts = song.default_time_signature;
+    let scope_time_signature = match (pattern_id, arrangement_start_tick) {
+        (Some(_), _) => default_ts,
+        (None, Some(t)) => song.time_signature_at(synth_sequencer::Tick(t)),
+        (None, None) => default_ts,
+    };
 
     let (scope, notes, range_start, range_end) = match pattern_id {
         Some(pid) => {
@@ -4581,9 +4637,11 @@ fn analyze_song_harmony(
     let analysis = crate::harmony::analyze(&notes, &opts);
 
     // Convert the harmony module's output into the serializable MCP types.
+    // Track identified / distinct counts on the raw per-window events so the
+    // stats reflect the analyzer's resolution, not the post-merge view.
     let mut distinct = std::collections::HashSet::new();
     let mut identified = 0u32;
-    let chords: Vec<HarmonyChordEvent> = analysis
+    let raw_chords: Vec<HarmonyChordEvent> = analysis
         .events
         .iter()
         .map(|e| {
@@ -4599,7 +4657,11 @@ fn analyze_song_harmony(
                 }
                 None => (None, None, None),
             };
+            let (start_bar, start_beat) =
+                tick_to_bar_beat_1based(e.start_tick, scope_time_signature);
             HarmonyChordEvent {
+                start_bar,
+                start_beat,
                 start_tick: e.start_tick,
                 end_tick: e.end_tick,
                 midi_notes: e.midi_notes.clone(),
@@ -4610,6 +4672,8 @@ fn analyze_song_harmony(
             }
         })
         .collect();
+    let raw_event_count = raw_chords.len() as u32;
+    let chords = merge_consecutive_chord_events(raw_chords);
 
     let to_key_estimate = |k: &crate::harmony::KeyEstimate| HarmonyKeyEstimate {
         tonic: k.tonic,
@@ -4631,7 +4695,7 @@ fn analyze_song_harmony(
     let (lo, hi) = analysis.pitch_range.unwrap_or((0, 0));
     let stats = HarmonyStats {
         total_notes: analysis.total_notes,
-        chord_event_count: chords.len() as u32,
+        chord_event_count: raw_event_count,
         distinct_chord_count: distinct.len() as u32,
         identified_chord_count: identified,
         pitch_range_low: lo,
@@ -4727,7 +4791,17 @@ fn analyze_mix_bus_impl(
         crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
     let metrics =
         mix_metrics_from_analysis(&analysis, rendered.sample_rate, rendered.duration_seconds);
+    let ts = shared
+        .song
+        .read()
+        .time_signature_at(synth_sequencer::Tick(rendered.start_tick));
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(rendered.start_tick, ts);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(rendered.end_tick, ts);
     Ok(AnalyzeMixBusResult {
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
         start_tick: rendered.start_tick,
         end_tick: rendered.end_tick,
         metrics,
@@ -4751,7 +4825,17 @@ fn analyze_section_impl(
         crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
     let metrics =
         mix_metrics_from_analysis(&analysis, rendered.sample_rate, rendered.duration_seconds);
+    let ts = shared
+        .song
+        .read()
+        .time_signature_at(synth_sequencer::Tick(rendered.start_tick));
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(rendered.start_tick, ts);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(rendered.end_tick, ts);
     Ok(AnalyzeSectionResult {
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
         start_tick: rendered.start_tick,
         end_tick: rendered.end_tick,
         metrics,

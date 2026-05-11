@@ -218,11 +218,6 @@ const CHORD_TEMPLATES: &[ChordTemplate] = &[
         suffix: "5",
         intervals: &[0, 7],
     },
-    ChordTemplate {
-        quality: "interval_octave",
-        suffix: "(oct)",
-        intervals: &[0],
-    },
 ];
 
 /// Identify a chord from a slice of MIDI pitch classes (any range).
@@ -249,7 +244,10 @@ pub fn identify_chord(
             count += 1;
         }
     }
-    if count == 0 {
+    // A single pitch class is a note, not a chord — refuse to fit it to any
+    // template (the smallest matchable template is the power chord at two
+    // pitch classes).
+    if count < 2 {
         return None;
     }
 
@@ -579,8 +577,8 @@ pub fn analyze(notes: &[AnalysisNote], opts: &AnalysisOptions) -> AnalysisOutput
         if !window_pitches.is_empty() {
             window_pitches.sort_by_key(Pitch::as_midi);
             let chord = identify_chord_from_pitches(&window_pitches);
-            let in_key = match (&chord, scale_for_key, inferred_key.as_ref()) {
-                (Some(_), Some(scale), Some(k)) => {
+            let in_key = match (scale_for_key, inferred_key.as_ref()) {
+                (Some(scale), Some(k)) => {
                     let in_set = scale.pitch_classes(k.tonic);
                     window_pitches
                         .iter()

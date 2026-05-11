@@ -160,9 +160,6 @@ pub fn render_arrangement_to_buffer(
     handle.send_blocking(EngineCommand::SetSong {
         song: Arc::clone(&shared.song),
     });
-    handle.send_blocking(EngineCommand::Seek {
-        tick: Tick(start_tick),
-    });
 
     let hw_sample_rate = HwSampleRate(RENDER_SAMPLE_RATE);
     let stream_info = synth_core::StreamInfo {
@@ -187,9 +184,16 @@ pub fn render_arrangement_to_buffer(
     };
     engine.process(&mut block, &warmup_ctx);
 
-    // Start sequencer playback. Has to happen AFTER the warm-up block so the
-    // engine's command queue is drained before audio production begins.
+    // Play, then Seek — in that order. Play transitions the sequencer from
+    // Stopped → Playing, which has the side effect of resetting current_tick
+    // to zero (see `SequencerEngine::play`). Sending Seek *after* Play
+    // overrides that reset so the real render starts at `start_tick`.
+    // Both commands drain together at the top of the first real process
+    // call below, so the sequencer hasn't advanced yet when Seek lands.
     handle.send_blocking(EngineCommand::Play);
+    handle.send_blocking(EngineCommand::Seek {
+        tick: Tick(start_tick),
+    });
 
     let mut samples: Vec<f32> = Vec::with_capacity((total_frames as usize) * CHANNELS);
     let mut frames_written: u64 = 0;

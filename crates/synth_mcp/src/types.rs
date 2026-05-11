@@ -1068,6 +1068,12 @@ pub enum HarmonyScope {
 /// used; chord identification is based on every pitch that sounded inside it.
 #[derive(Debug, Clone, Serialize)]
 pub struct HarmonyChordEvent {
+    /// 1-indexed bar number at the event start, using the song's time
+    /// signature at `start_tick`. For pattern scope, computed against the
+    /// song's default time signature; bars are 1-indexed within the pattern.
+    pub start_bar: u32,
+    /// 1-indexed beat within `start_bar`.
+    pub start_beat: u32,
     /// Window start in absolute ticks (or pattern-relative ticks for pattern
     /// scope).
     pub start_tick: u64,
@@ -1077,7 +1083,8 @@ pub struct HarmonyChordEvent {
     /// sorted ascending. Empty windows are omitted.
     pub midi_notes: Vec<u8>,
     /// Chord symbol e.g. `"Cm7"`, `"F#maj7"`, `"Bbsus4"`. `None` when the
-    /// pitch set didn't match any known chord template.
+    /// pitch set didn't match any known chord template (e.g. a single note
+    /// or a dyad that isn't a power chord).
     pub symbol: Option<String>,
     /// Root pitch class (0..12, C = 0). `None` when `symbol` is `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1210,6 +1217,15 @@ pub struct MixBusMetrics {
 /// starting from `start_tick` (defaults to 0) and returns mix-level metrics.
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyzeMixBusResult {
+    /// 1-indexed bar number at `start_tick`, using the song's time signature
+    /// at that tick.
+    pub start_bar: u32,
+    /// 1-indexed beat within `start_bar`.
+    pub start_beat: u32,
+    /// 1-indexed bar number at `end_tick`.
+    pub end_bar: u32,
+    /// 1-indexed beat within `end_bar`.
+    pub end_beat: u32,
     /// Tick where the render started.
     pub start_tick: u64,
     /// Tick where the render ended (exclusive).
@@ -1225,6 +1241,14 @@ pub struct AnalyzeMixBusResult {
 /// implemented — that will land in a follow-up version.
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyzeSectionResult {
+    /// 1-indexed bar number at `start_tick`.
+    pub start_bar: u32,
+    /// 1-indexed beat within `start_bar`.
+    pub start_beat: u32,
+    /// 1-indexed bar number at `end_tick`.
+    pub end_bar: u32,
+    /// 1-indexed beat within `end_bar`.
+    pub end_beat: u32,
     /// Tick range that was analyzed (inclusive start, exclusive end).
     pub start_tick: u64,
     pub end_tick: u64,
