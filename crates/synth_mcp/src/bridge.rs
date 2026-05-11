@@ -640,6 +640,27 @@ pub trait SynthBridge: Send + Sync + 'static {
         grouping_ticks: Option<u32>,
     ) -> Result<crate::types::AnalyzeHarmonyResult, McpBridgeError>;
 
+    /// Render `duration_seconds` of the master bus offline and return
+    /// mix-level metrics (LUFS-I, true peak proxy, RMS, crest factor, banded
+    /// energy, stereo correlation, mid/side, mono-compatibility).
+    ///
+    /// Rendering starts at `start_tick` (defaults to 0). Duration is clamped
+    /// by the renderer to an internal upper bound.
+    fn analyze_mix_bus(
+        &self,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+    ) -> Result<crate::types::AnalyzeMixBusResult, McpBridgeError>;
+
+    /// Render an explicit arrangement range `[start_tick, end_tick)` offline
+    /// and return the same metrics as `analyze_mix_bus`. Per-track stem
+    /// breakdown is reserved for a future version.
+    fn analyze_section(
+        &self,
+        start_tick: u64,
+        end_tick: u64,
+    ) -> Result<crate::types::AnalyzeSectionResult, McpBridgeError>;
+
     // === AWE (Acoustic World Engine) ===
 
     /// Get the current AWE state (room, material, all parameters, LFOs).

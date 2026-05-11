@@ -64,9 +64,11 @@
 //! ```
 
 pub mod analysis;
+pub mod arrangement_render;
 pub mod backends;
 pub mod export;
 pub mod input;
+pub mod mix_analysis;
 pub mod preview;
 mod traits;
 mod types;

@@ -1161,3 +1161,89 @@ pub struct AnalyzeHarmonyResult {
     /// no notes). Empty when analysis ran cleanly.
     pub warnings: Vec<String>,
 }
+
+// ---------------------------------------------------------------------------
+// analyze_mix_bus / analyze_section result types
+// ---------------------------------------------------------------------------
+
+/// 4-band frequency-balance RMS energies. Reported by `analyze_mix_bus` and
+/// `analyze_section` for the mono mix-down of the master bus.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct MixEnergyBands {
+    /// RMS energy 0-100 Hz.
+    pub sub: f32,
+    /// RMS energy 100-500 Hz.
+    pub low: f32,
+    /// RMS energy 500-2000 Hz.
+    pub mid: f32,
+    /// RMS energy 2000+ Hz.
+    pub high: f32,
+}
+
+/// Mix-bus metrics common to `analyze_mix_bus` and `analyze_section`.
+///
+/// All `*_dbfs` fields use `-200.0` as a substitute for `-inf` so JSON
+/// consumers don't have to special-case non-finite values. `lufs_integrated`
+/// follows the same convention: silence reports `-200.0` rather than `-inf`.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct MixBusMetrics {
+    /// Sample rate the buffer was rendered at.
+    pub sample_rate: u32,
+    /// Total render duration in seconds.
+    pub duration_seconds: f32,
+    /// Sample peak across both channels, linear.
+    pub peak: f32,
+    /// Sample peak in dBFS.
+    pub peak_dbfs: f32,
+    /// Overall RMS, linear.
+    pub rms: f32,
+    /// Overall RMS in dBFS.
+    pub rms_dbfs: f32,
+    /// Crest factor (peak_dBFS - rms_dBFS). Higher = more dynamic.
+    pub crest_factor_db: f32,
+    /// Integrated loudness (ITU-R BS.1770-4 LUFS).
+    pub lufs_integrated: f32,
+    /// 4-band RMS energy on the mono mix-down.
+    pub energy_bands: MixEnergyBands,
+    /// Pearson correlation between L and R channels, [-1.0, 1.0].
+    pub stereo_correlation: f32,
+    /// RMS of the (L+R)/2 component.
+    pub mid_rms: f32,
+    /// RMS of the (L-R)/2 component.
+    pub side_rms: f32,
+    /// Stereo width = side_rms / mid_rms (0.0 = mono).
+    pub stereo_width: f32,
+    /// Mono-compatibility score, 0.0..=1.0. 1.0 = perfectly mono-summable,
+    /// 0.0 = full anti-phase cancellation.
+    pub mono_compat: f32,
+    /// Count of samples that hit the ±0.999 ceiling.
+    pub clipped_samples: u32,
+}
+
+/// Output of `analyze_mix_bus`. Renders `duration_seconds` of the master bus
+/// starting from `start_tick` (defaults to 0) and returns mix-level metrics.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeMixBusResult {
+    /// Tick where the render started.
+    pub start_tick: u64,
+    /// Tick where the render ended (exclusive).
+    pub end_tick: u64,
+    /// Mix-bus metrics from the rendered window.
+    pub metrics: MixBusMetrics,
+    /// Non-fatal warnings emitted during the render.
+    pub warnings: Vec<String>,
+}
+
+/// Output of `analyze_section`. Same metrics as `analyze_mix_bus` but the
+/// tick range is explicit. Per-track contribution breakdown is not yet
+/// implemented — that will land in a follow-up version.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeSectionResult {
+    /// Tick range that was analyzed (inclusive start, exclusive end).
+    pub start_tick: u64,
+    pub end_tick: u64,
+    /// Mix-bus metrics for the section.
+    pub metrics: MixBusMetrics,
+    /// Non-fatal warnings emitted during the render.
+    pub warnings: Vec<String>,
+}

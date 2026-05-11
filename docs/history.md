@@ -1,5 +1,88 @@
 # Version History
 
+## [0.276.0] - 2026-05-11
+### Tier-0 AI music tools: `analyze_harmony`, `analyze_mix_bus`, `analyze_section`
+
+Three new MCP tools that let an AI judge music as music rather than only as
+individual sounds. Built per `docs/mcp-music-tools-plan.md` Tier 0.
+
+#### `analyze_harmony` (symbolic, no audio rendering)
+
+New `crate::harmony` module:
+
+- 13 scale templates: major, natural/harmonic/melodic minor, dorian,
+  phrygian, lydian, mixolydian, locrian, pentatonic major/minor, blues,
+  chromatic.
+- Chord identification from a pitch-class set against 18 chord templates
+  (triads, 7ths, 6ths, sus, dim, aug, power). Supports a `bass_hint`
+  parameter to disambiguate equivalent voicings (Csus4 vs Fsus2 → bass note
+  wins). Falls back to a sus4-first jazz convention when no hint is given.
+- `identify_chord_from_pitches` — convenience over `identify_chord` that
+  reads the bass from the lowest MIDI note.
+- Krumhansl-Schmuckler key inference across 24 major/minor keys with Pearson
+  correlation; returns top match + 2 runner-ups.
+- `analyze()` driver: walks notes in time order, emits one chord event per
+  configurable grouping window (default 960 ticks = one quarter at 960 PPQN),
+  computes in-key ratio, out-of-scale pitch classes, and a 0..1 composite
+  harmonic stability score (0.5 · in-key ratio + 0.25 · chord-identification
+  ratio + 0.25 · clamped key correlation).
+- 17 unit tests covering chord identification, key inference, range trimming,
+  sus4/sus2 disambiguation, and out-of-scale detection.
+
+MCP wiring: `AnalyzeHarmonyParam` (pattern_id OR arrangement_start_tick +
+arrangement_end_tick, optional grouping_ticks) → `SynthBridge::analyze_harmony`
+→ `AnalyzeHarmonyResult` (scope, chord events, inferred_key, key_candidates,
+pitch_class_histogram, in_key_ratio, out_of_scale_pcs,
+harmonic_stability_score, stats, warnings).
+
+#### `analyze_mix_bus` / `analyze_section` (offline audio rendering)
+
+New offline arrangement renderer `crate::audio::arrangement_render`:
+
+- Snapshots all live instruments, builds an isolated offline `SynthEngine`,
+  shares the `Song` Arc with the engine via `EngineCommand::SetSong`, seeks
+  to the requested start tick, drives the sequencer through the range, and
+  captures the master-bus stereo output to an f32 buffer.
+- Respects tempo changes inside the range (uses `Song::tick_to_seconds`
+  for the wall-clock budget).
+- Hard 300-second ceiling per request.
+- Per-track stem breakdown is not yet implemented — master mix only in v1.
+- Known limitation: notes that start before the range are not pre-rolled.
+
+New mix-bus analyzer `crate::audio::mix_analysis`:
+
+- Integrated LUFS following ITU-R BS.1770-4 (K-weighting with pre-filter +
+  RLB high-pass, 400 ms gating blocks at 75 % overlap, absolute -70 LUFS
+  gate, relative -10 LU gate). 44.1 kHz K-weighting coefficients are
+  hard-coded; this matches the offline render path.
+- Sample peak / RMS in dBFS, crest factor.
+- 4-band frequency-balance RMS (sub / low / mid / high).
+- Stereo correlation (Pearson), mid/side RMS, stereo width, mono-compat
+  score (`2 · mid_rms / (L_rms + R_rms)` clamped 0..1).
+- Clipped-sample counter.
+- 8 unit tests covering DC, sines, mono, anti-phase, short buffers, and
+  clipping.
+
+MCP wiring: `analyze_mix_bus` takes `(duration_seconds, start_tick?)` and
+renders from `start_tick` for that many seconds. `analyze_section` takes
+explicit `(start_tick, end_tick)`. Both return a `MixBusMetrics` struct.
+
+#### Files
+
+New:
+
+- `crates/pertylizer/src/harmony.rs`
+- `crates/pertylizer/src/audio/arrangement_render.rs`
+- `crates/pertylizer/src/audio/mix_analysis.rs`
+
+Modified:
+
+- `crates/synth_mcp/src/{bridge.rs,server.rs,types.rs}` — trait methods,
+  tool handlers, dispatch entries, result types.
+- `crates/pertylizer/src/{lib.rs,mcp_bridge.rs}` — module wiring and bridge
+  implementations.
+- `crates/pertylizer/src/audio/mod.rs` — register new audio submodules.
+
 ## [0.275.0] - 2026-05-10
 ### Example-patch audit: fix four broken patches + make `get_graph_diagnostics` effect-chain and Mod Matrix aware
 

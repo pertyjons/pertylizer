@@ -507,6 +507,26 @@ pub struct PreviewNoteParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeMixBusParam {
+    #[schemars(
+        description = "How many seconds of the master bus to render and analyze (default 10.0, max 300.0)."
+    )]
+    pub duration_seconds: Option<f32>,
+    #[schemars(
+        description = "Absolute tick to start rendering from (default 0 = song beginning)."
+    )]
+    pub start_tick: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeSectionParam {
+    #[schemars(description = "Absolute tick where the section starts (inclusive).")]
+    pub start_tick: u64,
+    #[schemars(description = "Absolute tick where the section ends (exclusive).")]
+    pub end_tick: u64,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeHarmonyParam {
     #[schemars(
         description = "Pattern ID to analyze. When set, the arrangement_* fields are ignored and analysis runs on that pattern's notes in pattern-relative ticks. Leave unset to analyze the arrangement instead."
@@ -1699,6 +1719,8 @@ impl SynthMcpServer {
 
             // Music analysis
             "analyze_harmony" => analyze_harmony(AnalyzeHarmonyParam),
+            "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
+            "analyze_section" => analyze_section(AnalyzeSectionParam),
         ])
     }
 }
@@ -2200,6 +2222,30 @@ impl SynthMcpServer {
         let json = serde_json::to_string_pretty(&result)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        description = "Render N seconds of the master bus offline and return mix-level metrics: integrated LUFS (ITU-R BS.1770-4), sample peak/RMS in dBFS, crest factor, 4-band frequency-balance RMS energies (sub/low/mid/high), stereo correlation, mid/side RMS, stereo width, mono-compatibility score (0..1 — how well L+R survive a mono sum), and a clipped-sample count. Use this to judge whether a mix is balanced, too quiet/loud, narrow, anti-phase, or clipping. Renders the song from `start_tick` (default 0) for `duration_seconds` (default 10, max 300) using the engine snapshot — deterministic and offline."
+    )]
+    async fn analyze_mix_bus(&self, params: Parameters<AnalyzeMixBusParam>) -> String {
+        let duration = params.0.duration_seconds.unwrap_or(10.0);
+        match self.bridge.analyze_mix_bus(duration, params.0.start_tick) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Render an explicit arrangement range [start_tick, end_tick) offline and return the same mix-bus metrics as analyze_mix_bus (LUFS-I, peak/RMS, crest, banded energy, stereo correlation, mid/side, mono-compatibility, clipped samples). Use this when you want to A/B verses vs. choruses, compare a buildup to a drop, or inspect a specific musical passage rather than a fixed-duration window from the song start. Per-track contribution breakdown is reserved for a future version."
+    )]
+    async fn analyze_section(&self, params: Parameters<AnalyzeSectionParam>) -> String {
+        match self
+            .bridge
+            .analyze_section(params.0.start_tick, params.0.end_tick)
+        {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
     }
 
     #[tool(

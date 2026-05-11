@@ -21,14 +21,15 @@ use synth_mcp::bridge::{
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
-    AnalyzeHarmonyResult, ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo,
-    AweLfoInfo, AwePresetInfo, AweStateInfo, BatchItemResult, BatchResult, BuildInstrumentResult,
-    ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo,
-    GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope, HarmonyStats,
-    InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo,
-    ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
-    PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo,
-    UiOverlap, UiSnapshot,
+    AnalyzeHarmonyResult, AnalyzeMixBusResult, AnalyzeSectionResult, ApplyExamplePatchResult,
+    AutomationLaneInfo, AutomationPointInfo, AweLfoInfo, AwePresetInfo, AweStateInfo,
+    BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo,
+    DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent,
+    HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MixBusMetrics, MixEnergyBands,
+    ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo,
+    PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo,
+    PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap,
+    UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -2359,6 +2360,22 @@ impl SynthBridge for AppSynthBridge {
         )
     }
 
+    fn analyze_mix_bus(
+        &self,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+    ) -> Result<AnalyzeMixBusResult, McpBridgeError> {
+        analyze_mix_bus_impl(&self.session, &self.shared, duration_seconds, start_tick)
+    }
+
+    fn analyze_section(
+        &self,
+        start_tick: u64,
+        end_tick: u64,
+    ) -> Result<AnalyzeSectionResult, McpBridgeError> {
+        analyze_section_impl(&self.session, &self.shared, start_tick, end_tick)
+    }
+
     // === AWE (Acoustic World Engine) ===
 
     fn get_awe_state(&self) -> Result<AweStateInfo, McpBridgeError> {
@@ -4646,6 +4663,112 @@ fn analyze_song_harmony(
         harmonic_stability_score: analysis.harmonic_stability_score,
         stats,
         warnings,
+    })
+}
+
+/// Default mix-bus render duration when the caller leaves it unspecified.
+const DEFAULT_MIX_BUS_SECONDS: f32 = 10.0;
+
+/// Convert a `MixAnalysis` into the wire-format `MixBusMetrics`.
+fn mix_metrics_from_analysis(
+    analysis: &crate::audio::mix_analysis::MixAnalysis,
+    sample_rate: u32,
+    duration_seconds: f32,
+) -> MixBusMetrics {
+    MixBusMetrics {
+        sample_rate,
+        duration_seconds,
+        peak: analysis.peak,
+        peak_dbfs: analysis.peak_dbfs,
+        rms: analysis.rms,
+        rms_dbfs: analysis.rms_dbfs,
+        crest_factor_db: analysis.crest_factor_db,
+        lufs_integrated: analysis.lufs_integrated,
+        energy_bands: MixEnergyBands {
+            sub: analysis.energy_bands.sub,
+            low: analysis.energy_bands.low,
+            mid: analysis.energy_bands.mid,
+            high: analysis.energy_bands.high,
+        },
+        stereo_correlation: analysis.stereo_correlation,
+        mid_rms: analysis.mid_rms,
+        side_rms: analysis.side_rms,
+        stereo_width: analysis.stereo_width,
+        mono_compat: analysis.mono_compat,
+        clipped_samples: analysis.clipped_samples,
+    }
+}
+
+/// `analyze_mix_bus` bridge implementation. Renders `duration_seconds` of the
+/// master bus offline starting at `start_tick` (default 0).
+fn analyze_mix_bus_impl(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    duration_seconds: f32,
+    start_tick: Option<u64>,
+) -> Result<AnalyzeMixBusResult, McpBridgeError> {
+    let dur = if duration_seconds.is_nan() || duration_seconds <= 0.0 {
+        DEFAULT_MIX_BUS_SECONDS
+    } else {
+        duration_seconds
+    };
+    if dur > 300.0 {
+        return Err(McpBridgeError::Other(format!(
+            "duration_seconds {dur} exceeds the 300-second maximum"
+        )));
+    }
+    let start = start_tick.unwrap_or(0);
+
+    // Convert the requested duration into a tick offset using the song's
+    // tempo so the renderer can do its own tick-range render.
+    let end = {
+        let song = shared.song.read();
+        let start_seconds = song.tick_to_seconds(synth_sequencer::Tick(start));
+        let target_seconds = start_seconds + f64::from(dur);
+        song.seconds_to_tick(target_seconds).0
+    };
+    if end <= start {
+        return Err(McpBridgeError::Other(
+            "Requested duration resolves to zero song ticks — check tempo".to_string(),
+        ));
+    }
+
+    let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer(
+        session, shared, start, end,
+    )?;
+    let analysis =
+        crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
+    let metrics =
+        mix_metrics_from_analysis(&analysis, rendered.sample_rate, rendered.duration_seconds);
+    Ok(AnalyzeMixBusResult {
+        start_tick: rendered.start_tick,
+        end_tick: rendered.end_tick,
+        metrics,
+        warnings: rendered.warnings,
+    })
+}
+
+/// `analyze_section` bridge implementation. Renders an explicit
+/// `[start_tick, end_tick)` arrangement range offline and returns
+/// mix-bus metrics.
+fn analyze_section_impl(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    start_tick: u64,
+    end_tick: u64,
+) -> Result<AnalyzeSectionResult, McpBridgeError> {
+    let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer(
+        session, shared, start_tick, end_tick,
+    )?;
+    let analysis =
+        crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
+    let metrics =
+        mix_metrics_from_analysis(&analysis, rendered.sample_rate, rendered.duration_seconds);
+    Ok(AnalyzeSectionResult {
+        start_tick: rendered.start_tick,
+        end_tick: rendered.end_tick,
+        metrics,
+        warnings: rendered.warnings,
     })
 }
 

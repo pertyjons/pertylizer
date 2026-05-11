@@ -171,6 +171,20 @@ Open questions: persistence format (inline vs. sidecar), max length, whether to 
 
 ### 6.1 MCP & AI Interaction
 
+Tier-0 music-analysis tools shipped in v0.276.0 (`analyze_harmony`,
+`analyze_mix_bus`, `analyze_section`). Roadmap for the remaining tiers lives
+in `docs/mcp-music-tools-plan.md`.
+
+- [ ] Per-track stem breakdown for `analyze_section` (currently master-only)
+- [ ] Tier 1: `analyze_pattern` (symbolic pattern stats — density, polyphony,
+      rhythmic and velocity variance), `analyze_instrument_range` (sweep an
+      instrument across MIDI range; flag aliasing, energy loss, pitch
+      tracking), `render_section_to_wav`.
+- [ ] Tier 2: `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`,
+      `quantize_notes_to_grid`, `analyze_groove`, `analyze_velocity_response`.
+- [ ] Tier 3: `analyze_arrangement`, `compare_to_reference`,
+      `compare_patterns`, `compare_patches`, `humanize_notes`,
+      `generate_variation`, `analyze_track`, `get_mix_meters`.
 - [ ] Enable AI to "play freely" via MCP to autonomously generate complete songs and arrangements
 - [ ] Implement real-time parameter interpolation (gliding) to allow smoother AI-driven sound design
 
