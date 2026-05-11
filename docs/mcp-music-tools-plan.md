@@ -1,19 +1,19 @@
 # MCP Music Tools — Plan
 
 > **Date:** 2026-05-11 (updated 2026-05-11 after Tier-1 partial ship, post-ship live-test pass, and two rounds of §8.1 determinism fix)
-> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix landed in two rounds post-v0.277.0**; remaining Tier-1+ pending.
-> Post-ship live testing surfaced determinism + auto-categorization issues — see §8. §8.1 fully fixed end-to-end through the MCP bridge; §8.2 and §8.3 still open.
+> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix landed in two rounds post-v0.277.0; §8.2 auto-inferred instrument profiles shipped in v0.278.0**; remaining Tier-1+ pending.
+> Post-ship live testing surfaced determinism + auto-categorization issues — see §8. §8.1 and §8.2 fully fixed end-to-end through the MCP bridge; §8.3 still open.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
 
 ---
 
 ## 0. Status snapshot
 
-### Shipped — v0.276.0 (Tier 0) and v0.277.0 (Tier-1 first wave)
+### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), and v0.278.0 (auto-inferred instrument profiles)
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| `analyze_harmony` | v0.276.0 + v0.277.0 | Walks notes by tick, identifies chord symbols (18 templates incl. m7/maj7/dom7/sus/dim/aug/power), infers key via Krumhansl-Schmuckler over 24 major/minor keys, returns in-key ratio, out-of-scale pitch classes, composite stability score. Pattern or arrangement scope. Returns chord events with `start_bar`/`start_beat` (1-indexed). Default grouping: 1 quarter-note for pattern scope, 1 bar for arrangement scope. Consecutive identical chord events are merged. **v0.277.0 added drum-track filtering**: `exclude_drums` (default true) drops notes from `InstrumentCategory::Drums` tracks; `exclude_track_ids` accepts an explicit drop list. Arrangement scope only. |
+| `analyze_harmony` | v0.276.0 + v0.277.0 + v0.278.0 | Walks notes by tick, identifies chord symbols (18 templates incl. m7/maj7/dom7/sus/dim/aug/power), infers key via Krumhansl-Schmuckler over 24 major/minor keys, returns in-key ratio, out-of-scale pitch classes, composite stability score. Pattern or arrangement scope. Returns chord events with `start_bar`/`start_beat` (1-indexed). Default grouping: 1 quarter-note for pattern scope, 1 bar for arrangement scope. Consecutive identical chord events are merged. **v0.277.0 added drum-track filtering** (manual `InstrumentCategory::Drums` + explicit `exclude_track_ids`). **v0.278.0 wired `analysis::instrument_profile` auto-inference** into the same filter — uncategorized percussion (Noise + percussive envelope + atonal pitch use) is now caught with confidence ≥ 0.6 and the warning text carries the signal trail (`[drums conf=X.XX; …]`). Manual category keeps priority via the `manual-override` signal. Arrangement scope only. |
 | `analyze_mix_bus` | v0.276.0 | Renders N seconds (default 10, max 300) of the master bus offline from `start_tick` (default 0). Returns sample peak, RMS, crest factor, integrated LUFS (ITU-R BS.1770-4 K-weighted + 400 ms gating, 75 % overlap, abs −70 / rel −10 gates), 4-band frequency-balance RMS (sub/low/mid/high) windowed across the full buffer, stereo correlation, mid/side RMS, stereo width, mono-compatibility score, clipped-sample count. Includes `start_bar`/`end_bar`/`start_beat`/`end_beat`. |
 | `analyze_section` | v0.276.0 + v0.277.0 | Same metrics as `analyze_mix_bus` but takes explicit `[start_tick, end_tick)`. **v0.277.0 added per-track contribution breakdown**: `include_per_track` (default false) opts in to one extra soloed render per audible track that overlaps the section, returning `TrackContribution { track_id, track_name, instrument_id, peak, peak_dbfs, rms, rms_dbfs, lufs_integrated, energy_bands, clipped_samples, rms_share }`. Soloing is implemented by cloning the song, setting only the target track's `solo = true`, and rendering via `render_arrangement_to_buffer_with_song`. |
 
@@ -234,8 +234,12 @@ in `41d8bf6`; #5 is a deliberate Tier-1 follow-up.
    still gets checked against the inferred key.
 5. **Drum tracks pollute harmonic analysis** — bar 1 of the test song reports `F#m7b5` because the hi-hat plays
    MIDI 42 (F#2) on top of an Am pad. The pitch set is correct; the musical interpretation isn't. ✅ Fixed in
-   v0.277.0: `analyze_harmony` now defaults to `exclude_drums = true`, dropping notes from `InstrumentCategory::Drums`
-   tracks. An `exclude_track_ids` parameter lets callers drop additional tracks by ID.
+   v0.277.0 for *manually-tagged* drum tracks: `analyze_harmony` defaults to `exclude_drums = true`, dropping
+   notes from `InstrumentCategory::Drums` tracks. ✅ Fully fixed in v0.278.0 via `analysis::instrument_profile`
+   auto-inference: a drum patch no longer needs to be tagged via `set_instrument_category` for the filter to
+   fire. Name vocabulary, voice-graph contents, envelope shape, and pitch-role statistics together resolve
+   uncategorized percussion to `Role::Drums` with confidence ≥ 0.6, and the warning text now names *why* a
+   track was auto-excluded. `exclude_track_ids` remains as a manual escape hatch.
 6. **The test song clips at ~22 % of samples in the chorus** and reads **−5 LUFS-I** — 9 dB hotter than streaming
    norms (−14 LUFS for Spotify). Not a tool bug, but evidence that the tools are pointing at real and useful
    problems.
@@ -452,12 +456,23 @@ the existing single-Oscillator `sustain_patch` could not have caught the Round 2
 `include_per_track = true`. Master ≈ per-track sum is bit-exact-reproducible (modulo the inherent solo-flag
 accounting; no longer modulo RNG drift or HashMap iteration drift).
 
-### 8.2 Drop the manual `InstrumentCategory` requirement — auto-infer it instead
+### 8.2 Drop the manual `InstrumentCategory` requirement — auto-infer it instead — ✅ shipped in v0.278.0
 
 The v0.277.0 default `exclude_drums: true` on `analyze_harmony` is a silent no-op when no instruments have
 `category == Drums` — which is the realistic case, since `set_instrument_category` is barely used. On the test
 song every instrument is `Uncategorized`, so the default call still produces the `F#m7b5` bug it was supposed
 to fix. The user has no warning indicating the filter was inert.
+
+**Shipped form (v0.278.0, 8.2b path).** New module `pertylizer::analysis::instrument_profile` (~600 lines incl.
+tests; planned in `docs/instrument-profile-plan.md`). `InstrumentProfile` exposes five independent axes —
+`role`, `envelope_shape`, `pitch_role`, `register`, `texture` — plus a `RoleInference` carrying the confidence
+score and the signal trail that produced it. `analyze_song_harmony` now calls `infer_all_profiles` and drops
+tracks classified as `Drums` with confidence ≥ 0.6; the warning text spells out *why*, e.g.
+`"Excluded 1 track(s) from harmony analysis: Track 5(1) [drums conf=1.00; decision:drums-gate, envelope:percussive, graph:noise-no-osc]"`.
+Manual `set_instrument_category` keeps priority (`manual-override` signal, confidence 1.0). No new MCP surface
+— the module is internal until the first external consumer arrives.
+
+The original analysis below is preserved for context.
 
 Two paths, ordered by ambition:
 
@@ -525,6 +540,7 @@ whether any of them is hot internally without correlating with `analyze_note`. T
 ### 8.4 Cross-reference
 
 §8.1 is now fully fixed (Round 1 + Round 2); §4's "deterministic output for a given project state" claim holds
-bit-exact end-to-end through the MCP bridge, not just inside the determinism unit tests. §8.2 supersedes the
-"manual `set_instrument_category` required" implication in v0.277.0's `analyze_harmony` doc. §8.3 is a doc-only
-update plus an optional additive field.
+bit-exact end-to-end through the MCP bridge, not just inside the determinism unit tests. §8.2 shipped in
+v0.278.0: the v0.277.0 `analyze_harmony` doc's implicit "manual `set_instrument_category` required" is now
+optional — the inference path resolves uncategorized percussion on its own. §8.3 is a doc-only update plus an
+optional additive field.

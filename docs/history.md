@@ -1,5 +1,54 @@
 # Version History
 
+## [0.278.0] - 2026-05-11
+### Auto-inferred instrument profiles close the §8.2 silent no-op in `analyze_harmony`
+
+`analyze_harmony` with `exclude_drums: true` (the default) was a silent
+no-op when no instrument had been manually tagged via
+`set_instrument_category(_, Drums)`. The realistic case on the test song
+— every instrument left as `Uncategorized` — therefore still surfaced the
+`F#m7b5` bar-1 mislabel the v0.277.0 filter was supposed to fix.
+
+New module `pertylizer::analysis::instrument_profile` derives a profile
+for each instrument from three sources that always exist:
+
+1. `InstrumentSnapshot` (name + manual category).
+2. `ModuleStateSnapshot` (voice-graph contents and their parameters).
+3. Notes the instrument plays in the `Song`.
+
+The profile carries several independent axes — `role`,
+`envelope_shape`, `pitch_role`, `register`, `texture` — so future tools
+can pick whichever axis is relevant without `role` being the single
+source of truth.
+
+Inference is pure (no audio render, no lock holding) and runs from any
+thread. Manual `set_instrument_category` still wins: an
+explicitly-tagged instrument resolves to its category with confidence
+1.0 and a `manual-override` signal. For uncategorized instruments a
+decision tree combines a small name vocabulary, voice-graph contents,
+amp-envelope shape, and note-pitch statistics into a `RoleInference`
+with a confidence score plus the signal trail that produced it.
+
+`analyze_song_harmony` now calls `analysis::infer_all_profiles` and
+drops tracks classified as `Drums` with confidence ≥ 0.6. The warning
+text carries the signal trail so a user can see *why* a track was
+auto-excluded, e.g. `Track 5(1) [drums conf=1.00;
+decision:drums-gate, envelope:percussive, graph:noise-no-osc]`.
+
+No new MCP surface in this version — the inference module is internal
+infrastructure for `analyze_harmony` today and for upcoming Tier-1
+tools (`analyze_pattern`, `analyze_groove`) tomorrow. A future
+`get_instrument_profiles` MCP resource is reserved when the first
+external consumer arrives.
+
+40 new unit tests cover every axis, the classify_role decision tree,
+the name-override / name-conflict rules, and the sweep-line edge
+cases for `max_simultaneous`. A new integration test
+`analyze_harmony_default_excludes_uncategorized_inferred_drums`
+exercises the auto-inference path end to end on a real `SynthSession`
+with a Noise+percussive-envelope patch on an Uncategorized
+instrument.
+
 ## [0.277.0] - 2026-05-11
 ### Tier-1 follow-ups: drum-track filter for `analyze_harmony`, per-track breakdown for `analyze_section`
 
