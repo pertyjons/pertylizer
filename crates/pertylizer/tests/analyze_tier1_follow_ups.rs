@@ -161,6 +161,33 @@ fn setup_two_instruments(drum_category: InstrumentCategory) -> TwoInstrumentRig 
     }
 }
 
+/// Sample-based drum patch: just Sampler (PlayMode=OneShot) → Amp → Output.
+/// No envelope module, no noise — exercises the `pure_oneshot_sampler` arm
+/// of the drum gate added in 74d18da. Connections mirror `kick_patch` so the
+/// engine accepts the graph.
+fn sampler_kick_patch(name: &str) -> Patch {
+    let mut patch = Patch::new(name);
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Sampler)
+            .param_choice("play_mode", "one_shot")
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Amplifier)
+            .param_f("level", 1.0)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
+            .param_f("master", 1.0)
+            .build(),
+    );
+    patch.add_connection("sam-1", "out", "amp-1", "in");
+    patch.add_connection("amp-1", "left", "out-1", "in_l");
+    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch
+}
+
 /// Variant of `setup_two_instruments` that does *not* call
 /// `set_instrument_category` on the drum instrument and gives it a true
 /// noise+percussive-envelope patch. Used to verify the auto-inference path
@@ -202,6 +229,60 @@ fn setup_pad_and_uncategorized_kick() -> TwoInstrumentRig {
 
     let _ = session.apply_patch(melodic, &sustain_patch("Pad"));
     let _ = session.apply_patch(percussion, &kick_patch("Track 5"));
+
+    for _ in 0..16 {
+        block.fill(0.0);
+        engine.process(&mut block, &context);
+    }
+
+    TwoInstrumentRig {
+        _engine: engine,
+        _handle: handle,
+        session,
+        sample_library: Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        )),
+    }
+}
+
+/// Like `setup_pad_and_uncategorized_kick`, but the drum instrument is a
+/// pure sampler patch — the shape projects loaded from ZIP bundles produce.
+/// Exercises the `pure_oneshot_sampler` drum-gate branch (74d18da).
+fn setup_pad_and_uncategorized_sampler_kick() -> TwoInstrumentRig {
+    let (mut engine, handle) = SynthEngine::new();
+    let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+
+    let melodic = InstrumentId::new(0);
+    let percussion = InstrumentId::new(1);
+    session
+        .add_instrument_with_id(melodic, "Pad")
+        .expect("add melodic instrument");
+    session
+        .add_instrument_with_id(percussion, "Track 5")
+        .expect("add drum instrument");
+
+    let stream_info = synth_core::StreamInfo {
+        sample_rate: HwSampleRate(TEST_SR),
+        buffer_size: synth_core::BufferSize(256),
+        channels: synth_core::ChannelCount::Stereo,
+        output_latency: std::time::Duration::ZERO,
+        input_latency: None,
+    };
+    engine.on_stream_start(&stream_info);
+
+    let mut block = vec![0.0f32; 256 * 2];
+    let context = AudioCallbackContext {
+        sample_rate: HwSampleRate(TEST_SR),
+        frames: 256,
+        channels: 2,
+        stream_time: 0.0,
+        sample_position: 0,
+        output_latency: synth_core::Seconds::ZERO,
+    };
+    engine.process(&mut block, &context);
+
+    let _ = session.apply_patch(melodic, &sustain_patch("Pad"));
+    let _ = session.apply_patch(percussion, &sampler_kick_patch("Track 5"));
 
     for _ in 0..16 {
         block.fill(0.0);
@@ -375,6 +456,53 @@ fn analyze_harmony_default_excludes_uncategorized_inferred_drums() {
     assert!(
         warning_mentions_inference,
         "expected an inference-tagged drum warning, got {:?}",
+        result.warnings
+    );
+}
+
+/// End-to-end cover for the sample-based drum-gate branch added in 74d18da:
+/// a generic-named track running a pure Sampler (no envelope, no noise) with
+/// PlayMode=OneShot must be auto-excluded from harmony, exactly the shape
+/// that real ZIP-bundle projects load with.
+#[test]
+fn analyze_harmony_default_excludes_uncategorized_sampler_drums() {
+    let rig = setup_pad_and_uncategorized_sampler_kick();
+    let song = build_drum_pollution_song();
+    let shared = McpSharedState::with_song(song);
+
+    let result = analyze_song_harmony(
+        &rig.session,
+        &shared,
+        None,
+        Some(0),
+        Some(3840),
+        Some(3840),
+        None, // exclude_drums defaults to true
+        None,
+    )
+    .expect("harmony analysis should succeed");
+
+    let chord_symbols: Vec<&str> = result
+        .chords
+        .iter()
+        .filter_map(|c| c.symbol.as_deref())
+        .collect();
+    assert!(
+        chord_symbols.iter().any(|s| s == &"Am"),
+        "sampler-drum inference should produce Am, got {chord_symbols:?}"
+    );
+    assert!(
+        chord_symbols
+            .iter()
+            .all(|s| !s.starts_with("F#") && !s.contains("m7b5")),
+        "sampler-drum inference should not produce F#m7b5, got {chord_symbols:?}"
+    );
+    let warning_mentions_oneshot = result.warnings.iter().any(|w| {
+        w.contains("Excluded") && w.contains("drums conf=") && w.contains("graph:oneshot-sampler")
+    });
+    assert!(
+        warning_mentions_oneshot,
+        "expected a `graph:oneshot-sampler` drum warning, got {:?}",
         result.warnings
     );
 }

@@ -19,9 +19,9 @@ use crate::types::{
     ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo, AwePresetInfo,
     AweStateInfo, BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo,
     DetailedSampleInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo,
-    InputStateInfo, InstrumentInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult,
-    ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, SampleInfo, SamplerStateInfo,
-    SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    InputStateInfo, InstrumentInfo, InstrumentProfileResult, ModuleInfo, ModuleTypeInfo, NoteInfo,
+    OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, SampleInfo,
+    SamplerStateInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -154,6 +154,13 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// List all instruments with basic info.
     fn list_instruments(&self) -> Result<Vec<InstrumentInfo>, McpBridgeError>;
+
+    /// Auto-infer a profile (role, envelope shape, register, texture, ...)
+    /// for every instrument that at least one of the song's tracks routes to.
+    /// The same inference path that `analyze_harmony`'s `exclude_drums = true`
+    /// default uses — but exposed directly so external tools can read or
+    /// debug the classification.
+    fn get_instrument_profiles(&self) -> Result<Vec<InstrumentProfileResult>, McpBridgeError>;
 
     /// Get detailed info for a single instrument.
     fn get_instrument_info(&self, instrument_id: u64) -> Result<InstrumentInfo, McpBridgeError>;

@@ -406,6 +406,13 @@ fn classify_drums_via_oneshot_sampler() {
         Texture::Monophonic,
     );
     assert_eq!(r.role, Role::Drums);
+    // `analyze_harmony`'s default drum filter auto-excludes at >= 0.6, so the
+    // OneShot-Sampler-only path must clear that bar without name help.
+    assert!(
+        r.confidence >= 0.6,
+        "confidence {} fell below the 0.6 auto-exclusion threshold",
+        r.confidence,
+    );
     assert!(
         r.signals
             .iter()
@@ -652,7 +659,7 @@ fn manual_category_overrides_inference() {
     // And every non-Uncategorized variant should map to a role.
     snap.category = InstrumentCategory::FX;
     let profile = infer_instrument_profile(&snap, &modules, &[], &notes);
-    assert_eq!(profile.role.role, Role::FX);
+    assert_eq!(profile.role.role, Role::Fx);
 }
 
 #[test]

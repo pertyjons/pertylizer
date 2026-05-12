@@ -1301,3 +1301,43 @@ pub struct AnalyzeSectionResult {
     /// Non-fatal warnings emitted during the render.
     pub warnings: Vec<String>,
 }
+
+/// Auto-inferred profile for one instrument. Mirrors the internal
+/// `analysis::InstrumentProfile`; enums travel as snake_case strings so the
+/// MCP crate stays free of pertylizer-side types.
+#[derive(Debug, Clone, Serialize)]
+pub struct InstrumentProfileResult {
+    /// Sequencer instrument id (matches `SeqInstrumentId.0`).
+    pub instrument_id: u16,
+    pub instrument_name: String,
+    /// Inferred role plus confidence and the signal trail that produced it.
+    pub role: RoleInferenceResult,
+    /// `"percussive" | "plucked" | "sustained" | "evolving" | "unknown"`.
+    pub envelope_shape: String,
+    /// `"tonal" | "atonal" | "mixed" | "unused"`.
+    pub pitch_role: String,
+    /// `"sub" | "bass" | "mid" | "high" | "full_range" | "unused"`.
+    pub register: String,
+    /// `"monophonic" | "polyphonic" | "chordal" | "unused"`.
+    pub texture: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RoleInferenceResult {
+    /// `"drums" | "bass" | "lead" | "pad" | "pluck" | "keys" | "fx" | "unknown"`.
+    pub role: String,
+    /// `0.0..=1.0`. The `analyze_harmony` drum filter triggers at `>= 0.6`.
+    pub confidence: f32,
+    /// Trail of signals (name, graph, envelope, pattern, manual, decision)
+    /// that contributed to the classification.
+    pub signals: Vec<ProfileSignalResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProfileSignalResult {
+    /// `"name" | "graph" | "envelope" | "pattern" | "manual" | "decision"`.
+    pub axis: String,
+    /// Concrete detail, e.g. `"kick"`, `"noise-no-osc"`, `"oneshot-sampler"`,
+    /// `"percussive"`, `"manual-override"`.
+    pub detail: String,
+}

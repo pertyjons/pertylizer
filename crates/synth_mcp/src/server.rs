@@ -1578,6 +1578,7 @@ impl SynthMcpServer {
         dispatch_tools!(self, tool, params, [
             // Read operations
             "list_instruments" => list_instruments(NoParams),
+            "get_instrument_profiles" => get_instrument_profiles(NoParams),
             "get_instrument_info" => get_instrument_info(InstrumentIdParam),
             "list_modules" => list_modules(InstrumentIdParam),
             "get_module_info" => get_module_info(ModuleParam),
@@ -2000,6 +2001,22 @@ impl SynthMcpServer {
     async fn list_instruments(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_instruments() {
             Ok(instruments) => to_json(&instruments),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Auto-infer per-instrument profiles (role, envelope shape, pitch role, \
+                       register, texture) for every instrument that at least one track routes to. \
+                       Role values: drums, bass, lead, pad, pluck, keys, fx, unknown — each with a \
+                       confidence in [0.0, 1.0] and a signal trail that explains the classification. \
+                       Same inference path that `analyze_harmony`'s `exclude_drums = true` default \
+                       uses; expose it directly to debug or override the classification. Manual \
+                       `set_instrument_category` always wins (reports as `manual-override`)."
+    )]
+    async fn get_instrument_profiles(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.get_instrument_profiles() {
+            Ok(profiles) => to_json(&profiles),
             Err(e) => format!("Error: {e}"),
         }
     }

@@ -59,7 +59,7 @@ pub enum Role {
     Pad,
     Pluck,
     Keys,
-    FX,
+    Fx,
     Unknown,
 }
 
@@ -236,7 +236,7 @@ pub fn role_from_name(instrument_name: &str, track_name: Option<&str>) -> Option
         return Some(Role::Keys);
     }
     if has("fx") || has("riser") || has("impact") || has("sweep") || has("noise") {
-        return Some(Role::FX);
+        return Some(Role::Fx);
     }
     None
 }
@@ -618,12 +618,12 @@ pub fn classify_role(
     if pitch_role == PitchRole::Atonal && envelope != EnvelopeShape::Percussive {
         let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "fx-gate")];
         let mut bonus = 0;
-        if name_hint == Some(Role::FX) {
+        if name_hint == Some(Role::Fx) {
             signals.push(ProfileSignal::new(SignalAxis::Name, "fx"));
             bonus += 1;
         }
         let conf = (0.5_f32 + 0.15_f32 * bonus as f32).min(1.0);
-        return apply_name_override(Role::FX, conf, signals, name_hint);
+        return apply_name_override(Role::Fx, conf, signals, name_hint);
     }
 
     // 8. Unknown.
@@ -723,7 +723,7 @@ fn map_category_to_role(cat: InstrumentCategory) -> Role {
         InstrumentCategory::Lead => Role::Lead,
         InstrumentCategory::Pad => Role::Pad,
         InstrumentCategory::Keys => Role::Keys,
-        InstrumentCategory::FX => Role::FX,
+        InstrumentCategory::FX => Role::Fx,
         InstrumentCategory::Arp => Role::Lead,
         InstrumentCategory::Uncategorized => Role::Unknown,
     }

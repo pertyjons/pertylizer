@@ -131,6 +131,14 @@ impl SynthBridge for AppSynthBridge {
         Ok(snapshots.iter().map(Self::snapshot_to_info).collect())
     }
 
+    fn get_instrument_profiles(
+        &self,
+    ) -> Result<Vec<synth_mcp::types::InstrumentProfileResult>, McpBridgeError> {
+        let song = self.shared.song.read();
+        let profiles = crate::analysis::infer_all_profiles(&song, self.session.state());
+        Ok(profiles.into_iter().map(profile_to_result).collect())
+    }
+
     fn get_instrument_info(&self, instrument_id: u64) -> Result<InstrumentInfo, McpBridgeError> {
         let snapshots = self.session.list_instruments();
         snapshots
@@ -5112,6 +5120,45 @@ fn render_per_track_contributions(
     }
 
     Ok(contributions)
+}
+
+/// Convert the internal `InstrumentProfile` to the MCP-wire form.
+/// The two structs have identical serde shapes (snake_case enum variants),
+/// so we go through `serde_json` for the enum→string conversion rather than
+/// hand-maintain a parallel `as_str` impl on every enum.
+fn profile_to_result(
+    profile: crate::analysis::InstrumentProfile,
+) -> synth_mcp::types::InstrumentProfileResult {
+    use synth_mcp::types::{InstrumentProfileResult, ProfileSignalResult, RoleInferenceResult};
+
+    fn enum_to_str<T: serde::Serialize>(v: &T) -> String {
+        match serde_json::to_value(v) {
+            Ok(serde_json::Value::String(s)) => s,
+            _ => String::new(),
+        }
+    }
+
+    InstrumentProfileResult {
+        instrument_id: profile.instrument_id,
+        instrument_name: profile.instrument_name,
+        role: RoleInferenceResult {
+            role: enum_to_str(&profile.role.role),
+            confidence: profile.role.confidence,
+            signals: profile
+                .role
+                .signals
+                .into_iter()
+                .map(|s| ProfileSignalResult {
+                    axis: s.axis.as_str().to_string(),
+                    detail: s.detail.to_string(),
+                })
+                .collect(),
+        },
+        envelope_shape: enum_to_str(&profile.envelope_shape),
+        pitch_role: enum_to_str(&profile.pitch_role),
+        register: enum_to_str(&profile.register),
+        texture: enum_to_str(&profile.texture),
+    }
 }
 
 /// Pure analysis pass over an already-rendered audio buffer. Split out from
