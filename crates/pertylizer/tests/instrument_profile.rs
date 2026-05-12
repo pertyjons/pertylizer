@@ -370,6 +370,7 @@ fn classify_drums_via_envelope_only() {
         &g,
         EnvelopeShape::Percussive,
         PitchRole::Atonal,
+        12,
         Register::Bass,
         Texture::Monophonic,
     );
@@ -378,7 +379,29 @@ fn classify_drums_via_envelope_only() {
 }
 
 #[test]
-fn classify_drums_via_noise_only() {
+fn classify_drums_via_noise_with_short_envelope() {
+    // Noise + short envelope (here Percussive) = drum hit. Fix #5 added the
+    // envelope-shape constraint so sustained/evolving noise patches don't
+    // get classified as drums anymore — see `noise_sweep_falls_through_to_fx`.
+    let mut g = empty_graph();
+    g.has_noise_source = true;
+    let r = classify_role(
+        None,
+        &g,
+        EnvelopeShape::Percussive,
+        PitchRole::Atonal,
+        12,
+        Register::Mid,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Drums);
+}
+
+#[test]
+fn noise_sweep_falls_through_to_fx() {
+    // Fix #5: a noise source with a sustained envelope is a sweep, not a
+    // drum. Drum-gate now requires a short envelope alongside noise; the
+    // signal falls through to the FX-gate (atonal + non-percussive).
     let mut g = empty_graph();
     g.has_noise_source = true;
     let r = classify_role(
@@ -386,10 +409,11 @@ fn classify_drums_via_noise_only() {
         &g,
         EnvelopeShape::Sustained,
         PitchRole::Atonal,
+        12,
         Register::Mid,
         Texture::Monophonic,
     );
-    assert_eq!(r.role, Role::Drums);
+    assert_eq!(r.role, Role::Fx);
 }
 
 #[test]
@@ -402,6 +426,7 @@ fn classify_drums_via_oneshot_sampler() {
         &g,
         EnvelopeShape::Unknown,
         PitchRole::Atonal,
+        12,
         Register::Bass,
         Texture::Monophonic,
     );
@@ -434,6 +459,7 @@ fn oneshot_sampler_with_oscillator_does_not_fire_drum_gate() {
         &g,
         EnvelopeShape::Unknown,
         PitchRole::Atonal,
+        12,
         Register::Bass,
         Texture::Monophonic,
     );
@@ -450,6 +476,7 @@ fn classify_bass_when_low_register_and_tonal() {
         &g,
         EnvelopeShape::Sustained,
         PitchRole::Tonal,
+        12,
         Register::Bass,
         Texture::Monophonic,
     );
@@ -466,6 +493,7 @@ fn classify_pad_when_evolving_and_chordal() {
         &g,
         EnvelopeShape::Evolving,
         PitchRole::Tonal,
+        12,
         Register::Mid,
         Texture::Chordal,
     );
@@ -481,6 +509,7 @@ fn classify_pluck_when_plucked_monophonic() {
         &g,
         EnvelopeShape::Plucked,
         PitchRole::Tonal,
+        12,
         Register::Mid,
         Texture::Monophonic,
     );
@@ -496,6 +525,7 @@ fn classify_keys_when_plucked_chordal_tonal() {
         &g,
         EnvelopeShape::Plucked,
         PitchRole::Tonal,
+        12,
         Register::Mid,
         Texture::Polyphonic,
     );
@@ -511,6 +541,7 @@ fn classify_lead_when_sustained_monophonic_high_register() {
         &g,
         EnvelopeShape::Sustained,
         PitchRole::Tonal,
+        12,
         Register::High,
         Texture::Monophonic,
     );
@@ -526,6 +557,7 @@ fn name_match_caps_confidence_to_0_85_minimum() {
         &g,
         EnvelopeShape::Plucked,
         PitchRole::Tonal,
+        12,
         Register::Mid,
         Texture::Monophonic,
     );
@@ -544,6 +576,7 @@ fn name_conflict_lowers_confidence_and_records_signal() {
         &g,
         EnvelopeShape::Sustained,
         PitchRole::Tonal,
+        12,
         Register::Bass,
         Texture::Monophonic,
     );
@@ -562,11 +595,184 @@ fn classify_unknown_when_nothing_matches() {
         &g,
         EnvelopeShape::Unknown,
         PitchRole::Unused,
+        12,
         Register::Unused,
         Texture::Unused,
     );
     assert_eq!(r.role, Role::Unknown);
     assert!(r.confidence < f32::EPSILON);
+}
+
+// Fix #1: Pad-gate relaxed — accepts (Sustained || Evolving) + (Polyphonic ||
+// Chordal) + (Tonal || Mixed). Real pad patches typically don't hit the old
+// strict (Evolving && Chordal) gate.
+#[test]
+fn pad_fires_on_sustained_polyphonic_tonal_mid() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Pad),
+        &g,
+        EnvelopeShape::Sustained,
+        PitchRole::Tonal,
+        12,
+        Register::Mid,
+        Texture::Polyphonic,
+    );
+    assert_eq!(r.role, Role::Pad);
+}
+
+#[test]
+fn pad_fires_on_evolving_polyphonic_mixed() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    g.osc_count = 2;
+    let r = classify_role(
+        None,
+        &g,
+        EnvelopeShape::Evolving,
+        PitchRole::Mixed,
+        12,
+        Register::Mid,
+        Texture::Polyphonic,
+    );
+    assert_eq!(r.role, Role::Pad);
+}
+
+// Fix #2b: when envelope_shape is Unknown, fall back to name+pitch+texture
+// instead of returning Role::Unknown silently.
+#[test]
+fn envelope_unknown_falls_back_to_pad_when_polyphonic_tonal() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        None,
+        &g,
+        EnvelopeShape::Unknown,
+        PitchRole::Tonal,
+        12,
+        Register::Mid,
+        Texture::Polyphonic,
+    );
+    assert_eq!(r.role, Role::Pad);
+    assert!(
+        r.signals
+            .iter()
+            .any(|s| s.detail == "envelope-unknown-fallback"),
+    );
+}
+
+#[test]
+fn envelope_unknown_respects_name_hint() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Lead),
+        &g,
+        EnvelopeShape::Unknown,
+        PitchRole::Tonal,
+        12,
+        Register::Mid,
+        Texture::Polyphonic,
+    );
+    assert_eq!(r.role, Role::Lead);
+}
+
+// Fix #3: drum-gate now accepts Plucked envelope when register is sub/bass —
+// many synth-kicks have plucked-shaped envelopes (slightly longer release
+// than the strict Percussive threshold).
+#[test]
+fn plucked_bass_atonal_classified_as_drums() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Drums),
+        &g,
+        EnvelopeShape::Plucked,
+        PitchRole::Atonal,
+        12,
+        Register::Sub,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Drums);
+    assert!(r.signals.iter().any(|s| s.detail == "plucked-bass"),);
+}
+
+// Fix #4: pitched synth-drums (Mixed/Tonal pitch but narrow spread) now fire
+// the drum-gate via the pitch_spread <= 5 relaxation. Without this, kicks
+// with pitch envelopes that span 2-3 distinct MIDI notes leak into harmony
+// analysis.
+#[test]
+fn percussive_with_narrow_pitch_spread_classified_as_drums() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Drums),
+        &g,
+        EnvelopeShape::Percussive,
+        PitchRole::Mixed,
+        3, // narrow — kick with small pitch sweep
+        Register::Sub,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Drums);
+    assert!(r.signals.iter().any(|s| s.detail == "narrow-pitch-spread"),);
+}
+
+#[test]
+fn percussive_with_wide_pitch_spread_is_not_drums() {
+    // Counter-test: melodic bass with percussive envelope shouldn't get
+    // mis-classified as drums just because it has a short attack.
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Bass),
+        &g,
+        EnvelopeShape::Plucked,
+        PitchRole::Tonal,
+        24, // 2-octave melodic line
+        Register::Bass,
+        Texture::Monophonic,
+    );
+    assert_ne!(r.role, Role::Drums);
+}
+
+// Fix #6: Lead-precedence-by-name — when name says Lead, fire Lead-gate
+// before Bass-gate even when register is low. A "Sub Lead" should be Lead,
+// not Bass.
+#[test]
+fn name_lead_wins_over_bass_register() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Lead),
+        &g,
+        EnvelopeShape::Sustained,
+        PitchRole::Tonal,
+        12,
+        Register::Bass,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Lead);
+}
+
+// Fix #7: Pluck-gate fires before Bass when envelope is Plucked. A
+// plucked-envelope monophonic patch playing in the bass register is more
+// pluck-like than bass-like.
+#[test]
+fn plucked_bass_register_classified_as_pluck() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Pluck),
+        &g,
+        EnvelopeShape::Plucked,
+        PitchRole::Tonal,
+        12,
+        Register::Bass,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Pluck);
 }
 
 // ---------------------------------------------------------------------------

@@ -473,6 +473,11 @@ pub fn texture_from_stats(stats: &PatternStats) -> Texture {
 // Decision tree: combine all signals into a Role + confidence.
 // ---------------------------------------------------------------------------
 
+/// Pitch spread (semitones) below which a pitched percussive instrument still
+/// counts as drum-like — covers pitch-swept synth kicks, tom-roll variations,
+/// and chromatic snare layering.
+const DRUM_PITCH_SPREAD_LIMIT: u8 = 5;
+
 #[allow(clippy::too_many_arguments)]
 #[must_use]
 pub fn classify_role(
@@ -480,22 +485,30 @@ pub fn classify_role(
     graph: &GraphSignals,
     envelope: EnvelopeShape,
     pitch_role: PitchRole,
+    pitch_spread: u8,
     register: Register,
     texture: Texture,
 ) -> RoleInference {
-    // First matching gate wins. Bonus signals are counted on top of the
-    // gate so a confident classification can reach 1.0.
-
     // 1. Drums.
-    // Sample-based percussion fails the envelope/noise gate (Sampler+Output
-    // patches have neither), so OneShot Sampler counts as percussive evidence.
+    //
+    // Pitch (fix #4): Atonal OR pitch_spread ≤ 5 semitones — covers synth
+    // kicks with pitch-swept oscillators and toms that play 1-3 tuned hits.
+    // Envelope (fix #3): Percussive, OR Plucked when register is sub/bass —
+    // many synth-kicks have plucked-shaped envelopes (slightly longer release
+    // than the Percussive threshold).
+    // Noise (fix #5): noise-source alone is not enough — long sustained noise
+    // is a sweep/pad, not a drum. Require a short envelope alongside.
     let pure_oneshot_sampler =
         graph.has_oneshot_sampler && !graph.has_oscillator && !graph.has_noise_source;
-    let drum_gate = pitch_role == PitchRole::Atonal
-        && (envelope == EnvelopeShape::Percussive
-            || graph.has_noise_source
-            || pure_oneshot_sampler);
-    if drum_gate {
+    let drum_pitch_ok =
+        matches!(pitch_role, PitchRole::Atonal) || pitch_spread <= DRUM_PITCH_SPREAD_LIMIT;
+    let plucked_in_bass =
+        envelope == EnvelopeShape::Plucked && matches!(register, Register::Sub | Register::Bass);
+    let drum_envelope_ok = envelope == EnvelopeShape::Percussive || plucked_in_bass;
+    let noise_short_envelope = graph.has_noise_source
+        && !matches!(envelope, EnvelopeShape::Sustained | EnvelopeShape::Evolving);
+
+    if drum_pitch_ok && (drum_envelope_ok || noise_short_envelope || pure_oneshot_sampler) {
         let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "drums-gate")];
         let mut bonus = 0;
         if name_hint == Some(Role::Drums) {
@@ -505,8 +518,11 @@ pub fn classify_role(
         if envelope == EnvelopeShape::Percussive {
             signals.push(ProfileSignal::new(SignalAxis::Envelope, "percussive"));
             bonus += 1;
+        } else if plucked_in_bass {
+            signals.push(ProfileSignal::new(SignalAxis::Envelope, "plucked-bass"));
+            bonus += 1;
         }
-        if graph.has_noise_source && !graph.has_oscillator && !graph.has_sampler {
+        if noise_short_envelope && !graph.has_oscillator && !graph.has_sampler {
             signals.push(ProfileSignal::new(SignalAxis::Graph, "noise-no-osc"));
             bonus += 1;
         }
@@ -514,11 +530,54 @@ pub fn classify_role(
             signals.push(ProfileSignal::new(SignalAxis::Graph, "oneshot-sampler"));
             bonus += 1;
         }
+        if !matches!(pitch_role, PitchRole::Atonal) && pitch_spread <= DRUM_PITCH_SPREAD_LIMIT {
+            signals.push(ProfileSignal::new(
+                SignalAxis::Pattern,
+                "narrow-pitch-spread",
+            ));
+        }
         let conf = (0.6_f32 + 0.2_f32 * bonus as f32).min(1.0);
         return apply_name_override(Role::Drums, conf, signals, name_hint);
     }
 
-    // 2. Bass.
+    // 2. Pluck (fix #7).
+    // Plucked envelope + Monophonic is a strong pluck signature regardless of
+    // register — fires before Bass so plucks playing in the bass register
+    // don't get swallowed by Bass-gate.
+    if envelope == EnvelopeShape::Plucked && texture == Texture::Monophonic {
+        let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "pluck-gate")];
+        let mut bonus = 0;
+        if name_hint == Some(Role::Pluck) {
+            signals.push(ProfileSignal::new(SignalAxis::Name, "pluck"));
+            bonus += 1;
+        }
+        if graph.has_physical {
+            signals.push(ProfileSignal::new(SignalAxis::Graph, "physical"));
+            bonus += 1;
+        }
+        let conf = (0.6_f32 + 0.15_f32 * bonus as f32).min(1.0);
+        return apply_name_override(Role::Pluck, conf, signals, name_hint);
+    }
+
+    // 3. Lead-precedence-by-name (fix #6).
+    // When the user named it Lead, respect that ahead of register-only Bass —
+    // a Lead patch that happens to play low ("Sub Lead") should still be Lead.
+    let lead_envelope_ok = matches!(envelope, EnvelopeShape::Plucked | EnvelopeShape::Sustained);
+    if name_hint == Some(Role::Lead) && lead_envelope_ok && texture == Texture::Monophonic {
+        let mut signals = vec![
+            ProfileSignal::new(SignalAxis::Decision, "lead-gate"),
+            ProfileSignal::new(SignalAxis::Name, "lead"),
+        ];
+        let mut bonus = 1;
+        if graph.has_oscillator {
+            signals.push(ProfileSignal::new(SignalAxis::Graph, "oscillator"));
+            bonus += 1;
+        }
+        let conf = (0.6_f32 + 0.15_f32 * bonus as f32).min(1.0);
+        return apply_name_override(Role::Lead, conf, signals, name_hint);
+    }
+
+    // 4. Bass.
     let bass_gate = matches!(pitch_role, PitchRole::Tonal | PitchRole::Mixed)
         && matches!(register, Register::Sub | Register::Bass)
         && matches!(texture, Texture::Monophonic | Texture::Polyphonic);
@@ -544,8 +603,14 @@ pub fn classify_role(
         return apply_name_override(Role::Bass, conf, signals, name_hint);
     }
 
-    // 3. Pad.
-    if envelope == EnvelopeShape::Evolving && texture == Texture::Chordal {
+    // 5. Pad (fix #1 — relaxed).
+    // Real pad patches typically have Polyphonic (2-4) texture and Sustained
+    // envelope, not the stricter Chordal (≥5) + Evolving the old gate required.
+    // Mixed pitch is still musical content (modal/quartal pads etc.).
+    if matches!(envelope, EnvelopeShape::Sustained | EnvelopeShape::Evolving)
+        && matches!(texture, Texture::Polyphonic | Texture::Chordal)
+        && matches!(pitch_role, PitchRole::Tonal | PitchRole::Mixed)
+    {
         let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "pad-gate")];
         let mut bonus = 0;
         if name_hint == Some(Role::Pad) {
@@ -556,11 +621,15 @@ pub fn classify_role(
             signals.push(ProfileSignal::new(SignalAxis::Graph, "thick"));
             bonus += 1;
         }
-        let conf = (0.7_f32 + 0.15_f32 * bonus as f32).min(1.0);
+        if envelope == EnvelopeShape::Evolving {
+            signals.push(ProfileSignal::new(SignalAxis::Envelope, "evolving"));
+            bonus += 1;
+        }
+        let conf = (0.6_f32 + 0.15_f32 * bonus as f32).min(1.0);
         return apply_name_override(Role::Pad, conf, signals, name_hint);
     }
 
-    // 4. Keys.
+    // 6. Keys.
     if envelope == EnvelopeShape::Plucked
         && matches!(texture, Texture::Polyphonic | Texture::Chordal)
         && pitch_role == PitchRole::Tonal
@@ -579,26 +648,14 @@ pub fn classify_role(
         return apply_name_override(Role::Keys, conf, signals, name_hint);
     }
 
-    // 5. Pluck.
-    if envelope == EnvelopeShape::Plucked && texture == Texture::Monophonic {
-        let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "pluck-gate")];
-        let mut bonus = 0;
-        if name_hint == Some(Role::Pluck) {
-            signals.push(ProfileSignal::new(SignalAxis::Name, "pluck"));
-            bonus += 1;
-        }
-        if graph.has_physical {
-            signals.push(ProfileSignal::new(SignalAxis::Graph, "physical"));
-            bonus += 1;
-        }
-        let conf = (0.6_f32 + 0.15_f32 * bonus as f32).min(1.0);
-        return apply_name_override(Role::Pluck, conf, signals, name_hint);
-    }
-
-    // 6. Lead.
-    if matches!(envelope, EnvelopeShape::Plucked | EnvelopeShape::Sustained)
+    // 7. Lead (default — Mid/High register).
+    // Requires Tonal/Mixed pitch: atonal monophonic signals are sweeps/FX,
+    // not melodic leads — the lead-precedence-by-name gate (step 3) catches
+    // user-named exceptions before this point.
+    if lead_envelope_ok
         && texture == Texture::Monophonic
         && matches!(register, Register::Mid | Register::High)
+        && matches!(pitch_role, PitchRole::Tonal | PitchRole::Mixed)
     {
         let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "lead-gate")];
         let mut bonus = 0;
@@ -614,7 +671,7 @@ pub fn classify_role(
         return apply_name_override(Role::Lead, conf, signals, name_hint);
     }
 
-    // 7. FX.
+    // 8. FX.
     if pitch_role == PitchRole::Atonal && envelope != EnvelopeShape::Percussive {
         let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "fx-gate")];
         let mut bonus = 0;
@@ -626,7 +683,32 @@ pub fn classify_role(
         return apply_name_override(Role::Fx, conf, signals, name_hint);
     }
 
-    // 8. Unknown.
+    // 9. Envelope-Unknown fallback (fix #2b).
+    // When envelope_shape is Unknown, every primary gate fails because they
+    // all key on a specific shape. Without this, common patches that lack a
+    // single dominant Envelope module (modulation envs only, multiple
+    // envelopes confusing the heuristic) become silent Unknowns. Soft-classify
+    // from pitch+texture+name with lower confidence than the primary gates.
+    if envelope == EnvelopeShape::Unknown && pitch_role != PitchRole::Unused {
+        let fallback_role = if let Some(hint) = name_hint {
+            hint
+        } else if matches!(pitch_role, PitchRole::Tonal | PitchRole::Mixed) {
+            if matches!(texture, Texture::Polyphonic | Texture::Chordal) {
+                Role::Pad
+            } else {
+                Role::Lead
+            }
+        } else {
+            Role::Fx
+        };
+        let signals = vec![ProfileSignal::new(
+            SignalAxis::Decision,
+            "envelope-unknown-fallback",
+        )];
+        return apply_name_override(fallback_role, 0.4_f32, signals, name_hint);
+    }
+
+    // 10. Unknown.
     RoleInference {
         role: Role::Unknown,
         confidence: 0.0,
@@ -703,7 +785,15 @@ pub fn infer_instrument_profile(
     let pitch_role = pitch_role_from_stats(&stats);
     let register = register_from_stats(&stats);
     let texture = texture_from_stats(&stats);
-    let role = classify_role(name_hint, &graph, envelope, pitch_role, register, texture);
+    let role = classify_role(
+        name_hint,
+        &graph,
+        envelope,
+        pitch_role,
+        stats.pitch_spread,
+        register,
+        texture,
+    );
 
     InstrumentProfile {
         instrument_id: snapshot.seq_instrument_id,

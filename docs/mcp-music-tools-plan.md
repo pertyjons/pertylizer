@@ -1,26 +1,28 @@
 # MCP Music Tools — Plan
 
-> **Date:** 2026-05-11 (updated 2026-05-11 after Tier-1 partial ship, post-ship live-test pass, and two rounds of §8.1 determinism fix)
-> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix landed in two rounds post-v0.277.0; §8.2 auto-inferred instrument profiles shipped in v0.278.0**; remaining Tier-1+ pending.
-> Post-ship live testing surfaced determinism + auto-categorization issues — see §8. §8.1 and §8.2 fully fixed end-to-end through the MCP bridge; §8.3 still open.
+> **Date:** 2026-05-11 (last update 2026-05-12: live-testing round 3 across four songs, eight inference-rule fixes, `get_instrument_profiles` MCP tool, offline-render sample-data + tempo + sampler-state propagation fixes)
+> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix in two rounds post-v0.277.0; §8.2 auto-inferred instrument profiles shipped in v0.278.0; commits 74d18da + 93c0786 (in flight 2026-05-12) closed the offline-render snapshot bug class, added `get_instrument_profiles`, and applied seven inference improvements that roughly doubled live-test accuracy on synth patches.** Remaining Tier-1+ pending.
+> Post-ship live testing surfaced determinism, auto-categorization, and offline-render-state issues — see §8. §8.1, §8.2, and §8.4 are fully fixed end-to-end through the MCP bridge. §8.3 (pan-law doc) and §8.5 (inference round-3 follow-ups) are still open.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
 
 ---
 
 ## 0. Status snapshot
 
-### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), and v0.278.0 (auto-inferred instrument profiles)
+### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), v0.278.0 (auto-inferred profiles), and 74d18da + 93c0786 (offline-render fixes, `get_instrument_profiles`, inference round 2)
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| `analyze_harmony` | v0.276.0 + v0.277.0 + v0.278.0 | Walks notes by tick, identifies chord symbols (18 templates incl. m7/maj7/dom7/sus/dim/aug/power), infers key via Krumhansl-Schmuckler over 24 major/minor keys, returns in-key ratio, out-of-scale pitch classes, composite stability score. Pattern or arrangement scope. Returns chord events with `start_bar`/`start_beat` (1-indexed). Default grouping: 1 quarter-note for pattern scope, 1 bar for arrangement scope. Consecutive identical chord events are merged. **v0.277.0 added drum-track filtering** (manual `InstrumentCategory::Drums` + explicit `exclude_track_ids`). **v0.278.0 wired `analysis::instrument_profile` auto-inference** into the same filter — uncategorized percussion (Noise + percussive envelope + atonal pitch use) is now caught with confidence ≥ 0.6 and the warning text carries the signal trail (`[drums conf=X.XX; …]`). Manual category keeps priority via the `manual-override` signal. Arrangement scope only. |
-| `analyze_mix_bus` | v0.276.0 | Renders N seconds (default 10, max 300) of the master bus offline from `start_tick` (default 0). Returns sample peak, RMS, crest factor, integrated LUFS (ITU-R BS.1770-4 K-weighted + 400 ms gating, 75 % overlap, abs −70 / rel −10 gates), 4-band frequency-balance RMS (sub/low/mid/high) windowed across the full buffer, stereo correlation, mid/side RMS, stereo width, mono-compatibility score, clipped-sample count. Includes `start_bar`/`end_bar`/`start_beat`/`end_beat`. |
-| `analyze_section` | v0.276.0 + v0.277.0 | Same metrics as `analyze_mix_bus` but takes explicit `[start_tick, end_tick)`. **v0.277.0 added per-track contribution breakdown**: `include_per_track` (default false) opts in to one extra soloed render per audible track that overlaps the section, returning `TrackContribution { track_id, track_name, instrument_id, peak, peak_dbfs, rms, rms_dbfs, lufs_integrated, energy_bands, clipped_samples, rms_share }`. Soloing is implemented by cloning the song, setting only the target track's `solo = true`, and rendering via `render_arrangement_to_buffer_with_song`. |
+| `analyze_harmony` | v0.276.0 + v0.277.0 + v0.278.0 + 74d18da | Walks notes by tick, identifies chord symbols (18 templates incl. m7/maj7/dom7/sus/dim/aug/power), infers key via Krumhansl-Schmuckler over 24 major/minor keys, returns in-key ratio, out-of-scale pitch classes, composite stability score. Pattern or arrangement scope. Returns chord events with `start_bar`/`start_beat` (1-indexed). Default grouping: 1 quarter-note for pattern scope, 1 bar for arrangement scope. Consecutive identical chord events are merged. **v0.277.0 added drum-track filtering** (manual `InstrumentCategory::Drums` + explicit `exclude_track_ids`). **v0.278.0 wired `analysis::instrument_profile` auto-inference** into the same filter — uncategorized percussion is now caught with confidence ≥ 0.6 and the warning text carries the signal trail. **74d18da** added the `has_oneshot_sampler` graph signal so sample-based percussion (Sampler + Output, no envelope) also fires drum-gate via the `oneshot-sampler` evidence. Manual category keeps priority via the `manual-override` signal. Arrangement scope only. |
+| `analyze_mix_bus` | v0.276.0 + 74d18da | Renders N seconds (default 10, max 300) of the master bus offline from `start_tick` (default 0). Returns sample peak, RMS, crest factor, integrated LUFS (ITU-R BS.1770-4 K-weighted + 400 ms gating, 75 % overlap, abs −70 / rel −10 gates), 4-band frequency-balance RMS (sub/low/mid/high) windowed across the full buffer, stereo correlation, mid/side RMS, stereo width, mono-compatibility score, clipped-sample count. Includes `start_bar`/`end_bar`/`start_beat`/`end_beat`. **74d18da** threaded `SharedSampleLibrary` through the offline renderer so sampler-based instruments stop rendering silence — see §8.4. |
+| `analyze_section` | v0.276.0 + v0.277.0 + 74d18da | Same metrics as `analyze_mix_bus` but takes explicit `[start_tick, end_tick)`. **v0.277.0 added per-track contribution breakdown**: `include_per_track` (default false) opts in to one extra soloed render per audible track that overlaps the section, returning `TrackContribution { track_id, track_name, instrument_id, peak, peak_dbfs, rms, rms_dbfs, lufs_integrated, energy_bands, clipped_samples, rms_share }`. Soloing is implemented by cloning the song, setting only the target track's `solo = true`, and rendering via `render_arrangement_to_buffer_with_song`. **74d18da** propagated samples per soloed render so per-track contributions on sample-based instruments report real metrics. |
+| `get_instrument_profiles` | 93c0786 | Returns `Vec<InstrumentProfileResult>`, one entry per instrument routed to by at least one track. Each profile carries the inferred `role` plus a `confidence: 0.0..=1.0` and a `signals` trail listing every axis that contributed (`decision`, `name`, `envelope`, `graph`, `pattern`, `manual`). Same inference path that `analyze_harmony`'s `exclude_drums = true` uses — exposed directly so users can debug or override the classification. Manual `set_instrument_category` short-circuits the decision tree and reports as `manual-override` with confidence 1.0. Wire format uses snake_case strings for role/envelope_shape/etc. so the MCP type stays decoupled from pertylizer-internal enums. |
 
 ### Deferred / in-progress
 
 - **`true_peak` (inter-sample peak)** — currently reports sample peak; inter-sample peak would catch over-shoots that emerge after DA conversion. Important for mixes that already clip on sample-peak (the test song clipped at 22 % of samples in chorus).
 - **LUFS-S / LUFS-M (momentary / short-term)** — only integrated LUFS shipped. Momentary LUFS would help locate the hottest spot inside a section.
+- **Inference round-3 follow-ups** — five concrete classification gaps remain after the round-2 inference improvements (74d18da). Documented in §8.5 with example mis-classifications from the four-song regression suite. Top item: Bass-gate dominates name-priority for low-register Pad/Lead/Strings.
 
 ### Tier 0 follow-up commits
 
@@ -463,8 +465,8 @@ The v0.277.0 default `exclude_drums: true` on `analyze_harmony` is a silent no-o
 song every instrument is `Uncategorized`, so the default call still produces the `F#m7b5` bug it was supposed
 to fix. The user has no warning indicating the filter was inert.
 
-**Shipped form (v0.278.0, 8.2b path).** New module `pertylizer::analysis::instrument_profile` (~600 lines incl.
-tests; planned in `docs/instrument-profile-plan.md`). `InstrumentProfile` exposes five independent axes —
+**Shipped form (v0.278.0, 8.2b path).** New module `pertylizer::analysis::instrument_profile` (~600 lines
+incl. tests). `InstrumentProfile` exposes five independent axes —
 `role`, `envelope_shape`, `pitch_role`, `register`, `texture` — plus a `RoleInference` carrying the confidence
 score and the signal trail that produced it. `analyze_song_harmony` now calls `infer_all_profiles` and drops
 tracks classified as `Drums` with confidence ≥ 0.6; the warning text spells out *why*, e.g.
@@ -515,6 +517,52 @@ default analysis to work. It also unblocks other future tools (`analyze_groove` 
 Recommendation: ship 8.2b. It's a small standalone module (~150 lines), fully testable, and removes a sharp
 edge in the harmony tool's UX.
 
+#### 8.2c Inference round 2 — eight rule fixes after multi-song live testing — ✅ shipped in 74d18da + 93c0786
+
+Once `get_instrument_profiles` (added in `93c0786`) exposed the inference output directly through MCP, four
+test songs were run against it. The shipped 8.2b rules classified samples correctly but had clear failure
+modes on synth patches: 33 % accuracy across 61 synth instruments, with 18 % of instruments dropped to
+`Role::Unknown` and the rest split between near-correct and clearly-wrong classifications. Seven changes to
+`classify_role` (plus one new graph signal) raised accuracy to ~64 % across the same instruments. The four
+test songs were retained as the regression suite for any further inference work.
+
+| # | Change | Cascade position | Effect |
+|---|--------|------------------|--------|
+| 1 | Pad-gate relaxed to `(Sustained \|\| Evolving) && (Polyphonic \|\| Chordal) && (Tonal \|\| Mixed)` | was step 3, now step 5 | Real pad patches (texture: polyphonic, 2-4 notes; sustained envelope, attack < 500 ms) fire pad-gate. Previously required `Evolving && Chordal` (≥ 5 simultaneous notes) and so missed every monophonic-or-polyphonic pad in the corpus. |
+| 2a | New `envelope_shape: Unknown` fallback after every primary gate | new step 9 | Patches without a single dominant Envelope module previously fell to `Role::Unknown` with confidence 0.0. Now soft-classify from name + pitch + texture (Pad / Lead / Fx) with confidence 0.4. |
+| 2b | Sustained-polyphonic-tonal mid/high register caught by relaxed Pad-gate | step 5 | Closes the "polyphonic Lead/Brass/Strings → Unknown" gap from §8.5.1 below. (Imperfect for instruments named Lead; tracked in §8.5.) |
+| 3 | Drum-gate envelope accepts `Plucked` when register is sub/bass | step 1 | Synth-kick envelopes that are slightly longer than the Percussive threshold (sustain ≈ 0, release ~300 ms) now fire drum-gate. New signal `plucked-bass` in the trail. |
+| 4 | Drum-gate pitch accepts `pitch_spread ≤ 5` semitones for pitched percussion | step 1 | Synth-kicks with pitch envelopes that sweep 2-5 semitones across hits (Mixed/Tonal pitch role) now fire drum-gate. New signal `narrow-pitch-spread` in the trail. |
+| 5 | Drum-gate requires short envelope alongside `has_noise_source` | step 1 | A noise source with a sustained or evolving envelope is a sweep, not a drum. Falls through to FX-gate now. |
+| 6 | Lead-by-name-precedence step before Bass-gate | new step 3 | When `name_hint == Some(Lead)` and the envelope/texture matches, fire Lead-gate even if register is sub/bass. A "Sub Lead" patch should be a Lead, not a Bass. |
+| 7 | Pluck-gate fires before Bass-gate when envelope is `Plucked` and texture is `Monophonic` | new step 2 | A plucked-envelope monophonic patch in the bass register is more pluck-like than bass-like. Fixes "Pluck Synth" mis-classified as bass. |
+
+Side fix: the default Lead-gate (step 7) now requires `pitch_role != Atonal` — an atonal monophonic signal
+is a sweep/FX, not a melodic lead. Without this, the noise-sweep relaxation (#5) above leaked from Drums to
+Lead instead of falling through to FX.
+
+The drum-gate now uses a new `has_oneshot_sampler` graph signal (a Sampler module whose `PlayMode` parameter
+is `OneShot`) as percussive evidence on equal footing with `has_noise_source` and `EnvelopeShape::Percussive`.
+This makes sample-based percussion (Sampler + Output, no envelope, no oscillator) — the dominant shape in
+ZIP-bundle projects — fire drum-gate without manual categorization.
+
+**Accuracy lift across the test corpus (synth patches only):**
+
+| Song | Instruments | Pre-fix accuracy | Post-fix accuracy |
+|------|-------------|------------------|-------------------|
+| Oxygene Dreams (80s Techno) | 16 | 38 % (6/16) | 56 % (9/16) |
+| Neon Horizon (Extended) | 13 | 31 % (4/13) | 62 % (8/13) |
+| Neon Horizon | 7 | n/a | 100 % (7/7) |
+| Oxygène Dreams (9-instr) | 9 | n/a | 78 % (7/9) |
+| Oxygène Dreams (20-instr) | 20 | 30 % (6/20) | 60 % (12/20) |
+| **Synth corpus total** | **65** | **~33 %** | **~64 %** |
+
+`get_instrument_profiles` is the canonical way to inspect this: each `InstrumentProfileResult` carries the
+inferred role, a 0.0..=1.0 confidence, and a signal trail listing every axis that contributed (`decision`,
+`name`, `envelope`, `graph`, `pattern`, plus `manual` when `set_instrument_category` was used). Manual
+override is still authoritative — it reports as `manual-override` with confidence 1.0 and short-circuits the
+decision tree.
+
 ### 8.3 Per-track contribution: clarify pan-law output, optionally add `pre_master_peak` — LOW/MED
 
 Per-track renders on center-panned tracks report `peak = 0.7071068` (= 1/√2), which is the constant-power pan-law
@@ -537,10 +585,150 @@ Live testing showed Kick + Sub Bass + Aggro Bass + Stab all reported exactly 0.7
 whether any of them is hot internally without correlating with `analyze_note`. The doc fix is mandatory;
 `pre_master_peak` is a quality-of-life add.
 
-### 8.4 Cross-reference
+### 8.4 Offline-render snapshot propagation bug class — HIGH ✅ **Fixed in 74d18da**
 
-§8.1 is now fully fixed (Round 1 + Round 2); §4's "deterministic output for a given project state" claim holds
-bit-exact end-to-end through the MCP bridge, not just inside the determinism unit tests. §8.2 shipped in
-v0.278.0: the v0.277.0 `analyze_harmony` doc's implicit "manual `set_instrument_category` required" is now
-optional — the inference path resolves uncategorized percussion on its own. §8.3 is a doc-only update plus an
-optional additive field.
+Running the analyzers against a sample-based project (`echoing (003)`, 9 sample instruments) revealed a
+class of bugs where read paths (`analyze_note`, `analyze_mix_bus`, `analyze_section`, `get_sampler_state`,
+`get_engine_status`) consulted an engine snapshot that the realtime audio thread never wrote into. Audible
+playback worked but offline analysis returned -200 dBFS across every metric — the sampler modules in the
+fresh offline `SynthEngine` had their `SampleSelect` IDs set but no audio buffer attached.
+
+Four instances were fixed together:
+
+1. **Offline renderers didn't load sample data.** `render_note_to_buffer` and
+   `render_arrangement_to_buffer{,_with_song}` create a fresh `SynthEngine` and rebuild the module graph via
+   `SetModuleParameter` commands, but never sent `EngineCommand::LoadSampleData`. Fixed by threading
+   `SharedSampleLibrary` through the renderer call chain and adding a `load_sample_data_for_samplers`
+   helper that walks sampler modules and dispatches `LoadSampleData` after the graph is built. A new shared
+   `load_sample_data_command` helper now constructs the `LoadSampleData` payload for both the live engine
+   (`egui_backend::send_loaded_sample_data`) and the offline path.
+2. **`load_project_data` didn't sync tempo to the engine transport.** The Song's `default_tempo` flowed to
+   the sequencer (so playback was correct), but `EngineCommand::SetTempo` was never sent. `get_engine_status`
+   reported the engine default (120 BPM) for every loaded project. Fixed by sending `SetTempo` alongside the
+   other restored global state in `load_project_data`.
+3. **`get_sampler_state` read sample id via a lossy f32 path.** `SamplerParam::SampleSelect::as_f32()`
+   returns 0.0 ("not meaningful as f32" — sample ids don't fit a slider widget), so reading the parameter
+   through the f32 indirection always reported 0 regardless of the real assignment. Fixed by pattern-matching
+   the typed `Param::Sampler(SamplerParam::SampleSelect(SampleId))` directly off the snapshot. `PlayMode` and
+   `Direction` are now also matched as typed enums instead of being round-tripped through u8.
+4. **Drum-gate didn't fire for sample-based percussion.** Sample-only patches (Sampler + Output, no envelope,
+   no noise) failed both branches of the gate. Added the `has_oneshot_sampler` graph signal so a Sampler in
+   `OneShot` PlayMode counts as percussive evidence — see §8.2c #3 for the cascade-level details.
+
+**Lesson.** Whenever an analyzer/read path reports unexpected silence, defaults, or stale values, check
+whether the live audio thread has state (sample data, tempo, mod-matrix slot, sampler params, etc.) that
+needs an explicit propagation command and isn't being sent on the offline-side `SynthEngine::new()`. The
+realtime engine has it; the snapshot consulted by readers may not. Particularly suspect anything where the
+value flows through `Param::as_f32()` — that conversion is lossy for several variants.
+
+### 8.5 Inference round-3 follow-ups (live testing 2026-05-12) — MEDIUM
+
+After the round-2 improvements (§8.2c), four songs were re-run through `get_instrument_profiles`. Accuracy
+went from ~33 % to ~64 %, but five concrete failure modes persist. These are documented here as the next
+batch of inference work; each one has at least one concrete example in the regression suite.
+
+#### 8.5.1 Bass-gate dominates name-priority — HIGH
+
+Pad/Lead/Strings/etc. patches that play in the bass register get classified as `Bass` even when the name
+clearly says otherwise. The Bass-gate fires at cascade position 4, before Pad (5) and the default Lead (7);
+when the patch's pitch is `Tonal`/`Mixed` and register is `Sub`/`Bass`, Bass-gate wins regardless of name.
+
+Concrete examples from the test corpus:
+
+| Song | Instrument | Got | Expected (from name) |
+|------|------------|-----|----------------------|
+| Oxygène Dreams (20-instr) | Fractal Pad | bass 0.55 | Pad |
+| Oxygène Dreams (20-instr) | String Ensemble | bass 0.55 | Pad |
+| Oxygène Dreams (20-instr) | Unison Supersaw | bass 0.90 | Lead |
+| Neon Horizon (Extended) | Pad | bass 0.55 | Pad |
+
+The fix that already exists for Lead (the Lead-by-name-precedence gate at cascade position 3) covers
+monophonic Lead patches in the bass register, but doesn't cover Pad (because Pad-gate requires polyphonic+
+texture, so the cascade order between Lead-precedence and Bass-gate doesn't help). The cleanest fix is a
+generalized "name-priority for exact vocab match": if the name hint is `Some(Role::X)` and that role's gate
+*could* fire on a relaxed register requirement, prefer it over a register-based Bass-gate. The conservative
+form is `name_hint == Some(Pad) && pad_gate_without_register_check matches → Pad with confidence 0.6`.
+
+#### 8.5.2 Atonal patches in mid register fall through Bass-gate to FX or Lead — MEDIUM
+
+Bass-gate requires `pitch_role in [Tonal, Mixed]`. A sub-bass that plays one note repeatedly is `Atonal`
+and so escapes Bass-gate even when the register is sub/bass.
+
+| Song | Instrument | Got | Expected |
+|------|------------|-----|----------|
+| Oxygene Dreams (80s Techno) | Sub Bass | fx 0.30 | Bass |
+| Neon Horizon (Extended) | Sub Bass | lead 0.55 | Bass |
+
+Fix candidates: (a) relax Bass-gate to accept Atonal when `name_hint == Some(Bass)` and register is
+sub/bass; (b) generalize 8.5.1's name-priority rule to bass-by-name. (a) is simpler and risks no new
+mis-classifications because the bass-by-name combination is unambiguous.
+
+#### 8.5.3 Tom-style tonal percussion fails drum-gate — MEDIUM
+
+Tom patches play 1-3 distinct tom-tuned notes (a small but non-zero pitch spread). Fix §8.2c #4 set the
+`pitch_spread ≤ 5` threshold for the relaxed drum-gate, but real Tom patterns can spread further (e.g. 2-3
+toms tuned to ~8 semitones apart). With pitch spread > 5 and pitch_role = Tonal, the drum-gate doesn't
+fire; the Pluck-before-Bass step (§8.2c #7) then captures Tom as `pluck`.
+
+| Song | Instrument | Got | Expected |
+|------|------------|-----|----------|
+| Neon Horizon (Extended) | Tom | pluck 0.40 | Drums |
+
+Fix candidates: (a) relax the pitch-spread threshold to ~10-12 semitones when name_hint says Drums; (b) add
+a "tonal-narrow-percussive" branch with a more permissive spread when envelope is Plucked + percussive-like
+register; (c) name-hint-priority — if name says Drums and envelope is short, classify as Drums even when
+pitch is wider.
+
+Note that fix #6 (Lead-by-name-precedence) already establishes the pattern of "name says X, fire X's gate
+before the cascade decides". (c) is the same shape applied to Drums.
+
+#### 8.5.4 Polyphonic Lead patches get caught by relaxed Pad-gate — LOW
+
+After §8.2c #1, Pad-gate accepts polyphonic+sustained+tonal+mid. Lead patches that happen to be
+polyphonic (sustained chord-stab leads, brass-style polyphonic leads) now hit Pad-gate before the
+monophonic-only Lead-gate. With name_hint = Lead, the name-conflict policy kicks in: role stays Pad,
+confidence drops by 0.2.
+
+| Song | Instrument | Got | Expected |
+|------|------------|-----|----------|
+| Neon Horizon (Extended) | Lead | pad 0.40 | Lead |
+| Oxygène Dreams (20-instr) | Glitch Pad | fx 0.30 | Pad (atonal pad — separate issue) |
+
+The Lead → pad case is "less wrong than before" — previously this exact pattern fell to Unknown 0.0,
+which gave the user no information at all. Pad 0.40 with name-conflict trail at least tells the user the
+inference is uncertain. Fix would relax Lead-gate to accept Polyphonic when name_hint == Lead (same
+pattern as §8.2c #6 / 8.5.1).
+
+#### 8.5.5 Name vocabulary is too narrow — LOW
+
+`role_from_name` matches a small fixed vocabulary; many real instrument names get no hint at all and rely
+purely on the decision tree. The 49-instrument corpus showed these names produce no name_hint:
+
+- `Tom` ← actually in the vocab, but tokenizes as the whole instrument name so `has("tom")` does match;
+  not a vocab gap. (Listed here as a near-miss to remember the tokenizer's word-match semantics.)
+- `Brass`, `Strings/String Ensemble` (only `strings`/`string` is in the vocab — "ensemble" isn't)
+- `Arp`, `Arp Main`, `Arp High`, `Crystal Arp` (no `arp` token)
+- `Stab`, `Punchy Stab` (no `stab` token — stabs are typically Pluck/Keys)
+- `Supersaw`, `Unison Supersaw` (no `supersaw` token — supersaws are leads/pads)
+- `Chime`, `Digital Chime` (no `chime` token — chimes are Pluck/Keys)
+- `Shimmer`, `Ethereal Shimmer Pad` (Pad token catches it; `shimmer` alone wouldn't)
+- `Glitch`, `Glitch Pad` (same; pad token catches it)
+
+Extension: add `brass` → Lead, `arp` → Lead (or new `Arp` role), `stab`/`stabs` → Pluck, `supersaw` → Lead,
+`chime`/`chimes`/`bell`/`bells` → Pluck. The vocabulary is intentionally word-match (not substring) to
+avoid false hits like `bassoon` → bass; extension just adds tokens.
+
+#### Suggested fix order
+
+8.5.1 (name-priority for Pad) → 8.5.2 (Atonal bass-by-name) → 8.5.5 (vocabulary) → 8.5.3 (Tom pitch spread)
+→ 8.5.4 (Polyphonic Lead). The first two cover the majority of remaining mis-classifications by themselves;
+vocabulary is cheap and reduces name-conflict cases; 8.5.3 and 8.5.4 are narrower long-tail fixes.
+
+### 8.6 Cross-reference
+
+§8.1 is fully fixed (Round 1 + Round 2); §4's "deterministic output for a given project state" claim holds
+bit-exact end-to-end through the MCP bridge, not just inside the determinism unit tests. §8.2 (auto-inferred
+profiles) shipped in v0.278.0, with §8.2c (round-2 inference improvements) and §8.4 (offline-render
+snapshot propagation) landing together in commits 74d18da + 93c0786 — the previously implicit "manual
+`set_instrument_category` required" workflow is now fully optional. §8.3 (pan-law doc + optional
+`pre_master_peak`) and §8.5 (round-3 inference follow-ups) are still open.
