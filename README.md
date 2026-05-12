@@ -6,7 +6,22 @@
 > responsibility whatsoever for anything — use entirely at your own risk.
 
 A modular audio synthesizer written in Rust with a real-time egui GUI, pattern sequencer, spatial audio engine, 3D
-visualizer, and MCP integration for AI-assisted sound design.
+visualizer, and **first-class AI-agent integration via MCP (Model Context Protocol)**.
+
+## AI Integration via MCP
+
+Pertylizer exposes **~120 MCP tools** that let AI agents (Claude Code, Claude Desktop, or any MCP-capable client)
+build instruments, compose songs, edit patterns, set parameters, render and analyze audio, and play notes in real time
+— all while the synth keeps running.
+
+- **Streamable HTTP** on `http://127.0.0.1:9850/mcp` (enabled by default in GUI mode)
+- **stdio** transport via `cargo run -- --headless`
+- **Audio analysis tools** (`analyze_harmony`, `analyze_section`, `analyze_mix_bus`) give agents quantitative,
+  deterministic feedback on harmony, mix balance, and per-track contribution
+- **Auto-inference** (`get_instrument_profiles`) classifies instrument roles (drums/bass/lead/pad/pluck/FX) with
+  confidence scores so agents can compose without manual tagging
+
+See [`docs/README_MCP.md`](docs/README_MCP.md) for the full integration guide, tool catalog, and example workflows.
 
 ## Screenshots
 
@@ -17,11 +32,12 @@ Engine, and 3D visualizer.
 
 ### Synthesis
 
-- **56 module types** — oscillators (standard, wavetable, additive, granular, fractal, FM/math, sub, LA synth, vector),
-  filters (ladder, SVF, biquad), envelopes, LFOs, MSEG, mod matrix, ring mod, and more
-- **21 effects** — delay, BBD delay, reverb, shimmer reverb, reverse gate reverb, chorus, ensemble chorus, flanger,
-  phaser, distortion, waveshaper, compressor, limiter, EQ, mid/side, convolver, phase vocoder, frequency shifter,
-  granular FX, spectral blur, modal resonator
+- **67 module types** — oscillators (standard, wavetable, additive, granular, fractal, FM/math, sub, LA synth, vector,
+  pad synth, chaotic), filters (ladder, SVF, biquad, formant), envelopes, LFOs, MSEG, mod matrix, ring mod, drift
+  generator, sampler, audio input, and more
+- **25 effects** — delay, BBD delay, reverb, shimmer reverb, reverse gate reverb, chorus, ensemble chorus, flanger,
+  phaser, univibe, distortion, waveshaper, compressor, limiter, EQ, tilt EQ, mid/side, crossover splitter, convolver,
+  phase vocoder, vocoder, frequency shifter, granular FX, spectral blur, modal resonator
 - **60 built-in patches** — from acid bass and grand piano to fractal cosmos and spectral freeze pad
 
 ### Highlights
@@ -33,8 +49,9 @@ Engine, and 3D visualizer.
 - **Generative Sequencing** — Euclidean rhythm generator, Turing machine, random gates
 - **AWE (Acoustic World Engine)** — physics-based spatial audio with room simulation, early reflections (image-source
   method), late reverb (FDN), room modes, per-voice 3D spatialization, and internal modulation LFOs
-- **MCP Server (~80 tools)** — full remote control via HTTP or stdio, enabling AI agents like Claude to build
-  instruments, compose songs, tweak parameters, and play notes in real time
+- **MCP Server (~120 tools)** — full remote control via HTTP or stdio, enabling AI agents like Claude to build
+  instruments, compose songs, tweak parameters, render and analyze audio, and play notes in real time
+  (see [`docs/README_MCP.md`](docs/README_MCP.md))
 - **OSC Telemetry** — real-time spectrum, RMS, note events, and transport state streamed over UDP at 30 Hz (enabled by
   default, `--no-osc` to disable)
 
@@ -58,18 +75,18 @@ Engine, and 3D visualizer.
 A separate application (`visualizer/`) that receives OSC telemetry and renders real-time 3D visuals driven by audio
 analysis.
 
-### Visual Effects (22 effects)
+### Visual Effects (27 effects)
 
 Effects are organized into layered scene slots:
 
-| Slot           | Effects                                                                                                                                                   |
-|----------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Terrain**    | Base Floor, FFT Bars, Waveform Ring, Spectral Waterfall, Pulse Terrain, Spectral Origami                                                                  |
-| **Hero**       | CPU Overdrive Core, Flux Supernova, Fractal Pulse, Ferrofluid Tendrils                                                                                    |
-| **Ambient**    | Centroid Nebula, Spectral Cathedral, Reaction Diffusion                                                                                                   |
-| **Transients** | Note Particles, Velocity Meteors, Phase Rings, Harmonic Ribbons, Chord Bloom, Neon Calligraphy, Instrument Cubes, Voronoi Shatter, FFT Terrain, Note Tree |
+| Slot           | Effects                                                                                                                                |
+|----------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| **Terrain**    | Base Floor, FFT Bars, Waveform Ring, Spectral Waterfall, Pulse Terrain, Spectral Origami, Phase Rings, Voronoi Shatter, FFT Terrain, Cyber Wireframe |
+| **Hero**       | CPU Overdrive Core, Flux Supernova, Fractal Pulse, Ferrofluid Tendrils, Note Tree, Orbital Satellites                                  |
+| **Ambient**    | Centroid Nebula, Spectral Cathedral, Reaction Diffusion, Spectral Aurora                                                               |
+| **Transients** | Note Particles, Velocity Meteors, Harmonic Ribbons, Chord Bloom, Neon Calligraphy, Instrument Cubes, Beat Fracture                     |
 
-### Scene Presets (9 presets)
+### Scene Presets (11 presets)
 
 0. **Classic Pertylizer** — Spectral Waterfall + Note Particles
 1. **The Matrix** — Pulse Terrain + CPU Overdrive + Centroid Nebula + Velocity Meteors
@@ -80,6 +97,8 @@ Effects are organized into layered scene slots:
 6. **Earthquake** — Voronoi Shatter + Ferrofluid Tendrils + Velocity Meteors + Note Particles
 7. **Spectrum City** — FFT Terrain + Note Tree + Reaction Diffusion + Chord Bloom
 8. **Living Forest** — Pulse Terrain + Note Tree + Centroid Nebula + Harmonic Ribbons + Note Particles
+9. **Neon Grid** — Cyber Wireframe + Orbital Satellites + Spectral Aurora + Beat Fracture
+10. **Arctic Station** — Cyber Wireframe + Flux Supernova + Spectral Aurora + Note Particles + Beat Fracture
 
 ### Themes (8 themes)
 
@@ -137,14 +156,14 @@ cd visualizer && cargo run
 
 ## Tech Stack
 
-- **Language:** Rust 1.93+ (edition 2024)
+- **Language:** Rust 1.95+ (edition 2024)
 - **Audio:** cpal (cross-platform I/O)
 - **GUI:** egui/eframe with custom knobs, meters, scopes, and spectrum analyzer
 - **MIDI:** midir
 - **DSP:** PolyBLEP oscillators, SVF/biquad/ladder filters, FFT via realfft
 - **MCP:** rmcp + axum (Streamable HTTP on port 9850)
 - **OSC:** rosc (Open Sound Control over UDP)
-- **Visualizer:** Bevy 0.16 (3D rendering)
+- **Visualizer:** Bevy 0.18 (3D rendering)
 - **Concurrency:** lock-free ringbuf, parking_lot
 
 ## Building & Running
@@ -168,15 +187,17 @@ cargo test && cargo clippy --all-targets && cargo fmt --check
 
 ## Workspace Crates
 
-| Crate             | Description                                                  | 
-|-------------------|--------------------------------------------------------------|
-| `synth_core`      | Domain types, module traits, audio abstractions              |
-| `synth_dsp`       | DSP primitives: oscillators, filters, delay lines, FFT       |
-| `synth_awe`       | Acoustic World Engine — spatial audio & room simulation      |
-| `synth_sequencer` | Pattern and song sequencing                                  |
-| `synth_modules`   | 56 module types including 21 effects                         |
-| `synth_engine`    | Audio engine: voice allocation, modular graph, mixing        |
-| `synth_mcp`       | MCP server with ~80 tools for AI agent integration           |
-| `synth_osc`       | OSC telemetry sender (spectrum, notes, transport over UDP)   | 
-| `pertylizer`      | Main application: GUI, audio I/O, MIDI                       |
-| `visualizer`      | Bevy 3D visualizer driven by OSC telemetry (separate binary) |
+| Crate                | Description                                                  |
+|----------------------|--------------------------------------------------------------|
+| `synth_core`         | Domain types, module traits, audio abstractions              |
+| `synth_dsp`          | DSP primitives: oscillators, filters, delay lines, FFT       |
+| `synth_awe`          | Acoustic World Engine — spatial audio & room simulation      |
+| `synth_sampler`      | Sample loading, playback, and waveform analysis              |
+| `synth_sequencer`    | Pattern and song sequencing                                  |
+| `synth_modules`      | 67 module types including 25 effects                         |
+| `synth_engine`       | Audio engine: voice allocation, modular graph, mixing        |
+| `synth_mcp`          | MCP server with ~120 tools for AI agent integration          |
+| `synth_osc`          | OSC telemetry sender (spectrum, notes, transport over UDP)   |
+| `synth_osc_protocol` | Shared OSC protocol definitions for synth and visualizer     |
+| `pertylizer`         | Main application: GUI, audio I/O, MIDI                       |
+| `visualizer`         | Bevy 3D visualizer driven by OSC telemetry (separate binary) |

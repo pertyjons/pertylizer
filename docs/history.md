@@ -1,5 +1,49 @@
 # Version History
 
+## [0.280.0] - 2026-05-13
+### README refresh + dedicated MCP integration guide
+
+#### `README.md`
+
+Brought the front page in sync with the actual codebase and made the AI/MCP
+integration the headline feature instead of an afterthought:
+
+- New **AI Integration via MCP** section directly under the project
+  description, calling out HTTP (`http://127.0.0.1:9850/mcp`) and stdio
+  transports plus the analysis tools (`analyze_harmony`, `analyze_section`,
+  `analyze_mix_bus`) and `get_instrument_profiles` auto-inference.
+- Updated counts to match source-of-truth files:
+  - **67 module types** (was 56) — verified against the `ModuleType` enum.
+  - **25 effects** (was 21) — added univibe, tilt EQ, crossover splitter,
+    vocoder.
+  - **~120 MCP tools** (was ~80) — verified by counting `#[tool(...)]`
+    attributes in `synth_mcp::server`.
+  - **27 visualizer effects** across Terrain (10) / Hero (6) / Ambient (4) /
+    Transients (7) — corrected the slot table.
+  - **11 scene presets** (was 9) — added Neon Grid and Arctic Station.
+- Tech stack: Rust 1.93+ → **1.95+**, Bevy 0.16 → **0.18**.
+- Workspace crates table now lists `synth_sampler` and
+  `synth_osc_protocol`.
+
+#### `docs/README_MCP.md` (new)
+
+A dedicated guide for connecting AI agents to Pertylizer:
+
+- Quick Start with both **pre-built binary** and **compile-from-source**
+  paths.
+- Connection instructions for **Claude Code** (`claude mcp add` for both
+  HTTP and stdio) and **Claude Desktop** (`claude_desktop_config.json`
+  snippet).
+- Full tool catalog grouped into 12 categories with one-line purposes per
+  tool.
+- AI-friendly features: auto-inference, deterministic offline analysis,
+  batch operations, structured errors, diagnostics.
+- Architecture diagram showing the
+  client → `synth_mcp::server` → `AppSynthBridge` → audio thread bridge
+  pattern, plus real-time safety guarantees.
+- Four worked example workflows: building a kick, composing a chord
+  progression, mixing a song, inspecting a user's patch.
+
 ## [0.279.0] - 2026-05-12
 ### Instrument metadata + edit windows, bottom status bar, GNOME CSD, English module descriptions, round-2 inference
 
