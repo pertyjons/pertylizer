@@ -401,13 +401,13 @@ impl Describable for Oscillator {
                 .widget(WidgetHint::Knob),
             )
             .port(
-                PortDescriptor::control_input("fm", "FM").description("Modulerar tonhöjden. Koppla: LFO för vibrato, Envelope för pitch-sweep, annan Oscillator för FM-syntes"),
+                PortDescriptor::control_input("fm", "FM").description("Modulates pitch. Connect: LFO for vibrato, Envelope for pitch sweep, another Oscillator for FM synthesis"),
             )
-            .port(PortDescriptor::control_input("pm", "PM").description("Modulerar fasen — ger FM-liknande ljud. Koppla: LFO, Envelope, annan Oscillator"))
-            .port(PortDescriptor::control_input("pwm", "PWM").description("Modulerar pulsbredd (square/pulse). Koppla: LFO för klassiskt PWM-ljud, Envelope"))
+            .port(PortDescriptor::control_input("pm", "PM").description("Modulates phase — gives FM-like sound. Connect: LFO, Envelope, another Oscillator"))
+            .port(PortDescriptor::control_input("pwm", "PWM").description("Modulates pulse width (square/pulse). Connect: LFO for classic PWM sound, Envelope"))
             .port(
                 PortDescriptor::control_input("cross_mod", "X-Mod")
-                    .description("Korsmuterar frekvensen med en annan oscillator. Koppla: annan Oscillator för metalliska/klockljud"),
+                    .description("Cross-modulates frequency with another oscillator. Connect: another Oscillator for metallic/bell sounds"),
             )
             .parameter(
                 ParameterDescriptor::float(
@@ -432,7 +432,7 @@ impl Describable for Oscillator {
                 )
                 .description("Anti-aliasing algorithm"),
             )
-            .port(PortDescriptor::gate_input("sync", "Sync").description("Återställer fasen vid gate. Koppla: annan Oscillators output för hard sync-ljud"))
+            .port(PortDescriptor::gate_input("sync", "Sync").description("Resets phase on gate. Connect: another Oscillator's output for hard sync sounds"))
             .port(PortDescriptor::audio_output("out", "Out").description("Audio output (mono sum)"))
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Stereo left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Stereo right output"))

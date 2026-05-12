@@ -355,7 +355,7 @@ impl Describable for GranularOsc {
             )
             .port(
                 PortDescriptor::audio_output("out", "Out")
-                    .description("Granulär output. Koppla till: Amplifier In, Filter In"),
+                    .description("Granular output. Connect to: Amplifier In, Filter In"),
             )
     }
 }

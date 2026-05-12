@@ -191,6 +191,9 @@ pub fn default_instrument_state() -> InstrumentState {
         key_range: (0, 127),
         transpose: Semitones::ZERO,
         oversampling: 1,
+        category: 0,
+        description: String::new(),
+        color: None,
         patch: Patch::new("Init"),
     }
 }

@@ -148,12 +148,16 @@ impl Describable for Lfo {
                 LfoWaveform::to_choices(),
             ))
             .parameter(
-                ParameterDescriptor::float("rate", Param::Lfo(LfoParam::Rate(Hertz::new(1.0))), "Rate")
-                    .range(0.01, 50.0)
-                    .default(1.0)
-                    .unit(ParameterUnit::Hertz)
-                    .widget(WidgetHint::FrequencySlider)
-                    .curve(ResponseCurve::Logarithmic),
+                ParameterDescriptor::float(
+                    "rate",
+                    Param::Lfo(LfoParam::Rate(Hertz::new(1.0))),
+                    "Rate",
+                )
+                .range(0.01, 50.0)
+                .default(1.0)
+                .unit(ParameterUnit::Hertz)
+                .widget(WidgetHint::FrequencySlider)
+                .curve(ResponseCurve::Logarithmic),
             )
             .parameter(
                 ParameterDescriptor::float(
@@ -166,14 +170,28 @@ impl Describable for Lfo {
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float("phase", Param::Lfo(LfoParam::Phase(Phase::ZERO)), "Phase")
-                    .range(0.0, 1.0)
-                    .default(0.0)
-                    .widget(WidgetHint::Knob),
+                ParameterDescriptor::float(
+                    "phase",
+                    Param::Lfo(LfoParam::Phase(Phase::ZERO)),
+                    "Phase",
+                )
+                .range(0.0, 1.0)
+                .default(0.0)
+                .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::gate_input("retrigger", "Retrig").description("Återstartar LFO-cykeln. Koppla: Envelope Gate, annan LFO, Euclidean Gate"))
-            .port(PortDescriptor::control_input("rate_cv", "Rate CV").description("Modulerar LFO-hastighet. Koppla: annan LFO, Envelope, Kinetic Modulator"))
-            .port(PortDescriptor::audio_output("out", "Out").description("LFO-signal (±1). Koppla till: Oscillator FM/PM/PWM, Filter Cutoff CV, Amplifier CV"))
+            .port(
+                PortDescriptor::gate_input("retrigger", "Retrig").description(
+                    "Restarts the LFO cycle. Connect: Envelope Gate, another LFO, Euclidean Gate",
+                ),
+            )
+            .port(
+                PortDescriptor::control_input("rate_cv", "Rate CV").description(
+                    "Modulates LFO rate. Connect: another LFO, Envelope, Kinetic Modulator",
+                ),
+            )
+            .port(PortDescriptor::audio_output("out", "Out").description(
+                "LFO signal (±1). Connect to: Oscillator FM/PM/PWM, Filter Cutoff CV, Amplifier CV",
+            ))
     }
 }
 

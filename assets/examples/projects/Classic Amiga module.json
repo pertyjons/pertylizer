@@ -16,37 +16,11 @@
       ],
       "transpose": 0.0,
       "oversampling": 1,
+      "category": 0,
       "patch": {
         "name": "Kick",
         "version": "1.0",
         "modules": [
-          {
-            "id": "amp-1",
-            "type": "amplifier",
-            "position": {
-              "x": 384.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "cv_bipolar": 0.0,
-              "level": 1.0,
-              "pan": 0.0
-            }
-          },
-          {
-            "id": "out-1",
-            "type": "stereo_output",
-            "position": {
-              "x": 704.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "limit": 1.0,
-              "master": 0.9,
-              "mute": 0.0,
-              "pan": 0.0
-            }
-          },
           {
             "id": "osc-1",
             "type": "oscillator",
@@ -55,6 +29,7 @@
               "y": 32.0
             },
             "parameters": {
+              "anti_alias": 0.0,
               "detune": 0.0,
               "fm_amt": -0.6,
               "fm_mode": 0.0,
@@ -70,11 +45,39 @@
             }
           },
           {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 768.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.9,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
             "id": "env-1",
             "type": "envelope",
             "position": {
               "x": 32.0,
-              "y": 352.0
+              "y": 384.0
             },
             "parameters": {
               "atk_curve": 0.0,
@@ -92,7 +95,7 @@
             "type": "envelope",
             "position": {
               "x": 32.0,
-              "y": 640.0
+              "y": 672.0
             },
             "parameters": {
               "atk_curve": 0.0,
@@ -154,8 +157,8 @@
           "octave_offset": 0,
           "glide_time": 0.0,
           "canvas_size": {
-            "width": 1154.0,
-            "height": 1140.0
+            "width": 1218.0,
+            "height": 1172.0
           }
         }
       }
@@ -174,43 +177,11 @@
       ],
       "transpose": 0.0,
       "oversampling": 1,
+      "category": 0,
       "patch": {
         "name": "Snare",
         "version": "1.0",
         "modules": [
-          {
-            "id": "mix-1",
-            "type": "mixer",
-            "position": {
-              "x": 384.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "input_1": 1.0,
-              "input_2": 0.7,
-              "input_3": 1.0,
-              "input_4": 1.0,
-              "input_5": 1.0,
-              "input_6": 1.0,
-              "input_7": 1.0,
-              "input_8": 1.0,
-              "master": 1.0
-            }
-          },
-          {
-            "id": "out-1",
-            "type": "stereo_output",
-            "position": {
-              "x": 1408.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "limit": 1.0,
-              "master": 0.9,
-              "mute": 0.0,
-              "pan": 0.0
-            }
-          },
           {
             "id": "osc-1",
             "type": "oscillator",
@@ -219,6 +190,7 @@
               "y": 32.0
             },
             "parameters": {
+              "anti_alias": 0.0,
               "detune": 0.0,
               "fm_amt": 1.0,
               "fm_mode": 0.0,
@@ -237,13 +209,14 @@
             "id": "flt-1",
             "type": "filter",
             "position": {
-              "x": 736.0,
+              "x": 800.0,
               "y": 32.0
             },
             "parameters": {
               "cutoff": 1800.0,
               "cv_amt": 0.6,
               "drive": 1.2,
+              "env_amt": 0.25,
               "key_track": 0.0,
               "model": 0.0,
               "morph": 0.0,
@@ -255,7 +228,7 @@
             "id": "env-1",
             "type": "envelope",
             "position": {
-              "x": 384.0,
+              "x": 448.0,
               "y": 384.0
             },
             "parameters": {
@@ -270,10 +243,29 @@
             }
           },
           {
+            "id": "mix-1",
+            "type": "mixer",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "input_1": 1.0,
+              "input_2": 0.7,
+              "input_3": 1.0,
+              "input_4": 1.0,
+              "input_5": 1.0,
+              "input_6": 1.0,
+              "input_7": 1.0,
+              "input_8": 1.0,
+              "master": 1.0
+            }
+          },
+          {
             "id": "amp-1",
             "type": "amplifier",
             "position": {
-              "x": 1088.0,
+              "x": 1152.0,
               "y": 32.0
             },
             "parameters": {
@@ -283,11 +275,26 @@
             }
           },
           {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1472.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.9,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
             "id": "nse-1",
             "type": "noise",
             "position": {
               "x": 32.0,
-              "y": 352.0
+              "y": 384.0
             },
             "parameters": {
               "level": 0.8,
@@ -373,7 +380,7 @@
           "octave_offset": 0,
           "glide_time": 0.0,
           "canvas_size": {
-            "width": 1858.0,
+            "width": 1922.0,
             "height": 884.0
           }
         }
@@ -393,37 +400,16 @@
       ],
       "transpose": 0.0,
       "oversampling": 1,
+      "category": 0,
       "patch": {
         "name": "Bass",
         "version": "1.0",
         "modules": [
           {
-            "id": "osc-1",
-            "type": "oscillator",
-            "position": {
-              "x": 32.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "detune": 0.0,
-              "fm_amt": 1.0,
-              "fm_mode": 0.0,
-              "frequency": 440.0,
-              "level": 0.9,
-              "pulse_width": 0.5,
-              "uni_detune": 10.0,
-              "uni_phase": 1.0,
-              "uni_spread": 0.5,
-              "unison": 1.0,
-              "waveform": 3.0,
-              "x_mod": 0.0
-            }
-          },
-          {
             "id": "amp-1",
             "type": "amplifier",
             "position": {
-              "x": 736.0,
+              "x": 800.0,
               "y": 32.0
             },
             "parameters": {
@@ -433,43 +419,11 @@
             }
           },
           {
-            "id": "out-1",
-            "type": "stereo_output",
-            "position": {
-              "x": 1056.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "limit": 1.0,
-              "master": 0.9,
-              "mute": 0.0,
-              "pan": 0.0
-            }
-          },
-          {
-            "id": "env-1",
-            "type": "envelope",
-            "position": {
-              "x": 384.0,
-              "y": 288.0
-            },
-            "parameters": {
-              "atk_curve": 0.0,
-              "attack": 0.001,
-              "dec_curve": 0.0,
-              "decay": 0.25,
-              "rel_curve": 0.0,
-              "release": 0.08,
-              "sustain": 0.6,
-              "vel_sens": 0.9
-            }
-          },
-          {
             "id": "env-2",
             "type": "envelope",
             "position": {
               "x": 32.0,
-              "y": 352.0
+              "y": 384.0
             },
             "parameters": {
               "atk_curve": 0.0,
@@ -486,18 +440,75 @@
             "id": "flt-1",
             "type": "filter",
             "position": {
-              "x": 384.0,
+              "x": 448.0,
               "y": 32.0
             },
             "parameters": {
               "cutoff": 600.0,
               "cv_amt": 0.6,
               "drive": 1.3,
+              "env_amt": 0.25,
               "key_track": 0.0,
               "model": 0.0,
               "morph": 0.0,
               "resonance": 0.25,
               "type": 0.0
+            }
+          },
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "anti_alias": 0.0,
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": 0.0,
+              "frequency": 440.0,
+              "level": 0.9,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": 3.0,
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 448.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": 0.0,
+              "decay": 0.25,
+              "rel_curve": 0.0,
+              "release": 0.08,
+              "sustain": 0.6,
+              "vel_sens": 0.9
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1120.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.9,
+              "mute": 0.0,
+              "pan": 0.0
             }
           }
         ],
@@ -559,8 +570,8 @@
           "octave_offset": 0,
           "glide_time": 0.0,
           "canvas_size": {
-            "width": 1506.0,
-            "height": 852.0
+            "width": 1570.0,
+            "height": 884.0
           }
         }
       }
@@ -579,16 +590,64 @@
       ],
       "transpose": 0.0,
       "oversampling": 1,
+      "category": 0,
       "patch": {
         "name": "Lead",
         "version": "1.0",
         "modules": [
           {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 800.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 0.85,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1120.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.9,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 2500.0,
+              "cv_amt": 0.5,
+              "drive": 1.1,
+              "env_amt": 0.25,
+              "key_track": 0.0,
+              "model": 0.0,
+              "morph": 0.0,
+              "resonance": 0.15,
+              "type": 0.0
+            }
+          },
+          {
             "id": "env-2",
             "type": "envelope",
             "position": {
               "x": 32.0,
-              "y": 352.0
+              "y": 384.0
             },
             "parameters": {
               "atk_curve": 0.0,
@@ -605,7 +664,7 @@
             "id": "env-1",
             "type": "envelope",
             "position": {
-              "x": 384.0,
+              "x": 448.0,
               "y": 288.0
             },
             "parameters": {
@@ -620,24 +679,6 @@
             }
           },
           {
-            "id": "flt-1",
-            "type": "filter",
-            "position": {
-              "x": 384.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "cutoff": 2500.0,
-              "cv_amt": 0.5,
-              "drive": 1.1,
-              "key_track": 0.0,
-              "model": 0.0,
-              "morph": 0.0,
-              "resonance": 0.15,
-              "type": 0.0
-            }
-          },
-          {
             "id": "osc-1",
             "type": "oscillator",
             "position": {
@@ -645,6 +686,7 @@
               "y": 32.0
             },
             "parameters": {
+              "anti_alias": 0.0,
               "detune": 0.0,
               "fm_amt": 1.0,
               "fm_mode": 0.0,
@@ -657,33 +699,6 @@
               "unison": 1.0,
               "waveform": 3.0,
               "x_mod": 0.0
-            }
-          },
-          {
-            "id": "amp-1",
-            "type": "amplifier",
-            "position": {
-              "x": 736.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "cv_bipolar": 0.0,
-              "level": 0.85,
-              "pan": 0.0
-            }
-          },
-          {
-            "id": "out-1",
-            "type": "stereo_output",
-            "position": {
-              "x": 1056.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "limit": 1.0,
-              "master": 0.9,
-              "mute": 0.0,
-              "pan": 0.0
             }
           }
         ],
@@ -745,8 +760,8 @@
           "octave_offset": 0,
           "glide_time": 0.0,
           "canvas_size": {
-            "width": 1506.0,
-            "height": 852.0
+            "width": 1570.0,
+            "height": 884.0
           }
         }
       }

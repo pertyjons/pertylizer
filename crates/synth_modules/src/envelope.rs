@@ -396,14 +396,14 @@ impl Describable for Envelope {
             )
             .port(
                 PortDescriptor::gate_input("gate", "Gate")
-                    .description("Startar/släpper envelopet. Automatisk från tangentbord"),
+                    .description("Starts/releases the envelope. Automatic from keyboard"),
             )
             .port(
                 PortDescriptor::control_input("velocity", "Vel")
-                    .description("Anslagsstyrka. Automatisk från tangentbord"),
+                    .description("Velocity. Automatic from keyboard"),
             )
             .port(PortDescriptor::audio_output("out", "Out").description(
-                "Envelope-signal (0–1). Koppla till: Filter Cutoff CV, Amplifier CV, Oscillator FM",
+                "Envelope signal (0–1). Connect to: Filter Cutoff CV, Amplifier CV, Oscillator FM",
             ))
     }
 }

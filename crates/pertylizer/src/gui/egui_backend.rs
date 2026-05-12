@@ -34,7 +34,9 @@ use crate::gui::widgets::{draw_oscilloscope, draw_stereo_meter};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
 use crate::io::{GroupTemplateManager, MidiHandler, PatchManager};
-use crate::patch::{AwePresetFile, GroupCategory, InstrumentState, Patch, categorized_patches};
+use crate::patch::{
+    Author, AwePresetFile, GroupCategory, InstrumentState, Patch, categorized_patches,
+};
 use crate::project::{self, GlobalProjectState, LoadedFile, ProjectFile};
 use synth_core::{Describable, ModuleCategory};
 use synth_core::{Seconds, Velocity};
@@ -105,6 +107,7 @@ impl GuiBackend for EguiBackend {
         let mut viewport = egui::ViewportBuilder::default()
             .with_inner_size([window_width, window_height])
             .with_title(&window_title)
+            .with_app_id("pertylizer")
             .with_min_inner_size([800.0, 600.0]);
 
         if let (Some(x), Some(y)) = (config.settings.window.x, config.settings.window.y) {
@@ -309,6 +312,15 @@ struct SynthApp {
     /// Floating analyze window. Single instance, re-targeted to the active
     /// instrument each frame.
     analyze_window: crate::gui::analyze::AnalyzeWindow,
+
+    /// Which instrument has its edit window open. `None` = closed.
+    instrument_edit_target: Option<InstrumentId>,
+
+    /// Project info edit window — open state.
+    project_edit_open: bool,
+    /// Per-project author metadata. Initialized from `settings.author`
+    /// for new projects, overridden from disk on load, persisted on save.
+    current_project_author: Author,
 }
 
 impl SynthApp {
@@ -354,6 +366,10 @@ impl SynthApp {
         let mut dialog_state = DialogState::new();
         dialog_state.current_theme = settings.theme;
 
+        // Clone the default author up front because `settings` is moved
+        // into the struct literal below before `current_project_author`.
+        let project_author = settings.author.clone();
+
         // Surface settings load warnings as a GUI toast so the user knows
         // defaults are being used (the file may be corrupt or missing).
         if let Some(warning) = &settings.load_warning {
@@ -398,6 +414,9 @@ impl SynthApp {
             sample_view_state: crate::gui::sample_view::SampleViewState::new(),
             audio_input: crate::audio::input::AudioInputManager::new(),
             analyze_window: crate::gui::analyze::AnalyzeWindow::new(),
+            instrument_edit_target: None,
+            project_edit_open: false,
+            current_project_author: project_author,
         }
     }
 
@@ -768,6 +787,12 @@ impl eframe::App for SynthApp {
         // ── Analyze window — runs every frame so the worker-thread poll can
         //    drain even when the window itself is closed. ──
         self.render_analyze_window(ctx);
+
+        // ── Instrument edit window (per-instrument basic settings). ──
+        self.render_instrument_edit_window(ctx);
+
+        // ── Project info edit window (song metadata + project author). ──
+        self.render_project_edit_window(ctx);
 
         // Request continuous repaint for meters
         ctx.request_repaint();
@@ -1156,32 +1181,6 @@ impl eframe::App for SynthApp {
                         self.pressed_keys.clear();
                         self.keyboard.clear_pressed();
                     }
-                    ui.separator();
-
-                    // Status indicators
-                    let cpu = self.handle.cpu_usage();
-                    let cpu_color = if cpu > 0.8 {
-                        theme().colors.meter_red
-                    } else if cpu > 0.5 {
-                        theme().colors.meter_yellow
-                    } else {
-                        theme().colors.meter_green
-                    };
-                    ui.label(RichText::new(format!("CPU: {:>3.0}%", cpu * 100.0)).color(cpu_color));
-                    ui.separator();
-                    ui.label(
-                        RichText::new(format!("Voices: {:>3}", self.handle.voice_count()))
-                            .color(theme().colors.text_secondary)
-                            .family(egui::FontFamily::Monospace),
-                    );
-                    ui.separator();
-                    ui.label(
-                        RichText::new(format!(
-                            "Latency: {:.1}ms",
-                            self.latency.as_secs_f64() * 1000.0
-                        ))
-                        .color(theme().colors.text_dim),
-                    );
                     // Sample memory indicator
                     if let Ok(lib) = self.sample_library.read() {
                         let count = lib.len();
@@ -1456,28 +1455,205 @@ impl eframe::App for SynthApp {
                         resp.response.on_hover_text(hover_text);
                         ui.separator();
                     }
-                    // Project name
-                    let project_name = self
-                        .current_project_path
-                        .as_ref()
-                        .and_then(|p| p.file_stem())
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("Untitled");
+                    // Instrument edit pencil — sits visually to the right of
+                    // the dropdown (right-to-left layout). Opens the active
+                    // instrument's edit window from any view; disabled when
+                    // no instrument is selected.
+                    let edit_btn = ui
+                        .add_enabled(
+                            self.active_instrument_id.is_some(),
+                            egui::Button::new(
+                                RichText::new(ri::EDIT_LINE).color(theme().colors.text_dim),
+                            )
+                            .frame(false)
+                            .small(),
+                        )
+                        .on_hover_text("Edit active instrument…");
+                    if edit_btn.clicked() {
+                        self.instrument_edit_target = self.active_instrument_id;
+                    }
+
+                    // Instrument selector dropdown (lives in the toolbar so
+                    // the active instrument can be switched independently of
+                    // the keyboard strip).
+                    let active_name = self
+                        .active_instrument_id
+                        .and_then(|id| self.instruments.iter().find(|i| i.id == id))
+                        .map(|i| i.name.as_str())
+                        .unwrap_or("(none)");
+                    let menu_label = RichText::new(format!(
+                        "{} {active_name} {}",
+                        ri::MUSIC_2_FILL,
+                        ri::ARROW_DOWN_S_FILL
+                    ))
+                    .color(theme().colors.accent_cyan);
+                    ui.menu_button(menu_label, |ui| {
+                        if ui
+                            .button(
+                                RichText::new(format!("{} New Instrument", ri::ADD_LINE))
+                                    .color(theme().colors.accent_green),
+                            )
+                            .clicked()
+                        {
+                            self.add_new_instrument();
+                            ui.close();
+                        }
+                        ui.separator();
+                        if self.instruments.is_empty() {
+                            ui.label(
+                                RichText::new("No instruments").color(theme().colors.text_dim),
+                            );
+                        } else {
+                            for inst in &self.instruments {
+                                let is_active = Some(inst.id) == self.active_instrument_id;
+                                let label = if is_active {
+                                    RichText::new(format!(
+                                        "{} {}",
+                                        ri::CHECKBOX_BLANK_CIRCLE_FILL,
+                                        inst.name
+                                    ))
+                                    .color(theme().colors.accent_cyan)
+                                } else {
+                                    RichText::new(format!("  {}", inst.name))
+                                };
+                                if ui.button(label).clicked() {
+                                    self.active_instrument_id = Some(inst.id);
+                                    self.handle.set_focused_instrument(Some(inst.id));
+                                    ui.close();
+                                }
+                            }
+                        }
+                    });
+                    ui.separator();
+
+                    // Pencil edit icon (sits visually to the right of the title
+                    // because right-to-left layout places later widgets further
+                    // left).
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(ri::EDIT_LINE).color(theme().colors.text_dim),
+                            )
+                            .frame(false)
+                            .small(),
+                        )
+                        .on_hover_text("Edit project info")
+                        .clicked()
+                    {
+                        self.project_edit_open = true;
+                    }
+
+                    // Project / song title — shows `Song.name`. Double-click
+                    // opens the project edit window.
+                    let title_text = {
+                        let song = self.song.read();
+                        if song.name.is_empty() {
+                            "Untitled".to_string()
+                        } else {
+                            song.name.clone()
+                        }
+                    };
                     let dirty_marker = if self.dirty { " *" } else { "" };
-                    ui.label(
-                        RichText::new(format!("{project_name}{dirty_marker}"))
-                            .color(theme().colors.text_secondary),
-                    );
+                    let title_resp = ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new(format!("{title_text}{dirty_marker}"))
+                                    .color(theme().colors.text_secondary),
+                            )
+                            .sense(egui::Sense::click()),
+                        )
+                        .on_hover_text("Double-click to edit project info");
+                    if title_resp.double_clicked() {
+                        self.project_edit_open = true;
+                    }
                     ui.separator();
                 });
             });
         });
 
+        // Status bar at the very bottom: Glide + Octave on the left,
+        // Latency / Voices / CPU on the right.
+        // Declared before keyboard_panel so it ends up below the keyboard.
+        egui::Panel::bottom("status_bar")
+            .min_size(22.0)
+            .show_inside(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let t = theme();
+
+                    // ── Left side: Octave +/- and Glide slider ──
+                    ui.label(
+                        RichText::new(format!("Octave: {:+}", self.keyboard.octave_offset()))
+                            .color(t.colors.text_secondary)
+                            .small(),
+                    );
+                    if ui.small_button("-").clicked() {
+                        let new_offset = self.keyboard.octave_offset() - 1;
+                        self.keyboard.set_octave_offset(new_offset);
+                    }
+                    if ui.small_button("+").clicked() {
+                        let new_offset = self.keyboard.octave_offset() + 1;
+                        self.keyboard.set_octave_offset(new_offset);
+                    }
+                    ui.separator();
+
+                    ui.label(RichText::new("Glide:").color(t.colors.text_dim).small());
+                    let mut glide_val = self.glide_time.as_f32();
+                    let glide_response = ui
+                        .add(
+                            egui::Slider::new(&mut glide_val, 0.0..=2.0)
+                                .suffix(" s")
+                                .fixed_decimals(2)
+                                .custom_formatter(|v, _| {
+                                    if v < 0.001 {
+                                        "Off".to_string()
+                                    } else {
+                                        format!("{v:.2}s")
+                                    }
+                                }),
+                        )
+                        .on_hover_text("Portamento glide time between notes");
+                    if glide_response.changed() {
+                        self.glide_time = synth_core::Seconds::new(glide_val);
+                        self.handle
+                            .send(EngineCommand::SetGlideTime(self.glide_time));
+                    }
+
+                    // ── Right side: CPU / Voices / Latency ──
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let cpu = self.handle.cpu_usage();
+                        let cpu_color = if cpu > 0.8 {
+                            t.colors.meter_red
+                        } else if cpu > 0.5 {
+                            t.colors.meter_yellow
+                        } else {
+                            t.colors.meter_green
+                        };
+                        ui.label(
+                            RichText::new(format!("CPU: {:>3.0}%", cpu * 100.0)).color(cpu_color),
+                        );
+                        ui.separator();
+                        ui.label(
+                            RichText::new(format!("Voices: {:>3}", self.handle.voice_count()))
+                                .color(t.colors.text_secondary)
+                                .family(egui::FontFamily::Monospace),
+                        );
+                        ui.separator();
+                        ui.label(
+                            RichText::new(format!(
+                                "Latency: {:.1}ms",
+                                self.latency.as_secs_f64() * 1000.0
+                            ))
+                            .color(t.colors.text_dim),
+                        );
+                    });
+                });
+            });
+
         // Bottom panel with keyboard (always visible)
         // Render keyboard content in Order::Middle so it has input priority over
         // module Areas (Order::Background) that may extend into the panel area.
         egui::Panel::bottom("keyboard_panel")
-            .min_size(120.0)
+            .min_size(100.0)
             .show_inside(ui, |ui| {
                 let layer_id =
                     egui::LayerId::new(egui::Order::Middle, egui::Id::new("keyboard_layer"));
@@ -1528,6 +1704,7 @@ impl eframe::App for SynthApp {
                             ui.separator();
 
                             let mut clicked: Option<InstrumentId> = None;
+                            let mut edit_requested: Option<InstrumentId> = None;
                             egui::ScrollArea::vertical()
                                 .content_margin(egui::Margin::same(6))
                                 .show(ui, |ui| {
@@ -1538,19 +1715,49 @@ impl eframe::App for SynthApp {
                                         } else {
                                             t.colors.text_secondary
                                         };
-                                        let resp = ui.selectable_label(
-                                            is_active,
-                                            RichText::new(&inst.name).color(text_color),
-                                        );
-                                        if resp.clicked() && !is_active {
-                                            clicked = Some(inst.id);
-                                        }
+                                        ui.horizontal(|ui| {
+                                            let resp = ui.selectable_label(
+                                                is_active,
+                                                RichText::new(&inst.name).color(text_color),
+                                            );
+                                            if resp.clicked() && !is_active {
+                                                clicked = Some(inst.id);
+                                            }
+                                            if resp.double_clicked() {
+                                                edit_requested = Some(inst.id);
+                                            }
+                                            // Pencil icon on the right opens the
+                                            // edit window without changing the
+                                            // active instrument.
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    let btn = ui.add(
+                                                        egui::Button::new(
+                                                            RichText::new(ri::EDIT_LINE)
+                                                                .color(t.colors.text_dim),
+                                                        )
+                                                        .frame(false)
+                                                        .small(),
+                                                    );
+                                                    if btn
+                                                        .on_hover_text("Edit instrument…")
+                                                        .clicked()
+                                                    {
+                                                        edit_requested = Some(inst.id);
+                                                    }
+                                                },
+                                            );
+                                        });
                                     }
                                 });
 
                             if let Some(id) = clicked {
                                 self.active_instrument_id = Some(id);
                                 self.handle.set_focused_instrument(Some(id));
+                            }
+                            if let Some(id) = edit_requested {
+                                self.instrument_edit_target = Some(id);
                             }
 
                             ui.add_space(8.0);
@@ -2156,11 +2363,12 @@ impl eframe::App for SynthApp {
                 .and_then(|p| p.file_stem())
                 .and_then(|s| s.to_str())
                 .unwrap_or("Untitled");
-            let title = if self.dirty {
-                format!("Pertylizer - {project_name} *")
-            } else {
-                format!("Pertylizer - {project_name}")
-            };
+            let title = format!(
+                "Pertylizer v{} ({}) - {project_name}{}",
+                env!("CARGO_PKG_VERSION"),
+                env!("BUILD_DATE"),
+                if self.dirty { " *" } else { "" },
+            );
             if title != self.last_title {
                 self.last_title = title.clone();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
@@ -2584,357 +2792,33 @@ impl SynthApp {
         editor.add_module(next_id, descriptor);
     }
 
-    /// Draw the instrument control strip above the piano keyboard.
-    /// Contains: instrument selector, MIDI channel, vol, pan, solo, mute, glide, module/connection counts.
-    fn draw_instrument_strip(&mut self, ui: &mut egui::Ui) {
-        use egui_remixicon::icons as ri;
-
-        let t = theme();
-
-        ui.horizontal(|ui| {
-            // Use small font for all widgets in the strip
-            ui.style_mut().text_styles.insert(
-                egui::TextStyle::Body,
-                egui::FontId::proportional(t.fonts.size_small),
-            );
-            ui.style_mut().text_styles.insert(
-                egui::TextStyle::Button,
-                egui::FontId::proportional(t.fonts.size_small),
-            );
-
-            // Instrument selector dropdown
-            let active_name = self
-                .active_instrument_id
-                .and_then(|id| self.instruments.iter().find(|i| i.id == id))
-                .map(|i| i.name.as_str())
-                .unwrap_or("(none)");
-            let menu_label = RichText::new(format!(
-                "{} {active_name} {}",
-                ri::MUSIC_2_FILL,
-                ri::ARROW_DOWN_S_FILL
-            ))
-            .color(t.colors.accent_cyan)
-            .size(t.fonts.size_small);
-            ui.menu_button(menu_label, |ui| {
-                // New Instrument option at the top
-                if ui
-                    .button(
-                        RichText::new(format!("{} New Instrument", ri::ADD_LINE))
-                            .color(t.colors.accent_green),
-                    )
-                    .clicked()
-                {
-                    self.add_new_instrument();
-                    ui.close();
-                }
-
-                ui.separator();
-
-                if self.instruments.is_empty() {
-                    ui.label(RichText::new("No instruments").color(t.colors.text_dim));
-                } else {
-                    for inst in &self.instruments {
-                        let is_active = Some(inst.id) == self.active_instrument_id;
-                        let label = if is_active {
-                            RichText::new(format!(
-                                "{} {}",
-                                ri::CHECKBOX_BLANK_CIRCLE_FILL,
-                                inst.name
-                            ))
-                            .color(t.colors.accent_cyan)
-                        } else {
-                            RichText::new(format!("  {}", inst.name))
-                        };
-                        if ui.button(label).clicked() {
-                            self.active_instrument_id = Some(inst.id);
-                            self.handle.set_focused_instrument(Some(inst.id));
-                            ui.close();
-                        }
-                    }
-                }
-            });
-            ui.separator();
-
-            // Find the active instrument index for modifying controls
-            let active_idx = self
-                .active_instrument_id
-                .and_then(|id| self.instruments.iter().position(|i| i.id == id));
-
-            if let Some(idx) = active_idx {
-                let instrument_id = self.instruments[idx].id;
-
-                // MIDI Channel dropdown
-                let channel = self.instruments[idx].channel;
-                let channel_label = if channel.is_omni() {
-                    "Omni".to_string()
-                } else {
-                    format!("Ch {}", channel.as_one_indexed())
-                };
-                egui::ComboBox::from_id_salt("strip_midi_ch")
-                    .selected_text(RichText::new(&channel_label).size(t.fonts.size_small))
-                    .width(50.0)
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_label(channel.is_omni(), "Omni").clicked() {
-                            self.instruments[idx].channel = MidiChannel::OMNI;
-                            self.handle.send(EngineCommand::SetInstrumentMidiChannel {
-                                instrument_id,
-                                channel: MidiChannel::OMNI,
-                            });
-                        }
-                        for ch in 1..=16u8 {
-                            let Some(midi_ch) = MidiChannel::from_one_indexed(ch) else {
-                                continue;
-                            };
-                            let is_selected = !channel.is_omni() && channel.as_one_indexed() == ch;
-                            if ui
-                                .selectable_label(is_selected, format!("Ch {ch}"))
-                                .clicked()
-                            {
-                                self.instruments[idx].channel = midi_ch;
-                                self.handle.send(EngineCommand::SetInstrumentMidiChannel {
-                                    instrument_id,
-                                    channel: midi_ch,
-                                });
-                            }
-                        }
-                    })
-                    .response
-                    .on_hover_text("MIDI channel for this instrument");
-                ui.separator();
-
-                // Volume slider
-                let muted = self.instruments[idx].muted;
-                ui.label(
-                    RichText::new("Vol:")
-                        .color(t.colors.text_dim)
-                        .size(t.fonts.size_small),
-                );
-                let mut vol = self.instruments[idx].volume.as_f32();
-                let vol_response = ui
-                    .add(
-                        egui::Slider::new(&mut vol, 0.0..=1.0)
-                            .fixed_decimals(2)
-                            .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
-                    )
-                    .on_hover_text("Instrument volume");
-                if vol_response.changed() && !muted {
-                    self.instruments[idx].set_volume(synth_core::Gain::new(vol));
-                    self.handle.send(EngineCommand::SetInstrumentParameter {
-                        instrument_id,
-                        param: synth_engine::InstrumentParam::Volume(self.instruments[idx].volume),
-                    });
-                }
-
-                // Pan slider
-                ui.label(
-                    RichText::new("Pan:")
-                        .color(t.colors.text_dim)
-                        .size(t.fonts.size_small),
-                );
-                let current_pan = self.instruments[idx].pan.as_f32();
-                let mut pan = current_pan;
-                let pan_response = ui
-                    .add(
-                        egui::Slider::new(&mut pan, -1.0..=1.0)
-                            .fixed_decimals(2)
-                            .custom_formatter(|v, _| {
-                                if v.abs() < 0.01 {
-                                    "C".to_string()
-                                } else if v < 0.0 {
-                                    format!("L{:.0}", -v * 100.0)
-                                } else {
-                                    format!("R{:.0}", v * 100.0)
-                                }
-                            }),
-                    )
-                    .on_hover_text("Stereo pan position");
-                if pan_response.changed() {
-                    self.instruments[idx].pan = synth_core::BipolarValue::new(pan);
-                    self.handle.send(EngineCommand::SetInstrumentParameter {
-                        instrument_id,
-                        param: synth_engine::InstrumentParam::Pan(self.instruments[idx].pan),
-                    });
-                }
-
-                // Solo button
-                if ui
-                    .add(
-                        egui::Button::new(
-                            RichText::new("S")
-                                .color(t.colors.accent_yellow)
-                                .size(t.fonts.size_small),
-                        )
-                        .min_size(egui::vec2(24.0, 24.0)),
-                    )
-                    .on_hover_text("Solo: mute all other instruments")
-                    .clicked()
-                {
-                    for (i, inst) in self.instruments.iter_mut().enumerate() {
-                        if i == idx {
-                            if inst.muted {
-                                let vol = inst.toggle_mute();
-                                self.handle.send(EngineCommand::SetInstrumentParameter {
-                                    instrument_id: inst.id,
-                                    param: synth_engine::InstrumentParam::Volume(vol),
-                                });
-                            }
-                        } else if !inst.muted {
-                            let vol = inst.toggle_mute();
-                            self.handle.send(EngineCommand::SetInstrumentParameter {
-                                instrument_id: inst.id,
-                                param: synth_engine::InstrumentParam::Volume(vol),
-                            });
-                        }
-                    }
-                }
-
-                // Mute button
-                let mute_color = if muted {
-                    t.colors.accent_red
-                } else {
-                    t.colors.text_dim
-                };
-                if ui
-                    .add(
-                        egui::Button::new(
-                            RichText::new("M")
-                                .color(mute_color)
-                                .size(t.fonts.size_small),
-                        )
-                        .min_size(egui::vec2(24.0, 24.0)),
-                    )
-                    .on_hover_text("Mute this instrument")
-                    .clicked()
-                {
-                    let new_volume = self.instruments[idx].toggle_mute();
-                    self.handle.send(EngineCommand::SetInstrumentParameter {
-                        instrument_id,
-                        param: synth_engine::InstrumentParam::Volume(new_volume),
-                    });
-                }
-
-                // Transpose
-                ui.label(
-                    RichText::new("Trans:")
-                        .color(t.colors.text_dim)
-                        .size(t.fonts.size_small),
-                );
-                let mut transpose = self.instruments[idx].transpose.as_f32().round() as i32;
-                let trans_response = ui
-                    .add(
-                        egui::DragValue::new(&mut transpose)
-                            .range(-24..=24)
-                            .speed(0.1)
-                            .suffix(" st"),
-                    )
-                    .on_hover_text("Transpose in semitones (-24 to +24)");
-                if trans_response.changed() {
-                    let new_transpose = synth_core::Semitones::new(transpose.clamp(-24, 24) as f32);
-                    self.instruments[idx].transpose = new_transpose;
-                    self.handle.send(EngineCommand::SetInstrumentParameter {
-                        instrument_id,
-                        param: synth_engine::InstrumentParam::Transpose(new_transpose),
-                    });
-                }
-
-                // Oversampling
-                ui.label(
-                    RichText::new("OS:")
-                        .color(t.colors.text_dim)
-                        .size(t.fonts.size_small),
-                );
-                let current_os = self.instruments[idx].oversampling;
-                egui::ComboBox::from_id_salt("strip_os")
-                    .selected_text(RichText::new(current_os.name()).size(t.fonts.size_small))
-                    .width(40.0)
-                    .show_ui(ui, |ui| {
-                        for factor in synth_dsp::OversamplingFactor::ALL {
-                            if ui
-                                .selectable_label(current_os == factor, factor.name())
-                                .clicked()
-                            {
-                                self.instruments[idx].oversampling = factor;
-                                self.handle.send(EngineCommand::SetInstrumentParameter {
-                                    instrument_id,
-                                    param: synth_engine::InstrumentParam::OversamplingFactor(
-                                        factor,
-                                    ),
-                                });
-                            }
-                        }
-                    })
-                    .response
-                    .on_hover_text("Oversampling factor (reduces aliasing)");
-
-                ui.separator();
-
-                // Glide slider
-                ui.label(
-                    RichText::new("Glide:")
-                        .color(t.colors.text_dim)
-                        .size(t.fonts.size_small),
-                );
-                let mut glide_val = self.glide_time.as_f32();
-                let glide_response = ui
-                    .add(
-                        egui::Slider::new(&mut glide_val, 0.0..=2.0)
-                            .suffix(" s")
-                            .fixed_decimals(2)
-                            .custom_formatter(|v, _| {
-                                if v < 0.001 {
-                                    "Off".to_string()
-                                } else {
-                                    format!("{v:.2}s")
-                                }
-                            }),
-                    )
-                    .on_hover_text("Portamento glide time between notes");
-                if glide_response.changed() {
-                    self.glide_time = synth_core::Seconds::new(glide_val);
-                    self.handle
-                        .send(EngineCommand::SetGlideTime(self.glide_time));
-                }
-
-                ui.separator();
-
-                // Module and connection counts (only meaningful in Rack view)
-                let (conn_count, module_count) = self
-                    .active_patch_editor_ref()
-                    .map(|e| (e.connections().len(), e.module_ids().len()))
-                    .unwrap_or((0, 0));
-                ui.label(
-                    RichText::new(format!("M:{module_count} C:{conn_count}"))
-                        .color(t.colors.text_dim)
-                        .size(t.fonts.size_small),
-                )
-                .on_hover_text("Modules and connections in current patch");
-            }
-        });
-    }
-
     fn draw_keyboard(&mut self, ui: &mut egui::Ui) {
         // Always use CH1 for keyboard input - focused_instrument handles routing
         let active_channel = MidiChannel::CH1;
 
-        // Layout: [Left Scope] [Piano Keys] [Right Scope] [Meter] [margin]
+        // Layout: [Left Scope] [Piano Keys] [Right Scope] [Meter]
+        // The horizontal row sets item_spacing to 0 so scopes sit flush
+        // against the keyboard and the meter — no extra slack to budget for.
+        //
+        // Sizing strategy: reserve a minimum width for each scope first
+        // and give the piano only the leftover. Whatever the piano
+        // doesn't claim (rounding down to whole octaves) flows back to
+        // the scopes as extra width.
         let available_width = ui.available_width();
         let meter_width = 30.0;
-        let meter_margin = 24.0;
-        let item_spacing = ui.spacing().item_spacing.x;
-        let keys_height = 130.0;
+        let scope_min_width = 128.0;
+        let keys_height = 100.0;
 
-        // Estimate spacings (max 3 gaps: between ScopeL-Piano, Piano-ScopeR, ScopeR-Meter)
-        let max_spacings = 3.0 * item_spacing;
-
-        // Piano: calculate octaves that fit, then its exact width
+        // Piano: calculate octaves that fit in the leftover after reserving
+        // space for both scopes and the meter.
         use crate::gui::keyboard::PianoKeyboard;
-        let piano_budget = available_width - meter_width - meter_margin - max_spacings;
+        let piano_budget = available_width - meter_width - 2.0 * scope_min_width;
         let num_octaves = PianoKeyboard::octaves_for_width(piano_budget.max(0.0));
         let piano_width = PianoKeyboard::width_for_octaves(num_octaves);
 
-        // Scopes share remaining space equally
-        let scope_total =
-            (available_width - piano_width - meter_width - meter_margin - max_spacings).max(0.0);
+        // Scopes share everything that's left equally — they grow beyond
+        // scope_min_width whenever the piano didn't use its full budget.
+        let scope_total = (available_width - piano_width - meter_width).max(0.0);
         let min_scope_width = 40.0;
         let show_scopes = scope_total >= min_scope_width * 2.0;
         let scope_width = if show_scopes { scope_total / 2.0 } else { 0.0 };
@@ -2959,6 +2843,10 @@ impl SynthApp {
         let (rms_l, rms_r) = (rms_l.as_f32(), rms_r.as_f32());
 
         ui.horizontal(|ui| {
+            // Keep scopes and meter flush against the keyboard — no item spacing
+            // between widgets in this row.
+            ui.spacing_mut().item_spacing.x = 0.0;
+
             if show_scopes {
                 draw_oscilloscope(
                     ui,
@@ -2971,25 +2859,15 @@ impl SynthApp {
             }
 
             ui.allocate_ui(Vec2::new(piano_width, keys_height), |ui| {
-                ui.vertical(|ui| {
-                    // Instrument strip + octave controls above piano keys
-                    ui.horizontal(|ui| {
-                        self.draw_instrument_strip(ui);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            self.keyboard.show_header(ui);
-                        });
-                    });
+                let event = self.keyboard.show_keys(ui);
 
-                    let event = self.keyboard.show_keys(ui);
-
-                    if let Some(note) = event.note_on {
-                        self.handle
-                            .note_on_channel(note, Velocity::new(0.8), active_channel);
-                    }
-                    for note in event.note_off {
-                        self.handle.note_off_channel(note, active_channel);
-                    }
-                });
+                if let Some(note) = event.note_on {
+                    self.handle
+                        .note_on_channel(note, Velocity::new(0.8), active_channel);
+                }
+                for note in event.note_off {
+                    self.handle.note_off_channel(note, active_channel);
+                }
             });
 
             if show_scopes {
@@ -3005,7 +2883,6 @@ impl SynthApp {
 
             // Vertical stereo level meter
             draw_stereo_meter(ui, peak_l, peak_r, rms_l, rms_r, meter_width, keys_height);
-            ui.add_space(meter_margin);
         });
 
         // Return buffers to self so their capacity is reused next frame
@@ -3055,6 +2932,470 @@ impl SynthApp {
         }
         self.analyze_window
             .show(ctx, &self.session, &self.sample_library);
+    }
+
+    /// Floating window for editing project / song metadata: song name,
+    /// song author, default tempo, default time signature, and the
+    /// project-level `Author` (name / email / website / license).
+    /// Live-mutates `self.song` and `self.current_project_author`.
+    fn render_project_edit_window(&mut self, ctx: &egui::Context) {
+        use egui_remixicon::icons as ri;
+
+        if !self.project_edit_open {
+            return;
+        }
+
+        let t = theme();
+        let mut open = true;
+        let mut song_changed = false;
+        let mut author_changed = false;
+        let mut send_tempo: Option<synth_core::Bpm> = None;
+
+        egui::Window::new(format!("{} Project Info", ri::EDIT_LINE))
+            .id(egui::Id::new("project_edit_window"))
+            .open(&mut open)
+            .resizable(true)
+            .vscroll(true)
+            .default_size([420.0, 520.0])
+            .show(ctx, |ui| {
+                // Song-level fields ----------------------------------------------------
+                {
+                    let mut song = self.song.write();
+
+                    ui.label(RichText::new("Song name").color(t.colors.text_dim));
+                    if ui.text_edit_singleline(&mut song.name).changed() {
+                        song_changed = true;
+                    }
+
+                    ui.add_space(8.0);
+
+                    ui.label(RichText::new("Song author").color(t.colors.text_dim));
+                    if ui.text_edit_singleline(&mut song.author).changed() {
+                        song_changed = true;
+                    }
+
+                    ui.add_space(8.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Tempo (BPM)").color(t.colors.text_dim));
+                        let mut bpm = song.default_tempo.as_f32();
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut bpm)
+                                    .range(20.0..=300.0)
+                                    .speed(0.5)
+                                    .fixed_decimals(1),
+                            )
+                            .changed()
+                        {
+                            let clamped = bpm.clamp(20.0, 300.0);
+                            let new_bpm = synth_core::Bpm::new(clamped);
+                            song.default_tempo = new_bpm;
+                            send_tempo = Some(new_bpm);
+                            song_changed = true;
+                        }
+                    });
+
+                    ui.add_space(8.0);
+
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Time signature").color(t.colors.text_dim));
+                        let mut num = song.default_time_signature.numerator as i32;
+                        if ui
+                            .add(egui::DragValue::new(&mut num).range(1..=32).speed(0.1))
+                            .changed()
+                        {
+                            song.default_time_signature.numerator = num.clamp(1, 32) as u8;
+                            song_changed = true;
+                        }
+                        ui.label("/");
+                        let current_den = song.default_time_signature.denominator;
+                        egui::ComboBox::from_id_salt("project_edit_time_sig_den")
+                            .selected_text(current_den.to_string())
+                            .width(60.0)
+                            .show_ui(ui, |ui| {
+                                for d in [1u8, 2, 4, 8, 16, 32] {
+                                    if ui
+                                        .selectable_label(current_den == d, d.to_string())
+                                        .clicked()
+                                        && song.default_time_signature.denominator != d
+                                    {
+                                        song.default_time_signature.denominator = d;
+                                        song_changed = true;
+                                    }
+                                }
+                            });
+                    });
+                } // <- release song write lock before touching other self fields
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                // Project author (Author struct) --------------------------------------
+                ui.label(RichText::new("Project Author").color(t.colors.text_primary));
+                ui.add_space(4.0);
+
+                ui.label(RichText::new("Name").color(t.colors.text_dim));
+                if ui
+                    .text_edit_singleline(&mut self.current_project_author.name)
+                    .changed()
+                {
+                    author_changed = true;
+                }
+
+                ui.add_space(6.0);
+
+                ui.label(RichText::new("Email").color(t.colors.text_dim));
+                if ui
+                    .text_edit_singleline(&mut self.current_project_author.email)
+                    .changed()
+                {
+                    author_changed = true;
+                }
+
+                ui.add_space(6.0);
+
+                ui.label(RichText::new("Website").color(t.colors.text_dim));
+                if ui
+                    .text_edit_singleline(&mut self.current_project_author.website)
+                    .changed()
+                {
+                    author_changed = true;
+                }
+
+                ui.add_space(6.0);
+
+                ui.label(RichText::new("License").color(t.colors.text_dim));
+                if ui
+                    .text_edit_singleline(&mut self.current_project_author.license)
+                    .changed()
+                {
+                    author_changed = true;
+                }
+            });
+
+        if !open {
+            self.project_edit_open = false;
+        }
+        if let Some(tempo) = send_tempo {
+            self.handle.send(EngineCommand::SetTempo(tempo));
+        }
+        if song_changed || author_changed {
+            self.mark_dirty();
+        }
+    }
+
+    /// Floating window for editing an instrument's basic settings
+    /// (identity + the performance controls also shown in the strip
+    /// above the keyboard). Live-mutates the `InstrumentUiState` and
+    /// forwards engine-relevant changes to the session/handle. Closed
+    /// via the window X or when the target instrument no longer exists.
+    fn render_instrument_edit_window(&mut self, ctx: &egui::Context) {
+        use egui_remixicon::icons as ri;
+        use synth_engine::InstrumentCategory;
+
+        let Some(target_id) = self.instrument_edit_target else {
+            return;
+        };
+        let Some(idx) = self.instruments.iter().position(|i| i.id == target_id) else {
+            self.instrument_edit_target = None;
+            return;
+        };
+
+        let t = theme();
+        let title = format!(
+            "{} Edit instrument: {}",
+            ri::EDIT_LINE,
+            self.instruments[idx].name
+        );
+
+        let mut open = true;
+        let mut name_changed = false;
+        let mut category_changed = false;
+        let mut other_changed = false;
+        let mut send_midi_channel: Option<MidiChannel> = None;
+        let mut send_volume = false;
+        let mut send_pan = false;
+        let mut send_transpose = false;
+        let mut send_oversampling = false;
+
+        egui::Window::new(title)
+            .id(egui::Id::new((
+                "instrument_edit_window",
+                target_id.as_u64(),
+            )))
+            .open(&mut open)
+            .resizable(true)
+            .vscroll(true)
+            .default_size([400.0, 560.0])
+            .show(ctx, |ui| {
+                let inst = &mut self.instruments[idx];
+
+                ui.label(RichText::new("Name").color(t.colors.text_dim));
+                if ui.text_edit_singleline(&mut inst.name).changed() {
+                    name_changed = true;
+                }
+
+                ui.add_space(8.0);
+
+                ui.label(RichText::new("Category").color(t.colors.text_dim));
+                let mut cat = inst.category;
+                egui::ComboBox::from_id_salt("instrument_edit_category")
+                    .selected_text(cat.name())
+                    .show_ui(ui, |ui| {
+                        for variant in [
+                            InstrumentCategory::Uncategorized,
+                            InstrumentCategory::Drums,
+                            InstrumentCategory::Bass,
+                            InstrumentCategory::Pad,
+                            InstrumentCategory::Lead,
+                            InstrumentCategory::Arp,
+                            InstrumentCategory::Keys,
+                            InstrumentCategory::FX,
+                        ] {
+                            ui.selectable_value(&mut cat, variant, variant.name());
+                        }
+                    });
+                if cat != inst.category {
+                    inst.category = cat;
+                    category_changed = true;
+                }
+
+                ui.add_space(8.0);
+
+                ui.label(RichText::new("Description").color(t.colors.text_dim));
+                if ui
+                    .add(
+                        egui::TextEdit::multiline(&mut inst.description)
+                            .desired_rows(4)
+                            .desired_width(f32::INFINITY),
+                    )
+                    .changed()
+                {
+                    other_changed = true;
+                }
+
+                ui.add_space(8.0);
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Color").color(t.colors.text_dim));
+                    let mut color = inst
+                        .color
+                        .as_deref()
+                        .and_then(crate::gui::patch_editor::parse_hex_color)
+                        .unwrap_or(Color32::from_rgba_unmultiplied(128, 128, 128, 255));
+                    if egui::color_picker::color_edit_button_srgba(
+                        ui,
+                        &mut color,
+                        egui::color_picker::Alpha::BlendOrAdditive,
+                    )
+                    .changed()
+                    {
+                        inst.color = Some(crate::gui::patch_editor::color32_to_hex(color));
+                        other_changed = true;
+                    }
+                    if inst.color.is_some() && ui.button("Clear").clicked() {
+                        inst.color = None;
+                        other_changed = true;
+                    }
+                });
+
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+
+                // ── Performance controls (mirrors the strip above the keyboard) ──
+
+                // MIDI channel
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("MIDI Channel").color(t.colors.text_dim));
+                    let channel = inst.channel;
+                    let channel_label = if channel.is_omni() {
+                        "Omni".to_string()
+                    } else {
+                        format!("Ch {}", channel.as_one_indexed())
+                    };
+                    egui::ComboBox::from_id_salt("instrument_edit_midi_ch")
+                        .selected_text(channel_label)
+                        .width(80.0)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(channel.is_omni(), "Omni").clicked() {
+                                inst.channel = MidiChannel::OMNI;
+                                send_midi_channel = Some(MidiChannel::OMNI);
+                            }
+                            for ch in 1..=16u8 {
+                                let Some(midi_ch) = MidiChannel::from_one_indexed(ch) else {
+                                    continue;
+                                };
+                                let is_selected =
+                                    !channel.is_omni() && channel.as_one_indexed() == ch;
+                                if ui
+                                    .selectable_label(is_selected, format!("Ch {ch}"))
+                                    .clicked()
+                                {
+                                    inst.channel = midi_ch;
+                                    send_midi_channel = Some(midi_ch);
+                                }
+                            }
+                        });
+                });
+
+                ui.add_space(6.0);
+
+                // Volume + Mute + Solo on one row
+                let muted = inst.muted;
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Volume").color(t.colors.text_dim));
+                    let mut vol = inst.volume.as_f32();
+                    let vol_resp = ui
+                        .add(
+                            egui::Slider::new(&mut vol, 0.0..=1.0)
+                                .fixed_decimals(2)
+                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                        )
+                        .on_hover_text("Instrument volume");
+                    if vol_resp.changed() && !muted {
+                        inst.set_volume(synth_core::Gain::new(vol));
+                        send_volume = true;
+                    }
+                });
+
+                ui.add_space(6.0);
+
+                // Pan slider
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Pan").color(t.colors.text_dim));
+                    let mut pan = inst.pan.as_f32();
+                    let resp = ui
+                        .add(
+                            egui::Slider::new(&mut pan, -1.0..=1.0)
+                                .fixed_decimals(2)
+                                .custom_formatter(|v, _| {
+                                    if v.abs() < 0.01 {
+                                        "C".to_string()
+                                    } else if v < 0.0 {
+                                        format!("L{:.0}", -v * 100.0)
+                                    } else {
+                                        format!("R{:.0}", v * 100.0)
+                                    }
+                                }),
+                        )
+                        .on_hover_text("Stereo pan position");
+                    if resp.changed() {
+                        inst.pan = synth_core::BipolarValue::new(pan);
+                        send_pan = true;
+                    }
+                });
+
+                ui.add_space(6.0);
+
+                // Transpose
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Transpose").color(t.colors.text_dim));
+                    let mut transpose = inst.transpose.as_f32().round() as i32;
+                    let resp = ui
+                        .add(
+                            egui::DragValue::new(&mut transpose)
+                                .range(-24..=24)
+                                .speed(0.1)
+                                .suffix(" st"),
+                        )
+                        .on_hover_text("Transpose in semitones (-24 to +24)");
+                    if resp.changed() {
+                        let new_transpose =
+                            synth_core::Semitones::new(transpose.clamp(-24, 24) as f32);
+                        inst.transpose = new_transpose;
+                        send_transpose = true;
+                    }
+                });
+
+                ui.add_space(6.0);
+
+                // Oversampling
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Oversampling").color(t.colors.text_dim));
+                    let current_os = inst.oversampling;
+                    egui::ComboBox::from_id_salt("instrument_edit_os")
+                        .selected_text(current_os.name())
+                        .width(80.0)
+                        .show_ui(ui, |ui| {
+                            for factor in synth_dsp::OversamplingFactor::ALL {
+                                if ui
+                                    .selectable_label(current_os == factor, factor.name())
+                                    .clicked()
+                                {
+                                    inst.oversampling = factor;
+                                    send_oversampling = true;
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text("Oversampling factor (reduces aliasing)");
+                });
+            });
+
+        if !open {
+            self.instrument_edit_target = None;
+        }
+
+        if name_changed {
+            let new_name = self.instruments[idx].name.clone();
+            if let Err(e) = self.session.rename_instrument(target_id, &new_name) {
+                eprintln!("Failed to rename instrument {target_id:?}: {e}");
+            }
+        }
+        if category_changed {
+            let cat = self.instruments[idx].category;
+            if let Err(e) = self.session.set_instrument_category(target_id, cat) {
+                eprintln!("Failed to set instrument category {target_id:?}: {e}");
+            }
+        }
+        if let Some(channel) = send_midi_channel {
+            self.handle.send(EngineCommand::SetInstrumentMidiChannel {
+                instrument_id: target_id,
+                channel,
+            });
+        }
+        if send_volume {
+            let volume = self.instruments[idx].volume;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: target_id,
+                param: synth_engine::InstrumentParam::Volume(volume),
+            });
+        }
+        if send_pan {
+            let pan = self.instruments[idx].pan;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: target_id,
+                param: synth_engine::InstrumentParam::Pan(pan),
+            });
+        }
+        if send_transpose {
+            let transpose = self.instruments[idx].transpose;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: target_id,
+                param: synth_engine::InstrumentParam::Transpose(transpose),
+            });
+        }
+        if send_oversampling {
+            let os = self.instruments[idx].oversampling;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: target_id,
+                param: synth_engine::InstrumentParam::OversamplingFactor(os),
+            });
+        }
+        if name_changed
+            || category_changed
+            || other_changed
+            || send_midi_channel.is_some()
+            || send_volume
+            || send_pan
+            || send_transpose
+            || send_oversampling
+        {
+            self.mark_dirty();
+        }
     }
 
     /// Handle Ctrl+Z (undo) and Ctrl+Shift+Z (redo) keyboard shortcuts.
@@ -4311,6 +4652,9 @@ impl SynthApp {
                     key_range: (inst.key_range.low.as_u8(), inst.key_range.high.as_u8()),
                     transpose: inst.transpose,
                     oversampling: inst.oversampling.factor() as u8,
+                    category: inst.category.as_u8(),
+                    description: inst.description.clone(),
+                    color: inst.color.clone(),
                     patch,
                 }
             })
@@ -4330,10 +4674,10 @@ impl SynthApp {
             awe_preset: None,
         };
 
-        let author = if self.settings.author.is_empty() {
+        let author = if self.current_project_author.is_empty() {
             None
         } else {
-            Some(self.settings.author.clone())
+            Some(self.current_project_author.clone())
         };
 
         ProjectFile::new(
@@ -4484,10 +4828,19 @@ impl SynthApp {
                 4 => synth_dsp::OversamplingFactor::X4,
                 _ => synth_dsp::OversamplingFactor::X1,
             };
+            ui_inst.category = synth_engine::InstrumentCategory::from_u8(inst_state.category);
+            ui_inst.description = inst_state.description.clone();
+            ui_inst.color = inst_state.color.clone();
 
             // Send engine commands for instrument parameters
             if let Err(e) = self.session.rename_instrument(inst_id, &inst_state.name) {
                 eprintln!("Failed to rename instrument {inst_id:?}: {e}");
+            }
+            if let Err(e) = self
+                .session
+                .set_instrument_category(inst_id, ui_inst.category)
+            {
+                eprintln!("Failed to set instrument category {inst_id:?}: {e}");
             }
             if let Err(e) = self
                 .session
@@ -4538,6 +4891,12 @@ impl SynthApp {
             let mut song = self.song.write();
             *song = project.song;
         }
+
+        // Project-level author: use the value stored in the file, falling
+        // back to the global default identity from settings.
+        self.current_project_author = project
+            .author
+            .unwrap_or_else(|| self.settings.author.clone());
 
         // 6. Restore global state
         self.handle

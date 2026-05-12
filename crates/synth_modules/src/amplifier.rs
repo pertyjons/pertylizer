@@ -107,26 +107,27 @@ impl Describable for Amplifier {
             )
             .port(
                 PortDescriptor::audio_input("in", "In")
-                    .description("Mono-ingång. Koppla: Oscillator Out, Filter Out, annan modul"),
+                    .description("Mono input. Connect: Oscillator Out, Filter Out, another module"),
             )
             .port(
                 PortDescriptor::audio_input("in_l", "In L")
-                    .description("Vänster kanal. Koppla: Oscillator Out L"),
+                    .description("Left channel. Connect: Oscillator Out L"),
             )
             .port(
                 PortDescriptor::audio_input("in_r", "In R")
-                    .description("Höger kanal. Koppla: Oscillator Out R"),
+                    .description("Right channel. Connect: Oscillator Out R"),
             )
             .port(
-                PortDescriptor::control_input("cv", "CV")
-                    .description("Styr volymen. Koppla: Envelope för dynamik, LFO för tremolo"),
+                PortDescriptor::control_input("cv", "CV").description(
+                    "Controls volume. Connect: Envelope for dynamics, LFO for tremolo",
+                ),
             )
             .port(
                 PortDescriptor::control_input("pan_cv", "Pan CV")
-                    .description("Styr panorering. Koppla: LFO för auto-pan, Envelope"),
+                    .description("Controls panning. Connect: LFO for auto-pan, Envelope"),
             )
-            .port(PortDescriptor::audio_output("left", "L").description("Vänster output"))
-            .port(PortDescriptor::audio_output("right", "R").description("Höger output"))
+            .port(PortDescriptor::audio_output("left", "L").description("Left output"))
+            .port(PortDescriptor::audio_output("right", "R").description("Right output"))
             .port(PortDescriptor::audio_output("out", "Out").description("Mono output (L+R)"))
     }
 }
@@ -328,7 +329,7 @@ impl Describable for Mixer {
             desc = desc
                 .port(
                     PortDescriptor::audio_input(format!("in{n}"), format!("In {n}")).description(
-                        "Audio-ingång. Koppla: Oscillator, Filter, eller annan ljudkälla",
+                        "Audio input. Connect: Oscillator, Filter, or another sound source",
                     ),
                 )
                 .parameter(

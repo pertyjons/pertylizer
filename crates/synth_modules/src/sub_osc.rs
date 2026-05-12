@@ -129,7 +129,7 @@ impl Describable for SubOscillator {
             )
             .port(
                 PortDescriptor::audio_output("out", "Out").description(
-                    "Sub-oscillator output. Koppla till: Amplifier In, Filter In, Mixer",
+                    "Sub-oscillator output. Connect to: Amplifier In, Filter In, Mixer",
                 ),
             )
     }

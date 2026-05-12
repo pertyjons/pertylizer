@@ -152,11 +152,11 @@ impl Describable for LaSynth {
             .tag("transient")
             .port(
                 PortDescriptor::audio_input("in", "In")
-                    .description("Sustain signal input. Koppla: Oscillator Out, Wavetable Out"),
+                    .description("Sustain signal input. Connect: Oscillator Out, Wavetable Out"),
             )
             .port(
                 PortDescriptor::audio_output("out", "Out").description(
-                    "Output with attack transient. Koppla till: Filter In, Amplifier In",
+                    "Output with attack transient. Connect to: Filter In, Amplifier In",
                 ),
             )
             .parameter(

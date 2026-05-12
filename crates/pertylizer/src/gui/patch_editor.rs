@@ -82,7 +82,7 @@ fn collapsed_group_size(group: &ModuleGroup) -> Vec2 {
     Vec2::new(width, height)
 }
 
-fn parse_hex_color(hex: &str) -> Option<Color32> {
+pub(crate) fn parse_hex_color(hex: &str) -> Option<Color32> {
     let s = hex.trim_start_matches('#');
     let bytes = match s.len() {
         6 => u32::from_str_radix(s, 16).ok().map(|v| (v << 8) | 0xFF),
@@ -96,7 +96,7 @@ fn parse_hex_color(hex: &str) -> Option<Color32> {
     Some(Color32::from_rgba_unmultiplied(r, g, b, a))
 }
 
-fn color32_to_hex(color: Color32) -> HexColor {
+pub(crate) fn color32_to_hex(color: Color32) -> HexColor {
     format!(
         "#{:02X}{:02X}{:02X}{:02X}",
         color.r(),

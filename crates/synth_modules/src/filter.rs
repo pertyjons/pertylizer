@@ -300,19 +300,19 @@ impl Describable for Filter {
             )
             .port(
                 PortDescriptor::audio_input("in", "In").description(
-                    "Audio att filtrera. Koppla: Oscillator Out, Noise Out, Mixer Out",
+                    "Audio to filter. Connect: Oscillator Out, Noise Out, Mixer Out",
                 ),
             )
             .port(
                 PortDescriptor::control_input("cutoff_cv", "Cutoff CV").description(
-                    "Modulerar cutoff-frekvens. Koppla: Envelope för filter-sweep, LFO för wah-wah",
+                    "Modulates cutoff frequency. Connect: Envelope for filter sweep, LFO for wah-wah",
                 ),
             )
             .port(
                 PortDescriptor::control_input("res_cv", "Res CV")
-                    .description("Modulerar resonans. Koppla: LFO, Envelope"),
+                    .description("Modulates resonance. Connect: LFO, Envelope"),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description("Filtrerad output"))
+            .port(PortDescriptor::audio_output("out", "Out").description("Filtered output"))
     }
 }
 
@@ -575,14 +575,14 @@ impl Describable for LadderFilter {
             )
             .port(
                 PortDescriptor::audio_input("in", "In")
-                    .description("Audio att filtrera. Koppla: Oscillator Out, Noise Out"),
+                    .description("Audio to filter. Connect: Oscillator Out, Noise Out"),
             )
             .port(
                 PortDescriptor::control_input("cutoff_cv", "Cutoff CV").description(
-                    "Modulerar cutoff-frekvens. Koppla: Envelope för filter-sweep, LFO för wah-wah",
+                    "Modulates cutoff frequency. Connect: Envelope for filter sweep, LFO for wah-wah",
                 ),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description("Filtrerad output"))
+            .port(PortDescriptor::audio_output("out", "Out").description("Filtered output"))
     }
 }
 

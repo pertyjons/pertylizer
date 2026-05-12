@@ -198,12 +198,12 @@ impl Describable for AdditiveOsc {
             )
             .port(
                 PortDescriptor::control_input("freq_cv", "Freq CV").description(
-                    "Modulerar tonhöjden (1V/oct). Koppla: LFO, Envelope, Kinetic Modulator",
+                    "Modulates pitch (1V/oct). Connect: LFO, Envelope, Kinetic Modulator",
                 ),
             )
             .port(
                 PortDescriptor::audio_output("out", "Out")
-                    .description("Additiv output. Koppla till: Amplifier In, Filter In"),
+                    .description("Additive output. Connect to: Amplifier In, Filter In"),
             )
     }
 }

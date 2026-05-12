@@ -1,5 +1,125 @@
 # Version History
 
+## [0.279.0] - 2026-05-12
+### Instrument metadata + edit windows, bottom status bar, GNOME CSD, English module descriptions, round-2 inference
+
+#### Instrument metadata fields + edit window
+
+`InstrumentState` (and its `InstrumentUiState` mirror) gain three persisted
+fields used by both the GUI and upcoming MCP work:
+
+- `category: u8` — `InstrumentCategory::as_u8()` value. `0` = Uncategorized.
+  Replaces the implicit reliance on `set_instrument_category` for routing
+  hints; loading a project now restores the category the user picked.
+- `description: String` — free-text intent ("verse bass, sub-heavy"). Empty
+  strings are skipped on serialize.
+- `color: Option<HexColor>` — optional accent color (`"#RRGGBBAA"`). The
+  `parse_hex_color` / `color32_to_hex` helpers in `gui/patch_editor.rs` are
+  now `pub(crate)` so other GUI panels share the same parsing rules.
+
+New floating instrument edit window (`render_instrument_edit_window`) lets
+the user change name, category, description, color, MIDI channel, volume,
+mute/solo, pan, transpose, and oversampling from a single dialog. Opened
+via a pencil button next to the instrument selector (works from any view,
+disabled when no instrument is selected). Engine-relevant changes route
+through `EngineHandle` immediately; metadata-only changes update the
+`InstrumentUiState` and the project file.
+
+#### Project info edit window
+
+New floating project edit window (`render_project_edit_window`) edits the
+song title, song author, default tempo, default time signature, plus the
+project-level `Author` (name / email / website / license). Opened by
+double-clicking the song title in the toolbar. The author block is
+seeded from `AppSettings.author` for new projects, overridden from disk
+on load, and persisted on save.
+
+#### Bottom status bar + keyboard layout
+
+CPU / Voices / Latency moved out of the top toolbar into a new bottom
+status bar (declared before the keyboard panel so it ends up at the very
+bottom of the window). Left side carries Octave +/- and Glide. Right
+side carries the engine metrics. The keyboard panel above is now a
+single horizontal row `[Left Scope] [Piano Keys] [Right Scope] [Meter]`
+with zero item spacing — scopes flank the piano flush, claim leftover
+width when the piano rounds down to whole octaves, and the meter sits
+flush against the right scope. The piano keyboard itself now fills the
+panel's available height (previously hard-coded to 100 px). The redundant
+`show_header` helper on `PianoKeyboard` is removed; octave controls live
+in the bottom bar now.
+
+#### Linux desktop integration
+
+`ViewportBuilder::with_app_id("pertylizer")` ties window instances to the
+desktop entry on Wayland/X11. The `winit` dep is re-declared on Linux
+with the `wayland-csd-adwaita` feature so GNOME draws an Adwaita-style
+title bar — `eframe` only opts into `winit/wayland`, which omits every
+CSD feature and left GNOME windows without a title bar. Cargo unifies
+features across the dep graph, so adding it on the application crate
+applies to the same `winit` crate `eframe` pulls in.
+
+#### Module descriptions translated to English
+
+All `PortDescriptor::description(...)` strings in `crates/synth_modules`
+are now English-only (previously a mix of Swedish and English). Closes
+TODO §1.1 "Translate all swedish descriptions in the modules". No
+behavioral change — wire-format keys and tags are unaffected; only the
+human-readable port descriptions changed.
+
+#### Inference round 2 + `get_instrument_profiles` MCP tool
+
+Six commits worth of follow-ups to the §8.2b inference launched in
+v0.278.0 (live-test accuracy on synth patches now ~64 %, up from ~33 %):
+
+- `analysis::instrument_profile::classify_role` runs gates in a new
+  order — Drums → Pluck → Lead-by-name → Bass → Pad → Keys → Lead → FX
+  → envelope-Unknown fallback → Unknown — with seven rule changes:
+  plucked sub/bass envelopes count as drums; pitch-spread ≤ 5 semitones
+  count as drum-like; noise without a short envelope falls through to
+  FX; pluck gate moved before bass; Lead-by-name fires even in
+  sub/bass register; pad gate relaxed to `(Sustained || Evolving) &&
+  (Polyphonic || Chordal) && (Tonal || Mixed)`; default Lead-gate
+  requires `pitch_role != Atonal`. New envelope-Unknown fallback
+  soft-classifies from name + pitch + texture at confidence 0.4 instead
+  of dropping silently.
+- New `has_oneshot_sampler` graph signal lets the drum gate fire on
+  Sampler-only percussion patches (no envelope, no noise source). On
+  the test project this dropped `analyze_harmony` total_notes 2047 →
+  1397 and bumped C-minor correlation 0.868 → 0.907.
+- `collect_notes_for_instrument` no longer filters `pattern.notes()` by
+  `note.instrument` — the track's instrument routing decides, not the
+  note's `instrument` default. Was causing every note to be dropped in
+  real projects, collapsing the pitch axis to `Unused` and the decision
+  tree to `Unknown`.
+- New MCP tool `get_instrument_profiles` exposes the inference results
+  (role, axes, confidence, signal trail) as data so external consumers
+  see the same `manual-override` / `decision:*` / `envelope:*` /
+  `graph:*` signals that `exclude_drums = true` uses internally. New
+  mirror types `InstrumentProfileResult` / `RoleInferenceResult` /
+  `ProfileSignalResult` in `synth_mcp::types`; enums travel as
+  snake_case strings.
+- `Role::FX` renamed `Role::Fx` so the snake_case wire serialization is
+  `"fx"` instead of `"f_x"`. First exposure of FX through MCP — fixed
+  before external consumers stabilize on the wrong string.
+- Three related offline-render bugs fixed alongside the gate: the
+  offline renderers in `audio/preview.rs` and
+  `audio/arrangement_render.rs` now thread `SharedSampleLibrary`
+  through and dispatch `LoadSampleData` for every sampler module
+  (sampler patches were rendering silence); `load_project_data` now
+  sends `SetTempo` (was silently leaving the engine at 120 BPM);
+  `get_sampler_state` reads the `Sample` parameter via the typed
+  `Param` enum instead of the f32 path (which is hardcoded to 0.0 for
+  `SamplerParam::SampleSelect`).
+
+#### Tests
+
+12 new regression tests in `tests/instrument_profile.rs` (52 total),
+plus a new sample-drum integration test
+`analyze_harmony_default_excludes_uncategorized_sampler_drums` that
+asserts confidence ≥ 0.6 so the OneShot-Sampler branch can't silently
+demote below the auto-exclusion threshold. All previously passing tests
+still pass.
+
 ## [0.278.0] - 2026-05-11
 ### Auto-inferred instrument profiles close the §8.2 silent no-op in `analyze_harmony`
 

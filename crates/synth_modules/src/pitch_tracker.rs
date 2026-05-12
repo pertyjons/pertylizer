@@ -226,15 +226,15 @@ impl Describable for PitchTracker {
             .tag("cv")
             .port(
                 PortDescriptor::audio_input("in", "In")
-                    .description("Audio input to track. Koppla: Oscillator Out, Mic input"),
+                    .description("Audio input to track. Connect: Oscillator Out, Mic input"),
             )
             .port(
                 PortDescriptor::audio_output("pitch_cv", "Pitch CV")
-                    .description("1V/oct pitch CV output. Koppla till: Oscillator Freq CV"),
+                    .description("1V/oct pitch CV output. Connect to: Oscillator Freq CV"),
             )
             .port(
                 PortDescriptor::audio_output("gate", "Gate").description(
-                    "Gate output (1.0 when pitch detected). Koppla till: Envelope Gate",
+                    "Gate output (1.0 when pitch detected). Connect to: Envelope Gate",
                 ),
             )
             .parameter(

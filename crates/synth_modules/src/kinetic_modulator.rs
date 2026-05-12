@@ -139,7 +139,7 @@ impl Describable for KineticModulator {
             )
             .port(
                 PortDescriptor::audio_output("out", "Out")
-                    .description("Modulationssignal. Koppla till: Oscillator FM, Filter Cutoff CV"),
+                    .description("Modulation signal. Connect to: Oscillator FM, Filter Cutoff CV"),
             )
     }
 }

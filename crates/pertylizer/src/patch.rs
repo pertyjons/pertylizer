@@ -688,6 +688,16 @@ pub struct InstrumentState {
     /// Oversampling factor (1, 2, or 4).
     #[serde(default = "default_oversampling")]
     pub oversampling: u8,
+    /// Category for visualization/routing, stored as the
+    /// `InstrumentCategory::as_u8()` value. `0` = Uncategorized.
+    #[serde(default)]
+    pub category: u8,
+    /// Free-text description of the instrument.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Optional accent color as hex string (e.g. "#FF8800FF").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<HexColor>,
     /// Full module graph for this instrument.
     pub patch: Patch,
 }
@@ -712,6 +722,12 @@ impl<'de> Deserialize<'de> for InstrumentState {
             transpose: Semitones,
             #[serde(default = "default_oversampling")]
             oversampling: u8,
+            #[serde(default)]
+            category: u8,
+            #[serde(default)]
+            description: String,
+            #[serde(default)]
+            color: Option<HexColor>,
             patch: Patch,
         }
 
@@ -727,6 +743,9 @@ impl<'de> Deserialize<'de> for InstrumentState {
             key_range: raw.key_range,
             transpose: raw.transpose,
             oversampling: raw.oversampling,
+            category: raw.category,
+            description: raw.description,
+            color: raw.color,
             patch: raw.patch,
         })
     }

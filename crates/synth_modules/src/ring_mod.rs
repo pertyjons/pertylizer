@@ -174,15 +174,15 @@ impl Describable for RingMod {
             )
             .port(
                 PortDescriptor::audio_input("in", "In")
-                    .description("Audio att modulera. Koppla: Oscillator Out, Filter Out"),
+                    .description("Audio to modulate. Connect: Oscillator Out, Filter Out"),
             )
             .port(
                 PortDescriptor::control_input("freq_cv", "Freq CV")
-                    .description("Modulerar carrier-frekvens. Koppla: LFO, Envelope"),
+                    .description("Modulates carrier frequency. Connect: LFO, Envelope"),
             )
             .port(
                 PortDescriptor::audio_output("out", "Out")
-                    .description("Ring-modulerad output. Koppla till: Amplifier In, Filter In"),
+                    .description("Ring-modulated output. Connect to: Amplifier In, Filter In"),
             )
     }
 }

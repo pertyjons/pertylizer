@@ -150,17 +150,19 @@ impl Describable for WavetableOsc {
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
             )
-            .port(PortDescriptor::control_input("fm", "FM").description(
-                "Modulerar tonhöjden. Koppla: LFO för vibrato, Envelope för pitch-sweep",
-            ))
+            .port(
+                PortDescriptor::control_input("fm", "FM").description(
+                    "Modulates pitch. Connect: LFO for vibrato, Envelope for pitch sweep",
+                ),
+            )
             .port(
                 PortDescriptor::control_input("pos_cv", "Pos CV").description(
-                    "Modulerar wavetable-position. Koppla: LFO, Envelope, Kinetic Modulator",
+                    "Modulates wavetable position. Connect: LFO, Envelope, Kinetic Modulator",
                 ),
             )
             .port(
                 PortDescriptor::audio_output("out", "Out")
-                    .description("Wavetable output. Koppla till: Amplifier In, Filter In"),
+                    .description("Wavetable output. Connect to: Amplifier In, Filter In"),
             )
     }
 }

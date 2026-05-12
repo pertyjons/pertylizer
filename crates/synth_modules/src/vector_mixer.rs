@@ -71,31 +71,31 @@ impl Describable for VectorMixer {
             .tag("crossfade")
             .port(
                 PortDescriptor::audio_input("in_a", "In A")
-                    .description("Top-left corner input. Koppla: Oscillator Out"),
+                    .description("Top-left corner input. Connect: Oscillator Out"),
             )
             .port(
                 PortDescriptor::audio_input("in_b", "In B")
-                    .description("Top-right corner input. Koppla: Oscillator Out"),
+                    .description("Top-right corner input. Connect: Oscillator Out"),
             )
             .port(
                 PortDescriptor::audio_input("in_c", "In C")
-                    .description("Bottom-left corner input. Koppla: Oscillator Out"),
+                    .description("Bottom-left corner input. Connect: Oscillator Out"),
             )
             .port(
                 PortDescriptor::audio_input("in_d", "In D")
-                    .description("Bottom-right corner input. Koppla: Oscillator Out"),
+                    .description("Bottom-right corner input. Connect: Oscillator Out"),
             )
             .port(
                 PortDescriptor::control_input("x_cv", "X CV")
-                    .description("Modulerar X-position. Koppla: LFO, Envelope"),
+                    .description("Modulates X position. Connect: LFO, Envelope"),
             )
             .port(
                 PortDescriptor::control_input("y_cv", "Y CV")
-                    .description("Modulerar Y-position. Koppla: LFO, Envelope"),
+                    .description("Modulates Y position. Connect: LFO, Envelope"),
             )
             .port(
                 PortDescriptor::audio_output("out", "Out")
-                    .description("Mixed output. Koppla till: Filter In, Amplifier In"),
+                    .description("Mixed output. Connect to: Filter In, Amplifier In"),
             )
             .parameter(
                 ParameterDescriptor::float(

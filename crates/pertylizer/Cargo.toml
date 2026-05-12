@@ -1,6 +1,6 @@
 [package]
 name = "pertylizer"
-version = "0.278.0"
+version = "0.279.0"
 edition = "2024"
 rust-version = "1.95"
 description = "Pertylizer — a modular synthesizer"
@@ -70,6 +70,13 @@ tokio = { workspace = true, optional = true }
 
 # OSC telemetry (optional)
 synth_osc = { path = "../synth_osc", optional = true }
+
+# Force winit to draw Adwaita-style CSD on Wayland (eframe enables only
+# winit/wayland, which omits any CSD feature — leaving GNOME windows with
+# no title bar). Cargo unifies features across the dep graph, so adding
+# the feature here applies to the same winit crate eframe uses.
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

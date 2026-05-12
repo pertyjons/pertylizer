@@ -43,7 +43,7 @@ Open questions: persistence format (inline vs. sidecar), max length, whether to 
 
 - [ ] Rename instrument from instrument strip menu or inline edit
 - [ ] Remove instruments via context menu or toolbar
-- [ ] Translate all swedish descriptions in the modules here: crates/synth_modules
+- [x] Translate all swedish descriptions in the modules here: crates/synth_modules
 
 ### 1.2 MIDI learn
 

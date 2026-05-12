@@ -5,7 +5,7 @@
 //! currently active octave range for computer keyboard input.
 
 use crate::gui::theme::theme;
-use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use std::collections::HashMap;
 use synth_core::{MidiNote, Velocity};
 
@@ -81,12 +81,22 @@ impl PianoKeyboard {
     }
 
     /// Calculate how many octaves fit in the given width.
-    /// Returns a value between 2 and 8.
+    /// Returns a value between 2 and 7.
+    ///
+    /// N octaves render as `(N*7 + 1)` white keys (the trailing C is
+    /// always drawn), so we reserve one extra `WHITE_KEY_WIDTH` before
+    /// dividing — otherwise the keyboard would be 24 px wider than the
+    /// budget at the upper end of each octave threshold.
+    ///
+    /// The upper bound is 7 (C1-C8) because `show_keys` caps `high_note`
+    /// at MIDI 108. Asking for 8 here would reserve width for keys that
+    /// never get drawn, producing visible padding on each side of the
+    /// keyboard.
     #[must_use]
     pub fn octaves_for_width(available_width: f32) -> u32 {
-        let max_octaves =
-            (available_width / (WHITE_KEYS_PER_OCTAVE as f32 * WHITE_KEY_WIDTH)) as u32;
-        max_octaves.clamp(2, 8)
+        let usable = (available_width - WHITE_KEY_WIDTH).max(0.0);
+        let max_octaves = (usable / (WHITE_KEYS_PER_OCTAVE as f32 * WHITE_KEY_WIDTH)) as u32;
+        max_octaves.clamp(2, 7)
     }
 
     /// Calculate the exact pixel width the piano needs for the given number of octaves.
@@ -108,35 +118,15 @@ impl PianoKeyboard {
         (base_note, end_note)
     }
 
-    /// Draw the keyboard header (KEYBOARD label, octave controls, Center button).
-    pub fn show_header(&mut self, ui: &mut egui::Ui) -> i32 {
-        let mut octave_change = 0;
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!("Octave: {:+}", self.octave_offset))
-                    .small()
-                    .color(theme().colors.text_secondary),
-            );
-            if ui.small_button("-").clicked() && self.octave_offset > -2 {
-                self.octave_offset -= 1;
-                octave_change = -1;
-            }
-            if ui.small_button("+").clicked() && self.octave_offset < 4 {
-                self.octave_offset += 1;
-                octave_change = 1;
-            }
-        });
-        octave_change
-    }
-
     /// Draw the piano keys and handle interaction.
-    /// The number of visible octaves is determined by available width.
+    /// The number of visible octaves is determined by available width;
+    /// the keys fill the entire available height.
     #[allow(clippy::too_many_lines)]
     pub fn show_keys(&mut self, ui: &mut egui::Ui) -> KeyboardEvent {
         let mut event = KeyboardEvent::default();
 
         let available = ui.available_size();
-        let keyboard_height = 100.0;
+        let keyboard_height = available.y.max(40.0);
 
         let white_key_width = WHITE_KEY_WIDTH;
         let white_key_height = keyboard_height - 10.0;

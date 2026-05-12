@@ -4,7 +4,9 @@
 //! for display purposes in the GUI.
 
 use super::patch_editor::PatchEditor;
+use crate::patch::HexColor;
 use synth_core::{BipolarValue, Gain, Semitones};
+use synth_engine::InstrumentCategory;
 use synth_engine::instrument::{InstrumentId, KeyRange, LearnState, MidiChannel};
 
 /// GUI state for a single instrument.
@@ -41,6 +43,12 @@ pub struct InstrumentUiState {
     pub learn_state: LearnState,
     /// Oversampling factor (Off/2x/4x).
     pub oversampling: synth_dsp::OversamplingFactor,
+    /// Category for visualization/routing (Drums, Bass, Lead, ...).
+    pub category: InstrumentCategory,
+    /// Free-text description shown in the instrument edit window.
+    pub description: String,
+    /// Optional accent color as hex string (e.g. "#FF8800FF").
+    pub color: Option<HexColor>,
 }
 
 impl Default for InstrumentUiState {
@@ -59,6 +67,9 @@ impl Default for InstrumentUiState {
             transpose: Semitones::ZERO,
             learn_state: LearnState::Idle,
             oversampling: synth_dsp::OversamplingFactor::default(),
+            category: InstrumentCategory::default(),
+            description: String::new(),
+            color: None,
         }
     }
 }
@@ -80,6 +91,9 @@ impl InstrumentUiState {
             transpose: Semitones::ZERO,
             learn_state: LearnState::Idle,
             oversampling: synth_dsp::OversamplingFactor::default(),
+            category: InstrumentCategory::default(),
+            description: String::new(),
+            color: None,
         }
     }
 

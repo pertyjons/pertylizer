@@ -195,7 +195,7 @@ impl Describable for NoiseGenerator {
             )
             .port(
                 PortDescriptor::audio_output("out", "Out")
-                    .description("Noise output. Koppla till: Filter In, Amplifier In, Mixer"),
+                    .description("Noise output. Connect to: Filter In, Amplifier In, Mixer"),
             )
     }
 }
