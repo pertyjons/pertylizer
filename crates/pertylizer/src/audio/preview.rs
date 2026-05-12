@@ -15,8 +15,33 @@ use synth_engine::{EngineCommand, SynthEngine};
 
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::AudioPreview;
+use synth_sampler::{Sample, SampleLibrary};
 
 use crate::session::SynthSession;
+
+pub type SharedSampleLibrary = Arc<std::sync::RwLock<SampleLibrary>>;
+
+/// Build the `LoadSampleData` command for a single sampler. Shared between the
+/// live engine (`egui_backend::send_loaded_sample_data`) and the offline
+/// renderers — the audio buffer never travels through the `SampleSelect`
+/// parameter, only its id does.
+pub(crate) fn load_sample_data_command(
+    instrument_id: InstrumentId,
+    module_id: synth_engine::commands::ModuleId,
+    sample: &Sample,
+) -> EngineCommand {
+    EngineCommand::LoadSampleData {
+        instrument_id,
+        module_id,
+        data: Arc::clone(&sample.data),
+        channels: sample.meta.channels,
+        frame_count: sample.meta.frame_count.as_usize(),
+        root_note: sample
+            .meta
+            .root_note
+            .unwrap_or(synth_core::MidiNote::new(60)),
+    }
+}
 
 /// Sample rate for preview rendering (44.1 kHz — sufficient for previews).
 const PREVIEW_SAMPLE_RATE: u32 = 44100;
@@ -48,6 +73,62 @@ pub struct RenderedNote {
     pub warnings: Vec<String>,
 }
 
+/// `Param::Sampler(SampleSelect)` carries the real `SampleId` in the typed
+/// enum; `Param::as_f32()` returns 0.0 for that variant, so the f32 path
+/// silently loses the id. Reads must go through the typed match.
+pub(crate) fn sampler_sample_id(
+    snapshot: &synth_engine::ModuleStateSnapshot,
+) -> Option<synth_sampler::SampleId> {
+    snapshot.parameters.iter().find_map(|p| match p {
+        synth_core::Param::Sampler(synth_core::SamplerParam::SampleSelect(sid)) if sid.0 != 0 => {
+            Some(synth_sampler::SampleId::new(sid.0))
+        }
+        _ => None,
+    })
+}
+
+pub(crate) fn load_sample_data_for_samplers(
+    handle: &mut synth_engine::EngineHandle,
+    instrument_id: InstrumentId,
+    modules: &[&synth_engine::ModuleStateSnapshot],
+    sample_library: &SharedSampleLibrary,
+    warnings: &mut Vec<String>,
+) {
+    let lib = match sample_library.read() {
+        Ok(lib) => lib,
+        Err(_) => {
+            warnings.push("offline render: sample library lock poisoned".to_string());
+            return;
+        }
+    };
+    for module_snap in modules {
+        if module_snap.module_type != synth_core::ModuleType::Sampler {
+            continue;
+        }
+        let Some(sample_id) = sampler_sample_id(module_snap) else {
+            continue;
+        };
+        let Some(sample) = lib.get(sample_id) else {
+            warnings.push(format!(
+                "offline render: sampler {} references sample id {sample_id} not in library",
+                module_snap.id
+            ));
+            continue;
+        };
+        let sent = handle.send_blocking(load_sample_data_command(
+            instrument_id,
+            module_snap.id,
+            sample,
+        ));
+        if !sent {
+            warnings.push(format!(
+                "offline render: failed to enqueue LoadSampleData for module {}",
+                module_snap.id
+            ));
+        }
+    }
+}
+
 /// Render a note on the given instrument into an in-memory f32 buffer.
 ///
 /// Snapshots the instrument's current module graph and parameters from the
@@ -56,6 +137,7 @@ pub struct RenderedNote {
 /// encoding).
 pub fn render_note_to_buffer(
     session: &SynthSession,
+    sample_library: &SharedSampleLibrary,
     instrument_id: InstrumentId,
     note: MidiNote,
     velocity: Velocity,
@@ -219,6 +301,14 @@ pub fn render_note_to_buffer(
         };
         apply_module_state(&mut handle, module_snap, &descriptor, &mut warnings);
     }
+
+    load_sample_data_for_samplers(
+        &mut handle,
+        InstrumentId::FIRST,
+        &voice_modules,
+        sample_library,
+        &mut warnings,
+    );
 
     // Load effects in chain order so the offline chain mirrors the live one.
     // Any effects that are present in the snapshot but not in the chain order
@@ -474,14 +564,22 @@ pub fn encode_buffer_as_wav(
 /// (e.g. the `preview_note` MCP tool) keep using this function unchanged.
 pub fn render_note_preview(
     session: &SynthSession,
+    sample_library: &SharedSampleLibrary,
     instrument_id: InstrumentId,
     note: MidiNote,
     velocity: Velocity,
     duration_ms: u32,
     tail_ms: u32,
 ) -> Result<AudioPreview, McpBridgeError> {
-    let rendered =
-        render_note_to_buffer(session, instrument_id, note, velocity, duration_ms, tail_ms)?;
+    let rendered = render_note_to_buffer(
+        session,
+        sample_library,
+        instrument_id,
+        note,
+        velocity,
+        duration_ms,
+        tail_ms,
+    )?;
 
     let wav_data =
         encode_buffer_as_wav(&rendered.samples, rendered.sample_rate, rendered.channels)?;

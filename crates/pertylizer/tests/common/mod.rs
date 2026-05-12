@@ -72,6 +72,7 @@ pub struct Rig {
     pub _engine: SynthEngine,
     pub _handle: synth_engine::EngineHandle,
     pub session: SynthSession,
+    pub sample_library: pertylizer::audio::preview::SharedSampleLibrary,
 }
 
 pub fn setup_with_patch(patch: &Patch) -> Rig {
@@ -112,6 +113,9 @@ pub fn setup_with_patch(patch: &Patch) -> Rig {
         _engine: engine,
         _handle: handle,
         session,
+        sample_library: Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        )),
     }
 }
 

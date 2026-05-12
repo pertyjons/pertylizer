@@ -31,7 +31,7 @@ use synth_engine::SynthEngine;
 use synth_engine::commands::ModuleId;
 use synth_engine::instrument::InstrumentId;
 
-use pertylizer::audio::preview::{RenderedNote, render_note_to_buffer};
+use pertylizer::audio::preview::{RenderedNote, SharedSampleLibrary, render_note_to_buffer};
 use pertylizer::patch::{ModuleBuilder, Patch};
 use pertylizer::session::SynthSession;
 
@@ -96,6 +96,7 @@ struct TestRig {
     engine: SynthEngine,
     handle: synth_engine::EngineHandle,
     session: SynthSession,
+    sample_library: SharedSampleLibrary,
     instrument_id: InstrumentId,
 }
 
@@ -164,6 +165,9 @@ fn setup_with_patch(patch: &Patch) -> TestRig {
         engine,
         handle,
         session,
+        sample_library: Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        )),
         instrument_id: InstrumentId::FIRST,
     }
 }
@@ -188,6 +192,7 @@ fn note_off_frame_matches_requested_duration() {
     let rig = setup_with_patch(&sustain_patch_no_envelope());
     let rendered = render_note_to_buffer(
         &rig.session,
+        &rig.sample_library,
         rig.instrument_id,
         MidiNote::new(60),
         Velocity::from_midi(100),
@@ -213,6 +218,7 @@ fn note_off_lands_inside_a_short_note_without_overflow() {
     let rig = setup_with_patch(&sustain_patch_no_envelope());
     let rendered = render_note_to_buffer(
         &rig.session,
+        &rig.sample_library,
         rig.instrument_id,
         MidiNote::new(60),
         Velocity::from_midi(100),
@@ -241,6 +247,7 @@ fn effect_chain_replicated_in_offline_render() {
 
     let dry = render_note_to_buffer(
         &rig_dry.session,
+        &rig_dry.sample_library,
         rig_dry.instrument_id,
         MidiNote::new(60),
         Velocity::from_midi(100),
@@ -250,6 +257,7 @@ fn effect_chain_replicated_in_offline_render() {
     .expect("dry render");
     let wet = render_note_to_buffer(
         &rig_wet.session,
+        &rig_wet.sample_library,
         rig_wet.instrument_id,
         MidiNote::new(60),
         Velocity::from_midi(100),
@@ -291,6 +299,7 @@ fn warnings_empty_on_clean_render() {
     let rig = setup_with_patch(&sustain_patch_no_envelope());
     let rendered = render_note_to_buffer(
         &rig.session,
+        &rig.sample_library,
         rig.instrument_id,
         MidiNote::new(60),
         Velocity::from_midi(100),
@@ -319,8 +328,12 @@ fn missing_instrument_returns_error() {
     };
     engine.on_stream_start(&stream_info);
 
+    let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
+        synth_sampler::SampleLibrary::default(),
+    ));
     let result = render_note_to_buffer(
         &session,
+        &sample_library,
         InstrumentId::new(99),
         MidiNote::new(60),
         Velocity::from_midi(100),
@@ -343,6 +356,7 @@ fn buffer_length_matches_requested_duration() {
     for &(dur, tail) in &[(100u32, 100u32), (250, 250), (1, 1000), (1500, 0)] {
         let rendered: RenderedNote = render_note_to_buffer(
             &rig.session,
+            &rig.sample_library,
             rig.instrument_id,
             MidiNote::new(60),
             Velocity::from_midi(100),
@@ -467,6 +481,7 @@ fn analyze_note_result_schema_is_extensible() {
 fn render_left_for(rig: &TestRig) -> Vec<f32> {
     let rendered = render_note_to_buffer(
         &rig.session,
+        &rig.sample_library,
         rig.instrument_id,
         MidiNote::new(60),
         Velocity::from_midi(100),
@@ -493,6 +508,7 @@ fn effect_bypass_after_patch_load_removes_tail() {
     let mut rig = setup_with_patch(&sustain_patch_with_reverb());
     let baseline = render_note_to_buffer(
         &rig.session,
+        &rig.sample_library,
         rig.instrument_id,
         MidiNote::new(60),
         Velocity::from_midi(100),
@@ -527,6 +543,7 @@ fn effect_bypass_after_patch_load_removes_tail() {
     // window should drop to roughly the dry-patch level.
     let after = render_note_to_buffer(
         &rig.session,
+        &rig.sample_library,
         rig.instrument_id,
         MidiNote::new(60),
         Velocity::from_midi(100),
@@ -591,6 +608,7 @@ fn effect_remove_after_patch_load_drops_effect() {
     let mut rig = setup_with_patch(&sustain_patch_with_reverb());
     let baseline = render_note_to_buffer(
         &rig.session,
+        &rig.sample_library,
         rig.instrument_id,
         MidiNote::new(60),
         Velocity::from_midi(100),
@@ -624,6 +642,7 @@ fn effect_remove_after_patch_load_drops_effect() {
     // offline render won't replicate it). The tail should drop substantially.
     let after = render_note_to_buffer(
         &rig.session,
+        &rig.sample_library,
         rig.instrument_id,
         MidiNote::new(60),
         Velocity::from_midi(100),

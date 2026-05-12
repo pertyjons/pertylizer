@@ -44,8 +44,14 @@ fn renders_audible_arrangement_from_engine_snapshot() {
     let start_tick = 0u64;
     let end_tick = 3840u64;
 
-    let rendered = render_arrangement_to_buffer(&rig.session, &shared, start_tick, end_tick)
-        .expect("arrangement render should succeed");
+    let rendered = render_arrangement_to_buffer(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        start_tick,
+        end_tick,
+    )
+    .expect("arrangement render should succeed");
 
     // Sanity: buffer covers ~2 s at 44.1 kHz stereo.
     let frame_count = rendered.samples.len() / 2;
@@ -117,8 +123,9 @@ fn empty_arrangement_renders_silently_without_error() {
     let song = Arc::new(RwLock::new(Song::new("Empty")));
     let shared = McpSharedState::with_song(song);
 
-    let rendered = render_arrangement_to_buffer(&rig.session, &shared, 0, 3840)
-        .expect("empty-arrangement render should succeed");
+    let rendered =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+            .expect("empty-arrangement render should succeed");
 
     // The buffer should be silent (or very nearly so) — no notes were
     // played. We allow a tiny non-zero RMS for engine startup transients
@@ -139,10 +146,11 @@ fn render_rejects_inverted_range() {
 
     // end_tick <= start_tick should return an explicit error instead of
     // panicking or producing a zero-length buffer.
-    let result = render_arrangement_to_buffer(&rig.session, &shared, 3840, 3840);
+    let result =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 3840, 3840);
     assert!(result.is_err(), "zero-width range should fail");
 
-    let result = render_arrangement_to_buffer(&rig.session, &shared, 3840, 0);
+    let result = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 3840, 0);
     assert!(result.is_err(), "inverted range should fail");
 }
 
@@ -163,7 +171,10 @@ fn render_fails_when_no_instruments_loaded() {
     let song = build_arpeggio_song();
     let shared = McpSharedState::with_song(song);
 
-    let result = render_arrangement_to_buffer(&session, &shared, 0, 3840);
+    let sample_library: pertylizer::audio::preview::SharedSampleLibrary = Arc::new(
+        std::sync::RwLock::new(synth_sampler::SampleLibrary::default()),
+    );
+    let result = render_arrangement_to_buffer(&session, &sample_library, &shared, 0, 3840);
     assert!(
         result.is_err(),
         "render should fail when no instruments are loaded"

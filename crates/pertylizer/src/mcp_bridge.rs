@@ -2315,6 +2315,7 @@ impl SynthBridge for AppSynthBridge {
     ) -> Result<synth_mcp::types::AudioPreview, McpBridgeError> {
         crate::audio::preview::render_note_preview(
             &self.session,
+            &self.sample_library,
             InstrumentId::new(instrument_id),
             MidiNote::new(note),
             Velocity::from_midi(velocity),
@@ -2334,6 +2335,7 @@ impl SynthBridge for AppSynthBridge {
     ) -> Result<synth_mcp::types::AnalyzeNoteResult, McpBridgeError> {
         analyze_rendered_note(
             &self.session,
+            &self.sample_library,
             instrument_id,
             note,
             velocity,
@@ -2369,7 +2371,13 @@ impl SynthBridge for AppSynthBridge {
         duration_seconds: f32,
         start_tick: Option<u64>,
     ) -> Result<AnalyzeMixBusResult, McpBridgeError> {
-        analyze_mix_bus_impl(&self.session, &self.shared, duration_seconds, start_tick)
+        analyze_mix_bus_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            duration_seconds,
+            start_tick,
+        )
     }
 
     fn analyze_section(
@@ -2380,6 +2388,7 @@ impl SynthBridge for AppSynthBridge {
     ) -> Result<AnalyzeSectionResult, McpBridgeError> {
         analyze_section_impl(
             &self.session,
+            &self.sample_library,
             &self.shared,
             start_tick,
             end_tick,
@@ -3272,60 +3281,81 @@ impl SynthBridge for AppSynthBridge {
         instrument_id: u64,
         module_id: &str,
     ) -> Result<synth_mcp::types::SamplerStateInfo, McpBridgeError> {
+        use synth_core::{Param, PlayDirection, SamplerParam, SamplerPlayMode};
+
         self.validate_instrument(instrument_id)?;
 
-        let module = self.get_module_info(instrument_id, module_id)?;
-        let get_float = |name: &str| -> f32 {
-            module
-                .parameters
-                .iter()
-                .find(|p| p.name == name)
-                .map(|p| p.value)
-                .unwrap_or(0.0)
-        };
+        // `Param::as_f32()` returns 0.0 for `SamplerParam::SampleSelect` (the
+        // sample id doesn't fit a slider), so the f32 path silently loses it.
+        // Read the typed enum from the snapshot instead.
+        let inst_id = InstrumentId::new(instrument_id);
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+        let snapshot = self
+            .session
+            .state()
+            .shared_graph
+            .get_module(inst_id, mid)
+            .ok_or_else(|| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
 
-        let sample_id_raw = get_float("Sample") as u64;
-        let pitch_tracking = get_float("Pitch Track") > 0.5;
-        let level = get_float("Level");
-        let play_mode_raw = get_float("Play Mode") as u8;
-        let direction_raw = get_float("Direction") as u8;
-        let velocity_sensitivity = get_float("Vel Sens");
-        let fine_tune = get_float("Fine Tune");
-        let start_offset = get_float("Start Offset");
+        let mut sample_id: Option<synth_sampler::SampleId> = None;
+        let mut pitch_tracking = true;
+        let mut level: f32 = 0.0;
+        let mut play_mode = SamplerPlayMode::OneShot;
+        let mut direction = PlayDirection::Forward;
+        let mut velocity_sensitivity: f32 = 1.0;
+        let mut fine_tune: f32 = 0.0;
+        let mut start_offset: f32 = 0.0;
+        for param in &snapshot.parameters {
+            if let Param::Sampler(sp) = param {
+                match sp {
+                    SamplerParam::SampleSelect(sid) if sid.0 != 0 => {
+                        sample_id = Some(synth_sampler::SampleId::new(sid.0));
+                    }
+                    SamplerParam::SampleSelect(_) => {}
+                    SamplerParam::PitchTracking(b) => pitch_tracking = *b,
+                    SamplerParam::Level(g) => level = g.as_f32(),
+                    SamplerParam::PlayMode(m) => play_mode = *m,
+                    SamplerParam::Direction(d) => direction = *d,
+                    SamplerParam::VelocitySensitivity(v) => velocity_sensitivity = v.as_f32(),
+                    SamplerParam::FineTune(c) => fine_tune = c.0,
+                    SamplerParam::StartOffset(v) => start_offset = v.as_f32(),
+                }
+            }
+        }
 
-        let play_mode = match play_mode_raw {
-            0 => "one_shot",
-            1 => "sustain",
-            _ => "loop",
+        let play_mode_str = match play_mode {
+            SamplerPlayMode::OneShot => "one_shot",
+            SamplerPlayMode::Sustain => "sustain",
+            SamplerPlayMode::Loop => "loop",
         }
         .to_string();
 
-        let direction = match direction_raw {
-            0 => "forward",
-            1 => "reverse",
-            _ => "ping_pong",
+        let direction_str = match direction {
+            PlayDirection::Forward => "forward",
+            PlayDirection::Reverse => "reverse",
+            PlayDirection::PingPong => "ping_pong",
         }
         .to_string();
 
-        let sample_name = if sample_id_raw > 0 {
+        let sample_name = if let Some(id) = sample_id {
             let lib = self
                 .sample_library
                 .read()
                 .map_err(|_| McpBridgeError::Other("Lock poisoned".to_string()))?;
-            lib.get_meta(synth_sampler::SampleId::new(sample_id_raw))
-                .map(|m| m.name.clone())
-                .unwrap_or_default()
+            lib.get_meta(id).map(|m| m.name.clone()).unwrap_or_default()
         } else {
             String::new()
         };
 
         Ok(synth_mcp::types::SamplerStateInfo {
-            sample_id: sample_id_raw,
+            sample_id: sample_id.map_or(0, |id| id.0),
             sample_name,
             pitch_tracking,
             level,
-            play_mode,
-            direction,
+            play_mode: play_mode_str,
+            direction: direction_str,
             velocity_sensitivity,
             fine_tune,
             start_offset,
@@ -4442,8 +4472,10 @@ fn compute_overlaps(modules: &[crate::mcp_shared::ModuleLayout]) -> Vec<UiOverla
 /// keeps the pitch metric meaningful for patches where the loudest spectral
 /// peak is not the fundamental (sub-bass with a dominant sub-osc, wave-folded
 /// patches with redistributed harmonics, etc.).
+#[allow(clippy::too_many_arguments)]
 fn analyze_rendered_note(
     session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
     instrument_id: u64,
     note: u8,
     velocity: u8,
@@ -4453,6 +4485,7 @@ fn analyze_rendered_note(
 ) -> Result<synth_mcp::types::AnalyzeNoteResult, McpBridgeError> {
     let rendered = crate::audio::preview::render_note_to_buffer(
         session,
+        sample_library,
         InstrumentId::new(instrument_id),
         MidiNote::new(note),
         Velocity::from_midi(velocity),
@@ -4852,6 +4885,7 @@ fn mix_metrics_from_analysis(
 /// master bus offline starting at `start_tick` (default 0).
 fn analyze_mix_bus_impl(
     session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     duration_seconds: f32,
     start_tick: Option<u64>,
@@ -4883,7 +4917,11 @@ fn analyze_mix_bus_impl(
     }
 
     let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer(
-        session, shared, start, end,
+        session,
+        sample_library,
+        shared,
+        start,
+        end,
     )?;
     let analysis =
         crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
@@ -4914,13 +4952,18 @@ fn analyze_mix_bus_impl(
 #[doc(hidden)]
 pub fn analyze_section_impl(
     session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     start_tick: u64,
     end_tick: u64,
     include_per_track: Option<bool>,
 ) -> Result<AnalyzeSectionResult, McpBridgeError> {
     let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer(
-        session, shared, start_tick, end_tick,
+        session,
+        sample_library,
+        shared,
+        start_tick,
+        end_tick,
     )?;
     let analysis =
         crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
@@ -4935,7 +4978,14 @@ pub fn analyze_section_impl(
 
     let mut warnings = rendered.warnings;
     let per_track = if include_per_track.unwrap_or(false) {
-        render_per_track_contributions(session, shared, start_tick, end_tick, &mut warnings)?
+        render_per_track_contributions(
+            session,
+            sample_library,
+            shared,
+            start_tick,
+            end_tick,
+            &mut warnings,
+        )?
     } else {
         Vec::new()
     };
@@ -4958,6 +5008,7 @@ pub fn analyze_section_impl(
 /// soloed render are accumulated into `warnings`.
 fn render_per_track_contributions(
     session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     start_tick: u64,
     end_tick: u64,
@@ -5023,7 +5074,11 @@ fn render_per_track_contributions(
             track.solo = true;
         }
         let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_song(
-            session, &song_arc, start_tick, end_tick,
+            session,
+            sample_library,
+            &song_arc,
+            start_tick,
+            end_tick,
         )?;
         if let Some(track) = song_arc.write().track_mut(target.track_id) {
             track.solo = false;

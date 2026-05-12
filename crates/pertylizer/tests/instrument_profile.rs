@@ -356,6 +356,7 @@ fn empty_graph() -> GraphSignals {
         has_oscillator: false,
         has_noise_source: false,
         has_sampler: false,
+        has_oneshot_sampler: false,
         has_physical: false,
         osc_count: 0,
     }
@@ -389,6 +390,47 @@ fn classify_drums_via_noise_only() {
         Texture::Monophonic,
     );
     assert_eq!(r.role, Role::Drums);
+}
+
+#[test]
+fn classify_drums_via_oneshot_sampler() {
+    let mut g = empty_graph();
+    g.has_sampler = true;
+    g.has_oneshot_sampler = true;
+    let r = classify_role(
+        None,
+        &g,
+        EnvelopeShape::Unknown,
+        PitchRole::Atonal,
+        Register::Bass,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Drums);
+    assert!(
+        r.signals
+            .iter()
+            .any(|s| s.detail.contains("oneshot-sampler")),
+        "expected `oneshot-sampler` signal in trail, got {:?}",
+        r.signals,
+    );
+}
+
+#[test]
+fn oneshot_sampler_with_oscillator_does_not_fire_drum_gate() {
+    let mut g = empty_graph();
+    g.has_sampler = true;
+    g.has_oneshot_sampler = true;
+    g.has_oscillator = true;
+    g.osc_count = 1;
+    let r = classify_role(
+        None,
+        &g,
+        EnvelopeShape::Unknown,
+        PitchRole::Atonal,
+        Register::Bass,
+        Texture::Monophonic,
+    );
+    assert_ne!(r.role, Role::Drums);
 }
 
 #[test]

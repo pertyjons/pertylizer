@@ -86,11 +86,18 @@ pub struct RenderedArrangement {
 /// inside the range).
 pub fn render_arrangement_to_buffer(
     session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     start_tick: u64,
     end_tick: u64,
 ) -> Result<RenderedArrangement, McpBridgeError> {
-    render_arrangement_to_buffer_with_song(session, &shared.song, start_tick, end_tick)
+    render_arrangement_to_buffer_with_song(
+        session,
+        sample_library,
+        &shared.song,
+        start_tick,
+        end_tick,
+    )
 }
 
 /// Render an arrangement range against an explicit `Song` handle.
@@ -100,6 +107,7 @@ pub fn render_arrangement_to_buffer(
 /// variants from a cloned `Song` without mutating the live shared instance.
 pub(crate) fn render_arrangement_to_buffer_with_song(
     session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
     song: &Arc<RwLock<Song>>,
     start_tick: u64,
     end_tick: u64,
@@ -177,6 +185,7 @@ pub(crate) fn render_arrangement_to_buffer_with_song(
             engine_state,
             &tmp_session,
             &mut handle,
+            sample_library,
             &mut warnings,
         );
     }
@@ -274,6 +283,7 @@ fn load_instrument_into_offline(
     engine_state: &synth_engine::EngineState,
     tmp_session: &SynthSession,
     handle: &mut synth_engine::EngineHandle,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
     warnings: &mut Vec<String>,
 ) {
     let instrument_id = inst_snap.id;
@@ -377,6 +387,14 @@ fn load_instrument_into_offline(
             };
         apply_module_state(handle, module_snap, &descriptor, warnings);
     }
+
+    crate::audio::preview::load_sample_data_for_samplers(
+        handle,
+        instrument_id,
+        &voice_modules,
+        sample_library,
+        warnings,
+    );
 
     let mut handled: std::collections::HashSet<synth_engine::commands::ModuleId> =
         std::collections::HashSet::new();

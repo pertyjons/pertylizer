@@ -2998,7 +2998,8 @@ impl SynthApp {
         {
             self.analyze_window.set_target(active_id, name);
         }
-        self.analyze_window.show(ctx, &self.session);
+        self.analyze_window
+            .show(ctx, &self.session, &self.sample_library);
     }
 
     /// Handle Ctrl+Z (undo) and Ctrl+Shift+Z (redo) keyboard shortcuts.
@@ -4333,17 +4334,12 @@ impl SynthApp {
                 let Some(sample) = lib.get(synth_sampler::SampleId::new(sample_id)) else {
                     continue;
                 };
-                self.handle.send(EngineCommand::LoadSampleData {
-                    instrument_id: inst_state.id,
-                    module_id: mod_id,
-                    data: std::sync::Arc::clone(&sample.data),
-                    channels: sample.meta.channels,
-                    frame_count: sample.meta.frame_count.as_usize(),
-                    root_note: sample
-                        .meta
-                        .root_note
-                        .unwrap_or(synth_core::MidiNote::new(60)),
-                });
+                self.handle
+                    .send(crate::audio::preview::load_sample_data_command(
+                        inst_state.id,
+                        mod_id,
+                        sample,
+                    ));
             }
         }
     }
@@ -4479,6 +4475,10 @@ impl SynthApp {
         self.send_loaded_sample_data(&project);
 
         // 5. Replace song (move instead of clone since we own the project)
+        // MCP get_engine_status reads tempo from transport (not Song), so
+        // sync it explicitly here.
+        self.handle
+            .send(EngineCommand::SetTempo(project.song.default_tempo));
         {
             let mut song = self.song.write();
             *song = project.song;

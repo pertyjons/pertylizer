@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use serde::Serialize;
 
 use synth_core::params::EnvelopeParam;
-use synth_core::{ModuleType, Param};
+use synth_core::{ModuleType, Param, SamplerParam, SamplerPlayMode};
 use synth_engine::state::EngineState;
 use synth_engine::{InstrumentCategory, InstrumentSnapshot, ModuleStateSnapshot};
 use synth_sequencer::{SeqInstrumentId, SequencerTrack, Song};
@@ -250,6 +250,10 @@ pub struct GraphSignals {
     pub has_oscillator: bool,
     pub has_noise_source: bool,
     pub has_sampler: bool,
+    /// Sampler module whose `PlayMode` parameter is set to `OneShot`. This is
+    /// the canonical configuration for sample-based percussion and one-shot FX
+    /// hits — a strong percussive signal even when the patch has no envelope.
+    pub has_oneshot_sampler: bool,
     pub has_physical: bool,
     pub osc_count: usize,
 }
@@ -260,6 +264,7 @@ pub fn graph_signals(modules: &[ModuleStateSnapshot]) -> GraphSignals {
         has_oscillator: false,
         has_noise_source: false,
         has_sampler: false,
+        has_oneshot_sampler: false,
         has_physical: false,
         osc_count: 0,
     };
@@ -278,7 +283,15 @@ pub fn graph_signals(modules: &[ModuleStateSnapshot]) -> GraphSignals {
                 sig.osc_count += 1;
             }
             ModuleType::Noise | ModuleType::MechanicalNoise => sig.has_noise_source = true,
-            ModuleType::Sampler => sig.has_sampler = true,
+            ModuleType::Sampler => {
+                sig.has_sampler = true;
+                for p in &m.parameters {
+                    if let Param::Sampler(SamplerParam::PlayMode(SamplerPlayMode::OneShot)) = p {
+                        sig.has_oneshot_sampler = true;
+                        break;
+                    }
+                }
+            }
             ModuleType::BodyResonance | ModuleType::ModalResonator => sig.has_physical = true,
             _ => {}
         }
@@ -474,8 +487,14 @@ pub fn classify_role(
     // gate so a confident classification can reach 1.0.
 
     // 1. Drums.
+    // Sample-based percussion fails the envelope/noise gate (Sampler+Output
+    // patches have neither), so OneShot Sampler counts as percussive evidence.
+    let pure_oneshot_sampler =
+        graph.has_oneshot_sampler && !graph.has_oscillator && !graph.has_noise_source;
     let drum_gate = pitch_role == PitchRole::Atonal
-        && (envelope == EnvelopeShape::Percussive || graph.has_noise_source);
+        && (envelope == EnvelopeShape::Percussive
+            || graph.has_noise_source
+            || pure_oneshot_sampler);
     if drum_gate {
         let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "drums-gate")];
         let mut bonus = 0;
@@ -489,6 +508,10 @@ pub fn classify_role(
         }
         if graph.has_noise_source && !graph.has_oscillator && !graph.has_sampler {
             signals.push(ProfileSignal::new(SignalAxis::Graph, "noise-no-osc"));
+            bonus += 1;
+        }
+        if pure_oneshot_sampler {
+            signals.push(ProfileSignal::new(SignalAxis::Graph, "oneshot-sampler"));
             bonus += 1;
         }
         let conf = (0.6_f32 + 0.2_f32 * bonus as f32).min(1.0);

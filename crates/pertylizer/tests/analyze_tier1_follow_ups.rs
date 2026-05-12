@@ -103,6 +103,7 @@ struct TwoInstrumentRig {
     _engine: SynthEngine,
     _handle: synth_engine::EngineHandle,
     session: SynthSession,
+    sample_library: pertylizer::audio::preview::SharedSampleLibrary,
 }
 
 fn setup_two_instruments(drum_category: InstrumentCategory) -> TwoInstrumentRig {
@@ -154,6 +155,9 @@ fn setup_two_instruments(drum_category: InstrumentCategory) -> TwoInstrumentRig 
         _engine: engine,
         _handle: handle,
         session,
+        sample_library: Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        )),
     }
 }
 
@@ -208,6 +212,9 @@ fn setup_pad_and_uncategorized_kick() -> TwoInstrumentRig {
         _engine: engine,
         _handle: handle,
         session,
+        sample_library: Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        )),
     }
 }
 
@@ -494,8 +501,15 @@ fn analyze_section_per_track_breakdown_emits_one_entry_per_track() {
     let song = build_two_track_song();
     let shared = McpSharedState::with_song(song);
 
-    let result = analyze_section_impl(&rig.session, &shared, 0, 3840, Some(true))
-        .expect("section analysis should succeed");
+    let result = analyze_section_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        0,
+        3840,
+        Some(true),
+    )
+    .expect("section analysis should succeed");
 
     assert_eq!(
         result.per_track.len(),
@@ -536,14 +550,21 @@ fn analyze_section_without_per_track_flag_returns_empty_breakdown() {
     let song = build_two_track_song();
     let shared = McpSharedState::with_song(song);
 
-    let result = analyze_section_impl(&rig.session, &shared, 0, 3840, None)
+    let result = analyze_section_impl(&rig.session, &rig.sample_library, &shared, 0, 3840, None)
         .expect("section analysis should succeed");
     assert!(
         result.per_track.is_empty(),
         "per_track must default to empty when not requested"
     );
 
-    let opt_off = analyze_section_impl(&rig.session, &shared, 0, 3840, Some(false))
-        .expect("section analysis should succeed");
+    let opt_off = analyze_section_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        0,
+        3840,
+        Some(false),
+    )
+    .expect("section analysis should succeed");
     assert!(opt_off.per_track.is_empty());
 }

@@ -19,7 +19,9 @@ use synth_engine::InstrumentId;
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{AnalysisSignalMode, AnalyzeFlags, AnalyzeNoteResult, AnalyzeSpectrumPeak};
 
-use crate::audio::preview::{RenderedNote, encode_buffer_as_wav, render_note_to_buffer};
+use crate::audio::preview::{
+    RenderedNote, SharedSampleLibrary, encode_buffer_as_wav, render_note_to_buffer,
+};
 use crate::gui::theme::theme;
 use crate::mcp_bridge::analyze_rendered_buffer;
 use crate::session::SynthSession;
@@ -319,7 +321,7 @@ impl AnalyzeWindow {
         }
     }
 
-    fn spawn_render(&mut self, session: Arc<SynthSession>) {
+    fn spawn_render(&mut self, session: Arc<SynthSession>, sample_library: SharedSampleLibrary) {
         let Some(target) = self.target else { return };
         if self.pending.is_some() {
             return;
@@ -329,6 +331,7 @@ impl AnalyzeWindow {
         let handle = std::thread::spawn(move || -> Result<AnalysisSnapshot, McpBridgeError> {
             let rendered = render_note_to_buffer(
                 session.as_ref(),
+                &sample_library,
                 target,
                 params.note,
                 params.velocity,
@@ -379,7 +382,12 @@ impl AnalyzeWindow {
     }
 
     /// Render the window. Call every frame from the host.
-    pub fn show(&mut self, ctx: &egui::Context, session: &Arc<SynthSession>) {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        session: &Arc<SynthSession>,
+        sample_library: &SharedSampleLibrary,
+    ) {
         self.poll_pending();
         self.poll_wav_dialog(ctx);
 
@@ -410,7 +418,7 @@ impl AnalyzeWindow {
             .default_size([960.0, 640.0])
             .min_size([720.0, 360.0])
             .show(ctx, |ui| {
-                self.render_header(ui, session, &mut copy_json, &mut save_wav);
+                self.render_header(ui, session, sample_library, &mut copy_json, &mut save_wav);
                 ui.separator();
                 self.render_status_strip(ui, &pt);
                 if let Some(err) = self.last_error.as_ref() {
@@ -441,6 +449,7 @@ impl AnalyzeWindow {
         &mut self,
         ui: &mut egui::Ui,
         session: &Arc<SynthSession>,
+        sample_library: &SharedSampleLibrary,
         copy_json: &mut bool,
         save_wav: &mut bool,
     ) {
@@ -535,7 +544,7 @@ impl AnalyzeWindow {
                     .on_hover_text("Render and analyze the active patch")
                     .clicked()
                 {
-                    self.spawn_render(Arc::clone(session));
+                    self.spawn_render(Arc::clone(session), Arc::clone(sample_library));
                 }
 
                 let pin_label = if self.pinned.is_some() {

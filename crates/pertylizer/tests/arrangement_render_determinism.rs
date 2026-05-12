@@ -28,12 +28,30 @@ fn offline_render_is_bit_exact_across_calls() {
     let start_tick = 0u64;
     let end_tick = 3840u64;
 
-    let first = render_arrangement_to_buffer(&rig.session, &shared, start_tick, end_tick)
-        .expect("first render should succeed");
-    let second = render_arrangement_to_buffer(&rig.session, &shared, start_tick, end_tick)
-        .expect("second render should succeed");
-    let third = render_arrangement_to_buffer(&rig.session, &shared, start_tick, end_tick)
-        .expect("third render should succeed");
+    let first = render_arrangement_to_buffer(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        start_tick,
+        end_tick,
+    )
+    .expect("first render should succeed");
+    let second = render_arrangement_to_buffer(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        start_tick,
+        end_tick,
+    )
+    .expect("second render should succeed");
+    let third = render_arrangement_to_buffer(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        start_tick,
+        end_tick,
+    )
+    .expect("third render should succeed");
 
     assert_bit_exact(
         "render-1 vs render-2",
@@ -70,9 +88,9 @@ fn offline_render_is_bit_exact_for_noise_patch() {
     let song = build_arpeggio_song();
     let shared = McpSharedState::with_song(song);
 
-    let first = render_arrangement_to_buffer(&rig.session, &shared, 0, 3840)
+    let first = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
         .expect("first noise render should succeed");
-    let second = render_arrangement_to_buffer(&rig.session, &shared, 0, 3840)
+    let second = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
         .expect("second noise render should succeed");
 
     assert_bit_exact(
@@ -114,11 +132,11 @@ fn offline_render_is_bit_exact_for_dual_oscillator_patch() {
     let song = build_arpeggio_song();
     let shared = McpSharedState::with_song(song);
 
-    let first = render_arrangement_to_buffer(&rig.session, &shared, 0, 3840)
+    let first = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
         .expect("first dual-osc render should succeed");
-    let second = render_arrangement_to_buffer(&rig.session, &shared, 0, 3840)
+    let second = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
         .expect("second dual-osc render should succeed");
-    let third = render_arrangement_to_buffer(&rig.session, &shared, 0, 3840)
+    let third = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
         .expect("third dual-osc render should succeed");
 
     assert_bit_exact(
@@ -145,7 +163,7 @@ fn analyze_mix_metrics_are_stable_across_calls() {
     let mut rms: Vec<f32> = Vec::with_capacity(4);
     let mut clipped: Vec<u32> = Vec::with_capacity(4);
     for _ in 0..4 {
-        let r = render_arrangement_to_buffer(&rig.session, &shared, 0, 3840)
+        let r = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
             .expect("render should succeed");
         let a = analyze_mix_buffer(&r.samples, r.sample_rate);
         lufs.push(a.lufs_integrated);
