@@ -1510,6 +1510,61 @@ impl eframe::App for SynthApp {
                         }
                         break 'view;
                     };
+
+                    // Left side panel: instrument list (mirrors sample_view layout).
+                    // Acts as a primary picker; the dropdown above the keyboard
+                    // stays as a backup.
+                    egui::Panel::left("instruments_panel")
+                        .default_size(180.0)
+                        .min_size(140.0)
+                        .show_inside(ui, |ui| {
+                            use egui_remixicon::icons as ri;
+                            let t = theme();
+
+                            ui.heading(
+                                RichText::new(format!("{} Instruments", ri::MUSIC_2_FILL))
+                                    .color(t.colors.text_primary),
+                            );
+                            ui.separator();
+
+                            let mut clicked: Option<InstrumentId> = None;
+                            egui::ScrollArea::vertical()
+                                .content_margin(egui::Margin::same(6))
+                                .show(ui, |ui| {
+                                    for inst in &self.instruments {
+                                        let is_active = inst.id == active_id;
+                                        let text_color = if is_active {
+                                            t.colors.text_primary
+                                        } else {
+                                            t.colors.text_secondary
+                                        };
+                                        let resp = ui.selectable_label(
+                                            is_active,
+                                            RichText::new(&inst.name).color(text_color),
+                                        );
+                                        if resp.clicked() && !is_active {
+                                            clicked = Some(inst.id);
+                                        }
+                                    }
+                                });
+
+                            if let Some(id) = clicked {
+                                self.active_instrument_id = Some(id);
+                                self.handle.set_focused_instrument(Some(id));
+                            }
+
+                            ui.add_space(8.0);
+                            if ui
+                                .button(
+                                    RichText::new(format!("{} New Instrument", ri::ADD_LINE))
+                                        .color(t.colors.accent_green),
+                                )
+                                .clicked()
+                            {
+                                self.add_new_instrument();
+                            }
+                        });
+
                     egui::CentralPanel::default().show_inside(ui, |ui| {
                         // Get the active instrument's patch editor
                         let Some(patch_editor) = self
