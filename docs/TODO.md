@@ -20,20 +20,75 @@ Add an optional free-text `description: String` field on user-facing entities so
 *intent* — what a thing is for, not just what it is. The structural data (graph, notes, params) already tells you
 *what*; descriptions capture the *why*, which is otherwise unrecoverable.
 
-Phase 1 — start narrow where the payoff is highest:
+**Every instance-level description must be readable AND writable via MCP**, so AI can both read existing intent
+and populate descriptions after analysis. Read access is typically free (include the field in the existing
+resource/getter response — `get_instrument_info`, `get_song_info`, `list_patterns`, `list_tracks`,
+`list_samples`, `get_awe_state`); write access needs a dedicated setter tool routed through
+`bridge.rs` → `mcp_bridge.rs` → `server.rs`.
 
-- [ ] `Patch` — describe role/character (e.g. `"verse bass, sub-heavy, sidechained to kick"`)
-- [ ] `Pattern` — describe musical function (e.g. `"chorus drop, half-time feel"`)
-- [ ] Expose via `synth_mcp` resources and include in `get_graph_diagnostics` / `analyze_note` output so AI
-  actually sees them
-- [ ] Editable from GUI (patch header, pattern properties dialog)
+**Every instance-level description must also be editable from the GUI** — never MCP-only. The user must be
+able to write the same intent they'd ask AI to write. Each entity gets an inline-editable text field (header
+band, properties dialog, or context-menu "Edit description…" action) wired through the same session/bridge
+path so MCP and GUI writes share validation and undo. Type-level descriptors (`ModuleDescriptor`,
+`ParameterDescriptor`, `PortDescriptor`) are already read-exposed via `get_module_type_info` /
+`list_module_types` / `search_modules` and are hardcoded in source — no GUI edit and no MCP write tool there.
 
-Phase 2 — extend if Phase 1 proves useful:
+### Current status of description fields
 
-- [ ] `Track`, individual modules, `Sample` entries, `Song`
-- [ ] Consider per-module-instance notes vs. per-module-type docs (different concepts)
+| Entity                     | Field exists?                         | MCP read | MCP write |
+|----------------------------|---------------------------------------|----------|-----------|
+| `InstrumentState`          | ✅ `patch.rs:697`                     | ❌       | ❌        |
+| `Patch`                    | ✅ `patch.rs:130, 307` (Option)       | ❌       | ❌        |
+| `AwePresetFile`            | ✅ `patch.rs:792`                     | ❌       | ❌        |
+| `Song`                     | ❌ — add to `synth_sequencer/song.rs` | ❌       | ❌        |
+| `Pattern`                  | ❌ — add to `synth_sequencer`         | ❌       | ❌        |
+| `SequencerTrack`           | ❌ — add to `synth_sequencer`         | ❌       | ❌        |
+| `Sample` entry             | ❌ — add to sample registry           | ❌       | ❌        |
+| Module *instance* (in patch) | ❌ — separate from `ModuleDescriptor` | ❌       | ❌        |
+| `ModuleDescriptor` (type)  | ✅ `module_traits.rs:869`             | ✅       | n/a (hardcoded) |
+| `ParameterDescriptor` (type) | ✅ `module_traits.rs:586`            | ✅       | n/a       |
+| `PortDescriptor` (type)    | ✅                                    | ✅       | n/a       |
+| `ChoiceOption` (type)      | ✅ `module_traits.rs:557` (Option)    | partial  | n/a       |
 
-Open questions: persistence format (inline vs. sidecar), max length, whether to surface descriptions in tooltips.
+### Phase 1 — entities whose fields already exist; only MCP plumbing needed
+
+- [ ] Surface `InstrumentState.description` in `get_instrument_info` / `list_instruments` (MCP read)
+- [ ] `set_instrument_description` MCP tool — `bridge.rs` / `mcp_bridge.rs` / `server.rs` (MCP write)
+- [ ] Surface `Patch.description` in the patch resource view (MCP read)
+- [ ] `set_patch_description` MCP tool (MCP write) — note `Patch.description` is `Option<String>`,
+  setter should accept empty string to clear
+- [ ] Surface `AwePresetFile.description` in `get_awe_state` and `list_awe_presets` (MCP read)
+- [ ] `set_awe_preset_description` MCP tool (MCP write)
+- [ ] Editable from GUI (patch header, AWE preset save dialog) for the same three fields
+
+### Phase 2 — add new description fields + MCP read/write tools
+
+- [ ] Add `description: String` to `Song` (`synth_sequencer/src/song.rs:79`); surface in `get_song_info`;
+  add `set_song_description` MCP tool
+- [ ] Add `description: String` to `Pattern`; surface in `list_patterns` / pattern resource;
+  add `set_pattern_description` MCP tool (e.g. `"chorus drop, half-time feel"`)
+- [ ] Add `description: String` to `SequencerTrack`; surface in `list_tracks`;
+  add `set_track_description` MCP tool
+- [ ] Add `description: String` to sample registry entries; surface in `list_samples` / `get_sample_info`;
+  add `set_sample_description` MCP tool
+- [ ] Editable from GUI (song properties, pattern properties dialog, track header context menu, sample library)
+
+### Phase 3 — per-module-instance notes (different concept from type docs)
+
+- [ ] Add per-instance `description: String` on placed modules in a patch (e.g. annotate "this LFO is the
+  wobble modulator" on a specific `lfo-1` instance). Distinct from `ModuleDescriptor.description` which
+  documents the module *type* and is shared across all instances.
+- [ ] Surface in `get_module_info` (MCP read); add `set_module_description` MCP tool (MCP write)
+- [ ] Editable from GUI (module header context menu)
+
+### Cross-cutting
+
+- [ ] Include all instance-level descriptions in `get_graph_diagnostics` / `analyze_note` output so AI sees
+  intent alongside structure
+- [ ] Surface descriptions as tooltips on the corresponding GUI elements
+- [ ] Decide on max length (suggest 500 chars soft, 2000 hard) — long enough for a paragraph, short enough to
+  stay readable in tooltips
+- [ ] Persistence format: inline in the existing JSON containers (no sidecar files)
 
 ---
 

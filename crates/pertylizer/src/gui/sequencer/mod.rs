@@ -873,6 +873,15 @@ fn draw_arrangement(
 
     let mut double_clicked_pattern: Option<PatternId> = None;
 
+    // ── Shared scroll state ──
+    // The right-side timeline owns the vertical scroll. The left header panel
+    // mirrors the same y-offset so headers stay aligned with their rows.
+    let scroll_salt = "seq_scroll";
+    let scroll_id = ui.make_persistent_id(egui::Id::new(scroll_salt));
+    let header_v_offset = egui::scroll_area::State::load(ui.ctx(), scroll_id)
+        .map(|s| s.offset.y)
+        .unwrap_or(0.0);
+
     // ── Track header panel (left side, uses egui widgets) ──
     egui::Panel::left("seq_track_headers")
         .exact_size(TRACK_HEADER_WIDTH)
@@ -880,169 +889,177 @@ fn draw_arrangement(
         .show_inside(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
 
-            // Ruler corner placeholder
+            // Ruler corner placeholder (pinned, outside the scroll area)
             ui.allocate_space(Vec2::new(TRACK_HEADER_WIDTH, RULER_HEIGHT));
 
-            for (i, track) in data.tracks.iter().enumerate() {
-                let is_selected = view_state.selected_track == Some(track.id);
-                let is_highlighted = view_state.highlighted_track == Some(track.id);
-                let bg = if is_selected {
-                    Color32::from_rgba_premultiplied(80, 140, 220, 50)
-                } else if is_highlighted {
-                    Color32::from_rgba_premultiplied(80, 120, 200, 40)
-                } else if i % 2 == 0 {
-                    t.colors.bg_module
-                } else {
-                    t.colors.bg_panel
-                };
+            egui::ScrollArea::vertical()
+                .id_salt("seq_track_headers_scroll")
+                .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .scroll_source(egui::scroll_area::ScrollSource::NONE)
+                .vertical_scroll_offset(header_v_offset)
+                .show(ui, |ui| {
+                    for (i, track) in data.tracks.iter().enumerate() {
+                        let is_selected = view_state.selected_track == Some(track.id);
+                        let is_highlighted = view_state.highlighted_track == Some(track.id);
+                        let bg = if is_selected {
+                            Color32::from_rgba_premultiplied(80, 140, 220, 50)
+                        } else if is_highlighted {
+                            Color32::from_rgba_premultiplied(80, 120, 200, 40)
+                        } else if i % 2 == 0 {
+                            t.colors.bg_module
+                        } else {
+                            t.colors.bg_panel
+                        };
 
-                let frame = egui::Frame::new()
-                    .fill(bg)
-                    .stroke(if is_selected {
-                        Stroke::new(1.0, t.colors.accent_cyan)
-                    } else {
-                        Stroke::NONE
-                    })
-                    .inner_margin(egui::Margin::symmetric(4, 2));
+                        let frame = egui::Frame::new()
+                            .fill(bg)
+                            .stroke(if is_selected {
+                                Stroke::new(1.0, t.colors.accent_cyan)
+                            } else {
+                                Stroke::NONE
+                            })
+                            .inner_margin(egui::Margin::symmetric(4, 2));
 
-                frame.show(ui, |ui| {
-                    ui.set_min_height(TRACK_ROW_HEIGHT - 4.0);
-                    ui.set_max_height(TRACK_ROW_HEIGHT - 4.0);
-                    ui.set_min_width(ui.available_width());
+                        frame.show(ui, |ui| {
+                            ui.set_min_height(TRACK_ROW_HEIGHT - 4.0);
+                            ui.set_max_height(TRACK_ROW_HEIGHT - 4.0);
+                            ui.set_min_width(ui.available_width());
 
-                    // Color indicator + name row
-                    ui.horizontal(|ui| {
-                        // Color indicator
-                        let (color_rect, _) = ui.allocate_exact_size(
-                            Vec2::new(4.0, TRACK_ROW_HEIGHT - 8.0),
-                            Sense::hover(),
-                        );
-                        ui.painter().rect_filled(color_rect, 2.0, track.color);
+                            // Color indicator + name row
+                            ui.horizontal(|ui| {
+                                // Color indicator
+                                let (color_rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(4.0, TRACK_ROW_HEIGHT - 8.0),
+                                    Sense::hover(),
+                                );
+                                ui.painter().rect_filled(color_rect, 2.0, track.color);
 
-                        ui.vertical(|ui| {
-                            // Track name (editable on click)
-                            if view_state.editing_track_name.as_ref().map(|(id, _)| *id)
-                                == Some(track.id)
-                            {
-                                if let Some((_, ref mut name_buf)) = view_state.editing_track_name {
-                                    let resp = ui.add(
-                                        egui::TextEdit::singleline(name_buf)
-                                            .desired_width(80.0)
-                                            .font(egui::FontId::proportional(12.0)),
-                                    );
-                                    if resp.lost_focus()
-                                        || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                ui.vertical(|ui| {
+                                    // Track name (editable on click)
+                                    if view_state.editing_track_name.as_ref().map(|(id, _)| *id)
+                                        == Some(track.id)
                                     {
-                                        let new_name = name_buf.clone();
-                                        let tid = track.id;
+                                        if let Some((_, ref mut name_buf)) =
+                                            view_state.editing_track_name
                                         {
-                                            let mut song_w = song.write();
-                                            if let Some(t) = song_w.track_mut(tid) {
-                                                t.name = new_name;
+                                            let resp = ui.add(
+                                                egui::TextEdit::singleline(name_buf)
+                                                    .desired_width(80.0)
+                                                    .font(egui::FontId::proportional(12.0)),
+                                            );
+                                            if resp.lost_focus()
+                                                || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                            {
+                                                let new_name = name_buf.clone();
+                                                let tid = track.id;
+                                                {
+                                                    let mut song_w = song.write();
+                                                    if let Some(t) = song_w.track_mut(tid) {
+                                                        t.name = new_name;
+                                                    }
+                                                }
+                                                view_state.editing_track_name = None;
+                                            } else {
+                                                resp.request_focus();
                                             }
                                         }
-                                        view_state.editing_track_name = None;
                                     } else {
-                                        resp.request_focus();
-                                    }
-                                }
-                            } else {
-                                let name_resp = ui.add(
-                                    egui::Label::new(
-                                        RichText::new(&track.name)
-                                            .size(12.0)
-                                            .color(t.colors.text_primary),
-                                    )
-                                    .sense(Sense::click()),
-                                );
-                                if name_resp.clicked() {
-                                    view_state.selected_track = Some(track.id);
-                                }
-                                if name_resp.double_clicked() {
-                                    view_state.editing_track_name =
-                                        Some((track.id, track.name.clone()));
-                                }
+                                        let name_resp = ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&track.name)
+                                                    .size(12.0)
+                                                    .color(t.colors.text_primary),
+                                            )
+                                            .sense(Sense::click()),
+                                        );
+                                        if name_resp.clicked() {
+                                            view_state.selected_track = Some(track.id);
+                                        }
+                                        if name_resp.double_clicked() {
+                                            view_state.editing_track_name =
+                                                Some((track.id, track.name.clone()));
+                                        }
 
-                                // Right-click context menu on track name
-                                name_resp.context_menu(|ui| {
-                                    if ui.button("Rename").clicked() {
-                                        view_state.editing_track_name =
-                                            Some((track.id, track.name.clone()));
-                                        ui.close();
+                                        // Right-click context menu on track name
+                                        name_resp.context_menu(|ui| {
+                                            if ui.button("Rename").clicked() {
+                                                view_state.editing_track_name =
+                                                    Some((track.id, track.name.clone()));
+                                                ui.close();
+                                            }
+                                            if ui
+                                                .button(
+                                                    RichText::new("Delete Track")
+                                                        .color(t.colors.accent_red),
+                                                )
+                                                .clicked()
+                                            {
+                                                song.write().delete_track(track.id);
+                                                ui.close();
+                                            }
+                                        });
                                     }
-                                    if ui
-                                        .button(
-                                            RichText::new("Delete Track")
-                                                .color(t.colors.accent_red),
-                                        )
-                                        .clicked()
-                                    {
-                                        song.write().delete_track(track.id);
-                                        ui.close();
-                                    }
+
+                                    // Mute / Solo row
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 2.0;
+                                        // Mute button
+                                        let m_color = if track.mute {
+                                            t.colors.accent_red
+                                        } else {
+                                            t.colors.text_dim
+                                        };
+                                        if ui
+                                            .button(RichText::new("M").size(10.0).color(m_color))
+                                            .on_hover_text("Mute")
+                                            .clicked()
+                                            && let mut song_w = song.write()
+                                            && let Some(trk) = song_w.track_mut(track.id)
+                                        {
+                                            trk.toggle_mute();
+                                        }
+
+                                        // Solo button
+                                        let s_color = if track.solo {
+                                            t.colors.accent_yellow
+                                        } else {
+                                            t.colors.text_dim
+                                        };
+                                        if ui
+                                            .button(RichText::new("S").size(10.0).color(s_color))
+                                            .on_hover_text("Solo")
+                                            .clicked()
+                                            && let mut song_w = song.write()
+                                            && let Some(trk) = song_w.track_mut(track.id)
+                                        {
+                                            trk.toggle_solo();
+                                        }
+                                    });
                                 });
-                            }
-
-                            // Mute / Solo row
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 2.0;
-                                // Mute button
-                                let m_color = if track.mute {
-                                    t.colors.accent_red
-                                } else {
-                                    t.colors.text_dim
-                                };
-                                if ui
-                                    .button(RichText::new("M").size(10.0).color(m_color))
-                                    .on_hover_text("Mute")
-                                    .clicked()
-                                    && let mut song_w = song.write()
-                                    && let Some(trk) = song_w.track_mut(track.id)
-                                {
-                                    trk.toggle_mute();
-                                }
-
-                                // Solo button
-                                let s_color = if track.solo {
-                                    t.colors.accent_yellow
-                                } else {
-                                    t.colors.text_dim
-                                };
-                                if ui
-                                    .button(RichText::new("S").size(10.0).color(s_color))
-                                    .on_hover_text("Solo")
-                                    .clicked()
-                                    && let mut song_w = song.write()
-                                    && let Some(trk) = song_w.track_mut(track.id)
-                                {
-                                    trk.toggle_solo();
-                                }
                             });
                         });
-                    });
-                });
-            }
+                    }
 
-            // "+" button to add track
-            ui.add_space(4.0);
-            if ui
-                .button(
-                    RichText::new(format!("{} Add Track", ri::ADD_LINE))
-                        .size(11.0)
-                        .color(t.colors.accent_green),
-                )
-                .clicked()
-            {
-                let mut song_w = song.write();
-                let count = song_w.track_count();
-                let _ = song_w.create_track(format!("Track {}", count + 1));
-            }
+                    // "+" button to add track
+                    ui.add_space(4.0);
+                    if ui
+                        .button(
+                            RichText::new(format!("{} Add Track", ri::ADD_LINE))
+                                .size(11.0)
+                                .color(t.colors.accent_green),
+                        )
+                        .clicked()
+                    {
+                        let mut song_w = song.write();
+                        let count = song_w.track_count();
+                        let _ = song_w.create_track(format!("Track {}", count + 1));
+                    }
+                });
         });
 
     // ── Timeline area (right side, uses painter for performance) ──
     // The scroll area's actual ID = ui.make_persistent_id(Id::new(salt))
-    let scroll_salt = "seq_scroll";
-    let scroll_id = ui.make_persistent_id(egui::Id::new(scroll_salt));
 
     // Pre-set scroll offset for auto-follow before showing the scroll area
     if is_playing && view_state.auto_follow_playhead && ticks_per_beat > 0 {
@@ -1059,8 +1076,9 @@ fn draw_arrangement(
         view_state.last_auto_scroll_offset = Some(target_offset);
     }
 
-    let scroll_output = egui::ScrollArea::horizontal()
+    let scroll_output = egui::ScrollArea::both()
         .id_salt(scroll_salt)
+        .auto_shrink([false, false])
         .show(ui, |ui| {
             let total_size = Vec2::new(
                 timeline_width,
