@@ -361,4 +361,10 @@ impl AudioEffect for Compressor {
     fn module_type(&self) -> ModuleType {
         ModuleType::Compressor
     }
+
+    fn set_sidechain_input(&mut self, buffer: &[f32]) {
+        // Delegate to the inherent method so the trait dispatch reaches
+        // this effect when the engine pumps in cross-instrument audio.
+        Self::set_sidechain_input(self, buffer);
+    }
 }

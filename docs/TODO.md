@@ -250,9 +250,8 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 
 ### 3.4 Sidechain routing
 
-- [~] Use one instrument's audio to control another (e.g. sidechain compression) — **partially
-  shipped: data model + persistence + GUI + MCP are wired; engine audio routing is the remaining
-  piece.**
+- [x] Use one instrument's audio to control another (e.g. sidechain compression). Full path
+  shipped: data model + persistence + MCP + GUI + engine audio routing.
   - [x] `Instrument.sidechain_source_id: Option<InstrumentId>` engine field + getter/setter.
   - [x] `EngineCommand::SetSidechainSource` + handler (rejects self-routing). `transactions::try_clone`
         and `hub.rs` permission gate updated.
@@ -262,14 +261,24 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
   - [x] `InstrumentState.sidechain_source_id` persistence (`#[serde(default)]`) + load path sends
         the engine command after instrument construction.
   - [x] GUI combobox in the instrument-edit window listing all other instruments + `— None —`.
-        Tooltip warns that audio routing is still in development.
-  - [ ] **Engine audio routing** — capture each instrument's previous-callback output into a
-        per-instrument cache (`HashMap<InstrumentId, (AudioBuffer, AudioBuffer)>` on `SynthEngine`,
-        pre-allocated to avoid audio-thread allocs). Before each instrument's `process()`, look up
-        `sidechain_source_id` and call `set_sidechain_input(...)` on every compressor in its
-        effect chain. Reads previous-callback audio so order of `self.instruments` doesn't matter
-        (~5 ms of sidechain detection latency, which is below typical attack times).
-  - [ ] Cycle detection deeper than 1 (currently only self-routing is rejected).
+  - [x] **Engine audio routing**:
+    - `SynthEngine::prev_instrument_outputs: HashMap<InstrumentId, AudioBuffer>` — pre-allocated
+      on instrument add/remove (no audio-thread allocs).
+    - `Instrument::last_output_interleaved()` exposes the post-effect-chain interleaved-stereo
+      output for the engine to capture after each `process()`.
+    - `Instrument::feed_sidechain_inputs(buffer)` walks the effect chain and calls
+      `AudioEffect::set_sidechain_input` on every effect slot. Default trait method is a
+      no-op; `Compressor` overrides to forward into its existing inherent
+      `set_sidechain_input`.
+    - `SynthEngine::process_voices` uses previous-callback semantics (read source's
+      previous output, then process, then capture this callback's output for next time).
+      Introduces ~1 audio-buffer of sidechain detection latency. Order of `self.instruments`
+      no longer matters — A and B can sidechain each other safely.
+    - Removing an instrument clears its prev cache *and* clears any other instrument's
+      `sidechain_source_id` that pointed at it.
+  - [ ] Cycle detection deeper than 1 (currently only self-routing is rejected at the engine
+        boundary; longer cycles are harmless thanks to previous-buffer semantics but produce
+        unintuitive ducking patterns).
 
 ### 3.5 Polyphony settings
 

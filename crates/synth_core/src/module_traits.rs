@@ -1058,6 +1058,14 @@ pub trait AudioEffect: Describable + Send {
         // Default implementation does nothing.
         // Override in effects that need sample rate (delays, reverbs, etc.)
     }
+
+    /// Feed audio from a sidechain source into this effect. Most effects
+    /// ignore the input; `Compressor` overrides this to gate detection
+    /// on the source signal. Called by the engine before `process` when
+    /// the host instrument has `sidechain_source_id` set.
+    fn set_sidechain_input(&mut self, _buffer: &[f32]) {
+        // Default: ignore.
+    }
 }
 
 // ============================================================================

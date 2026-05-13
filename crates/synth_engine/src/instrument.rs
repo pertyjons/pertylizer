@@ -546,6 +546,26 @@ impl Instrument {
         self.sidechain_source_id = source;
     }
 
+    /// Get the most recently rendered post-effect-chain output as
+    /// interleaved-stereo samples. Valid after `process` has run; before
+    /// the first `process` it returns an empty slice. Used by the engine
+    /// to feed cross-instrument sidechain routing.
+    #[inline]
+    pub fn last_output_interleaved(&self) -> &[f32] {
+        self.effect_buffer.as_slice()
+    }
+
+    /// Push every sidechain-capable effect in this instrument's chain
+    /// a fresh sidechain input buffer. Called by the engine before
+    /// `process` when this instrument has a sidechain source configured.
+    pub fn feed_sidechain_inputs(&mut self, buffer: &[f32]) {
+        for slot in self.effect_chain.slots_mut() {
+            if let crate::effect_chain::ChainSlot::Effect(effect_slot) = slot {
+                effect_slot.effect.set_sidechain_input(buffer);
+            }
+        }
+    }
+
     /// Get the instrument category.
     #[inline]
     pub fn category(&self) -> InstrumentCategory {

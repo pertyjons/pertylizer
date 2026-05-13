@@ -375,6 +375,12 @@ pub struct SynthEngine {
     mix_buffer: AudioBuffer,
     /// Output buffer for the global module graph.
     graph_output: AudioBuffer,
+    /// Previous-callback output per instrument (interleaved stereo).
+    /// Read by sidechain consumers; written after each instrument's
+    /// `process()`. Pre-allocated on instrument add/remove to avoid
+    /// audio-thread allocation. Introduces ~1 buffer of sidechain
+    /// detection latency — acceptable for compressor envelope follow.
+    prev_instrument_outputs: std::collections::HashMap<InstrumentId, AudioBuffer>,
 
     // === Metering ===
     metering: MeteringSystem,
@@ -458,6 +464,7 @@ impl SynthEngine {
             master_volume: 1.0,
             mix_buffer: AudioBuffer::new(512),
             graph_output: AudioBuffer::new(1024),
+            prev_instrument_outputs: std::collections::HashMap::new(),
             metering: MeteringSystem::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
@@ -1164,6 +1171,10 @@ impl SynthEngine {
         #[allow(clippy::cast_possible_truncation)]
         let seq_id = synth_sequencer::SeqInstrumentId(instrument.id().as_u64() as u16);
         self.instrument_mapping.insert(seq_id, instrument.id());
+        // Pre-allocate this instrument's sidechain output buffer so the
+        // audio thread never grows the map. 4096 × 2 = max interleaved frame.
+        self.prev_instrument_outputs
+            .insert(instrument.id(), AudioBuffer::new(4096 * 2));
         self.instruments.push(instrument);
         self.update_shared_instruments();
     }
@@ -1186,6 +1197,14 @@ impl SynthEngine {
             self.instrument_mapping.remove_by_engine_id(instrument_id);
 
             let instrument = self.instruments.swap_remove(idx);
+            // Drop this instrument's sidechain cache.
+            self.prev_instrument_outputs.remove(&instrument_id);
+            // Clear any sidechain references that pointed at this id.
+            for inst in &mut self.instruments {
+                if inst.sidechain_source_id() == Some(instrument_id) {
+                    inst.set_sidechain_source_id(None);
+                }
+            }
             let _ = self.instrument_return_producer.try_push(instrument);
             self.update_shared_instruments();
         }
@@ -2105,12 +2124,26 @@ impl SynthEngine {
         // Check if any instrument is soloed
         let any_soloed = self.instruments.iter().any(|i| i.is_solo());
 
-        // Process each instrument - delegate to Instrument::process
+        // Process each instrument - delegate to Instrument::process.
+        //
+        // Sidechain routing uses *previous-callback* outputs from
+        // `self.prev_instrument_outputs`. This introduces ~1 buffer of
+        // sidechain detection latency (e.g. ~5 ms at 256-frame buffers /
+        // 48 kHz) — well below typical compressor attack times. The
+        // benefit is that processing order doesn't matter: A can
+        // sidechain B and B can sidechain A without circular reads.
         for instrument in &mut self.instruments {
             // Skip this instrument if:
             // - Any instrument is soloed AND this one is not soloed
             if any_soloed && !instrument.is_solo() {
                 continue;
+            }
+
+            // Feed sidechain from the previous callback before process.
+            if let Some(src_id) = instrument.sidechain_source_id()
+                && let Some(prev) = self.prev_instrument_outputs.get(&src_id)
+            {
+                instrument.feed_sidechain_inputs(prev.as_slice());
             }
 
             active_count += instrument.process(
@@ -2119,6 +2152,19 @@ impl SynthEngine {
                 spatial_ctx.as_ref(),
                 &mut self.spatial_voice_bank,
             );
+        }
+
+        // Capture each instrument's post-effect-chain output for the
+        // next callback. Pure copy into pre-allocated buffers — no allocs.
+        for instrument in &self.instruments {
+            if let Some(buf) = self.prev_instrument_outputs.get_mut(&instrument.id()) {
+                let src = instrument.last_output_interleaved();
+                if buf.len() < src.len() {
+                    // Resize once at startup or after a buffer-size change.
+                    buf.resize(src.len());
+                }
+                buf.as_mut_slice()[..src.len()].copy_from_slice(src);
+            }
         }
 
         // Update total voice count across all instruments

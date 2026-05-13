@@ -3611,10 +3611,9 @@ impl SynthApp {
                         .response
                         .on_hover_text(
                             "Route another instrument's audio output into this \
-                            instrument's compressors / envelope followers for \
-                            classic pumping/ducking. Engine audio routing is \
-                            still in development — the setting is persisted and \
-                            visible to MCP, but does not yet pump the signal.",
+                            instrument's compressors for classic pumping/ducking. \
+                            The compressor's Sidechain Enabled parameter must also \
+                            be on. Detection latency is ~1 audio buffer.",
                         );
                 });
             });
