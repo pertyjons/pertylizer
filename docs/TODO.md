@@ -2,6 +2,46 @@
 
 ## 0. Known Bugs
 
+### 0.1 Sequencer — identical-pitch retrigger across placement boundaries fades sustained notes
+
+When two adjacent pattern placements both hold a note at the same pitch and the first note's end
+coincides with (or precedes) the second's start, the sequencer emits `note_off` followed immediately
+by `note_on`. On instruments with long release + long attack envelopes (pads, strings) this produces
+an audible "breath" every pattern boundary instead of a continuous sustained tone — the release tail
+fades out while the new attack ramps up.
+
+**Repro:** create a 16-beat pad pattern with a Cm7 chord (notes `start_beat=0, duration_beats=16`) on
+an instrument with `Attack=0.6s, Release=1.5s`, place it at beats 0, 16, 32, 48. The pad will fade
+every 16 beats. **Workaround:** use a single placement with one long note covering the whole
+duration (this is what `Sidechain Demo.json` does).
+
+**Possible fixes (sequencer-side):**
+- Detect adjacent same-pitch note edges within a small epsilon and skip the redundant
+  `note_off` + `note_on` pair so the voice sustains.
+- Per-track or per-placement "legato across boundaries" toggle.
+- Or document this as expected DAW retrigger semantics and only offer the toggle on opt-in.
+
+### 0.3 `analyze_section` per-track render misses notes that started before the section
+
+When `analyze_section` is called with `include_per_track: true` and `start_tick > 0`, the offline
+renderer for each soloed track starts a fresh engine at `start_tick`. Long-running notes whose
+NoteOn fires *before* `start_tick` are never triggered in that render, so the per-track metrics
+falsely report silence for sustained tracks.
+
+**Repro:** in `Sidechain Demo.json`, the Pad pattern has one 80-beat note at start_beat=0. Call
+`analyze_section(start_tick=15360, end_tick=61440, include_per_track=true)` — the master metrics
+report normal pad energy, but the per-track row for Pad reports `peak: 0.0, peak_dbfs: -200.0,
+rms_share: 0.0` because the soloed pad render starts at tick 15360 with no active voice.
+
+Same class of bug as the one fixed in 74d18da (see memory note
+`project_analyze_offline_render_snapshot_bug`), but for the per-track soloed render path inside
+`analyze_section` rather than the master path. The fix likely needs to either (a) warm the engine
+from tick 0 and only return metrics from `start_tick` onward, or (b) seed active voices for any
+note placement that straddles `start_tick`.
+
+**Workaround:** call `analyze_section(start_tick=0, ...)` and rely on the master metrics; or
+analyze each section starting from tick 0 with a longer `end_tick`.
+
 ### 0.2 Project settings — unsaved instrument strip parameters
 
 The following `InstrumentParam` variants exist in the engine but have no UI controls and are not persisted in
@@ -105,8 +145,27 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 - [ ] Add per-instance `description: String` on placed modules in a patch (e.g. annotate "this LFO is the
   wobble modulator" on a specific `lfo-1` instance). Distinct from `ModuleDescriptor.description` which
   documents the module *type* and is shared across all instances.
-- [ ] Surface in `get_module_info` (MCP read); add `set_module_description` MCP tool (MCP write)
+- [ ] Surface in `get_module_info` (MCP read); add `set_module_description(instrument_id, module_id, description)`
+  MCP tool (MCP write). Accept `""` to clear.
 - [ ] Editable from GUI (module header context menu)
+
+#### Persistence (must round-trip on save/load)
+
+Module-instance descriptions **must** survive serialization, both at the project and standalone-patch
+level — otherwise AI-applied notes silently vanish on save/reload. Same pattern as
+`Patch.description` and the planned color persistence above.
+
+- [ ] **Project save** — every module instance's description persisted inside its containing patch
+  in the project JSON. Round-trip test: MCP-set description on `lfo-1` → `save_project` →
+  `new_project` → `load_project` → `get_module_info` returns the same text.
+- [ ] **Standalone patch save** — the per-instance description travels with the .json patch file
+  when the user invokes "Save Patch…". A patch saved by AI must carry its module notes into other
+  projects that load it.
+- [ ] **Project / patch load → engine mirror** — on load, copy each saved module description into
+  the engine's runtime mirror so subsequent MCP reads see what was loaded, not stale defaults.
+  Mirror the `Patch.description` → `Instrument.description` plumbing used in Phase 1.
+- [ ] **No partial states** — do not ship `set_module_description` without the full save/load path;
+  document as known-broken until both halves land.
 
 ### Cross-cutting
 
@@ -116,6 +175,67 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 - [ ] Decide on max length (suggest 500 chars soft, 2000 hard) — long enough for a paragraph, short enough to
   stay readable in tooltips
 - [ ] Persistence format: inline in the existing JSON containers (no sidecar files)
+
+---
+
+## ★ Color fields via MCP
+
+Color fields already exist on several entities (Patch, Instrument, Group, SequencerTrack), but
+**no MCP setter** exposes them — AI can build a song but can't paint the strips/tracks to make the
+arrangement visually scannable. Parallel structure to the description roadmap above: read on the
+existing getter response, write via a dedicated setter routed through
+`bridge.rs` → `mcp_bridge.rs` → `server.rs`. Color is also already GUI-editable in most cases.
+
+### Current status of color fields
+
+| Entity            | Field exists?                            | MCP read | MCP write |
+|-------------------|------------------------------------------|----------|-----------|
+| `InstrumentState` | ✅ `patch.rs:700` `Option<HexColor>`     | ❌       | ❌        |
+| `Patch`           | ✅ `patch.rs:255` `Option<HexColor>`     | ❌       | ❌        |
+| `Group`           | ✅ `patch.rs:316` `Option<HexColor>`     | ❌       | ❌        |
+| `SequencerTrack`  | ✅ in song JSON `{r, g, b}` per track    | ❌       | ❌        |
+
+### Work to do
+
+- [ ] Surface color on `get_instrument_info` / `list_instruments` (MCP read); add
+  `set_instrument_color(instrument_id, color)` MCP tool. Accept `"#RRGGBB"` / `"#RRGGBBAA"` and
+  `""`/`null` to clear back to "auto" / default.
+- [ ] Surface patch color on the same getters as a separate `patch_color` field, mirroring how
+  `patch_description` is exposed alongside `description`. Add `set_patch_color` MCP tool.
+- [ ] Surface track color on `list_tracks`; add `set_track_color(track_id, color)` MCP tool.
+- [ ] Surface group color on `get_instrument_info` (or wherever groups are listed); add
+  `set_group_color` MCP tool.
+- [ ] Decide whether AI-friendly named palettes are useful (`"warm-orange"`, `"cool-blue"`) on top of
+  raw hex — same pattern as `set_awe_preset` vs `set_awe_parameter`. Out of scope for v1; raw hex
+  is enough.
+
+### Persistence (must round-trip on save/load)
+
+Color writes via MCP **must** survive serialization, both at the project and standalone-patch level
+— otherwise AI-applied colors silently vanish on save/reload. This is the same architectural
+pattern used for `Patch.description` (runtime mirror in the engine, project load copies in, project
+save reads back).
+
+- [ ] **Project save** — all four entities' colors persisted in the project JSON. Verify by
+  round-tripping: MCP-set a color → `save_project` → `new_project` → `load_project` → color is the
+  same. `InstrumentState.color`, `SequencerTrack` color and `Group.color` already serialize via
+  serde; mainly need to confirm the engine-side runtime mirror is read back into the snapshot at
+  save time (mirror the `description` plumbing).
+- [ ] **Standalone patch save** — `Patch.color` travels with the .json patch file when the user
+  invokes "Save Patch…" from the instrument-edit window. Important because a patch saved by AI
+  should carry its color into other projects that load it.
+- [ ] **Project load → engine mirror** — on `load_project`, push each saved color into the engine's
+  runtime mirror (analogous to how `Patch.description` is copied into `Instrument.description` at
+  load time) so subsequent MCP reads see what was loaded, not stale defaults.
+- [ ] **No partial states** — if any color setter is added without the corresponding save+load path
+  wired, document it as known-broken until both halves land; do not ship a setter that only
+  updates the live engine but not the project file.
+
+### Use case (motivation)
+
+When AI builds a multi-instrument song via MCP, every track defaults to the same color (e.g. all
+tracks in the just-built sidechain demo render as `{r:100, g:100, b:255}`). With color setters AI
+can make the arrangement self-documenting at a glance — e.g. red kick, blue pad, green bass.
 
 ---
 
@@ -248,6 +368,32 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
   `Repeat` to match DAW expectations). Surface in the placement context menu and in the right-edge
   resize-grab tooltip so the user can choose per placement. Migration of older songs: default existing
   placements to `Clip` so behaviour is preserved, or `Repeat` if we accept a one-time semantic change.
+
+### 2.7 Transport loop region — visibility + MCP control
+
+The transport loop region (`SharedState.loop_enabled` / `loop_start` / `loop_end`, set via right-click
+on the arrangement ruler) silently clips playback wrap. Today the loop is invisible in the timeline
+ruler — the only way to discover it exists is via the right-click context menu. If a user (or AI)
+extends the arrangement past a previously-set `loop_end`, playback keeps wrapping at the stale
+position with no visual hint, and there is no MCP tool to inspect or clear the region.
+
+- [ ] **Persistent visual markers on the timeline ruler** showing loop start, loop end, and the active
+  region (highlight band between the two flags, distinct flag markers, contrasting fill on the
+  ruler segment). The right-click menu can stay as the editor; the ruler needs to *display* the
+  current state at all times.
+- [ ] **Status indicator in the transport bar** when a loop is active — e.g. a loop icon that
+  lights up, or a small "LOOP 1.1–16.4" readout next to play/stop. Cheap visual cue so a stale
+  loop can't hide.
+- [ ] **MCP exposure of the transport loop** — `set_transport_loop(start_beats, end_beats, enabled)`
+  and `clear_transport_loop()` tools routed through `bridge.rs` → `mcp_bridge.rs` → `server.rs`,
+  driving the same `EngineCommand::SetLoop` path the GUI uses. Surface current loop state in
+  `get_song_info` (or a new `get_transport_state`) so AI can detect a stale loop region before
+  building out longer arrangements.
+- [ ] **Auto-extend or warn on arrangement growth** — when a placement is added past `loop_end` and
+  a loop is currently active, either auto-extend `loop_end` to the new arrangement length or
+  return a warning in the operation response. The "AI extended the song to 24 bars but a stale
+  16-bar loop silently kept playback short" pitfall is real — discovered during the Neuro F#m 174
+  session, 2026-05-13.
 
 ---
 
