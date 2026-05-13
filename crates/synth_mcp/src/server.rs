@@ -662,6 +662,27 @@ pub struct SetInstrumentDescriptionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetAweDescriptionParam {
+    #[schemars(
+        description = "Free-text description of the AWE state's acoustic character. \
+        Mirrors `AwePresetFile.description` when an AWE preset is loaded. Pass \"\" to clear."
+    )]
+    pub description: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetPatchDescriptionParam {
+    #[schemars(description = "Instrument ID whose patch description to set")]
+    pub instrument_id: u64,
+    #[schemars(
+        description = "Free-text patch description (what the patch is for / how it works). \
+        Distinct from set_instrument_description, which captures per-instance song-role intent. \
+        Pass \"\" to clear."
+    )]
+    pub description: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetSidechainSourceParam {
     #[schemars(description = "Instrument ID whose sidechain input to configure")]
     pub instrument_id: u64,
@@ -1645,6 +1666,8 @@ impl SynthMcpServer {
             "delete_instrument" => delete_instrument(InstrumentIdParam),
             "rename_instrument" => rename_instrument(RenameInstrumentParam),
             "set_instrument_description" => set_instrument_description(SetInstrumentDescriptionParam),
+            "set_patch_description" => set_patch_description(SetPatchDescriptionParam),
+            "set_awe_description" => set_awe_description(SetAweDescriptionParam),
             "set_sidechain_source" => set_sidechain_source(SetSidechainSourceParam),
             "set_instrument_volume" => set_instrument_volume(SetInstrumentVolumeParam),
             "set_instrument_pan" => set_instrument_pan(SetInstrumentPanParam),
@@ -2523,6 +2546,58 @@ impl SynthMcpServer {
                 params.0.instrument_id,
                 params.0.description.chars().count()
             ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set or clear the patch-level description on an instrument's currently \
+        loaded patch. This describes the *patch* (sound design intent, how it works, what it's \
+        good for) and is distinct from set_instrument_description, which records the \
+        instrument's per-instance role in the song. The patch description travels with the \
+        patch when saved. Pass \"\" to clear."
+    )]
+    async fn set_patch_description(&self, params: Parameters<SetPatchDescriptionParam>) -> String {
+        match self
+            .bridge
+            .set_patch_description(params.0.instrument_id, &params.0.description)
+        {
+            Ok(()) => {
+                if params.0.description.is_empty() {
+                    format!(
+                        "OK: cleared patch description on instrument {}",
+                        params.0.instrument_id
+                    )
+                } else {
+                    format!(
+                        "OK: set instrument {} patch description ({} chars)",
+                        params.0.instrument_id,
+                        params.0.description.chars().count()
+                    )
+                }
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set or clear the free-text description on the current AWE state \
+        (the acoustic character of the loaded room / preset). Mirrors \
+        `AwePresetFile.description` when an AWE preset is loaded; can also be set directly. \
+        Pass \"\" to clear."
+    )]
+    async fn set_awe_description(&self, params: Parameters<SetAweDescriptionParam>) -> String {
+        match self.bridge.set_awe_description(&params.0.description) {
+            Ok(()) => {
+                if params.0.description.is_empty() {
+                    "OK: cleared AWE description".to_owned()
+                } else {
+                    format!(
+                        "OK: set AWE description ({} chars)",
+                        params.0.description.chars().count()
+                    )
+                }
+            }
             Err(e) => format!("Error: {e}"),
         }
     }

@@ -113,6 +113,7 @@ impl AppSynthBridge {
             id: snap.id.as_u64(),
             name: snap.name.clone(),
             description: snap.description.clone(),
+            patch_description: snap.patch_description.clone(),
             sidechain_source_id: snap.sidechain_source_id.map(|id| id.as_u64()),
             category: snap.category.name().to_owned(),
             midi_channel: snap.midi_channel.as_u8(),
@@ -451,6 +452,7 @@ impl SynthBridge for AppSynthBridge {
             id: id.as_u64(),
             name: name.to_string(),
             description: String::new(),
+            patch_description: None,
             sidechain_source_id: None,
             midi_channel: 1,
             volume: 1.0,
@@ -493,6 +495,22 @@ impl SynthBridge for AppSynthBridge {
         self.validate_instrument(instrument_id)?;
         self.session
             .set_instrument_description(InstrumentId::new(instrument_id), description)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
+    }
+
+    fn set_patch_description(
+        &self,
+        instrument_id: u64,
+        description: &str,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let value = if description.is_empty() {
+            None
+        } else {
+            Some(description)
+        };
+        self.session
+            .set_patch_description(InstrumentId::new(instrument_id), value)
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 
@@ -2469,7 +2487,24 @@ impl SynthBridge for AppSynthBridge {
             .awe_state
             .lock()
             .map_err(|_| McpBridgeError::Other("AWE state lock poisoned".to_string()))?;
-        Ok(awe_state_to_info(&state))
+        let mut info = awe_state_to_info(&state);
+        if let Ok(desc) = self.shared.awe_description.lock()
+            && !desc.is_empty()
+        {
+            info.description = Some(desc.clone());
+        }
+        Ok(info)
+    }
+
+    fn set_awe_description(&self, description: &str) -> Result<(), McpBridgeError> {
+        // Description lives separately from the `AweState` struct so
+        // existing literal initializers stay untouched. Metadata only —
+        // no engine command needed.
+        if let Ok(mut desc) = self.shared.awe_description.lock() {
+            desc.clear();
+            desc.push_str(description);
+        }
+        Ok(())
     }
 
     fn set_awe_enabled(&self, enabled: bool) -> Result<(), McpBridgeError> {
@@ -3898,6 +3933,7 @@ fn awe_state_to_info(state: &synth_awe::AweState) -> AweStateInfo {
 
     AweStateInfo {
         enabled: state.enabled,
+        description: None, // filled in by the bridge after `awe_state_to_info`
         room_shape: room_shape_name(&room),
         room_dimensions: room_dimensions_string(&room),
         room_length: room.length().as_f32(),

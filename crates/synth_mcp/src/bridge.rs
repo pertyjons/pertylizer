@@ -215,6 +215,14 @@ pub trait SynthBridge: Send + Sync + 'static {
         description: &str,
     ) -> Result<(), McpBridgeError>;
 
+    /// Set or clear the patch-level description on an instrument's
+    /// currently-loaded patch. Pass `""` to clear (treated as `None`).
+    fn set_patch_description(
+        &self,
+        instrument_id: u64,
+        description: &str,
+    ) -> Result<(), McpBridgeError>;
+
     /// Set or clear the sidechain source instrument id. Pass `None` to
     /// disable sidechain routing into this instrument's compressors.
     /// Self-routing is rejected.
@@ -706,6 +714,10 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Enable or disable the AWE engine.
     fn set_awe_enabled(&self, enabled: bool) -> Result<(), McpBridgeError>;
+
+    /// Set or clear the AWE state's free-text description (the acoustic
+    /// character of the current room / preset). Pass `""` to clear.
+    fn set_awe_description(&self, description: &str) -> Result<(), McpBridgeError>;
 
     /// Set a single AWE parameter by name. Value interpretation depends on the parameter.
     fn set_awe_parameter(&self, name: &str, value: f64) -> Result<(), McpBridgeError>;

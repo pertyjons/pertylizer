@@ -670,6 +670,19 @@ impl SynthEngine {
                 }
                 self.update_shared_instruments();
             }
+            EngineCommand::SetPatchDescription {
+                instrument_id,
+                description,
+            } => {
+                if let Some(inst) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|i| i.id() == instrument_id)
+                {
+                    inst.set_patch_description(description);
+                }
+                self.update_shared_instruments();
+            }
             EngineCommand::SetSidechainSource {
                 instrument_id,
                 source,
@@ -2096,6 +2109,7 @@ impl SynthEngine {
                     seq_instrument_id: seq_id,
                     name: inst.name().to_string(),
                     description: inst.description().to_string(),
+                    patch_description: inst.patch_description().map(str::to_owned),
                     sidechain_source_id: inst.sidechain_source_id(),
                     category: inst.category(),
                     midi_channel: synth_core::MidiChannel::new(

@@ -338,6 +338,9 @@ pub struct InstrumentSnapshot {
     pub name: String,
     /// Free-text description / intent. Empty when not set.
     pub description: String,
+    /// Patch-level description, separate from the per-instrument
+    /// description above. `None` when not set.
+    pub patch_description: Option<String>,
     /// Sidechain source — when set, this instrument's
     /// sidechain-capable modules read audio from the source instrument.
     pub sidechain_source_id: Option<InstrumentId>,

@@ -5110,15 +5110,23 @@ impl SynthApp {
     /// Build a `ProjectFile` from the current application state.
     fn create_project_from_app(&self) -> ProjectFile {
         let engine_state = self.session.state();
+        // Pull current patch descriptions from the engine snapshots so
+        // they survive a save → load round-trip without an extra
+        // GUI-side mirror.
+        let snapshots = self.session.list_instruments();
         let instrument_states: Vec<InstrumentState> = self
             .instruments
             .iter()
             .map(|inst| {
-                let patch = patch_bridge::create_patch_from_editor(
+                let mut patch = patch_bridge::create_patch_from_editor(
                     &inst.name,
                     &inst.patch_editor,
                     Some((engine_state.as_ref(), inst.id)),
                 );
+                patch.description = snapshots
+                    .iter()
+                    .find(|s| s.id == inst.id)
+                    .and_then(|s| s.patch_description.clone());
                 InstrumentState {
                     id: inst.id,
                     name: inst.name.clone(),
@@ -5341,6 +5349,16 @@ impl SynthApp {
                     .set_instrument_description(inst_id, &inst_state.description)
             {
                 eprintln!("Failed to set instrument description {inst_id:?}: {e}");
+            }
+            // Mirror the saved patch.description into the runtime mirror
+            // on the engine so MCP can read it via get_instrument_info.
+            if let Some(patch_desc) = inst_state.patch.description.as_deref()
+                && !patch_desc.is_empty()
+                && let Err(e) = self
+                    .session
+                    .set_patch_description(inst_id, Some(patch_desc))
+            {
+                eprintln!("Failed to set patch description {inst_id:?}: {e}");
             }
             if let Some(src) = inst_state.sidechain_source_id
                 && let Err(e) = self

@@ -368,6 +368,11 @@ pub struct Instrument {
     /// Free-text description / intent. Never affects audio; mirrored in
     /// `InstrumentSnapshot` so MCP can read+write per-instrument intent.
     description: String,
+    /// Patch-level description (separate from instrument's per-instance
+    /// description). Captures "what is this patch for" — author intent
+    /// that travels with the patch when saved. `None` when no
+    /// description was set or loaded.
+    patch_description: Option<String>,
     /// Instrument that feeds this instrument's sidechain inputs (e.g.
     /// compressors with `sidechain_enabled` set). `None` = no sidechain.
     /// Audio routing is the engine's responsibility — see
@@ -438,6 +443,7 @@ impl Instrument {
             id,
             name: name.into(),
             description: String::new(),
+            patch_description: None,
             sidechain_source_id: None,
             category: InstrumentCategory::default(),
             midi_channel: MidiChannel::default(),
@@ -475,6 +481,7 @@ impl Instrument {
             id,
             name: name.into(),
             description: String::new(),
+            patch_description: None,
             sidechain_source_id: None,
             category: InstrumentCategory::default(),
             midi_channel: MidiChannel::default(),
@@ -531,6 +538,18 @@ impl Instrument {
     #[inline]
     pub fn set_description(&mut self, description: impl Into<String>) {
         self.description = description.into();
+    }
+
+    /// Get the patch description, if any.
+    #[inline]
+    pub fn patch_description(&self) -> Option<&str> {
+        self.patch_description.as_deref()
+    }
+
+    /// Set or clear the patch description. `None` clears.
+    #[inline]
+    pub fn set_patch_description(&mut self, description: Option<String>) {
+        self.patch_description = description;
     }
 
     /// Get the sidechain source instrument id, if any.

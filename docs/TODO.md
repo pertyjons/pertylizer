@@ -62,12 +62,23 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
   `Session::set_instrument_description` + `SynthBridge::set_instrument_description` +
   `server.rs` tool. Accepts `""` to clear. Already editable in the instrument edit window;
   the GUI now dispatches the engine command on every changed frame.
-- [ ] Surface `Patch.description` in the patch resource view (MCP read)
-- [ ] `set_patch_description` MCP tool (MCP write) — note `Patch.description` is `Option<String>`,
-  setter should accept empty string to clear
-- [ ] Surface `AwePresetFile.description` in `get_awe_state` and `list_awe_presets` (MCP read)
-- [ ] `set_awe_preset_description` MCP tool (MCP write)
-- [ ] Editable from GUI (patch header, AWE preset save dialog) for the remaining two fields
+- [x] Surface `Patch.description` per instrument in `InstrumentInfo.patch_description` (MCP read) —
+  the engine's `Instrument` gained a runtime mirror; project load copies the saved
+  `Patch.description` into it, project save writes it back from the snapshot.
+- [x] `set_patch_description` MCP tool (MCP write) — `EngineCommand::SetPatchDescription` +
+  `Session::set_patch_description` + bridge method + `server.rs` tool. Accepts `""` to clear
+  (treated as `None`). Distinct from `set_instrument_description` — see the tool description.
+- [x] Surface `AwePresetFile.description` in `get_awe_state` (MCP read) — `AweStateInfo.description`
+  populated from a new `McpSharedState.awe_description: Mutex<String>` slot (lives outside
+  `AweState` to avoid touching the 36+ preset literals). `list_awe_presets` already exposed
+  preset descriptions via `AwePresetInfo`.
+- [x] `set_awe_description` MCP tool (MCP write) — bridge method updates
+  `McpSharedState.awe_description` directly (no engine command since description never
+  affects audio). Accepts `""` to clear.
+- [ ] Editable from GUI (patch header inline edit, AWE preset save dialog) — currently
+  the only GUI surfaces are the instrument-edit window (instrument-level description)
+  and the AWE preset save dialog (preset-level description). Patch-level + AWE-state
+  description editing in the GUI is a follow-up.
 
 ### Phase 2 — add new description fields + MCP read/write tools
 

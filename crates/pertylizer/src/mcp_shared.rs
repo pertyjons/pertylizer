@@ -45,6 +45,11 @@ pub struct McpSharedState {
     pub awe_state: Mutex<AweState>,
     /// Pending AWE state change from MCP (consumed by GUI each frame).
     pub pending_awe_state: Mutex<Option<AweState>>,
+    /// Free-text description of the AWE state's acoustic character.
+    /// Lives outside `AweState` to avoid touching 36+ literal initializers
+    /// in the preset table. Empty string == not set. Both GUI and MCP
+    /// read/write this directly.
+    pub awe_description: Mutex<String>,
 }
 
 impl McpSharedState {
@@ -61,6 +66,7 @@ impl McpSharedState {
             project_action_result: (Mutex::new(None), Condvar::new()),
             awe_state: Mutex::new(AweState::default()),
             pending_awe_state: Mutex::new(None),
+            awe_description: Mutex::new(String::new()),
         }
     }
 
@@ -78,6 +84,7 @@ impl McpSharedState {
             project_action_result: (Mutex::new(None), Condvar::new()),
             awe_state: Mutex::new(AweState::default()),
             pending_awe_state: Mutex::new(None),
+            awe_description: Mutex::new(String::new()),
         }
     }
 

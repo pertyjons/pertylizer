@@ -13,6 +13,10 @@ pub struct InstrumentInfo {
     /// JSON when empty so older clients don't see surprising new fields.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    /// Patch-level description, separate from the per-instrument
+    /// description above. Skipped from JSON when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_description: Option<String>,
     /// Sidechain source instrument id, or `None` when no sidechain is
     /// configured. Skipped from JSON when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -817,6 +821,12 @@ pub struct AnalyzeNoteResult {
 pub struct AweStateInfo {
     /// Whether AWE is enabled.
     pub enabled: bool,
+    /// Free-text description of the acoustic character. Mirrors
+    /// `AwePresetFile.description` when an AWE preset is loaded; can
+    /// also be set directly via `set_awe_description`. Skipped from
+    /// JSON when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// Current room shape (e.g. "Box", "Cylinder", "Sphere").
     pub room_shape: String,
     /// Room dimensions as a human-readable string (e.g. "8.0 x 5.0 x 3.0 m").

@@ -216,6 +216,24 @@ impl SynthSession {
         Ok(())
     }
 
+    /// Set or clear the patch-level description on an instrument.
+    pub fn set_patch_description(
+        &self,
+        instrument_id: InstrumentId,
+        description: Option<&str>,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetPatchDescription {
+                instrument_id,
+                description: description.map(str::to_owned),
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
     /// Set or clear an instrument's sidechain source.
     pub fn set_sidechain_source(
         &self,

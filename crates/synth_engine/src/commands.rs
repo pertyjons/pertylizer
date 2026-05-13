@@ -284,6 +284,15 @@ pub enum EngineCommand {
         description: String,
     },
 
+    /// Set or clear the patch-level description on an instrument. This
+    /// describes the *patch* (sound design intent) rather than the
+    /// instrument's per-instance role — both are kept separately so a
+    /// patch can be shared/exported with its own narrative.
+    SetPatchDescription {
+        instrument_id: InstrumentId,
+        description: Option<String>,
+    },
+
     /// Set or clear the sidechain source for an instrument. When set,
     /// the engine routes the source instrument's output into this
     /// instrument's compressors / sidechain-capable modules with
@@ -935,6 +944,14 @@ impl std::fmt::Debug for EngineCommand {
                 description,
             } => f
                 .debug_struct("SetInstrumentDescription")
+                .field("instrument_id", instrument_id)
+                .field("description", description)
+                .finish(),
+            Self::SetPatchDescription {
+                instrument_id,
+                description,
+            } => f
+                .debug_struct("SetPatchDescription")
                 .field("instrument_id", instrument_id)
                 .field("description", description)
                 .finish(),
