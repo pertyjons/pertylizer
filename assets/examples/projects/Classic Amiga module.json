@@ -16,10 +16,17 @@
       ],
       "transpose": 0.0,
       "oversampling": 1,
-      "category": 0,
+      "category": 1,
+      "description": "Foundation 4-on-the-floor pulse — sits on every quarter beat of the Kick 4bar pattern. Provides the sub and low-band weight of the mix (~30 % RMS share at -21 LUFS). Centered (pan 0). Was the broken element fixed earlier: fm_amt flipped from -0.6 to +0.6 so the pitch now sweeps down (click → boom) instead of up (plopp).",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.0,
       "patch": {
         "name": "Kick",
         "version": "1.0",
+        "description": "808/909-style synth kick. Sine oscillator with two ADSR envelopes: env-1 drives the amp (D=250 ms, no sustain) for body; env-2 modulates the oscillator's exponential FM input (D=80 ms, fm_amt=+0.6) for a downward pitch sweep — pitch attack ~85 Hz, settles to the played note in release. Tight body, no harmonics above ~1 kHz. Critical parameter: osc-1 fm_amt MUST be positive — negative values invert the sweep and produce a \"plopp\".",
         "modules": [
           {
             "id": "osc-1",
@@ -31,7 +38,7 @@
             "parameters": {
               "anti_alias": 0.0,
               "detune": 0.0,
-              "fm_amt": -0.6,
+              "fm_amt": 0.6,
               "fm_mode": 0.0,
               "frequency": 440.0,
               "level": 1.0,
@@ -54,21 +61,6 @@
             "parameters": {
               "cv_bipolar": 0.0,
               "level": 1.0,
-              "pan": 0.0
-            }
-          },
-          {
-            "id": "out-1",
-            "type": "stereo_output",
-            "position": {
-              "x": 768.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
-              "master": 0.9,
-              "mute": 0.0,
               "pan": 0.0
             }
           },
@@ -106,6 +98,21 @@
               "release": 0.02,
               "sustain": 0.0,
               "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 768.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.9,
+              "mute": 0.0,
+              "pan": 0.0
             }
           }
         ],
@@ -167,8 +174,8 @@
       "id": 14,
       "name": "Snare",
       "channel": 1,
-      "volume": 1.0,
-      "pan": 0.0,
+      "volume": 2.0,
+      "pan": -0.15,
       "muted": false,
       "solo": false,
       "key_range": [
@@ -177,32 +184,31 @@
       ],
       "transpose": 0.0,
       "oversampling": 1,
-      "category": 0,
+      "category": 1,
+      "description": "Backbeat snare on beats 2 and 4 (Snare 4bar pattern). Boosted +6 dB during mix-pass (track volume 2.0) — was originally 12 dB below the other elements which was too restrained even for an Amiga module aesthetic. Now sits ~5 dB below the bus average (LUFS -26). Slight left pan (-0.15) to balance the right-panned lead.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.0,
       "patch": {
         "name": "Snare",
         "version": "1.0",
+        "description": "Hybrid noise/osc snare. White noise + low-level saw oscillator summed into a state-variable bandpass filter (cutoff 1.8 kHz, res 0.35, drive 1.2 for bite). Single ADSR (D=220 ms, no sustain) shapes both the amp and the filter envelope (env_amt 0.25). Broadband 2–4 kHz core; pitch confidence near zero, which is correct — this is intentionally inharmonic.",
         "modules": [
           {
-            "id": "osc-1",
-            "type": "oscillator",
+            "id": "out-1",
+            "type": "stereo_output",
             "position": {
-              "x": 32.0,
+              "x": 1472.0,
               "y": 32.0
             },
             "parameters": {
-              "anti_alias": 0.0,
-              "detune": 0.0,
-              "fm_amt": 1.0,
-              "fm_mode": 0.0,
-              "frequency": 440.0,
-              "level": 0.25,
-              "pulse_width": 0.5,
-              "uni_detune": 10.0,
-              "uni_phase": 1.0,
-              "uni_spread": 0.5,
-              "unison": 1.0,
-              "waveform": 1.0,
-              "x_mod": 0.0
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.9,
+              "mute": 0.0,
+              "pan": 0.0
             }
           },
           {
@@ -225,21 +231,15 @@
             }
           },
           {
-            "id": "env-1",
-            "type": "envelope",
+            "id": "nse-1",
+            "type": "noise",
             "position": {
-              "x": 448.0,
+              "x": 32.0,
               "y": 384.0
             },
             "parameters": {
-              "atk_curve": 0.0,
-              "attack": 0.001,
-              "dec_curve": 0.0,
-              "decay": 0.22,
-              "rel_curve": 0.0,
-              "release": 0.06,
-              "sustain": 0.0,
-              "vel_sens": 0.8
+              "level": 0.8,
+              "type": 0.0
             }
           },
           {
@@ -275,30 +275,44 @@
             }
           },
           {
-            "id": "out-1",
-            "type": "stereo_output",
+            "id": "env-1",
+            "type": "envelope",
             "position": {
-              "x": 1472.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
-              "master": 0.9,
-              "mute": 0.0,
-              "pan": 0.0
-            }
-          },
-          {
-            "id": "nse-1",
-            "type": "noise",
-            "position": {
-              "x": 32.0,
+              "x": 448.0,
               "y": 384.0
             },
             "parameters": {
-              "level": 0.8,
-              "type": 0.0
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": 0.0,
+              "decay": 0.22,
+              "rel_curve": 0.0,
+              "release": 0.06,
+              "sustain": 0.0,
+              "vel_sens": 0.8
+            }
+          },
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "anti_alias": 0.0,
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": 0.0,
+              "frequency": 440.0,
+              "level": 0.25,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": 1.0,
+              "x_mod": 0.0
             }
           }
         ],
@@ -391,7 +405,7 @@
       "name": "Bass",
       "channel": 1,
       "volume": 1.0,
-      "pan": 0.0,
+      "pan": -0.2,
       "muted": false,
       "solo": false,
       "key_range": [
@@ -400,10 +414,17 @@
       ],
       "transpose": 0.0,
       "oversampling": 1,
-      "category": 0,
+      "category": 2,
+      "description": "Harmonic anchor — plays the root motion of the Am–G7–Fmaj7–G four-bar progression. Square-wave timbre with a downward filter sweep gives it acid-ish movement under the lead. Largest RMS share in the mix (~33 %). Panned slightly left (-0.2) to clear stereo space for the lead.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.0,
       "patch": {
         "name": "Bass",
         "version": "1.0",
+        "description": "Square/pulse bass with closed filter sweep — classic acid topology. Oscillator's odd-harmonic content (odd/even ratio ~+65 dB) gives the hollow square character. Filter envelope opens the cutoff at attack and decays it down, producing the downward centroid sweep (337 → 276 Hz). Key-tracking on the filter keeps the timbre consistent across the bass register.",
         "modules": [
           {
             "id": "amp-1",
@@ -419,40 +440,21 @@
             }
           },
           {
-            "id": "env-2",
+            "id": "env-1",
             "type": "envelope",
             "position": {
-              "x": 32.0,
-              "y": 384.0
+              "x": 448.0,
+              "y": 288.0
             },
             "parameters": {
               "atk_curve": 0.0,
               "attack": 0.001,
               "dec_curve": 0.0,
-              "decay": 0.2,
+              "decay": 0.25,
               "rel_curve": 0.0,
-              "release": 0.05,
-              "sustain": 0.0,
-              "vel_sens": 1.0
-            }
-          },
-          {
-            "id": "flt-1",
-            "type": "filter",
-            "position": {
-              "x": 448.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "cutoff": 600.0,
-              "cv_amt": 0.6,
-              "drive": 1.3,
-              "env_amt": 0.25,
-              "key_track": 0.0,
-              "model": 0.0,
-              "morph": 0.0,
-              "resonance": 0.25,
-              "type": 0.0
+              "release": 0.08,
+              "sustain": 0.6,
+              "vel_sens": 0.9
             }
           },
           {
@@ -479,21 +481,21 @@
             }
           },
           {
-            "id": "env-1",
+            "id": "env-2",
             "type": "envelope",
             "position": {
-              "x": 448.0,
-              "y": 288.0
+              "x": 32.0,
+              "y": 384.0
             },
             "parameters": {
               "atk_curve": 0.0,
               "attack": 0.001,
               "dec_curve": 0.0,
-              "decay": 0.25,
+              "decay": 0.2,
               "rel_curve": 0.0,
-              "release": 0.08,
-              "sustain": 0.6,
-              "vel_sens": 0.9
+              "release": 0.05,
+              "sustain": 0.0,
+              "vel_sens": 1.0
             }
           },
           {
@@ -509,6 +511,25 @@
               "master": 0.9,
               "mute": 0.0,
               "pan": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 600.0,
+              "cv_amt": 0.6,
+              "drive": 1.3,
+              "env_amt": 0.25,
+              "key_track": 0.0,
+              "model": 0.0,
+              "morph": 0.0,
+              "resonance": 0.25,
+              "type": 0.0
             }
           }
         ],
@@ -581,7 +602,7 @@
       "name": "Lead",
       "channel": 1,
       "volume": 1.0,
-      "pan": 0.0,
+      "pan": 0.3,
       "muted": false,
       "solo": false,
       "key_range": [
@@ -590,39 +611,18 @@
       ],
       "transpose": 0.0,
       "oversampling": 1,
-      "category": 0,
+      "category": 4,
+      "description": "Melodic top voice. The Lead 4bar pattern is octave-doubled (32 notes / 6.0 avg polyphony with the bass), tracing the Am/G7/Fmaj7/G progression. Panned right (+0.3) to open the stereo image opposite the bass/snare.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.0,
       "patch": {
         "name": "Lead",
         "version": "1.0",
+        "description": "Square-wave melodic lead mirroring the bass topology one octave up. Pure odd-harmonic timbre (odd/even ratio ~+90 dB). Filter envelope produces a downward centroid sweep (1.16 kHz → 1.0 kHz) over each note. Locked tightly on pitch (sub-1-cent error at C4). Six audible harmonics, THD around -9 dB.",
         "modules": [
-          {
-            "id": "amp-1",
-            "type": "amplifier",
-            "position": {
-              "x": 800.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "cv_bipolar": 0.0,
-              "level": 0.85,
-              "pan": 0.0
-            }
-          },
-          {
-            "id": "out-1",
-            "type": "stereo_output",
-            "position": {
-              "x": 1120.0,
-              "y": 32.0
-            },
-            "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
-              "master": 0.9,
-              "mute": 0.0,
-              "pan": 0.0
-            }
-          },
           {
             "id": "flt-1",
             "type": "filter",
@@ -643,21 +643,18 @@
             }
           },
           {
-            "id": "env-2",
-            "type": "envelope",
+            "id": "out-1",
+            "type": "stereo_output",
             "position": {
-              "x": 32.0,
-              "y": 384.0
+              "x": 1120.0,
+              "y": 32.0
             },
             "parameters": {
-              "atk_curve": 0.0,
-              "attack": 0.001,
-              "dec_curve": 0.0,
-              "decay": 0.25,
-              "rel_curve": 0.0,
-              "release": 0.05,
-              "sustain": 0.0,
-              "vel_sens": 1.0
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.9,
+              "mute": 0.0,
+              "pan": 0.0
             }
           },
           {
@@ -676,6 +673,19 @@
               "release": 0.08,
               "sustain": 0.3,
               "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 800.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 0.85,
+              "pan": 0.0
             }
           },
           {
@@ -699,6 +709,24 @@
               "unison": 1.0,
               "waveform": 3.0,
               "x_mod": 0.0
+            }
+          },
+          {
+            "id": "env-2",
+            "type": "envelope",
+            "position": {
+              "x": 32.0,
+              "y": 384.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": 0.0,
+              "decay": 0.25,
+              "rel_curve": 0.0,
+              "release": 0.05,
+              "sustain": 0.0,
+              "vel_sens": 1.0
             }
           }
         ],
@@ -765,9 +793,167 @@
           }
         }
       }
+    },
+    {
+      "id": 17,
+      "name": "Hi-Hat",
+      "channel": 1,
+      "volume": 2.0,
+      "pan": 0.2,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 1,
+      "description": "Eighth-note timing reference added during the mix-pass to fill the missing high-band content (pre-fix mix had almost no energy >5 kHz). Velocity-accented on beats, ghosted off-beats. Track volume 2.0 to bring LUFS up to -31 (5 dB below snare). Carries ~40 % of the mix's high-band energy. Slight right pan (+0.2).",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.0,
+      "patch": {
+        "name": "Hi-Hat",
+        "version": "1.0",
+        "description": "Minimal closed hi-hat. White noise → state-variable highpass (8 kHz, mild resonance 0.1) → VCA with a 50 ms decay envelope (no sustain, 20 ms release). No oscillator, no key tracking — pitch input is ignored, every note plays the same brushed-air color. Centroid lands around 14 kHz; ~99 % of the energy sits in the >5 kHz band.",
+        "modules": [
+          {
+            "id": "nse-1",
+            "type": "noise",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "level": 0.7,
+              "type": 0.0
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 320.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": 0.0,
+              "decay": 0.05,
+              "rel_curve": 0.0,
+              "release": 0.02,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 992.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 320.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 8000.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "env_amt": 0.0,
+              "key_track": 0.0,
+              "model": 0.0,
+              "morph": 0.0,
+              "resonance": 0.1,
+              "type": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 672.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 0.6,
+              "pan": 0.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "nse-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1442.0,
+            "height": 788.0
+          }
+        }
+      }
     }
   ],
-  "active_instrument_id": 16,
+  "active_instrument_id": 17,
   "author": {
     "name": "Per Jonsson",
     "email": "pertyjons@gmail.com",
@@ -1620,9 +1806,310 @@
           "ticks_per_row": 240
         },
         "next_note_id": 32
+      },
+      "4": {
+        "id": 4,
+        "name": "Hi-Hat 4bar",
+        "length": 15360,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 480,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.47244096,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 960,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 1440,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.511811,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 4,
+            "start": 1920,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 5,
+            "start": 2400,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.47244096,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 6,
+            "start": 2880,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 7,
+            "start": 3360,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.5511811,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 8,
+            "start": 3840,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 9,
+            "start": 4320,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.47244096,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 10,
+            "start": 4800,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 11,
+            "start": 5280,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.511811,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 12,
+            "start": 5760,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 13,
+            "start": 6240,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.47244096,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 14,
+            "start": 6720,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 15,
+            "start": 7200,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.5511811,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 16,
+            "start": 7680,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 17,
+            "start": 8160,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.47244096,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 18,
+            "start": 8640,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 19,
+            "start": 9120,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.511811,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 20,
+            "start": 9600,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 21,
+            "start": 10080,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.47244096,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 22,
+            "start": 10560,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 23,
+            "start": 11040,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.5511811,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 24,
+            "start": 11520,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 25,
+            "start": 12000,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.47244096,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 26,
+            "start": 12480,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 27,
+            "start": 12960,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.511811,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 28,
+            "start": 13440,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 29,
+            "start": 13920,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.47244096,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 30,
+            "start": 14400,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.7480315,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 31,
+            "start": 14880,
+            "duration": 96,
+            "pitch": 42,
+            "velocity": 0.5905512,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 32
       }
     },
-    "next_pattern_id": 4,
+    "next_pattern_id": 5,
     "tracks": {
       "0": {
         "id": 0,
@@ -1683,121 +2170,187 @@
           "b": 255
         },
         "mode": "Polyphonic"
+      },
+      "4": {
+        "id": 4,
+        "name": "Hi-Hat",
+        "instrument": 17,
+        "volume": 1.0,
+        "pan": 0.5,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
       }
     },
-    "next_track_id": 4,
+    "next_track_id": 5,
+    "track_order": [
+      4
+    ],
     "arrangement": [
       {
         "pattern_id": 0,
         "track_id": 0,
         "start": 0,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 1,
         "track_id": 1,
         "start": 0,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 2,
         "track_id": 2,
         "start": 0,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 3,
         "track_id": 3,
         "start": 0,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 4,
+        "start": 0,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 0,
         "track_id": 0,
         "start": 15360,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 1,
         "track_id": 1,
         "start": 15360,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 2,
         "track_id": 2,
         "start": 15360,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 3,
         "track_id": 3,
         "start": 15360,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 4,
+        "start": 15360,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 0,
         "track_id": 0,
         "start": 30720,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 1,
         "track_id": 1,
         "start": 30720,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 2,
         "track_id": 2,
         "start": 30720,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 3,
         "track_id": 3,
         "start": 30720,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 4,
+        "start": 30720,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 0,
         "track_id": 0,
         "start": 46080,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 1,
         "track_id": 1,
         "start": 46080,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 2,
         "track_id": 2,
         "start": 46080,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
       },
       {
         "pattern_id": 3,
         "track_id": 3,
         "start": 46080,
         "transpose": 0.0,
-        "gain": 1.0
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 4,
+        "start": 46080,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
       }
     ],
     "tempo_changes": [],
@@ -1811,6 +2364,74 @@
   "global": {
     "master_volume": 0.8,
     "octave_offset": 0,
-    "glide_time": 0.0
+    "glide_time": 0.0,
+    "awe": {
+      "enabled": true,
+      "room": {
+        "Box": {
+          "length": 8.0,
+          "width": 5.0,
+          "height": 3.0
+        }
+      },
+      "material": {
+        "absorption_low": 0.05,
+        "absorption_mid": 0.08,
+        "absorption_high": 0.15,
+        "diffusion": 0.15
+      },
+      "spatial_enabled": false,
+      "note_mapping": "Off",
+      "snapshot": {
+        "dry_wet": 0.18,
+        "early_late_balance": 0.5,
+        "modes_amount": 0.5,
+        "freq_warp": 0.0,
+        "resonance_boost": 0.0,
+        "tail_stretch": 1.0,
+        "portal_amount": 0.0,
+        "pre_delay": 0.0,
+        "source_pos": [
+          2.0,
+          2.5,
+          1.5
+        ],
+        "listener_pos": [
+          6.0,
+          2.5,
+          1.5
+        ],
+        "spatial_enabled": false,
+        "note_mapping": "Off",
+        "modulation_depth": 0.0,
+        "modulation_rate": 1.0,
+        "air_absorption": 0.25,
+        "width": 1.0,
+        "high_cut": 20000.0,
+        "low_cut": 20.0,
+        "temperature": 20.0,
+        "lfo1": {
+          "rate": 0.5,
+          "amount": 0.0,
+          "target": "SourceX"
+        },
+        "lfo2": {
+          "rate": 0.5,
+          "amount": 0.0,
+          "target": "SourceY"
+        },
+        "lfo3": {
+          "rate": 0.5,
+          "amount": 0.0,
+          "target": "EarlyLate"
+        },
+        "lfo4": {
+          "rate": 0.5,
+          "amount": 0.0,
+          "target": "ModesAmount"
+        }
+      }
+    },
+    "awe_description": "Subtle small-room glue. Concrete box 8×5×3 m, 18 % wet, 25 % air absorption. Adds early-reflection shimmer in the 5–15 kHz band and breaks the perfect-mono image without changing the harmonic balance. Disable for a dry studio reference."
   }
 }

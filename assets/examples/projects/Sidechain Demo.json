@@ -1,0 +1,1034 @@
+{
+  "file_type": "project",
+  "version": "1.0",
+  "instruments": [
+    {
+      "id": 1,
+      "name": "Kick",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 1,
+      "description": "Four-on-the-floor kick driving the demo. Acts as the sidechain SOURCE for both Pad and Bass — every quarter-note hit triggers ducking on the sustained instruments. Plays on bars 5–16 (beats 16–64); silent in intro and outro so the listener can hear pad alone for A/B comparison.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.0,
+      "patch": {
+        "name": "Kick",
+        "version": "1.0",
+        "description": "Classic synth kick: sine osc (50 Hz) shaped by two envelopes. Pitch envelope (Decay 50 ms, curve -0.6) drives the oscillator's linear FM input for a downward \"thump\" sweep. Amp envelope (Decay 350 ms, curve -0.5, Sustain 0) gives the punchy decay. No effects in the chain — kept clean so it works well as a sidechain trigger source (peak content, not sustained energy).",
+        "modules": [
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 768.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 1.0,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "env-2",
+            "type": "envelope",
+            "position": {
+              "x": 32.0,
+              "y": 672.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": -0.5,
+              "decay": 0.35,
+              "rel_curve": 0.0,
+              "release": 0.08,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 32.0,
+              "y": 384.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": -0.6,
+              "decay": 0.03,
+              "rel_curve": 0.0,
+              "release": 0.0,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.4,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "anti_alias": 0.0,
+              "detune": 0.0,
+              "fm_amt": 0.55,
+              "fm_mode": 1.0,
+              "frequency": 50.0,
+              "level": 1.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": 0.0,
+              "x_mod": 0.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "osc-1",
+              "fm"
+            ]
+          },
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-2",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1218.0,
+            "height": 1172.0
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Pad",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 3,
+      "description": "Sustained Cm7 pad held across the entire song. Acts as a sidechain RECEIVER (sidechain_source_id = 1, the Kick). When the kick hits during bars 5–16, the compressor ducks the pad ≈10 dB; release 220 ms allows the pad to breathe back up between kicks. In intro/outro the pad plays uncompressed because the kick is silent (no sidechain signal).",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.0,
+      "sidechain_source_id": 1,
+      "patch": {
+        "name": "Pad",
+        "version": "1.0",
+        "description": "Warm detuned saw pad: two saw oscillators with unison (5 voices + 3 voices, detune 12 ct and 6 ct, spread 0.8/0.5) mixed and fed through a lowpass filter (cutoff 2200 Hz, light resonance, 30% key tracking). Slow attack (600 ms) + long release (1.5 s) for an airy sustained character. Effect chain: Compressor with sidechain enabled (threshold -18 dB, ratio 6, attack 3 ms, release 220 ms, SC HPF at 20 Hz to let the full kick spectrum trigger detection).",
+        "modules": [
+          {
+            "id": "cmp-1",
+            "type": "compressor",
+            "position": {
+              "x": 1824.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "attack": 3.0,
+              "makeup": 0.0,
+              "mix": 1.0,
+              "ratio": 6.0,
+              "release": 220.0,
+              "sc_filter": 20.0,
+              "sidechain": 1.0,
+              "threshold": -18.0
+            }
+          },
+          {
+            "id": "enc-1",
+            "type": "ensemble_chorus",
+            "position": {
+              "x": 1824.0,
+              "y": 320.0
+            },
+            "parameters": {
+              "base_delay": 14.0,
+              "depth": 1.8,
+              "mix": 0.55,
+              "noise": 0.1,
+              "rate": 0.45,
+              "stereo_width": 1.0,
+              "tone": 0.4,
+              "voices": 3.0
+            }
+          },
+          {
+            "id": "osc-2",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 384.0
+            },
+            "parameters": {
+              "anti_alias": 0.0,
+              "detune": -7.0,
+              "fm_amt": 1.0,
+              "fm_mode": 0.0,
+              "frequency": 440.0,
+              "level": 0.6,
+              "pulse_width": 0.5,
+              "uni_detune": 6.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 3.0,
+              "waveform": 2.0,
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 800.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.6,
+              "dec_curve": 0.0,
+              "decay": 0.3,
+              "rel_curve": 0.0,
+              "release": 1.5,
+              "sustain": 0.85,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1472.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.9,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 1152.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "mix-1",
+            "type": "mixer",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "input_1": 1.0,
+              "input_2": 1.0,
+              "input_3": 1.0,
+              "input_4": 1.0,
+              "input_5": 1.0,
+              "input_6": 1.0,
+              "input_7": 1.0,
+              "input_8": 1.0,
+              "master": 0.8
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 800.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 2200.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "env_amt": 0.25,
+              "key_track": 0.3,
+              "model": 0.0,
+              "morph": 0.0,
+              "resonance": 0.15,
+              "type": 0.0
+            }
+          },
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "anti_alias": 0.0,
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": 0.0,
+              "frequency": 440.0,
+              "level": 0.6,
+              "pulse_width": 0.5,
+              "uni_detune": 12.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.8,
+              "unison": 5.0,
+              "waveform": 2.0,
+              "x_mod": 0.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "osc-2",
+              "out"
+            ],
+            "to": [
+              "mix-1",
+              "in2"
+            ]
+          },
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "mix-1",
+              "in1"
+            ]
+          },
+          {
+            "from": [
+              "mix-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 2274.0,
+            "height": 884.0
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "name": "Bass",
+      "channel": 1,
+      "volume": 1.3,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 2,
+      "description": "Sustained C2 sub-bass under the drop (bars 5–16). Sidechain RECEIVER from the Kick (id 1) — pumps in sync with the pad so the entire low-mid spectrum breathes together. Slightly tighter release (180 ms) than the pad to keep low-end punch and stay out of the kick's transient.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.0,
+      "sidechain_source_id": 1,
+      "patch": {
+        "name": "Bass",
+        "version": "1.0",
+        "description": "Tight sub-ish bass: one saw oscillator with subtle unison (2 voices, 4 ct detune, mostly mono spread) → lowpass filter (cutoff 750 Hz, key-tracked 55%, envelope-modulated). Quick attack (5 ms) with moderate decay (180 ms) and sustain 0.7. Effect chain: Compressor with sidechain enabled (threshold -18 dB, ratio 5, attack 3 ms, release 180 ms). Designed to sit under the pad and pump in lockstep with it.",
+        "modules": [
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 800.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.1,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "cmp-1",
+            "type": "compressor",
+            "position": {
+              "x": 1472.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "attack": 3.0,
+              "makeup": 0.0,
+              "mix": 1.0,
+              "ratio": 5.0,
+              "release": 180.0,
+              "sc_filter": 20.0,
+              "sidechain": 1.0,
+              "threshold": -18.0
+            }
+          },
+          {
+            "id": "dst-1",
+            "type": "distortion",
+            "position": {
+              "x": 1472.0,
+              "y": 320.0
+            },
+            "parameters": {
+              "bit_depth": 0.46666667,
+              "drive": 0.3,
+              "mix": 0.45,
+              "tone": 0.55,
+              "type": 2.0
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 32.0,
+              "y": 384.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.005,
+              "dec_curve": -0.3,
+              "decay": 0.18,
+              "rel_curve": 0.0,
+              "release": 0.12,
+              "sustain": 0.7,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1120.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.95,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "anti_alias": 0.0,
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": 0.0,
+              "frequency": 440.0,
+              "level": 0.9,
+              "pulse_width": 0.5,
+              "uni_detune": 4.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.15,
+              "unison": 2.0,
+              "waveform": 2.0,
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 750.0,
+              "cv_amt": 1.0,
+              "drive": 1.4,
+              "env_amt": 0.25,
+              "key_track": 0.55,
+              "model": 0.0,
+              "morph": 0.0,
+              "resonance": 0.12,
+              "type": 0.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "cutoff_cv"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1922.0,
+            "height": 884.0
+          }
+        }
+      }
+    }
+  ],
+  "active_instrument_id": 2,
+  "author": {
+    "name": "Per Jonsson",
+    "email": "pertyjons@gmail.com"
+  },
+  "song": {
+    "name": "Sidechain Demo",
+    "author": "Pertylizer",
+    "patterns": {
+      "0": {
+        "id": 0,
+        "name": "Pad Cm7 (full)",
+        "length": 76800,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 76320,
+            "pitch": 48,
+            "velocity": 0.70866144,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 0,
+            "duration": 76320,
+            "pitch": 51,
+            "velocity": 0.6692913,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 0,
+            "duration": 76320,
+            "pitch": 55,
+            "velocity": 0.6692913,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 0,
+            "duration": 76320,
+            "pitch": 58,
+            "velocity": 0.62992126,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 4
+      },
+      "1": {
+        "id": 1,
+        "name": "Kick 4-floor",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.9448819,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 4
+      },
+      "2": {
+        "id": 2,
+        "name": "Bass sustain (full)",
+        "length": 46080,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 45792,
+            "pitch": 36,
+            "velocity": 0.78740156,
+            "instrument": 0,
+            "track": null
+          }
+        ],
+        "automation": [],
+        "row_resolution": {
+          "rows": 64,
+          "ticks_per_row": 240
+        },
+        "next_note_id": 1
+      }
+    },
+    "next_pattern_id": 3,
+    "tracks": {
+      "0": {
+        "id": 0,
+        "name": "Pad",
+        "instrument": 2,
+        "volume": 1.0,
+        "pan": 0.5,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      "1": {
+        "id": 1,
+        "name": "Kick",
+        "instrument": 1,
+        "volume": 1.0,
+        "pan": 0.5,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      "2": {
+        "id": 2,
+        "name": "Bass",
+        "instrument": 3,
+        "volume": 1.0,
+        "pan": 0.5,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      }
+    },
+    "next_track_id": 3,
+    "track_order": [
+      0,
+      1,
+      2
+    ],
+    "arrangement": [
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 0,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 15360,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 2,
+        "start": 15360,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 19200,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 23040,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 26880,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 30720,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 34560,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 38400,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 42240,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 46080,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 49920,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 53760,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 57600,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      }
+    ],
+    "tempo_changes": [],
+    "time_signature_changes": [],
+    "default_tempo": 124.0,
+    "default_time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    }
+  },
+  "global": {
+    "master_volume": 1.0,
+    "octave_offset": -1,
+    "glide_time": 0.0,
+    "awe": {
+      "enabled": true,
+      "room": {
+        "Box": {
+          "length": 5.0,
+          "width": 4.0,
+          "height": 3.0
+        }
+      },
+      "material": {
+        "absorption_low": 0.2,
+        "absorption_mid": 0.18,
+        "absorption_high": 0.25,
+        "diffusion": 0.35
+      },
+      "spatial_enabled": false,
+      "note_mapping": "Off",
+      "snapshot": {
+        "dry_wet": 0.2,
+        "early_late_balance": 0.3,
+        "modes_amount": 0.2,
+        "freq_warp": 0.0,
+        "resonance_boost": 0.0,
+        "tail_stretch": 0.8,
+        "portal_amount": 0.0,
+        "pre_delay": 0.0,
+        "source_pos": [
+          1.5,
+          2.0,
+          1.5
+        ],
+        "listener_pos": [
+          3.5,
+          2.0,
+          1.5
+        ],
+        "spatial_enabled": false,
+        "note_mapping": "Off",
+        "modulation_depth": 0.0,
+        "modulation_rate": 1.0,
+        "air_absorption": 0.0,
+        "width": 1.0,
+        "high_cut": 20000.0,
+        "low_cut": 20.0,
+        "temperature": 20.0,
+        "lfo1": {
+          "rate": 0.5,
+          "amount": 0.0,
+          "target": "SourceX"
+        },
+        "lfo2": {
+          "rate": 0.5,
+          "amount": 0.0,
+          "target": "SourceY"
+        },
+        "lfo3": {
+          "rate": 0.5,
+          "amount": 0.0,
+          "target": "EarlyLate"
+        },
+        "lfo4": {
+          "rate": 0.5,
+          "amount": 0.0,
+          "target": "ModesAmount"
+        }
+      }
+    },
+    "awe_description": "Small Studio preset — a controlled, dry 5x4x3 m wooden room with 20% dry/wet. Chosen deliberately for this sidechain demo: too much reverb tail would smear the kick transients and make the pumping motion harder to hear. The mild room reflections add subtle \"glue\" and dimension to the pad without obscuring the duck-and-recover envelope on every quarter note."
+  }
+}
