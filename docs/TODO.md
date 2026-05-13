@@ -99,8 +99,12 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 
 ### 1.1 Instrument management
 
-- [ ] Rename instrument from instrument strip menu or inline edit
-- [ ] Remove instruments via context menu or toolbar
+- [x] Rename instrument from instrument strip menu or inline edit — each row in the instrument-strip
+  dropdown has a "⋯" submenu with "Rename / edit…" that opens the instrument-edit window with the
+  name field, plus all the other instrument properties.
+- [x] Remove instruments via context menu or toolbar — same "⋯" submenu has a red "Delete…" action.
+  Opens a confirmation modal (instrument-level undo isn't wired yet, so a confirm step prevents
+  accidental unrecoverable deletes).
 - [x] Translate all swedish descriptions in the modules here: crates/synth_modules
 
 ### 1.2 MIDI learn
@@ -166,7 +170,14 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 
 ### 2.1 Tempo automation
 
-- [ ] Tempo curve over time (accelerando/ritardando)
+- [x] Tempo curve over time (accelerando/ritardando) — right-click the arrangement ruler →
+  "Set tempo here…" opens a DragValue (20–300 BPM) + Apply. Existing changes can be removed via the
+  same menu. The engine already polls `song.tempo_at(current_tick)` per tick, so changes take effect
+  during playback without an extra command. Markers render as small orange flags on the ruler with
+  the BPM number.
+- [ ] Tempo curve interpolation (currently step changes only — accelerando ramps would smooth between
+  two adjacent points)
+- [ ] Undo for tempo set / remove (not yet wired into `UndoManager`)
 
 ### 2.2 Section markers
 

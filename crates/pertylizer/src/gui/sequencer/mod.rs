@@ -765,6 +765,8 @@ struct ArrangementData {
     patterns: Vec<PatternInfo>,
     time_sig: TimeSignature,
     song_end_tick: u64,
+    /// Tempo automation points: (tick, BPM). Sorted by tick.
+    tempo_changes: Vec<(u64, f32)>,
 }
 
 /// Collect arrangement data from song (short read-lock, then release).
@@ -856,6 +858,11 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
         .collect();
 
     let time_sig = song.default_time_signature;
+    let tempo_changes: Vec<(u64, f32)> = song
+        .tempo_changes()
+        .iter()
+        .map(|tc| (tc.tick.0, tc.bpm.as_f32()))
+        .collect();
 
     Some(ArrangementData {
         tracks,
@@ -863,6 +870,7 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
         patterns,
         time_sig,
         song_end_tick,
+        tempo_changes,
     })
 }
 
@@ -2047,6 +2055,51 @@ fn draw_arrangement(
                         });
                         ui.close();
                     }
+
+                    ui.separator();
+
+                    // Tempo automation at the clicked (snapped) tick.
+                    let existing_bpm: Option<f32> = data
+                        .tempo_changes
+                        .iter()
+                        .find(|(t, _)| *t == snapped)
+                        .map(|(_, b)| *b);
+                    let default_bpm = existing_bpm.unwrap_or_else(|| {
+                        // Seed from the song's tempo at this position so
+                        // dragging from a curve point feels stable.
+                        song.try_read()
+                            .map(|s| s.tempo_at(Tick(snapped)).as_f32())
+                            .unwrap_or(120.0)
+                    });
+                    ui.menu_button("Set tempo here…", |ui| {
+                        let mut bpm = default_bpm;
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                egui::DragValue::new(&mut bpm)
+                                    .range(20.0..=300.0)
+                                    .speed(0.5)
+                                    .fixed_decimals(1)
+                                    .suffix(" BPM"),
+                            );
+                            if ui.button("Apply").clicked() {
+                                song.write().set_tempo_at(Tick(snapped), Bpm::new(bpm));
+                                ui.close();
+                            }
+                        });
+                        if existing_bpm.is_some() {
+                            ui.separator();
+                            if ui
+                                .button(
+                                    RichText::new("Remove tempo change here")
+                                        .color(t.colors.accent_red),
+                                )
+                                .clicked()
+                            {
+                                song.write().remove_tempo_change(Tick(snapped));
+                                ui.close();
+                            }
+                        }
+                    });
                     return;
                 }
 
@@ -2307,6 +2360,26 @@ fn draw_arrangement(
                     [Pos2::new(x_b - 6.0, tl_y + 4.0), Pos2::new(x_b, tl_y + 4.0)],
                     Stroke::new(2.0, loop_color),
                 );
+            }
+
+            // ── Tempo change markers on the ruler ──
+            if !data.tempo_changes.is_empty() {
+                let tempo_color = Color32::from_rgb(255, 180, 80);
+                for (tick, bpm) in &data.tempo_changes {
+                    let x = tick_to_x(*tick);
+                    // Small flag: vertical tick + label "120.0".
+                    painter.line_segment(
+                        [Pos2::new(x, tl_y + 1.0), Pos2::new(x, tl_y + RULER_HEIGHT)],
+                        Stroke::new(1.5, tempo_color),
+                    );
+                    painter.text(
+                        Pos2::new(x + 2.0, tl_y + 12.0),
+                        egui::Align2::LEFT_TOP,
+                        format!("{bpm:.0}"),
+                        egui::FontId::proportional(9.0),
+                        tempo_color,
+                    );
+                }
             }
 
             // ── Playhead ──

@@ -316,6 +316,9 @@ struct SynthApp {
     /// Which instrument has its edit window open. `None` = closed.
     instrument_edit_target: Option<InstrumentId>,
 
+    /// Instrument pending deletion (drives the confirmation modal).
+    pending_instrument_delete: Option<InstrumentId>,
+
     /// Project info edit window — open state.
     project_edit_open: bool,
     /// Per-project author metadata. Initialized from `settings.author`
@@ -415,6 +418,7 @@ impl SynthApp {
             audio_input: crate::audio::input::AudioInputManager::new(),
             analyze_window: crate::gui::analyze::AnalyzeWindow::new(),
             instrument_edit_target: None,
+            pending_instrument_delete: None,
             project_edit_open: false,
             current_project_author: project_author,
         }
@@ -466,6 +470,28 @@ impl SynthApp {
 
     /// Create a new instrument, register it in the engine and UI, and make it active.
     /// Returns the new `InstrumentId` on success, or `None` if the session refused.
+    /// Remove an instrument by id. Drops the UI mirror, tells the engine
+    /// to release voices, and switches `active_instrument_id` to a
+    /// neighbour when the active one was deleted. No-op for unknown ids.
+    fn delete_instrument(&mut self, id: InstrumentId) {
+        if !self.instruments.iter().any(|i| i.id == id) {
+            return;
+        }
+        if let Err(e) = self.session.remove_instrument(id) {
+            eprintln!("Failed to remove instrument {id:?}: {e}");
+        }
+        self.instruments.retain(|i| i.id != id);
+        if self.active_instrument_id == Some(id) {
+            self.active_instrument_id = self.instruments.first().map(|i| i.id);
+            self.handle
+                .set_focused_instrument(self.active_instrument_id);
+        }
+        if self.instrument_edit_target == Some(id) {
+            self.instrument_edit_target = None;
+        }
+        self.mark_dirty();
+    }
+
     fn add_new_instrument(&mut self) -> Option<InstrumentId> {
         let instrument_num = self.instruments.len() + 1;
         let new_name = format!("Instrument {instrument_num}");
@@ -790,6 +816,7 @@ impl eframe::App for SynthApp {
 
         // ── Instrument edit window (per-instrument basic settings). ──
         self.render_instrument_edit_window(ctx);
+        self.render_instrument_delete_confirm(ctx);
 
         // ── Project info edit window (song metadata + project author). ──
         self.render_project_edit_window(ctx);
@@ -1504,23 +1531,65 @@ impl eframe::App for SynthApp {
                                 RichText::new("No instruments").color(theme().colors.text_dim),
                             );
                         } else {
-                            for inst in &self.instruments {
-                                let is_active = Some(inst.id) == self.active_instrument_id;
-                                let label = if is_active {
-                                    RichText::new(format!(
-                                        "{} {}",
-                                        ri::CHECKBOX_BLANK_CIRCLE_FILL,
-                                        inst.name
-                                    ))
-                                    .color(theme().colors.accent_cyan)
-                                } else {
-                                    RichText::new(format!("  {}", inst.name))
-                                };
-                                if ui.button(label).clicked() {
-                                    self.active_instrument_id = Some(inst.id);
-                                    self.handle.set_focused_instrument(Some(inst.id));
-                                    ui.close();
-                                }
+                            // Capture id/name pairs first so we can mutate
+                            // state inside the menu without borrowing
+                            // `self.instruments` immutably.
+                            let rows: Vec<(InstrumentId, String, bool)> = self
+                                .instruments
+                                .iter()
+                                .map(|inst| {
+                                    (
+                                        inst.id,
+                                        inst.name.clone(),
+                                        Some(inst.id) == self.active_instrument_id,
+                                    )
+                                })
+                                .collect();
+                            for (id, name, is_active) in rows {
+                                ui.horizontal(|ui| {
+                                    let label = if is_active {
+                                        RichText::new(format!(
+                                            "{} {}",
+                                            ri::CHECKBOX_BLANK_CIRCLE_FILL,
+                                            name
+                                        ))
+                                        .color(theme().colors.accent_cyan)
+                                    } else {
+                                        RichText::new(format!("  {}", name))
+                                    };
+                                    if ui.button(label).clicked() {
+                                        self.active_instrument_id = Some(id);
+                                        self.handle.set_focused_instrument(Some(id));
+                                        ui.close();
+                                    }
+                                    // Per-row actions menu.
+                                    ui.menu_button(
+                                        RichText::new(ri::MORE_FILL).color(theme().colors.text_dim),
+                                        |ui| {
+                                            if ui
+                                                .button(format!("{} Rename / edit…", ri::EDIT_LINE))
+                                                .clicked()
+                                            {
+                                                self.instrument_edit_target = Some(id);
+                                                ui.close();
+                                            }
+                                            ui.separator();
+                                            if ui
+                                                .button(
+                                                    RichText::new(format!(
+                                                        "{} Delete…",
+                                                        ri::DELETE_BIN_LINE
+                                                    ))
+                                                    .color(theme().colors.accent_red),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.pending_instrument_delete = Some(id);
+                                                ui.close();
+                                            }
+                                        },
+                                    );
+                                });
                             }
                         }
                     });
@@ -3091,6 +3160,66 @@ impl SynthApp {
     /// above the keyboard). Live-mutates the `InstrumentUiState` and
     /// forwards engine-relevant changes to the session/handle. Closed
     /// via the window X or when the target instrument no longer exists.
+    /// Modal confirmation for instrument deletion. Instrument-level undo
+    /// isn't wired into `UndoManager` yet, so a confirm step prevents
+    /// accidental unrecoverable deletes.
+    fn render_instrument_delete_confirm(&mut self, ctx: &egui::Context) {
+        let Some(target_id) = self.pending_instrument_delete else {
+            return;
+        };
+        let name = self
+            .instruments
+            .iter()
+            .find(|i| i.id == target_id)
+            .map(|i| i.name.clone());
+        let Some(name) = name else {
+            // Instrument vanished out from under us — clear and bail.
+            self.pending_instrument_delete = None;
+            return;
+        };
+        let t = theme();
+        let mut open = true;
+        let mut decision: Option<bool> = None;
+        egui::Window::new("Delete instrument?")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Delete \"{name}\"? Notes referencing it remain on tracks but go silent until \
+                     reassigned. This cannot be undone."
+                ));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        decision = Some(false);
+                    }
+                    if ui
+                        .button(
+                            RichText::new(format!(
+                                "{} Delete",
+                                egui_remixicon::icons::DELETE_BIN_LINE
+                            ))
+                            .color(t.colors.accent_red),
+                        )
+                        .clicked()
+                    {
+                        decision = Some(true);
+                    }
+                });
+            });
+        match decision {
+            Some(true) => {
+                self.delete_instrument(target_id);
+                self.pending_instrument_delete = None;
+            }
+            Some(false) => self.pending_instrument_delete = None,
+            None if !open => self.pending_instrument_delete = None,
+            None => {}
+        }
+    }
+
     fn render_instrument_edit_window(&mut self, ctx: &egui::Context) {
         use egui_remixicon::icons as ri;
         use synth_engine::InstrumentCategory;

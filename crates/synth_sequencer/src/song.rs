@@ -550,6 +550,14 @@ impl Song {
         self.tempo_changes.clear();
     }
 
+    /// Remove the tempo change at exactly `tick`. Returns true if one was
+    /// removed. No-op for ticks that don't carry an explicit change.
+    pub fn remove_tempo_change(&mut self, tick: Tick) -> bool {
+        let before = self.tempo_changes.len();
+        self.tempo_changes.retain(|t| t.tick != tick);
+        self.tempo_changes.len() != before
+    }
+
     // === Time signature ===
 
     /// Set time signature at a position.
