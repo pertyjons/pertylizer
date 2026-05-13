@@ -479,6 +479,7 @@ impl EngineCommand {
             Self::PlayFromPattern { pattern_id } => Self::PlayFromPattern {
                 pattern_id: *pattern_id,
             },
+            Self::SetSoloPattern(p) => Self::SetSoloPattern(*p),
             Self::SetLoop {
                 start,
                 end,

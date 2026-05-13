@@ -3637,6 +3637,161 @@ impl SynthApp {
                     pattern.set_note_velocity(*note_id, *new_velocity);
                 }
             }
+            UndoAction::SetVelocitiesBatch {
+                pattern_id,
+                changes,
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    for (note_id, _old, new) in changes {
+                        pattern.set_note_velocity(*note_id, *new);
+                    }
+                }
+            }
+            UndoAction::RenamePattern {
+                pattern_id,
+                new_name,
+                ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    pattern.name = new_name.clone();
+                }
+            }
+            UndoAction::RenameTrack {
+                track_id, new_name, ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(track) = song_w.track_mut(*track_id) {
+                    track.name = new_name.clone();
+                }
+            }
+            UndoAction::SetPatternLength {
+                pattern_id,
+                new_length,
+                ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    pattern.length = *new_length;
+                }
+            }
+            UndoAction::MovePlacement {
+                pattern_id,
+                old_track_id,
+                old_start,
+                new_track_id,
+                new_start,
+            } => {
+                let mut song_w = self.song.write();
+                song_w.move_placement(
+                    *pattern_id,
+                    *old_track_id,
+                    *old_start,
+                    *new_track_id,
+                    *new_start,
+                );
+            }
+            UndoAction::AddAutomationPoint {
+                pattern_id,
+                target,
+                tick,
+                value,
+                curve,
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    let lane = pattern.get_or_create_automation(target.clone());
+                    let mut point = synth_sequencer::AutomationPoint::new(*tick, *value);
+                    point.curve = *curve;
+                    lane.add_point(point);
+                }
+            }
+            UndoAction::RemoveAutomationPoint {
+                pattern_id,
+                target,
+                tick,
+                ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id)
+                    && let Some(lane) = pattern.automation.iter_mut().find(|l| &l.target == target)
+                {
+                    lane.remove_point(*tick);
+                }
+            }
+            UndoAction::DeleteTrack {
+                track, placements, ..
+            } => {
+                let mut song_w = self.song.write();
+                song_w.delete_track(track.id);
+                let _ = placements;
+            }
+            UndoAction::AddTrack {
+                track,
+                track_index,
+                placements,
+            } => {
+                let mut song_w = self.song.write();
+                song_w.insert_track(track.clone(), Some(*track_index));
+                for p in placements {
+                    song_w.insert_placement(p.clone());
+                }
+            }
+            UndoAction::DeletePattern {
+                pattern,
+                placements,
+            } => {
+                let mut song_w = self.song.write();
+                song_w.delete_pattern(pattern.id);
+                let _ = placements;
+            }
+            UndoAction::AddPattern {
+                pattern,
+                placements,
+            } => {
+                let mut song_w = self.song.write();
+                song_w.insert_pattern(pattern.clone());
+                for p in placements {
+                    song_w.insert_placement(p.clone());
+                }
+            }
+            UndoAction::RemovePlacement { placement } => {
+                let mut song_w = self.song.write();
+                song_w.remove_placement(placement.pattern_id, placement.track_id, placement.start);
+            }
+            UndoAction::InsertPlacement { placement } => {
+                let mut song_w = self.song.write();
+                song_w.insert_placement(placement.clone());
+            }
+            UndoAction::SetPlacementLength {
+                pattern_id,
+                track_id,
+                start,
+                new_length,
+                ..
+            } => {
+                let mut song_w = self.song.write();
+                song_w.set_placement_length(*pattern_id, *track_id, *start, *new_length);
+            }
+            UndoAction::MoveAutomationPoint {
+                pattern_id,
+                target,
+                old_tick,
+                new_tick,
+                new_value,
+                curve,
+                ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    let lane = pattern.get_or_create_automation(target.clone());
+                    lane.remove_point(*old_tick);
+                    let mut point = synth_sequencer::AutomationPoint::new(*new_tick, *new_value);
+                    point.curve = *curve;
+                    lane.add_point(point);
+                }
+            }
             UndoAction::AddModule {
                 instrument_id,
                 module_state,

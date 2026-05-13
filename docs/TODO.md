@@ -130,6 +130,26 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 - [ ] Add `SampleId(u64)` variant to `PatchParamValue` in `synth_mcp/src/types.rs` — currently the MCP patch
   resource view down-casts `u64 → i32` at `mcp_bridge.rs:687`, which silently truncates for sample ids ≥ 2³¹.
   Inconsistent with the lossless rationale already documented for `ParamValue::SampleId`
+- [ ] **Bundle piano-roll coordinate plumbing into a `PianoRollCoords` struct.**
+  `handle_piano_roll_interaction` (`gui/sequencer/mod.rs`) currently takes 17 parameters and
+  `draw_arrangement` takes 9. Four of those (`x_to_tick`, `y_to_pitch`, `tick_to_x`, `pitch_to_y`) plus
+  `view_pitch_min`/`view_pitch_max`/`note_row_height` are one coherent concept — a piano-roll coordinate
+  transform. Extracting a struct collapses 7 args → 1 and removes the need to thread `note_row_height`
+  through `note_at_pos` separately.
+- [ ] **Deduplicate "Set Length" write+undo in the arrangement context menu.**
+  `gui/sequencer/mod.rs` "Set Length…" submenu has the same ~22-line "read old length → write new → push
+  `SetPatternLength` undo" block in two places: the free-input `DragValue` + Apply branch and the preset
+  buttons loop. Extract `fn apply_pattern_length(song, undo_manager, pat_id, new_len)`.
+- [ ] **Unify `SeqInstrumentId` ↔ `InstrumentId` raw conversions.**
+  ~9 sites in `gui/sequencer/mod.rs` do `inst.id.0 == seq_id.0 as u64` and a few do the reverse
+  `SeqInstrumentId::new(inst.id.0 as u16)` (lossy `u64 → u16` cast is silent). Pick one of: add
+  `impl From<SeqInstrumentId> for InstrumentId` + `TryFrom<InstrumentId> for SeqInstrumentId`, or add a
+  single `find_instrument_by_seq_id(&[InstrumentUiState], SeqInstrumentId) -> Option<&InstrumentUiState>`
+  helper. (A `build_instrument_colour_cache` helper already exists for the hot-path lookups.)
+- [ ] **Convert `Song::insert_pattern` / `Song::insert_track` double-lookup to `Entry` API.**
+  Both currently do `if self.patterns.contains_key(...) { return false; } self.patterns.insert(...)` —
+  two map lookups per call. Switch to `self.patterns.entry(id).or_insert_with(...)` (or `Entry::Vacant`
+  for the explicit "already exists" branch). Low priority — only runs on undo/restore.
 
 ### 1.6 Workflow quality of life
 
@@ -156,6 +176,40 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 ### 2.4 MIDI export
 
 - [ ] Export sequences as .mid files
+
+### 2.5 Track reorder via drag-handle
+
+- [ ] Replace (or complement) the current ↑/↓ arrow buttons in the track header with a drag-handle
+  (e.g. `ri::DRAG_MOVE_2_LINE`) on the left edge of each row. Drag should snap the row vertically to the
+  nearest neighbour while dragging, then commit on release via `Song::reorder_track`. The arrow buttons
+  shipped because they are simpler and robust, but drag-handle reorder is the DAW convention.
+
+### 2.6 Pattern looping within placement length (future)
+
+- [ ] **Switch placement-resize from clip to loop-within semantics.** Today
+  `PatternPlacement.length_override` (added in v0.281 with placement-resize) uses *clip* semantics: when the
+  placement is longer than `pattern.length`, the pattern plays once and the remainder is silent. Most DAWs
+  (Ableton, FL Studio, Renoise, Bitwig) loop the pattern internally instead, so a 1-bar drum pattern
+  stretched to 4 bars plays four times. Implementing it touches three places in
+  `crates/synth_engine/src/sequencer_engine.rs`:
+  1. **Modulo on `pattern_tick`** — `collect_events_at_tick` currently computes
+     `pattern_tick = (current_tick - placement.start) as u32`. With looping it becomes
+     `pattern_tick = raw % pattern.length.0`. Trivial.
+  2. **NoteOff timing across loop boundaries.** A note starting at `pattern_tick=800` with duration
+     `200` in a 960-tick pattern would NoteOff at 1000 — past the loop. The active-notes buffer must
+     hold the *absolute* end-tick (not modulo), and the next loop iteration's identical NoteOn must
+     either retrigger or be coalesced with the still-ringing note. Pick a policy and document it.
+  3. **Automation re-trigger.** Automation points need a re-trigger or "carry-over last value"
+     decision per loop iteration. Today there is only one playback of each automation lane per
+     placement — see `pattern.automation` collection at line ~360.
+- [ ] **Mini-note visualization should mirror the loop.** `NoteMiniature.start_frac` is currently
+  fraction-of-pattern-length. For loop-within semantics the rendering in
+  `gui/sequencer/mod.rs` (mini-note loop, near the `inst_color_cache` use) should repeat the miniature
+  across the placement's `effective_length / pattern.length` iterations, so the user sees what they hear.
+- [ ] **Add a toggle on `PatternPlacement`** (`loop_mode: PlacementLoopMode { Clip, Repeat }`, default
+  `Repeat` to match DAW expectations). Surface in the placement context menu and in the right-edge
+  resize-grab tooltip so the user can choose per placement. Migration of older songs: default existing
+  placements to `Clip` so behaviour is preserved, or `Repeat` if we accept a one-time semantic change.
 
 ---
 

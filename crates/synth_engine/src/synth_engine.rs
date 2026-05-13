@@ -898,6 +898,7 @@ impl SynthEngine {
                             .set_recording_state(self.recording.state());
                     }
                 } else {
+                    self.sequencer.set_solo_pattern(None);
                     self.sequencer.play();
                     self.state.transport.set_playing(true);
                 }
@@ -925,6 +926,7 @@ impl SynthEngine {
                     self.restore_pre_record_loop();
                 }
 
+                self.sequencer.set_solo_pattern(None);
                 let _ = self.sequencer.stop();
                 self.state.transport.set_playing(false);
                 self.state.transport.set_ticks(0);
@@ -1001,6 +1003,9 @@ impl SynthEngine {
                     self.sequencer.play();
                     self.state.transport.set_playing(true);
                 }
+            }
+            EngineCommand::SetSoloPattern(pattern) => {
+                self.sequencer.set_solo_pattern(pattern);
             }
             EngineCommand::SetSong { song } => {
                 self.sequencer.set_song(song);

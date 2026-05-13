@@ -10,8 +10,8 @@ use parking_lot::RwLock;
 
 use synth_core::{Bpm, NormalizedValue, SampleCount, SampleRate};
 use synth_sequencer::{
-    AutomationTarget, PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER,
-    Tick, Velocity,
+    AutomationTarget, PatternId, PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song,
+    TICKS_PER_QUARTER, Tick, Velocity,
 };
 
 /// Minimum change threshold for automation value deduplication.
@@ -72,6 +72,10 @@ pub struct SequencerEngine {
     scratch_notes: Vec<(Pitch, Velocity, SeqInstrumentId, Option<Tick>)>,
     /// Pre-allocated scratch buffer for automation collection (avoids per-tick allocation).
     scratch_automation: Vec<(AutomationTarget, NormalizedValue)>,
+    /// When set, only emit notes from placements whose pattern id matches.
+    /// Used by the piano-roll preview to audition a single pattern in isolation.
+    /// Cleared by global `Play`/`Stop` and by the GUI when the piano roll closes.
+    solo_pattern: Option<PatternId>,
 }
 
 impl SequencerEngine {
@@ -92,6 +96,7 @@ impl SequencerEngine {
             last_automation_values: HashMap::with_capacity(32),
             scratch_notes: Vec::with_capacity(64),
             scratch_automation: Vec::with_capacity(16),
+            solo_pattern: None,
         }
     }
 
@@ -113,7 +118,20 @@ impl SequencerEngine {
             last_automation_values: HashMap::with_capacity(32),
             scratch_notes: Vec::with_capacity(64),
             scratch_automation: Vec::with_capacity(16),
+            solo_pattern: None,
         }
+    }
+
+    /// Set the solo-pattern filter. When `Some(id)`, only notes from
+    /// placements whose pattern id matches are emitted; all other patterns
+    /// stay silent. Pass `None` to resume normal multi-pattern playback.
+    pub fn set_solo_pattern(&mut self, pattern: Option<PatternId>) {
+        self.solo_pattern = pattern;
+    }
+
+    /// Get the current solo-pattern filter.
+    pub fn solo_pattern(&self) -> Option<PatternId> {
+        self.solo_pattern
     }
 
     /// Set the sample rate.
@@ -301,6 +319,15 @@ impl SequencerEngine {
             let any_solo = song.any_solo();
 
             for placement in song.arrangement() {
+                // Solo-pattern filter (piano-roll preview): drop everything
+                // that isn't the chosen pattern. Track mute/solo still
+                // applies on top of this so muted tracks remain silent.
+                if let Some(solo) = self.solo_pattern
+                    && placement.pattern_id != solo
+                {
+                    continue;
+                }
+
                 // Skip muted/non-soloed tracks
                 if let Some(track) = song.track(placement.track_id)
                     && !track.is_audible(any_solo)
@@ -312,8 +339,9 @@ impl SequencerEngine {
                     continue;
                 };
 
-                // Check if this placement contains the current tick
-                let pattern_end = Tick(placement.start.0 + pattern.length.0 as u64);
+                // length_override gives clip semantics when set.
+                let placement_len = placement.length_override.unwrap_or(pattern.length);
+                let pattern_end = Tick(placement.start.0 + placement_len.0 as u64);
                 if self.current_tick < placement.start || self.current_tick >= pattern_end {
                     continue;
                 }

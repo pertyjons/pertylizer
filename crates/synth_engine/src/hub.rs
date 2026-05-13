@@ -353,6 +353,7 @@ impl EngineHub {
             | EngineCommand::Seek { .. }
             | EngineCommand::PlayPattern { .. }
             | EngineCommand::PlayFromPattern { .. }
+            | EngineCommand::SetSoloPattern(_)
             | EngineCommand::SetLoop { .. }
             | EngineCommand::SetRepeat { .. } => perms.can_control_transport,
 

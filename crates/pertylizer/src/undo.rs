@@ -7,7 +7,9 @@
 use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
-use synth_sequencer::{Duration as SeqDuration, NoteId, PatternId, PatternTick, Pitch, Velocity};
+use synth_sequencer::{
+    Duration as SeqDuration, NoteId, PatternId, PatternTick, Pitch, Tick, TrackId, Velocity,
+};
 
 use crate::patch::{ConnectionState, ModuleState, ParamValue};
 
@@ -59,6 +61,112 @@ pub(crate) enum UndoAction {
         note_id: NoteId,
         old_velocity: Velocity,
         new_velocity: Velocity,
+    },
+    /// Batch velocity change (scale velocities, multi-edit).
+    /// Each tuple is `(note_id, old_velocity, new_velocity)`.
+    SetVelocitiesBatch {
+        pattern_id: PatternId,
+        changes: Vec<(NoteId, Velocity, Velocity)>,
+    },
+
+    // ── Pattern + track metadata ──
+    /// A pattern was renamed.
+    RenamePattern {
+        pattern_id: PatternId,
+        old_name: String,
+        new_name: String,
+    },
+    /// A track was renamed.
+    RenameTrack {
+        track_id: TrackId,
+        old_name: String,
+        new_name: String,
+    },
+    /// A pattern's length was changed.
+    SetPatternLength {
+        pattern_id: PatternId,
+        old_length: SeqDuration,
+        new_length: SeqDuration,
+    },
+
+    // ── Arrangement ──
+    /// A placement was moved or transferred between tracks.
+    MovePlacement {
+        pattern_id: PatternId,
+        old_track_id: TrackId,
+        old_start: Tick,
+        new_track_id: TrackId,
+        new_start: Tick,
+    },
+
+    // ── Track / pattern delete (full state) ──
+    /// A track was deleted. Restoring it brings back the full track plus
+    /// every placement that referenced it.
+    DeleteTrack {
+        track: synth_sequencer::SequencerTrack,
+        track_index: usize,
+        placements: Vec<synth_sequencer::PatternPlacement>,
+    },
+    /// A track was restored from undo (inverse of DeleteTrack).
+    AddTrack {
+        track: synth_sequencer::SequencerTrack,
+        track_index: usize,
+        placements: Vec<synth_sequencer::PatternPlacement>,
+    },
+    /// A pattern was deleted. Restoring it brings back the full pattern
+    /// (notes + automation) plus every placement that referenced it.
+    DeletePattern {
+        pattern: synth_sequencer::Pattern,
+        placements: Vec<synth_sequencer::PatternPlacement>,
+    },
+    /// A pattern was restored from undo (inverse of DeletePattern).
+    AddPattern {
+        pattern: synth_sequencer::Pattern,
+        placements: Vec<synth_sequencer::PatternPlacement>,
+    },
+    /// A placement was removed from the arrangement.
+    RemovePlacement {
+        placement: synth_sequencer::PatternPlacement,
+    },
+    /// A placement was inserted (inverse of RemovePlacement).
+    InsertPlacement {
+        placement: synth_sequencer::PatternPlacement,
+    },
+    /// A placement's length override changed (resize handle).
+    SetPlacementLength {
+        pattern_id: PatternId,
+        track_id: TrackId,
+        start: Tick,
+        old_length: Option<SeqDuration>,
+        new_length: Option<SeqDuration>,
+    },
+
+    // ── Automation ──
+    /// An automation point was added.
+    AddAutomationPoint {
+        pattern_id: PatternId,
+        target: synth_sequencer::AutomationTarget,
+        tick: PatternTick,
+        value: synth_core::NormalizedValue,
+        curve: synth_sequencer::CurveType,
+    },
+    /// An automation point was removed.
+    RemoveAutomationPoint {
+        pattern_id: PatternId,
+        target: synth_sequencer::AutomationTarget,
+        tick: PatternTick,
+        value: synth_core::NormalizedValue,
+        curve: synth_sequencer::CurveType,
+    },
+    /// An automation point was moved.
+    MoveAutomationPoint {
+        pattern_id: PatternId,
+        target: synth_sequencer::AutomationTarget,
+        old_tick: PatternTick,
+        old_value: synth_core::NormalizedValue,
+        new_tick: PatternTick,
+        new_value: synth_core::NormalizedValue,
+        curve: synth_sequencer::CurveType,
     },
 
     // ── Module operations ──
@@ -254,6 +362,150 @@ impl UndoManager {
                 note_id: *note_id,
                 old_velocity: *new_velocity,
                 new_velocity: *old_velocity,
+            },
+            UndoAction::SetVelocitiesBatch {
+                pattern_id,
+                changes,
+            } => UndoAction::SetVelocitiesBatch {
+                pattern_id: *pattern_id,
+                changes: changes
+                    .iter()
+                    .map(|(id, old, new)| (*id, *new, *old))
+                    .collect(),
+            },
+            UndoAction::RenamePattern {
+                pattern_id,
+                old_name,
+                new_name,
+            } => UndoAction::RenamePattern {
+                pattern_id: *pattern_id,
+                old_name: new_name.clone(),
+                new_name: old_name.clone(),
+            },
+            UndoAction::RenameTrack {
+                track_id,
+                old_name,
+                new_name,
+            } => UndoAction::RenameTrack {
+                track_id: *track_id,
+                old_name: new_name.clone(),
+                new_name: old_name.clone(),
+            },
+            UndoAction::SetPatternLength {
+                pattern_id,
+                old_length,
+                new_length,
+            } => UndoAction::SetPatternLength {
+                pattern_id: *pattern_id,
+                old_length: *new_length,
+                new_length: *old_length,
+            },
+            UndoAction::MovePlacement {
+                pattern_id,
+                old_track_id,
+                old_start,
+                new_track_id,
+                new_start,
+            } => UndoAction::MovePlacement {
+                pattern_id: *pattern_id,
+                old_track_id: *new_track_id,
+                old_start: *new_start,
+                new_track_id: *old_track_id,
+                new_start: *old_start,
+            },
+            UndoAction::AddAutomationPoint {
+                pattern_id,
+                target,
+                tick,
+                value,
+                curve,
+            } => UndoAction::RemoveAutomationPoint {
+                pattern_id: *pattern_id,
+                target: target.clone(),
+                tick: *tick,
+                value: *value,
+                curve: *curve,
+            },
+            UndoAction::RemoveAutomationPoint {
+                pattern_id,
+                target,
+                tick,
+                value,
+                curve,
+            } => UndoAction::AddAutomationPoint {
+                pattern_id: *pattern_id,
+                target: target.clone(),
+                tick: *tick,
+                value: *value,
+                curve: *curve,
+            },
+            UndoAction::DeleteTrack {
+                track,
+                track_index,
+                placements,
+            } => UndoAction::AddTrack {
+                track: track.clone(),
+                track_index: *track_index,
+                placements: placements.clone(),
+            },
+            UndoAction::AddTrack {
+                track,
+                track_index,
+                placements,
+            } => UndoAction::DeleteTrack {
+                track: track.clone(),
+                track_index: *track_index,
+                placements: placements.clone(),
+            },
+            UndoAction::DeletePattern {
+                pattern,
+                placements,
+            } => UndoAction::AddPattern {
+                pattern: pattern.clone(),
+                placements: placements.clone(),
+            },
+            UndoAction::AddPattern {
+                pattern,
+                placements,
+            } => UndoAction::DeletePattern {
+                pattern: pattern.clone(),
+                placements: placements.clone(),
+            },
+            UndoAction::RemovePlacement { placement } => UndoAction::InsertPlacement {
+                placement: placement.clone(),
+            },
+            UndoAction::InsertPlacement { placement } => UndoAction::RemovePlacement {
+                placement: placement.clone(),
+            },
+            UndoAction::SetPlacementLength {
+                pattern_id,
+                track_id,
+                start,
+                old_length,
+                new_length,
+            } => UndoAction::SetPlacementLength {
+                pattern_id: *pattern_id,
+                track_id: *track_id,
+                start: *start,
+                old_length: *new_length,
+                new_length: *old_length,
+            },
+            UndoAction::MoveAutomationPoint {
+                pattern_id,
+                target,
+                old_tick,
+                old_value,
+                new_tick,
+                new_value,
+                curve,
+            } => UndoAction::MoveAutomationPoint {
+                pattern_id: *pattern_id,
+                target: target.clone(),
+                old_tick: *new_tick,
+                old_value: *new_value,
+                new_tick: *old_tick,
+                new_value: *old_value,
+                curve: *curve,
             },
             UndoAction::AddModule {
                 instrument_id,

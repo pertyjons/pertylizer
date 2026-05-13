@@ -454,6 +454,12 @@ pub enum EngineCommand {
     /// Does not loop - plays through the entire song from that position.
     PlayFromPattern { pattern_id: PatternId },
 
+    /// Solo a single pattern during playback (piano-roll preview): only
+    /// notes from placements with this `pattern_id` are emitted. Pass
+    /// `None` to clear and resume normal multi-pattern playback. The
+    /// engine also clears this state automatically on global `Play`/`Stop`.
+    SetSoloPattern(Option<PatternId>),
+
     // === Engine control ===
     /// Reset the engine state.
     Reset,
@@ -1073,6 +1079,7 @@ impl std::fmt::Debug for EngineCommand {
             Self::SetRepeat { enabled } => write!(f, "SetRepeat({enabled})"),
             Self::PlayPattern { pattern_id } => write!(f, "PlayPattern({pattern_id:?})"),
             Self::PlayFromPattern { pattern_id } => write!(f, "PlayFromPattern({pattern_id:?})"),
+            Self::SetSoloPattern(p) => write!(f, "SetSoloPattern({p:?})"),
             Self::Reset => write!(f, "Reset"),
             Self::ClearAllModules => write!(f, "ClearAllModules"),
             Self::SetMasterVolume(v) => write!(f, "SetMasterVolume({v})"),

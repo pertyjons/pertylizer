@@ -42,6 +42,12 @@ pub struct PatternPlacement {
     pub transpose: Semitones,
     /// Volume scaling (1.0 = normal).
     pub gain: Gain,
+    /// Optional per-placement length override. When `None`, the placement
+    /// occupies exactly `pattern.length` ticks. When `Some(d)`, the
+    /// placement extends/clips to that length; the engine still walks the
+    /// pattern's note timeline up to `min(d, pattern.length)`.
+    #[serde(default)]
+    pub length_override: Option<Duration>,
 }
 
 impl PatternPlacement {
@@ -53,6 +59,7 @@ impl PatternPlacement {
             start,
             transpose: Semitones::ZERO,
             gain: Gain::UNITY,
+            length_override: None,
         }
     }
 
@@ -68,9 +75,16 @@ impl PatternPlacement {
         self
     }
 
-    /// Calculate end position based on pattern length.
+    /// Calculate end position. Respects `length_override` when set,
+    /// otherwise uses the pattern's own length.
     pub fn end(&self, pattern_length: Duration) -> Tick {
-        Tick(self.start.0 + pattern_length.0 as u64)
+        let len = self.length_override.unwrap_or(pattern_length);
+        Tick(self.start.0 + len.0 as u64)
+    }
+
+    /// Effective length (override if set, otherwise the pattern's length).
+    pub fn effective_length(&self, pattern_length: Duration) -> Duration {
+        self.length_override.unwrap_or(pattern_length)
     }
 }
 
@@ -89,6 +103,12 @@ pub struct Song {
     // Track storage
     tracks: BTreeMap<TrackId, SequencerTrack>,
     next_track_id: u16,
+    /// Display order for tracks (top → bottom). Maintained alongside
+    /// `tracks`: created tracks append to the end, deleted ones are
+    /// removed, and `reorder_track` mutates the order without touching
+    /// the underlying map. `tracks()` iterates in this order.
+    #[serde(default)]
+    track_order: Vec<TrackId>,
 
     // Arrangement
     arrangement: Vec<PatternPlacement>,
@@ -113,6 +133,7 @@ impl Song {
             next_pattern_id: 0,
             tracks: BTreeMap::new(),
             next_track_id: 0,
+            track_order: Vec::new(),
             arrangement: Vec::new(),
             tempo_changes: Vec::new(),
             time_signature_changes: Vec::new(),
@@ -181,6 +202,23 @@ impl Song {
         self.patterns.remove(&id)
     }
 
+    /// Insert a pre-built pattern under its existing id. Used by undo to
+    /// restore a deleted pattern with its full notes and automation.
+    /// Returns true if inserted, false if a pattern with that id already
+    /// exists.
+    pub fn insert_pattern(&mut self, pattern: Pattern) -> bool {
+        if self.patterns.contains_key(&pattern.id) {
+            return false;
+        }
+        // Keep `next_pattern_id` ahead of any restored id so later
+        // create_pattern calls don't reuse the same slot.
+        if pattern.id.0 >= self.next_pattern_id {
+            self.next_pattern_id = pattern.id.0.saturating_add(1);
+        }
+        self.patterns.insert(pattern.id, pattern);
+        true
+    }
+
     /// Duplicate a pattern.
     pub fn duplicate_pattern(&mut self, id: PatternId) -> Option<PatternId> {
         let pattern = self.patterns.get(&id)?.clone();
@@ -210,7 +248,73 @@ impl Song {
         let id = TrackId(self.next_track_id);
         self.next_track_id = self.next_track_id.saturating_add(1);
         self.tracks.insert(id, SequencerTrack::new(id, name));
+        self.track_order.push(id);
         id
+    }
+
+    /// Insert a pre-built track under its existing id. Used by undo to
+    /// restore a deleted track. The track is appended to the display order
+    /// (or its old position if provided via `at_index`). Returns true if
+    /// inserted, false if the id already exists.
+    pub fn insert_track(&mut self, track: SequencerTrack, at_index: Option<usize>) -> bool {
+        if self.tracks.contains_key(&track.id) {
+            return false;
+        }
+        if track.id.0 >= self.next_track_id {
+            self.next_track_id = track.id.0.saturating_add(1);
+        }
+        let id = track.id;
+        self.tracks.insert(id, track);
+        let pos =
+            at_index.map_or_else(|| self.track_order.len(), |i| i.min(self.track_order.len()));
+        self.track_order.insert(pos, id);
+        true
+    }
+
+    /// Insert a pre-built placement as-is. Used by undo to restore a
+    /// removed placement with its transpose/gain/etc. preserved. Returns
+    /// true if inserted, false if the pattern or track is missing.
+    pub fn insert_placement(&mut self, placement: PatternPlacement) -> bool {
+        if !self.patterns.contains_key(&placement.pattern_id)
+            || !self.tracks.contains_key(&placement.track_id)
+        {
+            return false;
+        }
+        let start = placement.start;
+        let pos = self.arrangement.partition_point(|p| p.start <= start);
+        self.arrangement.insert(pos, placement);
+        true
+    }
+
+    /// Move a track from one index to another in the display order.
+    /// Returns true if the move happened. Repairs `track_order` first if
+    /// it has drifted from `tracks` (e.g. an older serialized song).
+    pub fn reorder_track(&mut self, from: usize, to: usize) -> bool {
+        self.repair_track_order();
+        if from >= self.track_order.len() || to >= self.track_order.len() || from == to {
+            return false;
+        }
+        let id = self.track_order.remove(from);
+        self.track_order.insert(to, id);
+        true
+    }
+
+    /// Sync `track_order` with `tracks`: drop unknown ids, append missing
+    /// ones in map order. Idempotent; no-op when already in sync.
+    pub fn repair_track_order(&mut self) {
+        self.track_order.retain(|id| self.tracks.contains_key(id));
+        let missing: Vec<TrackId> = self
+            .tracks
+            .keys()
+            .filter(|id| !self.track_order.contains(id))
+            .copied()
+            .collect();
+        self.track_order.extend(missing);
+    }
+
+    /// Get the display-ordered list of track IDs.
+    pub fn track_order(&self) -> &[TrackId] {
+        &self.track_order
     }
 
     /// Get a track by ID.
@@ -224,9 +328,33 @@ impl Song {
         self.tracks.get_mut(&id)
     }
 
-    /// Get all tracks.
+    /// Get all tracks in display order.
+    ///
+    /// Fast path (no allocation) when `track_order` is in sync with
+    /// `tracks` — the case after every supported mutation. For older
+    /// serialized songs with an empty/partial `track_order`, falls back
+    /// to a one-shot `HashSet` to chain any missing tracks in map order.
     pub fn tracks(&self) -> impl Iterator<Item = &SequencerTrack> {
-        self.tracks.values()
+        use std::collections::HashSet;
+        let in_sync = self.track_order.len() == self.tracks.len();
+        let missing: HashSet<TrackId> = if in_sync {
+            HashSet::new()
+        } else {
+            // Tracks present in the map but absent from track_order.
+            self.tracks
+                .keys()
+                .filter(|id| !self.track_order.contains(id))
+                .copied()
+                .collect()
+        };
+        self.track_order
+            .iter()
+            .filter_map(|id| self.tracks.get(id))
+            .chain(
+                self.tracks
+                    .iter()
+                    .filter_map(move |(id, t)| missing.contains(id).then_some(t)),
+            )
     }
 
     /// Get the number of tracks.
@@ -239,6 +367,7 @@ impl Song {
     pub fn delete_track(&mut self, id: TrackId) -> Option<SequencerTrack> {
         // Also remove placements on this track
         self.arrangement.retain(|p| p.track_id != id);
+        self.track_order.retain(|t| *t != id);
         self.tracks.remove(&id)
     }
 
@@ -317,6 +446,24 @@ impl Song {
         } else {
             false
         }
+    }
+
+    /// Set a placement's length override. Identified by
+    /// `(pattern_id, track_id, start)`. Returns true if found and updated.
+    pub fn set_placement_length(
+        &mut self,
+        pattern_id: PatternId,
+        track_id: TrackId,
+        start: Tick,
+        length: Option<Duration>,
+    ) -> bool {
+        for p in &mut self.arrangement {
+            if p.pattern_id == pattern_id && p.track_id == track_id && p.start == start {
+                p.length_override = length;
+                return true;
+            }
+        }
+        false
     }
 
     /// Get all placements.
@@ -544,6 +691,7 @@ impl Song {
             .collect();
         for tid in unused_tids {
             self.tracks.remove(&tid);
+            self.track_order.retain(|t| *t != tid);
         }
 
         // Collect instrument IDs still in use (from tracks and notes)
