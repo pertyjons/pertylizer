@@ -503,6 +503,9 @@ pub enum PatchParamValue {
     Bool(bool),
     /// Choice/enum value (e.g. "sawtooth").
     Choice(String),
+    /// Sample id — kept lossless as u64. The MCP resource view used to
+    /// down-cast to `Int(i32)`, which silently truncated ids ≥ 2³¹.
+    SampleId(u64),
 }
 
 /// Result of optimizing a project by removing unused items.

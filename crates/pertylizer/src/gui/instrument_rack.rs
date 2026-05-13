@@ -49,6 +49,16 @@ pub struct InstrumentUiState {
     pub description: String,
     /// Optional accent color as hex string (e.g. "#FF8800FF").
     pub color: Option<HexColor>,
+    /// Voice allocation mode (Poly / Mono / Legato / Unison).
+    pub allocation_mode: synth_engine::voice_allocator::AllocationMode,
+    /// Strategy for stealing voices when all are busy.
+    pub stealing_strategy: synth_engine::voice_allocator::StealingStrategy,
+    /// Maximum polyphony for this instrument.
+    pub max_voices: synth_core::VoiceCount,
+    /// Velocity → amplitude sensitivity (0 = constant, 1 = full dynamic).
+    pub velocity_amp_sensitivity: synth_core::NormalizedValue,
+    /// Velocity → filter cutoff sensitivity (0 = none, 1 = full).
+    pub velocity_filter_sensitivity: synth_core::NormalizedValue,
 }
 
 impl Default for InstrumentUiState {
@@ -70,6 +80,11 @@ impl Default for InstrumentUiState {
             category: InstrumentCategory::default(),
             description: String::new(),
             color: None,
+            allocation_mode: synth_engine::voice_allocator::AllocationMode::default(),
+            stealing_strategy: synth_engine::voice_allocator::StealingStrategy::default(),
+            max_voices: synth_core::VoiceCount::OCTO,
+            velocity_amp_sensitivity: synth_core::NormalizedValue::MAX,
+            velocity_filter_sensitivity: synth_core::NormalizedValue::MIN,
         }
     }
 }
@@ -94,6 +109,11 @@ impl InstrumentUiState {
             category: InstrumentCategory::default(),
             description: String::new(),
             color: None,
+            allocation_mode: synth_engine::voice_allocator::AllocationMode::default(),
+            stealing_strategy: synth_engine::voice_allocator::StealingStrategy::default(),
+            max_voices: synth_core::VoiceCount::OCTO,
+            velocity_amp_sensitivity: synth_core::NormalizedValue::MAX,
+            velocity_filter_sensitivity: synth_core::NormalizedValue::MIN,
         }
     }
 

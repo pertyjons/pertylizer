@@ -107,6 +107,20 @@ impl SynthSession {
     /// Updates the instrument counter so future `add_instrument` calls
     /// won't collide.
     pub fn add_instrument_with_id(&self, id: InstrumentId, name: &str) -> Result<(), SessionError> {
+        self.add_instrument_with_id_and_config(id, name, None)
+    }
+
+    /// Add an instrument under a specific ID with an optional allocator
+    /// config. The config governs `max_voices` / `mode` / `stealing` —
+    /// these can't be changed at runtime because the voice pool is
+    /// pre-allocated, so this constructor is the only way to honour a
+    /// loaded project's polyphony settings.
+    pub fn add_instrument_with_id_and_config(
+        &self,
+        id: InstrumentId,
+        name: &str,
+        config: Option<synth_engine::voice_allocator::AllocatorConfig>,
+    ) -> Result<(), SessionError> {
         // Ensure counter is above this ID
         {
             let mut counter = self
@@ -119,7 +133,10 @@ impl SynthSession {
             }
         }
 
-        let instrument = Box::new(Instrument::new(id, name));
+        let instrument = Box::new(match config {
+            Some(cfg) => Instrument::with_config(id, name, cfg),
+            None => Instrument::new(id, name),
+        });
 
         if !self
             .command_sender

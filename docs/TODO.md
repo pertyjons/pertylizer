@@ -7,10 +7,13 @@
 The following `InstrumentParam` variants exist in the engine but have no UI controls and are not persisted in
 project/patch files:
 
-- [ ] `AllocationMode` — voice allocation mode (Polyphonic/Mono/Legato), currently hardcoded to Polyphonic
-- [ ] `MaxVoices` — maximum polyphony per instrument, currently hardcoded in allocator
-- [ ] `VelocityAmpSensitivity` — velocity → amplitude mapping sensitivity
-- [ ] `VelocityFilterSensitivity` — velocity → filter cutoff mapping sensitivity
+- [x] `AllocationMode` — voice allocation mode (Polyphonic/Mono/Legato/Unison). Persisted on `InstrumentState`,
+  applied at instrument construction; editable in the instrument edit window.
+- [x] `MaxVoices` — maximum polyphony per instrument. Persisted on `InstrumentState` as `VoiceCount`,
+  applied via `Session::add_instrument_with_id_and_config` on project load (engine can't resize the voice
+  pool at runtime, so changes take effect on the next reload). Editable in the instrument edit window.
+- [x] `VelocityAmpSensitivity` — velocity → amplitude mapping sensitivity. Persisted; live-editable.
+- [x] `VelocityFilterSensitivity` — velocity → filter cutoff mapping sensitivity. Persisted; live-editable.
 
 ---
 
@@ -127,9 +130,9 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
   `gui/patch_editor.rs`, `gui/egui_backend.rs`)
 - [ ] Add `param_sample_id(name, id)` to `ModuleStateBuilder` in `pertylizer/src/patch.rs` for symmetry with
   `param_f` / `param_i` / `param_b` / `param_choice` (no current callers — for API completeness)
-- [ ] Add `SampleId(u64)` variant to `PatchParamValue` in `synth_mcp/src/types.rs` — currently the MCP patch
-  resource view down-casts `u64 → i32` at `mcp_bridge.rs:687`, which silently truncates for sample ids ≥ 2³¹.
-  Inconsistent with the lossless rationale already documented for `ParamValue::SampleId`
+- [x] Add `SampleId(u64)` variant to `PatchParamValue` in `synth_mcp/src/types.rs` — fixed by emitting
+  `PatchParamValue::SampleId(*sample_id)` in `mcp_bridge.rs` (was `Int(sample_id as i32)` which silently
+  truncated sample ids ≥ 2³¹).
 - [ ] **Bundle piano-roll coordinate plumbing into a `PianoRollCoords` struct.**
   `handle_piano_roll_interaction` (`gui/sequencer/mod.rs`) currently takes 17 parameters and
   `draw_arrangement` takes 9. Four of those (`x_to_tick`, `y_to_pitch`, `tick_to_x`, `pitch_to_y`) plus
@@ -235,8 +238,11 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 
 ### 3.5 Polyphony settings
 
-- [ ] Voice count configurable per instrument (GUI control)
-- [ ] Voice stealing mode selection (oldest, quietest, none)
+- [x] Voice count configurable per instrument (GUI control) — DragValue 1–128 in the instrument edit window;
+  applied at project-reload time (engine voice pool is fixed-size at construction).
+- [x] Allocation mode (Poly / Mono / Legato / Unison) — combobox in the instrument edit window, persisted.
+- [ ] Voice stealing mode selection (oldest, quietest, none) — engine + persistence done, GUI selector
+  not yet added (defaults still applied).
 - [ ] Unison detune/spread controls
 
 ---

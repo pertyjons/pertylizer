@@ -3119,6 +3119,9 @@ impl SynthApp {
         let mut send_pan = false;
         let mut send_transpose = false;
         let mut send_oversampling = false;
+        let mut send_alloc_mode = false;
+        let mut send_vel_amp = false;
+        let mut send_vel_filter = false;
 
         egui::Window::new(title)
             .id(egui::Id::new((
@@ -3333,6 +3336,90 @@ impl SynthApp {
                         .response
                         .on_hover_text("Oversampling factor (reduces aliasing)");
                 });
+
+                ui.add_space(6.0);
+
+                // Polyphony / voice count. Changing this only takes effect
+                // after the project is reloaded — the engine can't resize
+                // the voice pool at runtime.
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Max voices").color(t.colors.text_dim));
+                    let mut voices = inst.max_voices.0 as i32;
+                    let resp = ui
+                        .add(egui::DragValue::new(&mut voices).range(1..=128).speed(0.2))
+                        .on_hover_text(
+                            "Maximum polyphony (1–128). Takes effect on project reload.",
+                        );
+                    if resp.changed() {
+                        inst.max_voices = synth_core::VoiceCount::new(voices.clamp(1, 128) as u8);
+                        other_changed = true;
+                    }
+                });
+
+                ui.add_space(6.0);
+
+                // Allocation mode
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Mode").color(t.colors.text_dim));
+                    let current = inst.allocation_mode;
+                    egui::ComboBox::from_id_salt("instrument_edit_alloc_mode")
+                        .selected_text(format!("{current:?}"))
+                        .width(110.0)
+                        .show_ui(ui, |ui| {
+                            for mode in [
+                                synth_engine::voice_allocator::AllocationMode::Polyphonic,
+                                synth_engine::voice_allocator::AllocationMode::Mono,
+                                synth_engine::voice_allocator::AllocationMode::Legato,
+                                synth_engine::voice_allocator::AllocationMode::Unison,
+                            ] {
+                                if ui
+                                    .selectable_label(current == mode, format!("{mode:?}"))
+                                    .clicked()
+                                {
+                                    inst.allocation_mode = mode;
+                                    send_alloc_mode = true;
+                                }
+                            }
+                        });
+                });
+
+                ui.add_space(6.0);
+
+                // Velocity → amp sensitivity
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Vel → Amp").color(t.colors.text_dim));
+                    let mut s = inst.velocity_amp_sensitivity.as_f32();
+                    let resp = ui
+                        .add(
+                            egui::Slider::new(&mut s, 0.0..=1.0)
+                                .fixed_decimals(2)
+                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                        )
+                        .on_hover_text("Velocity → amplitude sensitivity (0 = flat, 1 = full)");
+                    if resp.changed() {
+                        inst.velocity_amp_sensitivity = synth_core::NormalizedValue::new(s);
+                        send_vel_amp = true;
+                    }
+                });
+
+                ui.add_space(6.0);
+
+                // Velocity → filter sensitivity
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Vel → Filter").color(t.colors.text_dim));
+                    let mut s = inst.velocity_filter_sensitivity.as_f32();
+                    let resp = ui
+                        .add(
+                            egui::Slider::new(&mut s, 0.0..=1.0)
+                                .fixed_decimals(2)
+                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                        )
+                        .on_hover_text("Velocity → filter cutoff sensitivity (0 = none, 1 = full)");
+                    if resp.changed() {
+                        inst.velocity_filter_sensitivity = synth_core::NormalizedValue::new(s);
+                        send_vel_filter = true;
+                    }
+                });
             });
 
         if !open {
@@ -3385,6 +3472,27 @@ impl SynthApp {
                 param: synth_engine::InstrumentParam::OversamplingFactor(os),
             });
         }
+        if send_alloc_mode {
+            let mode = self.instruments[idx].allocation_mode;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: target_id,
+                param: synth_engine::InstrumentParam::AllocationMode(mode),
+            });
+        }
+        if send_vel_amp {
+            let s = self.instruments[idx].velocity_amp_sensitivity;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: target_id,
+                param: synth_engine::InstrumentParam::VelocityAmpSensitivity(s),
+            });
+        }
+        if send_vel_filter {
+            let s = self.instruments[idx].velocity_filter_sensitivity;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: target_id,
+                param: synth_engine::InstrumentParam::VelocityFilterSensitivity(s),
+            });
+        }
         if name_changed
             || category_changed
             || other_changed
@@ -3393,6 +3501,9 @@ impl SynthApp {
             || send_pan
             || send_transpose
             || send_oversampling
+            || send_alloc_mode
+            || send_vel_amp
+            || send_vel_filter
         {
             self.mark_dirty();
         }
@@ -4810,6 +4921,11 @@ impl SynthApp {
                     category: inst.category.as_u8(),
                     description: inst.description.clone(),
                     color: inst.color.clone(),
+                    allocation_mode: inst.allocation_mode,
+                    stealing_strategy: inst.stealing_strategy,
+                    max_voices: inst.max_voices,
+                    velocity_amp_sensitivity: inst.velocity_amp_sensitivity,
+                    velocity_filter_sensitivity: inst.velocity_filter_sensitivity,
                     patch,
                 }
             })
@@ -4929,9 +5045,18 @@ impl SynthApp {
                 max_id = inst_id.as_u64();
             }
 
-            if let Err(e) = self
-                .session
-                .add_instrument_with_id(inst_id, &inst_state.name)
+            // Construct with the saved allocator config so voice pool /
+            // mode / stealing match the project; runtime `MaxVoices`
+            // command is a no-op (engine can't resize the voice pool).
+            let cfg = synth_engine::voice_allocator::AllocatorConfig {
+                max_voices: inst_state.max_voices,
+                mode: inst_state.allocation_mode,
+                stealing: inst_state.stealing_strategy,
+                ..Default::default()
+            };
+            if let Err(e) =
+                self.session
+                    .add_instrument_with_id_and_config(inst_id, &inst_state.name, Some(cfg))
             {
                 eprintln!(
                     "Warning: failed to create instrument {}: {e}",
@@ -4986,6 +5111,11 @@ impl SynthApp {
             ui_inst.category = synth_engine::InstrumentCategory::from_u8(inst_state.category);
             ui_inst.description = inst_state.description.clone();
             ui_inst.color = inst_state.color.clone();
+            ui_inst.allocation_mode = inst_state.allocation_mode;
+            ui_inst.stealing_strategy = inst_state.stealing_strategy;
+            ui_inst.max_voices = inst_state.max_voices;
+            ui_inst.velocity_amp_sensitivity = inst_state.velocity_amp_sensitivity;
+            ui_inst.velocity_filter_sensitivity = inst_state.velocity_filter_sensitivity;
 
             // Send engine commands for instrument parameters
             if let Err(e) = self.session.rename_instrument(inst_id, &inst_state.name) {
@@ -5028,6 +5158,30 @@ impl SynthApp {
             self.handle.send(EngineCommand::SetInstrumentParameter {
                 instrument_id: inst_id,
                 param: synth_engine::InstrumentParam::Transpose(ui_inst.transpose),
+            });
+            // Voice allocator config + velocity sensitivities. NB: the
+            // engine's `MaxVoices` command is a no-op (voice pool can't
+            // resize at runtime); it is honoured at instrument
+            // construction time below via `session.add_instrument_with_config`.
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: inst_id,
+                param: synth_engine::InstrumentParam::AllocationMode(ui_inst.allocation_mode),
+            });
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: inst_id,
+                param: synth_engine::InstrumentParam::StealingStrategy(ui_inst.stealing_strategy),
+            });
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: inst_id,
+                param: synth_engine::InstrumentParam::VelocityAmpSensitivity(
+                    ui_inst.velocity_amp_sensitivity,
+                ),
+            });
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: inst_id,
+                param: synth_engine::InstrumentParam::VelocityFilterSensitivity(
+                    ui_inst.velocity_filter_sensitivity,
+                ),
             });
 
             self.instruments.push(ui_inst);

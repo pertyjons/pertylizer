@@ -5,13 +5,16 @@
 //! - Voice stealing strategies
 //! - Glide/portamento support
 
+use serde::{Deserialize, Serialize};
+
 use crate::voice::{Voice, VoiceId, VoiceState};
 use synth_core::{Cents, MidiNote, SampleCount, SamplePosition, Seconds, Velocity, VoiceCount};
 
 /// Voice allocation mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AllocationMode {
     /// Unlimited polyphony (up to max voices).
+    #[default]
     Polyphonic,
     /// Monophonic with retriggering.
     Mono,
@@ -22,11 +25,12 @@ pub enum AllocationMode {
 }
 
 /// Strategy for stealing voices when all are busy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum StealingStrategy {
     /// Don't steal - ignore new notes when full.
     None,
     /// Steal the oldest active voice.
+    #[default]
     Oldest,
     /// Steal the quietest voice (based on envelope level).
     Quietest,

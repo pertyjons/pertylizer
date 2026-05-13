@@ -698,6 +698,21 @@ pub struct InstrumentState {
     /// Optional accent color as hex string (e.g. "#FF8800FF").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<HexColor>,
+    /// Voice allocation mode (Poly / Mono / Legato / Unison).
+    #[serde(default)]
+    pub allocation_mode: synth_engine::voice_allocator::AllocationMode,
+    /// Strategy for stealing voices when all are busy.
+    #[serde(default)]
+    pub stealing_strategy: synth_engine::voice_allocator::StealingStrategy,
+    /// Maximum polyphony for this instrument (1–128, default 8).
+    #[serde(default = "default_max_voices")]
+    pub max_voices: synth_core::VoiceCount,
+    /// Velocity → amplitude sensitivity (0 = constant volume, 1 = full dynamic).
+    #[serde(default = "default_vel_amp_sens")]
+    pub velocity_amp_sensitivity: synth_core::NormalizedValue,
+    /// Velocity → filter cutoff sensitivity (0 = none, 1 = full).
+    #[serde(default)]
+    pub velocity_filter_sensitivity: synth_core::NormalizedValue,
     /// Full module graph for this instrument.
     pub patch: Patch,
 }
@@ -728,6 +743,16 @@ impl<'de> Deserialize<'de> for InstrumentState {
             description: String,
             #[serde(default)]
             color: Option<HexColor>,
+            #[serde(default)]
+            allocation_mode: synth_engine::voice_allocator::AllocationMode,
+            #[serde(default)]
+            stealing_strategy: synth_engine::voice_allocator::StealingStrategy,
+            #[serde(default = "default_max_voices")]
+            max_voices: synth_core::VoiceCount,
+            #[serde(default = "default_vel_amp_sens")]
+            velocity_amp_sensitivity: synth_core::NormalizedValue,
+            #[serde(default)]
+            velocity_filter_sensitivity: synth_core::NormalizedValue,
             patch: Patch,
         }
 
@@ -746,6 +771,11 @@ impl<'de> Deserialize<'de> for InstrumentState {
             category: raw.category,
             description: raw.description,
             color: raw.color,
+            allocation_mode: raw.allocation_mode,
+            stealing_strategy: raw.stealing_strategy,
+            max_voices: raw.max_voices,
+            velocity_amp_sensitivity: raw.velocity_amp_sensitivity,
+            velocity_filter_sensitivity: raw.velocity_filter_sensitivity,
             patch: raw.patch,
         })
     }
@@ -757,6 +787,14 @@ fn default_key_range() -> (u8, u8) {
 
 fn default_oversampling() -> u8 {
     1
+}
+
+fn default_max_voices() -> synth_core::VoiceCount {
+    synth_core::VoiceCount::OCTO
+}
+
+fn default_vel_amp_sens() -> synth_core::NormalizedValue {
+    synth_core::NormalizedValue::MAX
 }
 
 /// Errors that can occur when loading/saving patches.

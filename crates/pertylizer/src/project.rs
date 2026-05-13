@@ -194,6 +194,11 @@ pub fn default_instrument_state() -> InstrumentState {
         category: 0,
         description: String::new(),
         color: None,
+        allocation_mode: synth_engine::voice_allocator::AllocationMode::default(),
+        stealing_strategy: synth_engine::voice_allocator::StealingStrategy::default(),
+        max_voices: synth_core::VoiceCount::OCTO,
+        velocity_amp_sensitivity: synth_core::NormalizedValue::MAX,
+        velocity_filter_sensitivity: synth_core::NormalizedValue::MIN,
         patch: Patch::new("Init"),
     }
 }
