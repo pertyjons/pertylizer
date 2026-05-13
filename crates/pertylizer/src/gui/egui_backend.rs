@@ -5008,18 +5008,27 @@ impl SynthApp {
                 .set_focused_instrument(self.active_instrument_id);
         }
 
-        // Update metadata for existing instruments (name, volume, pan, mute, solo)
+        // Update metadata for existing instruments from the engine snapshot.
+        // MCP is the source of truth for these fields when changed, so we
+        // mirror them here so create_project_from_app (which reads from the
+        // GUI-side InstrumentUiState) sees the latest values at save time.
         for snap in &snapshots {
             if let Some(ui_inst) = self.instruments.iter_mut().find(|i| i.id == snap.id) {
                 ui_inst.name = snap.name.clone();
-                // Only update volume/pan/mute/solo if not currently being edited by GUI
-                // For now, always sync from engine (MCP is source of truth when changed)
                 if !ui_inst.muted {
                     ui_inst.volume = snap.volume;
                 }
                 ui_inst.pan = snap.pan;
                 ui_inst.muted = snap.muted;
                 ui_inst.solo = snap.solo;
+                ui_inst.channel = synth_engine::MidiChannel::from_zero_indexed(
+                    snap.midi_channel.as_u8().saturating_sub(1),
+                )
+                .unwrap_or(ui_inst.channel);
+                ui_inst.description = snap.description.clone();
+                ui_inst.patch_description = snap.patch_description.clone().unwrap_or_default();
+                ui_inst.category = snap.category;
+                ui_inst.sidechain_source_id = snap.sidechain_source_id;
             }
         }
     }
@@ -5158,9 +5167,10 @@ impl SynthApp {
     /// Build a `ProjectFile` from the current application state.
     fn create_project_from_app(&self) -> ProjectFile {
         let engine_state = self.session.state();
-        // Pull current patch descriptions from the engine snapshots so
-        // they survive a save → load round-trip without an extra
-        // GUI-side mirror.
+        // Pull a fresh snapshot of engine-owned fields (description,
+        // patch_description, category, midi_channel, sidechain_source_id)
+        // so they survive a save → load round-trip even if reconcile_instruments
+        // hasn't yet mirrored a recent MCP write into the GUI state.
         let snapshots = self.session.list_instruments();
         let instrument_states: Vec<InstrumentState> = self
             .instruments
@@ -5171,14 +5181,21 @@ impl SynthApp {
                     &inst.patch_editor,
                     Some((engine_state.as_ref(), inst.id)),
                 );
-                patch.description = snapshots
-                    .iter()
-                    .find(|s| s.id == inst.id)
-                    .and_then(|s| s.patch_description.clone());
+                let snap = snapshots.iter().find(|s| s.id == inst.id);
+                patch.description = snap.and_then(|s| s.patch_description.clone());
+                let description =
+                    snap.map_or_else(|| inst.description.clone(), |s| s.description.clone());
+                let category = snap.map_or(inst.category.as_u8(), |s| s.category.as_u8());
+                let channel =
+                    snap.map_or(inst.channel.as_one_indexed(), |s| s.midi_channel.as_u8());
+                let sidechain_source_id = snap.map_or_else(
+                    || inst.sidechain_source_id.map(|id| id.as_u64()),
+                    |s| s.sidechain_source_id.map(|id| id.as_u64()),
+                );
                 InstrumentState {
                     id: inst.id,
                     name: inst.name.clone(),
-                    channel: inst.channel.as_one_indexed(),
+                    channel,
                     volume: inst.volume,
                     pan: inst.pan,
                     muted: inst.muted,
@@ -5186,21 +5203,45 @@ impl SynthApp {
                     key_range: (inst.key_range.low.as_u8(), inst.key_range.high.as_u8()),
                     transpose: inst.transpose,
                     oversampling: inst.oversampling.factor() as u8,
-                    category: inst.category.as_u8(),
-                    description: inst.description.clone(),
+                    category,
+                    description,
                     color: inst.color.clone(),
                     allocation_mode: inst.allocation_mode,
                     stealing_strategy: inst.stealing_strategy,
                     max_voices: inst.max_voices,
                     velocity_amp_sensitivity: inst.velocity_amp_sensitivity,
                     velocity_filter_sensitivity: inst.velocity_filter_sensitivity,
-                    sidechain_source_id: inst.sidechain_source_id.map(|id| id.as_u64()),
+                    sidechain_source_id,
                     patch,
                 }
             })
             .collect();
 
         let song = self.song.read().clone();
+
+        // Pull awe_description from the MCP-shared cell when available,
+        // so a recent MCP write survives a save in the same frame (the
+        // bi-directional sync at the top of update() runs *after* the
+        // project-action handler, so self.awe_ui.description can be stale).
+        #[cfg(feature = "mcp")]
+        let awe_description = self
+            .mcp_shared
+            .as_ref()
+            .and_then(|shared| shared.awe_description.lock().ok().map(|s| s.clone()))
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                if self.awe_ui.description.is_empty() {
+                    None
+                } else {
+                    Some(self.awe_ui.description.clone())
+                }
+            });
+        #[cfg(not(feature = "mcp"))]
+        let awe_description = if self.awe_ui.description.is_empty() {
+            None
+        } else {
+            Some(self.awe_ui.description.clone())
+        };
 
         let global = GlobalProjectState {
             master_volume: synth_core::Gain::new(self.handle.master_volume()),
@@ -5212,11 +5253,7 @@ impl SynthApp {
                 None
             },
             awe_preset: None,
-            awe_description: if self.awe_ui.description.is_empty() {
-                None
-            } else {
-                Some(self.awe_ui.description.clone())
-            },
+            awe_description,
         };
 
         let author = if self.current_project_author.is_empty() {
