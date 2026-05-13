@@ -63,11 +63,11 @@ pub struct WaterfallMaterial {
 
 impl Material for WaterfallMaterial {
     fn vertex_shader() -> ShaderRef {
-        "shaders/spectral_waterfall.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/spectral_waterfall.wgsl".into()
     }
 
     fn fragment_shader() -> ShaderRef {
-        "shaders/spectral_waterfall.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/spectral_waterfall.wgsl".into()
     }
 }
 

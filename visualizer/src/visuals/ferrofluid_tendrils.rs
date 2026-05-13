@@ -47,11 +47,11 @@ pub struct FerrofluidMaterial {
 
 impl Material for FerrofluidMaterial {
     fn vertex_shader() -> ShaderRef {
-        "shaders/ferrofluid_tendrils.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/ferrofluid_tendrils.wgsl".into()
     }
 
     fn fragment_shader() -> ShaderRef {
-        "shaders/ferrofluid_tendrils.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/ferrofluid_tendrils.wgsl".into()
     }
 
     fn specialize(

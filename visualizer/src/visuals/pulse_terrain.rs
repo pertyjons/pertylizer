@@ -53,11 +53,11 @@ pub struct PulseTerrainMaterial {
 
 impl Material for PulseTerrainMaterial {
     fn vertex_shader() -> ShaderRef {
-        "shaders/pulse_terrain.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/pulse_terrain.wgsl".into()
     }
 
     fn fragment_shader() -> ShaderRef {
-        "shaders/pulse_terrain.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/pulse_terrain.wgsl".into()
     }
 }
 

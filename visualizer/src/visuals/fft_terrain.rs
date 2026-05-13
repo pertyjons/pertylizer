@@ -57,11 +57,11 @@ pub struct FftTerrainMaterial {
 
 impl Material for FftTerrainMaterial {
     fn vertex_shader() -> ShaderRef {
-        "shaders/fft_terrain.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/fft_terrain.wgsl".into()
     }
 
     fn fragment_shader() -> ShaderRef {
-        "shaders/fft_terrain.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/fft_terrain.wgsl".into()
     }
 }
 

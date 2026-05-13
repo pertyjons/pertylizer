@@ -48,11 +48,11 @@ pub struct VoronoiShatterMaterial {
 
 impl Material for VoronoiShatterMaterial {
     fn vertex_shader() -> ShaderRef {
-        "shaders/voronoi_shatter.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/voronoi_shatter.wgsl".into()
     }
 
     fn fragment_shader() -> ShaderRef {
-        "shaders/voronoi_shatter.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/voronoi_shatter.wgsl".into()
     }
 
     fn specialize(

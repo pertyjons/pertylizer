@@ -60,11 +60,11 @@ pub struct CyberWireframeMaterial {
 
 impl Material for CyberWireframeMaterial {
     fn vertex_shader() -> ShaderRef {
-        "shaders/cyber_wireframe.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/cyber_wireframe.wgsl".into()
     }
 
     fn fragment_shader() -> ShaderRef {
-        "shaders/cyber_wireframe.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/cyber_wireframe.wgsl".into()
     }
 }
 

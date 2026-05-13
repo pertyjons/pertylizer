@@ -9,6 +9,7 @@
 //! 2. Run this visualizer: `cargo run --release`
 
 mod osc_receiver;
+mod shaders;
 mod telemetry;
 mod visuals;
 
@@ -24,6 +25,7 @@ fn main() {
             }),
             ..default()
         }))
+        .add_plugins(shaders::EmbeddedShadersPlugin)
         .add_plugins(osc_receiver::OscReceiverPlugin)
         .add_plugins(visuals::VisualsPlugin)
         .init_resource::<telemetry::SynthTelemetry>()

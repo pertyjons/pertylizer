@@ -63,11 +63,11 @@ pub struct ReactionDiffusionDisplayMaterial {
 
 impl Material for ReactionDiffusionDisplayMaterial {
     fn vertex_shader() -> ShaderRef {
-        "shaders/reaction_diffusion_display.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/reaction_diffusion_display.wgsl".into()
     }
 
     fn fragment_shader() -> ShaderRef {
-        "shaders/reaction_diffusion_display.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/reaction_diffusion_display.wgsl".into()
     }
 }
 
@@ -313,7 +313,7 @@ fn init_compute_pipeline(
         ),
     );
 
-    let shader = asset_server.load("shaders/reaction_diffusion_compute.wgsl");
+    let shader = asset_server.load("embedded://pertylizer_visualizer/shaders/reaction_diffusion_compute.wgsl");
 
     let pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
         label: Some(Cow::from("rd_compute_pipeline")),

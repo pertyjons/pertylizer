@@ -53,11 +53,11 @@ pub struct SpectralAuroraMaterial {
 
 impl Material for SpectralAuroraMaterial {
     fn vertex_shader() -> ShaderRef {
-        "shaders/spectral_aurora.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/spectral_aurora.wgsl".into()
     }
 
     fn fragment_shader() -> ShaderRef {
-        "shaders/spectral_aurora.wgsl".into()
+        "embedded://pertylizer_visualizer/shaders/spectral_aurora.wgsl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
