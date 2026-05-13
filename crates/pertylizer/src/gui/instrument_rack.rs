@@ -62,8 +62,7 @@ pub struct InstrumentUiState {
     /// Sidechain source instrument id, or `None` when no sidechain is
     /// configured.
     pub sidechain_source_id: Option<InstrumentId>,
-    /// Patch-level description (free-text). Edited as a `String` for
-    /// the egui multiline buffer; empty string == no description set.
+    /// Patch-level description. Empty string means no description set.
     pub patch_description: String,
 }
 

@@ -792,18 +792,16 @@ impl eframe::App for SynthApp {
             if let Ok(mut awe_state) = shared.awe_state.lock() {
                 *awe_state = self.awe_ui.to_awe_state(self.awe_enabled);
             }
-            // Two-way sync for the AWE description. While the user is
-            // actively editing the field, push GUI → shared (so MCP
-            // reads see the latest). Otherwise pull shared → GUI so
-            // any MCP write via `set_awe_description` propagates back.
+            // The edit-in-progress flag (set last frame in draw_controls) decides
+            // direction: while editing, GUI is source of truth; otherwise let MCP
+            // writes flow back.
             if let Ok(mut desc) = shared.awe_description.lock()
                 && *desc != self.awe_ui.description
             {
                 if self.awe_ui.description_edit_in_progress {
-                    desc.clear();
-                    desc.push_str(&self.awe_ui.description);
+                    desc.clone_from(&self.awe_ui.description);
                 } else {
-                    self.awe_ui.description = desc.clone();
+                    self.awe_ui.description.clone_from(&desc);
                 }
             }
         }
@@ -5518,8 +5516,16 @@ impl SynthApp {
         self.handle
             .send(EngineCommand::SetGlideTime(project.global.glide_time));
 
-        // Restore the AWE description (separate from AweState — see project.rs).
+        // AWE description lives outside AweState (see project.rs). Seed both the UI
+        // buffer and the MCP-shared slot so the next frame's two-way sync doesn't
+        // pull the still-empty shared value back over the loaded one.
         self.awe_ui.description = project.global.awe_description.clone().unwrap_or_default();
+        #[cfg(feature = "mcp")]
+        if let Some(shared) = &self.mcp_shared
+            && let Ok(mut desc) = shared.awe_description.lock()
+        {
+            desc.clone_from(&self.awe_ui.description);
+        }
 
         if let Some(awe) = &project.global.awe {
             self.awe_enabled = awe.enabled;

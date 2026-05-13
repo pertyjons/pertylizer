@@ -118,14 +118,10 @@ pub struct AweUiState {
     /// Tags of the currently active preset.
     pub current_preset_tags: Vec<String>,
 
-    /// Editable free-text description for the AWE state (mirrors
-    /// `McpSharedState.awe_description`). Written to shared each frame
-    /// while the user is editing; pulled from shared otherwise so MCP
-    /// writes via `set_awe_description` propagate back to the view.
+    /// Editable free-text description for the AWE state.
     pub description: String,
-    /// True while the user is actively typing in the description
-    /// `TextEdit` — guards against the shared-state pull clobbering
-    /// keystrokes mid-edit.
+    /// True while the user is typing — guards against the MCP-shared pull
+    /// clobbering keystrokes mid-edit.
     pub description_edit_in_progress: bool,
 
     // Drag state
@@ -2112,7 +2108,6 @@ fn draw_iso_dimension_labels(
 fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUiState) {
     let t = theme();
 
-    // --- Description (free-text, mirrors AwePresetFile.description) ---
     ui.label(egui::RichText::new("Description").color(t.colors.text_dim))
         .on_hover_text(
             "Free-text description of the acoustic character. Saved with AWE presets \
@@ -2123,8 +2118,6 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .desired_rows(2)
             .desired_width(f32::INFINITY),
     );
-    // Track edit state so the shared-state pull doesn't clobber the
-    // user's keystrokes mid-edit (see egui_backend.rs sync block).
     state.description_edit_in_progress = desc_resp.has_focus();
 
     ui.add_space(8.0);
