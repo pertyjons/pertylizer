@@ -75,10 +75,18 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 - [x] `set_awe_description` MCP tool (MCP write) — bridge method updates
   `McpSharedState.awe_description` directly (no engine command since description never
   affects audio). Accepts `""` to clear.
-- [ ] Editable from GUI (patch header inline edit, AWE preset save dialog) — currently
-  the only GUI surfaces are the instrument-edit window (instrument-level description)
-  and the AWE preset save dialog (preset-level description). Patch-level + AWE-state
-  description editing in the GUI is a follow-up.
+- [x] Editable from GUI for the remaining two fields:
+  - **Patch description** — `InstrumentUiState.patch_description: String` mirror, multiline
+    `TextEdit` in the instrument-edit window directly below the existing Description field.
+    Hover tooltips on both labels distinguish per-instance song-role intent vs sound-design
+    intent. Dispatches `EngineCommand::SetPatchDescription` on change; loads from
+    `inst_state.patch.description`.
+  - **AWE description** — `AweUiState.description: String` mirror with an
+    `description_edit_in_progress` flag, multiline `TextEdit` at the top of the AWE controls
+    panel. Two-way sync with `McpSharedState.awe_description`: GUI → shared while the user is
+    typing (edit-in-progress guard), shared → GUI otherwise so MCP writes propagate back.
+    Persists separately as `GlobalProjectState.awe_description: Option<String>` so the text
+    survives project save / load round-trips.
 
 ### Phase 2 — add new description fields + MCP read/write tools
 

@@ -62,6 +62,9 @@ pub struct InstrumentUiState {
     /// Sidechain source instrument id, or `None` when no sidechain is
     /// configured.
     pub sidechain_source_id: Option<InstrumentId>,
+    /// Patch-level description (free-text). Edited as a `String` for
+    /// the egui multiline buffer; empty string == no description set.
+    pub patch_description: String,
 }
 
 impl Default for InstrumentUiState {
@@ -89,6 +92,7 @@ impl Default for InstrumentUiState {
             velocity_amp_sensitivity: synth_core::NormalizedValue::MAX,
             velocity_filter_sensitivity: synth_core::NormalizedValue::MIN,
             sidechain_source_id: None,
+            patch_description: String::new(),
         }
     }
 }
@@ -119,6 +123,7 @@ impl InstrumentUiState {
             velocity_amp_sensitivity: synth_core::NormalizedValue::MAX,
             velocity_filter_sensitivity: synth_core::NormalizedValue::MIN,
             sidechain_source_id: None,
+            patch_description: String::new(),
         }
     }
 

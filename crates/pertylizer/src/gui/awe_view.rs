@@ -118,6 +118,16 @@ pub struct AweUiState {
     /// Tags of the currently active preset.
     pub current_preset_tags: Vec<String>,
 
+    /// Editable free-text description for the AWE state (mirrors
+    /// `McpSharedState.awe_description`). Written to shared each frame
+    /// while the user is editing; pulled from shared otherwise so MCP
+    /// writes via `set_awe_description` propagate back to the view.
+    pub description: String,
+    /// True while the user is actively typing in the description
+    /// `TextEdit` — guards against the shared-state pull clobbering
+    /// keystrokes mid-edit.
+    pub description_edit_in_progress: bool,
+
     // Drag state
     pub dragging_source: bool,
     pub dragging_listener: bool,
@@ -187,6 +197,8 @@ impl Default for AweUiState {
             current_preset_name: String::new(),
             current_preset_description: String::new(),
             current_preset_tags: Vec::new(),
+            description: String::new(),
+            description_edit_in_progress: false,
             dragging_source: false,
             dragging_listener: false,
             user_presets: Vec::new(),
@@ -2099,6 +2111,23 @@ fn draw_iso_dimension_labels(
 #[allow(clippy::too_many_lines)]
 fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUiState) {
     let t = theme();
+
+    // --- Description (free-text, mirrors AwePresetFile.description) ---
+    ui.label(egui::RichText::new("Description").color(t.colors.text_dim))
+        .on_hover_text(
+            "Free-text description of the acoustic character. Saved with AWE presets \
+            and read back via MCP `get_awe_state`.",
+        );
+    let desc_resp = ui.add(
+        egui::TextEdit::multiline(&mut state.description)
+            .desired_rows(2)
+            .desired_width(f32::INFINITY),
+    );
+    // Track edit state so the shared-state pull doesn't clobber the
+    // user's keystrokes mid-edit (see egui_backend.rs sync block).
+    state.description_edit_in_progress = desc_resp.has_focus();
+
+    ui.add_space(8.0);
 
     // --- Room Shape & Dimensions ---
     ui.heading(

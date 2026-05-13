@@ -71,6 +71,31 @@ git commit -m "<short description of changes>"
 
 ---
 
+## MCP Integration
+
+This project includes an MCP (Model Context Protocol) server for external control and inspection.
+
+### Connection
+
+- **HTTP Endpoint:** `http://127.0.0.1:9850/mcp`
+- **Gemini CLI Configuration:** Local settings are stored in `.gemini/settings.json`.
+- **Claude Code Configuration:** Configuration is in `.mcp.json`.
+
+### Available Tools
+
+The `synth` MCP server provides a wide range of tools:
+- **Discovery:** `list_module_types`, `get_module_type_info`, `search_modules`, `list_port_types`.
+- **Instruments:** `create_instrument`, `build_instrument`, `list_instruments`, `set_parameter`.
+- **Sequencer:** `create_pattern`, `add_notes`, `create_track`, `place_pattern`.
+- **AWE:** `set_awe_preset`, `set_awe_parameter`, `get_awe_state`.
+- **Analysis:** `analyze_harmony`, `analyze_mix_bus`, `analyze_section`.
+
+### Batch Operations
+
+Use `batch_execute` to run multiple operations in a single request for better performance.
+
+---
+
 ## Newtype Pattern (CRITICAL)
 
 **NEVER use raw primitives** for domain concepts. ALWAYS wrap in a newtype.

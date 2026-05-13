@@ -788,10 +788,24 @@ impl eframe::App for SynthApp {
 
         // Sync AWE state to MCP shared state
         #[cfg(feature = "mcp")]
-        if let Some(shared) = &self.mcp_shared
-            && let Ok(mut awe_state) = shared.awe_state.lock()
-        {
-            *awe_state = self.awe_ui.to_awe_state(self.awe_enabled);
+        if let Some(shared) = &self.mcp_shared {
+            if let Ok(mut awe_state) = shared.awe_state.lock() {
+                *awe_state = self.awe_ui.to_awe_state(self.awe_enabled);
+            }
+            // Two-way sync for the AWE description. While the user is
+            // actively editing the field, push GUI → shared (so MCP
+            // reads see the latest). Otherwise pull shared → GUI so
+            // any MCP write via `set_awe_description` propagates back.
+            if let Ok(mut desc) = shared.awe_description.lock()
+                && *desc != self.awe_ui.description
+            {
+                if self.awe_ui.description_edit_in_progress {
+                    desc.clear();
+                    desc.push_str(&self.awe_ui.description);
+                } else {
+                    self.awe_ui.description = desc.clone();
+                }
+            }
         }
 
         // Reconcile with session: detect modules added/removed by MCP
@@ -3252,6 +3266,7 @@ impl SynthApp {
         let mut send_vel_amp = false;
         let mut send_vel_filter = false;
         let mut send_description = false;
+        let mut send_patch_description = false;
         let mut send_sidechain: Option<Option<InstrumentId>> = None;
         // Other-instrument list captured before the mutable borrow.
         let other_instruments: Vec<(InstrumentId, String)> = self
@@ -3305,17 +3320,40 @@ impl SynthApp {
 
                 ui.add_space(8.0);
 
-                ui.label(RichText::new("Description").color(t.colors.text_dim));
+                ui.label(RichText::new("Description").color(t.colors.text_dim))
+                    .on_hover_text(
+                        "Per-instance song-role intent (e.g. \"chorus pad\", \"sub layer\"). \
+                        Distinct from Patch description below.",
+                    );
                 if ui
                     .add(
                         egui::TextEdit::multiline(&mut inst.description)
-                            .desired_rows(4)
+                            .desired_rows(3)
                             .desired_width(f32::INFINITY),
                     )
                     .changed()
                 {
                     other_changed = true;
                     send_description = true;
+                }
+
+                ui.add_space(6.0);
+
+                ui.label(RichText::new("Patch description").color(t.colors.text_dim))
+                    .on_hover_text(
+                        "Sound-design intent for this patch (how it works, what it's good for). \
+                        Travels with the patch on save and is read back via MCP.",
+                    );
+                if ui
+                    .add(
+                        egui::TextEdit::multiline(&mut inst.patch_description)
+                            .desired_rows(3)
+                            .desired_width(f32::INFINITY),
+                    )
+                    .changed()
+                {
+                    other_changed = true;
+                    send_patch_description = true;
                 }
 
                 ui.add_space(8.0);
@@ -3698,6 +3736,17 @@ impl SynthApp {
                 eprintln!("Failed to set instrument description {target_id:?}: {e}");
             }
         }
+        if send_patch_description {
+            let description = self.instruments[idx].patch_description.clone();
+            let value = if description.is_empty() {
+                None
+            } else {
+                Some(description.as_str())
+            };
+            if let Err(e) = self.session.set_patch_description(target_id, value) {
+                eprintln!("Failed to set patch description {target_id:?}: {e}");
+            }
+        }
         if let Some(source) = send_sidechain
             && let Err(e) = self.session.set_sidechain_source(target_id, source)
         {
@@ -3715,6 +3764,7 @@ impl SynthApp {
             || send_vel_amp
             || send_vel_filter
             || send_description
+            || send_patch_description
             || send_sidechain.is_some()
         {
             self.mark_dirty();
@@ -5164,6 +5214,11 @@ impl SynthApp {
                 None
             },
             awe_preset: None,
+            awe_description: if self.awe_ui.description.is_empty() {
+                None
+            } else {
+                Some(self.awe_ui.description.clone())
+            },
         };
 
         let author = if self.current_project_author.is_empty() {
@@ -5338,6 +5393,7 @@ impl SynthApp {
             ui_inst.velocity_amp_sensitivity = inst_state.velocity_amp_sensitivity;
             ui_inst.velocity_filter_sensitivity = inst_state.velocity_filter_sensitivity;
             ui_inst.sidechain_source_id = inst_state.sidechain_source_id.map(InstrumentId::new);
+            ui_inst.patch_description = inst_state.patch.description.clone().unwrap_or_default();
 
             // Send engine commands for instrument parameters
             if let Err(e) = self.session.rename_instrument(inst_id, &inst_state.name) {
@@ -5461,6 +5517,9 @@ impl SynthApp {
         self.glide_time = project.global.glide_time;
         self.handle
             .send(EngineCommand::SetGlideTime(project.global.glide_time));
+
+        // Restore the AWE description (separate from AweState — see project.rs).
+        self.awe_ui.description = project.global.awe_description.clone().unwrap_or_default();
 
         if let Some(awe) = &project.global.awe {
             self.awe_enabled = awe.enabled;

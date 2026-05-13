@@ -52,6 +52,12 @@ pub struct GlobalProjectState {
     /// Full AWE preset with metadata, embedded in project when enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awe_preset: Option<AwePresetFile>,
+    /// Free-text description of the current AWE state (room's acoustic
+    /// character). Mirrors `AwePresetFile.description` when a preset is
+    /// loaded but persists separately so MCP-written descriptions on
+    /// unsaved rooms survive a project save / load round-trip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub awe_description: Option<String>,
 }
 
 fn default_master_volume() -> Gain {
@@ -66,6 +72,7 @@ impl Default for GlobalProjectState {
             glide_time: Seconds::ZERO,
             awe: None,
             awe_preset: None,
+            awe_description: None,
         }
     }
 }
