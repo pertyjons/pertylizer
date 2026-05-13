@@ -674,10 +674,14 @@ impl SynthEngine {
                 instrument_id,
                 source,
             } => {
-                // Reject self-routing; cycles deeper than 1 aren't checked
-                // here — caller (UI / MCP) should avoid them.
-                let valid = source.is_none_or(|s| s != instrument_id);
-                if valid
+                // Walk the proposed chain to reject any cycle. Cycles
+                // are technically safe (previous-buffer semantics) but
+                // produce surprising ducking patterns and obscure user
+                // intent, so the engine rejects them outright.
+                let creates_cycle = source.is_some_and(|src| {
+                    Self::sidechain_chain_contains(&self.instruments, src, instrument_id)
+                });
+                if !creates_cycle
                     && let Some(inst) = self
                         .instruments
                         .iter_mut()
@@ -1148,6 +1152,34 @@ impl SynthEngine {
     // ========================================================================
 
     /// Find the start and end tick for a pattern's first occurrence in the arrangement.
+    /// Walk the sidechain chain starting at `start`, following
+    /// `sidechain_source_id` on each visited instrument, and return
+    /// true if `needle` is reachable. Bounded by the number of
+    /// instruments so a corrupted chain cannot loop forever.
+    fn sidechain_chain_contains(
+        instruments: &[Box<Instrument>],
+        start: InstrumentId,
+        needle: InstrumentId,
+    ) -> bool {
+        let mut current = Some(start);
+        for _ in 0..=instruments.len() {
+            let Some(id) = current else {
+                return false;
+            };
+            if id == needle {
+                return true;
+            }
+            current = instruments
+                .iter()
+                .find(|i| i.id() == id)
+                .and_then(|i| i.sidechain_source_id());
+        }
+        // Bound exhausted — there's a cycle but it doesn't include
+        // `needle`. Returning false here is safe: the caller is only
+        // asking whether *this* node would create a new cycle.
+        false
+    }
+
     fn find_pattern_bounds(
         song: &synth_sequencer::Song,
         pattern_id: synth_sequencer::PatternId,

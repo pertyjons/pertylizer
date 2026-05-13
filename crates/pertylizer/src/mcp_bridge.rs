@@ -509,6 +509,26 @@ impl SynthBridge for AppSynthBridge {
                 ));
             }
             self.validate_instrument(src)?;
+            // Walk the current chain from `src` to detect cycles.
+            // The engine also rejects cycles defensively, but pre-checking
+            // here lets MCP report a clear error to the caller.
+            let snapshots = self.session.list_instruments();
+            let chain_len = snapshots.len();
+            let mut current = Some(src);
+            for _ in 0..=chain_len {
+                let Some(id) = current else {
+                    break;
+                };
+                if id == instrument_id {
+                    return Err(McpBridgeError::Other(format!(
+                        "sidechain would form a cycle through instrument {id}"
+                    )));
+                }
+                current = snapshots
+                    .iter()
+                    .find(|s| s.id.as_u64() == id)
+                    .and_then(|s| s.sidechain_source_id.map(|i| i.as_u64()));
+            }
         }
         self.session
             .set_sidechain_source(
