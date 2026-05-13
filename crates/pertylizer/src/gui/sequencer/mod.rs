@@ -2707,10 +2707,11 @@ fn draw_piano_roll(
                             .map_or_else(|| format!("#{}", seq_id.0), |inst| inst.name.clone())
                     })
                     .collect();
+                let arrow = egui_remixicon::icons::ARROW_RIGHT_S_LINE;
                 let badge_text = if names.len() == 1 {
-                    format!("→ track plays: {}", names[0])
+                    format!("{arrow} track plays: {}", names[0])
                 } else {
-                    format!("→ track plays: {}", names.join(", "))
+                    format!("{arrow} track plays: {}", names.join(", "))
                 };
                 ui.label(
                     RichText::new(badge_text)
@@ -2930,9 +2931,10 @@ fn draw_piano_roll(
                                 None
                             };
                         let base = target.display_name();
+                        let arrow = egui_remixicon::icons::ARROW_RIGHT_S_LINE;
                         let label = if is_foreign {
                             match inst_name {
-                                Some(name) => format!("* {base}  → {name}"),
+                                Some(name) => format!("* {base}  {arrow} {name}"),
                                 None => format!("* {base}"),
                             }
                         } else {
@@ -3254,7 +3256,10 @@ fn draw_piano_roll(
                             ("Shift+↑ · Shift+↓", "Transpose ±1 octave"),
                             ("Ctrl+scroll", "Horizontal zoom"),
                             ("Ctrl+Shift+scroll", "Vertical zoom"),
-                            ("STEP key letters", "A·W·S·E·D·F·T·G·Y·H·U·J → C..B"),
+                            (
+                                "STEP key letters",
+                                concat!("A·W·S·E·D·F·T·G·Y·H·U·J ", "\u{ea6e}", " C..B"),
+                            ),
                         ];
                         for (k, d) in rows {
                             ui.label(RichText::new(*k).monospace().color(t.colors.accent_cyan));

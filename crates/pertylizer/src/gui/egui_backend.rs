@@ -3387,7 +3387,13 @@ impl SynthApp {
 
                 // Velocity → amp sensitivity
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Vel → Amp").color(t.colors.text_dim));
+                    ui.label(
+                        RichText::new(format!(
+                            "Vel {} Amp",
+                            egui_remixicon::icons::ARROW_RIGHT_S_LINE
+                        ))
+                        .color(t.colors.text_dim),
+                    );
                     let mut s = inst.velocity_amp_sensitivity.as_f32();
                     let resp = ui
                         .add(
@@ -3395,7 +3401,7 @@ impl SynthApp {
                                 .fixed_decimals(2)
                                 .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                         )
-                        .on_hover_text("Velocity → amplitude sensitivity (0 = flat, 1 = full)");
+                        .on_hover_text("Velocity to amplitude sensitivity (0 = flat, 1 = full)");
                     if resp.changed() {
                         inst.velocity_amp_sensitivity = synth_core::NormalizedValue::new(s);
                         send_vel_amp = true;
@@ -3406,7 +3412,13 @@ impl SynthApp {
 
                 // Velocity → filter sensitivity
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Vel → Filter").color(t.colors.text_dim));
+                    ui.label(
+                        RichText::new(format!(
+                            "Vel {} Filter",
+                            egui_remixicon::icons::ARROW_RIGHT_S_LINE
+                        ))
+                        .color(t.colors.text_dim),
+                    );
                     let mut s = inst.velocity_filter_sensitivity.as_f32();
                     let resp = ui
                         .add(
@@ -3414,7 +3426,9 @@ impl SynthApp {
                                 .fixed_decimals(2)
                                 .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
                         )
-                        .on_hover_text("Velocity → filter cutoff sensitivity (0 = none, 1 = full)");
+                        .on_hover_text(
+                            "Velocity to filter cutoff sensitivity (0 = none, 1 = full)",
+                        );
                     if resp.changed() {
                         inst.velocity_filter_sensitivity = synth_core::NormalizedValue::new(s);
                         send_vel_filter = true;
