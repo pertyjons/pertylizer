@@ -112,6 +112,7 @@ impl AppSynthBridge {
         InstrumentInfo {
             id: snap.id.as_u64(),
             name: snap.name.clone(),
+            description: snap.description.clone(),
             category: snap.category.name().to_owned(),
             midi_channel: snap.midi_channel.as_u8(),
             volume: snap.volume.as_f32(),
@@ -448,6 +449,7 @@ impl SynthBridge for AppSynthBridge {
         Ok(InstrumentInfo {
             id: id.as_u64(),
             name: name.to_string(),
+            description: String::new(),
             midi_channel: 1,
             volume: 1.0,
             pan: 0.0,
@@ -478,6 +480,17 @@ impl SynthBridge for AppSynthBridge {
         self.validate_instrument(instrument_id)?;
         self.session
             .rename_instrument(InstrumentId::new(instrument_id), name)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
+    }
+
+    fn set_instrument_description(
+        &self,
+        instrument_id: u64,
+        description: &str,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        self.session
+            .set_instrument_description(InstrumentId::new(instrument_id), description)
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 

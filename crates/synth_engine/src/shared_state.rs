@@ -336,6 +336,8 @@ pub struct InstrumentSnapshot {
     pub seq_instrument_id: u16,
     /// Instrument name.
     pub name: String,
+    /// Free-text description / intent. Empty when not set.
+    pub description: String,
     /// Instrument category (drums, bass, pad, etc.).
     pub category: crate::InstrumentCategory,
     /// MIDI channel (1-indexed).

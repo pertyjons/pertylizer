@@ -55,14 +55,19 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 
 ### Phase 1 — entities whose fields already exist; only MCP plumbing needed
 
-- [ ] Surface `InstrumentState.description` in `get_instrument_info` / `list_instruments` (MCP read)
-- [ ] `set_instrument_description` MCP tool — `bridge.rs` / `mcp_bridge.rs` / `server.rs` (MCP write)
+- [x] Surface `InstrumentState.description` in `get_instrument_info` / `list_instruments` (MCP read) —
+  done by mirroring description through engine: `Instrument.description` + getter/setter,
+  `InstrumentSnapshot.description`, populated in `snapshot_to_info`.
+- [x] `set_instrument_description` MCP tool — `EngineCommand::SetInstrumentDescription` +
+  `Session::set_instrument_description` + `SynthBridge::set_instrument_description` +
+  `server.rs` tool. Accepts `""` to clear. Already editable in the instrument edit window;
+  the GUI now dispatches the engine command on every changed frame.
 - [ ] Surface `Patch.description` in the patch resource view (MCP read)
 - [ ] `set_patch_description` MCP tool (MCP write) — note `Patch.description` is `Option<String>`,
   setter should accept empty string to clear
 - [ ] Surface `AwePresetFile.description` in `get_awe_state` and `list_awe_presets` (MCP read)
 - [ ] `set_awe_preset_description` MCP tool (MCP write)
-- [ ] Editable from GUI (patch header, AWE preset save dialog) for the same three fields
+- [ ] Editable from GUI (patch header, AWE preset save dialog) for the remaining two fields
 
 ### Phase 2 — add new description fields + MCP read/write tools
 

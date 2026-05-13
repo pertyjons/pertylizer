@@ -313,7 +313,8 @@ impl EngineHub {
             // Instrument topology changes
             EngineCommand::AddInstrument { .. }
             | EngineCommand::RemoveInstrument { .. }
-            | EngineCommand::RenameInstrument { .. } => perms.can_modify_topology,
+            | EngineCommand::RenameInstrument { .. }
+            | EngineCommand::SetInstrumentDescription { .. } => perms.can_modify_topology,
 
             // Instrument parameter changes
             EngineCommand::SetInstrumentParameter { .. }

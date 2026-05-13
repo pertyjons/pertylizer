@@ -650,6 +650,18 @@ pub struct RenameInstrumentParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInstrumentDescriptionParam {
+    #[schemars(description = "Instrument ID to annotate")]
+    pub instrument_id: u64,
+    #[schemars(
+        description = "Free-text description of the instrument's intent / role. \
+        Pass \"\" to clear. Never affects audio; surfaces in \
+        list_instruments / get_instrument_info for later AI reads."
+    )]
+    pub description: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetInstrumentVolumeParam {
     #[schemars(description = "Instrument ID")]
     pub instrument_id: u64,
@@ -1620,6 +1632,7 @@ impl SynthMcpServer {
             "create_instrument" => create_instrument(CreateInstrumentParam),
             "delete_instrument" => delete_instrument(InstrumentIdParam),
             "rename_instrument" => rename_instrument(RenameInstrumentParam),
+            "set_instrument_description" => set_instrument_description(SetInstrumentDescriptionParam),
             "set_instrument_volume" => set_instrument_volume(SetInstrumentVolumeParam),
             "set_instrument_pan" => set_instrument_pan(SetInstrumentPanParam),
             "set_instrument_mute" => set_instrument_mute(SetInstrumentMuteParam),
@@ -2472,6 +2485,30 @@ impl SynthMcpServer {
             Ok(()) => format!(
                 "OK: renamed instrument {} to '{}'",
                 params.0.instrument_id, params.0.name
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set or clear the free-text description / intent on an instrument. \
+        The description never affects audio and is read back via list_instruments / \
+        get_instrument_info. Use it to record why an instrument exists, what role it plays \
+        in the song, or any analysis notes you want a future agent (or human) to see. \
+        Pass an empty string to clear."
+    )]
+    async fn set_instrument_description(
+        &self,
+        params: Parameters<SetInstrumentDescriptionParam>,
+    ) -> String {
+        match self
+            .bridge
+            .set_instrument_description(params.0.instrument_id, &params.0.description)
+        {
+            Ok(()) => format!(
+                "OK: set instrument {} description ({} chars)",
+                params.0.instrument_id,
+                params.0.description.chars().count()
             ),
             Err(e) => format!("Error: {e}"),
         }

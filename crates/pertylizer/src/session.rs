@@ -198,6 +198,24 @@ impl SynthSession {
         Ok(())
     }
 
+    /// Set an instrument's free-text description / intent.
+    pub fn set_instrument_description(
+        &self,
+        instrument_id: InstrumentId,
+        description: &str,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentDescription {
+                instrument_id,
+                description: description.to_string(),
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
     /// Set instrument volume.
     pub fn set_instrument_volume(
         &self,

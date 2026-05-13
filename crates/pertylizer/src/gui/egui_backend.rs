@@ -3251,6 +3251,7 @@ impl SynthApp {
         let mut send_alloc_mode = false;
         let mut send_vel_amp = false;
         let mut send_vel_filter = false;
+        let mut send_description = false;
 
         egui::Window::new(title)
             .id(egui::Id::new((
@@ -3306,6 +3307,7 @@ impl SynthApp {
                     .changed()
                 {
                     other_changed = true;
+                    send_description = true;
                 }
 
                 ui.add_space(8.0);
@@ -3636,6 +3638,15 @@ impl SynthApp {
                 param: synth_engine::InstrumentParam::VelocityFilterSensitivity(s),
             });
         }
+        if send_description {
+            let description = self.instruments[idx].description.clone();
+            if let Err(e) = self
+                .session
+                .set_instrument_description(target_id, &description)
+            {
+                eprintln!("Failed to set instrument description {target_id:?}: {e}");
+            }
+        }
         if name_changed
             || category_changed
             || other_changed
@@ -3647,6 +3658,7 @@ impl SynthApp {
             || send_alloc_mode
             || send_vel_amp
             || send_vel_filter
+            || send_description
         {
             self.mark_dirty();
         }
@@ -5263,6 +5275,13 @@ impl SynthApp {
             // Send engine commands for instrument parameters
             if let Err(e) = self.session.rename_instrument(inst_id, &inst_state.name) {
                 eprintln!("Failed to rename instrument {inst_id:?}: {e}");
+            }
+            if !inst_state.description.is_empty()
+                && let Err(e) = self
+                    .session
+                    .set_instrument_description(inst_id, &inst_state.description)
+            {
+                eprintln!("Failed to set instrument description {inst_id:?}: {e}");
             }
             if let Err(e) = self
                 .session

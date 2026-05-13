@@ -541,6 +541,13 @@ impl EngineCommand {
                 instrument_id: *instrument_id,
                 name: name.clone(),
             },
+            Self::SetInstrumentDescription {
+                instrument_id,
+                description,
+            } => Self::SetInstrumentDescription {
+                instrument_id: *instrument_id,
+                description: description.clone(),
+            },
             Self::SetInstrumentParameter {
                 instrument_id,
                 param,

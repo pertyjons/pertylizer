@@ -9,6 +9,10 @@ pub struct InstrumentInfo {
     pub id: u64,
     /// Instrument name.
     pub name: String,
+    /// Free-text description / intent — `""` when not set. Skipped from
+    /// JSON when empty so older clients don't see surprising new fields.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// Instrument category (e.g. "Drums", "Bass", "Pad", "Lead").
     pub category: String,
     /// MIDI channel (1-16).

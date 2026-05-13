@@ -48,6 +48,7 @@ fn instrument_snapshot(seq: u16, name: &str, category: InstrumentCategory) -> In
         id: instrument_id(seq),
         seq_instrument_id: seq,
         name: name.to_string(),
+        description: String::new(),
         category,
         midi_channel: MidiChannel::CH1,
         volume: Gain::UNITY,

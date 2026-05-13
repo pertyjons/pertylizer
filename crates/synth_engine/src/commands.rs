@@ -277,6 +277,13 @@ pub enum EngineCommand {
         name: String,
     },
 
+    /// Set the free-text description / intent on an instrument. Never
+    /// affects audio; surfaces in `InstrumentSnapshot` for MCP/GUI reads.
+    SetInstrumentDescription {
+        instrument_id: InstrumentId,
+        description: String,
+    },
+
     /// Set a parameter on a specific instrument.
     SetInstrumentParameter {
         instrument_id: InstrumentId,
@@ -913,6 +920,14 @@ impl std::fmt::Debug for EngineCommand {
                 .debug_struct("RenameInstrument")
                 .field("instrument_id", instrument_id)
                 .field("name", name)
+                .finish(),
+            Self::SetInstrumentDescription {
+                instrument_id,
+                description,
+            } => f
+                .debug_struct("SetInstrumentDescription")
+                .field("instrument_id", instrument_id)
+                .field("description", description)
                 .finish(),
             Self::SetInstrumentParameter {
                 instrument_id,

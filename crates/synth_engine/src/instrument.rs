@@ -365,6 +365,9 @@ pub struct Instrument {
     id: InstrumentId,
     /// Human-readable name.
     name: String,
+    /// Free-text description / intent. Never affects audio; mirrored in
+    /// `InstrumentSnapshot` so MCP can read+write per-instrument intent.
+    description: String,
     /// Instrument category (drums, bass, pad, lead, etc.).
     category: InstrumentCategory,
     /// MIDI channel this instrument responds to.
@@ -428,6 +431,7 @@ impl Instrument {
         Self {
             id,
             name: name.into(),
+            description: String::new(),
             category: InstrumentCategory::default(),
             midi_channel: MidiChannel::default(),
             key_range: KeyRange::default(),
@@ -463,6 +467,7 @@ impl Instrument {
         Self {
             id,
             name: name.into(),
+            description: String::new(),
             category: InstrumentCategory::default(),
             midi_channel: MidiChannel::default(),
             key_range: KeyRange::default(),
@@ -506,6 +511,18 @@ impl Instrument {
     #[inline]
     pub fn set_name(&mut self, name: impl Into<String>) {
         self.name = name.into();
+    }
+
+    /// Get the instrument description (free-text intent).
+    #[inline]
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    /// Set the instrument description.
+    #[inline]
+    pub fn set_description(&mut self, description: impl Into<String>) {
+        self.description = description.into();
     }
 
     /// Get the instrument category.

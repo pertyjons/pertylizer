@@ -206,6 +206,15 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Rename an instrument.
     fn rename_instrument(&self, instrument_id: u64, name: &str) -> Result<(), McpBridgeError>;
 
+    /// Set the free-text description / intent on an instrument. Pass `""`
+    /// to clear. Never affects audio; surfaces in `InstrumentInfo` for
+    /// later AI reads.
+    fn set_instrument_description(
+        &self,
+        instrument_id: u64,
+        description: &str,
+    ) -> Result<(), McpBridgeError>;
+
     /// Set instrument volume (0.0-2.0).
     fn set_instrument_volume(&self, instrument_id: u64, volume: f32) -> Result<(), McpBridgeError>;
 

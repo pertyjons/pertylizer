@@ -650,6 +650,19 @@ impl SynthEngine {
                 }
                 self.update_shared_instruments();
             }
+            EngineCommand::SetInstrumentDescription {
+                instrument_id,
+                description,
+            } => {
+                if let Some(inst) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|i| i.id() == instrument_id)
+                {
+                    inst.set_description(&description);
+                }
+                self.update_shared_instruments();
+            }
             EngineCommand::SetInstrumentParameter {
                 instrument_id,
                 param,
@@ -2014,6 +2027,7 @@ impl SynthEngine {
                     id: inst.id(),
                     seq_instrument_id: seq_id,
                     name: inst.name().to_string(),
+                    description: inst.description().to_string(),
                     category: inst.category(),
                     midi_channel: synth_core::MidiChannel::new(
                         inst.midi_channel().as_zero_indexed() + 1,
