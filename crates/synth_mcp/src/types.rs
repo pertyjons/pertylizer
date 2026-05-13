@@ -13,6 +13,10 @@ pub struct InstrumentInfo {
     /// JSON when empty so older clients don't see surprising new fields.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    /// Sidechain source instrument id, or `None` when no sidechain is
+    /// configured. Skipped from JSON when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidechain_source_id: Option<u64>,
     /// Instrument category (e.g. "Drums", "Bass", "Pad", "Lead").
     pub category: String,
     /// MIDI channel (1-16).

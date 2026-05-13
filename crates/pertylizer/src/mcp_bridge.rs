@@ -113,6 +113,7 @@ impl AppSynthBridge {
             id: snap.id.as_u64(),
             name: snap.name.clone(),
             description: snap.description.clone(),
+            sidechain_source_id: snap.sidechain_source_id.map(|id| id.as_u64()),
             category: snap.category.name().to_owned(),
             midi_channel: snap.midi_channel.as_u8(),
             volume: snap.volume.as_f32(),
@@ -450,6 +451,7 @@ impl SynthBridge for AppSynthBridge {
             id: id.as_u64(),
             name: name.to_string(),
             description: String::new(),
+            sidechain_source_id: None,
             midi_channel: 1,
             volume: 1.0,
             pan: 0.0,
@@ -491,6 +493,28 @@ impl SynthBridge for AppSynthBridge {
         self.validate_instrument(instrument_id)?;
         self.session
             .set_instrument_description(InstrumentId::new(instrument_id), description)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
+    }
+
+    fn set_sidechain_source(
+        &self,
+        instrument_id: u64,
+        source: Option<u64>,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        if let Some(src) = source {
+            if src == instrument_id {
+                return Err(McpBridgeError::Other(
+                    "sidechain source must differ from the target instrument".into(),
+                ));
+            }
+            self.validate_instrument(src)?;
+        }
+        self.session
+            .set_sidechain_source(
+                InstrumentId::new(instrument_id),
+                source.map(InstrumentId::new),
+            )
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 

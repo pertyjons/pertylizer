@@ -662,6 +662,18 @@ pub struct SetInstrumentDescriptionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetSidechainSourceParam {
+    #[schemars(description = "Instrument ID whose sidechain input to configure")]
+    pub instrument_id: u64,
+    #[schemars(
+        description = "Source instrument ID whose audio output feeds the sidechain. \
+        Pass null (omit) to disable sidechain routing. Self-routing is rejected."
+    )]
+    #[serde(default)]
+    pub source: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetInstrumentVolumeParam {
     #[schemars(description = "Instrument ID")]
     pub instrument_id: u64,
@@ -1633,6 +1645,7 @@ impl SynthMcpServer {
             "delete_instrument" => delete_instrument(InstrumentIdParam),
             "rename_instrument" => rename_instrument(RenameInstrumentParam),
             "set_instrument_description" => set_instrument_description(SetInstrumentDescriptionParam),
+            "set_sidechain_source" => set_sidechain_source(SetSidechainSourceParam),
             "set_instrument_volume" => set_instrument_volume(SetInstrumentVolumeParam),
             "set_instrument_pan" => set_instrument_pan(SetInstrumentPanParam),
             "set_instrument_mute" => set_instrument_mute(SetInstrumentMuteParam),
@@ -2510,6 +2523,32 @@ impl SynthMcpServer {
                 params.0.instrument_id,
                 params.0.description.chars().count()
             ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set or clear the sidechain source on an instrument. When set, the \
+        engine routes the source instrument's audio output into this instrument's \
+        sidechain-capable modules (compressors with sidechain_enabled, envelope followers). \
+        Use it for classic pumping/ducking — e.g. let a kick drum sidechain the pad. \
+        Pass source = null (or omit) to disable. Self-routing is rejected."
+    )]
+    async fn set_sidechain_source(&self, params: Parameters<SetSidechainSourceParam>) -> String {
+        match self
+            .bridge
+            .set_sidechain_source(params.0.instrument_id, params.0.source)
+        {
+            Ok(()) => match params.0.source {
+                Some(src) => format!(
+                    "OK: instrument {} sidechains from instrument {}",
+                    params.0.instrument_id, src
+                ),
+                None => format!(
+                    "OK: cleared sidechain source on instrument {}",
+                    params.0.instrument_id
+                ),
+            },
             Err(e) => format!("Error: {e}"),
         }
     }

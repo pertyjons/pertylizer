@@ -314,7 +314,8 @@ impl EngineHub {
             EngineCommand::AddInstrument { .. }
             | EngineCommand::RemoveInstrument { .. }
             | EngineCommand::RenameInstrument { .. }
-            | EngineCommand::SetInstrumentDescription { .. } => perms.can_modify_topology,
+            | EngineCommand::SetInstrumentDescription { .. }
+            | EngineCommand::SetSidechainSource { .. } => perms.can_modify_topology,
 
             // Instrument parameter changes
             EngineCommand::SetInstrumentParameter { .. }

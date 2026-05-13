@@ -663,6 +663,23 @@ impl SynthEngine {
                 }
                 self.update_shared_instruments();
             }
+            EngineCommand::SetSidechainSource {
+                instrument_id,
+                source,
+            } => {
+                // Reject self-routing; cycles deeper than 1 aren't checked
+                // here — caller (UI / MCP) should avoid them.
+                let valid = source.is_none_or(|s| s != instrument_id);
+                if valid
+                    && let Some(inst) = self
+                        .instruments
+                        .iter_mut()
+                        .find(|i| i.id() == instrument_id)
+                {
+                    inst.set_sidechain_source_id(source);
+                }
+                self.update_shared_instruments();
+            }
             EngineCommand::SetInstrumentParameter {
                 instrument_id,
                 param,
@@ -2028,6 +2045,7 @@ impl SynthEngine {
                     seq_instrument_id: seq_id,
                     name: inst.name().to_string(),
                     description: inst.description().to_string(),
+                    sidechain_source_id: inst.sidechain_source_id(),
                     category: inst.category(),
                     midi_channel: synth_core::MidiChannel::new(
                         inst.midi_channel().as_zero_indexed() + 1,

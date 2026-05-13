@@ -250,7 +250,26 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 
 ### 3.4 Sidechain routing
 
-- [ ] Use one instrument's audio to control another (e.g. sidechain compression)
+- [~] Use one instrument's audio to control another (e.g. sidechain compression) — **partially
+  shipped: data model + persistence + GUI + MCP are wired; engine audio routing is the remaining
+  piece.**
+  - [x] `Instrument.sidechain_source_id: Option<InstrumentId>` engine field + getter/setter.
+  - [x] `EngineCommand::SetSidechainSource` + handler (rejects self-routing). `transactions::try_clone`
+        and `hub.rs` permission gate updated.
+  - [x] `InstrumentSnapshot.sidechain_source_id` exposed to MCP via `InstrumentInfo`.
+  - [x] `Session::set_sidechain_source` + `SynthBridge::set_sidechain_source` + new MCP tool
+        `set_sidechain_source(instrument_id, source: Option<u64>)`.
+  - [x] `InstrumentState.sidechain_source_id` persistence (`#[serde(default)]`) + load path sends
+        the engine command after instrument construction.
+  - [x] GUI combobox in the instrument-edit window listing all other instruments + `— None —`.
+        Tooltip warns that audio routing is still in development.
+  - [ ] **Engine audio routing** — capture each instrument's previous-callback output into a
+        per-instrument cache (`HashMap<InstrumentId, (AudioBuffer, AudioBuffer)>` on `SynthEngine`,
+        pre-allocated to avoid audio-thread allocs). Before each instrument's `process()`, look up
+        `sidechain_source_id` and call `set_sidechain_input(...)` on every compressor in its
+        effect chain. Reads previous-callback audio so order of `self.instruments` doesn't matter
+        (~5 ms of sidechain detection latency, which is below typical attack times).
+  - [ ] Cycle detection deeper than 1 (currently only self-routing is rejected).
 
 ### 3.5 Polyphony settings
 

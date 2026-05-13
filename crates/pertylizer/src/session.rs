@@ -216,6 +216,21 @@ impl SynthSession {
         Ok(())
     }
 
+    /// Set or clear an instrument's sidechain source.
+    pub fn set_sidechain_source(
+        &self,
+        instrument_id: InstrumentId,
+        source: Option<InstrumentId>,
+    ) -> Result<(), SessionError> {
+        if !self.command_sender.send(EngineCommand::SetSidechainSource {
+            instrument_id,
+            source,
+        }) {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
     /// Set instrument volume.
     pub fn set_instrument_volume(
         &self,

@@ -3252,6 +3252,14 @@ impl SynthApp {
         let mut send_vel_amp = false;
         let mut send_vel_filter = false;
         let mut send_description = false;
+        let mut send_sidechain: Option<Option<InstrumentId>> = None;
+        // Other-instrument list captured before the mutable borrow.
+        let other_instruments: Vec<(InstrumentId, String)> = self
+            .instruments
+            .iter()
+            .filter(|i| i.id != target_id)
+            .map(|i| (i.id, i.name.clone()))
+            .collect();
 
         egui::Window::new(title)
             .id(egui::Id::new((
@@ -3565,6 +3573,50 @@ impl SynthApp {
                         send_vel_filter = true;
                     }
                 });
+
+                ui.add_space(6.0);
+
+                // Sidechain source
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Sidechain").color(t.colors.text_dim));
+                    let current = inst.sidechain_source_id;
+                    let label = match current {
+                        Some(src) => other_instruments
+                            .iter()
+                            .find(|(id, _)| *id == src)
+                            .map(|(_, n)| n.clone())
+                            .unwrap_or_else(|| format!("#{}", src.as_u64())),
+                        None => "— None —".to_owned(),
+                    };
+                    egui::ComboBox::from_id_salt("instrument_edit_sidechain")
+                        .selected_text(label)
+                        .width(160.0)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(current.is_none(), "— None —").clicked()
+                                && current.is_some()
+                            {
+                                inst.sidechain_source_id = None;
+                                send_sidechain = Some(None);
+                            }
+                            for (id, name) in &other_instruments {
+                                let selected = current == Some(*id);
+                                if ui.selectable_label(selected, name).clicked()
+                                    && current != Some(*id)
+                                {
+                                    inst.sidechain_source_id = Some(*id);
+                                    send_sidechain = Some(Some(*id));
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text(
+                            "Route another instrument's audio output into this \
+                            instrument's compressors / envelope followers for \
+                            classic pumping/ducking. Engine audio routing is \
+                            still in development — the setting is persisted and \
+                            visible to MCP, but does not yet pump the signal.",
+                        );
+                });
             });
 
         if !open {
@@ -3647,6 +3699,11 @@ impl SynthApp {
                 eprintln!("Failed to set instrument description {target_id:?}: {e}");
             }
         }
+        if let Some(source) = send_sidechain
+            && let Err(e) = self.session.set_sidechain_source(target_id, source)
+        {
+            eprintln!("Failed to set sidechain source for {target_id:?}: {e}");
+        }
         if name_changed
             || category_changed
             || other_changed
@@ -3659,6 +3716,7 @@ impl SynthApp {
             || send_vel_amp
             || send_vel_filter
             || send_description
+            || send_sidechain.is_some()
         {
             self.mark_dirty();
         }
@@ -5081,6 +5139,7 @@ impl SynthApp {
                     max_voices: inst.max_voices,
                     velocity_amp_sensitivity: inst.velocity_amp_sensitivity,
                     velocity_filter_sensitivity: inst.velocity_filter_sensitivity,
+                    sidechain_source_id: inst.sidechain_source_id.map(|id| id.as_u64()),
                     patch,
                 }
             })
@@ -5271,6 +5330,7 @@ impl SynthApp {
             ui_inst.max_voices = inst_state.max_voices;
             ui_inst.velocity_amp_sensitivity = inst_state.velocity_amp_sensitivity;
             ui_inst.velocity_filter_sensitivity = inst_state.velocity_filter_sensitivity;
+            ui_inst.sidechain_source_id = inst_state.sidechain_source_id.map(InstrumentId::new);
 
             // Send engine commands for instrument parameters
             if let Err(e) = self.session.rename_instrument(inst_id, &inst_state.name) {
@@ -5282,6 +5342,13 @@ impl SynthApp {
                     .set_instrument_description(inst_id, &inst_state.description)
             {
                 eprintln!("Failed to set instrument description {inst_id:?}: {e}");
+            }
+            if let Some(src) = inst_state.sidechain_source_id
+                && let Err(e) = self
+                    .session
+                    .set_sidechain_source(inst_id, Some(InstrumentId::new(src)))
+            {
+                eprintln!("Failed to set sidechain source for {inst_id:?}: {e}");
             }
             if let Err(e) = self
                 .session

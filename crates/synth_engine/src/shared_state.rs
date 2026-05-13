@@ -338,6 +338,9 @@ pub struct InstrumentSnapshot {
     pub name: String,
     /// Free-text description / intent. Empty when not set.
     pub description: String,
+    /// Sidechain source — when set, this instrument's
+    /// sidechain-capable modules read audio from the source instrument.
+    pub sidechain_source_id: Option<InstrumentId>,
     /// Instrument category (drums, bass, pad, etc.).
     pub category: crate::InstrumentCategory,
     /// MIDI channel (1-indexed).

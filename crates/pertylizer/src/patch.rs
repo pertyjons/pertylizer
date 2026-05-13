@@ -713,6 +713,11 @@ pub struct InstrumentState {
     /// Velocity → filter cutoff sensitivity (0 = none, 1 = full).
     #[serde(default)]
     pub velocity_filter_sensitivity: synth_core::NormalizedValue,
+    /// Sidechain source — when set, this instrument's compressors
+    /// receive audio from the source instrument's output.
+    /// Serialized as `u64` for forward-compat with non-Rust readers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidechain_source_id: Option<u64>,
     /// Full module graph for this instrument.
     pub patch: Patch,
 }
@@ -753,6 +758,8 @@ impl<'de> Deserialize<'de> for InstrumentState {
             velocity_amp_sensitivity: synth_core::NormalizedValue,
             #[serde(default)]
             velocity_filter_sensitivity: synth_core::NormalizedValue,
+            #[serde(default)]
+            sidechain_source_id: Option<u64>,
             patch: Patch,
         }
 
@@ -776,6 +783,7 @@ impl<'de> Deserialize<'de> for InstrumentState {
             max_voices: raw.max_voices,
             velocity_amp_sensitivity: raw.velocity_amp_sensitivity,
             velocity_filter_sensitivity: raw.velocity_filter_sensitivity,
+            sidechain_source_id: raw.sidechain_source_id,
             patch: raw.patch,
         })
     }

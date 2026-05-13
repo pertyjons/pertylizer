@@ -59,6 +59,9 @@ pub struct InstrumentUiState {
     pub velocity_amp_sensitivity: synth_core::NormalizedValue,
     /// Velocity → filter cutoff sensitivity (0 = none, 1 = full).
     pub velocity_filter_sensitivity: synth_core::NormalizedValue,
+    /// Sidechain source instrument id, or `None` when no sidechain is
+    /// configured.
+    pub sidechain_source_id: Option<InstrumentId>,
 }
 
 impl Default for InstrumentUiState {
@@ -85,6 +88,7 @@ impl Default for InstrumentUiState {
             max_voices: synth_core::VoiceCount::OCTO,
             velocity_amp_sensitivity: synth_core::NormalizedValue::MAX,
             velocity_filter_sensitivity: synth_core::NormalizedValue::MIN,
+            sidechain_source_id: None,
         }
     }
 }
@@ -114,6 +118,7 @@ impl InstrumentUiState {
             max_voices: synth_core::VoiceCount::OCTO,
             velocity_amp_sensitivity: synth_core::NormalizedValue::MAX,
             velocity_filter_sensitivity: synth_core::NormalizedValue::MIN,
+            sidechain_source_id: None,
         }
     }
 

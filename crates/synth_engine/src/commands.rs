@@ -284,6 +284,15 @@ pub enum EngineCommand {
         description: String,
     },
 
+    /// Set or clear the sidechain source for an instrument. When set,
+    /// the engine routes the source instrument's output into this
+    /// instrument's compressors / sidechain-capable modules with
+    /// previous-callback semantics. `source = None` disables.
+    SetSidechainSource {
+        instrument_id: InstrumentId,
+        source: Option<InstrumentId>,
+    },
+
     /// Set a parameter on a specific instrument.
     SetInstrumentParameter {
         instrument_id: InstrumentId,
@@ -928,6 +937,14 @@ impl std::fmt::Debug for EngineCommand {
                 .debug_struct("SetInstrumentDescription")
                 .field("instrument_id", instrument_id)
                 .field("description", description)
+                .finish(),
+            Self::SetSidechainSource {
+                instrument_id,
+                source,
+            } => f
+                .debug_struct("SetSidechainSource")
+                .field("instrument_id", instrument_id)
+                .field("source", source)
                 .finish(),
             Self::SetInstrumentParameter {
                 instrument_id,

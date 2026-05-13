@@ -199,6 +199,7 @@ pub fn default_instrument_state() -> InstrumentState {
         max_voices: synth_core::VoiceCount::OCTO,
         velocity_amp_sensitivity: synth_core::NormalizedValue::MAX,
         velocity_filter_sensitivity: synth_core::NormalizedValue::MIN,
+        sidechain_source_id: None,
         patch: Patch::new("Init"),
     }
 }

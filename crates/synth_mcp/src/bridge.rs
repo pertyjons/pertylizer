@@ -215,6 +215,15 @@ pub trait SynthBridge: Send + Sync + 'static {
         description: &str,
     ) -> Result<(), McpBridgeError>;
 
+    /// Set or clear the sidechain source instrument id. Pass `None` to
+    /// disable sidechain routing into this instrument's compressors.
+    /// Self-routing is rejected.
+    fn set_sidechain_source(
+        &self,
+        instrument_id: u64,
+        source: Option<u64>,
+    ) -> Result<(), McpBridgeError>;
+
     /// Set instrument volume (0.0-2.0).
     fn set_instrument_volume(&self, instrument_id: u64, volume: f32) -> Result<(), McpBridgeError>;
 

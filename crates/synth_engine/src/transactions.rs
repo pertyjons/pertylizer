@@ -548,6 +548,13 @@ impl EngineCommand {
                 instrument_id: *instrument_id,
                 description: description.clone(),
             },
+            Self::SetSidechainSource {
+                instrument_id,
+                source,
+            } => Self::SetSidechainSource {
+                instrument_id: *instrument_id,
+                source: *source,
+            },
             Self::SetInstrumentParameter {
                 instrument_id,
                 param,

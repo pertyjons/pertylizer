@@ -368,6 +368,12 @@ pub struct Instrument {
     /// Free-text description / intent. Never affects audio; mirrored in
     /// `InstrumentSnapshot` so MCP can read+write per-instrument intent.
     description: String,
+    /// Instrument that feeds this instrument's sidechain inputs (e.g.
+    /// compressors with `sidechain_enabled` set). `None` = no sidechain.
+    /// Audio routing is the engine's responsibility — see
+    /// `SynthEngine::process_instruments`. Cycles are not currently
+    /// detected; users / MCP should avoid them.
+    sidechain_source_id: Option<InstrumentId>,
     /// Instrument category (drums, bass, pad, lead, etc.).
     category: InstrumentCategory,
     /// MIDI channel this instrument responds to.
@@ -432,6 +438,7 @@ impl Instrument {
             id,
             name: name.into(),
             description: String::new(),
+            sidechain_source_id: None,
             category: InstrumentCategory::default(),
             midi_channel: MidiChannel::default(),
             key_range: KeyRange::default(),
@@ -468,6 +475,7 @@ impl Instrument {
             id,
             name: name.into(),
             description: String::new(),
+            sidechain_source_id: None,
             category: InstrumentCategory::default(),
             midi_channel: MidiChannel::default(),
             key_range: KeyRange::default(),
@@ -523,6 +531,19 @@ impl Instrument {
     #[inline]
     pub fn set_description(&mut self, description: impl Into<String>) {
         self.description = description.into();
+    }
+
+    /// Get the sidechain source instrument id, if any.
+    #[inline]
+    pub fn sidechain_source_id(&self) -> Option<InstrumentId> {
+        self.sidechain_source_id
+    }
+
+    /// Set or clear the sidechain source instrument. `None` disables
+    /// sidechain routing into this instrument's effect chain.
+    #[inline]
+    pub fn set_sidechain_source_id(&mut self, source: Option<InstrumentId>) {
+        self.sidechain_source_id = source;
     }
 
     /// Get the instrument category.
