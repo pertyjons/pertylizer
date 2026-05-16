@@ -53,6 +53,9 @@ rosc = "0.11.4"
 # Fast random number generation
 fastrand = "2.4.1"
 
+# Data parallelism (used by offline per-track renderers)
+rayon = "1.10"
+
 # WAV export
 hound = "3.5.1"
 

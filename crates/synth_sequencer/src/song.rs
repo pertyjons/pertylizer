@@ -363,6 +363,16 @@ impl Song {
         self.tracks.len()
     }
 
+    /// Mutable iterator over all tracks, in `TrackId` order.
+    ///
+    /// Order is the underlying `BTreeMap`'s key order rather than display
+    /// order; the borrow checker prevents borrowing `track_order` while
+    /// holding a mutable reference to `tracks`. For order-sensitive mutation,
+    /// iterate `track_order()` and call `track_mut(id)` per ID.
+    pub fn tracks_mut(&mut self) -> impl Iterator<Item = &mut SequencerTrack> {
+        self.tracks.values_mut()
+    }
+
     /// Delete a track.
     pub fn delete_track(&mut self, id: TrackId) -> Option<SequencerTrack> {
         // Also remove placements on this track
@@ -375,6 +385,16 @@ impl Song {
     #[must_use]
     pub fn any_solo(&self) -> bool {
         self.tracks.values().any(|t| t.solo)
+    }
+
+    /// Set `solo = true` on `target` and `solo = false` on every other track.
+    ///
+    /// No-op for `target` if it does not exist; other tracks are still
+    /// cleared.
+    pub fn set_solo_only(&mut self, target: TrackId) {
+        for (id, track) in self.tracks.iter_mut() {
+            track.solo = *id == target;
+        }
     }
 
     // === Arrangement ===
@@ -869,5 +889,53 @@ mod tests {
 
         let placements: Vec<_> = song.placements_in_range(Tick(500), Tick(1500)).collect();
         assert_eq!(placements.len(), 2); // First and second overlap with range
+    }
+
+    #[test]
+    fn tracks_mut_iterates_every_track() {
+        let mut song = Song::new("Test");
+        let a = song.create_track("A");
+        let b = song.create_track("B");
+        let c = song.create_track("C");
+
+        let mut seen: Vec<TrackId> = song.tracks_mut().map(|t| t.id).collect();
+        seen.sort_by_key(|id| id.0);
+        assert_eq!(seen, vec![a, b, c]);
+
+        for track in song.tracks_mut() {
+            track.mute = true;
+        }
+        assert!(song.tracks().all(|t| t.mute));
+    }
+
+    #[test]
+    fn set_solo_only_isolates_target_and_clears_others() {
+        let mut song = Song::new("Test");
+        let a = song.create_track("A");
+        let b = song.create_track("B");
+        let c = song.create_track("C");
+
+        song.track_mut(a).unwrap().solo = true;
+        song.track_mut(b).unwrap().solo = true;
+
+        song.set_solo_only(c);
+
+        assert!(!song.track(a).unwrap().solo);
+        assert!(!song.track(b).unwrap().solo);
+        assert!(song.track(c).unwrap().solo);
+        assert!(song.any_solo());
+    }
+
+    #[test]
+    fn set_solo_only_with_unknown_target_clears_all() {
+        let mut song = Song::new("Test");
+        let a = song.create_track("A");
+        song.track_mut(a).unwrap().solo = true;
+
+        // TrackId(9999) does not exist; helper must still clear existing solos.
+        song.set_solo_only(TrackId(9999));
+
+        assert!(!song.track(a).unwrap().solo);
+        assert!(!song.any_solo());
     }
 }

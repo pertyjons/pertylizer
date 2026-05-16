@@ -47,6 +47,9 @@ hound = { workspace = true }
 # Fast random number generation
 fastrand = { workspace = true }
 
+# Data parallelism for the offline per-track render loop
+rayon = { workspace = true }
+
 # Serialization for save/load
 serde = { workspace = true }
 serde_json = { workspace = true }

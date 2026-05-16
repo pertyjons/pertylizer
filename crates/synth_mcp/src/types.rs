@@ -1347,6 +1347,83 @@ pub struct AnalyzeSectionResult {
     pub warnings: Vec<String>,
 }
 
+/// Per-band overlap report between two tracks. One entry per
+/// `AnalyzeEnergyBands` band; values are linear RMS amplitudes pulled from
+/// each track's soloed render.
+///
+/// `dominance_db = 20·log10(max(a,b) / min(a,b))` — magnitude of the louder
+/// track's lead in this band, regardless of direction. Combine with
+/// `track_a_energy` vs. `track_b_energy` to know *which* track is louder.
+/// Reported as `200.0` when one side is silent (avoids `+inf` in JSON).
+#[derive(Debug, Clone, Serialize)]
+pub struct BandOverlap {
+    /// `"sub"` | `"low"` | `"mid"` | `"high"`.
+    pub band: String,
+    /// Band lower frequency edge in Hz (inclusive).
+    pub freq_low_hz: f32,
+    /// Band upper frequency edge in Hz (exclusive, or Nyquist for `"high"`).
+    pub freq_high_hz: f32,
+    /// Linear RMS of track A in this band.
+    pub track_a_energy: f32,
+    /// Linear RMS of track B in this band.
+    pub track_b_energy: f32,
+    /// `min(track_a_energy, track_b_energy)` — the energy two tracks compete
+    /// for in this band. High overlap is a masking candidate.
+    pub overlap_energy: f32,
+    /// `20·log10(max / min)` — how many dB louder the dominant track is.
+    /// Clamped to `200.0` for the silent-vs-non-silent case.
+    pub dominance_db: f32,
+}
+
+/// One pair of tracks with their per-band overlap and an optional textual
+/// hint. Pairs are unordered (`track_a_id < track_b_id`); `dominant_track_id`
+/// flags which side wins overall on the band that has the highest overlap.
+#[derive(Debug, Clone, Serialize)]
+pub struct MaskingPair {
+    pub track_a_id: u16,
+    pub track_a_name: String,
+    pub track_b_id: u16,
+    pub track_b_name: String,
+    /// One entry per band (sub / low / mid / high), in that order.
+    pub bands: Vec<BandOverlap>,
+    /// `sum(overlap_energy) / sum(max(a,b))` across bands, `0.0..=1.0`.
+    /// 0 = tracks share no audible energy; 1 = identical spectral envelope.
+    /// Pairs are returned sorted by descending `conflict_score`.
+    pub conflict_score: f32,
+    /// The id of the track that dominates the highest-overlap band when the
+    /// dominance margin exceeds 6 dB. `None` means the pair is in even
+    /// competition (or both sides are essentially silent in shared bands).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dominant_track_id: Option<u16>,
+    /// Free-form hint summarizing the worst band, e.g. `"Pad(2) masks
+    /// Lead(3) in mid (500-2000 Hz)"`. `None` when the highest-overlap band
+    /// is below the audibility threshold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+/// Output of `analyze_masking_matrix`. Pairwise spectral overlap report
+/// across every audible track in the section. Reuses the same soloed per-
+/// track renders as `analyze_section` with `include_per_track = true`, so the
+/// audio cost is one offline render per audible track; the pair matrix
+/// itself is computed in-memory from the per-track band energies.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeMaskingMatrixResult {
+    pub start_bar: u32,
+    pub start_beat: u32,
+    pub end_bar: u32,
+    pub end_beat: u32,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    /// Number of audible tracks that overlapped the section. The pair
+    /// count is `track_count·(track_count − 1) / 2`.
+    pub track_count: u32,
+    /// One entry per unordered pair, sorted by descending `conflict_score`.
+    pub pairs: Vec<MaskingPair>,
+    /// Non-fatal warnings emitted during the render.
+    pub warnings: Vec<String>,
+}
+
 /// Auto-inferred profile for one instrument. Mirrors the internal
 /// `analysis::InstrumentProfile`; enums travel as snake_case strings so the
 /// MCP crate stays free of pertylizer-side types.

@@ -784,6 +784,19 @@ pub trait SynthBridge: Send + Sync + 'static {
         include_per_track: Option<bool>,
     ) -> Result<crate::types::AnalyzeSectionResult, McpBridgeError>;
 
+    /// Pairwise spectral-masking report for every audible track that
+    /// overlaps `[start_tick, end_tick)`. Renders each audible track soloed
+    /// (same renders as `analyze_section` with `include_per_track = true`)
+    /// and computes per-band overlap on the resulting buffers — no extra
+    /// renders are needed beyond the per-track set. Pairs are sorted by
+    /// descending conflict score so the most contested combination appears
+    /// first.
+    fn analyze_masking_matrix(
+        &self,
+        start_tick: u64,
+        end_tick: u64,
+    ) -> Result<crate::types::AnalyzeMaskingMatrixResult, McpBridgeError>;
+
     // === AWE (Acoustic World Engine) ===
 
     /// Get the current AWE state (room, material, all parameters, LFOs).

@@ -23,7 +23,9 @@ use synth_sequencer::{
     Duration as SeqDuration, PatternTick, Pitch, SeqInstrumentId, Song, Tick, Velocity,
 };
 
-use pertylizer::mcp_bridge::{analyze_section_impl, analyze_song_harmony};
+use pertylizer::mcp_bridge::{
+    analyze_masking_matrix_impl, analyze_section_impl, analyze_song_harmony,
+};
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
 use pertylizer::session::SynthSession;
@@ -745,4 +747,227 @@ fn analyze_section_without_per_track_flag_returns_empty_breakdown() {
     )
     .expect("section analysis should succeed");
     assert!(opt_off.per_track.is_empty());
+}
+
+/// §7.2 regression: the parallel per-track render path must be deterministic.
+/// Two back-to-back `analyze_section` calls with `include_per_track = true`
+/// must return bit-exact metrics for every track. With rayon the work order
+/// across worker threads is non-deterministic; this guards against a hashmap
+/// / RNG / iteration-order regression sneaking back into the offline engine
+/// when multiple sessions are alive concurrently.
+#[test]
+fn analyze_section_per_track_is_bit_exact_across_calls() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let a = analyze_section_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        0,
+        3840,
+        Some(true),
+    )
+    .expect("first analyze_section");
+    let b = analyze_section_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        0,
+        3840,
+        Some(true),
+    )
+    .expect("second analyze_section");
+
+    assert_eq!(a.per_track.len(), b.per_track.len());
+    for (ai, bi) in a.per_track.iter().zip(b.per_track.iter()) {
+        assert_eq!(ai.track_id, bi.track_id, "per_track order must match");
+        assert_eq!(
+            ai.metrics.peak.to_bits(),
+            bi.metrics.peak.to_bits(),
+            "peak for track {} drifted ({} vs {})",
+            ai.track_id,
+            ai.metrics.peak,
+            bi.metrics.peak
+        );
+        assert_eq!(
+            ai.metrics.rms.to_bits(),
+            bi.metrics.rms.to_bits(),
+            "rms for track {} drifted",
+            ai.track_id
+        );
+        assert_eq!(
+            ai.metrics.lufs_integrated.to_bits(),
+            bi.metrics.lufs_integrated.to_bits(),
+            "lufs_integrated for track {} drifted",
+            ai.track_id
+        );
+        assert_eq!(
+            ai.pre_master_peak.to_bits(),
+            bi.pre_master_peak.to_bits(),
+            "pre_master_peak for track {} drifted",
+            ai.track_id
+        );
+        assert_eq!(
+            ai.metrics.clipped_samples, bi.metrics.clipped_samples,
+            "clipped_samples for track {} drifted",
+            ai.track_id
+        );
+    }
+}
+
+#[test]
+fn analyze_masking_matrix_emits_pair_with_well_formed_bands() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let result = analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("masking matrix should succeed");
+
+    assert_eq!(result.track_count, 2);
+    assert_eq!(
+        result.pairs.len(),
+        1,
+        "expected exactly one pair for 2 tracks"
+    );
+    let pair = &result.pairs[0];
+
+    // Pair ordering invariant: track_a_id < track_b_id.
+    assert!(
+        pair.track_a_id < pair.track_b_id,
+        "track_a_id ({}) must be < track_b_id ({})",
+        pair.track_a_id,
+        pair.track_b_id
+    );
+
+    // Four bands in the canonical order.
+    assert_eq!(pair.bands.len(), 4, "expected 4 bands per pair");
+    let names: Vec<&str> = pair.bands.iter().map(|b| b.band.as_str()).collect();
+    assert_eq!(names, vec!["sub", "low", "mid", "high"]);
+
+    // conflict_score is a probability.
+    assert!(
+        (0.0..=1.0).contains(&pair.conflict_score),
+        "conflict_score {} out of [0, 1]",
+        pair.conflict_score
+    );
+
+    // Per-band invariants.
+    for band in &pair.bands {
+        assert!(
+            band.overlap_energy <= band.track_a_energy.max(band.track_b_energy) + 1e-6,
+            "overlap_energy ({}) exceeds max(a, b) ({})",
+            band.overlap_energy,
+            band.track_a_energy.max(band.track_b_energy)
+        );
+        assert!(
+            band.dominance_db >= 0.0,
+            "dominance_db ({}) must be ≥ 0",
+            band.dominance_db
+        );
+        assert!(
+            band.freq_high_hz > band.freq_low_hz,
+            "band {} has malformed freq range {}-{}",
+            band.band,
+            band.freq_low_hz,
+            band.freq_high_hz
+        );
+    }
+}
+
+#[test]
+fn analyze_masking_matrix_is_deterministic_across_calls() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let a = analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("first call");
+    let b = analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("second call");
+
+    assert_eq!(a.pairs.len(), b.pairs.len());
+    for (ap, bp) in a.pairs.iter().zip(b.pairs.iter()) {
+        assert_eq!(ap.track_a_id, bp.track_a_id);
+        assert_eq!(ap.track_b_id, bp.track_b_id);
+        assert_eq!(
+            ap.conflict_score.to_bits(),
+            bp.conflict_score.to_bits(),
+            "conflict_score drifted for pair ({}, {})",
+            ap.track_a_id,
+            ap.track_b_id
+        );
+        for (ab, bb) in ap.bands.iter().zip(bp.bands.iter()) {
+            assert_eq!(
+                ab.overlap_energy.to_bits(),
+                bb.overlap_energy.to_bits(),
+                "{} band overlap drifted",
+                ab.band
+            );
+            assert_eq!(
+                ab.dominance_db.to_bits(),
+                bb.dominance_db.to_bits(),
+                "{} band dominance drifted",
+                ab.band
+            );
+        }
+        assert_eq!(ap.hint, bp.hint);
+    }
+}
+
+#[test]
+fn analyze_masking_matrix_rejects_inverted_range() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let err = analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, 3840, 1920)
+        .expect_err("inverted range must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("end_tick") && msg.contains("start_tick"),
+        "error message should mention both end_tick and start_tick: {msg}"
+    );
+}
+
+#[test]
+fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    // Build a one-track song using the same instruments rig (only pad placed).
+    let mut song = Song::new("OneTrack");
+    let bar = 3840u32;
+    let pad_pattern_id = song.create_pattern(SeqDuration(bar));
+    {
+        let pat = song.pattern_mut(pad_pattern_id).expect("pad pattern");
+        let nid = pat.add_note(
+            PatternTick(0),
+            Pitch::new(60).unwrap(),
+            Velocity::MF,
+            SeqInstrumentId(0),
+        );
+        if let Some(n) = pat.note_mut(nid) {
+            n.duration = Some(SeqDuration(bar - 60));
+        }
+    }
+    let pad_track = song.create_track("Pad");
+    if let Some(t) = song.track_mut(pad_track) {
+        t.instrument = Some(SeqInstrumentId(0));
+    }
+    song.place_pattern(pad_pattern_id, pad_track, Tick(0));
+    let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
+
+    let result = analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("single-track masking matrix should succeed (just empty)");
+    assert_eq!(result.track_count, 1);
+    assert!(result.pairs.is_empty());
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("at least 2 audible tracks")),
+        "expected an explanatory warning, got {:?}",
+        result.warnings
+    );
 }

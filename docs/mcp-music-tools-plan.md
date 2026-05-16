@@ -20,6 +20,7 @@
 | `analyze_pattern` | 2026-05-16 | Pure symbolic single-pattern analyzer; no audio render. Reads a pattern's notes directly and reports `density` (notes per bar/beat, active ratio), `pitch` (low/high/range, mean, distinct count, duration-weighted pitch-class histogram), `velocity` (min/max/mean/std/range), `rhythm` (max/mean polyphony, monophonic flag, distinct onsets+durations, IOI mean+std, regularity score), and `repetition` (distinct bar signatures quantized to a 32nd-note grid, repetition score). `length_bars` and `notes_per_bar` use the song's default time signature. Notes that start past the pattern length are dropped with a warning. Implementation in `crates/pertylizer/src/analysis/pattern_analysis.rs`; bridge in `analyze_pattern_impl`. Closes Tier-1 #6. |
 | `analyze_drum_groove` | v0.283.0 | Pure-symbolic drum-feel diagnostics. Pattern or arrangement scope. In arrangement scope identifies drum tracks via `infer_all_profiles` (Role::Drums, confidence ≥ 0.6) and pulls notes from them; pattern scope treats every note as a drum hit. Classifies each note via the GM drum map (kick / snare / closed-hat / open-hat / tom / cymbal / clap / other — unknown notes still flow through as `other` for custom maps). Reports `composition` (per-component counts), `backbeat` (snare hits on beats 2/4 within a 16th-note tolerance — strength + matched + off-backbeat counts), `hat` (subdivision in `quarter`/`8th`/`16th`/`triplet_8th`/`triplet_16th`/`irregular`/`none`, density per beat, hat count), `ghost_notes` (snare hits below half the loudest snare velocity, only counted when both quiet and loud snares are present), `fills` (bar density exceeding 2× scope mean), `repetition` (distinct bar signatures on a 32nd-note grid). 13 unit tests. Implementation in `crates/pertylizer/src/analysis/drum_groove.rs`; bridge in `analyze_drum_groove_impl`. Closes Tier-1 #7. |
 | `analyze_bass_drum_lock` | v0.283.0 | Pure-symbolic kick/bass relationship. Identifies drum tracks (Role::Drums, conf ≥ 0.6) and bass tracks (Role::Bass, conf ≥ 0.6) via the same `infer_all_profiles` path. Aligns kick onsets (GM MIDI 35/36) against bass-note onsets within `onset_tolerance_ticks` (default 120 = ±1/32-note at 960 PPQN, clamped to [30, 960]). Returns `alignment` (matched / kick-only / bass-only counts plus `lock_score = matched/kicks` and `coverage_score = matched/bass`) and `bass_pitch` (most common pitch class on matched onsets + its share + distinct PC counts on-kick vs total + mean bass MIDI). Pattern scope splits a combined rhythm-section pattern into kicks (GM kick MIDI) and bass (everything else). 11 unit tests. Implementation in `crates/pertylizer/src/analysis/bass_drum_lock.rs`; bridge in `analyze_bass_drum_lock_impl`. Closes Tier-1 #8. |
+| `analyze_masking_matrix` | 2026-05-16 (post-v0.283.0) | Pairwise per-track spectral masking on top of the §7.2 parallel solo-render pipeline. Each pair carries 4 `BandOverlap` entries (sub 0-100 / low 100-500 / mid 500-2000 / high 2000+ Hz) with linear RMS for each side, `overlap_energy = min(a, b)`, and `dominance_db = 20·log10(max/min)` clamped to 200.0 for silent-vs-non-silent. Pair-level `conflict_score ∈ [0, 1]` = `sum(overlap) / sum(max)` across bands. Pairs returned sorted by descending `conflict_score`. Optional `dominant_track_id` is set when the worst-overlap band shows ≥ 6 dB margin and `hint` is a human-readable string (`"Pad(2) masks Lead(3) in mid (500-2000 Hz)"` or `"…/… compete in …"` when dominance is small). Implementation: `analyze_masking_matrix_impl` + helpers in `crates/pertylizer/src/mcp_bridge.rs`; types `BandOverlap` / `MaskingPair` / `AnalyzeMaskingMatrixResult` in `crates/synth_mcp/src/types.rs`; bridge trait method + server handler. 4 integration tests cover pair shape, determinism across calls, inverted-range rejection, single-track empty-pair case. Closes Tier-1 #9. |
 | `analyze_harmonic_function` | v0.283.0 | Tonal-function annotation on top of `analyze_harmony`. Same scope params (pattern_id or arrangement range, `grouping_ticks`, `exclude_drums`, `exclude_track_ids`). Reuses `analyze_song_harmony` end-to-end so chord identification, key inference, and drum exclusion stay in lock-step. For every chord event: scale degree (1..=7 for diatonic), Roman numeral with quality decoration (`I`, `V7`, `ii7`, `vii°`, `ø7`, `°7`, plus `bII`/`bIII`/`bVI`/`bVII` for chromatic), function bucket (`tonic`/`subdominant`/`dominant`/`other`/`chromatic`, simplified Riemannian), and tension (function base + 0.15 for dom7 + 0.2 for dim/half-dim). Detects cadences on consecutive pairs: Authentic (V → I), Plagal (IV → I), Half (anything → V), Deceptive (V → vi). Returns the chord stream, cadence index list, function distribution (T/S/D/Other/Chromatic counts), and tension stats (mean/peak/trough/std-dev). Leading-tone in minor (interval 11) labeled as Dominant when the chord has major or dominant-7 quality (covers borrowed `V` from harmonic minor). 12 unit tests. Implementation in `crates/pertylizer/src/analysis/harmonic_function.rs`; bridge in `analyze_harmonic_function_impl`. Closes Tier-1 #10. |
 
 ### Deferred / in-progress
@@ -177,9 +178,14 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
    `analyze_pattern_impl`.
 7. ✅ **`analyze_drum_groove`** — shipped 2026-05-16. Drum-specific feel analysis is more actionable than a generic groove score: backbeat strength, hat subdivision, fills, ghost notes, and repeated-bar sameness — the exact dimensions that make AI-written beats sound flat. Pure symbolic, built on the instrument-profile inference.
 8. ✅ **`analyze_bass_drum_lock`** — shipped 2026-05-16. The kick/bass relationship carries a large share of perceived groove and low-end clarity. Gives concrete answers to "does the bass actually work with the beat?" via onset alignment with a configurable tolerance, plus a bass-pitch-stability summary on matched onsets.
-9. **`analyze_masking_matrix`** — Extends the shipped per-track contribution work from "which track owns which
-   band?" to "which track conflicts with which other track?". High mix utility once `analyze_section` can render
-   per-track contributions deterministically.
+9. ✅ **`analyze_masking_matrix`** — shipped 2026-05-16. Pairwise per-track spectral overlap on top of the
+   existing per-track soloed renders: each pair carries the 4-band overlap energy + dB dominance, an overall
+   `conflict_score ∈ [0, 1]`, a `dominant_track_id` when one side leads the worst-overlap band by ≥ 6 dB, and
+   a textual hint such as `"Pad(2) masks Lead(3) in mid (500-2000 Hz)"`. Pairs sorted by descending conflict
+   score so the most contested combination is index 0. No extra audio renders beyond the per-track set —
+   pair matrix is computed in-memory and O(N²). Implementation: helpers + `analyze_masking_matrix_impl` in
+   `crates/pertylizer/src/mcp_bridge.rs`; types in `crates/synth_mcp/src/types.rs`; bridge trait + server
+   handler in `crates/synth_mcp/src/{bridge,server}.rs`. Closes Tier-1 #9.
 10. ✅ **`analyze_harmonic_function`** — shipped 2026-05-16. Roman numerals + simplified Riemannian function buckets + per-chord tension + cadence detection (authentic/plagal/half/deceptive). Built on `analyze_harmony` so chord ID + key inference + drum exclusion stay in lock-step.
 11. **`analyze_instrument_range`** — Catches the bug class where a patch sounds great at C4 in `analyze_note` and
    falls apart at C6 or C2. Especially important once an AI is committing patches into a project without a human
@@ -272,7 +278,10 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 6. ✅ `analyze_pattern` — shipped 2026-05-16. Pure symbolic, no audio render.
 7. ✅ `analyze_drum_groove` — shipped 2026-05-16. Pure symbolic drum-feel diagnostics built on `infer_all_profiles`. Reports backbeat strength, hat subdivision, ghost notes, fill candidates, bar repetition; classifies hits via the General MIDI drum map (kick/snare/hat/tom/cymbal/clap/other).
 8. ✅ `analyze_bass_drum_lock` — shipped 2026-05-16. Symbolic kick/bass-onset alignment with configurable tolerance (default ±1/32-note). Returns lock_score / coverage_score / kick-only / bass-only counts plus bass-pitch stability (most common PC on matched onsets).
-9. `analyze_masking_matrix` — pairwise per-track spectral masking on top of deterministic solo renders.
+9. ✅ `analyze_masking_matrix` — shipped 2026-05-16. Pairwise per-track spectral masking on top of the
+   parallel per-track solo renders. No extra audio renders beyond the per-track set; pair matrix is O(N²)
+   and computed in-memory from `MixBusMetrics.energy_bands`. Produces per-pair textual hints when one side
+   dominates by > 6 dB on the worst-overlap band.
 10. ✅ `analyze_harmonic_function` — shipped 2026-05-16. Roman numerals + Tonic/Subdominant/Dominant/Other/Chromatic function buckets + per-chord tension (T 0.0 / S 0.3 / D 0.7, +0.15 for dom7, +0.2 for dim/half-dim) + cadence detection (authentic/plagal/half/deceptive) on top of `analyze_harmony`.
 11. `analyze_instrument_range` — sweep on top of `analyze_note`.
 12. `render_section_to_wav` — generalization of the renderer that writes out instead of analyzing.
@@ -366,17 +375,29 @@ This is the single biggest win for `analyze_section` with `include_per_track = t
 an N-track section previously paid the full engine + module-graph load N times; with the session,
 it pays it once.
 
-### 7.2 Parallelize the per-track renders with rayon — medium impact
+### 7.2 Parallelize the per-track renders with rayon — ✅ shipped 2026-05-16
 
 The N renders in `render_per_track_contributions` are independent (each its own engine + soloed song clone, no
-shared mutable state). Today they run serially in a `for` loop. With §7.1 landed, the natural next step is
-`par_iter` over `targets`, scaled to `min(N, num_cpus)`, with each worker holding its own
-`OfflineEngineSession`. Watch peak memory — each worker holds one session plus a `Song` snapshot — but for
-8–16 tracks on modern hardware this trades RAM for near-linear wall-clock improvement.
+shared mutable state). Now run on rayon's thread pool via `par_iter` over `targets`. Each worker builds its own
+`OfflineEngineSession` and per-target `Song` clone (with the target's solo flag set up-front via
+`Song::set_solo_only` — see §7.4), so workers never share mutable state.
 
-Note: the current per-track loop mutates a single shared `song_arc`'s solo flags between iterations.
-Parallelization needs a per-worker song clone (or a non-mutating solo-override mechanism in the renderer) to
-keep the workers independent — otherwise two workers fight over the same `solo` flag.
+**Determinism preserved.** The §8.1 Round-2 fixes (`BTreeMap` ordering in `synth_engine::graph` + `fastrand`
+reseed per `render_range`) make N independent sessions produce bit-exact output equal to the prior serial
+path. Verified by `analyze_section_per_track_is_bit_exact_across_calls` (new) — two back-to-back
+`analyze_section` calls with `include_per_track = true` return bit-exact peak / RMS / LUFS / pre_master_peak /
+clipped_samples for every track.
+
+**Setup-warning capture.** Engine-level setup warnings (per-instrument load failures, etc.) are identical for
+every worker because they describe the live session state, not the target solo flag. They're captured once
+via `OnceLock` and emitted alongside the result — no duplicate warnings, no synchronization cost beyond a
+single atomic compare-and-swap.
+
+**Trade-off accepted.** §7.1's "build session once, reuse for N renders" win is partly undone here: each
+worker builds its own session per target (no within-worker reuse). With N targets on K cores you pay N setup
+costs total instead of 1, but render time dominates setup for any non-trivial section, so the parallel
+speedup more than compensates. If profiling on big sections shows setup-cost dominance, switch to
+`par_iter().map_init` for per-worker session reuse.
 
 ### 7.3 `HarmonyScope` enum to fix `analyze_song_harmony` argument sprawl — medium impact
 
@@ -404,17 +425,22 @@ maps into the enum inside the bridge. The runtime "ignored in pattern scope" war
 impossibility, and the `#[allow]` lint disappears. Touches `synth_mcp::bridge`, the bridge impl, and the
 arrangement-vs-pattern branch in `analyze_song_harmony`.
 
-### 7.4 `Song::tracks_mut` / `Song::set_solo_only` helpers in `synth_sequencer` — low impact
+### 7.4 `Song::tracks_mut` / `Song::set_solo_only` helpers in `synth_sequencer` — ✅ shipped 2026-05-16
 
-The current solo-flag handling clears all flags via a Vec-of-IDs loop, then per render flips one flag and flips it
-back. Two upstream helpers would shrink the call site and become reusable elsewhere in the project:
+Two new helpers on `Song` (`crates/synth_sequencer/src/song.rs`):
 
-- `pub fn tracks_mut(&mut self) -> impl Iterator<Item = &mut SequencerTrack>` — symmetric with the existing
-  `tracks()` at `crates/synth_sequencer/src/song.rs:228`.
-- `pub fn set_solo_only(&mut self, target: TrackId)` — atomic "make this the only soloed track".
+- `pub fn tracks_mut(&mut self) -> impl Iterator<Item = &mut SequencerTrack>` — mutable iteration in
+  `BTreeMap` (TrackId) order. Display-order mutation goes through `track_order()` + `track_mut(id)` to
+  avoid the borrow conflict that prevents borrowing `track_order` while holding a mutable borrow of
+  `tracks`.
+- `pub fn set_solo_only(&mut self, target: TrackId)` — atomic "make this the only soloed track". Sets
+  `solo = true` on `target` and `false` on every other track in one pass. No-op for `target` if it doesn't
+  exist; other tracks are still cleared.
 
-Both are small additions to `Song`; the per-track contribution loop becomes one line per iteration. Bundle with
-§7.1 since both touch the same loop.
+The per-track contribution loop's clear-then-flip dance collapsed into a single `song.set_solo_only(target)`
+per iteration. Both helpers also unblock §7.2 (parallel renders): each worker `set_solo_only`s its own song
+clone exactly once, so workers never share mutable state. Three unit tests in `song::tests` cover both
+helpers and the unknown-target edge case.
 
 ### 7.5 `Arc<RwLock<Song>>` constructor helper — low impact, project-wide
 
@@ -1012,6 +1038,9 @@ doc fix (pan-law attenuation in per-track peak/RMS) and the optional `pre_master
 (Plucked-Mono-Lead misclassification) and §8.5.6.2 (0.60-threshold margin for name-conflict drums) — both
 surfaced by the 2026-05-16 end-to-end verification on the "Neuro F#m 174" project — also shipped 2026-05-16.
 Every §8 item is now closed; Tier-1 items 6 (`analyze_pattern`), 7 (`analyze_drum_groove`), 8
-(`analyze_bass_drum_lock`), and 10 (`analyze_harmonic_function`) all shipped 2026-05-16. The next
-blind spot to address is Tier-1 item 9 (`analyze_masking_matrix`), or — when reference audio
-becomes a workflow — Tier-1 item 12 (`render_section_to_wav`).
+(`analyze_bass_drum_lock`), 9 (`analyze_masking_matrix`), and 10 (`analyze_harmonic_function`) all
+shipped 2026-05-16 — alongside §7.2 (rayon-parallel per-track renders) and §7.4 (`Song::tracks_mut`
++ `set_solo_only` helpers). Tier-1 items 11 (`analyze_instrument_range`) and 12
+(`render_section_to_wav`) remain — pick up `render_section_to_wav` when reference audio comes into
+the workflow (it unlocks `compare_to_reference` from Tier 3), or `analyze_instrument_range` to
+catch patches that fall apart outside their tested register before they're committed.

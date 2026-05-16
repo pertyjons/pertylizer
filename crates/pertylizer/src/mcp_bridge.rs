@@ -21,15 +21,15 @@ use synth_mcp::bridge::{
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
-    AnalyzeHarmonyResult, AnalyzeMixBusResult, AnalyzePatternResult, AnalyzeSectionResult,
-    ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, AweLfoInfo, AwePresetInfo,
-    AweStateInfo, BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionCheckResult,
-    ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
-    HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo,
-    MixBusMetrics, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo,
-    ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
-    PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo,
-    UiOverlap, UiSnapshot,
+    AnalyzeHarmonyResult, AnalyzeMaskingMatrixResult, AnalyzeMixBusResult, AnalyzePatternResult,
+    AnalyzeSectionResult, ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo,
+    AweLfoInfo, AwePresetInfo, AweStateInfo, BandOverlap, BatchItemResult, BatchResult,
+    BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity, EngineStatus,
+    ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope,
+    HarmonyStats, InstrumentInfo, MaskingPair, MixBusMetrics, ModuleInfo, ModuleTypeInfo, NoteInfo,
+    OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue,
+    PatchResourceData, PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo,
+    UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -2534,6 +2534,20 @@ impl SynthBridge for AppSynthBridge {
             start_tick,
             end_tick,
             include_per_track,
+        )
+    }
+
+    fn analyze_masking_matrix(
+        &self,
+        start_tick: u64,
+        end_tick: u64,
+    ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
+        analyze_masking_matrix_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            start_tick,
+            end_tick,
         )
     }
 
@@ -5817,9 +5831,7 @@ fn render_per_track_contributions(
         instrument_id: Option<u16>,
     }
 
-    // Snapshot under one read; the N renders below each clone the song and
-    // take their own write locks, so the shared read must not span them.
-    let (targets, mut base_song) = {
+    let (targets, base_song) = {
         let song = shared.song.read();
         let any_solo = song.any_solo();
         let mut covered: std::collections::HashSet<TrackId> = std::collections::HashSet::new();
@@ -5851,27 +5863,6 @@ fn render_per_track_contributions(
         return Ok(Vec::new());
     }
 
-    // Clear every solo flag once. The per-iteration loop then only needs to
-    // flip the target's flag, render, and flip it back — no full sweep, no
-    // per-iteration song clone.
-    for tid in base_song.tracks().map(|t| t.id).collect::<Vec<_>>() {
-        if let Some(track) = base_song.track_mut(tid) {
-            track.solo = false;
-        }
-    }
-    let song_arc = std::sync::Arc::new(parking_lot::RwLock::new(base_song));
-
-    // §7.1: build the offline engine + load every instrument ONCE; the
-    // per-target loop below just toggles a solo flag and re-renders. Without
-    // this, a 12-track section spun up 12 fresh engines and re-replayed every
-    // instrument's module graph 12 times even though only the solo bit
-    // differed between iterations.
-    let (mut engine_session, setup_warnings) =
-        crate::audio::arrangement_render::OfflineEngineSession::new(session, sample_library)?;
-    // Engine-level setup warnings apply to the whole session, not any one
-    // soloed track — emit them without the per-target prefix the loop adds.
-    warnings.extend(setup_warnings);
-
     // Snapshot each instrument's pan + volume so we can analytically reverse
     // their attenuation when computing `pre_master_peak`. The realtime engine
     // applies pan-law and per-instrument volume at the mix-down stage; the
@@ -5887,42 +5878,75 @@ fn render_per_track_contributions(
             .collect()
     };
 
+    // Determinism for the parallel renders rests on the §8.1 Round-2 fixes:
+    // BTreeMap ordering in `synth_engine::graph` + `fastrand` reseed per
+    // `render_range`. Engine-level setup warnings reflect the live session
+    // state (not the target solo flag), so they are identical for every
+    // worker — `enumerate` lets the idx == 0 worker push them and the rest
+    // discard.
+    use rayon::prelude::*;
+
+    let render_pairs: Result<
+        Vec<(synth_mcp::types::TrackContribution, Vec<String>)>,
+        McpBridgeError,
+    > = targets
+        .par_iter()
+        .enumerate()
+        .map(|(idx, target)| -> Result<_, McpBridgeError> {
+            let (mut engine_session, setup_warnings) =
+                crate::audio::arrangement_render::OfflineEngineSession::new(
+                    session,
+                    sample_library,
+                )?;
+
+            let mut song_clone = base_song.clone();
+            song_clone.set_solo_only(target.track_id);
+            let song_arc = std::sync::Arc::new(parking_lot::RwLock::new(song_clone));
+
+            let rendered = engine_session.render_range(&song_arc, start_tick, end_tick)?;
+            let mut per_target_warnings: Vec<String> =
+                if idx == 0 { setup_warnings } else { Vec::new() };
+            for w in &rendered.warnings {
+                per_target_warnings.push(format!("{}({}): {w}", target.name, target.track_id.0));
+            }
+
+            let analysis = crate::audio::mix_analysis::analyze_mix_buffer(
+                &rendered.samples,
+                rendered.sample_rate,
+            );
+            let metrics = mix_metrics_from_analysis(
+                &analysis,
+                rendered.sample_rate,
+                rendered.duration_seconds,
+            );
+            let (pre_master_peak, pre_master_peak_dbfs) = pre_master_peak_for(
+                target
+                    .instrument_id
+                    .and_then(|id| instrument_gains.get(&id)),
+                analysis.peak_left,
+                analysis.peak_right,
+            );
+
+            Ok((
+                synth_mcp::types::TrackContribution {
+                    track_id: target.track_id.0,
+                    track_name: target.name.clone(),
+                    instrument_id: target.instrument_id,
+                    metrics,
+                    pre_master_peak,
+                    pre_master_peak_dbfs,
+                    rms_share: 0.0,
+                },
+                per_target_warnings,
+            ))
+        })
+        .collect();
+
     let mut contributions: Vec<synth_mcp::types::TrackContribution> =
         Vec::with_capacity(targets.len());
-
-    for target in &targets {
-        if let Some(track) = song_arc.write().track_mut(target.track_id) {
-            track.solo = true;
-        }
-        let rendered = engine_session.render_range(&song_arc, start_tick, end_tick)?;
-        if let Some(track) = song_arc.write().track_mut(target.track_id) {
-            track.solo = false;
-        }
-        for w in &rendered.warnings {
-            warnings.push(format!("{}({}): {w}", target.name, target.track_id.0));
-        }
-        let analysis =
-            crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
-        let metrics =
-            mix_metrics_from_analysis(&analysis, rendered.sample_rate, rendered.duration_seconds);
-
-        let (pre_master_peak, pre_master_peak_dbfs) = pre_master_peak_for(
-            target
-                .instrument_id
-                .and_then(|id| instrument_gains.get(&id)),
-            analysis.peak_left,
-            analysis.peak_right,
-        );
-
-        contributions.push(synth_mcp::types::TrackContribution {
-            track_id: target.track_id.0,
-            track_name: target.name.clone(),
-            instrument_id: target.instrument_id,
-            metrics,
-            pre_master_peak,
-            pre_master_peak_dbfs,
-            rms_share: 0.0,
-        });
+    for (c, ws) in render_pairs? {
+        contributions.push(c);
+        warnings.extend(ws);
     }
 
     let total_rms: f32 = contributions.iter().map(|c| c.metrics.rms).sum();
@@ -5975,6 +5999,215 @@ fn pre_master_peak_for(
         None => raw_peak,
     };
     (restored, crate::audio::mix_analysis::lin_to_db(restored))
+}
+
+/// Frequency band definitions for `analyze_masking_matrix`, matching the
+/// `AnalyzeEnergyBands` split used by `analyze_mix_buffer`.
+const MASKING_BAND_DEFS: &[(&str, f32, f32)] = &[
+    ("sub", 0.0, 100.0),
+    ("low", 100.0, 500.0),
+    ("mid", 500.0, 2000.0),
+    ("high", 2000.0, 20_000.0),
+];
+
+/// Minimum overlap energy (linear RMS) at which a band is loud enough to
+/// warrant a textual hint. Below this the bands are reported but no hint is
+/// generated — every multi-track section would otherwise produce noise.
+const MASKING_HINT_MIN_ENERGY: f32 = 0.01;
+
+/// Dominance margin in dB above which we call one track a "masker" of the
+/// other on the worst-overlap band. Below this the pair is reported as an
+/// even competition.
+const MASKING_DOMINANCE_DB_THRESHOLD: f32 = 6.0;
+
+fn masking_band_overlap(name: &str, lo: f32, hi: f32, a: f32, b: f32) -> BandOverlap {
+    let lower = a.min(b).max(0.0);
+    let upper = a.max(b).max(0.0);
+    let dominance_db = if upper < 1e-9 {
+        0.0
+    } else if lower < 1e-9 {
+        200.0
+    } else {
+        crate::audio::mix_analysis::lin_to_db(upper / lower).min(200.0)
+    };
+    BandOverlap {
+        band: name.to_string(),
+        freq_low_hz: lo,
+        freq_high_hz: hi,
+        track_a_energy: a,
+        track_b_energy: b,
+        overlap_energy: lower,
+        dominance_db,
+    }
+}
+
+fn masking_pair_bands(
+    a: &synth_mcp::types::AnalyzeEnergyBands,
+    b: &synth_mcp::types::AnalyzeEnergyBands,
+) -> Vec<BandOverlap> {
+    let aa = [a.sub, a.low, a.mid, a.high];
+    let bb = [b.sub, b.low, b.mid, b.high];
+    MASKING_BAND_DEFS
+        .iter()
+        .enumerate()
+        .map(|(i, (n, lo, hi))| masking_band_overlap(n, *lo, *hi, aa[i], bb[i]))
+        .collect()
+}
+
+fn masking_conflict_score(bands: &[BandOverlap]) -> f32 {
+    let overlap_total: f32 = bands.iter().map(|b| b.overlap_energy).sum();
+    let max_total: f32 = bands
+        .iter()
+        .map(|b| b.track_a_energy.max(b.track_b_energy))
+        .sum();
+    if max_total > 1e-9 {
+        (overlap_total / max_total).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// Returns `(hint, dominant_track_id)` for the worst-overlap band, or
+/// `(None, None)` when no band crosses `MASKING_HINT_MIN_ENERGY`. The
+/// `dominant_track_id` is set only when the margin exceeds
+/// `MASKING_DOMINANCE_DB_THRESHOLD`.
+fn masking_hint_for_pair(
+    bands: &[BandOverlap],
+    a_name: &str,
+    a_id: u16,
+    b_name: &str,
+    b_id: u16,
+) -> (Option<String>, Option<u16>) {
+    let Some(worst) = bands.iter().max_by(|x, y| {
+        x.overlap_energy
+            .partial_cmp(&y.overlap_energy)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }) else {
+        return (None, None);
+    };
+    if worst.overlap_energy < MASKING_HINT_MIN_ENERGY {
+        return (None, None);
+    }
+    let band_label = format!(
+        "{} ({:.0}-{:.0} Hz)",
+        worst.band, worst.freq_low_hz, worst.freq_high_hz
+    );
+    if worst.dominance_db >= MASKING_DOMINANCE_DB_THRESHOLD {
+        let (masker_name, masker_id, masked_name, masked_id) =
+            if worst.track_a_energy >= worst.track_b_energy {
+                (a_name, a_id, b_name, b_id)
+            } else {
+                (b_name, b_id, a_name, a_id)
+            };
+        (
+            Some(format!(
+                "{masker_name}({masker_id}) masks {masked_name}({masked_id}) in {band_label}"
+            )),
+            Some(masker_id),
+        )
+    } else {
+        (
+            Some(format!(
+                "{a_name}({a_id}) and {b_name}({b_id}) compete in {band_label}"
+            )),
+            None,
+        )
+    }
+}
+
+fn build_masking_pairs(contributions: &[synth_mcp::types::TrackContribution]) -> Vec<MaskingPair> {
+    let n = contributions.len();
+    let mut pairs: Vec<MaskingPair> = Vec::with_capacity(n.saturating_mul(n.saturating_sub(1)) / 2);
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let (lo, hi) = if contributions[i].track_id <= contributions[j].track_id {
+                (&contributions[i], &contributions[j])
+            } else {
+                (&contributions[j], &contributions[i])
+            };
+            let bands = masking_pair_bands(&lo.metrics.energy_bands, &hi.metrics.energy_bands);
+            let conflict_score = masking_conflict_score(&bands);
+            let (hint, dominant_track_id) = masking_hint_for_pair(
+                &bands,
+                &lo.track_name,
+                lo.track_id,
+                &hi.track_name,
+                hi.track_id,
+            );
+            pairs.push(MaskingPair {
+                track_a_id: lo.track_id,
+                track_a_name: lo.track_name.clone(),
+                track_b_id: hi.track_id,
+                track_b_name: hi.track_name.clone(),
+                bands,
+                conflict_score,
+                dominant_track_id,
+                hint,
+            });
+        }
+    }
+    pairs.sort_by(|x, y| {
+        y.conflict_score
+            .partial_cmp(&x.conflict_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    pairs
+}
+
+/// `analyze_masking_matrix` bridge implementation. Renders every audible
+/// track soloed, then computes pairwise per-band overlap and an optional
+/// textual hint. Returns pairs sorted by descending `conflict_score`.
+#[doc(hidden)]
+pub fn analyze_masking_matrix_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    start_tick: u64,
+    end_tick: u64,
+) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
+    if end_tick <= start_tick {
+        return Err(McpBridgeError::Other(format!(
+            "Section range invalid: end_tick ({end_tick}) must be greater than start_tick ({start_tick})"
+        )));
+    }
+
+    let mut warnings: Vec<String> = Vec::new();
+    let contributions = render_per_track_contributions(
+        session,
+        sample_library,
+        shared,
+        start_tick,
+        end_tick,
+        &mut warnings,
+    )?;
+
+    if contributions.len() < 2 {
+        warnings.push(format!(
+            "analyze_masking_matrix needs at least 2 audible tracks in the section; got {}",
+            contributions.len()
+        ));
+    }
+
+    let pairs = build_masking_pairs(&contributions);
+
+    let ts = shared
+        .song
+        .read()
+        .time_signature_at(synth_sequencer::Tick(start_tick));
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(start_tick, ts);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(end_tick, ts);
+
+    Ok(AnalyzeMaskingMatrixResult {
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
+        start_tick,
+        end_tick,
+        track_count: contributions.len() as u32,
+        pairs,
+        warnings,
+    })
 }
 
 /// Convert the internal `InstrumentProfile` to the MCP-wire form.

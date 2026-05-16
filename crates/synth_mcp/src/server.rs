@@ -531,6 +531,14 @@ pub struct AnalyzeSectionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeMaskingMatrixParam {
+    #[schemars(description = "Absolute tick where the section starts (inclusive).")]
+    pub start_tick: u64,
+    #[schemars(description = "Absolute tick where the section ends (exclusive).")]
+    pub end_tick: u64,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeHarmonyParam {
     #[schemars(
         description = "Pattern ID to analyze. When set, the arrangement_* fields are ignored and analysis runs on that pattern's notes in pattern-relative ticks. Leave unset to analyze the arrangement instead."
@@ -1857,6 +1865,7 @@ impl SynthMcpServer {
             "analyze_harmonic_function" => analyze_harmonic_function(AnalyzeHarmonicFunctionParam),
             "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
             "analyze_section" => analyze_section(AnalyzeSectionParam),
+            "analyze_masking_matrix" => analyze_masking_matrix(AnalyzeMaskingMatrixParam),
         ])
     }
 }
@@ -2396,6 +2405,22 @@ impl SynthMcpServer {
             params.0.end_tick,
             params.0.include_per_track,
         ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Pairwise spectral-masking report across every audible track in an arrangement range. Renders each audible track soloed once, then for every pair (a, b) compares their per-band RMS in the 4-band split (sub 0-100 Hz, low 100-500 Hz, mid 500-2000 Hz, high 2 kHz+) used elsewhere. Each pair carries the per-band overlap energy, the dominance margin in dB, an overall conflict_score in 0..=1, the dominant track id when one side leads by >6 dB on the worst-overlap band, and a textual hint such as 'Pad(2) masks Lead(3) in mid (500-2000 Hz)'. Pairs are returned sorted by descending conflict_score so the most contested combination appears first. Renders are O(track_count) (same as analyze_section with include_per_track=true); the pair matrix itself is in-memory and O(N²). Use when a section sounds muddy or when one element is being smothered and you need to know which other track is doing it."
+    )]
+    async fn analyze_masking_matrix(
+        &self,
+        params: Parameters<AnalyzeMaskingMatrixParam>,
+    ) -> String {
+        match self
+            .bridge
+            .analyze_masking_matrix(params.0.start_tick, params.0.end_tick)
+        {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
