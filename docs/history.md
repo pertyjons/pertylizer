@@ -1,5 +1,74 @@
 # Version History
 
+## [0.287.0] - 2026-05-17
+### MCP music tools — Tier-2 #14 + #16: meta-analysis (Group D)
+
+Group D from §8.6 of `docs/mcp-music-tools-plan.md`: a bar-level
+tension curve plus a meta-analysis tool that ranks concrete fix
+suggestions from the existing analyzer outputs. Two new analyzer
+modules: `crates/pertylizer/src/analysis/tension_curve.rs` (pure
+synthesis layer over bar features + harmony + harmonic_function +
+optional per-bar audio metrics) and
+`crates/pertylizer/src/analysis/suggest_fixes.rs` (rule engine over
+harmony / mix / groove / arrangement / composition diagnostics). No
+new measurements — both tools repackage findings that the underlying
+analyzer tools already produce. 15 in-module unit tests + 6
+integration tests through the bridge.
+
+#### `analyze_tension_curve`
+
+Bar-level tension diagnostic with per-bar rows + a peak/trough/mean/
+std-dev summary + cross-bar shape warnings. Each bar carries
+`harmonic_tension` (mean per-chord tension from harmonic_function over
+chord windows overlapping the bar), `dissonance` (fraction of in-bar
+chord-window-ticks marked out-of-key), `density_score` (note count /
+16, capped at 1), `register_score` ((mean MIDI − 36) / 60, clamped),
+`rhythmic_activity` (distinct 16th-note onset cells / 16), and
+`mean_velocity`. When `include_audio=true` (default in arrangement
+scope, false in pattern scope), the bridge does one offline render of
+the scope and slices the buffer per bar to add `loudness_score`
+(LUFS-M mapped from `[-50, -10]` dB to `[0, 1]`, RMS fallback for very
+short bars), `brightness` ((mid + high) / total energy),
+`band_entropy` (Shannon entropy across the 4 fixed bands, normalized
+by ln 4), and `stereo_width_score`. The composite-tension blend is
+35 % harmonic + 15 % dissonance + 20 % density + 10 % register + 20 %
+rhythm in symbolic mode; audio-augmented blend keeps 60 % of the
+symbolic score and adds 20 % loudness + 12 % brightness + 8 %
+entropy. Warnings flag (i) chorus-doesn't-lift when a section
+returning under the same root label has mean composite tension > 0.10
+below the original, (ii) build-peaks-too-early when the per-section
+peak bar lands before the section midpoint and the last bar drops
+> 0.10 below the peak, (iii) drop-loses-low-end when a section-start
+bar's sub-band energy collapses > 50 % vs. the prior bar despite high
+composite tension, (iv) monotone-tension when the std-dev over 4+ bars
+falls below 0.05. Reuses `analyze_arrangement`'s clustering for the
+returned `sections` field. Scope (pattern_id / arrangement range),
+drum filtering (`exclude_drums`, `exclude_track_ids`), and similarity
+threshold / `section_min_bars` mirror the Group C tools.
+
+#### `suggest_music_fixes`
+
+Packages diagnostics from harmony, harmonic-function, mix-bus,
+masking, drum-groove, bass-drum-lock, form, hook, and tension-curve
+analyzers into a ranked list of concrete edits with supporting
+evidence. The bridge runs each analyzer once for the requested scope,
+hands its output into a category-grouped rule engine, then sorts
+suggestions by descending severity and truncates to `max_suggestions`
+(default 15, clamped to `[1, 50]`). `categories` filters to a subset
+of `harmony` / `mix` / `groove` / `arrangement` / `composition` /
+`patch`; empty/null runs every category. `include_audio` (default
+true) gates the mix-bus / masking / audio-augmented tension-curve
+checks; set to false for a faster pure-symbolic pass. Each suggestion
+carries a stable `id` (`"harmony.no_key_inferred"`,
+`"mix.heavy_masking_pair"`, …) so callers can suppress specific rules
+in a follow-up call without parsing titles, plus a numeric `severity`
+in `[0, 1]`, a short `title`, a multi-sentence `detail`, and an
+`evidence` list referencing the supporting measurements.
+`rules_clean` lists rule IDs that ran but found nothing to fix, so the
+agent can confirm what was actually checked. No new measurements: the
+underlying analyzers remain authoritative and surface their full
+output through their own MCP tools.
+
 ## [0.286.0] - 2026-05-17
 ### MCP music tools — Tier-2 #15 + #20: form & motif analysis (Group C)
 

@@ -857,6 +857,58 @@ pub struct AnalyzeHookStrengthParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeTensionCurveParam {
+    #[schemars(description = "Pattern ID. When set, arrangement_* fields are ignored.")]
+    pub pattern_id: Option<u32>,
+    #[schemars(description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0.")]
+    pub arrangement_start_tick: Option<u64>,
+    #[schemars(
+        description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
+    )]
+    pub arrangement_end_tick: Option<u64>,
+    #[schemars(
+        description = "If true, render the scope once and slice the buffer per bar to compute loudness, brightness, band entropy, and stereo width axes. Defaults to true in arrangement scope and false in pattern scope. Audio mode costs roughly one `analyze_section` call."
+    )]
+    pub include_audio: Option<bool>,
+    #[schemars(
+        description = "Cosine-similarity threshold for the section clustering (same as `analyze_arrangement`). Default 0.85."
+    )]
+    pub similarity_threshold: Option<f32>,
+    #[schemars(description = "Minimum section length in bars (default 2).")]
+    pub section_min_bars: Option<u32>,
+    #[schemars(description = "Exclude drum tracks from the melodic note stream (default true).")]
+    pub exclude_drums: Option<bool>,
+    #[schemars(description = "Explicit list of track IDs to exclude. Arrangement scope only.")]
+    pub exclude_track_ids: Option<Vec<u16>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SuggestMusicFixesParam {
+    #[schemars(description = "Pattern ID. When set, arrangement_* fields are ignored.")]
+    pub pattern_id: Option<u32>,
+    #[schemars(description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0.")]
+    pub arrangement_start_tick: Option<u64>,
+    #[schemars(
+        description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
+    )]
+    pub arrangement_end_tick: Option<u64>,
+    #[schemars(
+        description = "Categories to include. Subset of: 'harmony', 'mix', 'groove', 'arrangement', 'composition', 'patch'. Empty/null runs everything."
+    )]
+    pub categories: Option<Vec<String>>,
+    #[schemars(
+        description = "If true (default), run the audio-render-backed checks (mix-bus / masking / audio-augmented tension curve). Set to false for a faster pure-symbolic pass."
+    )]
+    pub include_audio: Option<bool>,
+    #[schemars(description = "Maximum suggestions returned. Default 15. Clamped to [1, 50].")]
+    pub max_suggestions: Option<u32>,
+    #[schemars(description = "Exclude drum tracks from melodic-axis rules (default true).")]
+    pub exclude_drums: Option<bool>,
+    #[schemars(description = "Explicit list of track IDs to exclude. Arrangement scope only.")]
+    pub exclude_track_ids: Option<Vec<u16>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeBassDrumLockParam {
     #[schemars(
         description = "Pattern ID to analyze. When set, the analyzer treats notes with GM kick MIDI numbers (35, 36) as kicks and everything else as bass. Useful for combined rhythm-section patterns. Ignored when arrangement_* fields are set."
@@ -2112,6 +2164,8 @@ impl SynthMcpServer {
             "analyze_form_map" => analyze_form_map(AnalyzeFormMapParam),
             "find_motifs" => find_motifs(FindMotifsParam),
             "analyze_hook_strength" => analyze_hook_strength(AnalyzeHookStrengthParam),
+            "analyze_tension_curve" => analyze_tension_curve(AnalyzeTensionCurveParam),
+            "suggest_music_fixes" => suggest_music_fixes(SuggestMusicFixesParam),
 
             // Symbolic composition helpers
             "generate_chord" => generate_chord(GenerateChordParam),
@@ -2813,6 +2867,44 @@ impl SynthMcpServer {
             params.0.arrangement_end_tick,
             params.0.min_interval_length,
             params.0.min_count,
+            params.0.exclude_drums,
+            params.0.exclude_track_ids,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Bar-level tension curve over the scope. Builds per-bar rows from existing analyzers — harmonic_function for chord tension, bar_features for density/register/rhythmic activity, plus (in audio mode) a single offline render sliced per bar for loudness, brightness, band entropy, and stereo width. Returns per-bar values, the cluster-derived section labels (so the caller can map bars to A/B/A'), a peak/trough/mean/std-dev summary, and shape warnings: chorus reprises with lower energy, builds that peak too early, drops that lose low-end, and otherwise monotone curves. `include_audio` defaults to true in arrangement scope and false in pattern scope. No new measurements — pure synthesis on top of the existing analyzers."
+    )]
+    async fn analyze_tension_curve(&self, params: Parameters<AnalyzeTensionCurveParam>) -> String {
+        match self.bridge.analyze_tension_curve(
+            params.0.pattern_id,
+            params.0.arrangement_start_tick,
+            params.0.arrangement_end_tick,
+            params.0.include_audio,
+            params.0.similarity_threshold,
+            params.0.section_min_bars,
+            params.0.exclude_drums,
+            params.0.exclude_track_ids,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Meta-analysis: runs the relevant analyzers across harmony, mix, groove, arrangement, composition, and patch categories, applies a rule set per category, and returns ranked fix suggestions with supporting evidence. No new measurements — every suggestion references metrics already produced by the underlying analyzer tools. `categories` is a subset of [harmony, mix, groove, arrangement, composition, patch] (empty/null = all). `include_audio` (default true) gates the mix-bus / masking / audio-augmented tension-curve checks. `max_suggestions` defaults to 15."
+    )]
+    async fn suggest_music_fixes(&self, params: Parameters<SuggestMusicFixesParam>) -> String {
+        match self.bridge.suggest_music_fixes(
+            params.0.pattern_id,
+            params.0.arrangement_start_tick,
+            params.0.arrangement_end_tick,
+            params.0.categories,
+            params.0.include_audio,
+            params.0.max_suggestions,
             params.0.exclude_drums,
             params.0.exclude_track_ids,
         ) {

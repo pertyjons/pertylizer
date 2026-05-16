@@ -900,6 +900,60 @@ pub trait SynthBridge: Send + Sync + 'static {
         tail_ms: Option<u32>,
     ) -> Result<crate::types::AnalyzeVelocityResponseResult, McpBridgeError>;
 
+    /// Bar-level tension curve over the analyzed scope. Builds per-bar
+    /// rows from existing analyzers — harmonic_function for per-chord
+    /// tension, bar_features for density/register/rhythmic activity,
+    /// optionally a single offline render sliced per bar for loudness,
+    /// brightness, band entropy, and stereo width.
+    ///
+    /// Returns per-bar values plus peak/trough/mean/std-dev summary, the
+    /// section labels from `analyze_arrangement`, and warnings for
+    /// chorus-doesn't-lift, build-peaks-too-early, drop-loses-low-end,
+    /// and monotone-tension shape problems.
+    ///
+    /// `include_audio` defaults to true in arrangement scope and false in
+    /// pattern scope; set explicitly to override. Audio mode does one
+    /// full-range render of the scope and slices it per bar — cost is
+    /// roughly equivalent to one `analyze_section` call.
+    #[allow(clippy::too_many_arguments)]
+    fn analyze_tension_curve(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        include_audio: Option<bool>,
+        similarity_threshold: Option<f32>,
+        section_min_bars: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<crate::types::AnalyzeTensionCurveResult, McpBridgeError>;
+
+    /// Meta-analysis: runs the relevant analyzers over the scope, applies
+    /// a rule set per category, and returns ranked fix suggestions with
+    /// supporting evidence. Adds no new measurements — every suggestion
+    /// references metrics already produced by harmony, harmonic_function,
+    /// mix-bus, masking, drum-groove, bass-drum-lock, form, motifs / hook,
+    /// tension-curve, or instrument-profile analyzers.
+    ///
+    /// `categories` filters which rule families run (`"harmony"`,
+    /// `"mix"`, `"groove"`, `"arrangement"`, `"composition"`, `"patch"`).
+    /// Empty list / `None` runs everything. `include_audio` mirrors
+    /// `analyze_tension_curve` — set to false to skip the mix-bus /
+    /// masking / audio-augmented tension-curve checks. `max_suggestions`
+    /// defaults to 15.
+    #[allow(clippy::too_many_arguments)]
+    fn suggest_music_fixes(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        categories: Option<Vec<String>>,
+        include_audio: Option<bool>,
+        max_suggestions: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<crate::types::SuggestMusicFixesResult, McpBridgeError>;
+
     // === Composition helpers (symbolic — no audio rendering) ===
 
     /// Parse a chord symbol (e.g. `"Cm7"`, `"F#maj7"`, `"Bbsus4"`) and

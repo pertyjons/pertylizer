@@ -49,6 +49,26 @@ impl EnergyBands {
             high: 0.0,
         }
     }
+
+    /// Shannon entropy across the four bands, normalized so a perfectly
+    /// uniform distribution scores 1.0 and a single-band signal scores 0.0.
+    /// Silent buffers (total ≤ 1e-9) return 0.0.
+    #[must_use]
+    pub fn shannon_entropy_normalized(&self) -> f32 {
+        let bands = [self.sub, self.low, self.mid, self.high];
+        let total: f32 = bands.iter().sum();
+        if total <= 1e-9 {
+            return 0.0;
+        }
+        let mut h = 0.0_f32;
+        for b in &bands {
+            let p = b / total;
+            if p > 1e-9 {
+                h -= p * p.ln();
+            }
+        }
+        (h / 4.0_f32.ln()).clamp(0.0, 1.0)
+    }
 }
 
 /// Harmonic structure summary for a tonal signal at a known fundamental.
@@ -902,6 +922,28 @@ pub fn centroid_trend(centroid_envelope: &[f32], window_ms: f32) -> f32 {
 mod tests {
     use super::*;
     use std::f32::consts::TAU;
+
+    #[test]
+    fn energy_bands_entropy_uniform_is_max() {
+        let bands = EnergyBands {
+            sub: 0.25,
+            low: 0.25,
+            mid: 0.25,
+            high: 0.25,
+        };
+        assert!((bands.shannon_entropy_normalized() - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn energy_bands_entropy_single_band_is_zero() {
+        let bands = EnergyBands {
+            sub: 1.0,
+            low: 0.0,
+            mid: 0.0,
+            high: 0.0,
+        };
+        assert!(bands.shannon_entropy_normalized().abs() < 1e-4);
+    }
 
     fn sine(freq_hz: f32, amplitude: f32, sample_rate: u32, num_samples: usize) -> Vec<f32> {
         let sr = sample_rate as f32;

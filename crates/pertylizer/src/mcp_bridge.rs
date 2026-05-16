@@ -2603,6 +2603,58 @@ impl SynthBridge for AppSynthBridge {
         )
     }
 
+    fn analyze_tension_curve(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        include_audio: Option<bool>,
+        similarity_threshold: Option<f32>,
+        section_min_bars: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<synth_mcp::types::AnalyzeTensionCurveResult, McpBridgeError> {
+        analyze_tension_curve_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            include_audio,
+            similarity_threshold,
+            section_min_bars,
+            exclude_drums,
+            exclude_track_ids,
+        )
+    }
+
+    fn suggest_music_fixes(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        categories: Option<Vec<String>>,
+        include_audio: Option<bool>,
+        max_suggestions: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<synth_mcp::types::SuggestMusicFixesResult, McpBridgeError> {
+        suggest_music_fixes_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            categories,
+            include_audio,
+            max_suggestions,
+            exclude_drums,
+            exclude_track_ids,
+        )
+    }
+
     fn analyze_mix_bus(
         &self,
         duration_seconds: f32,
@@ -6552,6 +6604,558 @@ pub fn analyze_hook_strength_impl(
         min_interval_length: min_len,
         min_count: min_count_v,
         warnings: scope_data.warnings,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Group D — meta-analysis tool impls (analyze_tension_curve,
+// suggest_music_fixes).
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_tension_curve_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    pattern_id: Option<u32>,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
+    include_audio: Option<bool>,
+    similarity_threshold: Option<f32>,
+    section_min_bars: Option<u32>,
+    exclude_drums: Option<bool>,
+    exclude_track_ids: Option<Vec<u16>>,
+) -> Result<synth_mcp::types::AnalyzeTensionCurveResult, McpBridgeError> {
+    use synth_mcp::types::{AnalyzeTensionCurveResult, TensionCurveBar, TensionCurveSummary};
+
+    let exclude_drums_v = exclude_drums.unwrap_or(true);
+    let exclude_track_ids_v = exclude_track_ids.unwrap_or_default();
+    let scope_data = collect_form_scope(
+        session,
+        shared,
+        pattern_id,
+        arrangement_start_tick,
+        arrangement_end_tick,
+        exclude_drums_v,
+        &exclude_track_ids_v,
+    )?;
+
+    let threshold = clamp_similarity(similarity_threshold);
+    let min_bars = section_min_bars
+        .unwrap_or(FORM_SECTION_MIN_BARS_DEFAULT)
+        .max(1);
+
+    let ticks_per_bar = scope_data.time_sig.ticks_per_bar().max(1);
+
+    // Run the form pipeline once — we want both the per-bar feature stream
+    // and the section clustering for the cross-bar warnings.
+    let form_analysis = crate::analysis::form::analyze_form(
+        &scope_data.notes,
+        scope_data.time_sig,
+        scope_data.total_bars,
+        threshold,
+        min_bars,
+    );
+
+    // Per-bar mean MIDI pitch + distinct-16th-note-onset cells.
+    let mut bar_mean_pitches: Vec<Option<f32>> = vec![None; scope_data.total_bars as usize];
+    let mut bar_onsets: Vec<u32> = vec![0; scope_data.total_bars as usize];
+    {
+        let mut pitch_sum = vec![0.0_f32; scope_data.total_bars as usize];
+        let mut pitch_count = vec![0_u32; scope_data.total_bars as usize];
+        let mut grid_cells: Vec<std::collections::HashSet<u32>> = (0..scope_data.total_bars)
+            .map(|_| std::collections::HashSet::new())
+            .collect();
+        for n in &scope_data.notes {
+            let bar_idx = (n.tick / ticks_per_bar) as usize;
+            if bar_idx >= bar_mean_pitches.len() {
+                continue;
+            }
+            pitch_sum[bar_idx] += f32::from(n.pitch.as_midi());
+            pitch_count[bar_idx] += 1;
+            let cell = (n.tick % ticks_per_bar) * 16 / ticks_per_bar;
+            grid_cells[bar_idx].insert(cell);
+        }
+        for i in 0..scope_data.total_bars as usize {
+            if pitch_count[i] > 0 {
+                bar_mean_pitches[i] = Some(pitch_sum[i] / pitch_count[i] as f32);
+            }
+            bar_onsets[i] = grid_cells[i].len() as u32;
+        }
+    }
+
+    // Run harmony + harmonic_function to get per-chord tension. Pull
+    // grouping_ticks from the scope's TS so it lines up with the chord-window
+    // defaults used by `analyze_harmonic_function`.
+    let grouping_ticks_opt = Some(synth_sequencer::Duration::QUARTER.0);
+    let harmony = analyze_song_harmony(
+        session,
+        shared,
+        pattern_id,
+        arrangement_start_tick,
+        arrangement_end_tick,
+        grouping_ticks_opt,
+        Some(exclude_drums_v),
+        Some(exclude_track_ids_v.clone()),
+    )?;
+    let key_mode = harmony
+        .inferred_key
+        .as_ref()
+        .map(|k| crate::analysis::KeyMode::from_label(&k.mode))
+        .unwrap_or(crate::analysis::KeyMode::Major);
+    let tonic = harmony.inferred_key.as_ref().map(|k| k.tonic);
+    let chord_inputs: Vec<crate::analysis::ChordInput> = harmony
+        .chords
+        .iter()
+        .map(|e| crate::analysis::ChordInput {
+            symbol: e.symbol.clone(),
+            root: e.root,
+            quality: e.quality.clone(),
+            in_key: e.in_key,
+        })
+        .collect();
+    let harm_fn = crate::analysis::harmonic_function::analyze(&chord_inputs, tonic, key_mode);
+
+    let chord_spans: Vec<crate::analysis::tension_curve::ChordTensionSpan> = harmony
+        .chords
+        .iter()
+        .zip(harm_fn.chords.iter())
+        .map(|(ev, fnev)| {
+            // Harmony events carry absolute ticks in arrangement scope and
+            // pattern-relative ticks in pattern scope. Subtract the scope
+            // start so the inner module always sees scope-relative ticks.
+            let rel_start = ev.start_tick.saturating_sub(scope_data.start_tick) as u32;
+            let rel_end = ev.end_tick.saturating_sub(scope_data.start_tick) as u32;
+            crate::analysis::tension_curve::ChordTensionSpan {
+                start_tick: rel_start,
+                end_tick: rel_end,
+                tension: fnev.tension,
+                in_key: fnev.in_key,
+            }
+        })
+        .collect();
+
+    // Optional audio path — one full-scope render sliced into per-bar
+    // BarAudio entries. include_audio defaults to true for arrangement
+    // scope, false for pattern scope (patterns are usually short and
+    // include_audio brings in renderer warnings the caller probably
+    // doesn't want).
+    let want_audio = include_audio.unwrap_or(pattern_id.is_none());
+    let mut warnings = scope_data.warnings.clone();
+    let mut audio_per_bar_buf: Vec<crate::analysis::tension_curve::BarAudio> = Vec::new();
+    let mut has_audio = false;
+    if want_audio {
+        if pattern_id.is_some() {
+            warnings.push(
+                "include_audio is true but pattern scope renders only the pattern's note window — \
+                 results may differ from arrangement audio"
+                    .to_string(),
+            );
+        }
+        // Render the entire scope. For pattern scope we render the
+        // arrangement starting at 0 for `length_ticks` worth of ticks; for
+        // arrangement scope we render the [start, end) range directly.
+        let render_start = scope_data.start_tick;
+        let render_end = render_start + scope_data.length_ticks;
+        match crate::audio::arrangement_render::render_arrangement_to_buffer(
+            session,
+            sample_library,
+            shared,
+            render_start,
+            render_end,
+        ) {
+            Ok(rendered) => {
+                for w in &rendered.warnings {
+                    warnings.push(w.clone());
+                }
+                // Precompute the (total_bars + 1) bar-boundary frame
+                // offsets once. `tick_to_seconds` walks the tempo-change
+                // list per call; doing the lookup inside the per-bar loop
+                // is O(bars × tempo_changes).
+                let bar_boundary_frames: Vec<usize> = {
+                    let song = shared.song.read();
+                    let start_seconds = song.tick_to_seconds(synth_sequencer::Tick(render_start));
+                    (0..=scope_data.total_bars)
+                        .map(|i| {
+                            let tick = (render_start + u64::from(i) * u64::from(ticks_per_bar))
+                                .min(render_end);
+                            let s = song.tick_to_seconds(synth_sequencer::Tick(tick));
+                            (((s - start_seconds) * f64::from(rendered.sample_rate)).max(0.0))
+                                as usize
+                        })
+                        .collect()
+                };
+                let total_frames = rendered.samples.len() / 2;
+                let bar_audio = (0..scope_data.total_bars as usize)
+                    .map(|i| {
+                        let start_frame = bar_boundary_frames[i].min(total_frames);
+                        let end_frame = bar_boundary_frames[i + 1]
+                            .min(total_frames)
+                            .max(start_frame);
+                        let slice = &rendered.samples[start_frame * 2..end_frame * 2];
+                        let m = crate::audio::mix_analysis::analyze_mix_buffer(
+                            slice,
+                            rendered.sample_rate,
+                        );
+                        crate::analysis::tension_curve::BarAudio {
+                            lufs_momentary: m.lufs_momentary_max,
+                            rms_dbfs: m.rms_dbfs,
+                            band_sub: m.energy_bands.sub,
+                            band_low: m.energy_bands.low,
+                            band_mid: m.energy_bands.mid,
+                            band_high: m.energy_bands.high,
+                            stereo_correlation: m.stereo_correlation,
+                            stereo_width: m.stereo_width,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                audio_per_bar_buf = bar_audio;
+                has_audio = true;
+            }
+            Err(e) => {
+                warnings.push(format!(
+                    "include_audio requested but render failed — falling back to symbolic mode: {e}"
+                ));
+            }
+        }
+    }
+
+    let sections_from_form: Vec<crate::analysis::bar_features::ClusteredSection> = form_analysis
+        .sections
+        .iter()
+        .map(|s| crate::analysis::bar_features::ClusteredSection {
+            label: s.label.clone(),
+            start_bar: s.start_bar,
+            end_bar: s.end_bar,
+        })
+        .collect();
+
+    let inputs = crate::analysis::tension_curve::TensionCurveInputs {
+        bars: &form_analysis.bars,
+        bar_mean_pitches: &bar_mean_pitches,
+        bar_distinct_onsets: &bar_onsets,
+        ticks_per_bar,
+        chord_spans: &chord_spans,
+        audio_per_bar: if has_audio {
+            Some(&audio_per_bar_buf)
+        } else {
+            None
+        },
+        sections: &sections_from_form,
+    };
+    let analysis = crate::analysis::tension_curve::analyze_tension_curve(&inputs);
+
+    warnings.extend(analysis.warnings.iter().cloned());
+
+    let bars_wire: Vec<TensionCurveBar> = analysis
+        .bars
+        .iter()
+        .map(|b| TensionCurveBar {
+            bar: b.bar,
+            harmonic_tension: b.harmonic_tension,
+            dissonance: b.dissonance,
+            density_score: b.density_score,
+            register_score: b.register_score,
+            rhythmic_activity: b.rhythmic_activity,
+            mean_velocity: b.mean_velocity,
+            active_track_count: b.active_track_count,
+            loudness_score: b.loudness_score,
+            brightness: b.brightness,
+            band_entropy: b.band_entropy,
+            stereo_width_score: b.stereo_width_score,
+            composite_tension: b.composite_tension,
+        })
+        .collect();
+
+    let sections_wire = form_analysis
+        .sections
+        .iter()
+        .map(section_summary_to_wire)
+        .collect();
+
+    let (start_bar, start_beat) =
+        tick_to_bar_beat_1based(scope_data.start_tick, scope_data.time_sig);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(scope_data.end_tick, scope_data.time_sig);
+
+    Ok(AnalyzeTensionCurveResult {
+        scope: scope_data.scope,
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
+        length_bars: scope_data.total_bars,
+        time_signature_numerator: scope_data.time_sig.numerator,
+        time_signature_denominator: scope_data.time_sig.denominator,
+        has_audio,
+        bars: bars_wire,
+        sections: sections_wire,
+        summary: TensionCurveSummary {
+            peak_bar: analysis.summary.peak_bar,
+            peak_value: analysis.summary.peak_value,
+            trough_bar: analysis.summary.trough_bar,
+            trough_value: analysis.summary.trough_value,
+            mean: analysis.summary.mean,
+            std_dev: analysis.summary.std_dev,
+        },
+        warnings,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn suggest_music_fixes_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    pattern_id: Option<u32>,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
+    categories: Option<Vec<String>>,
+    include_audio: Option<bool>,
+    max_suggestions: Option<u32>,
+    exclude_drums: Option<bool>,
+    exclude_track_ids: Option<Vec<u16>>,
+) -> Result<synth_mcp::types::SuggestMusicFixesResult, McpBridgeError> {
+    use synth_mcp::types::SuggestMusicFixesResult;
+
+    let categories_v: Vec<String> = categories
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| {
+            crate::analysis::suggest_fixes::ALL_CATEGORIES
+                .iter()
+                .any(|allowed| allowed == c)
+        })
+        .collect();
+    let max = max_suggestions.unwrap_or(15).clamp(1, 50);
+    let exclude_drums_v = exclude_drums.unwrap_or(true);
+    let exclude_track_ids_v = exclude_track_ids.unwrap_or_default();
+    let include_audio_v = include_audio.unwrap_or(true);
+
+    let cat_enabled =
+        |c: &str| -> bool { categories_v.is_empty() || categories_v.iter().any(|e| e == c) };
+
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Resolve the scope header (start_bar/start_beat/length_bars). Reuse
+    // collect_form_scope so the wire-format scope/end_tick/etc. match
+    // analyze_tension_curve byte-for-byte.
+    let scope_data = collect_form_scope(
+        session,
+        shared,
+        pattern_id,
+        arrangement_start_tick,
+        arrangement_end_tick,
+        exclude_drums_v,
+        &exclude_track_ids_v,
+    )?;
+    for w in &scope_data.warnings {
+        warnings.push(w.clone());
+    }
+    let (start_bar, start_beat) =
+        tick_to_bar_beat_1based(scope_data.start_tick, scope_data.time_sig);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(scope_data.end_tick, scope_data.time_sig);
+
+    // ─── Harmony ────────────────────────────────────────────────────────
+    let harmony = if cat_enabled("harmony") {
+        match analyze_song_harmony(
+            session,
+            shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            None,
+            Some(exclude_drums_v),
+            Some(exclude_track_ids_v.clone()),
+        ) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                warnings.push(format!("harmony analyzer skipped: {e}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // ─── Form / arrangement ────────────────────────────────────────────
+    let form_map = if cat_enabled("arrangement") {
+        match analyze_form_map_impl(
+            session,
+            shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            None,
+            None,
+            Some(exclude_drums_v),
+            Some(exclude_track_ids_v.clone()),
+        ) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                warnings.push(format!("form-map analyzer skipped: {e}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // ─── Hook strength ──────────────────────────────────────────────────
+    let hook = if cat_enabled("composition") {
+        match analyze_hook_strength_impl(
+            session,
+            shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            None,
+            None,
+            Some(exclude_drums_v),
+            Some(exclude_track_ids_v.clone()),
+        ) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                warnings.push(format!("hook analyzer skipped: {e}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // ─── Tension curve ──────────────────────────────────────────────────
+    let tension_curve = if cat_enabled("arrangement") {
+        match analyze_tension_curve_impl(
+            session,
+            sample_library,
+            shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            Some(include_audio_v && pattern_id.is_none()),
+            None,
+            None,
+            Some(exclude_drums_v),
+            Some(exclude_track_ids_v.clone()),
+        ) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                warnings.push(format!("tension curve analyzer skipped: {e}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // ─── Drum groove + bass-drum lock ──────────────────────────────────
+    let drum_groove = if cat_enabled("groove") {
+        match analyze_drum_groove_impl(
+            session,
+            shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+        ) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                warnings.push(format!("drum-groove analyzer skipped: {e}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let bass_drum_lock = if cat_enabled("groove") {
+        match analyze_bass_drum_lock_impl(
+            session,
+            shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            None,
+        ) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                warnings.push(format!("bass-drum-lock analyzer skipped: {e}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // ─── Audio-render-backed checks ─────────────────────────────────────
+    let mix_bus = if cat_enabled("mix") && include_audio_v && pattern_id.is_none() {
+        let song = shared.song.read();
+        let start_seconds =
+            song.tick_to_seconds(synth_sequencer::Tick(scope_data.start_tick)) as f32;
+        let end_seconds = song.tick_to_seconds(synth_sequencer::Tick(scope_data.end_tick)) as f32;
+        let dur = (end_seconds - start_seconds).max(0.0);
+        drop(song);
+        if dur <= 0.0 {
+            None
+        } else {
+            match analyze_mix_bus_impl(
+                session,
+                sample_library,
+                shared,
+                dur,
+                Some(scope_data.start_tick),
+            ) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    warnings.push(format!("mix-bus analyzer skipped: {e}"));
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
+
+    let masking = if cat_enabled("mix") && include_audio_v && pattern_id.is_none() {
+        match analyze_masking_matrix_impl(
+            session,
+            sample_library,
+            shared,
+            scope_data.start_tick,
+            scope_data.end_tick,
+        ) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                warnings.push(format!("masking-matrix analyzer skipped: {e}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let inputs = crate::analysis::suggest_fixes::SuggestionInputs {
+        harmony: harmony.as_ref(),
+        mix_bus: mix_bus.as_ref(),
+        masking: masking.as_ref(),
+        drum_groove: drum_groove.as_ref(),
+        bass_drum_lock: bass_drum_lock.as_ref(),
+        form_map: form_map.as_ref(),
+        hook: hook.as_ref(),
+        tension_curve: tension_curve.as_ref(),
+    };
+    let output = crate::analysis::suggest_fixes::suggest(&inputs, &categories_v, max);
+
+    Ok(SuggestMusicFixesResult {
+        scope: scope_data.scope,
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
+        length_bars: scope_data.total_bars,
+        include_audio: include_audio_v,
+        categories: categories_v,
+        suggestions: output.suggestions,
+        rules_clean: output.rules_clean,
+        warnings,
     })
 }
 

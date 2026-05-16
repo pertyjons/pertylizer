@@ -1,6 +1,6 @@
 # MCP Music Tools — Plan
 
-> **Date:** 2026-05-11 (last update 2026-05-17: Group C from §8.6 — `analyze_arrangement`, `analyze_form_map`, `find_motifs`, `analyze_hook_strength` — shipped in v0.286.0. Earlier 2026-05-17: Group B from §8.6 — `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`, `quantize_notes_to_grid` — shipped in v0.285.0. Previous update 2026-05-16: §0 sweep — `true_peak`, `lufs_momentary_max`, `lufs_short_term_max`, `pre_master_peak` shipped; `TrackContribution` restructured to embed `MixBusMetrics` (§7.6 decision); §8.3 `pre_master_peak` closed. Earlier 2026-05-16 work: higher-level music-understanding catalogue + optional ML sidecar; §8.3 pan-law documentation, §8.5.1–§8.5.5 inference round-3 fixes — Pad-precedence-by-name, Bass-gate Atonal-by-name, Lead-precedence allows Polyphonic, drum-gate wider pitch-spread when name says Drums, extended name vocabulary; §7.1 `OfflineEngineSession` engine-reuse; §8.5.6.1/§8.5.6.2 round-4 inference follow-ups.)
+> **Date:** 2026-05-11 (last update 2026-05-17: Group D from §8.6 — `analyze_tension_curve`, `suggest_music_fixes` — shipped in v0.287.0. Earlier 2026-05-17: Group C from §8.6 — `analyze_arrangement`, `analyze_form_map`, `find_motifs`, `analyze_hook_strength` — shipped in v0.286.0. Earlier 2026-05-17: Group B from §8.6 — `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`, `quantize_notes_to_grid` — shipped in v0.285.0. Previous update 2026-05-16: §0 sweep — `true_peak`, `lufs_momentary_max`, `lufs_short_term_max`, `pre_master_peak` shipped; `TrackContribution` restructured to embed `MixBusMetrics` (§7.6 decision); §8.3 `pre_master_peak` closed. Earlier 2026-05-16 work: higher-level music-understanding catalogue + optional ML sidecar; §8.3 pan-law documentation, §8.5.1–§8.5.5 inference round-3 fixes — Pad-precedence-by-name, Bass-gate Atonal-by-name, Lead-precedence allows Polyphonic, drum-gate wider pitch-spread when name says Drums, extended name vocabulary; §7.1 `OfflineEngineSession` engine-reuse; §8.5.6.1/§8.5.6.2 round-4 inference follow-ups.)
 > **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix in two rounds post-v0.277.0; §8.2 auto-inferred instrument profiles shipped in v0.278.0; commits 74d18da + 93c0786 closed the offline-render snapshot bug class, added `get_instrument_profiles`, and applied seven inference improvements that roughly doubled live-test accuracy on synth patches; inference round-3 (§8.5.1–§8.5.5) + §8.3 pan-law doc + §7.1 engine reuse shipped 2026-05-16; §0 deferred trio (`true_peak`, LUFS-S/M, `pre_master_peak`) + §7.6 embed-MixBusMetrics decision shipped 2026-05-16.** Remaining Tier-1+ pending.
 > Post-ship live testing surfaced determinism, auto-categorization, and offline-render-state issues — see §8. §8.1, §8.2, §8.3 (doc + `pre_master_peak`), §8.4, and §8.5 are fully shipped end-to-end through the MCP bridge.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
@@ -9,7 +9,7 @@
 
 ## 0. Status snapshot
 
-### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), v0.278.0 (auto-inferred profiles), 74d18da + 93c0786 (offline-render fixes, `get_instrument_profiles`, inference round 2), v0.283.0 (drum-groove + bass-drum-lock + harmonic-function), v0.284.0 (Group A: `analyze_instrument_range` + `analyze_velocity_response`), v0.285.0 (Group B: `generate_chord` + `transpose_notes` + `quantize_notes_to_scale` + `quantize_notes_to_grid`), and v0.286.0 (Group C: `analyze_arrangement` + `analyze_form_map` + `find_motifs` + `analyze_hook_strength`)
+### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), v0.278.0 (auto-inferred profiles), 74d18da + 93c0786 (offline-render fixes, `get_instrument_profiles`, inference round 2), v0.283.0 (drum-groove + bass-drum-lock + harmonic-function), v0.284.0 (Group A: `analyze_instrument_range` + `analyze_velocity_response`), v0.285.0 (Group B: `generate_chord` + `transpose_notes` + `quantize_notes_to_scale` + `quantize_notes_to_grid`), v0.286.0 (Group C: `analyze_arrangement` + `analyze_form_map` + `find_motifs` + `analyze_hook_strength`), and v0.287.0 (Group D: `analyze_tension_curve` + `suggest_music_fixes`)
 
 | Tool | Version | Notes |
 |------|---------|-------|
@@ -28,6 +28,8 @@
 | `transpose_notes` | v0.285.0 | Shifts every note in `pattern_id` by a signed semitone delta. Notes whose new pitch would leave 0..=127 stay in place, counted in `notes_out_of_range`. When both `scale_tonic` (0..12) and `scale_name` are set, off-scale results snap to the nearest in-scale pitch via `tie_break` (`up`/`down`/`nearest`, default `up`); partial constraint emits a warning and proceeds without snapping. 13 scale templates supported (major, minor, harmonic_minor, melodic_minor, dorian, phrygian, lydian, mixolydian, locrian, pentatonic_major, pentatonic_minor, blues, chromatic). Returns `notes_transposed` / `notes_out_of_range` / `notes_snapped_to_scale` plus the echoed-back scale name (lets callers detect the major-fallback on unknown input). |
 | `quantize_notes_to_scale` | v0.285.0 | Snaps every off-scale pitch in `pattern_id` to its nearest in-scale neighbour (search radius ±6 semitones — a 12-pitch-class scale always contains a member within a tritone of any input). Same scale templates + tie_break semantics as `transpose_notes`. Returns `notes_already_in_scale`, `notes_moved`, `mean_correction_semitones`, `max_correction_semitones`. |
 | `quantize_notes_to_grid` | v0.285.0 | Snaps note start ticks in `pattern_id` to a `grid_ticks` grid (240 = sixteenth at 960 PPQN, 480 = eighth, 960 = quarter) with optional `strength` (0..1, default 1.0 — full snap), `swing` (0..1, even-indexed grid positions stay, odd push back by up to half-grid), and `humanize_ticks` (max ±jitter per note, seeded with `humanize_seed` for reproducibility — same seed + same notes + same options → byte-identical output). `grid_ticks == 0` returns early with a warning; final tick clamped to `pattern_length - 1` so swing/jitter never push notes past the pattern end. Returns `notes_moved`, `mean_delta_ticks`, `max_delta_ticks`, plus all input options echoed back. |
+| `analyze_tension_curve` | v0.287.0 | Bar-level tension diagnostic built from existing analyzers. Per-bar rows carry `harmonic_tension` (mean per-chord tension from `harmonic_function` over chord windows that touch the bar), `dissonance` (fraction of in-bar chord-window-ticks out of key), `density_score` (note count / 16, clamped), `register_score` ((mean MIDI − 36) / 60, clamped), `rhythmic_activity` (distinct 16th-note onset cells / 16), `mean_velocity`, and (in audio mode) `loudness_score` (LUFS-M mapped from `[-50, -10]` dB → `[0, 1]`, RMS fallback for very short bars), `brightness` ((mid + high) / total energy), `band_entropy` (Shannon entropy across the 4 fixed bands / ln 4), `stereo_width_score`. Composite blend: 35 % harmonic + 15 % dissonance + 20 % density + 10 % register + 20 % rhythm in symbolic mode; audio-augmented blend keeps 60 % of the symbolic score and adds 20 % loudness + 12 % brightness + 8 % entropy. Returns the cluster-derived `sections` from `analyze_arrangement` so callers can map bars to A/B/A'. Warnings cover chorus-doesn't-lift (reprise > 0.10 below its first appearance), build-peaks-too-early (section peak bar before midpoint and last bar > 0.10 below peak), drop-loses-low-end (section-start bar's sub-band energy falls > 50 % vs. the prior bar at high tension), monotone-tension (std-dev < 0.05 across 4+ bars). `include_audio` defaults to true in arrangement scope and false in pattern scope; audio mode does one offline render and slices the buffer per bar. Implementation in `crates/pertylizer/src/analysis/tension_curve.rs`; bridge in `analyze_tension_curve_impl`. Closes Tier-2 #14. |
+| `suggest_music_fixes` | v0.287.0 | Meta-analysis tool. The bridge runs harmony, harmonic-function, mix-bus, masking, drum-groove, bass-drum-lock, form, hook, and tension-curve analyzers for the requested scope, hands the results into a category-grouped rule engine, sorts suggestions by descending severity, and truncates to `max_suggestions` (default 15, clamped to `[1, 50]`). `categories` filters to a subset of `harmony` / `mix` / `groove` / `arrangement` / `composition` / `patch` — empty/null runs everything. `include_audio` (default true) gates the mix-bus, masking, and audio-augmented tension-curve checks; false skips the offline renders for a faster symbolic-only pass. Each `FixSuggestion` carries a stable rule `id` (`harmony.no_key_inferred`, `mix.heavy_masking_pair`, `groove.weak_backbeat`, …) so callers can suppress specific rules in a follow-up call without parsing titles, plus `severity ∈ [0, 1]`, a short `title`, a multi-sentence `detail`, and an `evidence` list referencing the supporting measurements. `rules_clean` lists rule IDs that ran but found nothing — confirms what was checked. No new measurements: each rule reads exactly one underlying analyzer's output. Implementation in `crates/pertylizer/src/analysis/suggest_fixes.rs`; bridge in `suggest_music_fixes_impl`. Closes Tier-2 #16. |
 
 ### Deferred / in-progress
 
@@ -204,14 +206,18 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 
 ### Tier 2 — Quality-of-life and composition
 
-14. **`analyze_tension_curve`** — Higher-level song-shape diagnostic built from existing analyzers. Useful for
-    "the chorus doesn't lift" and "the build peaks too early" feedback; less foundational than the lower-level
-    tools it consumes.
+14. ✅ **`analyze_tension_curve`** — shipped in v0.287.0 as Group D from §8.6. Per-bar rows over harmonic
+    tension + dissonance + density + register + rhythmic activity + (audio mode) loudness/brightness/band-
+    entropy/stereo-width. Section labels from `analyze_arrangement`. Warnings: chorus-doesn't-lift,
+    build-peaks-too-early, drop-loses-low-end, monotone-tension. `include_audio` defaults to true in
+    arrangement scope.
 15. ✅ **`find_motifs`** + **`analyze_hook_strength`** — shipped in v0.286.0 as Group C from §8.6. Pitch-interval
     n-gram motif search (transposition-invariant, lengths 3..=6 by default, hard cap 12); hook score blends
     longest motif length, repeat count, and coverage ratio.
-16. **`suggest_music_fixes`** — Meta-tool that ranks concrete next actions from existing diagnostics. High agent
-    usefulness, but should come after enough analyzers exist for the suggestions to be grounded.
+16. ✅ **`suggest_music_fixes`** — shipped in v0.287.0 as Group D from §8.6. Runs harmony, harmonic-function,
+    mix-bus, masking, drum-groove, bass-drum-lock, form, hook, and tension-curve analyzers for the scope,
+    feeds them into a category-grouped rule engine, returns ranked suggestions with stable rule IDs.
+    Categories filterable; `rules_clean` reports rules that found nothing.
 17. ✅ **`generate_chord`**, **`transpose_notes`**, **`quantize_notes_to_scale`**, **`quantize_notes_to_grid`** —
     Symbolic helpers that turn a 20-tool-call sequence into a 1-tool-call sequence. Not unlocking any new
     capability, but a large reduction in token-cost-per-musical-idea. **Shipped 2026-05-17 (v0.285.0) as
@@ -1102,11 +1108,19 @@ arrangement_start/end_tick (arrangement scope), reusing the harmony tools' resol
 HarmonyScope. `exclude_drums` defaults to true via `infer_all_profiles`. 17 in-module unit tests + 5
 bridge integration tests in `tests/form_motifs_integration.rs`.
 
-**Group D — Meta-analysis (Tier-2 #14 + #16)**
+**Group D — Meta-analysis (Tier-2 #14 + #16)** — ✅ shipped 2026-05-17 (v0.287.0)
 
-`analyze_tension_curve` first — consumes the existing harmony/dynamics/spectral analyzers and produces a
-bar-level curve. Then `suggest_music_fixes` on top, which consumes everything including the tension curve
-and ranks concrete edits. Tension-curve is the data source; suggest_music_fixes is the packaging layer.
+`analyze_tension_curve` and `suggest_music_fixes` shipped together. Tension curve lives in
+`crates/pertylizer/src/analysis/tension_curve.rs` as a pure synthesis layer: takes bar features +
+chord-tension spans + optional per-bar `BarAudio`, returns per-bar `composite_tension` + summary +
+warnings. Bridge runs harmony + harmonic_function to get chord-tension spans and (when
+`include_audio = true` — default in arrangement scope) does one offline render and slices the buffer
+per bar via `analyze_mix_buffer`. `suggest_music_fixes` lives in
+`crates/pertylizer/src/analysis/suggest_fixes.rs` as a category-grouped rule engine over
+`SuggestionInputs { harmony, mix_bus, masking, drum_groove, bass_drum_lock, form_map, hook,
+tension_curve }`; the bridge populates each slot by calling the corresponding `*_impl` for the
+scope, then aggregates. 21 in-module unit tests (9 tension_curve + 6 suggest_fixes + 6 integration
+suite) + 6 bridge integration tests in `tests/group_d_integration.rs`.
 
 **Standalone / lower priority**
 
@@ -1123,8 +1137,7 @@ and ranks concrete edits. Tension-curve is the data source; suggest_music_fixes 
 2. ✅ **Group B** — low risk, high token-saving impact for the agent. One PR. **Shipped 2026-05-17 (v0.285.0).**
 3. ✅ **Group C** — auto-detect section boundaries from self-similarity, pitch-interval n-gram motifs.
    One PR. **Shipped 2026-05-17 (v0.286.0).**
-4. **Group D** — depends on the analyzers from earlier groups being in place. Tension curve before
-   suggest_music_fixes.
+4. ✅ **Group D** — tension curve + suggest_music_fixes. One PR. **Shipped 2026-05-17 (v0.287.0).**
 
 ### 8.7 Cross-reference
 
@@ -1145,5 +1158,7 @@ shipped 2026-05-16 — alongside §7.2 (rayon-parallel per-track renders) and §
 from §8.6, four symbolic composition helpers (`generate_chord`, `transpose_notes`,
 `quantize_notes_to_scale`, `quantize_notes_to_grid`) — shipped 2026-05-17 (v0.285.0). Tier-1 item 12
 (`render_section_to_wav`) is the only remaining Tier-1 work — pick up when reference audio comes
-into the workflow (it unlocks `compare_to_reference` from Tier 3). Next groups from §8.6: Group C
-(form & motifs), Group D (meta-analysis).
+into the workflow (it unlocks `compare_to_reference` from Tier 3). Group D from §8.6 (`analyze_
+tension_curve` + `suggest_music_fixes`) shipped 2026-05-17 (v0.287.0), closing Tier-2 #14 and #16.
+All §8.6 groups (A/B/C/D) are now shipped; remaining Tier-2 work is item #18 `analyze_groove`
+(deferred — `analyze_drum_groove` already covers the highest-value case).

@@ -12,6 +12,8 @@ pub mod motifs;
 pub mod patch_sweep;
 pub mod pattern_analysis;
 pub(crate) mod repetition;
+pub mod suggest_fixes;
+pub mod tension_curve;
 
 pub use bass_drum_lock::{
     BassDrumAlignment, BassDrumLockAnalysis, BassOnset, BassPitchStability, KickOnset,

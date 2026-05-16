@@ -509,12 +509,14 @@ Roadmap for the remaining tiers lives in `docs/mcp-music-tools-plan.md`.
       `compare_to_reference` becomes relevant.
 - [x] Tier 2: `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`,
       `quantize_notes_to_grid` (v0.285.0, Group B from §8.6 of
-      `docs/mcp-music-tools-plan.md`); `analyze_velocity_response` (v0.284.0).
+      `docs/mcp-music-tools-plan.md`); `analyze_velocity_response` (v0.284.0);
+      `analyze_arrangement`, `analyze_form_map`, `find_motifs`,
+      `analyze_hook_strength` (v0.286.0, Group C); `analyze_tension_curve`,
+      `suggest_music_fixes` (v0.287.0, Group D — closes Tier-2 #14 and #16).
       `analyze_groove` still pending — `analyze_drum_groove` (v0.283.0)
       already covers the highest-value groove diagnostic.
-- [ ] Tier 3: `analyze_arrangement`, `compare_to_reference`,
-      `compare_patterns`, `compare_patches`, `humanize_notes`,
-      `generate_variation`, `analyze_track`, `get_mix_meters`.
+- [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
+      `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
 - [ ] Enable AI to "play freely" via MCP to autonomously generate complete songs and arrangements
 - [ ] Implement real-time parameter interpolation (gliding) to allow smoother AI-driven sound design
 

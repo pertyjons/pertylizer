@@ -2382,3 +2382,167 @@ pub struct AnalyzeHookStrengthResult {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub warnings: Vec<String>,
 }
+
+// ---------------------------------------------------------------------------
+// Group D — meta-analysis result types
+// ---------------------------------------------------------------------------
+
+/// Per-bar entry in `analyze_tension_curve`. All scalar fields are normalized
+/// to `[0, 1]` unless noted, so the caller can plot them on a single axis or
+/// feed them into a higher-level fix-ranker without extra work.
+///
+/// Audio-derived fields (`loudness_score`, `brightness`, `band_entropy`,
+/// `stereo_width_score`) are `None` when the caller asked for the cheap
+/// symbolic-only mode (or when the scope was too short to render).
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct TensionCurveBar {
+    /// 1-indexed bar number inside the analyzed scope.
+    pub bar: u32,
+    /// Mean per-chord tension across chord windows that overlap the bar
+    /// (from `analyze_harmonic_function`). `0.0` when no chord touches the
+    /// bar.
+    pub harmonic_tension: f32,
+    /// Fraction of in-bar chord-window-ticks marked out of key (proxy for
+    /// vertical dissonance). `0.0` when no chord touches the bar.
+    pub dissonance: f32,
+    /// `note_count / 16`, clamped to 1. Saturates for very busy bars so
+    /// arpeggios don't dominate the composite score.
+    pub density_score: f32,
+    /// `(mean_midi - 36) / 60`, clamped — places C2 near 0 and C7 near 1.
+    pub register_score: f32,
+    /// Distinct 16th-note onset positions / 16, clamped. Picks up
+    /// syncopation without being inflated by chordal multi-note onsets.
+    pub rhythmic_activity: f32,
+    /// Mean velocity (0..=1) across notes that start in the bar.
+    pub mean_velocity: f32,
+    /// Distinct track IDs that contributed notes to the bar.
+    pub active_track_count: u32,
+    /// Loudness score: LUFS-M (or RMS dBFS for very short bars) mapped from
+    /// `[-50, -10]` dB onto `[0, 1]`. Omitted in symbolic-only mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loudness_score: Option<f32>,
+    /// (mid + high) / total energy. Higher = brighter. Omitted in
+    /// symbolic-only mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brightness: Option<f32>,
+    /// Shannon entropy across the 4 energy bands, normalized by `ln(4)`.
+    /// 1.0 = perfectly flat spectrum; 0.0 = single-band signal. Omitted in
+    /// symbolic-only mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub band_entropy: Option<f32>,
+    /// `side_rms / mid_rms`, clamped to `[0, 1]`. Omitted in symbolic-only
+    /// mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stereo_width_score: Option<f32>,
+    /// Final composite tension in `[0, 1]`. Symbolic-only blend is 35 %
+    /// harmonic + 15 % dissonance + 20 % density + 10 % register + 20 %
+    /// rhythm. Audio-augmented blend keeps 60 % of the symbolic score and
+    /// adds 20 % loudness + 12 % brightness + 8 % band entropy.
+    pub composite_tension: f32,
+}
+
+/// Summary statistics over the per-bar `composite_tension` series.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct TensionCurveSummary {
+    /// 1-indexed bar with the highest composite tension. `None` for empty
+    /// scopes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peak_bar: Option<u32>,
+    pub peak_value: f32,
+    /// 1-indexed bar with the lowest composite tension *among bars that
+    /// have content* — purely empty bars are skipped so an intro of rests
+    /// doesn't always win. `None` when every bar is empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trough_bar: Option<u32>,
+    pub trough_value: f32,
+    pub mean: f32,
+    /// Standard deviation across the composite-tension series.
+    pub std_dev: f32,
+}
+
+/// Output of `analyze_tension_curve`. Bar-level tension diagnostic built
+/// from the existing harmony/dynamics/spectral analyzers — flags shape
+/// issues like a chorus that does not lift, a build that peaks too early,
+/// drops that lose low-end energy, and otherwise monotone curves.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeTensionCurveResult {
+    pub scope: HarmonyScope,
+    pub start_bar: u32,
+    pub start_beat: u32,
+    pub end_bar: u32,
+    pub end_beat: u32,
+    pub length_bars: u32,
+    pub time_signature_numerator: u8,
+    pub time_signature_denominator: u8,
+    /// True when the result includes audio-derived axes (loudness,
+    /// brightness, band entropy, stereo width). Driven by `include_audio` at
+    /// call time and whether the scope was renderable.
+    pub has_audio: bool,
+    /// Per-bar tension breakdown.
+    pub bars: Vec<TensionCurveBar>,
+    /// Detected sections (same clustering used by `analyze_arrangement`) so
+    /// the caller can map bars back to A/B/A' labels without re-running
+    /// form analysis.
+    pub sections: Vec<SectionSpan>,
+    pub summary: TensionCurveSummary,
+    /// Cross-bar / cross-section warnings: chorus-doesn't-lift,
+    /// build-peaks-too-early, drop-loses-low-end, monotone-tension.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
+
+/// One ranked suggestion from `suggest_music_fixes`. Severity is in
+/// `[0, 1]`; the caller can decide how aggressively to act on each entry.
+#[derive(Debug, Clone, Serialize)]
+pub struct FixSuggestion {
+    /// Stable rule identifier, e.g. `"harmony.no_key_inferred"`. Lets the
+    /// caller suppress specific rules in a follow-up call without parsing
+    /// the title.
+    pub id: String,
+    /// One of `"harmony"`, `"mix"`, `"groove"`, `"arrangement"`,
+    /// `"composition"`, `"patch"`.
+    pub category: String,
+    /// Severity in `[0, 1]`. Used to sort the list — higher = more urgent.
+    pub severity: f32,
+    /// Short headline ("Chorus reprise has lower energy than the original").
+    pub title: String,
+    /// Two-to-three sentence detail with concrete action language.
+    pub detail: String,
+    /// Numeric / textual evidence that triggered the rule. One entry per
+    /// supporting measurement, in declaration order.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub evidence: Vec<String>,
+}
+
+/// Output of `suggest_music_fixes`. Packages diagnostics from harmony,
+/// harmonic function, mix-bus, masking, groove, bass/drum-lock, form,
+/// motifs/hook, tension curve, and patch analyzers into a ranked list of
+/// concrete edits. No new measurements — the underlying analyzers are
+/// authoritative and surface their full output through their own MCP
+/// tools.
+#[derive(Debug, Clone, Serialize)]
+pub struct SuggestMusicFixesResult {
+    pub scope: HarmonyScope,
+    pub start_bar: u32,
+    pub start_beat: u32,
+    pub end_bar: u32,
+    pub end_beat: u32,
+    pub length_bars: u32,
+    /// Whether the bridge ran the audio-render-backed analyzers (mix bus,
+    /// masking, audio-augmented tension curve). False when the caller
+    /// asked for symbolic-only mode.
+    pub include_audio: bool,
+    /// Category filters that were honored. Empty when no filter was
+    /// supplied (all categories ran).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub categories: Vec<String>,
+    /// Ranked suggestions, severity descending. Truncated to
+    /// `max_suggestions` (default 15).
+    pub suggestions: Vec<FixSuggestion>,
+    /// Rule IDs that were considered but produced no suggestions (passed
+    /// thresholds), so the caller can confirm what was checked.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub rules_clean: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
