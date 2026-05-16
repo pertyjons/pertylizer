@@ -884,6 +884,12 @@ impl SynthEngine {
             } => {
                 self.handle_reorder_effect(instrument_id, module_id, direction);
             }
+            EngineCommand::SetEffectChainOrder {
+                instrument_id,
+                order,
+            } => {
+                self.handle_set_effect_chain_order(instrument_id, &order);
+            }
 
             // Modular routing
             EngineCommand::AddModuleInstance {
@@ -1855,21 +1861,28 @@ impl SynthEngine {
         self.update_shared_graph(instrument_id);
     }
 
+    fn effect_chain_for_mut(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+    ) -> Option<&mut EffectChain> {
+        match instrument_id {
+            Some(inst_id) => self
+                .instruments
+                .iter_mut()
+                .find(|i| i.id() == inst_id)
+                .map(|i| i.effect_chain_mut()),
+            None => Some(&mut self.master_effects),
+        }
+    }
+
     fn handle_reorder_effect(
         &mut self,
         instrument_id: Option<InstrumentId>,
         module_id: ModuleId,
         direction: ReorderDirection,
     ) {
-        let chain = match instrument_id {
-            Some(inst_id) => {
-                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
-                    instrument.effect_chain_mut()
-                } else {
-                    return;
-                }
-            }
-            None => &mut self.master_effects,
+        let Some(chain) = self.effect_chain_for_mut(instrument_id) else {
+            return;
         };
         match direction {
             ReorderDirection::Up => {
@@ -1880,8 +1893,19 @@ impl SynthEngine {
             }
         }
         self.update_shared_instruments();
-        // Refresh shared_graph so the effect_chain_order observed by offline
-        // tooling reflects the new slot order.
+        self.update_shared_graph(instrument_id);
+    }
+
+    fn handle_set_effect_chain_order(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        order: &[ModuleId],
+    ) {
+        let Some(chain) = self.effect_chain_for_mut(instrument_id) else {
+            return;
+        };
+        chain.set_slot_order(order);
+        self.update_shared_instruments();
         self.update_shared_graph(instrument_id);
     }
 

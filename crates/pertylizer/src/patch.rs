@@ -557,6 +557,13 @@ pub struct PatchSettings {
     /// Used to restore the scroll area size when loading a patch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canvas_size: Option<CanvasSize>,
+    /// Effect chain processing order (module IDs as strings, in chain order).
+    ///
+    /// When present, the engine restores the effect chain to match this order
+    /// on load. Empty means "use legacy behavior" — chain order is then
+    /// reconstructed from `patch.modules` order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effect_chain_order: Vec<String>,
 }
 
 fn default_master_volume() -> Gain {
@@ -572,6 +579,7 @@ impl Default for PatchSettings {
             glide_time: Seconds::new(0.0),
             awe: None,
             canvas_size: None,
+            effect_chain_order: Vec::new(),
         }
     }
 }
@@ -1020,6 +1028,57 @@ mod tests {
 
         let author = Author::from("Test");
         assert!(!author.is_empty());
+    }
+
+    #[test]
+    fn test_patch_settings_effect_chain_order_round_trip() {
+        let mut patch = Patch::new("Test");
+        patch.settings.effect_chain_order = vec!["reverb-1".to_string(), "delay-2".to_string()];
+
+        let json = serde_json::to_string_pretty(&patch).expect("serialize");
+        assert!(
+            json.contains("effect_chain_order"),
+            "non-empty chain order should serialize"
+        );
+
+        let parsed: Patch = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            parsed.settings.effect_chain_order,
+            vec!["reverb-1".to_string(), "delay-2".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_patch_settings_empty_chain_order_skipped() {
+        let patch = Patch::new("Test");
+        let json = serde_json::to_string_pretty(&patch).expect("serialize");
+        assert!(
+            !json.contains("effect_chain_order"),
+            "empty chain order should be skipped from JSON"
+        );
+
+        // Legacy patches without the field still load.
+        let parsed: Patch = serde_json::from_str(&json).expect("deserialize");
+        assert!(parsed.settings.effect_chain_order.is_empty());
+    }
+
+    #[test]
+    fn test_patch_settings_legacy_load_without_field() {
+        // Simulate an older patch JSON missing the effect_chain_order field.
+        let legacy = r#"{
+            "name": "Legacy",
+            "version": "1.0",
+            "modules": [],
+            "connections": [],
+            "groups": [],
+            "settings": {
+                "master_volume": 0.8,
+                "octave_offset": 0,
+                "glide_time": 0.0
+            }
+        }"#;
+        let parsed: Patch = serde_json::from_str(legacy).expect("deserialize legacy");
+        assert!(parsed.settings.effect_chain_order.is_empty());
     }
 
     #[test]

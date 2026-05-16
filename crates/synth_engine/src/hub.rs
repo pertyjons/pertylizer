@@ -342,6 +342,7 @@ impl EngineHub {
             | EngineCommand::AddEffectInstance { .. }
             | EngineCommand::RemoveEffect { .. }
             | EngineCommand::ReorderEffect { .. }
+            | EngineCommand::SetEffectChainOrder { .. }
             | EngineCommand::AddVisualizer { .. }
             | EngineCommand::RemoveVisualizer { .. }
             | EngineCommand::ClearAllModules => perms.can_modify_topology,

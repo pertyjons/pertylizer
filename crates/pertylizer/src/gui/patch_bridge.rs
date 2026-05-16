@@ -104,6 +104,19 @@ pub fn load_patch(
         }
     }
 
+    let order: Vec<ModuleId> = patch
+        .settings
+        .effect_chain_order
+        .iter()
+        .filter_map(|s| s.parse::<ModuleId>().ok())
+        .collect();
+    if !order.is_empty() {
+        handle.send_blocking(EngineCommand::SetEffectChainOrder {
+            instrument_id: Some(instrument_id),
+            order,
+        });
+    }
+
     // Apply per-instrument settings (always)
     keyboard.set_octave_offset(patch.settings.octave_offset);
 
@@ -447,6 +460,22 @@ pub fn create_patch_from_editor(
         })
         .unwrap_or_default();
 
+    let effect_chain_order: Vec<String> = engine_state
+        .and_then(|(state, inst_id)| {
+            state
+                .instrument_snapshots
+                .read()
+                .iter()
+                .find(|s| s.id == inst_id)
+                .map(|s| {
+                    s.effect_chain_order
+                        .iter()
+                        .map(ModuleId::to_string)
+                        .collect()
+                })
+        })
+        .unwrap_or_default();
+
     for module_id in patch_editor.module_ids() {
         if let Some((descriptor, position, gui_params)) = patch_editor.get_module_data(module_id) {
             let mut param_map = BTreeMap::new();
@@ -498,6 +527,8 @@ pub fn create_patch_from_editor(
         content_size.x,
         content_size.y,
     ));
+
+    patch.settings.effect_chain_order = effect_chain_order;
 
     patch
 }

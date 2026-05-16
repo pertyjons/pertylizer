@@ -557,6 +557,17 @@ pub enum EngineCommand {
         direction: ReorderDirection,
     },
 
+    /// Reorder the entire effect chain to match a given module ID sequence.
+    ///
+    /// IDs listed in `order` are moved to the front in the given order; any
+    /// slots not mentioned keep their relative order and follow afterwards.
+    /// Unknown IDs in `order` are ignored. Used by patch/project load to
+    /// restore explicit effect-chain order.
+    SetEffectChainOrder {
+        instrument_id: Option<InstrumentId>,
+        order: Vec<ModuleId>,
+    },
+
     /// Set an effect parameter using type-safe API.
     /// The Param contains both the parameter type and its value.
     /// - `instrument_id: Some(id)` - Target a specific instrument's effect chain
@@ -1182,6 +1193,14 @@ impl std::fmt::Debug for EngineCommand {
                 .field("instrument_id", instrument_id)
                 .field("module_id", module_id)
                 .field("direction", direction)
+                .finish(),
+            Self::SetEffectChainOrder {
+                instrument_id,
+                order,
+            } => f
+                .debug_struct("SetEffectChainOrder")
+                .field("instrument_id", instrument_id)
+                .field("order", order)
                 .finish(),
             Self::SetEffectParameter {
                 instrument_id,

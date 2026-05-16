@@ -643,6 +643,13 @@ impl EngineCommand {
                 module_id: *module_id,
                 direction: *direction,
             },
+            Self::SetEffectChainOrder {
+                instrument_id,
+                order,
+            } => Self::SetEffectChainOrder {
+                instrument_id: *instrument_id,
+                order: order.clone(),
+            },
 
             // Non-clonable commands (contain move-only types or Arc data)
             Self::SetAudioInputConsumer { .. }

@@ -304,6 +304,22 @@ impl EffectChain {
         false
     }
 
+    /// Reorder the chain so listed IDs appear first, in the given order.
+    ///
+    /// Slots whose IDs appear in `order` are moved to the front in that order.
+    /// Slots not mentioned keep their existing relative order at the end.
+    /// Unknown IDs in `order` are ignored.
+    pub fn set_slot_order(&mut self, order: &[ModuleId]) {
+        let mut new_slots: Vec<ChainSlot> = Vec::with_capacity(self.slots.len());
+        for id in order {
+            if let Some(pos) = self.slots.iter().position(|s| s.module_id() == *id) {
+                new_slots.push(self.slots.remove(pos));
+            }
+        }
+        new_slots.append(&mut self.slots);
+        self.slots = new_slots;
+    }
+
     /// Process the effect chain (effects only, visualizers are skipped).
     ///
     /// The `mix_buffer` contains interleaved stereo audio and is modified in place.
@@ -363,5 +379,70 @@ impl EffectChain {
 impl Default for EffectChain {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use synth_core::SampleRate;
+
+    fn make_id(module_type: ModuleType, instance: u16) -> ModuleId {
+        ModuleId::new(module_type, instance)
+    }
+
+    fn populate(chain: &mut EffectChain, ids: &[ModuleId]) {
+        let sr = SampleRate::new(44100.0);
+        for id in ids {
+            chain.add_effect(*id, Box::new(synth_modules::Chorus::new()), sr);
+        }
+    }
+
+    #[test]
+    fn set_slot_order_reorders_to_requested_sequence() {
+        let a = make_id(ModuleType::Chorus, 1);
+        let b = make_id(ModuleType::Chorus, 2);
+        let c = make_id(ModuleType::Chorus, 3);
+
+        let mut chain = EffectChain::new();
+        populate(&mut chain, &[a, b, c]);
+        assert_eq!(chain.slot_order(), vec![a, b, c]);
+
+        chain.set_slot_order(&[c, a, b]);
+        assert_eq!(chain.slot_order(), vec![c, a, b]);
+    }
+
+    #[test]
+    fn set_slot_order_appends_unmentioned_slots() {
+        let a = make_id(ModuleType::Chorus, 1);
+        let b = make_id(ModuleType::Chorus, 2);
+        let c = make_id(ModuleType::Chorus, 3);
+
+        let mut chain = EffectChain::new();
+        populate(&mut chain, &[a, b, c]);
+
+        // Only mention c; a and b should remain in their original order at end.
+        chain.set_slot_order(&[c]);
+        assert_eq!(chain.slot_order(), vec![c, a, b]);
+    }
+
+    #[test]
+    fn set_slot_order_ignores_unknown_ids() {
+        let a = make_id(ModuleType::Chorus, 1);
+        let b = make_id(ModuleType::Chorus, 2);
+        let unknown = make_id(ModuleType::Chorus, 99);
+
+        let mut chain = EffectChain::new();
+        populate(&mut chain, &[a, b]);
+
+        chain.set_slot_order(&[unknown, b, a]);
+        assert_eq!(chain.slot_order(), vec![b, a]);
+    }
+
+    #[test]
+    fn set_slot_order_on_empty_chain_is_noop() {
+        let mut chain = EffectChain::new();
+        chain.set_slot_order(&[make_id(ModuleType::Chorus, 1)]);
+        assert!(chain.is_empty());
     }
 }
