@@ -6,6 +6,7 @@ pub mod bass_drum_lock;
 pub mod drum_groove;
 pub mod harmonic_function;
 pub mod instrument_profile;
+pub mod patch_sweep;
 pub mod pattern_analysis;
 pub(crate) mod repetition;
 

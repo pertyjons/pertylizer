@@ -9,7 +9,7 @@
 
 ## 0. Status snapshot
 
-### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), v0.278.0 (auto-inferred profiles), 74d18da + 93c0786 (offline-render fixes, `get_instrument_profiles`, inference round 2), and v0.283.0 (drum-groove + bass-drum-lock + harmonic-function)
+### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), v0.278.0 (auto-inferred profiles), 74d18da + 93c0786 (offline-render fixes, `get_instrument_profiles`, inference round 2), v0.283.0 (drum-groove + bass-drum-lock + harmonic-function), and v0.284.0 (Group A: `analyze_instrument_range` + `analyze_velocity_response`)
 
 | Tool | Version | Notes |
 |------|---------|-------|
@@ -22,6 +22,8 @@
 | `analyze_bass_drum_lock` | v0.283.0 | Pure-symbolic kick/bass relationship. Identifies drum tracks (Role::Drums, conf ≥ 0.6) and bass tracks (Role::Bass, conf ≥ 0.6) via the same `infer_all_profiles` path. Aligns kick onsets (GM MIDI 35/36) against bass-note onsets within `onset_tolerance_ticks` (default 120 = ±1/32-note at 960 PPQN, clamped to [30, 960]). Returns `alignment` (matched / kick-only / bass-only counts plus `lock_score = matched/kicks` and `coverage_score = matched/bass`) and `bass_pitch` (most common pitch class on matched onsets + its share + distinct PC counts on-kick vs total + mean bass MIDI). Pattern scope splits a combined rhythm-section pattern into kicks (GM kick MIDI) and bass (everything else). 11 unit tests. Implementation in `crates/pertylizer/src/analysis/bass_drum_lock.rs`; bridge in `analyze_bass_drum_lock_impl`. Closes Tier-1 #8. |
 | `analyze_masking_matrix` | 2026-05-16 (post-v0.283.0) | Pairwise per-track spectral masking on top of the §7.2 parallel solo-render pipeline. Each pair carries 4 `BandOverlap` entries (sub 0-100 / low 100-500 / mid 500-2000 / high 2000+ Hz) with linear RMS for each side, `overlap_energy = min(a, b)`, and `dominance_db = 20·log10(max/min)` clamped to 200.0 for silent-vs-non-silent. Pair-level `conflict_score ∈ [0, 1]` = `sum(overlap) / sum(max)` across bands. Pairs returned sorted by descending `conflict_score`. Optional `dominant_track_id` is set when the worst-overlap band shows ≥ 6 dB margin and `hint` is a human-readable string (`"Pad(2) masks Lead(3) in mid (500-2000 Hz)"` or `"…/… compete in …"` when dominance is small). Implementation: `analyze_masking_matrix_impl` + helpers in `crates/pertylizer/src/mcp_bridge.rs`; types `BandOverlap` / `MaskingPair` / `AnalyzeMaskingMatrixResult` in `crates/synth_mcp/src/types.rs`; bridge trait method + server handler. 4 integration tests cover pair shape, determinism across calls, inverted-range rejection, single-track empty-pair case. Closes Tier-1 #9. |
 | `analyze_harmonic_function` | v0.283.0 | Tonal-function annotation on top of `analyze_harmony`. Same scope params (pattern_id or arrangement range, `grouping_ticks`, `exclude_drums`, `exclude_track_ids`). Reuses `analyze_song_harmony` end-to-end so chord identification, key inference, and drum exclusion stay in lock-step. For every chord event: scale degree (1..=7 for diatonic), Roman numeral with quality decoration (`I`, `V7`, `ii7`, `vii°`, `ø7`, `°7`, plus `bII`/`bIII`/`bVI`/`bVII` for chromatic), function bucket (`tonic`/`subdominant`/`dominant`/`other`/`chromatic`, simplified Riemannian), and tension (function base + 0.15 for dom7 + 0.2 for dim/half-dim). Detects cadences on consecutive pairs: Authentic (V → I), Plagal (IV → I), Half (anything → V), Deceptive (V → vi). Returns the chord stream, cadence index list, function distribution (T/S/D/Other/Chromatic counts), and tension stats (mean/peak/trough/std-dev). Leading-tone in minor (interval 11) labeled as Dominant when the chord has major or dominant-7 quality (covers borrowed `V` from harmonic minor). 12 unit tests. Implementation in `crates/pertylizer/src/analysis/harmonic_function.rs`; bridge in `analyze_harmonic_function_impl`. Closes Tier-1 #10. |
+| `analyze_instrument_range` | v0.284.0 | Patch-QA sweep across a MIDI note range. One offline render per step via the existing `analyze_note` path (`step_semitones` defaults to 12 — one note per octave; cheaper than the obvious one-per-semitone sweep). Returns per-step (`note`, `note_played`, `expected_hz`, `fundamental_hz`, `pitch_error_cents`, `pitch_confidence`, `peak_amplitude`, `rms_overall`, `centroid_hz`, `clipped_samples`, plus boolean `silent` / `likely_aliased` / `pitch_lost`) and a cross-step `issues` summary (`silent_notes`, `aliased_notes` — centroid > Nyquist/2 + confidence < 0.3, `pitch_lost_notes` — fundamental more than an octave off, `clipping_notes`, `level_spread_db`). Catches the bug class where a patch sounds great at C4 in `analyze_note` and falls apart at C6 (aliasing) or C2 (energy loss). Implementation: `analyze_instrument_range_impl` in `crates/pertylizer/src/mcp_bridge.rs`; pure helpers in `crates/pertylizer/src/analysis/patch_sweep.rs`. Closes Tier-1 #11. |
+| `analyze_velocity_response` | v0.284.0 | Velocity sweep at a fixed MIDI note. Same render path as `analyze_instrument_range`, but the note is held and velocity walks `[velocity_low, velocity_high]` in steps of `velocity_step` (default 16). Returns per-velocity (`peak_amplitude`, `rms_overall`, `centroid_hz`, `clipped_samples`) and cross-step diagnostics (`amplitude_range_db`, `non_monotonic_amplitude_steps`, `non_monotonic_centroid_steps`, `velocity_unresponsive` — flagged when `amplitude_range_db < 3.0` dB). Confirms a patch actually responds to velocity in a musical way (rising amplitude, brighter filter at higher velocity) instead of being effectively velocity-deaf — common surprise on patches with the wrong envelope → amp routing. Implementation: `analyze_velocity_response_impl` in `crates/pertylizer/src/mcp_bridge.rs`; shares helpers with `analyze_instrument_range`. Closes Tier-2 #19. |
 
 ### Deferred / in-progress
 
@@ -187,9 +189,11 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
    `crates/pertylizer/src/mcp_bridge.rs`; types in `crates/synth_mcp/src/types.rs`; bridge trait + server
    handler in `crates/synth_mcp/src/{bridge,server}.rs`. Closes Tier-1 #9.
 10. ✅ **`analyze_harmonic_function`** — shipped 2026-05-16. Roman numerals + simplified Riemannian function buckets + per-chord tension + cadence detection (authentic/plagal/half/deceptive). Built on `analyze_harmony` so chord ID + key inference + drum exclusion stay in lock-step.
-11. **`analyze_instrument_range`** — Catches the bug class where a patch sounds great at C4 in `analyze_note` and
-   falls apart at C6 or C2. Especially important once an AI is committing patches into a project without a human
-   playing test notes.
+11. ✅ **`analyze_instrument_range`** — shipped in v0.284.0. Sweeps an instrument across a MIDI range, runs the
+   existing `analyze_note` path per step, and aggregates per-step entries into a cross-step `issues` summary
+   (`silent_notes`, `aliased_notes`, `pitch_lost_notes`, `clipping_notes`, `level_spread_db`). One render per step,
+   `step_semitones` defaults to 12 — keeps cost manageable on full-keyboard sweeps. Implementation +
+   `analyze_velocity_response` share `crates/pertylizer/src/analysis/patch_sweep.rs`.
 12. **`render_section_to_wav`** — Even without immediate analysis tools layered on top, this unlocks the AI sending
    audio back to a human or feeding it to a separate model. Building block under `compare_to_reference`.
 13. ✅ **True-peak + LUFS-S/M for `analyze_mix_bus`** — shipped 2026-05-16 alongside `pre_master_peak`. See §0 deferred section.
@@ -209,7 +213,10 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 18. **`analyze_groove`** — Useful once the AI is past "write the right notes" and into "make it feel good".
     Less load-bearing than harmony analysis because timing problems are easier for humans to flag than harmonic ones.
     The new `analyze_drum_groove` should probably land first because it has clearer instrument semantics.
-19. **`analyze_velocity_response`** — Patch-QA, narrower than `analyze_instrument_range`.
+19. ✅ **`analyze_velocity_response`** — shipped in v0.284.0 alongside `analyze_instrument_range` as Group A from
+    §8.6. Holds one MIDI note and sweeps velocity. Returns per-velocity amplitude/centroid plus
+    `amplitude_range_db`, `non_monotonic_amplitude_steps`, `non_monotonic_centroid_steps`, and a
+    `velocity_unresponsive` flag (< 3 dB spread across the sweep).
 20. **`analyze_arrangement` / `analyze_form_map`** — Useful for long-form composition and section contrast. A
     deterministic first version can be built from bar-level features and self-similarity; heavier audio-structure
     models belong in the future sidecar category.
@@ -283,7 +290,7 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
    and computed in-memory from `MixBusMetrics.energy_bands`. Produces per-pair textual hints when one side
    dominates by > 6 dB on the worst-overlap band.
 10. ✅ `analyze_harmonic_function` — shipped 2026-05-16. Roman numerals + Tonic/Subdominant/Dominant/Other/Chromatic function buckets + per-chord tension (T 0.0 / S 0.3 / D 0.7, +0.15 for dom7, +0.2 for dim/half-dim) + cadence detection (authentic/plagal/half/deceptive) on top of `analyze_harmony`.
-11. `analyze_instrument_range` — sweep on top of `analyze_note`.
+11. ✅ `analyze_instrument_range` — shipped 2026-05-16 (v0.284.0). Sweep on top of `analyze_note`.
 12. `render_section_to_wav` — generalization of the renderer that writes out instead of analyzing.
 13. ✅ True-peak + LUFS-S/M on `analyze_mix_bus` — shipped 2026-05-16.
 
@@ -470,6 +477,30 @@ Bonus side-effect: `TrackContribution` now exposes per-track `stereo_correlation
 `stereo_width`, `mono_compat`, `crest_factor_db` for free — useful for "is this lead actually wide?" or
 "does this pad have a problematic L-R imbalance in isolation?" debugging that the previous flat layout
 omitted.
+
+### 7.7 Engine reuse across patch-sweep steps — deferred from v0.284.0
+
+`analyze_instrument_range_impl` and `analyze_velocity_response_impl`
+(`crates/pertylizer/src/mcp_bridge.rs`) call `analyze_rendered_note` once per
+swept value. Each call goes through `audio::preview::render_note_to_buffer`,
+which spins up a brand-new offline `SynthEngine` and reloads the instrument's
+module graph + sample data. For a 60-note semitone-step sweep that's 60 fresh
+engines; for the default 8-step velocity sweep that's 8. Same shape as the
+per-track contribution path before §7.1 introduced `OfflineEngineSession`.
+
+The win is real (engine setup dominates the wall-clock cost for short notes),
+but the change is sizable — needs an `OfflineNoteSession`-style wrapper that
+takes a `SynthSession` + `SharedSampleLibrary` + `InstrumentId` at
+construction, builds the engine + loads the patch + samples once, then exposes
+`render(note, velocity, duration_ms, tail_ms) -> RenderedNote` for the N calls.
+Voice-bleed drain between renders (same problem as §7.1) needs to be
+reproduced. Determinism tests would mirror
+`tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`.
+
+Until that lands, sweeps pay the full engine build N times. After §7.1 shipped
+for arrangement renders, rayon parallelism followed in §7.2 — same sequence
+applies here: ship session-reuse first, then `par_iter` over the sweep target
+vector to add a 2-4× speedup on top.
 
 ---
 
@@ -1031,14 +1062,16 @@ name-conflict), Impact resolves as `drums 1.00` (previously `drums 0.60` at the 
 With every §8 item closed and Tier-1 items 4–10 plus 13 shipped, the next concrete work splits into natural
 groups. Order chosen to maximize shared infrastructure per PR and to land the highest-leverage items first.
 
-**Group A — Patch-QA sweeps (Tier-1 #11 + Tier-2 #19)**
+**Group A — Patch-QA sweeps (Tier-1 #11 + Tier-2 #19)** — ✅ shipped 2026-05-16 (v0.284.0)
 
 `analyze_instrument_range` and `analyze_velocity_response` are both `analyze_note`-driven sweeps with the same
 plumbing: loop over a parameter (MIDI note or velocity), call the existing single-note render path per step,
 collect per-step metrics, return a curve plus stability flags. Shared result-struct shape (per-step entries +
 overall warnings), shared aliasing/non-monotonic detection helpers, shared "render N notes against one
-instrument" infrastructure. Build as one unit in `crates/pertylizer/src/analysis/patch_sweep.rs` (or similar)
-so the helpers don't get duplicated.
+instrument" infrastructure. Landed in `crates/pertylizer/src/analysis/patch_sweep.rs` with the per-step
+extraction + cross-step issue detection as pure helpers; the render loops live in the impl functions in
+`crates/pertylizer/src/mcp_bridge.rs`. 10 in-module unit tests + 5 integration tests against a real
+`SynthEngine` and a sustaining saw patch.
 
 **Group B — Symbolic composition helpers (Tier-2 #17 — four tools)**
 
@@ -1071,8 +1104,8 @@ and ranks concrete edits. Tension-curve is the data source; suggest_music_fixes 
 
 **Recommended landing order**
 
-1. **Group A** — smallest scope, clear design path via `analyze_note`, catches a concrete real bug class
-   (patches that work at C4 and fall apart at C6 or C2). One PR.
+1. ✅ **Group A** — smallest scope, clear design path via `analyze_note`, catches a concrete real bug class
+   (patches that work at C4 and fall apart at C6 or C2). One PR. **Shipped 2026-05-16 (v0.284.0).**
 2. **Group B** — low risk, high token-saving impact for the agent. One PR.
 3. **Group C** — needs design work (what counts as a motif, what counts as a section boundary), but
    unlocks long-form composition feedback. One PR or two depending on size.
@@ -1093,7 +1126,8 @@ surfaced by the 2026-05-16 end-to-end verification on the "Neuro F#m 174" projec
 Every §8 item is now closed; Tier-1 items 6 (`analyze_pattern`), 7 (`analyze_drum_groove`), 8
 (`analyze_bass_drum_lock`), 9 (`analyze_masking_matrix`), and 10 (`analyze_harmonic_function`) all
 shipped 2026-05-16 — alongside §7.2 (rayon-parallel per-track renders) and §7.4 (`Song::tracks_mut`
-+ `set_solo_only` helpers). Tier-1 items 11 (`analyze_instrument_range`) and 12
-(`render_section_to_wav`) remain — pick up `render_section_to_wav` when reference audio comes into
-the workflow (it unlocks `compare_to_reference` from Tier 3), or `analyze_instrument_range` to
-catch patches that fall apart outside their tested register before they're committed.
++ `set_solo_only` helpers). Tier-1 item 11 (`analyze_instrument_range`) + Tier-2 #19
+(`analyze_velocity_response`) — Group A from §8.6 — shipped 2026-05-16 (v0.284.0). Tier-1 item 12
+(`render_section_to_wav`) is the only remaining Tier-1 work — pick up when reference audio comes
+into the workflow (it unlocks `compare_to_reference` from Tier 3). Next groups from §8.6: Group B
+(symbolic composition helpers), Group C (form & motifs), Group D (meta-analysis).

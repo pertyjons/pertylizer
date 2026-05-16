@@ -573,6 +573,48 @@ pub struct AnalyzePatternParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeInstrumentRangeParam {
+    #[schemars(description = "Instrument ID to sweep.")]
+    pub instrument_id: u64,
+    #[schemars(description = "Lowest MIDI note in the sweep (0-127, inclusive).")]
+    pub low_note: u8,
+    #[schemars(description = "Highest MIDI note in the sweep (0-127, inclusive).")]
+    pub high_note: u8,
+    #[schemars(
+        description = "Semitone gap between consecutive sweep steps (default 12 = one note per octave). Smaller values increase resolution at proportional render cost."
+    )]
+    pub step_semitones: Option<u8>,
+    #[schemars(description = "Velocity to use for every step (1-127, default 100).")]
+    pub velocity: Option<u8>,
+    #[schemars(
+        description = "Note duration in ms (default 400). Held identical across steps so per-step amplitude/brightness curves stay comparable."
+    )]
+    pub duration_ms: Option<u32>,
+    #[schemars(description = "Release tail in ms after note-off (default 200).")]
+    pub tail_ms: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeVelocityResponseParam {
+    #[schemars(description = "Instrument ID to test.")]
+    pub instrument_id: u64,
+    #[schemars(description = "MIDI note to hold across the velocity sweep (0-127).")]
+    pub note: u8,
+    #[schemars(description = "Lowest velocity in the sweep (1-127, default 1).")]
+    pub velocity_low: Option<u8>,
+    #[schemars(description = "Highest velocity in the sweep (1-127, default 127).")]
+    pub velocity_high: Option<u8>,
+    #[schemars(
+        description = "Step size between consecutive velocities (default 16 → ~8 steps over 1-127)."
+    )]
+    pub velocity_step: Option<u8>,
+    #[schemars(description = "Note duration in ms (default 400). Held identical across steps.")]
+    pub duration_ms: Option<u32>,
+    #[schemars(description = "Release tail in ms after note-off (default 200).")]
+    pub tail_ms: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeDrumGrooveParam {
     #[schemars(
         description = "Pattern ID to analyze as a drum pattern. When set, the arrangement_* fields are ignored and the analyzer treats every note in the pattern as a drum hit (no drum-track filtering)."
@@ -1866,6 +1908,8 @@ impl SynthMcpServer {
             "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
             "analyze_section" => analyze_section(AnalyzeSectionParam),
             "analyze_masking_matrix" => analyze_masking_matrix(AnalyzeMaskingMatrixParam),
+            "analyze_instrument_range" => analyze_instrument_range(AnalyzeInstrumentRangeParam),
+            "analyze_velocity_response" => analyze_velocity_response(AnalyzeVelocityResponseParam),
         ])
     }
 }
@@ -2448,6 +2492,48 @@ impl SynthMcpServer {
     )]
     async fn analyze_pattern(&self, params: Parameters<AnalyzePatternParam>) -> String {
         match self.bridge.analyze_pattern(params.0.pattern_id) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Sweep an instrument across a MIDI note range and run the same render-and-analyze pipeline as analyze_note at each step. Returns per-note metrics (fundamental, pitch error, pitch confidence, peak/RMS, centroid, clipped-sample count) plus cross-step issues (silent notes, likely-aliased notes — high centroid + low pitch confidence in the top octaves, lost pitch tracking — fundamental off by more than an octave, clipping notes, level spread in dB between loudest and quietest non-silent step). Use to catch patches that work at C4 in analyze_note and fall apart at C6 (aliasing) or C2 (energy loss). One render per step — `step_semitones` defaults to 12 (one note per octave); reduce for higher resolution, increase or limit `[low_note, high_note]` for cheaper sweeps."
+    )]
+    async fn analyze_instrument_range(
+        &self,
+        params: Parameters<AnalyzeInstrumentRangeParam>,
+    ) -> String {
+        match self.bridge.analyze_instrument_range(
+            params.0.instrument_id,
+            params.0.low_note,
+            params.0.high_note,
+            params.0.step_semitones,
+            params.0.velocity,
+            params.0.duration_ms,
+            params.0.tail_ms,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Hold one MIDI note and sweep velocity across [velocity_low, velocity_high]. Returns per-velocity amplitude/brightness curves plus monotonicity flags (non_monotonic_amplitude_steps — adjacent pairs where peak fell as velocity rose, non_monotonic_centroid_steps — same for brightness) and a velocity_unresponsive flag (amplitude_range_db < 3 dB across the sweep). Use to confirm a patch actually responds to velocity in a musical way (rising amplitude, brighter filter at higher velocity) instead of being effectively velocity-deaf — common surprise on patches with the wrong envelope→amp routing."
+    )]
+    async fn analyze_velocity_response(
+        &self,
+        params: Parameters<AnalyzeVelocityResponseParam>,
+    ) -> String {
+        match self.bridge.analyze_velocity_response(
+            params.0.instrument_id,
+            params.0.note,
+            params.0.velocity_low,
+            params.0.velocity_high,
+            params.0.velocity_step,
+            params.0.duration_ms,
+            params.0.tail_ms,
+        ) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }

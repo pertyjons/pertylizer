@@ -797,6 +797,41 @@ pub trait SynthBridge: Send + Sync + 'static {
         end_tick: u64,
     ) -> Result<crate::types::AnalyzeMaskingMatrixResult, McpBridgeError>;
 
+    /// Sweep an instrument across a MIDI note range, render-and-analyze each
+    /// step via the same path as `analyze_note`, and return per-note metrics
+    /// plus cross-step issues (silent notes, likely aliasing, lost pitch
+    /// tracking, clipping, level spread). Use this to spot patches that work
+    /// at C4 but fall apart at C6 or C2 before committing them. `step_semitones`
+    /// defaults to 12 (one note per octave); reduce for higher resolution.
+    #[allow(clippy::too_many_arguments)]
+    fn analyze_instrument_range(
+        &self,
+        instrument_id: u64,
+        low_note: u8,
+        high_note: u8,
+        step_semitones: Option<u8>,
+        velocity: Option<u8>,
+        duration_ms: Option<u32>,
+        tail_ms: Option<u32>,
+    ) -> Result<crate::types::AnalyzeInstrumentRangeResult, McpBridgeError>;
+
+    /// Hold one MIDI note and sweep velocity across `[velocity_low,
+    /// velocity_high]`. Returns per-velocity amplitude and brightness curves
+    /// plus monotonicity / responsiveness flags — confirms the patch responds
+    /// musically to velocity (or flags it as effectively velocity-deaf).
+    /// `velocity_step` defaults to 16.
+    #[allow(clippy::too_many_arguments)]
+    fn analyze_velocity_response(
+        &self,
+        instrument_id: u64,
+        note: u8,
+        velocity_low: Option<u8>,
+        velocity_high: Option<u8>,
+        velocity_step: Option<u8>,
+        duration_ms: Option<u32>,
+        tail_ms: Option<u32>,
+    ) -> Result<crate::types::AnalyzeVelocityResponseResult, McpBridgeError>;
+
     // === AWE (Acoustic World Engine) ===
 
     /// Get the current AWE state (room, material, all parameters, LFOs).

@@ -1909,3 +1909,173 @@ pub struct AnalyzeHarmonicFunctionResult {
     /// function-analysis layer.
     pub warnings: Vec<String>,
 }
+
+// ---------------------------------------------------------------------------
+// analyze_instrument_range result types
+// ---------------------------------------------------------------------------
+
+/// One step in a per-note sweep across a MIDI range. Captures the subset of
+/// `AnalyzeNoteResult` that's useful for spotting per-note breakage — full
+/// per-note `AnalyzeNoteResult` blobs would blow the response budget on a
+/// 60-note sweep.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct InstrumentRangeStep {
+    /// MIDI note requested.
+    pub note: u8,
+    /// MIDI note actually played, after the patch's `octave_offset` was
+    /// applied. Differs from `note` for bass patches with offset != 0.
+    pub note_played: u8,
+    /// Concert-pitch frequency of `note_played`.
+    pub expected_hz: f32,
+    /// Detected fundamental in Hz. `0.0` when the renderer was silent or no
+    /// peak survived the spectral floor.
+    pub fundamental_hz: f32,
+    /// Detected pitch error in cents (positive = sharp). `0.0` when either
+    /// `fundamental_hz` or `expected_hz` is zero.
+    pub pitch_error_cents: f32,
+    /// Confidence in `fundamental_hz` in `0.0..=1.0` (prominence-based).
+    /// Low values mean the spectrum is noisy or has competing peaks.
+    pub pitch_confidence: f32,
+    /// Peak absolute amplitude across the whole render (1.0 = full scale).
+    pub peak_amplitude: f32,
+    /// Overall RMS amplitude.
+    pub rms_overall: f32,
+    /// Spectral centroid (Hz) at the sustained mid-region. A proxy for
+    /// brightness; sharp jumps across the range hint at aliasing.
+    pub centroid_hz: f32,
+    /// Count of samples whose absolute value reached or exceeded 0.999.
+    pub clipped_samples: u32,
+    /// True when `peak_amplitude` is below the silence floor (≈ −60 dBFS).
+    /// The patch did not produce audible output at this note.
+    pub silent: bool,
+    /// True when `pitch_confidence < 0.3` AND the centroid is above
+    /// half the Nyquist. Signals likely aliasing in the top octaves.
+    pub likely_aliased: bool,
+    /// True when the pitch tracker reported `fundamental_hz < expected_hz / 2`
+    /// or `> expected_hz * 2` — the patch stopped tracking pitch at this note
+    /// (octave error or fully detuned).
+    pub pitch_lost: bool,
+}
+
+/// Cross-range warnings derived from a `Vec<InstrumentRangeStep>`. Each flag
+/// surfaces a specific bug class an agent would otherwise have to spot by
+/// eyeballing the per-step list.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct InstrumentRangeIssues {
+    /// Notes (by MIDI number) where `silent == true`. Empty when the patch
+    /// produced audible output at every step.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub silent_notes: Vec<u8>,
+    /// Notes where `likely_aliased == true`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub aliased_notes: Vec<u8>,
+    /// Notes where `pitch_lost == true`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub pitch_lost_notes: Vec<u8>,
+    /// Notes where `clipped_samples > 0`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub clipping_notes: Vec<u8>,
+    /// `peak_amplitude` at the loudest non-silent step minus the quietest
+    /// non-silent step, in dB. Large values indicate the patch's level
+    /// varies wildly across its range (a known mix-bus surprise source).
+    /// `0.0` when fewer than two non-silent steps were found.
+    pub level_spread_db: f32,
+}
+
+/// Output of `analyze_instrument_range`. Sweeps an instrument across a MIDI
+/// range, runs the same render-and-analyze pipeline as `analyze_note` at each
+/// step, and returns per-step metrics plus a cross-step issue summary.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeInstrumentRangeResult {
+    /// Instrument that was swept.
+    pub instrument_id: u64,
+    /// Velocity used at every step.
+    pub velocity: u8,
+    /// Lowest MIDI note in the sweep (`low_note`).
+    pub low_note: u8,
+    /// Highest MIDI note in the sweep (`high_note`).
+    pub high_note: u8,
+    /// Semitone gap between consecutive steps.
+    pub step_semitones: u8,
+    /// Note duration in ms (forwarded to the renderer).
+    pub duration_ms: u32,
+    /// Tail in ms after note-off (forwarded to the renderer).
+    pub tail_ms: u32,
+    /// One entry per swept note, in ascending MIDI order.
+    pub steps: Vec<InstrumentRangeStep>,
+    /// Cross-step warnings.
+    pub issues: InstrumentRangeIssues,
+    /// Non-fatal warnings collected during the sweep (renderer failures on
+    /// individual notes, malformed parameters, etc.).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// analyze_velocity_response result types
+// ---------------------------------------------------------------------------
+
+/// One step in a velocity sweep at a fixed MIDI note.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct VelocityResponseStep {
+    /// Velocity used for this step (1..=127).
+    pub velocity: u8,
+    /// Peak absolute amplitude across the whole render.
+    pub peak_amplitude: f32,
+    /// Overall RMS amplitude.
+    pub rms_overall: f32,
+    /// Spectral centroid (Hz) at the sustained mid-region. Should generally
+    /// rise with velocity on patches with velocity → filter routing.
+    pub centroid_hz: f32,
+    /// Count of clipped samples at this velocity.
+    pub clipped_samples: u32,
+}
+
+/// Cross-velocity diagnostics derived from a `Vec<VelocityResponseStep>`.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct VelocityResponseIssues {
+    /// `peak_amplitude` at the loudest step minus the quietest, in dB.
+    /// `0.0` when fewer than two non-silent steps were found. Large values
+    /// = strongly velocity-sensitive; values < 6 dB = patch is barely
+    /// responsive to velocity.
+    pub amplitude_range_db: f32,
+    /// Number of adjacent step pairs where peak_amplitude decreased as
+    /// velocity increased. `0` for a clean monotonic response. Non-zero
+    /// values indicate a non-musical velocity curve.
+    pub non_monotonic_amplitude_steps: u32,
+    /// Number of adjacent step pairs where centroid_hz decreased as
+    /// velocity increased. Centroid is allowed to be flat (patch lacks
+    /// velocity → filter modulation) but should not invert.
+    pub non_monotonic_centroid_steps: u32,
+    /// True when the patch is effectively velocity-insensitive
+    /// (`amplitude_range_db < 3.0`) — flagged because patches that ignore
+    /// velocity often surprise users.
+    pub velocity_unresponsive: bool,
+}
+
+/// Output of `analyze_velocity_response`. Holds one MIDI note across a swept
+/// velocity range and returns per-velocity amplitude / brightness curves plus
+/// monotonicity / responsiveness flags.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeVelocityResponseResult {
+    pub instrument_id: u64,
+    /// MIDI note held throughout the sweep.
+    pub note: u8,
+    /// Lowest velocity in the sweep.
+    pub velocity_low: u8,
+    /// Highest velocity in the sweep.
+    pub velocity_high: u8,
+    /// Step size between consecutive velocities.
+    pub velocity_step: u8,
+    /// Note duration in ms (forwarded to the renderer).
+    pub duration_ms: u32,
+    /// Tail in ms after note-off (forwarded to the renderer).
+    pub tail_ms: u32,
+    /// One entry per swept velocity, in ascending order.
+    pub steps: Vec<VelocityResponseStep>,
+    /// Cross-step diagnostics.
+    pub issues: VelocityResponseIssues,
+    /// Non-fatal warnings collected during the sweep.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}

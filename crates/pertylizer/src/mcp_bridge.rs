@@ -2551,6 +2551,52 @@ impl SynthBridge for AppSynthBridge {
         )
     }
 
+    fn analyze_instrument_range(
+        &self,
+        instrument_id: u64,
+        low_note: u8,
+        high_note: u8,
+        step_semitones: Option<u8>,
+        velocity: Option<u8>,
+        duration_ms: Option<u32>,
+        tail_ms: Option<u32>,
+    ) -> Result<synth_mcp::types::AnalyzeInstrumentRangeResult, McpBridgeError> {
+        analyze_instrument_range_impl(
+            &self.session,
+            &self.sample_library,
+            instrument_id,
+            low_note,
+            high_note,
+            step_semitones,
+            velocity,
+            duration_ms,
+            tail_ms,
+        )
+    }
+
+    fn analyze_velocity_response(
+        &self,
+        instrument_id: u64,
+        note: u8,
+        velocity_low: Option<u8>,
+        velocity_high: Option<u8>,
+        velocity_step: Option<u8>,
+        duration_ms: Option<u32>,
+        tail_ms: Option<u32>,
+    ) -> Result<synth_mcp::types::AnalyzeVelocityResponseResult, McpBridgeError> {
+        analyze_velocity_response_impl(
+            &self.session,
+            &self.sample_library,
+            instrument_id,
+            note,
+            velocity_low,
+            velocity_high,
+            velocity_step,
+            duration_ms,
+            tail_ms,
+        )
+    }
+
     // === AWE (Acoustic World Engine) ===
 
     fn get_awe_state(&self) -> Result<AweStateInfo, McpBridgeError> {
@@ -4673,6 +4719,173 @@ fn analyze_rendered_note(
         duration_ms,
         expected_note,
     ))
+}
+
+/// Default note duration for sweep tools. Long enough for the envelope to
+/// reach sustain on typical patches; short enough that 60-note sweeps don't
+/// take minutes.
+const SWEEP_DEFAULT_DURATION_MS: u32 = 400;
+/// Default release tail for sweep tools.
+const SWEEP_DEFAULT_TAIL_MS: u32 = 200;
+const SWEEP_DEFAULT_STEP_SEMITONES: u8 = 12;
+const SWEEP_DEFAULT_VELOCITY: u8 = 100;
+const SWEEP_DEFAULT_VELOCITY_LOW: u8 = 1;
+const SWEEP_DEFAULT_VELOCITY_HIGH: u8 = 127;
+const SWEEP_DEFAULT_VELOCITY_STEP: u8 = 16;
+const SWEEP_NYQUIST_HZ: f32 = crate::audio::preview::PREVIEW_SAMPLE_RATE as f32 / 2.0;
+
+/// Walk `lo..=hi` in `step` increments, always including `hi` as the final
+/// value. Calls `on_step` per value; pushes a `"{label} {val}: render failed: {e}"`
+/// warning when `on_step` errors and continues the sweep.
+fn sweep_range<T>(
+    lo: u8,
+    hi: u8,
+    step: u8,
+    label: &str,
+    warnings: &mut Vec<String>,
+    mut on_step: impl FnMut(u8) -> Result<T, McpBridgeError>,
+) -> Vec<T> {
+    let mut out: Vec<T> = Vec::new();
+    let mut val = lo;
+    loop {
+        match on_step(val) {
+            Ok(t) => out.push(t),
+            Err(e) => warnings.push(format!("{label} {val}: render failed: {e}")),
+        }
+        if val == hi {
+            break;
+        }
+        val = val.saturating_add(step).min(hi);
+    }
+    out
+}
+
+/// Sweep an instrument across a MIDI note range. One offline render per step,
+/// reuses the `analyze_note` path; cross-step issues are derived in
+/// `analysis::patch_sweep`.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_instrument_range_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    instrument_id: u64,
+    low_note: u8,
+    high_note: u8,
+    step_semitones: Option<u8>,
+    velocity: Option<u8>,
+    duration_ms: Option<u32>,
+    tail_ms: Option<u32>,
+) -> Result<synth_mcp::types::AnalyzeInstrumentRangeResult, McpBridgeError> {
+    use crate::analysis::patch_sweep::{range_issues_from_steps, range_step_from_analysis};
+
+    if low_note > high_note {
+        return Err(McpBridgeError::Other(format!(
+            "low_note ({low_note}) must be <= high_note ({high_note})"
+        )));
+    }
+    let step = step_semitones
+        .unwrap_or(SWEEP_DEFAULT_STEP_SEMITONES)
+        .max(1);
+    let velocity = velocity.unwrap_or(SWEEP_DEFAULT_VELOCITY);
+    let duration_ms = duration_ms.unwrap_or(SWEEP_DEFAULT_DURATION_MS);
+    let tail_ms = tail_ms.unwrap_or(SWEEP_DEFAULT_TAIL_MS);
+
+    let mut warnings: Vec<String> = Vec::new();
+    let steps_out = sweep_range(low_note, high_note, step, "note", &mut warnings, |note| {
+        let result = analyze_rendered_note(
+            session,
+            sample_library,
+            instrument_id,
+            note,
+            velocity,
+            duration_ms,
+            tail_ms,
+            Some(note),
+        )?;
+        Ok(range_step_from_analysis(note, &result, SWEEP_NYQUIST_HZ))
+    });
+
+    let issues = range_issues_from_steps(&steps_out);
+    Ok(synth_mcp::types::AnalyzeInstrumentRangeResult {
+        instrument_id,
+        velocity,
+        low_note,
+        high_note,
+        step_semitones: step,
+        duration_ms,
+        tail_ms,
+        steps: steps_out,
+        issues,
+        warnings,
+    })
+}
+
+/// Hold one note and sweep velocity. Same render path as
+/// `analyze_instrument_range`, but the note is fixed and velocity walks the
+/// range.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_velocity_response_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    instrument_id: u64,
+    note: u8,
+    velocity_low: Option<u8>,
+    velocity_high: Option<u8>,
+    velocity_step: Option<u8>,
+    duration_ms: Option<u32>,
+    tail_ms: Option<u32>,
+) -> Result<synth_mcp::types::AnalyzeVelocityResponseResult, McpBridgeError> {
+    use crate::analysis::patch_sweep::{velocity_issues_from_steps, velocity_step_from_analysis};
+
+    let velocity_low = velocity_low.unwrap_or(SWEEP_DEFAULT_VELOCITY_LOW).max(1);
+    let velocity_high = velocity_high
+        .unwrap_or(SWEEP_DEFAULT_VELOCITY_HIGH)
+        .min(127);
+    if velocity_low > velocity_high {
+        return Err(McpBridgeError::Other(format!(
+            "velocity_low ({velocity_low}) must be <= velocity_high ({velocity_high})"
+        )));
+    }
+    let velocity_step = velocity_step.unwrap_or(SWEEP_DEFAULT_VELOCITY_STEP).max(1);
+    let duration_ms = duration_ms.unwrap_or(SWEEP_DEFAULT_DURATION_MS);
+    let tail_ms = tail_ms.unwrap_or(SWEEP_DEFAULT_TAIL_MS);
+
+    let mut warnings: Vec<String> = Vec::new();
+    let steps_out = sweep_range(
+        velocity_low,
+        velocity_high,
+        velocity_step,
+        "velocity",
+        &mut warnings,
+        |velocity| {
+            let result = analyze_rendered_note(
+                session,
+                sample_library,
+                instrument_id,
+                note,
+                velocity,
+                duration_ms,
+                tail_ms,
+                Some(note),
+            )?;
+            Ok(velocity_step_from_analysis(velocity, &result))
+        },
+    );
+
+    let issues = velocity_issues_from_steps(&steps_out);
+    Ok(synth_mcp::types::AnalyzeVelocityResponseResult {
+        instrument_id,
+        note,
+        velocity_low,
+        velocity_high,
+        velocity_step,
+        duration_ms,
+        tail_ms,
+        steps: steps_out,
+        issues,
+        warnings,
+    })
 }
 
 /// Default chord-detection window for pattern-scope analysis: one quarter

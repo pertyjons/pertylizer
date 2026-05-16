@@ -44,7 +44,7 @@ pub(crate) fn load_sample_data_command(
 }
 
 /// Sample rate for preview rendering (44.1 kHz — sufficient for previews).
-const PREVIEW_SAMPLE_RATE: u32 = 44100;
+pub(crate) const PREVIEW_SAMPLE_RATE: u32 = 44100;
 
 /// Buffer size in frames per render call.
 const BUFFER_SIZE: usize = 256;

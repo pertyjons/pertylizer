@@ -1,5 +1,84 @@
 # Version History
 
+## [0.284.0] - 2026-05-16
+### MCP music tools — Tier-1 #11 + Tier-2 #19: `analyze_instrument_range` + `analyze_velocity_response`
+
+Group A from §8.6 of `docs/mcp-music-tools-plan.md`: two patch-QA sweeps
+that catch patches that work at C4 in `analyze_note` and fall apart
+elsewhere. Both reuse the existing `analyze_note` render path — one
+offline render per swept step, no new audio infrastructure — and share
+a `crates/pertylizer/src/analysis/patch_sweep.rs` module for per-step
+extraction and cross-step issue detection.
+
+#### `analyze_instrument_range`
+
+Sweeps an instrument across a MIDI note range, render-and-analyze each
+step, and returns per-note metrics (fundamental, pitch error, pitch
+confidence, peak/RMS, sustain-region centroid, clipped sample count)
+plus a cross-step `issues` summary:
+
+- **`silent_notes`** — peak below ≈ −60 dBFS. A patch that stops
+  producing audible output above C7 or below C2.
+- **`aliased_notes`** — pitch confidence below 0.3 AND sustain centroid
+  above Nyquist/2. The classic "saw fizzes out into hash above C6"
+  pattern.
+- **`pitch_lost_notes`** — detected fundamental more than an octave off
+  the expected pitch. Sub-bass with a dominant sub-osc that swaps
+  octaves, wavetable patches that mistrack at the extremes.
+- **`clipping_notes`** — any step that reached f32 fullscale.
+- **`level_spread_db`** — loudest non-silent peak minus quietest, in dB.
+  Large values flag a patch whose perceived loudness changes wildly
+  across its register.
+
+Defaults: `step_semitones = 12` (one note per octave — keep cheap by
+default), `velocity = 100`, `duration_ms = 400`, `tail_ms = 200`.
+
+#### `analyze_velocity_response`
+
+Holds one MIDI note and sweeps velocity, returning per-velocity
+amplitude / RMS / centroid plus:
+
+- **`amplitude_range_db`** — loudest peak minus quietest, in dB.
+- **`non_monotonic_amplitude_steps`** — adjacent pairs where peak fell
+  as velocity rose. `0` for a clean response.
+- **`non_monotonic_centroid_steps`** — same for sustain-region centroid.
+  Centroid is allowed to be flat (patch has no velocity → filter
+  routing) but should not invert.
+- **`velocity_unresponsive`** — true when `amplitude_range_db < 3.0`.
+  Patches with the wrong envelope → amp routing often pass `analyze_note`
+  at velocity 100 but ignore velocity entirely.
+
+Defaults: `velocity_low = 1`, `velocity_high = 127`, `velocity_step = 16`
+(≈ 8 steps), same render durations as the range sweep.
+
+#### Wiring
+
+- `crates/synth_mcp/src/types.rs` — `InstrumentRangeStep`,
+  `InstrumentRangeIssues`, `AnalyzeInstrumentRangeResult`,
+  `VelocityResponseStep`, `VelocityResponseIssues`,
+  `AnalyzeVelocityResponseResult`.
+- `crates/synth_mcp/src/bridge.rs` — two new `SynthBridge` trait methods
+  with doc comments.
+- `crates/pertylizer/src/analysis/patch_sweep.rs` — pure-compute helpers
+  (`range_step_from_analysis`, `range_issues_from_steps`,
+  `velocity_step_from_analysis`, `velocity_issues_from_steps`).
+  10 unit tests in-module cover centroid summary, silence/aliasing/
+  pitch-lost flags at boundaries, range-issues aggregation, and
+  velocity monotonicity/responsiveness.
+- `crates/pertylizer/src/mcp_bridge.rs` — `analyze_instrument_range_impl`
+  and `analyze_velocity_response_impl`. Inverted ranges return
+  `McpBridgeError` with the offending bound names.
+- `crates/synth_mcp/src/server.rs` — `AnalyzeInstrumentRangeParam` /
+  `AnalyzeVelocityResponseParam` + tool registrations with `#[tool(
+  description = ...)]` blocks naming the bug classes each sweep catches.
+- `crates/pertylizer/tests/patch_sweep_integration.rs` — 5 integration
+  tests against a real `SynthEngine` + sustaining saw patch: per-step
+  shape, inverted-range rejection (both tools), monotonic velocity
+  rise, inclusive upper-bound on a step that lands on the high bound.
+
+`cargo build`, `cargo clippy --all-targets`, `cargo fmt --check`,
+`cargo test` are all clean. `Cargo.toml` bumped to `0.284.0`.
+
 ## [0.283.0] - 2026-05-16
 ### MCP music tools — Tier-1 items 7, 8, 10: drum-groove, bass-drum-lock, harmonic-function
 
