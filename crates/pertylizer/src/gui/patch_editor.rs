@@ -4006,10 +4006,23 @@ impl PatchEditor {
     }
 
     pub fn realign_effect_chain_if_changed(&mut self, effect_chain_order: &[ModuleId]) {
-        if effect_chain_order != self.prev_effect_chain_order.as_slice() {
-            self.align_effect_chain(effect_chain_order);
-            self.prev_effect_chain_order = effect_chain_order.to_vec();
+        if effect_chain_order == self.prev_effect_chain_order.as_slice() {
+            return;
         }
+        // Only realign on a true reorder — same set of effects in a new
+        // sequence. Set-level differences (add/remove or partial snapshot
+        // catching up after load) just sync the baseline without
+        // repositioning, so panels keep their saved/auto-laid positions.
+        let same_set = effect_chain_order.len() == self.prev_effect_chain_order.len()
+            && effect_chain_order
+                .iter()
+                .all(|id| self.prev_effect_chain_order.contains(id));
+        if same_set {
+            self.align_effect_chain(effect_chain_order);
+        }
+        self.prev_effect_chain_order.clear();
+        self.prev_effect_chain_order
+            .extend_from_slice(effect_chain_order);
     }
 
     /// Align effect chain modules in a vertical column, preserving their x-center
