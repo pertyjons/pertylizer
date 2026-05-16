@@ -5167,6 +5167,17 @@ fn render_per_track_contributions(
     }
     let song_arc = std::sync::Arc::new(parking_lot::RwLock::new(base_song));
 
+    // §7.1: build the offline engine + load every instrument ONCE; the
+    // per-target loop below just toggles a solo flag and re-renders. Without
+    // this, a 12-track section spun up 12 fresh engines and re-replayed every
+    // instrument's module graph 12 times even though only the solo bit
+    // differed between iterations.
+    let (mut engine_session, setup_warnings) =
+        crate::audio::arrangement_render::OfflineEngineSession::new(session, sample_library)?;
+    // Engine-level setup warnings apply to the whole session, not any one
+    // soloed track — emit them without the per-target prefix the loop adds.
+    warnings.extend(setup_warnings);
+
     let mut contributions: Vec<synth_mcp::types::TrackContribution> =
         Vec::with_capacity(targets.len());
 
@@ -5174,13 +5185,7 @@ fn render_per_track_contributions(
         if let Some(track) = song_arc.write().track_mut(target.track_id) {
             track.solo = true;
         }
-        let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_song(
-            session,
-            sample_library,
-            &song_arc,
-            start_tick,
-            end_tick,
-        )?;
+        let rendered = engine_session.render_range(&song_arc, start_tick, end_tick)?;
         if let Some(track) = song_arc.write().track_mut(target.track_id) {
             track.solo = false;
         }

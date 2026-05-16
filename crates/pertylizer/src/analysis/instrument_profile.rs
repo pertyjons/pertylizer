@@ -217,25 +217,34 @@ pub fn role_from_name(instrument_name: &str, track_name: Option<&str>) -> Option
         || has("perc")
         || has("drum")
         || has("drums")
+        || has("impact")
     {
         return Some(Role::Drums);
     }
     if has("bass") || has("sub") || has("808") {
         return Some(Role::Bass);
     }
-    if has("lead") || has("solo") {
+    if has("lead") || has("solo") || has("brass") || has("arp") || has("supersaw") {
         return Some(Role::Lead);
     }
     if has("pad") || has("string") || has("strings") || has("choir") {
         return Some(Role::Pad);
     }
-    if has("pluck") || has("harp") {
+    if has("pluck")
+        || has("harp")
+        || has("stab")
+        || has("stabs")
+        || has("chime")
+        || has("chimes")
+        || has("bell")
+        || has("bells")
+    {
         return Some(Role::Pluck);
     }
     if has("keys") || has("piano") || has("epiano") || has("ep") || has("rhodes") || has("organ") {
         return Some(Role::Keys);
     }
-    if has("fx") || has("riser") || has("impact") || has("sweep") || has("noise") {
+    if has("fx") || has("riser") || has("sweep") || has("noise") {
         return Some(Role::Fx);
     }
     None
@@ -478,6 +487,11 @@ pub fn texture_from_stats(stats: &PatternStats) -> Texture {
 /// and chromatic snare layering.
 const DRUM_PITCH_SPREAD_LIMIT: u8 = 5;
 
+/// Relaxed limit applied when the instrument's name says Drums (Tom, Snare,
+/// Kick, etc.). Tom patterns commonly tune 2-3 toms across ~8 semitones; a
+/// strict 5-st cap would otherwise push those into Pluck-gate.
+const DRUM_PITCH_SPREAD_LIMIT_NAMED: u8 = 12;
+
 #[allow(clippy::too_many_arguments)]
 #[must_use]
 pub fn classify_role(
@@ -500,8 +514,14 @@ pub fn classify_role(
     // is a sweep/pad, not a drum. Require a short envelope alongside.
     let pure_oneshot_sampler =
         graph.has_oneshot_sampler && !graph.has_oscillator && !graph.has_noise_source;
-    let drum_pitch_ok =
-        matches!(pitch_role, PitchRole::Atonal) || pitch_spread <= DRUM_PITCH_SPREAD_LIMIT;
+    // §8.5.3: when the name shouts Drums, allow wider pitch spreads so
+    // Tom-style patches (1-3 tuned hits across ~8 st) still fire drum-gate.
+    let drum_pitch_limit = if name_hint == Some(Role::Drums) {
+        DRUM_PITCH_SPREAD_LIMIT_NAMED
+    } else {
+        DRUM_PITCH_SPREAD_LIMIT
+    };
+    let drum_pitch_ok = matches!(pitch_role, PitchRole::Atonal) || pitch_spread <= drum_pitch_limit;
     let plucked_in_bass =
         envelope == EnvelopeShape::Plucked && matches!(register, Register::Sub | Register::Bass);
     let drum_envelope_ok = envelope == EnvelopeShape::Percussive || plucked_in_bass;
@@ -530,21 +550,29 @@ pub fn classify_role(
             signals.push(ProfileSignal::new(SignalAxis::Graph, "oneshot-sampler"));
             bonus += 1;
         }
-        if !matches!(pitch_role, PitchRole::Atonal) && pitch_spread <= DRUM_PITCH_SPREAD_LIMIT {
+        if !matches!(pitch_role, PitchRole::Atonal) && pitch_spread <= drum_pitch_limit {
             signals.push(ProfileSignal::new(
                 SignalAxis::Pattern,
                 "narrow-pitch-spread",
             ));
         }
-        let conf = (0.6_f32 + 0.2_f32 * bonus as f32).min(1.0);
+        // §8.5.6.2(c): base 0.65 (not the 0.6 the other gates use) so DSP-
+        // driven drum classifications with a `name-conflict` penalty (-0.2)
+        // still clear the 0.60 auto-exclude threshold analyze_harmony uses.
+        let conf = (0.65_f32 + 0.2_f32 * bonus as f32).min(1.0);
         return apply_name_override(Role::Drums, conf, signals, name_hint);
     }
 
-    // 2. Pluck (fix #7).
+    // 2. Pluck (fix #7 + §8.5.6.1 name-priority guard).
     // Plucked envelope + Monophonic is a strong pluck signature regardless of
     // register — fires before Bass so plucks playing in the bass register
-    // don't get swallowed by Bass-gate.
-    if envelope == EnvelopeShape::Plucked && texture == Texture::Monophonic {
+    // don't get swallowed by Bass-gate. Exception: when the user named the
+    // patch "Lead", defer to Lead-precedence (step 3) — an arpeggiated lead
+    // synth has plucked DSP shape but the user's name expresses Lead intent.
+    if envelope == EnvelopeShape::Plucked
+        && texture == Texture::Monophonic
+        && name_hint != Some(Role::Lead)
+    {
         let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "pluck-gate")];
         let mut bonus = 0;
         if name_hint == Some(Role::Pluck) {
@@ -559,11 +587,16 @@ pub fn classify_role(
         return apply_name_override(Role::Pluck, conf, signals, name_hint);
     }
 
-    // 3. Lead-precedence-by-name (fix #6).
-    // When the user named it Lead, respect that ahead of register-only Bass —
-    // a Lead patch that happens to play low ("Sub Lead") should still be Lead.
+    // 3. Lead-precedence-by-name (fix #6 + §8.5.4).
+    // When the user named it Lead, respect that ahead of register-only Bass
+    // ("Sub Lead" should still be Lead) and ahead of the relaxed Pad-gate
+    // (a "Lead" patch that happens to play 2-4 simultaneous notes should
+    // still be a Lead, not a Pad).
     let lead_envelope_ok = matches!(envelope, EnvelopeShape::Plucked | EnvelopeShape::Sustained);
-    if name_hint == Some(Role::Lead) && lead_envelope_ok && texture == Texture::Monophonic {
+    if name_hint == Some(Role::Lead)
+        && lead_envelope_ok
+        && matches!(texture, Texture::Monophonic | Texture::Polyphonic)
+    {
         let mut signals = vec![
             ProfileSignal::new(SignalAxis::Decision, "lead-gate"),
             ProfileSignal::new(SignalAxis::Name, "lead"),
@@ -577,8 +610,22 @@ pub fn classify_role(
         return apply_name_override(Role::Lead, conf, signals, name_hint);
     }
 
-    // 4. Bass.
-    let bass_gate = matches!(pitch_role, PitchRole::Tonal | PitchRole::Mixed)
+    // 4. Pad-precedence-by-name (§8.5.1).
+    // When the user named it Pad/Strings/Choir, respect that ahead of
+    // register-only Bass — a Pad that happens to play in the bass register
+    // (Fractal Pad, Pad layered with sub, …) should still be a Pad. Shares
+    // the gate body with step 6; the only difference is the precondition.
+    if name_hint == Some(Role::Pad) && pad_shape_matches(envelope, texture, pitch_role) {
+        return build_pad_inference(name_hint, graph, envelope);
+    }
+
+    // 5. Bass.
+    // §8.5.2: when the user named it Bass and it sits in the sub/bass register,
+    // accept Atonal pitch_role too — sub basses that hammer a single note all
+    // bar would otherwise leak to FX-gate (Atonal + non-percussive).
+    let bass_pitch_ok = matches!(pitch_role, PitchRole::Tonal | PitchRole::Mixed)
+        || (name_hint == Some(Role::Bass) && pitch_role == PitchRole::Atonal);
+    let bass_gate = bass_pitch_ok
         && matches!(register, Register::Sub | Register::Bass)
         && matches!(texture, Texture::Monophonic | Texture::Polyphonic);
     if bass_gate {
@@ -603,33 +650,15 @@ pub fn classify_role(
         return apply_name_override(Role::Bass, conf, signals, name_hint);
     }
 
-    // 5. Pad (fix #1 — relaxed).
+    // 6. Pad (fix #1 — relaxed).
     // Real pad patches typically have Polyphonic (2-4) texture and Sustained
     // envelope, not the stricter Chordal (≥5) + Evolving the old gate required.
     // Mixed pitch is still musical content (modal/quartal pads etc.).
-    if matches!(envelope, EnvelopeShape::Sustained | EnvelopeShape::Evolving)
-        && matches!(texture, Texture::Polyphonic | Texture::Chordal)
-        && matches!(pitch_role, PitchRole::Tonal | PitchRole::Mixed)
-    {
-        let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "pad-gate")];
-        let mut bonus = 0;
-        if name_hint == Some(Role::Pad) {
-            signals.push(ProfileSignal::new(SignalAxis::Name, "pad"));
-            bonus += 1;
-        }
-        if graph.osc_count >= 2 {
-            signals.push(ProfileSignal::new(SignalAxis::Graph, "thick"));
-            bonus += 1;
-        }
-        if envelope == EnvelopeShape::Evolving {
-            signals.push(ProfileSignal::new(SignalAxis::Envelope, "evolving"));
-            bonus += 1;
-        }
-        let conf = (0.6_f32 + 0.15_f32 * bonus as f32).min(1.0);
-        return apply_name_override(Role::Pad, conf, signals, name_hint);
+    if pad_shape_matches(envelope, texture, pitch_role) {
+        return build_pad_inference(name_hint, graph, envelope);
     }
 
-    // 6. Keys.
+    // 7. Keys.
     if envelope == EnvelopeShape::Plucked
         && matches!(texture, Texture::Polyphonic | Texture::Chordal)
         && pitch_role == PitchRole::Tonal
@@ -648,7 +677,7 @@ pub fn classify_role(
         return apply_name_override(Role::Keys, conf, signals, name_hint);
     }
 
-    // 7. Lead (default — Mid/High register).
+    // 8. Lead (default — Mid/High register).
     // Requires Tonal/Mixed pitch: atonal monophonic signals are sweeps/FX,
     // not melodic leads — the lead-precedence-by-name gate (step 3) catches
     // user-named exceptions before this point.
@@ -671,7 +700,7 @@ pub fn classify_role(
         return apply_name_override(Role::Lead, conf, signals, name_hint);
     }
 
-    // 8. FX.
+    // 9. FX.
     if pitch_role == PitchRole::Atonal && envelope != EnvelopeShape::Percussive {
         let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "fx-gate")];
         let mut bonus = 0;
@@ -683,7 +712,7 @@ pub fn classify_role(
         return apply_name_override(Role::Fx, conf, signals, name_hint);
     }
 
-    // 9. Envelope-Unknown fallback (fix #2b).
+    // 10. Envelope-Unknown fallback (fix #2b).
     // When envelope_shape is Unknown, every primary gate fails because they
     // all key on a specific shape. Without this, common patches that lack a
     // single dominant Envelope module (modulation envs only, multiple
@@ -708,7 +737,7 @@ pub fn classify_role(
         return apply_name_override(fallback_role, 0.4_f32, signals, name_hint);
     }
 
-    // 10. Unknown.
+    // 11. Unknown.
     RoleInference {
         role: Role::Unknown,
         confidence: 0.0,
@@ -739,6 +768,41 @@ fn apply_name_override(
         confidence,
         signals,
     }
+}
+
+/// Shared shape predicate for the Pad-precedence-by-name (step 4) and the
+/// default Pad-gate (step 6). No register check — the differentiator between
+/// the two call sites is the name precondition + cascade position.
+fn pad_shape_matches(envelope: EnvelopeShape, texture: Texture, pitch_role: PitchRole) -> bool {
+    matches!(envelope, EnvelopeShape::Sustained | EnvelopeShape::Evolving)
+        && matches!(texture, Texture::Polyphonic | Texture::Chordal)
+        && matches!(pitch_role, PitchRole::Tonal | PitchRole::Mixed)
+}
+
+/// Build the `RoleInference` body shared by both Pad cascade steps. The
+/// `Name("pad")` signal is pushed when `name_hint == Some(Pad)` — already true
+/// at step 4, may or may not hold at step 6.
+fn build_pad_inference(
+    name_hint: Option<Role>,
+    graph: &GraphSignals,
+    envelope: EnvelopeShape,
+) -> RoleInference {
+    let mut signals = vec![ProfileSignal::new(SignalAxis::Decision, "pad-gate")];
+    let mut bonus = 0;
+    if name_hint == Some(Role::Pad) {
+        signals.push(ProfileSignal::new(SignalAxis::Name, "pad"));
+        bonus += 1;
+    }
+    if graph.osc_count >= 2 {
+        signals.push(ProfileSignal::new(SignalAxis::Graph, "thick"));
+        bonus += 1;
+    }
+    if envelope == EnvelopeShape::Evolving {
+        signals.push(ProfileSignal::new(SignalAxis::Envelope, "evolving"));
+        bonus += 1;
+    }
+    let conf = (0.6_f32 + 0.15_f32 * bonus as f32).min(1.0);
+    apply_name_override(Role::Pad, conf, signals, name_hint)
 }
 
 // ---------------------------------------------------------------------------

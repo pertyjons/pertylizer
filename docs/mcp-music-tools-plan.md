@@ -1,8 +1,8 @@
 # MCP Music Tools — Plan
 
-> **Date:** 2026-05-11 (last update 2026-05-12: live-testing round 3 across four songs, eight inference-rule fixes, `get_instrument_profiles` MCP tool, offline-render sample-data + tempo + sampler-state propagation fixes)
-> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix in two rounds post-v0.277.0; §8.2 auto-inferred instrument profiles shipped in v0.278.0; commits 74d18da + 93c0786 (in flight 2026-05-12) closed the offline-render snapshot bug class, added `get_instrument_profiles`, and applied seven inference improvements that roughly doubled live-test accuracy on synth patches.** Remaining Tier-1+ pending.
-> Post-ship live testing surfaced determinism, auto-categorization, and offline-render-state issues — see §8. §8.1, §8.2, and §8.4 are fully fixed end-to-end through the MCP bridge. §8.3 (pan-law doc) and §8.5 (inference round-3 follow-ups) are still open.
+> **Date:** 2026-05-11 (last update 2026-05-16: higher-level music-understanding catalogue + optional ML sidecar; §8.3 pan-law documentation, §8.5.1–§8.5.5 inference round-3 fixes — Pad-precedence-by-name, Bass-gate Atonal-by-name, Lead-precedence allows Polyphonic, drum-gate wider pitch-spread when name says Drums, extended name vocabulary; §7.1 `OfflineEngineSession` engine-reuse; end-to-end MCP verification on the "Neuro F#m 174" project surfaced two §8.5 round-4 follow-ups documented in §8.5.6)
+> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix in two rounds post-v0.277.0; §8.2 auto-inferred instrument profiles shipped in v0.278.0; commits 74d18da + 93c0786 closed the offline-render snapshot bug class, added `get_instrument_profiles`, and applied seven inference improvements that roughly doubled live-test accuracy on synth patches; inference round-3 (§8.5.1–§8.5.5) + §8.3 pan-law doc + §7.1 engine reuse shipped 2026-05-16.** Remaining Tier-1+ pending.
+> Post-ship live testing surfaced determinism, auto-categorization, and offline-render-state issues — see §8. §8.1, §8.2, §8.4, and the mandatory §8.3 doc fix are fully shipped end-to-end through the MCP bridge. §8.5.1–§8.5.5 inference improvements shipped 2026-05-16. §8.5.6.1 (Plucked-Monophonic-Lead misclassification) and §8.5.6.2 (name-conflict drums at 0.60-threshold margin) — both surfaced by the 2026-05-16 end-to-end verification — also shipped 2026-05-16. Open: optional §8.3 `pre_master_peak` field only.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
 
 ---
@@ -22,7 +22,7 @@
 
 - **`true_peak` (inter-sample peak)** — currently reports sample peak; inter-sample peak would catch over-shoots that emerge after DA conversion. Important for mixes that already clip on sample-peak (the test song clipped at 22 % of samples in chorus).
 - **LUFS-S / LUFS-M (momentary / short-term)** — only integrated LUFS shipped. Momentary LUFS would help locate the hottest spot inside a section.
-- **Inference round-3 follow-ups** — five concrete classification gaps remain after the round-2 inference improvements (74d18da). Documented in §8.5 with example mis-classifications from the four-song regression suite. Top item: Bass-gate dominates name-priority for low-register Pad/Lead/Strings.
+- **Optional `pre_master_peak` on `TrackContribution`** — the §8.3 doc-fix shipped 2026-05-16 (peak/RMS now flag that they include pan-law attenuation). The optional pre-pan/pre-volume field that would report the patch's internal signal peak directly is still deferred — `analyze_note` against the instrument continues to be the workaround. Decision point comes with the §0 `true_peak` work (per §7.6).
 
 ### Tier 0 follow-up commits
 
@@ -105,6 +105,36 @@ the only granularity available for note edits.
 | `compare_to_reference`| Render a section, run the same DSP analysis on a reference WAV path, and return a diff report: frequency-balance delta per band, LUFS delta, stereo-width delta. Closes the "make it sound like X" loop. Builds on `render_section_to_wav`. |
 | `compare_patches`     | Run `analyze_note` on two patches with the same note/velocity and return a structured diff (brightness, harmonic richness, envelope shape, stereo width). Faster than the AI eyeballing two `AnalyzeNoteResult` blobs side by side. |
 
+### 2.6 Higher-level music understanding (core / no heavy external dependency)
+
+These tools should be implementable inside Pertylizer from existing song state, symbolic MIDI events, offline
+renders, and the existing instrument-profile/mix-analysis infrastructure. Some may benefit from small DSP crates
+(e.g. FFT helpers), but they should not require Python, ML models, or heavyweight third-party runtimes.
+
+| Tool | Purpose |
+|------|---------|
+| `analyze_harmonic_function` | Build on `analyze_harmony` but return key-relative Roman numerals, functional roles (`tonic`, `predominant`, `dominant`, `modal_mixture`, `secondary_dominant`, `chromatic_passing`, etc.), cadence candidates, phrase-level tension/release, and warnings for progressions that are stable but harmonically static. Gives the AI feedback in the same language it uses to plan chord movement. |
+| `analyze_drum_groove` | Drum-specific symbolic groove analysis: kick/snare backbeat strength, hat subdivision, ghost-note density, fill detection, syncopation score, accent grid, repeated-bar sameness, and common pattern hints (four-on-the-floor, breakbeat, half-time, tresillo/clave-like cells). Uses auto-inferred drum profiles by default. |
+| `analyze_bass_drum_lock` | Compare bass notes/onsets against kick, snare, and chord roots. Return kick overlap, bass anticipations, offbeat drive, root/fifth usage, low-end note conflicts, sub gaps, and likely sidechain/arrangement issues. Particularly useful for electronic music where the groove depends on bass + kick relationship. |
+| `analyze_masking_matrix` | Pairwise track masking report over a section. For each relevant track pair, return overlapping energy by perceptual/fixed bands, dominance, likely conflict ranges, and concrete mix hints (`pad masks lead around 1-4 kHz`, `kick/bass overlap too wide below 90 Hz`). Starts with soloed per-track renders and existing band metrics; can later grow Bark/ERB bands if needed. |
+| `analyze_tension_curve` | Bar/section-level curve combining harmony, dissonance, density, register, loudness, brightness, spectral entropy, stereo width, and rhythmic activity. Flags shape problems like a chorus that does not lift, a build that peaks too early, or a drop that loses low-end energy. |
+| `analyze_form_map` | Deterministic song-form/section map from bar-level features, arrangement clips, density, instrument activity, harmony changes, and self-similarity. Returns section candidates, phrase lengths, contrast scores, repetition/novelty peaks, and warnings for intros, builds, drops, or choruses that do not differ enough. This is the core version; ML/audio-reference structure models belong in the future sidecar bucket. |
+| `find_motifs` / `analyze_hook_strength` | Detect repeated pitch/rhythm contours, transformed motifs, call-and-response, hook recurrence, and variation-vs-copy-paste balance. Returns motif IDs with bar/beat occurrences, transformation labels, and a compact "hook appears enough / too hidden / too repetitive" assessment. |
+| `suggest_music_fixes` | Meta-analysis tool that consumes outputs from harmony, groove, mix, arrangement, and patch analyzers and returns ranked next actions with supporting evidence. It should not invent new measurements; it packages existing diagnostics into concrete edits an AI agent can act on. |
+
+### 2.7 Future ideas — optional third-party / ML sidecar
+
+These are powerful, but they should stay out of the deterministic core until there is a clear sidecar story
+for model installation, licensing, runtime cost, cache invalidation, and reproducibility.
+
+| Tool | Purpose |
+|------|---------|
+| `analyze_style_embedding` | Render a section and return semantic/style embeddings plus optional tag predictions (genre, mood, instrumentation, era, production style). Candidate backends: Essentia TensorFlow models, MERT, MuQ/MuLan, CLAP, MusicFM-like representation models. Useful for "this feels closer to synthwave than techno" feedback, but model choice and licensing matter. |
+| `compare_style_to_reference` | Compare Pertylizer output against a reference WAV/text target using embeddings and tag deltas instead of only LUFS/frequency balance. This is analysis, not style transfer: it tells the AI what differs semantically (`reference is brighter, more percussive, less pad-heavy`). |
+| `decompose_reference_to_stems` | Split an external reference WAV into drums/bass/vocals/other stems so `compare_to_reference` can compare the user's drums to reference drums, bass to reference bass, etc. Candidate backends: Demucs / HT-Demucs, Open-Unmix. Heavy runtime and licensing/deployment concerns make this a future optional tool. |
+| `transcribe_reference_to_midi` | Convert reference audio into approximate MIDI/chord/bass/melody material for symbolic comparison. Candidate backends: Basic Pitch for lightweight pitch transcription, MT3-like models for multi-instrument transcription. Best treated as an optional import/reference-analysis path, not a core analyzer. |
+| `analyze_audio_meter_map` | Audio-only beat/downbeat/tactus/timing analysis for imported reference audio. Candidate backends: Beat This!, BeatNet, madmom/librosa-style pipelines. The core `analyze_groove`/`analyze_drum_groove` path should stay symbolic for Pertylizer-authored songs. |
+
 ---
 
 ## 3. Prioritization for AI utility
@@ -134,39 +164,65 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 6. **`analyze_pattern`** — Cheap, no audio rendering. Density, range, velocity variance, repetition factor. Lets
    the AI verify "is this pattern interesting?" without rendering, and is a prerequisite for sane
    `generate_variation` heuristics.
-7. **`analyze_instrument_range`** — Catches the bug class where a patch sounds great at C4 in `analyze_note` and
+7. **`analyze_drum_groove`** — Drum-specific feel analysis is more actionable than a generic groove score:
+   backbeat strength, hat subdivision, fills, ghost notes, and repeated-bar sameness are exactly the issues that
+   make AI-written beats sound flat. Pure symbolic path, using the shipped instrument-profile inference.
+8. **`analyze_bass_drum_lock`** — The kick/bass relationship carries a large share of perceived groove and
+   low-end clarity in electronic music. This gives the AI concrete answers to "does the bass actually work with
+   the beat?" without requiring external models.
+9. **`analyze_masking_matrix`** — Extends the shipped per-track contribution work from "which track owns which
+   band?" to "which track conflicts with which other track?". High mix utility once `analyze_section` can render
+   per-track contributions deterministically.
+10. **`analyze_harmonic_function`** — Chord labels and key fit are useful; functional roles, cadence candidates,
+    and phrase-level tension are what let the AI reason about progression quality and direction.
+11. **`analyze_instrument_range`** — Catches the bug class where a patch sounds great at C4 in `analyze_note` and
    falls apart at C6 or C2. Especially important once an AI is committing patches into a project without a human
    playing test notes.
-8. **`render_section_to_wav`** — Even without immediate analysis tools layered on top, this unlocks the AI sending
+12. **`render_section_to_wav`** — Even without immediate analysis tools layered on top, this unlocks the AI sending
    audio back to a human or feeding it to a separate model. Building block under `compare_to_reference`.
-9. **True-peak + LUFS-S/M for `analyze_mix_bus`** — sample-peak misses inter-sample peaks; LUFS-S/M locate the
+13. **True-peak + LUFS-S/M for `analyze_mix_bus`** — sample-peak misses inter-sample peaks; LUFS-S/M locate the
    hottest moments. Cheap additions on top of the already-shipped LUFS-I pipeline.
 
 ### Tier 2 — Quality-of-life and composition
 
-10. **`generate_chord`**, **`transpose_notes`**, **`quantize_notes_to_scale`**, **`quantize_notes_to_grid`** —
+14. **`analyze_tension_curve`** — Higher-level song-shape diagnostic built from existing analyzers. Useful for
+    "the chorus doesn't lift" and "the build peaks too early" feedback; less foundational than the lower-level
+    tools it consumes.
+15. **`find_motifs` / `analyze_hook_strength`** — Helps verify whether a song has recognizable recurring ideas
+    and whether variations are meaningfully related rather than random. Symbolic first, no audio rendering needed.
+16. **`suggest_music_fixes`** — Meta-tool that ranks concrete next actions from existing diagnostics. High agent
+    usefulness, but should come after enough analyzers exist for the suggestions to be grounded.
+17. **`generate_chord`**, **`transpose_notes`**, **`quantize_notes_to_scale`**, **`quantize_notes_to_grid`** —
     Symbolic helpers that turn a 20-tool-call sequence into a 1-tool-call sequence. Not unlocking any new
     capability, but a large reduction in token-cost-per-musical-idea.
-11. **`analyze_groove`** — Useful once the AI is past "write the right notes" and into "make it feel good".
+18. **`analyze_groove`** — Useful once the AI is past "write the right notes" and into "make it feel good".
     Less load-bearing than harmony analysis because timing problems are easier for humans to flag than harmonic ones.
-12. **`analyze_velocity_response`** — Patch-QA, narrower than `analyze_instrument_range`.
+    The new `analyze_drum_groove` should probably land first because it has clearer instrument semantics.
+19. **`analyze_velocity_response`** — Patch-QA, narrower than `analyze_instrument_range`.
+20. **`analyze_arrangement` / `analyze_form_map`** — Useful for long-form composition and section contrast. A
+    deterministic first version can be built from bar-level features and self-similarity; heavier audio-structure
+    models belong in the future sidecar category.
 
 ### Tier 3 — Specialized, build only when needed
 
-13. **`analyze_arrangement`** — Useful for long-form composition; less critical for the typical 1-4 minute project.
-14. **`compare_to_reference`** — Powerful for "make it sound like" prompts but requires the user to bring a
+21. **`compare_to_reference`** — Powerful for "make it sound like" prompts but requires the user to bring a
     reference. Build after `render_section_to_wav` is in place.
-15. **`compare_patterns`**, **`compare_patches`**, **`humanize_notes`**, **`generate_variation`**,
+22. **`compare_patterns`**, **`compare_patches`**, **`humanize_notes`**, **`generate_variation`**,
     **`analyze_track`**, **`get_mix_meters`** — Each solves a narrower problem. Pick up as concrete user demand
     appears.
+23. **Future optional ML / third-party tools** — `analyze_style_embedding`, `compare_style_to_reference`,
+    `decompose_reference_to_stems`, `transcribe_reference_to_midi`, and `analyze_audio_meter_map`. These can be
+    very powerful, but should live behind an explicit optional sidecar/backend because they introduce model
+    downloads, licensing questions, runtime cost, and reproducibility concerns.
 
 ### What deliberately is **not** here
 
 - Real-time spectrum streaming over MCP — high bandwidth, low value for an offline-reasoning agent.
   `analyze_mix_bus` over a rendered window covers the same questions.
-- Style-transfer / "make it sound like genre X" — out of scope for this layer; belongs in a higher-level agent
-  that *uses* these tools.
-- Stem export — covered by `analyze_track` + `render_section_to_wav` with a track solo.
+- Style-transfer / "make it sound like genre X" generation — out of scope for this layer; belongs in a higher-level
+  agent that *uses* these tools. Style *analysis* via embeddings is listed only as a future optional sidecar.
+- Stem export for Pertylizer-authored tracks — covered by `analyze_track` + `render_section_to_wav` with a track
+  solo. ML-based reference-audio stem separation is a separate future optional tool.
 
 ---
 
@@ -185,6 +241,10 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
   signatures.
 - **Performance budget.** Each Tier-0 call should complete in well under a second for a 4-bar section at 44.1 kHz.
   `analyze_section` over a full 4-minute song is allowed to take a few seconds.
+- **Dependency boundary.** The core MCP analyzer set should remain deterministic, local, and testable from the
+  Rust project state wherever possible. Tools that require ML models, Python runtimes, large downloads, GPU/ONNX
+  dependencies, or non-trivial third-party licensing should be exposed through an explicit optional sidecar/backend
+  rather than becoming required core dependencies.
 
 ---
 
@@ -205,11 +265,15 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 4. ✅ Per-track contribution breakdown for `analyze_section` — v0.277.0.
 5. ✅ Drum-track filtering on `analyze_harmony` — v0.277.0.
 6. `analyze_pattern` — pure symbolic, fast win.
-7. `analyze_instrument_range` — sweep on top of `analyze_note`.
-8. `render_section_to_wav` — generalization of the renderer that writes out instead of analyzing.
-9. True-peak + LUFS-S/M on `analyze_mix_bus`.
+7. `analyze_drum_groove` — pure symbolic drum feel diagnostics, using inferred drum profiles.
+8. `analyze_bass_drum_lock` — symbolic groove + low-end relationship between kick, bass, and chord roots.
+9. `analyze_masking_matrix` — pairwise per-track spectral masking on top of deterministic solo renders.
+10. `analyze_harmonic_function` — Roman numerals, functional roles, cadence/tension analysis on top of harmony.
+11. `analyze_instrument_range` — sweep on top of `analyze_note`.
+12. `render_section_to_wav` — generalization of the renderer that writes out instead of analyzing.
+13. True-peak + LUFS-S/M on `analyze_mix_bus`.
 
-**Tier 2 / Tier 3** — picked up by demand.
+**Tier 2 / Tier 3** — picked up by demand. Keep optional ML/reference-audio tools behind a sidecar boundary.
 
 ---
 
@@ -253,30 +317,61 @@ in `41d8bf6`; #5 is a deliberate Tier-1 follow-up.
 Surfaced by the post-ship simplify pass. None are blockers; ordered by expected impact. Pick up alongside the next
 Tier-1 item that touches the same code.
 
-### 7.1 Reuse one `SynthEngine` across the N per-track renders — high impact
+### 7.1 Reuse one `SynthEngine` across the N per-track renders — ✅ shipped 2026-05-16
 
-`render_per_track_contributions` (`crates/pertylizer/src/mcp_bridge.rs`) currently calls
-`render_arrangement_to_buffer_with_song` once per audible track. Each call spins up a brand-new offline
-`SynthEngine` and replays every instrument's full module graph, connections, parameters, effect chain, bypass
-states, and volume/pan into it via `send_blocking`. For an N-track section that work is repeated N times even
+`render_per_track_contributions` (`crates/pertylizer/src/mcp_bridge.rs`) previously called
+`render_arrangement_to_buffer_with_song` once per audible track. Each call spun up a brand-new offline
+`SynthEngine` and replayed every instrument's full module graph, connections, parameters, effect chain, bypass
+states, and volume/pan into it via `send_blocking`. For an N-track section that work was repeated N times even
 though only the per-track `solo` flags differ between iterations.
 
-Plan: factor the engine construction + instrument-load out of `render_arrangement_to_buffer_with_song` into a
-`OfflineEngineSession` that owns the engine and exposes `render_range(song_arc, start, end) -> RenderedArrangement`.
-The per-track loop builds it once and calls `render_range` N times. Between iterations, send a `Stop` (to flush
-note/voice state) and a fresh `SetSong` / `Seek` / `Play`. The sequencer will pick up the updated solo flags on the
-next tick.
+**Shipped form.** New `pub struct OfflineEngineSession` in
+`crates/pertylizer/src/audio/arrangement_render.rs` owns the offline engine + handle and exposes
+`OfflineEngineSession::render_range(song, start, end) -> Result<RenderedArrangement, _>`. Setup
+(snapshot live instruments, build engine, load every instrument's voice graph + samples,
+`on_stream_start`) runs once in `OfflineEngineSession::new`; `render_range` then handles the per-call
+work (reseed `fastrand`, `Stop`, drain residual voice/effect state, `SetSong`, warm-up on first call
+only, `Play`, `Seek`, frame loop, `Stop`). `render_arrangement_to_buffer_with_song` is now a 4-line
+wrapper around the same session API so single-render callers (`analyze_mix_bus`, `analyze_section`
+without `include_per_track`) keep identical semantics.
 
-This is the single biggest win for `analyze_section` with `include_per_track = true` on real songs.
+**Voice-bleed drain.** `Stop` flips active envelopes into release but does not advance them; without
+extra processing, the next render's first sample inherits whatever amplitude the released voice
+still holds. `VOICE_DRAIN_BLOCKS = 64` (≈ 372 ms at 44.1 kHz) silent `engine.process` calls are run
+between consecutive `render_range` calls — empirically the minimum to bring the dual-oscillator
+regression patch back to bit-exact fresh state. Skipped on the first call where the engine has no
+prior voices.
+
+**Determinism preserved.** `fastrand::seed(OFFLINE_RENDER_SEED)` is called at the start of every
+`render_range` call (not in `new`), so consecutive renders consume the same RNG bytes for note-on
+phase randomization regardless of how many renders preceded them. Combined with the §8.1 Round-2
+`BTreeMap` ordering fix, repeated renders on a reused session are bit-exact for the test corpus.
+
+**Test coverage added in `tests/arrangement_render_determinism.rs`:**
+
+- `session_reuse_matches_fresh_engine_dual_osc` — one fresh-engine render and one session render
+  produce the same bytes for the same range. Anchors the §7.1 wrapper.
+- `session_render_range_is_bit_exact_across_three_calls` — three back-to-back `render_range` calls
+  on the same session and same range produce bit-exact identical buffers. Anchors the voice-bleed
+  drain.
+- `session_render_range_is_bit_exact_for_noise_patch` — repeats the above for the noise patch,
+  which consumes `fastrand` every sample.
+
+This is the single biggest win for `analyze_section` with `include_per_track = true` on real songs:
+an N-track section previously paid the full engine + module-graph load N times; with the session,
+it pays it once.
 
 ### 7.2 Parallelize the per-track renders with rayon — medium impact
 
 The N renders in `render_per_track_contributions` are independent (each its own engine + soloed song clone, no
-shared mutable state). Today they run serially in a `for` loop. After §7.1 lands, swap to `par_iter` over
-`targets`, scaled to `min(N, num_cpus)`. Watch peak memory — each worker holds one `OfflineEngineSession` plus a
-`Song` snapshot — but for 8–16 tracks on modern hardware this trades RAM for near-linear wall-clock improvement.
+shared mutable state). Today they run serially in a `for` loop. With §7.1 landed, the natural next step is
+`par_iter` over `targets`, scaled to `min(N, num_cpus)`, with each worker holding its own
+`OfflineEngineSession`. Watch peak memory — each worker holds one session plus a `Song` snapshot — but for
+8–16 tracks on modern hardware this trades RAM for near-linear wall-clock improvement.
 
-Cleanest order: do §7.1 first so each rayon worker reuses its own engine within its slice.
+Note: the current per-track loop mutates a single shared `song_arc`'s solo flags between iterations.
+Parallelization needs a per-worker song clone (or a non-mutating solo-override mechanism in the renderer) to
+keep the workers independent — otherwise two workers fight over the same `solo` flag.
 
 ### 7.3 `HarmonyScope` enum to fix `analyze_song_harmony` argument sprawl — medium impact
 
@@ -563,7 +658,7 @@ inferred role, a 0.0..=1.0 confidence, and a signal trail listing every axis tha
 override is still authoritative — it reports as `manual-override` with confidence 1.0 and short-circuits the
 decision tree.
 
-### 8.3 Per-track contribution: clarify pan-law output, optionally add `pre_master_peak` — LOW/MED
+### 8.3 Per-track contribution: clarify pan-law output, optionally add `pre_master_peak` — ✅ doc fix shipped 2026-05-16; optional `pre_master_peak` still open
 
 Per-track renders on center-panned tracks report `peak = 0.7071068` (= 1/√2), which is the constant-power pan-law
 attenuation kicking in for L = R = 1.0 inputs. That's correct but confusing: a user reading "Kick peak -3 dBFS"
@@ -584,6 +679,13 @@ Two parts:
 Live testing showed Kick + Sub Bass + Aggro Bass + Stab all reported exactly 0.7071 — the user can't tell
 whether any of them is hot internally without correlating with `analyze_note`. The doc fix is mandatory;
 `pre_master_peak` is a quality-of-life add.
+
+**Shipped 2026-05-16 (doc).** `TrackContribution`'s doc comment in
+`crates/synth_mcp/src/types.rs` and the `analyze_section` MCP tool description in
+`crates/synth_mcp/src/server.rs` now spell out that per-track peak/RMS include
+constant-power pan-law attenuation (≈ 0.7071 / -3 dB on each channel for a
+center-panned source), and direct users to `analyze_note` for the unattenuated
+internal-signal peak. The optional `pre_master_peak` field is still deferred.
 
 ### 8.4 Offline-render snapshot propagation bug class — HIGH ✅ **Fixed in 74d18da**
 
@@ -621,13 +723,13 @@ needs an explicit propagation command and isn't being sent on the offline-side `
 realtime engine has it; the snapshot consulted by readers may not. Particularly suspect anything where the
 value flows through `Param::as_f32()` — that conversion is lossy for several variants.
 
-### 8.5 Inference round-3 follow-ups (live testing 2026-05-12) — MEDIUM
+### 8.5 Inference round-3 follow-ups (live testing 2026-05-12) — ✅ all five fixes shipped 2026-05-16
 
 After the round-2 improvements (§8.2c), four songs were re-run through `get_instrument_profiles`. Accuracy
-went from ~33 % to ~64 %, but five concrete failure modes persist. These are documented here as the next
-batch of inference work; each one has at least one concrete example in the regression suite.
+went from ~33 % to ~64 %, but five concrete failure modes persisted. All five are now closed; each
+sub-section below carries a ✅ marker and a brief note on the shipped fix.
 
-#### 8.5.1 Bass-gate dominates name-priority — HIGH
+#### 8.5.1 Bass-gate dominates name-priority — ✅ shipped 2026-05-16
 
 Pad/Lead/Strings/etc. patches that play in the bass register get classified as `Bass` even when the name
 clearly says otherwise. The Bass-gate fires at cascade position 4, before Pad (5) and the default Lead (7);
@@ -649,7 +751,12 @@ generalized "name-priority for exact vocab match": if the name hint is `Some(Rol
 *could* fire on a relaxed register requirement, prefer it over a register-based Bass-gate. The conservative
 form is `name_hint == Some(Pad) && pad_gate_without_register_check matches → Pad with confidence 0.6`.
 
-#### 8.5.2 Atonal patches in mid register fall through Bass-gate to FX or Lead — MEDIUM
+**Shipped.** New cascade step 4 (Pad-precedence-by-name) sits between Lead-precedence (step 3) and Bass-gate
+(now step 5). Fires when `name_hint == Some(Pad)` AND `envelope ∈ {Sustained, Evolving}` AND `texture ∈
+{Polyphonic, Chordal}` AND `pitch_role ∈ {Tonal, Mixed}` — same shape as the relaxed Pad-gate, no register
+check. Counter-test ensures a monophonic patch named "Pad" still falls through to Bass-gate.
+
+#### 8.5.2 Atonal patches in mid register fall through Bass-gate to FX or Lead — ✅ shipped 2026-05-16
 
 Bass-gate requires `pitch_role in [Tonal, Mixed]`. A sub-bass that plays one note repeatedly is `Atonal`
 and so escapes Bass-gate even when the register is sub/bass.
@@ -663,7 +770,11 @@ Fix candidates: (a) relax Bass-gate to accept Atonal when `name_hint == Some(Bas
 sub/bass; (b) generalize 8.5.1's name-priority rule to bass-by-name. (a) is simpler and risks no new
 mis-classifications because the bass-by-name combination is unambiguous.
 
-#### 8.5.3 Tom-style tonal percussion fails drum-gate — MEDIUM
+**Shipped (approach a).** Bass-gate's pitch check is now `Tonal | Mixed | (Atonal && name_hint == Some(Bass))`.
+Register + texture requirements unchanged, so the unrelaxed bass criteria still gate FX/Lead candidates that
+just happen to play low.
+
+#### 8.5.3 Tom-style tonal percussion fails drum-gate — ✅ shipped 2026-05-16
 
 Tom patches play 1-3 distinct tom-tuned notes (a small but non-zero pitch spread). Fix §8.2c #4 set the
 `pitch_spread ≤ 5` threshold for the relaxed drum-gate, but real Tom patterns can spread further (e.g. 2-3
@@ -682,7 +793,11 @@ pitch is wider.
 Note that fix #6 (Lead-by-name-precedence) already establishes the pattern of "name says X, fire X's gate
 before the cascade decides". (c) is the same shape applied to Drums.
 
-#### 8.5.4 Polyphonic Lead patches get caught by relaxed Pad-gate — LOW
+**Shipped (approach a).** `DRUM_PITCH_SPREAD_LIMIT_NAMED = 12` is applied when `name_hint == Some(Drums)`;
+the strict `DRUM_PITCH_SPREAD_LIMIT = 5` still applies otherwise. The `narrow-pitch-spread` signal trail
+also uses the relaxed limit when relevant, so the named-Drums case still emits the same evidence string.
+
+#### 8.5.4 Polyphonic Lead patches get caught by relaxed Pad-gate — ✅ shipped 2026-05-16
 
 After §8.2c #1, Pad-gate accepts polyphonic+sustained+tonal+mid. Lead patches that happen to be
 polyphonic (sustained chord-stab leads, brass-style polyphonic leads) now hit Pad-gate before the
@@ -699,7 +814,12 @@ which gave the user no information at all. Pad 0.40 with name-conflict trail at 
 inference is uncertain. Fix would relax Lead-gate to accept Polyphonic when name_hint == Lead (same
 pattern as §8.2c #6 / 8.5.1).
 
-#### 8.5.5 Name vocabulary is too narrow — LOW
+**Shipped.** Lead-precedence-by-name (cascade step 3) now accepts `texture ∈ {Monophonic, Polyphonic}`
+instead of `Monophonic` only. Polyphonic chord-stab leads named "Lead" fire Lead-precedence before the
+relaxed Pad-gate (now step 6) gets a chance. The atonal-Pad case for "Glitch Pad" remains a separate
+issue — fix #1 still requires `pitch_role ∈ {Tonal, Mixed}`.
+
+#### 8.5.5 Name vocabulary is too narrow — ✅ shipped 2026-05-16
 
 `role_from_name` matches a small fixed vocabulary; many real instrument names get no hint at all and rely
 purely on the decision tree. The 49-instrument corpus showed these names produce no name_hint:
@@ -718,11 +838,132 @@ Extension: add `brass` → Lead, `arp` → Lead (or new `Arp` role), `stab`/`sta
 `chime`/`chimes`/`bell`/`bells` → Pluck. The vocabulary is intentionally word-match (not substring) to
 avoid false hits like `bassoon` → bass; extension just adds tokens.
 
+**Shipped.** Lead vocabulary extended with `brass`, `arp`, `supersaw`. Pluck vocabulary extended with
+`stab`, `stabs`, `chime`, `chimes`, `bell`, `bells`. Tests cover both the positive matches and the
+word-match-not-substring invariants (`Stable Drone` ≠ Stab, `Doorbell` ≠ Bell). Tokens for `brass` /
+`arp` / `supersaw` in particular unlock §8.5.1 / §8.5.4 fixes for instruments whose names previously
+produced no name_hint.
+
 #### Suggested fix order
 
 8.5.1 (name-priority for Pad) → 8.5.2 (Atonal bass-by-name) → 8.5.5 (vocabulary) → 8.5.3 (Tom pitch spread)
 → 8.5.4 (Polyphonic Lead). The first two cover the majority of remaining mis-classifications by themselves;
 vocabulary is cheap and reduces name-conflict cases; 8.5.3 and 8.5.4 are narrower long-tail fixes.
+
+**Shipped order matches the suggested order.** All five landed together on 2026-05-16 inside the same
+edit pass on `classify_role` and `role_from_name`.
+
+### 8.5 round-4 follow-ups (live testing 2026-05-16) — ✅ both shipped 2026-05-16
+
+End-to-end verification of the round-3 fixes against the "Neuro F#m 174" project (13 instruments, all
+manually categorized → temporarily uncategorized to exercise the inference path) confirmed 11 of 13
+auto-classifications correct. The two remaining failure modes are documented below as the next batch of
+inference work; each has a concrete example from that verification run.
+
+#### 8.5.6.1 Plucked + Monophonic + `name_hint == Lead` misclassifies as Pluck — ✅ shipped 2026-05-16
+
+The cascade order is:
+
+1. Drums
+2. Pluck (`envelope == Plucked && texture == Monophonic`)
+3. Lead-precedence-by-name (`name_hint == Some(Lead) && lead_envelope_ok && texture ∈ {Mono, Poly}`)
+4. Pad-precedence-by-name
+5. Bass
+6. Pad (relaxed)
+…
+
+§8.5.4 widened Lead-precedence (step 3) to accept Polyphonic so polyphonic chord-stab leads no longer
+fall into the relaxed Pad-gate. It did not address the case where a Plucked + Monophonic patch named
+"Lead" reaches step 2 (Pluck) before step 3 (Lead-precedence) — Pluck-gate fires, then
+`apply_name_override` records a `name-conflict` and shaves 0.2 off the confidence.
+
+Example from the test corpus (Neuro F#m 174 with categories cleared):
+
+| Instrument | Envelope | Texture | name_hint | Got | Expected |
+|------------|----------|---------|-----------|-----|----------|
+| Arp Lead | Plucked | Monophonic | Some(Lead) | pluck 0.40 (name-conflict) | lead |
+
+By contrast, **Arp Echo** in the same project (Plucked + Polyphonic + name=Lead, via the `arp` token
+added in §8.5.5) correctly resolves to `lead 0.90` via Lead-precedence — only the monophonic case is
+broken.
+
+Fix candidates:
+
+(a) **Reorder cascade** — move Lead-precedence-by-name BEFORE Pluck-gate. Risk: a "Pluck Lead"-style
+patch (envelope=Plucked, name says Lead but the user intended a plucked patch) would now resolve to
+Lead instead of Pluck. Probably acceptable since the user named it Lead.
+
+(b) **Guard Pluck-gate against `name_hint == Some(Lead)`** — skip Pluck-gate when the name explicitly
+says Lead, letting Lead-precedence catch it. Narrower fix, lower blast radius. Mirrors the existing
+pattern of "name-priority gates" introduced in §8.2c #6 and §8.5.1.
+
+Recommendation: **(b)** — Pluck-gate keeps firing for every other plucked monophonic patch, but yields
+to a user-stated Lead intent. Same logical shape as the existing Lead-precedence-by-name; just
+expressed as a guard on Pluck-gate instead of a new gate.
+
+**Shipped (approach b).** Pluck-gate (cascade step 2) now requires `name_hint != Some(Role::Lead)`,
+so a Plucked + Monophonic patch named "Lead" falls through to Lead-precedence (step 3) and resolves
+as `lead` with the existing `lead-gate` signal trail. Counter-test ensures that name=Pluck with the
+same shape still fires Pluck-gate.
+
+#### 8.5.6.2 `name-conflict` penalty parks Impact-style patches at the 0.60 auto-exclude threshold — ✅ shipped 2026-05-16
+
+`analyze_harmony` defaults to excluding tracks classified as `Drums` with `confidence ≥ 0.6`. When the
+decision tree fires Drums-gate via DSP signals (plucked-bass envelope + atonal pitch + sub register)
+but the name vocabulary points elsewhere, `apply_name_override` applies a -0.2 `name-conflict`
+penalty. Drums-gate's base confidence + one DSP-axis bonus = 0.80; after the penalty, 0.60 exactly.
+That's at the threshold — passes today's `>= 0.6` comparison, but a future tightening to `> 0.6`
+would silently break drum exclusion for these patches.
+
+Example from the test corpus:
+
+| Instrument | Got | Threshold margin |
+|------------|-----|------------------|
+| Impact | drums 0.60 (drums-gate, plucked-bass, name-conflict — name says Fx via `impact` → FX vocab) | 0 |
+
+Fix candidates:
+
+(a) **Soften the `name-conflict` penalty when DSP signals are strong** — e.g. reduce the penalty from
+0.2 to 0.1 when the decision-tree signals are unambiguous (drums-gate fired with both an envelope and
+a pitch_role signal, not just one). Keeps the penalty in place for genuinely ambiguous cases but lets
+high-confidence DSP signals dominate weakly-correlated name hints.
+
+(b) **Move "impact" out of the FX vocabulary** — "impact" patches in EDM/dnb are typically sub-thumps
+(percussion), not FX risers. Reclassify `impact` as either Drums or remove it from the FX vocab so it
+produces `name_hint = None`. Concrete impact: only this token; trivial to ship; matches the genre
+usage in the test corpus.
+
+(c) **Raise the bonus baseline for Drums-gate** so `plucked-bass + atonal` produces conf 0.85 pre-
+penalty instead of 0.80 — pushes name-conflict drums to 0.65 instead of 0.60, comfortably above any
+future strict-threshold change. Minimal blast radius.
+
+Recommendation: **(b) + (c)** — (b) is genre-correct and removes the conflict at the root; (c) gives
+the auto-exclude threshold a safety margin for all name-conflict drum cases, not just impacts.
+
+**Shipped (approach b + c).**
+
+- (b) `impact` token moved from the FX vocabulary to the Drums vocabulary in `role_from_name`.
+  Patches named "Impact", "Sub Impact", "Drop Impact" etc. now produce `name_hint = Some(Drums)`,
+  so name + DSP signals agree and `apply_name_override` clamps confidence to ≥ 0.85 instead of
+  applying the conflict penalty.
+- (c) Drums-gate confidence base bumped from 0.6 to 0.65 (other gates still use 0.6 — Drums was
+  already an outlier with its 0.2 bonus increment vs. 0.15 elsewhere). DSP-driven drum
+  classifications with a `name-conflict` penalty now land at 0.65 instead of 0.60 — comfortably
+  above any future strict-threshold change in analyze_harmony.
+
+Counter-test asserts `drums-gate + name-conflict` produces `confidence > 0.6`.
+
+#### Suggested round-4 fix order
+
+8.5.6.1 (Pluck-gate guard on `name_hint == Lead`) → 8.5.6.2 (impact vocab move + Drums-gate bonus
+bump). 8.5.6.1 is a real mis-classification visible in `get_instrument_profiles`; 8.5.6.2 is a margin
+issue that only becomes a bug if the threshold tightens, so lower priority. Both are small additions
+to `classify_role` / `role_from_name` — same edit-pass shape as round-3.
+
+**Shipped order matches the suggested order.** Both fixes landed together on 2026-05-16 inside the
+same edit pass on `classify_role` and `role_from_name`. Verified end-to-end against the
+"Neuro F#m 174" project: Arp Lead now resolves as `lead 0.90` (previously `pluck 0.40` with
+name-conflict), Impact resolves as `drums 1.00` (previously `drums 0.60` at the threshold edge).
 
 ### 8.6 Cross-reference
 
@@ -730,5 +971,9 @@ vocabulary is cheap and reduces name-conflict cases; 8.5.3 and 8.5.4 are narrowe
 bit-exact end-to-end through the MCP bridge, not just inside the determinism unit tests. §8.2 (auto-inferred
 profiles) shipped in v0.278.0, with §8.2c (round-2 inference improvements) and §8.4 (offline-render
 snapshot propagation) landing together in commits 74d18da + 93c0786 — the previously implicit "manual
-`set_instrument_category` required" workflow is now fully optional. §8.3 (pan-law doc + optional
-`pre_master_peak`) and §8.5 (round-3 inference follow-ups) are still open.
+`set_instrument_category` required" workflow is now fully optional. §8.3's mandatory doc fix (pan-law
+attenuation in per-track peak/RMS) and all five §8.5 round-3 inference follow-ups (§8.5.1–§8.5.5) shipped
+2026-05-16. §8.5.6.1 (Plucked-Mono-Lead misclassification) and §8.5.6.2 (0.60-threshold margin for
+name-conflict drums) — both surfaced by the 2026-05-16 end-to-end verification on the
+"Neuro F#m 174" project — also shipped 2026-05-16. The optional §8.3 `pre_master_peak` field is
+the only deferred §8 item.

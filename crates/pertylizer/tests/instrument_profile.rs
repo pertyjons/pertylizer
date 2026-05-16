@@ -350,6 +350,31 @@ fn role_from_name_recognizes_lead_and_pluck() {
     assert_eq!(role_from_name("Harp Pluck", None), Some(Role::Pluck));
 }
 
+// §8.5.5: extended name vocabulary — common synth-patch nicknames that the
+// original token list missed entirely.
+#[test]
+fn role_from_name_recognizes_extended_lead_vocab() {
+    assert_eq!(role_from_name("Brass", None), Some(Role::Lead));
+    assert_eq!(role_from_name("Arp Main", None), Some(Role::Lead));
+    assert_eq!(role_from_name("Crystal Arp", None), Some(Role::Lead));
+    assert_eq!(role_from_name("Unison Supersaw", None), Some(Role::Lead));
+}
+
+#[test]
+fn role_from_name_recognizes_extended_pluck_vocab() {
+    assert_eq!(role_from_name("Punchy Stab", None), Some(Role::Pluck));
+    assert_eq!(role_from_name("Stabs", None), Some(Role::Pluck));
+    assert_eq!(role_from_name("Digital Chime", None), Some(Role::Pluck));
+    assert_eq!(role_from_name("Tubular Bells", None), Some(Role::Pluck));
+}
+
+#[test]
+fn role_from_name_extended_vocab_stays_word_match() {
+    // "Stable" must not trigger "stab"; "Doorbell" must not trigger "bell".
+    assert_eq!(role_from_name("Stable Drone", None), None);
+    assert_eq!(role_from_name("Doorbell", None), None);
+}
+
 // ---------------------------------------------------------------------------
 // Decision tree (classify_role).
 // ---------------------------------------------------------------------------
@@ -776,6 +801,218 @@ fn plucked_bass_register_classified_as_pluck() {
         Texture::Monophonic,
     );
     assert_eq!(r.role, Role::Pluck);
+}
+
+// §8.5.1: Pad-precedence-by-name fires before Bass-gate so pads in the
+// bass register (Fractal Pad, layered sub-pads, …) stay Pads.
+#[test]
+fn name_pad_wins_over_bass_register() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    g.osc_count = 2;
+    let r = classify_role(
+        Some(Role::Pad),
+        &g,
+        EnvelopeShape::Sustained,
+        PitchRole::Tonal,
+        12,
+        Register::Bass,
+        Texture::Polyphonic,
+    );
+    assert_eq!(r.role, Role::Pad);
+    assert!(r.signals.iter().any(|s| s.detail == "pad-gate"));
+    assert!(r.confidence >= 0.85);
+}
+
+#[test]
+fn name_pad_without_pad_shape_does_not_force_pad() {
+    // Counter-test: a monophonic bass with name "Pad" should NOT become Pad
+    // just because of the name — the gate condition (Polyphonic/Chordal) must
+    // also hold. Falls through to the bass-gate.
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Pad),
+        &g,
+        EnvelopeShape::Sustained,
+        PitchRole::Tonal,
+        12,
+        Register::Bass,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Bass);
+}
+
+// §8.5.2: Sub Bass patches that hammer a single note (Atonal pitch_role) still
+// resolve to Bass when the name says so, instead of leaking to FX-gate.
+#[test]
+fn name_bass_atonal_in_bass_register_classified_as_bass() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Bass),
+        &g,
+        EnvelopeShape::Sustained,
+        PitchRole::Atonal,
+        0,
+        Register::Sub,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Bass);
+    assert!(r.confidence >= 0.85);
+}
+
+#[test]
+fn atonal_in_bass_register_without_bass_name_does_not_force_bass() {
+    // Counter-test: same shape but no name hint stays out of bass-gate.
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        None,
+        &g,
+        EnvelopeShape::Sustained,
+        PitchRole::Atonal,
+        0,
+        Register::Sub,
+        Texture::Monophonic,
+    );
+    assert_ne!(r.role, Role::Bass);
+}
+
+// §8.5.3: Tom patches play 1-3 tuned hits across ~8 semitones — wider than
+// the strict 5-st cap. When name_hint says Drums, the relaxed limit applies.
+#[test]
+fn tom_style_wide_pitch_spread_fires_drum_gate_via_name() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Drums),
+        &g,
+        EnvelopeShape::Percussive,
+        PitchRole::Tonal,
+        8, // spans ~3 tom-tuned hits
+        Register::Bass,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Drums);
+}
+
+#[test]
+fn wide_pitch_spread_without_drum_name_does_not_fire_drum_gate() {
+    // Counter-test: same shape but no name hint stays out of drum-gate
+    // (8 st > strict DRUM_PITCH_SPREAD_LIMIT = 5).
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        None,
+        &g,
+        EnvelopeShape::Percussive,
+        PitchRole::Tonal,
+        8,
+        Register::Bass,
+        Texture::Monophonic,
+    );
+    assert_ne!(r.role, Role::Drums);
+}
+
+// §8.5.6.1: a Plucked + Monophonic patch named "Lead" should reach
+// Lead-precedence (step 3) instead of getting swallowed by Pluck-gate
+// (step 2). Without the name-priority guard on Pluck-gate, an arp-lead
+// synth (plucked DSP, monophonic, name says Lead) resolved to Pluck
+// with a `name-conflict` signal and confidence 0.40.
+#[test]
+fn name_lead_plucked_monophonic_resolves_to_lead_not_pluck() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Lead),
+        &g,
+        EnvelopeShape::Plucked,
+        PitchRole::Tonal,
+        12,
+        Register::High,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Lead);
+    assert!(r.confidence >= 0.85);
+    assert!(r.signals.iter().any(|s| s.detail == "lead-gate"));
+}
+
+#[test]
+fn name_pluck_plucked_monophonic_still_fires_pluck_gate() {
+    // Counter-test: the §8.5.6.1 guard only fires for name=Lead. A patch
+    // explicitly named "Pluck" with the same shape must still resolve to
+    // Pluck via the regular Pluck-gate.
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Pluck),
+        &g,
+        EnvelopeShape::Plucked,
+        PitchRole::Tonal,
+        12,
+        Register::Mid,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Pluck);
+}
+
+// §8.5.6.2(b): "impact" moved from FX vocab to Drums vocab.
+#[test]
+fn role_from_name_impact_classifies_as_drums() {
+    assert_eq!(role_from_name("Impact", None), Some(Role::Drums));
+    assert_eq!(role_from_name("Sub Impact", None), Some(Role::Drums));
+    assert_eq!(role_from_name("Drop Impact", None), Some(Role::Drums));
+}
+
+// §8.5.6.2(c): drums-gate confidence bumped to 0.65 base so that a
+// DSP-driven drum classification with a `name-conflict` penalty (-0.2)
+// still clears the 0.60 auto-exclude threshold analyze_harmony uses.
+#[test]
+fn drums_gate_clears_threshold_under_name_conflict() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        // Name says Fx; envelope + register + pitch all say Drums. Pre-fix
+        // this case produced drums conf=0.6 (at the threshold edge).
+        Some(Role::Fx),
+        &g,
+        EnvelopeShape::Plucked,
+        PitchRole::Atonal,
+        0,
+        Register::Sub,
+        Texture::Monophonic,
+    );
+    assert_eq!(r.role, Role::Drums);
+    assert!(
+        r.confidence > 0.6,
+        "drums-gate with name-conflict must clear the 0.60 threshold: got {}",
+        r.confidence,
+    );
+    assert!(
+        r.signals.iter().any(|s| s.detail == "name-conflict"),
+        "expected name-conflict signal in trail, got {:?}",
+        r.signals,
+    );
+}
+
+// §8.5.4: Lead-precedence-by-name now also accepts Polyphonic texture so
+// polyphonic chord-stab leads don't get swallowed by the relaxed Pad-gate.
+#[test]
+fn name_lead_polyphonic_wins_over_pad_gate() {
+    let mut g = empty_graph();
+    g.has_oscillator = true;
+    let r = classify_role(
+        Some(Role::Lead),
+        &g,
+        EnvelopeShape::Sustained,
+        PitchRole::Tonal,
+        12,
+        Register::Mid,
+        Texture::Polyphonic,
+    );
+    assert_eq!(r.role, Role::Lead);
+    assert!(r.confidence >= 0.85);
 }
 
 // ---------------------------------------------------------------------------

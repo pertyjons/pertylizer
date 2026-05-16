@@ -1265,6 +1265,13 @@ pub struct AnalyzeMixBusResult {
 /// isolation (with its own track gain / pan / effects). Use this to answer
 /// "which track is responsible for the chorus clipping?" or "which track owns
 /// the sub-bass energy?".
+///
+/// Track `peak` / `peak_dbfs` / `rms` / `rms_dbfs` reflect the track's
+/// contribution to the master mix, **including pan-law attenuation** (constant-
+/// power pan: -3 dB on each channel for a center-panned track). A center-panned
+/// mono source with internal peak 1.0 therefore reports `peak ≈ 0.7071`. For
+/// the unattenuated internal signal peak, run `analyze_note` against the
+/// instrument directly.
 #[derive(Debug, Clone, Serialize)]
 pub struct TrackContribution {
     /// Sequencer track ID.

@@ -1,5 +1,158 @@
 # Version History
 
+## [0.281.0] - 2026-05-16
+### MCP analysis polish: engine reuse, pan-law docs, two more rounds of role inference
+
+Tier-1 engine-reuse refactor in `analyze_section`, the optional documentation
+fix surfaced by §8.3 of `docs/mcp-music-tools-plan.md`, and two rounds of
+instrument-role-inference improvements driven by live testing on the
+`Neuro F#m 174` regression project. All §8 items from the plan doc are now
+shipped except the optional `pre_master_peak` field; verified end-to-end via
+the MCP bridge against a real 13-instrument project.
+
+#### `crates/pertylizer/src/audio/arrangement_render.rs` — §7.1 engine reuse
+
+New `pub struct OfflineEngineSession` extracts the expensive setup
+(snapshotting live instruments, building an offline `SynthEngine`, loading
+every instrument's voice graph + samples, `on_stream_start`) out of the old
+one-shot `render_arrangement_to_buffer_with_song` into a session that can be
+reused across N renders. The per-track loop in
+`analyze_section(include_per_track: true)` now builds the session once and
+calls `render_range` N times instead of rebuilding the engine per track —
+on a 12-track section, that's one instrument-load pass instead of 12.
+
+- `OfflineEngineSession::new(session, sample_library)` returns
+  `(Self, Vec<String>)` — the second element carries engine-level setup
+  warnings (failed module adds, missing patterns) so the caller can emit
+  them outside any per-target prefix scheme.
+- `OfflineEngineSession::render_range(song, start_tick, end_tick)` reseeds
+  `fastrand` per call (preserves the §8.1 bit-exact-across-renders
+  contract), drains residual voice + effect state between calls until
+  silence with an early-exit threshold of 1e-7 and a 400 ms wall-clock cap
+  (`Stop` releases envelopes but doesn't advance them — without the drain,
+  the next render's first sample inherited the previous voice's release
+  tail), re-attaches the song, runs warm-up on the first call only, and
+  renders. No trailing `Stop` inside `render_range` — the next call's
+  leading `Stop` handles state hygiene, and engine drop covers the last-
+  call case.
+- `render_arrangement_to_buffer_with_song` is now a thin wrapper that
+  creates one session, renders one range, and combines setup + render
+  warnings — so `analyze_mix_bus` and single-render `analyze_section`
+  callers keep identical semantics.
+- New `offline_callback_ctx(frames, sample_position, stream_time)` helper
+  collapses three near-identical `AudioCallbackContext` literals in
+  `render_range` (drain ctx, warmup ctx, render ctx) — drain and warmup are
+  identical sentinel contexts; the helper makes the differing field set on
+  the real render visible.
+
+#### `crates/pertylizer/tests/arrangement_render_determinism.rs`
+
+Three new tests anchor the contract:
+
+- `session_reuse_matches_fresh_engine_dual_osc` — one fresh-engine render
+  and one session render of the dual-oscillator regression patch produce
+  bit-exact identical buffers.
+- `session_render_range_is_bit_exact_across_three_calls` — three back-to-
+  back `render_range` calls on the same session and range produce bit-exact
+  identical buffers (anchors the voice-bleed drain).
+- `session_render_range_is_bit_exact_for_noise_patch` — same for the noise
+  patch, which hammers `fastrand` every sample.
+
+#### `crates/synth_mcp/src/{server.rs,types.rs}` — §8.3 pan-law doc
+
+`TrackContribution`'s doc comment and the `analyze_section` MCP tool
+description now spell out that per-track `peak` / `peak_dbfs` / `rms` /
+`rms_dbfs` include constant-power pan-law attenuation (≈ 0.7071 / -3 dB on
+each channel for a center-panned source). A center-panned source with
+internal peak 1.0 reports `peak ≈ 0.7071` — previously a confusing-but-
+correct number with no explanation in the schema. The doc points users at
+`analyze_note` for the unattenuated internal-signal peak. The optional
+`pre_master_peak` field is still deferred.
+
+#### `crates/pertylizer/src/analysis/instrument_profile.rs` — §8.5 round-3
+
+Five concrete inference gaps surfaced after the round-2 `74d18da + 93c0786`
+ship, all closed in one edit pass on `classify_role` and `role_from_name`:
+
+- **§8.5.1 Pad-precedence-by-name.** New cascade step 4 between
+  Lead-precedence (step 3) and Bass-gate (step 5). When `name_hint == Pad`
+  and the relaxed Pad-gate condition holds (`envelope ∈ {Sustained,
+  Evolving} && texture ∈ {Polyphonic, Chordal} && pitch_role ∈ {Tonal,
+  Mixed}`), fire Pad regardless of register — so `Fractal Pad`,
+  `String Ensemble`, etc. playing in the bass register stay Pads instead
+  of getting swallowed by Bass-gate. Shares a `build_pad_inference` helper
+  with step 6 (the relaxed default Pad-gate).
+- **§8.5.2 Atonal bass-by-name.** Bass-gate's pitch check is now `Tonal ||
+  Mixed || (Atonal && name_hint == Bass)` — a Sub Bass that hammers a
+  single note (Atonal pitch_role) but is named "Bass" still resolves to
+  Bass instead of leaking to FX-gate.
+- **§8.5.3 Tom-style drum-gate pitch-spread.** New
+  `DRUM_PITCH_SPREAD_LIMIT_NAMED = 12` (the strict limit is still 5)
+  applies when `name_hint == Drums` — Tom patches tuned across ~8
+  semitones still fire drum-gate via the relaxed limit. The
+  `narrow-pitch-spread` signal trail follows the same limit when emitting
+  evidence.
+- **§8.5.4 Polyphonic Lead-precedence.** Lead-precedence (cascade step 3)
+  now accepts `texture ∈ {Monophonic, Polyphonic}` (was `Monophonic`
+  only) — polyphonic chord-stab leads named "Lead" no longer fall into
+  the relaxed Pad-gate.
+- **§8.5.5 Extended name vocabulary.** Lead group gains `brass`, `arp`,
+  `supersaw`; Pluck group gains `stab`, `stabs`, `chime`, `chimes`,
+  `bell`, `bells`. Word-match invariants preserved (`Stable Drone` ≠
+  Stab, `Doorbell` ≠ Bell) — verified by counter-tests.
+
+Cascade comments renumbered (steps 4–10 → 5–11) to keep the plan doc's
+in-text references load-bearing.
+
+#### `crates/pertylizer/src/analysis/instrument_profile.rs` — §8.5 round-4
+
+Two follow-up gaps surfaced by the end-to-end MCP verification on
+`Neuro F#m 174` (13 instruments, all manually categorized → temporarily
+uncategorized to exercise the auto-inference path) and closed in the same
+pass:
+
+- **§8.5.6.1 Pluck-gate name-priority guard.** Pluck-gate (cascade step 2)
+  now requires `name_hint != Some(Lead)` in addition to its existing
+  `envelope == Plucked && texture == Monophonic` condition. Without this,
+  an arp-lead synth with a plucked DSP shape resolved as Pluck with a
+  `name-conflict` signal before Lead-precedence (step 3) got a chance.
+  `Arp Lead` now goes from `pluck 0.40 + name-conflict` to `lead 0.90`.
+  Counter-test ensures name=Pluck with the same shape still fires
+  Pluck-gate.
+- **§8.5.6.2 `name-conflict` drums at 0.60-threshold margin.** Two pieces:
+  - (b) `impact` token moved from the FX vocabulary to the Drums
+    vocabulary in `role_from_name`. Patches named "Impact", "Sub Impact",
+    "Drop Impact" etc. now produce `name_hint = Drums`, so name + DSP
+    agree.
+  - (c) Drums-gate confidence base bumped from 0.6 to 0.65 (other gates
+    still use 0.6). DSP-driven drum classifications with a `name-conflict`
+    penalty now land at ≥ 0.65 instead of exactly 0.60 — comfortably
+    above any future strict-threshold change in `analyze_harmony`.
+  `Impact` goes from `drums 0.60 + name-conflict` to `drums 1.00`.
+
+End-to-end MCP verification on `Neuro F#m 174` after round-4: **13 of 13
+instruments correctly auto-classified**, up from 11/13 before §8.5.6 and
+~33 % synth-corpus accuracy before §8.2c.
+
+#### `crates/pertylizer/tests/instrument_profile.rs`
+
+Inference test count grew from 53 to 66:
+
+- §8.5: 9 new cascade tests (Pad-precedence-by-name + counter, Bass-Atonal-
+  by-name + counter, Tom-style drum-gate via name + counter, polyphonic
+  Lead-precedence, plus vocab and word-match-invariant tests for the new
+  tokens).
+- §8.5.6: 4 new cascade tests (Pluck-gate yields to name=Lead, name=Pluck
+  still fires Pluck-gate, `impact` token classifies as Drums, drums-gate
+  clears the 0.60 threshold under name-conflict).
+
+#### `docs/mcp-music-tools-plan.md`
+
+§8.3 mandatory doc fix, §8.5.1–§8.5.5 (round-3), §8.5.6.1–§8.5.6.2
+(round-4) and §7.1 all marked shipped with detailed redogörelser for the
+approach chosen. §8.6 cross-reference + the document header now list only
+the optional §8.3 `pre_master_peak` field as a deferred §8 item.
+
 ## [0.280.0] - 2026-05-13
 ### README refresh + dedicated MCP integration guide
 

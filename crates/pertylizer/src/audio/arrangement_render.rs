@@ -59,6 +59,39 @@ const MAX_RENDER_SECONDS: f32 = 300.0;
 /// thread-local RNG, so reseeding here doesn't disturb the audio thread.
 pub(crate) const OFFLINE_RENDER_SEED: u64 = 0x5EED_5EED_5EED_5EED;
 
+/// Upper bound on how long the voice-bleed drain in `render_range` may run
+/// between two consecutive renders, in milliseconds. The drain exits early as
+/// soon as a fully-silent block is produced (see `DRAIN_SILENCE_EPSILON`).
+/// 400 ms covers the 50 ms envelope release used by the determinism test
+/// suite with margin while still capping the per-iteration cost in the per-
+/// track `analyze_section` loop.
+const VOICE_DRAIN_MAX_MS: f32 = 400.0;
+
+/// Per-sample amplitude under which the drain block is considered silent for
+/// the purpose of the early-exit. Tight enough that residual filter / delay
+/// energy does not contaminate the next render's first sample at the precision
+/// the determinism tests assert (f32 bit-exact).
+const DRAIN_SILENCE_EPSILON: f32 = 1e-7;
+
+/// Build an [`AudioCallbackContext`] for a full-buffer offline `engine.process`
+/// call. Used for the drain, warm-up, and main-render contexts; the latter
+/// passes a real `sample_position` / `stream_time` to advance audio time, the
+/// other two pass `u64::MAX` / `0.0` to mark the block as non-time-advancing.
+fn offline_callback_ctx(
+    frames: usize,
+    sample_position: u64,
+    stream_time: f64,
+) -> AudioCallbackContext {
+    AudioCallbackContext {
+        sample_rate: HwSampleRate(RENDER_SAMPLE_RATE),
+        frames,
+        channels: CHANNELS as u16,
+        stream_time,
+        sample_position,
+        output_latency: synth_core::Seconds::ZERO,
+    }
+}
+
 /// Output of [`render_arrangement_to_buffer`].
 pub struct RenderedArrangement {
     /// Stereo-interleaved f32 samples (L0, R0, L1, R1, ...).
@@ -105,6 +138,12 @@ pub fn render_arrangement_to_buffer(
 /// Identical to [`render_arrangement_to_buffer`] except the sequencer source is
 /// supplied directly. Used by `analyze_section` to render per-track soloed
 /// variants from a cloned `Song` without mutating the live shared instance.
+///
+/// Thin wrapper: builds a single [`OfflineEngineSession`] and renders one range.
+/// Callers that need N renders against the same engine state (per-track loop in
+/// `analyze_section`) should construct an [`OfflineEngineSession`] directly and
+/// call [`OfflineEngineSession::render_range`] N times instead — that amortizes
+/// the engine + instrument-load cost across the loop.
 pub(crate) fn render_arrangement_to_buffer_with_song(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
@@ -112,163 +151,273 @@ pub(crate) fn render_arrangement_to_buffer_with_song(
     start_tick: u64,
     end_tick: u64,
 ) -> Result<RenderedArrangement, McpBridgeError> {
-    if end_tick <= start_tick {
-        return Err(McpBridgeError::Other(format!(
-            "Arrangement range invalid: end_tick ({end_tick}) must be greater than start_tick ({start_tick})"
-        )));
+    let (mut sess, setup_warnings) = OfflineEngineSession::new(session, sample_library)?;
+    let mut rendered = sess.render_range(song, start_tick, end_tick)?;
+    // Preserve the pre-§7.1 contract: setup warnings appear in the single
+    // render's `warnings` vec. The session API itself returns them separately.
+    if !setup_warnings.is_empty() {
+        let mut combined = setup_warnings;
+        combined.append(&mut rendered.warnings);
+        rendered.warnings = combined;
     }
+    Ok(rendered)
+}
 
-    fastrand::seed(OFFLINE_RENDER_SEED);
+/// Owns an offline `SynthEngine` plus a fully-loaded module graph, so the
+/// expensive setup (snapshotting live instruments, creating modules,
+/// applying parameters / connections / sample data) runs once and is
+/// amortized across N render calls.
+///
+/// The intended call pattern is:
+///
+/// ```ignore
+/// let mut sess = OfflineEngineSession::new(&session, &sample_library)?;
+/// for tick_range in ranges {
+///     let rendered = sess.render_range(&song_arc, tick_range.start, tick_range.end)?;
+///     // analyse rendered.samples …
+/// }
+/// ```
+///
+/// Each `render_range` call reseeds `fastrand`, sends `Stop` (to drop any
+/// voices still ringing from the previous render), re-attaches the song, and
+/// runs Play → Seek → process. The dual-oscillator `arrangement_render_determinism`
+/// test enforces that consecutive `render_range` calls are bit-exact.
+pub struct OfflineEngineSession {
+    engine: SynthEngine,
+    handle: synth_engine::EngineHandle,
+    /// True once the first `render_range` call has finished its warm-up
+    /// process. Gates two related behaviors: subsequent calls skip the warm-up
+    /// block AND run the voice-bleed drain instead (a freshly-built engine has
+    /// no prior voices to drain).
+    first_call_done: bool,
+}
 
-    let mut warnings: Vec<String> = Vec::new();
-
-    // Wall-clock duration of the tick range, computed via the song's own
-    // tick→second conversion so tempo changes inside the range are honoured.
-    let duration_seconds = {
-        let song = song.read();
-        let start_s = song.tick_to_seconds(Tick(start_tick));
-        let end_s = song.tick_to_seconds(Tick(end_tick));
-        let dur = (end_s - start_s).max(0.0) as f32;
-        if dur > MAX_RENDER_SECONDS {
-            warnings.push(format!(
-                "Requested arrangement range is {dur:.1}s; clamping to {MAX_RENDER_SECONDS:.0}s",
+impl OfflineEngineSession {
+    /// Snapshot the live instruments, build a fresh offline engine, load every
+    /// instrument's module graph + parameters + sample data, and start the
+    /// audio stream. Does not attach a song or play anything — that's done per
+    /// [`render_range`](Self::render_range).
+    ///
+    /// Returns the session paired with any warnings collected during the
+    /// instrument-load setup (failed module adds, missing patterns, etc.).
+    /// Those are surfaced once, by the caller — they describe the *engine*
+    /// state, not any one render's tick range, so callers running a per-track
+    /// loop should emit them outside the per-track prefix scheme.
+    pub fn new(
+        session: &SynthSession,
+        sample_library: &crate::audio::preview::SharedSampleLibrary,
+    ) -> Result<(Self, Vec<String>), McpBridgeError> {
+        let engine_state = session.state();
+        let live_instruments: Vec<synth_engine::shared_state::InstrumentSnapshot> = engine_state
+            .instrument_snapshots
+            .read()
+            .iter()
+            .cloned()
+            .collect();
+        if live_instruments.is_empty() {
+            return Err(McpBridgeError::Other(
+                "No instruments loaded — nothing to render".to_string(),
             ));
-            MAX_RENDER_SECONDS
-        } else {
-            dur
         }
-    };
 
-    if duration_seconds <= 0.0 {
-        return Err(McpBridgeError::Other(
-            "Arrangement range resolves to zero render duration — check tempo settings".to_string(),
-        ));
-    }
+        let (mut engine, mut handle) = SynthEngine::new();
+        let tmp_session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
 
-    let total_frames = (f64::from(duration_seconds) * f64::from(RENDER_SAMPLE_RATE)).ceil() as u64;
-    if total_frames == 0 {
-        return Err(McpBridgeError::Other(
-            "Arrangement range too short to produce any samples".to_string(),
-        ));
-    }
+        let mut setup_warnings: Vec<String> = Vec::new();
 
-    let engine_state = session.state();
-    let live_instruments: Vec<synth_engine::shared_state::InstrumentSnapshot> = engine_state
-        .instrument_snapshots
-        .read()
-        .iter()
-        .cloned()
-        .collect();
-    if live_instruments.is_empty() {
-        return Err(McpBridgeError::Other(
-            "No instruments loaded — nothing to render".to_string(),
-        ));
-    }
+        // Use each instrument's live ID so the sequencer's SeqInstrumentId →
+        // InstrumentId mapping survives into the offline engine.
+        for inst_snap in &live_instruments {
+            if let Err(e) = tmp_session.add_instrument_with_id(inst_snap.id, &inst_snap.name) {
+                setup_warnings.push(format!(
+                    "arrangement_render: failed to add instrument {}: {e}",
+                    inst_snap.id.as_u64()
+                ));
+                continue;
+            }
+            tmp_session.reset_counters_for_instrument(inst_snap.id);
 
-    let (mut engine, mut handle) = SynthEngine::new();
-    let tmp_session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
-
-    // Use each instrument's live ID so the sequencer's SeqInstrumentId →
-    // InstrumentId mapping survives into the offline engine.
-    for inst_snap in &live_instruments {
-        if let Err(e) = tmp_session.add_instrument_with_id(inst_snap.id, &inst_snap.name) {
-            warnings.push(format!(
-                "arrangement_render: failed to add instrument {}: {e}",
-                inst_snap.id.as_u64()
-            ));
-            continue;
+            load_instrument_into_offline(
+                inst_snap,
+                engine_state,
+                &tmp_session,
+                &mut handle,
+                sample_library,
+                &mut setup_warnings,
+            );
         }
-        tmp_session.reset_counters_for_instrument(inst_snap.id);
 
-        load_instrument_into_offline(
-            inst_snap,
-            engine_state,
-            &tmp_session,
-            &mut handle,
-            sample_library,
-            &mut warnings,
-        );
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate(RENDER_SAMPLE_RATE),
+            buffer_size: synth_core::BufferSize(BUFFER_SIZE as u32),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+
+        Ok((
+            Self {
+                engine,
+                handle,
+                first_call_done: false,
+            },
+            setup_warnings,
+        ))
     }
 
-    // The supplied Song is read-only from the sequencer's perspective
-    // (`SequencerEngine` only does try_read), so handing an Arc to the offline
-    // engine is safe even when it points at the live shared instance.
-    handle.send_blocking(EngineCommand::SetSong {
-        song: Arc::clone(song),
-    });
+    /// Render one `[start_tick, end_tick)` range against `song`. Safe to call
+    /// repeatedly on the same session — reseeds `fastrand`, flushes voice
+    /// state via `Stop`, and re-attaches the song each call so consecutive
+    /// renders are bit-exact regardless of what the previous render did.
+    pub fn render_range(
+        &mut self,
+        song: &Arc<RwLock<Song>>,
+        start_tick: u64,
+        end_tick: u64,
+    ) -> Result<RenderedArrangement, McpBridgeError> {
+        if end_tick <= start_tick {
+            return Err(McpBridgeError::Other(format!(
+                "Arrangement range invalid: end_tick ({end_tick}) must be greater than start_tick ({start_tick})"
+            )));
+        }
 
-    let hw_sample_rate = HwSampleRate(RENDER_SAMPLE_RATE);
-    let stream_info = synth_core::StreamInfo {
-        sample_rate: hw_sample_rate,
-        buffer_size: synth_core::BufferSize(BUFFER_SIZE as u32),
-        channels: synth_core::ChannelCount::Stereo,
-        output_latency: std::time::Duration::ZERO,
-        input_latency: None,
-    };
-    engine.on_stream_start(&stream_info);
+        fastrand::seed(OFFLINE_RENDER_SEED);
 
-    // Sentinel sample_position in the warm-up block keeps the engine from
-    // seeing a duplicate position 0 when the real render begins.
-    let mut block = vec![0.0f32; BUFFER_SIZE * CHANNELS];
-    let warmup_ctx = AudioCallbackContext {
-        sample_rate: hw_sample_rate,
-        frames: BUFFER_SIZE,
-        channels: CHANNELS as u16,
-        stream_time: 0.0,
-        sample_position: u64::MAX,
-        output_latency: synth_core::Seconds::ZERO,
-    };
-    engine.process(&mut block, &warmup_ctx);
+        let mut warnings: Vec<String> = Vec::new();
 
-    // Play, then Seek — in that order. Play transitions the sequencer from
-    // Stopped → Playing, which has the side effect of resetting current_tick
-    // to zero (see `SequencerEngine::play`). Sending Seek *after* Play
-    // overrides that reset so the real render starts at `start_tick`.
-    // Both commands drain together at the top of the first real process
-    // call below, so the sequencer hasn't advanced yet when Seek lands.
-    handle.send_blocking(EngineCommand::Play);
-    handle.send_blocking(EngineCommand::Seek {
-        tick: Tick(start_tick),
-    });
-
-    let mut samples: Vec<f32> = Vec::with_capacity((total_frames as usize) * CHANNELS);
-    let mut frames_written: u64 = 0;
-
-    while frames_written < total_frames {
-        let remaining = (total_frames - frames_written) as usize;
-        let this_buffer = remaining.min(BUFFER_SIZE);
-        let sample_count = this_buffer * CHANNELS;
-
-        block[..sample_count].fill(0.0);
-
-        let context = AudioCallbackContext {
-            sample_rate: hw_sample_rate,
-            frames: this_buffer,
-            channels: CHANNELS as u16,
-            stream_time: frames_written as f64 / f64::from(RENDER_SAMPLE_RATE),
-            sample_position: frames_written,
-            output_latency: synth_core::Seconds::ZERO,
+        // Wall-clock duration of the tick range, computed via the song's own
+        // tick→second conversion so tempo changes inside the range are honoured.
+        let duration_seconds = {
+            let song_read = song.read();
+            let start_s = song_read.tick_to_seconds(Tick(start_tick));
+            let end_s = song_read.tick_to_seconds(Tick(end_tick));
+            let dur = (end_s - start_s).max(0.0) as f32;
+            if dur > MAX_RENDER_SECONDS {
+                warnings.push(format!(
+                    "Requested arrangement range is {dur:.1}s; clamping to {MAX_RENDER_SECONDS:.0}s",
+                ));
+                MAX_RENDER_SECONDS
+            } else {
+                dur
+            }
         };
 
-        engine.process(&mut block[..sample_count], &context);
-        samples.extend_from_slice(&block[..sample_count]);
-        frames_written += this_buffer as u64;
+        if duration_seconds <= 0.0 {
+            return Err(McpBridgeError::Other(
+                "Arrangement range resolves to zero render duration — check tempo settings"
+                    .to_string(),
+            ));
+        }
+
+        let total_frames =
+            (f64::from(duration_seconds) * f64::from(RENDER_SAMPLE_RATE)).ceil() as u64;
+        if total_frames == 0 {
+            return Err(McpBridgeError::Other(
+                "Arrangement range too short to produce any samples".to_string(),
+            ));
+        }
+
+        // Drop any voices still active from a previous render. No-op on a
+        // freshly-built session. The PREVIOUS `render_range` does not send
+        // its own trailing Stop — letting this Stop do double duty (flushing
+        // both the previous render's voices and any state from this one if it
+        // bails early) saves one queue push per call.
+        self.handle.send_blocking(EngineCommand::Stop);
+
+        let mut block = vec![0.0f32; BUFFER_SIZE * CHANNELS];
+
+        // Voice-bleed drain: `Stop` flips active envelopes into release but
+        // does not advance them — without this, the next render's first
+        // sample inherits whatever amplitude the released voice still holds.
+        // Process silent blocks (sequencer Stopped → song does not advance)
+        // until the output goes fully silent, capped at `VOICE_DRAIN_MAX_MS`.
+        // Long reverb / delay tails on real-world patches may not fully
+        // converge inside the cap — bit-exactness across renders is best-
+        // effort for those, but RMS / LUFS metrics on the per-track soloed
+        // renders that `analyze_section` returns are unaffected by sub-ms
+        // residual filter state.
+        if self.first_call_done {
+            let drain_ctx = offline_callback_ctx(BUFFER_SIZE, u64::MAX, 0.0);
+            let max_blocks = ((VOICE_DRAIN_MAX_MS / 1000.0) * RENDER_SAMPLE_RATE as f32
+                / BUFFER_SIZE as f32)
+                .ceil() as usize;
+            for _ in 0..max_blocks {
+                block.fill(0.0);
+                self.engine.process(&mut block, &drain_ctx);
+                if block.iter().all(|s| s.abs() < DRAIN_SILENCE_EPSILON) {
+                    break;
+                }
+            }
+        }
+
+        // The supplied Song is read-only from the sequencer's perspective
+        // (`SequencerEngine` only does try_read), so handing an Arc to the
+        // offline engine is safe even when it points at the live shared
+        // instance. Re-sent every call so callers may render against different
+        // songs (or the same song with mutated solo flags) without restart.
+        self.handle.send_blocking(EngineCommand::SetSong {
+            song: Arc::clone(song),
+        });
+
+        // Sentinel sample_position in the warm-up block keeps the engine from
+        // seeing a duplicate position 0 when the real render begins. Only
+        // needed on the first call — subsequent renders inherit the same
+        // warmed-up engine.
+        if !self.first_call_done {
+            let warmup_ctx = offline_callback_ctx(BUFFER_SIZE, u64::MAX, 0.0);
+            block.fill(0.0);
+            self.engine.process(&mut block, &warmup_ctx);
+            self.first_call_done = true;
+        }
+
+        // Play, then Seek — in that order. Play transitions the sequencer from
+        // Stopped → Playing, which has the side effect of resetting current_tick
+        // to zero (see `SequencerEngine::play`). Sending Seek *after* Play
+        // overrides that reset so the real render starts at `start_tick`.
+        // Both commands drain together at the top of the first real process
+        // call below, so the sequencer hasn't advanced yet when Seek lands.
+        self.handle.send_blocking(EngineCommand::Play);
+        self.handle.send_blocking(EngineCommand::Seek {
+            tick: Tick(start_tick),
+        });
+
+        let mut samples: Vec<f32> = Vec::with_capacity((total_frames as usize) * CHANNELS);
+        let mut frames_written: u64 = 0;
+
+        while frames_written < total_frames {
+            let remaining = (total_frames - frames_written) as usize;
+            let this_buffer = remaining.min(BUFFER_SIZE);
+            let sample_count = this_buffer * CHANNELS;
+
+            block[..sample_count].fill(0.0);
+
+            let context = offline_callback_ctx(
+                this_buffer,
+                frames_written,
+                frames_written as f64 / f64::from(RENDER_SAMPLE_RATE),
+            );
+
+            self.engine.process(&mut block[..sample_count], &context);
+            samples.extend_from_slice(&block[..sample_count]);
+            frames_written += this_buffer as u64;
+        }
+
+        // No trailing Stop: the next `render_range` issues its own Stop at the
+        // top, which handles both flushing this render's voices and any prior
+        // state. Dropping the session without a follow-up render is also fine
+        // — the engine cleans up its own state on drop.
+
+        Ok(RenderedArrangement {
+            samples,
+            sample_rate: RENDER_SAMPLE_RATE,
+            duration_seconds,
+            channels: CHANNELS as u16,
+            start_tick,
+            end_tick,
+            warnings,
+        })
     }
-
-    // Stop the sequencer cleanly. Not strictly required for an offline render
-    // we're about to drop, but it lets the engine release voices in case any
-    // background work runs on Drop.
-    handle.send_blocking(EngineCommand::Stop);
-
-    Ok(RenderedArrangement {
-        samples,
-        sample_rate: RENDER_SAMPLE_RATE,
-        duration_seconds,
-        channels: CHANNELS as u16,
-        start_tick,
-        end_tick,
-        warnings,
-    })
 }
 
 /// Load one instrument's voice graph + effect chain into the offline engine.

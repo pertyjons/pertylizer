@@ -10,7 +10,7 @@ mod common;
 
 use synth_core::ModuleType;
 
-use pertylizer::audio::arrangement_render::render_arrangement_to_buffer;
+use pertylizer::audio::arrangement_render::{OfflineEngineSession, render_arrangement_to_buffer};
 use pertylizer::audio::mix_analysis::analyze_mix_buffer;
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
@@ -149,6 +149,93 @@ fn offline_render_is_bit_exact_for_dual_oscillator_patch() {
         "dual-osc render-1 vs render-3",
         &first.samples,
         &third.samples,
+        first.sample_rate,
+    );
+}
+
+// §7.1: `OfflineEngineSession` amortizes engine + instrument-load setup
+// across N renders. The contract is that a session reused across calls
+// produces bit-exact identical buffers to a freshly-built engine. The
+// dual-oscillator patch is the canonical regression target — it's the
+// smallest patch that exposes `note_on`'s `fastrand`-consumption order
+// dependency (caught §8.1 Round 2 of the determinism work).
+
+#[test]
+fn session_reuse_matches_fresh_engine_dual_osc() {
+    let rig = setup_with_patch(&dual_osc_patch());
+    let song = build_arpeggio_song();
+    let shared = McpSharedState::with_song(song);
+
+    let fresh = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("fresh-engine render should succeed");
+
+    let (mut sess, _setup_warnings) = OfflineEngineSession::new(&rig.session, &rig.sample_library)
+        .expect("session::new should succeed");
+    let session_first = sess
+        .render_range(&shared.song, 0, 3840)
+        .expect("session render-1 should succeed");
+
+    assert_bit_exact(
+        "fresh-engine vs session render-1",
+        &fresh.samples,
+        &session_first.samples,
+        fresh.sample_rate,
+    );
+}
+
+#[test]
+fn session_render_range_is_bit_exact_across_three_calls() {
+    let rig = setup_with_patch(&dual_osc_patch());
+    let song = build_arpeggio_song();
+    let shared = McpSharedState::with_song(song);
+
+    let (mut sess, _setup_warnings) = OfflineEngineSession::new(&rig.session, &rig.sample_library)
+        .expect("session::new should succeed");
+    let first = sess
+        .render_range(&shared.song, 0, 3840)
+        .expect("render-1 should succeed");
+    let second = sess
+        .render_range(&shared.song, 0, 3840)
+        .expect("render-2 should succeed");
+    let third = sess
+        .render_range(&shared.song, 0, 3840)
+        .expect("render-3 should succeed");
+
+    assert_bit_exact(
+        "session render-1 vs render-2",
+        &first.samples,
+        &second.samples,
+        first.sample_rate,
+    );
+    assert_bit_exact(
+        "session render-1 vs render-3",
+        &first.samples,
+        &third.samples,
+        first.sample_rate,
+    );
+}
+
+#[test]
+fn session_render_range_is_bit_exact_for_noise_patch() {
+    // Noise hammers `fastrand::f32()` every sample, so an unreseeded
+    // session would diverge immediately on render-2.
+    let rig = setup_with_patch(&noise_patch());
+    let song = build_arpeggio_song();
+    let shared = McpSharedState::with_song(song);
+
+    let (mut sess, _setup_warnings) = OfflineEngineSession::new(&rig.session, &rig.sample_library)
+        .expect("session::new should succeed");
+    let first = sess
+        .render_range(&shared.song, 0, 3840)
+        .expect("noise render-1 should succeed");
+    let second = sess
+        .render_range(&shared.song, 0, 3840)
+        .expect("noise render-2 should succeed");
+
+    assert_bit_exact(
+        "session noise render-1 vs render-2",
+        &first.samples,
+        &second.samples,
         first.sample_rate,
     );
 }
