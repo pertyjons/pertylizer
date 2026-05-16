@@ -5,9 +5,13 @@
 //! whole rather than a single sound:
 //!
 //! - Peak / RMS / crest factor.
-//! - **Integrated LUFS** following ITU-R BS.1770-4 (K-weighting + 400 ms
-//!   gating blocks at 75% overlap, absolute -70 LUFS gate, relative -10 LU
-//!   gate).
+//! - **True peak** (inter-sample peak) via 4× polyphase oversampling per
+//!   ITU-R BS.1770-4 Annex 2.
+//! - **Integrated, short-term, and momentary LUFS** following ITU-R BS.1770-4
+//!   (K-weighting + 400 ms gating blocks at 75% overlap, absolute -70 LUFS
+//!   gate, relative -10 LU gate). LUFS-M (momentary) is the max single-block
+//!   loudness; LUFS-S (short-term) is the max over a 3 s sliding window
+//!   (= 30 consecutive 100 ms hops).
 //! - 4-band frequency balance (delegates to `analysis::energy_bands` on a
 //!   mono mix-down).
 //! - Stereo correlation (delegates to `analysis::stereo_correlation`).
@@ -18,6 +22,8 @@
 //! coefficients are hard-wired for 44.1 kHz, which matches the offline render
 //! path. Other sample rates produce slightly biased LUFS readings (typically
 //! within ~0.5 dB) but the rest of the metrics are sample-rate independent.
+
+use std::sync::OnceLock;
 
 use crate::audio::analysis::{
     EnergyBands, energy_bands, peak_amplitude, rms_overall, stereo_correlation,
@@ -44,6 +50,18 @@ pub struct MixAnalysis {
     pub peak: f32,
     /// Sample peak in dBFS. `-inf` is reported as -200.0.
     pub peak_dbfs: f32,
+    /// Sample peak of the left channel only, linear.
+    pub peak_left: f32,
+    /// Sample peak of the right channel only, linear.
+    pub peak_right: f32,
+    /// Inter-sample (true) peak across both channels, linear. Computed by 4×
+    /// polyphase oversampling per ITU-R BS.1770-4 Annex 2. Always ≥ `peak` —
+    /// a band-limited signal can exceed the worst sample-grid value between
+    /// samples, and that overshoot is what surfaces as clipping after DA
+    /// conversion or lossy encoding.
+    pub true_peak: f32,
+    /// True peak in dBTP (dB true peak). `-inf` reported as -200.0.
+    pub true_peak_dbtp: f32,
     /// Overall RMS, linear (0.0..=1.0+).
     pub rms: f32,
     /// Overall RMS in dBFS. `-inf` reported as -200.0.
@@ -52,6 +70,12 @@ pub struct MixAnalysis {
     pub crest_factor_db: f32,
     /// Integrated loudness (ITU-R BS.1770-4 LUFS). `-inf` reported as -200.0.
     pub lufs_integrated: f32,
+    /// Maximum momentary loudness over the buffer (single 400 ms K-weighted
+    /// block, no overlap inside the window). `-inf` reported as -200.0.
+    pub lufs_momentary_max: f32,
+    /// Maximum short-term loudness over the buffer (3 s K-weighted window,
+    /// stepped every 100 ms). `-inf` reported as -200.0.
+    pub lufs_short_term_max: f32,
     /// 4-band frequency energy on the mono mix-down (sub/low/mid/high).
     pub energy_bands: EnergyBands,
     /// Pearson correlation between L and R channels, [-1.0, 1.0].
@@ -91,13 +115,23 @@ pub fn analyze_mix_buffer(stereo: &[f32], sample_rate: u32) -> MixAnalysis {
     let mut left_sum_sq = 0.0_f64;
     let mut right_sum_sq = 0.0_f64;
     let mut clipped = 0u32;
+    let mut peak_left = 0.0_f32;
+    let mut peak_right = 0.0_f32;
     for frame in stereo.chunks_exact(2) {
         let l = frame[0];
         let r = frame[1];
-        if l.abs() >= CLIP_THRESHOLD {
+        let la = l.abs();
+        let ra = r.abs();
+        if la > peak_left {
+            peak_left = la;
+        }
+        if ra > peak_right {
+            peak_right = ra;
+        }
+        if la >= CLIP_THRESHOLD {
             clipped += 1;
         }
-        if r.abs() >= CLIP_THRESHOLD {
+        if ra >= CLIP_THRESHOLD {
             clipped += 1;
         }
         mid.push((l + r) * 0.5);
@@ -125,15 +159,23 @@ pub fn analyze_mix_buffer(stereo: &[f32], sample_rate: u32) -> MixAnalysis {
         0.0
     };
 
-    let lufs = lufs_integrated(stereo, sample_rate);
+    let loudness = compute_loudness(stereo, sample_rate);
+    let true_peak = compute_true_peak_stereo(stereo);
+    let true_peak_dbtp = lin_to_db(true_peak);
 
     MixAnalysis {
         peak,
         peak_dbfs,
+        peak_left,
+        peak_right,
+        true_peak,
+        true_peak_dbtp,
         rms,
         rms_dbfs,
         crest_factor_db,
-        lufs_integrated: lufs,
+        lufs_integrated: loudness.integrated,
+        lufs_momentary_max: loudness.momentary_max,
+        lufs_short_term_max: loudness.short_term_max,
         energy_bands: bands,
         stereo_correlation: correlation,
         mid_rms,
@@ -148,10 +190,16 @@ fn zero_analysis() -> MixAnalysis {
     MixAnalysis {
         peak: 0.0,
         peak_dbfs: SILENT_FLOOR_DBFS,
+        peak_left: 0.0,
+        peak_right: 0.0,
+        true_peak: 0.0,
+        true_peak_dbtp: SILENT_FLOOR_DBFS,
         rms: 0.0,
         rms_dbfs: SILENT_FLOOR_DBFS,
         crest_factor_db: 0.0,
         lufs_integrated: SILENT_FLOOR_DBFS,
+        lufs_momentary_max: SILENT_FLOOR_DBFS,
+        lufs_short_term_max: SILENT_FLOOR_DBFS,
         energy_bands: EnergyBands {
             sub: 0.0,
             low: 0.0,
@@ -167,8 +215,10 @@ fn zero_analysis() -> MixAnalysis {
     }
 }
 
+/// Convert a linear amplitude to dBFS. Sub-zero / non-positive inputs collapse
+/// to [`SILENT_FLOOR_DBFS`] so JSON consumers never see `-inf`.
 #[inline]
-fn lin_to_db(linear: f32) -> f32 {
+pub(crate) fn lin_to_db(linear: f32) -> f32 {
     if linear > 0.0 {
         20.0 * linear.log10()
     } else {
@@ -265,22 +315,72 @@ fn k_weight_inplace(samples: &mut [f32]) {
     biquad_filter_inplace(samples, &K_RLB_B, &K_RLB_A);
 }
 
-/// Integrated loudness (LUFS) per ITU-R BS.1770-4.
+/// Combined LUFS-I / LUFS-M / LUFS-S results from a single K-weighting pass.
+struct LoudnessSummary {
+    /// Integrated LUFS (ITU-R BS.1770-4, abs/rel gated). `-200.0` when silent.
+    integrated: f32,
+    /// Maximum momentary loudness — max over single 400 ms K-weighted blocks.
+    /// `-200.0` when no block was audible.
+    momentary_max: f32,
+    /// Maximum short-term loudness — max over 3 s K-weighted sliding windows
+    /// (30 consecutive 100 ms hops). `-200.0` when no window was audible or
+    /// the buffer is shorter than 3 s.
+    short_term_max: f32,
+}
+
+impl LoudnessSummary {
+    const SILENT: Self = Self {
+        integrated: SILENT_FLOOR_DBFS,
+        momentary_max: SILENT_FLOOR_DBFS,
+        short_term_max: SILENT_FLOOR_DBFS,
+    };
+}
+
+/// Per ITU-R BS.1770-4 / EBU R 128: integrated + momentary-max + short-term-max
+/// loudness in one pass.
 ///
-/// Stereo (channel weights 1.0, 1.0). For short inputs (less than one 400 ms
-/// block) returns `-200.0` rather than `-inf`/`NaN`.
-fn lufs_integrated(stereo: &[f32], sample_rate: u32) -> f32 {
+/// Reuses the K-weighting + 400 ms / 100 ms-hop block decomposition for all
+/// three readouts. Momentary loudness == single 400 ms block. Short-term
+/// loudness == 3 s sliding window stepped every 100 ms (= 30 consecutive
+/// blocks at 75 % overlap = 0.4 s + 29 × 0.1 s = 3.3 s total cover; ITU-R
+/// allows ±10 % on the 3 s requirement, so 3.3 s is in spec).
+///
+/// Stereo (channel weights 1.0, 1.0). Buffers shorter than 400 ms produce
+/// `-200.0` for integrated / momentary; buffers shorter than 3.3 s produce
+/// `-200.0` for short_term.
+fn compute_loudness(stereo: &[f32], sample_rate: u32) -> LoudnessSummary {
     let n_frames = stereo.len() / 2;
     if n_frames == 0 || sample_rate == 0 {
-        return SILENT_FLOOR_DBFS;
+        return LoudnessSummary::SILENT;
     }
     let block_samples = (sample_rate as usize * 4) / 10; // 400 ms
     let hop_samples = block_samples / 4; // 75% overlap → 100 ms hop
     if n_frames < block_samples {
-        return SILENT_FLOOR_DBFS;
+        return LoudnessSummary::SILENT;
     }
 
-    // Deinterleave to per-channel buffers so we can filter independently.
+    let block_energy = k_weighted_block_energies(stereo, n_frames, block_samples, hop_samples);
+    if block_energy.is_empty() {
+        return LoudnessSummary::SILENT;
+    }
+
+    LoudnessSummary {
+        integrated: integrated_lufs(&block_energy),
+        momentary_max: momentary_max_lufs(&block_energy),
+        short_term_max: short_term_max_lufs(&block_energy),
+    }
+}
+
+/// K-weight the stereo input, slice into overlapping 400 ms blocks, and emit
+/// each block's combined L+R mean-square energy. Loudness for any block is
+/// then `energy_to_lufs(energy)`. Storing energy (not loudness) lets the
+/// short-term sliding window sum directly without a dB→linear round-trip.
+fn k_weighted_block_energies(
+    stereo: &[f32],
+    n_frames: usize,
+    block_samples: usize,
+    hop_samples: usize,
+) -> Vec<f64> {
     let mut left = Vec::with_capacity(n_frames);
     let mut right = Vec::with_capacity(n_frames);
     for frame in stereo.chunks_exact(2) {
@@ -290,70 +390,196 @@ fn lufs_integrated(stereo: &[f32], sample_rate: u32) -> f32 {
     k_weight_inplace(&mut left);
     k_weight_inplace(&mut right);
 
-    // Mean-square per 400 ms block, 75 % overlap. Block loudness:
-    //     L_K = -0.691 + 10 log10( Σ_ch weight_ch · MS_ch )
-    // For stereo, weight_L = weight_R = 1.0.
-    let mut block_loudness: Vec<f32> = Vec::new();
+    let est_blocks = n_frames.saturating_sub(block_samples) / hop_samples + 1;
+    let mut block_energy: Vec<f64> = Vec::with_capacity(est_blocks);
     let mut start = 0usize;
     while start + block_samples <= n_frames {
-        let end = start + block_samples;
         let mut sum_l = 0.0_f64;
         let mut sum_r = 0.0_f64;
-        for i in start..end {
+        for i in start..(start + block_samples) {
             sum_l += f64::from(left[i]) * f64::from(left[i]);
             sum_r += f64::from(right[i]) * f64::from(right[i]);
         }
-        let ms_l = sum_l / block_samples as f64;
-        let ms_r = sum_r / block_samples as f64;
-        let weighted = ms_l + ms_r;
-        if weighted > 0.0 {
-            let lk = -0.691 + 10.0 * weighted.log10();
-            block_loudness.push(lk as f32);
-        } else {
-            block_loudness.push(SILENT_FLOOR_DBFS);
-        }
+        block_energy.push((sum_l + sum_r) / block_samples as f64);
         start += hop_samples;
     }
+    block_energy
+}
 
-    if block_loudness.is_empty() {
+/// LUFS = -0.691 + 10·log₁₀(energy). Returns `SILENT_FLOOR_DBFS` for ≤ 0 input.
+#[inline]
+fn energy_to_lufs(energy: f64) -> f32 {
+    if energy > 0.0 {
+        (-0.691 + 10.0 * energy.log10()) as f32
+    } else {
+        SILENT_FLOOR_DBFS
+    }
+}
+
+fn momentary_max_lufs(block_energy: &[f64]) -> f32 {
+    let max_energy = block_energy.iter().copied().fold(0.0_f64, f64::max);
+    energy_to_lufs(max_energy)
+}
+
+/// 3 s sliding window stepped every 100 ms (= 30 consecutive 400 ms blocks at
+/// 75 % overlap). Buffers shorter than 30 blocks report -200 LUFS.
+fn short_term_max_lufs(block_energy: &[f64]) -> f32 {
+    const SHORT_TERM_BLOCKS: usize = 30;
+    if block_energy.len() < SHORT_TERM_BLOCKS {
         return SILENT_FLOOR_DBFS;
     }
+    let inv = 1.0 / SHORT_TERM_BLOCKS as f64;
+    let mut running: f64 = block_energy[..SHORT_TERM_BLOCKS].iter().sum();
+    let mut best = running * inv;
+    for i in SHORT_TERM_BLOCKS..block_energy.len() {
+        running += block_energy[i] - block_energy[i - SHORT_TERM_BLOCKS];
+        let mean = running * inv;
+        if mean > best {
+            best = mean;
+        }
+    }
+    energy_to_lufs(best)
+}
 
-    // Absolute gate: drop blocks below -70 LUFS.
-    let gated_abs: Vec<f32> = block_loudness
+/// ITU-R BS.1770-4 integrated loudness: absolute -70 LUFS gate, then a
+/// relative (mean − 10 LU) gate, applied to per-block energies.
+fn integrated_lufs(block_energy: &[f64]) -> f32 {
+    let abs_gate_energy = 10f64.powf((-70.0 + 0.691) / 10.0);
+    let gated_abs: Vec<f64> = block_energy
         .iter()
         .copied()
-        .filter(|l| *l > -70.0)
+        .filter(|e| *e > abs_gate_energy)
         .collect();
     if gated_abs.is_empty() {
         return SILENT_FLOOR_DBFS;
     }
+    let mean_energy_abs = gated_abs.iter().sum::<f64>() / gated_abs.len() as f64;
+    let rel_gate_energy = mean_energy_abs * 10f64.powf(-1.0); // -10 LU == ×0.1 energy
 
-    // Compute mean energy of absolute-gated blocks then derive the relative
-    // gate threshold = mean_loudness - 10 LU.
-    let mean_energy: f64 = gated_abs
-        .iter()
-        .map(|l| 10f64.powf((f64::from(*l) + 0.691) / 10.0))
-        .sum::<f64>()
-        / gated_abs.len() as f64;
-    let mean_loudness_lufs = -0.691 + 10.0 * mean_energy.log10();
-    let relative_threshold = mean_loudness_lufs - 10.0;
-
-    let gated_rel: Vec<f32> = gated_abs
-        .into_iter()
-        .filter(|l| f64::from(*l) > relative_threshold)
-        .collect();
-    if gated_rel.is_empty() {
-        return SILENT_FLOOR_DBFS;
+    let mut rel_sum = 0.0_f64;
+    let mut rel_count = 0usize;
+    for &e in &gated_abs {
+        if e > rel_gate_energy {
+            rel_sum += e;
+            rel_count += 1;
+        }
     }
+    if rel_count == 0 {
+        SILENT_FLOOR_DBFS
+    } else {
+        energy_to_lufs(rel_sum / rel_count as f64)
+    }
+}
 
-    let final_energy: f64 = gated_rel
-        .iter()
-        .map(|l| 10f64.powf((f64::from(*l) + 0.691) / 10.0))
-        .sum::<f64>()
-        / gated_rel.len() as f64;
-    let lufs_i = -0.691 + 10.0 * final_energy.log10();
-    lufs_i as f32
+// ---------------------------------------------------------------------------
+// True peak (inter-sample peak) via 4× polyphase oversampling
+// ---------------------------------------------------------------------------
+
+/// Oversample factor used for true-peak detection per ITU-R BS.1770-4 Annex 2
+/// (minimum 4× — this is the spec minimum that catches all but the most
+/// pathological inter-sample peaks).
+const TRUE_PEAK_OVERSAMPLE: usize = 4;
+
+/// Taps per polyphase phase. 12 × 4 = 48-tap prototype filter — ITU-R BS.1770-4
+/// Annex 2 specifies a 47-tap minimum.
+const TRUE_PEAK_TAPS_PER_PHASE: usize = 12;
+
+/// Total prototype-filter length (= phases × taps per phase).
+const TRUE_PEAK_PROTOTYPE_LEN: usize = TRUE_PEAK_OVERSAMPLE * TRUE_PEAK_TAPS_PER_PHASE;
+
+/// Polyphase coefficients indexed `[phase][tap]`. Lazily initialised because
+/// const-fn floating-point math is still gated on stable Rust.
+fn true_peak_kernel() -> &'static [[f32; TRUE_PEAK_TAPS_PER_PHASE]; TRUE_PEAK_OVERSAMPLE] {
+    static KERNEL: OnceLock<[[f32; TRUE_PEAK_TAPS_PER_PHASE]; TRUE_PEAK_OVERSAMPLE]> =
+        OnceLock::new();
+    KERNEL.get_or_init(build_true_peak_kernel)
+}
+
+/// Build a 48-tap Hamming-windowed sinc lowpass at fc = 1/(2·oversample)
+/// cycles per upsampled sample, then de-interleave into 4 polyphase phases.
+///
+/// Coefficients per phase are normalised so summing one phase against a DC
+/// input yields 1.0 — the upsampler then preserves DC level and the existing
+/// `peak`/`true_peak` comparison stays meaningful.
+fn build_true_peak_kernel() -> [[f32; TRUE_PEAK_TAPS_PER_PHASE]; TRUE_PEAK_OVERSAMPLE] {
+    use std::f64::consts::PI;
+    let n = TRUE_PEAK_PROTOTYPE_LEN;
+    let mut proto = [0.0_f64; TRUE_PEAK_PROTOTYPE_LEN];
+    let center = (n as f64 - 1.0) * 0.5;
+    let fc = 0.5 / TRUE_PEAK_OVERSAMPLE as f64;
+    for (i, slot) in proto.iter_mut().enumerate() {
+        let m = i as f64 - center;
+        let sinc = if m.abs() < 1e-12 {
+            2.0 * fc
+        } else {
+            (2.0 * PI * fc * m).sin() / (PI * m)
+        };
+        // Hamming window.
+        let w = 0.54 - 0.46 * (2.0 * PI * i as f64 / (n as f64 - 1.0)).cos();
+        *slot = sinc * w;
+    }
+    // De-interleave into polyphase phases and normalise each phase so DC is
+    // preserved (sum of each phase's taps == 1.0).
+    let mut phases = [[0.0_f32; TRUE_PEAK_TAPS_PER_PHASE]; TRUE_PEAK_OVERSAMPLE];
+    for phase in 0..TRUE_PEAK_OVERSAMPLE {
+        let mut sum = 0.0_f64;
+        for tap in 0..TRUE_PEAK_TAPS_PER_PHASE {
+            let proto_idx = tap * TRUE_PEAK_OVERSAMPLE + phase;
+            sum += proto[proto_idx];
+        }
+        let inv = if sum.abs() > 1e-12 { 1.0 / sum } else { 1.0 };
+        for tap in 0..TRUE_PEAK_TAPS_PER_PHASE {
+            let proto_idx = tap * TRUE_PEAK_OVERSAMPLE + phase;
+            phases[phase][tap] = (proto[proto_idx] * inv) as f32;
+        }
+    }
+    phases
+}
+
+/// Stereo true-peak: take the larger of the two per-channel true peaks.
+fn compute_true_peak_stereo(stereo: &[f32]) -> f32 {
+    if stereo.is_empty() {
+        return 0.0;
+    }
+    let n_frames = stereo.len() / 2;
+    if n_frames < TRUE_PEAK_TAPS_PER_PHASE {
+        // Buffer too short to give the FIR meaningful state; fall back to
+        // the sample-grid peak. Better than returning 0 or a garbage value.
+        return peak_amplitude(stereo);
+    }
+    let mut left = Vec::with_capacity(n_frames);
+    let mut right = Vec::with_capacity(n_frames);
+    for frame in stereo.chunks_exact(2) {
+        left.push(frame[0]);
+        right.push(frame[1]);
+    }
+    let lp = channel_true_peak(&left);
+    let rp = channel_true_peak(&right);
+    lp.max(rp)
+}
+
+/// Single-channel true peak: 4× upsample via polyphase FIR and take the max
+/// absolute value across both the original samples and the interpolated ones.
+fn channel_true_peak(samples: &[f32]) -> f32 {
+    let kernel = true_peak_kernel();
+    let taps = TRUE_PEAK_TAPS_PER_PHASE;
+    let mut peak = peak_amplitude(samples);
+    if samples.len() < taps {
+        return peak;
+    }
+    for k in (taps - 1)..samples.len() {
+        for coeffs in kernel.iter() {
+            let mut acc = 0.0_f32;
+            for tap in 0..taps {
+                acc += coeffs[tap] * samples[k - tap];
+            }
+            let a = acc.abs();
+            if a > peak {
+                peak = a;
+            }
+        }
+    }
+    peak
 }
 
 #[cfg(test)]
@@ -472,5 +698,89 @@ mod tests {
         buf[2] = -1.0;
         let result = analyze_mix_buffer(&buf, 44_100);
         assert_eq!(result.clipped_samples, 2);
+    }
+
+    #[test]
+    fn true_peak_is_at_least_sample_peak() {
+        let buf = sine_stereo(1000.0, 44_100, 1.0, 0.8);
+        let result = analyze_mix_buffer(&buf, 44_100);
+        assert!(
+            result.true_peak >= result.peak - 1e-4,
+            "true_peak ({}) must be ≥ sample peak ({})",
+            result.true_peak,
+            result.peak
+        );
+        // For a moderate-amplitude in-band sine, true_peak should still be
+        // close to the sample peak — within ~1 dB.
+        assert!(
+            result.true_peak <= result.peak * 1.2,
+            "true_peak ({}) wildly above sample peak ({}) — kernel may be misnormalised",
+            result.true_peak,
+            result.peak
+        );
+        assert!(result.true_peak_dbtp > -10.0);
+    }
+
+    #[test]
+    fn true_peak_exceeds_sample_peak_for_intersample_overshoot() {
+        // Intersample-peak test signal: a 11025 Hz sine (fs/4 at fs = 44.1 kHz)
+        // sampled at quadrature phases (π/4, 3π/4, …). Every sample lands at
+        // ±sin(π/4) ≈ ±0.7071, but the reconstructed waveform's true peak is
+        // the underlying amplitude A. With A = 1.0 we expect sample peak ≈
+        // 0.7071 and true_peak ≥ ~0.99 once the FIR has settled.
+        let n = 44_100;
+        let mut buf = Vec::with_capacity(n * 2);
+        let phase_offset = std::f32::consts::PI * 0.25;
+        for i in 0..n {
+            let phase = TAU * 11025.0 * (i as f32) / 44_100.0 + phase_offset;
+            let v = phase.sin();
+            buf.push(v);
+            buf.push(v);
+        }
+        let result = analyze_mix_buffer(&buf, 44_100);
+        let expected_sample = std::f32::consts::FRAC_1_SQRT_2; // ≈ 0.7071
+        assert!(
+            (result.peak - expected_sample).abs() < 0.01,
+            "sample peak should be ≈ {}, got {}",
+            expected_sample,
+            result.peak
+        );
+        assert!(
+            result.true_peak > result.peak + 0.1,
+            "true_peak ({}) should clearly overshoot sample peak ({}) for this quadrature-phase signal",
+            result.true_peak,
+            result.peak
+        );
+    }
+
+    #[test]
+    fn lufs_short_term_max_meets_short_term_threshold() {
+        // 4 s of audible content is comfortably above the 3.3 s short-term
+        // window minimum.
+        let buf = sine_stereo(1000.0, 44_100, 4.0, 0.5);
+        let result = analyze_mix_buffer(&buf, 44_100);
+        assert!(
+            result.lufs_short_term_max > -30.0 && result.lufs_short_term_max < 0.0,
+            "lufs_short_term_max = {}",
+            result.lufs_short_term_max
+        );
+        // Short-term and momentary should be close for stationary content.
+        // (LUFS-S averages over 3 s, LUFS-M over 400 ms — both readouts of
+        // the same stationary sine should land in the same neighbourhood.)
+        assert!(
+            (result.lufs_short_term_max - result.lufs_momentary_max).abs() < 1.0,
+            "stationary signal should give close LUFS-S ({}) and LUFS-M ({})",
+            result.lufs_short_term_max,
+            result.lufs_momentary_max
+        );
+    }
+
+    #[test]
+    fn lufs_short_term_returns_silent_floor_below_three_seconds() {
+        // 2 s — long enough for LUFS-I/M, too short for LUFS-S.
+        let buf = sine_stereo(1000.0, 44_100, 2.0, 0.5);
+        let result = analyze_mix_buffer(&buf, 44_100);
+        assert!(result.lufs_momentary_max > -30.0);
+        assert_eq!(result.lufs_short_term_max, -200.0);
     }
 }

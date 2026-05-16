@@ -649,11 +649,11 @@ fn analyze_section_per_track_breakdown_emits_one_entry_per_track() {
     // Each track should produce audible content on its own.
     for tc in &result.per_track {
         assert!(
-            tc.rms > 0.005,
+            tc.metrics.rms > 0.005,
             "track {}({}) should be audible when soloed, got RMS {}",
             tc.track_name,
             tc.track_id,
-            tc.rms
+            tc.metrics.rms
         );
         assert!(
             tc.rms_share > 0.0 && tc.rms_share <= 1.0,
@@ -670,6 +670,56 @@ fn analyze_section_per_track_breakdown_emits_one_entry_per_track() {
         (total_share - 1.0).abs() < 1e-4,
         "rms_share should sum to ~1.0, got {total_share}"
     );
+}
+
+/// Regression: per-track contributions include `pre_master_peak`, the
+/// pan/volume-compensated patch peak. For a center-panned, full-volume track
+/// the unattenuated peak should be ≈ sqrt(2) × the master-contribution peak.
+#[test]
+fn analyze_section_per_track_pre_master_peak_compensates_for_pan_law() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let result = analyze_section_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        0,
+        3840,
+        Some(true),
+    )
+    .expect("section analysis should succeed");
+
+    assert_eq!(result.per_track.len(), 2);
+    for tc in &result.per_track {
+        // Instruments default to pan = CENTER and volume = MAX. Constant-power
+        // pan-law puts √2/2 on each channel, so per-channel peaks should be
+        // ≈ internal_peak × 0.7071. Dividing by that gain in the analytical
+        // path recovers √2 × the master-contribution peak.
+        let ratio = tc.pre_master_peak / tc.metrics.peak.max(1e-9);
+        assert!(
+            (ratio - std::f32::consts::SQRT_2).abs() < 0.05,
+            "track {}({}) pre_master_peak / metrics.peak = {} (expected ≈ {})",
+            tc.track_name,
+            tc.track_id,
+            ratio,
+            std::f32::consts::SQRT_2
+        );
+        assert!(
+            tc.pre_master_peak >= tc.metrics.peak,
+            "pre_master_peak ({}) should be ≥ master-contribution peak ({}) for {}",
+            tc.pre_master_peak,
+            tc.metrics.peak,
+            tc.track_name
+        );
+        assert!(
+            (tc.pre_master_peak_dbfs - 20.0 * tc.pre_master_peak.log10()).abs() < 1e-3,
+            "pre_master_peak_dbfs ({}) inconsistent with pre_master_peak ({})",
+            tc.pre_master_peak_dbfs,
+            tc.pre_master_peak
+        );
+    }
 }
 
 #[test]

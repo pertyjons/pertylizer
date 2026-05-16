@@ -1,8 +1,8 @@
 # MCP Music Tools — Plan
 
-> **Date:** 2026-05-11 (last update 2026-05-16: higher-level music-understanding catalogue + optional ML sidecar; §8.3 pan-law documentation, §8.5.1–§8.5.5 inference round-3 fixes — Pad-precedence-by-name, Bass-gate Atonal-by-name, Lead-precedence allows Polyphonic, drum-gate wider pitch-spread when name says Drums, extended name vocabulary; §7.1 `OfflineEngineSession` engine-reuse; end-to-end MCP verification on the "Neuro F#m 174" project surfaced two §8.5 round-4 follow-ups documented in §8.5.6)
-> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix in two rounds post-v0.277.0; §8.2 auto-inferred instrument profiles shipped in v0.278.0; commits 74d18da + 93c0786 closed the offline-render snapshot bug class, added `get_instrument_profiles`, and applied seven inference improvements that roughly doubled live-test accuracy on synth patches; inference round-3 (§8.5.1–§8.5.5) + §8.3 pan-law doc + §7.1 engine reuse shipped 2026-05-16.** Remaining Tier-1+ pending.
-> Post-ship live testing surfaced determinism, auto-categorization, and offline-render-state issues — see §8. §8.1, §8.2, §8.4, and the mandatory §8.3 doc fix are fully shipped end-to-end through the MCP bridge. §8.5.1–§8.5.5 inference improvements shipped 2026-05-16. §8.5.6.1 (Plucked-Monophonic-Lead misclassification) and §8.5.6.2 (name-conflict drums at 0.60-threshold margin) — both surfaced by the 2026-05-16 end-to-end verification — also shipped 2026-05-16. Open: optional §8.3 `pre_master_peak` field only.
+> **Date:** 2026-05-11 (last update 2026-05-16: §0 sweep — `true_peak`, `lufs_momentary_max`, `lufs_short_term_max`, `pre_master_peak` shipped; `TrackContribution` restructured to embed `MixBusMetrics` (§7.6 decision); §8.3 `pre_master_peak` closed. Earlier 2026-05-16 work: higher-level music-understanding catalogue + optional ML sidecar; §8.3 pan-law documentation, §8.5.1–§8.5.5 inference round-3 fixes — Pad-precedence-by-name, Bass-gate Atonal-by-name, Lead-precedence allows Polyphonic, drum-gate wider pitch-spread when name says Drums, extended name vocabulary; §7.1 `OfflineEngineSession` engine-reuse; §8.5.6.1/§8.5.6.2 round-4 inference follow-ups.)
+> **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix in two rounds post-v0.277.0; §8.2 auto-inferred instrument profiles shipped in v0.278.0; commits 74d18da + 93c0786 closed the offline-render snapshot bug class, added `get_instrument_profiles`, and applied seven inference improvements that roughly doubled live-test accuracy on synth patches; inference round-3 (§8.5.1–§8.5.5) + §8.3 pan-law doc + §7.1 engine reuse shipped 2026-05-16; §0 deferred trio (`true_peak`, LUFS-S/M, `pre_master_peak`) + §7.6 embed-MixBusMetrics decision shipped 2026-05-16.** Remaining Tier-1+ pending.
+> Post-ship live testing surfaced determinism, auto-categorization, and offline-render-state issues — see §8. §8.1, §8.2, §8.3 (doc + `pre_master_peak`), §8.4, and §8.5 are fully shipped end-to-end through the MCP bridge.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
 
 ---
@@ -20,9 +20,12 @@
 
 ### Deferred / in-progress
 
-- **`true_peak` (inter-sample peak)** — currently reports sample peak; inter-sample peak would catch over-shoots that emerge after DA conversion. Important for mixes that already clip on sample-peak (the test song clipped at 22 % of samples in chorus).
-- **LUFS-S / LUFS-M (momentary / short-term)** — only integrated LUFS shipped. Momentary LUFS would help locate the hottest spot inside a section.
-- **Optional `pre_master_peak` on `TrackContribution`** — the §8.3 doc-fix shipped 2026-05-16 (peak/RMS now flag that they include pan-law attenuation). The optional pre-pan/pre-volume field that would report the patch's internal signal peak directly is still deferred — `analyze_note` against the instrument continues to be the workaround. Decision point comes with the §0 `true_peak` work (per §7.6).
+All §0 deferred items shipped 2026-05-16 alongside the §7.6 layout decision:
+
+- **`true_peak` (inter-sample peak)** — ✅ shipped. 4× polyphase oversampling FIR (48-tap Hamming-windowed sinc, ITU-R BS.1770-4 Annex 2-compliant) lives in `mix_analysis::compute_true_peak_stereo`. `MixBusMetrics` now carries `true_peak` (linear) and `true_peak_dbtp` (dBTP). Regression test signal is an 11 025 Hz sine sampled at quadrature phases — sample peak ≈ 0.7071, true peak ≥ 0.99.
+- **LUFS-S / LUFS-M (momentary / short-term)** — ✅ shipped. `compute_loudness` returns integrated + momentary-max + short-term-max in one pass over the existing 400 ms / 100 ms-hop K-weighted block decomposition. Short-term uses a 30-block sliding window (3 s, ITU-R-compliant); buffers < 3 s report -200.0 for that field. `MixBusMetrics` gained `lufs_momentary_max` and `lufs_short_term_max`.
+- **Optional `pre_master_peak` on `TrackContribution`** — ✅ shipped. `analyze_mix_buffer` now also records per-channel sample peaks (`peak_left` / `peak_right`); the bridge reads each instrument's `(volume, pan)` from the `SynthSession` snapshot and analytically reverses the engine's constant-power `Gain::from_pan(pan) × volume` attenuation on the loud channel. No extra render pass — the single soloed render that produced `metrics` is enough. `pre_master_peak` is the patch's internal signal peak before any pan-law or volume scaling. Unit tests cover center / hard-pan / volume-drop / unknown-instrument / silence cases.
+- **§7.6 layout decision** — went with embedding `MixBusMetrics` inside `TrackContribution` (the `metrics: MixBusMetrics` field), per CLAUDE.md's "active development — no backward compatibility required" stance. Eliminates the 9-field duplication permanently; adding any future metric only touches `MixBusMetrics`. Tests reading `tc.rms` → `tc.metrics.rms` were updated.
 
 ### Tier 0 follow-up commits
 
@@ -180,8 +183,7 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
    playing test notes.
 12. **`render_section_to_wav`** — Even without immediate analysis tools layered on top, this unlocks the AI sending
    audio back to a human or feeding it to a separate model. Building block under `compare_to_reference`.
-13. **True-peak + LUFS-S/M for `analyze_mix_bus`** — sample-peak misses inter-sample peaks; LUFS-S/M locate the
-   hottest moments. Cheap additions on top of the already-shipped LUFS-I pipeline.
+13. ✅ **True-peak + LUFS-S/M for `analyze_mix_bus`** — shipped 2026-05-16 alongside `pre_master_peak`. See §0 deferred section.
 
 ### Tier 2 — Quality-of-life and composition
 
@@ -271,7 +273,7 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 10. `analyze_harmonic_function` — Roman numerals, functional roles, cadence/tension analysis on top of harmony.
 11. `analyze_instrument_range` — sweep on top of `analyze_note`.
 12. `render_section_to_wav` — generalization of the renderer that writes out instead of analyzing.
-13. True-peak + LUFS-S/M on `analyze_mix_bus`.
+13. ✅ True-peak + LUFS-S/M on `analyze_mix_bus` — shipped 2026-05-16.
 
 **Tier 2 / Tier 3** — picked up by demand. Keep optional ML/reference-audio tools behind a sidecar boundary.
 
@@ -418,18 +420,27 @@ Grep finds ~9 sites that wrap a `Song` in `Arc::new(parking_lot::RwLock::new(...
 render loop, etc.). A `synth_sequencer::shared_song(Song) -> Arc<RwLock<Song>>` constructor would deduplicate
 the pattern. Strictly cosmetic; not on any hot path. Pick up as a drive-by when next touching one of those sites.
 
-### 7.6 `TrackContribution` field drift vs. `MixBusMetrics` — keep an eye on it
+### 7.6 `TrackContribution` field drift vs. `MixBusMetrics` — ✅ shipped 2026-05-16 (Option 1)
 
-`TrackContribution` duplicates 9 of `MixBusMetrics`'s numeric fields. When §0's deferred items land (`true_peak`,
-LUFS-S/M, etc.), the new fields will need to be added in two places. Two options when that happens:
+`TrackContribution` previously duplicated 9 of `MixBusMetrics`'s numeric fields. The §0 work on `true_peak` +
+LUFS-S/M forced the decision: every metric would have needed to land in two places.
 
-1. Embed a `MixBusMetrics` inside `TrackContribution` and add only the identity/share fields (`track_id`,
-   `track_name`, `instrument_id`, `rms_share`) at the outer level. Cleanest, but changes the response shape — MCP
-   clients keyed on the current flat layout would need to update.
-2. Keep the flat layout and add a small `#[cfg(test)]` test that asserts both structs declare the same superset of
-   audio-metric fields, so drift fails CI.
+Took **Option 1**: embed `MixBusMetrics` inside `TrackContribution`. CLAUDE.md's "active development — no
+backward compatibility required" stance made this the right call: the response shape changes (clients read
+`tc.metrics.peak` instead of `tc.peak`), but the duplication is eliminated permanently and adding any future
+metric only touches `MixBusMetrics`. The pan-law-compensated `pre_master_peak` + `pre_master_peak_dbfs` and the
+existing identity/share fields (`track_id`, `track_name`, `instrument_id`, `rms_share`) stay at the outer
+level — they don't belong in `MixBusMetrics`.
 
-Decision point comes with the `true_peak` work in §0; flag here so it's remembered.
+Wire-format consequence: any existing client reading `per_track[i].peak` / `per_track[i].rms` etc. directly
+must update to `per_track[i].metrics.peak` / `per_track[i].metrics.rms`. Internal tests
+(`analyze_section_per_track_breakdown_emits_one_entry_per_track` and friends) were updated in the same edit
+pass.
+
+Bonus side-effect: `TrackContribution` now exposes per-track `stereo_correlation`, `mid_rms`, `side_rms`,
+`stereo_width`, `mono_compat`, `crest_factor_db` for free — useful for "is this lead actually wide?" or
+"does this pad have a problematic L-R imbalance in isolation?" debugging that the previous flat layout
+omitted.
 
 ---
 
@@ -658,7 +669,7 @@ inferred role, a 0.0..=1.0 confidence, and a signal trail listing every axis tha
 override is still authoritative — it reports as `manual-override` with confidence 1.0 and short-circuits the
 decision tree.
 
-### 8.3 Per-track contribution: clarify pan-law output, optionally add `pre_master_peak` — ✅ doc fix shipped 2026-05-16; optional `pre_master_peak` still open
+### 8.3 Per-track contribution: clarify pan-law output, optionally add `pre_master_peak` — ✅ fully shipped 2026-05-16 (doc fix + `pre_master_peak`)
 
 Per-track renders on center-panned tracks report `peak = 0.7071068` (= 1/√2), which is the constant-power pan-law
 attenuation kicking in for L = R = 1.0 inputs. That's correct but confusing: a user reading "Kick peak -3 dBFS"
@@ -685,7 +696,28 @@ whether any of them is hot internally without correlating with `analyze_note`. T
 `crates/synth_mcp/src/server.rs` now spell out that per-track peak/RMS include
 constant-power pan-law attenuation (≈ 0.7071 / -3 dB on each channel for a
 center-panned source), and direct users to `analyze_note` for the unattenuated
-internal-signal peak. The optional `pre_master_peak` field is still deferred.
+internal-signal peak.
+
+**Shipped 2026-05-16 (`pre_master_peak`).** `analyze_mix_buffer` records the
+per-channel sample peaks (`peak_left` / `peak_right`) on its existing frame
+loop. The bridge then reads each target instrument's `(volume: Gain, pan:
+BipolarValue)` from `SynthSession::state().instrument_snapshots` and reverses
+the engine's mix-stage attenuation analytically:
+`pre_master_peak = max(peak_left / (volume × gL), peak_right / (volume × gR))`
+where `(gL, gR) = Gain::from_pan(pan)` is the same constant-power pan-law the
+realtime engine applies. No second render. With §7.1's engine reuse the
+per-track loop now does exactly one render per audible track — halving the
+wall-clock cost of `include_per_track = true` vs. the earlier two-render
+draft, and removing the `.expect()` pan/volume restore dance that the
+two-render path needed. `TrackContribution.pre_master_peak` (linear) and
+`pre_master_peak_dbfs` join the existing identity / share fields; the dBFS
+field clamps to -200.0 for silent tracks. Unit tests in
+`mcp_bridge::pre_master_peak_tests` cover center pan, hard pan (no
+divide-by-zero on the silent channel), volume drop, unknown instrument
+(falls back to raw channel peak), and silence (`-200.0` floor). The original
+`analyze_section_per_track_pre_master_peak_compensates_for_pan_law` integration
+test still passes — `pre_master_peak / metrics.peak ≈ √2` for default-pan
+tracks falls out naturally from the analytical reversal.
 
 ### 8.4 Offline-render snapshot propagation bug class — HIGH ✅ **Fixed in 74d18da**
 
@@ -971,9 +1003,9 @@ name-conflict), Impact resolves as `drums 1.00` (previously `drums 0.60` at the 
 bit-exact end-to-end through the MCP bridge, not just inside the determinism unit tests. §8.2 (auto-inferred
 profiles) shipped in v0.278.0, with §8.2c (round-2 inference improvements) and §8.4 (offline-render
 snapshot propagation) landing together in commits 74d18da + 93c0786 — the previously implicit "manual
-`set_instrument_category` required" workflow is now fully optional. §8.3's mandatory doc fix (pan-law
-attenuation in per-track peak/RMS) and all five §8.5 round-3 inference follow-ups (§8.5.1–§8.5.5) shipped
-2026-05-16. §8.5.6.1 (Plucked-Mono-Lead misclassification) and §8.5.6.2 (0.60-threshold margin for
-name-conflict drums) — both surfaced by the 2026-05-16 end-to-end verification on the
-"Neuro F#m 174" project — also shipped 2026-05-16. The optional §8.3 `pre_master_peak` field is
-the only deferred §8 item.
+`set_instrument_category` required" workflow is now fully optional. §8.3 is fully closed: the mandatory
+doc fix (pan-law attenuation in per-track peak/RMS) and the optional `pre_master_peak` field both shipped
+2026-05-16. All five §8.5 round-3 inference follow-ups (§8.5.1–§8.5.5) shipped 2026-05-16. §8.5.6.1
+(Plucked-Mono-Lead misclassification) and §8.5.6.2 (0.60-threshold margin for name-conflict drums) — both
+surfaced by the 2026-05-16 end-to-end verification on the "Neuro F#m 174" project — also shipped 2026-05-16.
+Every §8 item is now closed; the next blind spot to address is Tier-1 item 6 (`analyze_pattern`).

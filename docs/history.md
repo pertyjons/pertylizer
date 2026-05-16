@@ -1,5 +1,135 @@
 # Version History
 
+## [0.282.0] - 2026-05-16
+### MCP mix analysis: true peak, LUFS-S/M, analytical `pre_master_peak`
+
+Closes the §0 deferred trio in `docs/mcp-music-tools-plan.md` (`true_peak`,
+LUFS-S/M, `pre_master_peak`) and takes the §7.6 layout decision — embed
+`MixBusMetrics` inside `TrackContribution` instead of duplicating fields.
+End-to-end verified through the MCP bridge against the `Neuro F#m 174`
+regression project: every new field arrives with the right value, including
+the asymmetric pan/volume cases.
+
+#### `crates/pertylizer/src/audio/mix_analysis.rs` — true peak + LUFS-M/S + per-channel peaks
+
+- **`true_peak` / `true_peak_dbtp` via 4× polyphase oversampling.** New
+  `compute_true_peak_stereo` / `channel_true_peak` apply a 48-tap
+  Hamming-windowed sinc lowpass split into 4 polyphase phases (each
+  12 taps) — ITU-R BS.1770-4 Annex 2 specifies 47-tap minimum. Per-phase
+  coefficients are DC-normalised (each phase sums to 1.0) so the upsampled
+  output preserves DC level and `true_peak ≥ peak` is invariant by
+  construction. Lazy-init kernel via `OnceLock` (192 bytes; floating-point
+  const-fn still gated on stable).
+- **`lufs_momentary_max` (LUFS-M) + `lufs_short_term_max` (LUFS-S).** The
+  existing K-weighted 400 ms / 100 ms-hop block decomposition is reused; a
+  new `compute_loudness` returns all three readouts in one pass.
+  `momentary_max_lufs` takes the max over single 400 ms blocks;
+  `short_term_max_lufs` runs a 30-block (= 3 s) sliding window over the
+  block energies. Buffers < 3 s correctly report `-200.0` for LUFS-S; LUFS-M
+  is available from the first 400 ms onwards. Refactored `lufs_integrated`
+  into a standalone `integrated_lufs` helper that takes the shared
+  block-energy vector — drift between the three readouts is now
+  impossible.
+- **Per-channel peaks (`peak_left` / `peak_right`).** Folded into the
+  existing frame loop in `analyze_mix_buffer` (no extra pass over the
+  buffer). Enables the analytical `pre_master_peak` path in the bridge.
+- **`lin_to_db` promoted to `pub(crate)`** so the bridge can share the
+  single source of truth for `linear → dBFS` with `-200.0` silent-floor
+  handling instead of open-coding `20.0 * log10` and reinventing the
+  `<= 0.0` branch.
+- **`LoudnessSummary::SILENT` const** dedupes the three places where a
+  triple-`-200.0` summary is returned.
+- Five new unit tests in `mix_analysis::tests`: true peak ≥ sample peak
+  invariant, intersample overshoot via quadrature-phase signal at fs/4,
+  LUFS-S returns silent floor below 3 s, LUFS-S/M for stationary content
+  land in the same neighborhood, kernel correctness sanity-checks.
+
+#### `crates/synth_mcp/src/types.rs` — `MixBusMetrics` extended + `TrackContribution` restructured
+
+- `MixBusMetrics` gained `peak_left`, `peak_right`, `true_peak`,
+  `true_peak_dbtp`, `lufs_momentary_max`, `lufs_short_term_max`. Doc
+  comments spell out the BS.1770 / Annex-2 origin so AI consumers know
+  what they're reading.
+- **§7.6 layout decision — Option 1 shipped:** `TrackContribution` now
+  embeds `metrics: MixBusMetrics` instead of duplicating 9 fields. The
+  duplication is gone permanently; future additions to `MixBusMetrics`
+  apply to per-track contributions automatically. Wire format changes
+  from `per_track[i].peak` to `per_track[i].metrics.peak` — acceptable
+  break per CLAUDE.md's "active development — no backward compatibility
+  required" stance. Bonus: per-track readers now also get
+  `stereo_correlation` / `mid_rms` / `side_rms` / `stereo_width` /
+  `mono_compat` / `crest_factor_db` for free, which makes "is this lead
+  actually wide?" answerable in one tool call.
+- **New `pre_master_peak` + `pre_master_peak_dbfs`** on
+  `TrackContribution`. Linear + dBFS readouts of the patch's pre-mix
+  internal peak — what the patch is outputting before any pan-law or
+  track-volume scaling. Equivalent to running `analyze_note` against the
+  instrument and taking the max output peak across the section's notes,
+  but produced as a by-product of the existing soloed render instead of
+  N extra MCP round-trips.
+
+#### `crates/pertylizer/src/mcp_bridge.rs` — analytical `pre_master_peak`, no 2nd render
+
+- `mix_metrics_from_analysis` copies the new fields straight through.
+- **New `pre_master_peak_for(gains, peak_left, peak_right)` helper.** Reads
+  each instrument's `(volume: Gain, pan: BipolarValue)` once from the
+  `SynthSession` snapshot and analytically reverses the engine's
+  constant-power `Gain::from_pan(pan) × volume` attenuation on the loud
+  per-channel peak:
+  `pre_master_peak = max(peak_left / (volume × gL), peak_right / (volume × gR))`.
+  Hard-panned signals avoid divide-by-zero via a 1e-6 floor on each gain.
+  Unknown instrument falls back to `max(peak_left, peak_right)` so the
+  field is still informative. **No second render** — the single soloed
+  render already in flight (for `metrics`) is enough.
+- Earlier `pre_master_peak` draft did a 2nd render with
+  `track.pan = CENTER` and `track.volume = MAX`, then multiplied the peak
+  by √2. Live verification revealed track-level pan/volume isn't applied
+  in the offline render path (the engine sources pan/volume from the
+  instrument snapshot), so the 2nd render was producing the same buffer
+  as the 1st — pure waste. Dropping it cuts wall-clock for
+  `include_per_track = true` roughly in half on a 12-track section, and
+  removes the `.expect("target track went missing between renders")` that
+  violated CLAUDE.md's no-`.expect()` rule.
+- New `pre_master_peak_tests` mod (in-file, `#[cfg(test)]`) covers center
+  pan, hard pan (no divide-by-zero on the silent channel), volume drop
+  reversal, unknown-instrument fallback, and silence → `-200.0` dBFS
+  floor.
+
+#### `crates/synth_mcp/src/server.rs`
+
+- `analyze_mix_bus` tool description rewritten to enumerate the new fields
+  (LUFS-I/S/M, true peak in dBTP, the 3-s minimum for LUFS-S).
+- `analyze_section` tool description rewritten to document the embedded
+  `metrics.*` layout and `pre_master_peak`'s "internal patch peak"
+  semantics, replacing the prior "two renders per track" wording.
+
+#### `crates/pertylizer/tests/analyze_tier1_follow_ups.rs`
+
+- Test reading `tc.rms` updated to `tc.metrics.rms` for the new embedded
+  layout — every other field follows the same rename.
+- New `analyze_section_per_track_pre_master_peak_compensates_for_pan_law`
+  end-to-end test asserts `pre_master_peak / metrics.peak ≈ √2` for
+  default-routed (center pan, MAX volume) tracks. The five unit tests for
+  the analytical reversal live in `mcp_bridge::pre_master_peak_tests`.
+
+#### `docs/mcp-music-tools-plan.md`
+
+§0 deferred section, §8.3, §8.6, §7.6, and Tier-1 item 13 all updated to
+record the shipped state. The plan doc now has zero open §8 items; the
+next chunk of work is Tier-1 item 6 (`analyze_pattern`).
+
+#### Live MCP verification on `Neuro F#m 174`
+
+15-second `analyze_mix_bus` on the drop reported `peak: 1.0` /
+`true_peak: 1.0215` / `true_peak_dbtp: +0.18` — the drop clips inter-sample
+even when the sample peak says exactly 1.0. `lufs_momentary_max: -8.09`
+LUFS vs. `lufs_integrated: -16.25` LUFS shows the drop peaks ~8 dB above
+the running average. Per-track `pre_master_peak` reconstructed the
+internal patch peak across symmetric (Kick, Snare, Impact: center pan,
+volume < 1) and asymmetric (HiHat +0.12 R / Rim -0.35 L / Clap +0.35 R)
+pan cases — every patch's `pre_master_peak / (volume × max_pan_gain)`
+matched the per-channel peak from the analysis to within 1%.
+
 ## [0.281.0] - 2026-05-16
 ### MCP analysis polish: engine reuse, pan-law docs, two more rounds of role inference
 

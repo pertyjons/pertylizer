@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use synth_core::{
-    MidiNote, ModMatrixParam, ModSource, NormalizedValue, Param, ParameterUnit, PortDirection,
-    SampleCount, Velocity,
+    BipolarValue, Gain, MidiNote, ModMatrixParam, ModSource, NormalizedValue, Param, ParameterUnit,
+    PortDirection, SampleCount, Velocity,
 };
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
@@ -4968,10 +4968,16 @@ fn mix_metrics_from_analysis(
         duration_seconds,
         peak: analysis.peak,
         peak_dbfs: analysis.peak_dbfs,
+        peak_left: analysis.peak_left,
+        peak_right: analysis.peak_right,
+        true_peak: analysis.true_peak,
+        true_peak_dbtp: analysis.true_peak_dbtp,
         rms: analysis.rms,
         rms_dbfs: analysis.rms_dbfs,
         crest_factor_db: analysis.crest_factor_db,
         lufs_integrated: analysis.lufs_integrated,
+        lufs_momentary_max: analysis.lufs_momentary_max,
+        lufs_short_term_max: analysis.lufs_short_term_max,
         energy_bands: analysis.energy_bands.into(),
         stereo_correlation: analysis.stereo_correlation,
         mid_rms: analysis.mid_rms,
@@ -5178,6 +5184,21 @@ fn render_per_track_contributions(
     // soloed track — emit them without the per-target prefix the loop adds.
     warnings.extend(setup_warnings);
 
+    // Snapshot each instrument's pan + volume so we can analytically reverse
+    // their attenuation when computing `pre_master_peak`. The realtime engine
+    // applies pan-law and per-instrument volume at the mix-down stage; the
+    // soloed render already contains the resulting attenuated signal, so a
+    // single division by (volume × max_pan_gain) on the loud-channel peak
+    // recovers the patch's internal-signal peak. Saves a second render per
+    // track vs. re-rendering with pan/volume overridden.
+    let instrument_gains: std::collections::HashMap<u16, (Gain, BipolarValue)> = {
+        let snapshots = session.state().instrument_snapshots.read();
+        snapshots
+            .iter()
+            .map(|s| (s.id.as_u64() as u16, (s.volume, s.pan)))
+            .collect()
+    };
+
     let mut contributions: Vec<synth_mcp::types::TrackContribution> =
         Vec::with_capacity(targets.len());
 
@@ -5194,30 +5215,78 @@ fn render_per_track_contributions(
         }
         let analysis =
             crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
+        let metrics =
+            mix_metrics_from_analysis(&analysis, rendered.sample_rate, rendered.duration_seconds);
+
+        let (pre_master_peak, pre_master_peak_dbfs) = pre_master_peak_for(
+            target
+                .instrument_id
+                .and_then(|id| instrument_gains.get(&id)),
+            analysis.peak_left,
+            analysis.peak_right,
+        );
 
         contributions.push(synth_mcp::types::TrackContribution {
             track_id: target.track_id.0,
             track_name: target.name.clone(),
             instrument_id: target.instrument_id,
-            peak: analysis.peak,
-            peak_dbfs: analysis.peak_dbfs,
-            rms: analysis.rms,
-            rms_dbfs: analysis.rms_dbfs,
-            lufs_integrated: analysis.lufs_integrated,
-            energy_bands: analysis.energy_bands.into(),
-            clipped_samples: analysis.clipped_samples,
+            metrics,
+            pre_master_peak,
+            pre_master_peak_dbfs,
             rms_share: 0.0,
         });
     }
 
-    let total_rms: f32 = contributions.iter().map(|c| c.rms).sum();
+    let total_rms: f32 = contributions.iter().map(|c| c.metrics.rms).sum();
     if total_rms > 0.0 {
         for c in contributions.iter_mut() {
-            c.rms_share = (c.rms / total_rms).clamp(0.0, 1.0);
+            c.rms_share = (c.metrics.rms / total_rms).clamp(0.0, 1.0);
         }
     }
 
     Ok(contributions)
+}
+
+/// Reverse the engine's `volume × pan_gain` attenuation to recover the
+/// instrument's pre-mix peak from the soloed render's per-channel peaks.
+///
+/// Constant-power pan-law gives `(gL, gR) = Gain::from_pan(pan)`; each channel
+/// in the soloed render is `internal × volume × g_channel`. Dividing the
+/// per-channel peak by its own gain reverses both effects in one step; we
+/// take the larger of the two to handle hard-panned signals where one channel
+/// is silent.
+///
+/// Returns `(linear, dBFS)`. When the instrument's gains are unknown (no
+/// matching snapshot) or fully zero, falls back to the larger of the two raw
+/// channel peaks so the caller still sees a usable lower bound.
+fn pre_master_peak_for(
+    gains: Option<&(Gain, BipolarValue)>,
+    peak_left: f32,
+    peak_right: f32,
+) -> (f32, f32) {
+    let raw_peak = peak_left.max(peak_right);
+    let restored = match gains {
+        Some((volume, pan)) => {
+            let v = volume.as_f32();
+            let (gl, gr) = Gain::from_pan(*pan);
+            let combined_l = v * gl.as_f32();
+            let combined_r = v * gr.as_f32();
+            let left = if combined_l > 1e-6 {
+                peak_left / combined_l
+            } else {
+                0.0
+            };
+            let right = if combined_r > 1e-6 {
+                peak_right / combined_r
+            } else {
+                0.0
+            };
+            let max = left.max(right);
+            if max > 0.0 { max } else { raw_peak }
+        }
+        None => raw_peak,
+    };
+    (restored, crate::audio::mix_analysis::lin_to_db(restored))
 }
 
 /// Convert the internal `InstrumentProfile` to the MCP-wire form.
@@ -5908,5 +5977,68 @@ fn signal_flow_hint(category: &synth_core::ModuleCategory) -> Option<String> {
                 .to_owned(),
         ),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::float_cmp)]
+mod pre_master_peak_tests {
+    use super::pre_master_peak_for;
+    use synth_core::{BipolarValue, Gain};
+
+    /// Default rig: pan = center, volume = MAX. Per-channel peaks both equal
+    /// `internal × 0.7071` (constant-power pan-law at center). Dividing each
+    /// channel peak by its own gain restores the internal value, and we take
+    /// the larger of the two — should land at the internal patch peak.
+    #[test]
+    fn reverses_constant_power_pan_law_at_center() {
+        let internal = 0.8_f32;
+        let attenuated = internal * std::f32::consts::FRAC_1_SQRT_2;
+        let gains = (Gain::new(1.0), BipolarValue::CENTER);
+        let (peak, dbfs) = pre_master_peak_for(Some(&gains), attenuated, attenuated);
+        assert!((peak - internal).abs() < 1e-4, "got {peak}");
+        assert!((dbfs - 20.0 * internal.log10()).abs() < 1e-3);
+    }
+
+    /// Volume drop should also be reversed: at half volume the rendered peak
+    /// halves on top of the pan-law attenuation; the restored peak must still
+    /// match the internal value.
+    #[test]
+    fn reverses_volume_drop() {
+        let internal = 0.8_f32;
+        let rendered = internal * 0.5 * std::f32::consts::FRAC_1_SQRT_2;
+        let gains = (Gain::new(0.5), BipolarValue::CENTER);
+        let (peak, _) = pre_master_peak_for(Some(&gains), rendered, rendered);
+        assert!((peak - internal).abs() < 1e-4, "got {peak}");
+    }
+
+    /// Hard-panned signals leave one channel silent. The silent channel's
+    /// `peak / 0` division must be skipped (1e-6 floor) and the live channel
+    /// should drive the result.
+    #[test]
+    fn handles_hard_pan_without_division_by_zero() {
+        let internal = 0.6_f32;
+        let gains = (Gain::new(1.0), BipolarValue::new(1.0)); // full right
+        // Only the right channel carries signal; left is silent.
+        let (peak, _) = pre_master_peak_for(Some(&gains), 0.0, internal);
+        assert!((peak - internal).abs() < 1e-4, "got {peak}");
+    }
+
+    /// Missing snapshot (instrument id we don't know) falls back to the raw
+    /// per-channel peak so the caller still gets a meaningful lower bound.
+    #[test]
+    fn falls_back_to_raw_peak_when_gains_unknown() {
+        let (peak, _) = pre_master_peak_for(None, 0.3, 0.6);
+        assert!((peak - 0.6).abs() < 1e-4, "got {peak}");
+    }
+
+    /// Silence in → silence out, dBFS clamps to the silent floor instead of
+    /// reporting `-inf`.
+    #[test]
+    fn silence_reports_silent_floor() {
+        let gains = (Gain::new(1.0), BipolarValue::CENTER);
+        let (peak, dbfs) = pre_master_peak_for(Some(&gains), 0.0, 0.0);
+        assert_eq!(peak, 0.0);
+        assert_eq!(dbfs, crate::audio::mix_analysis::SILENT_FLOOR_DBFS);
     }
 }

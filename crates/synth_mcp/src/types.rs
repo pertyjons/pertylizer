@@ -1194,11 +1194,13 @@ pub struct AnalyzeHarmonyResult {
 // analyze_mix_bus / analyze_section result types
 // ---------------------------------------------------------------------------
 
-/// Mix-bus metrics common to `analyze_mix_bus` and `analyze_section`.
+/// Mix-bus metrics common to `analyze_mix_bus` and `analyze_section`, also
+/// embedded inside `TrackContribution` for the soloed per-track variant.
 ///
-/// All `*_dbfs` fields use `-200.0` as a substitute for `-inf` so JSON
-/// consumers don't have to special-case non-finite values. `lufs_integrated`
-/// follows the same convention: silence reports `-200.0` rather than `-inf`.
+/// All `*_dbfs` / `*_dbtp` fields use `-200.0` as a substitute for `-inf` so
+/// JSON consumers don't have to special-case non-finite values. All `lufs_*`
+/// fields follow the same convention. `lufs_short_term_max` is `-200.0` for
+/// buffers shorter than 3 s (the short-term window length).
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct MixBusMetrics {
     /// Sample rate the buffer was rendered at.
@@ -1209,14 +1211,31 @@ pub struct MixBusMetrics {
     pub peak: f32,
     /// Sample peak in dBFS.
     pub peak_dbfs: f32,
+    /// Sample peak of the left channel only, linear.
+    pub peak_left: f32,
+    /// Sample peak of the right channel only, linear.
+    pub peak_right: f32,
+    /// Inter-sample (true) peak across both channels, linear — computed via
+    /// 4× polyphase oversampling per ITU-R BS.1770-4 Annex 2. Always ≥ `peak`;
+    /// catches overshoots that emerge only after DA conversion or lossy
+    /// encoding.
+    pub true_peak: f32,
+    /// True peak in dBTP (dB true peak).
+    pub true_peak_dbtp: f32,
     /// Overall RMS, linear.
     pub rms: f32,
     /// Overall RMS in dBFS.
     pub rms_dbfs: f32,
     /// Crest factor (peak_dBFS - rms_dBFS). Higher = more dynamic.
     pub crest_factor_db: f32,
-    /// Integrated loudness (ITU-R BS.1770-4 LUFS).
+    /// Integrated loudness (ITU-R BS.1770-4 LUFS-I).
     pub lufs_integrated: f32,
+    /// Maximum momentary loudness (LUFS-M) — peak over single 400 ms
+    /// K-weighted blocks across the buffer.
+    pub lufs_momentary_max: f32,
+    /// Maximum short-term loudness (LUFS-S) — peak over 3 s K-weighted sliding
+    /// windows stepped every 100 ms. `-200.0` for buffers shorter than 3 s.
+    pub lufs_short_term_max: f32,
     /// 4-band RMS energy on the mono mix-down (sub/low/mid/high).
     pub energy_bands: AnalyzeEnergyBands,
     /// Pearson correlation between L and R channels, [-1.0, 1.0].
@@ -1266,12 +1285,17 @@ pub struct AnalyzeMixBusResult {
 /// "which track is responsible for the chorus clipping?" or "which track owns
 /// the sub-bass energy?".
 ///
-/// Track `peak` / `peak_dbfs` / `rms` / `rms_dbfs` reflect the track's
-/// contribution to the master mix, **including pan-law attenuation** (constant-
-/// power pan: -3 dB on each channel for a center-panned track). A center-panned
-/// mono source with internal peak 1.0 therefore reports `peak ≈ 0.7071`. For
-/// the unattenuated internal signal peak, run `analyze_note` against the
-/// instrument directly.
+/// `metrics.peak` / `metrics.peak_dbfs` / `metrics.rms` / `metrics.rms_dbfs`
+/// reflect the track's contribution to the master mix, **including pan-law
+/// attenuation** (constant-power pan: -3 dB on each channel for a center-panned
+/// track). A center-panned mono source with internal peak 1.0 therefore reports
+/// `metrics.peak ≈ 0.7071`.
+///
+/// `pre_master_peak` is the same instrument signal measured *before* track
+/// volume and pan-law are applied — i.e. what the patch itself is producing.
+/// Lets you spot a patch that clips internally even when the resulting master
+/// contribution looks safe. Equivalent to running `analyze_note` against the
+/// instrument and taking the max output peak across the section's notes.
 #[derive(Debug, Clone, Serialize)]
 pub struct TrackContribution {
     /// Sequencer track ID.
@@ -1281,21 +1305,14 @@ pub struct TrackContribution {
     /// Assigned instrument's seq ID (matches `InstrumentInfo.id` value).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instrument_id: Option<u16>,
-    /// Sample peak across both channels of the soloed render, linear.
-    pub peak: f32,
-    /// Sample peak in dBFS (silence reported as -200.0).
-    pub peak_dbfs: f32,
-    /// Overall RMS of the soloed render, linear.
-    pub rms: f32,
-    /// Overall RMS in dBFS (silence reported as -200.0).
-    pub rms_dbfs: f32,
-    /// Integrated LUFS of the soloed render (silence reported as -200.0).
-    pub lufs_integrated: f32,
-    /// 4-band RMS energy of the soloed render (sub/low/mid/high).
-    pub energy_bands: AnalyzeEnergyBands,
-    /// Count of samples that hit the ±0.999 ceiling in the soloed render —
-    /// pinpoints the actual offender when the master mix clips.
-    pub clipped_samples: u32,
+    /// Mix-bus metrics of the soloed render (with the track's own volume and
+    /// pan applied — includes pan-law attenuation; see struct docs).
+    pub metrics: MixBusMetrics,
+    /// Internal-signal peak before track volume and pan-law are applied,
+    /// linear. Equivalent to "what the patch is outputting on its own".
+    pub pre_master_peak: f32,
+    /// `pre_master_peak` in dBFS. Silence reported as -200.0.
+    pub pre_master_peak_dbfs: f32,
     /// Fraction of the summed-track RMS that this track contributes,
     /// `0.0..=1.0`. Sums to ~1.0 across all returned tracks; quick way to spot
     /// dominant elements without comparing absolute RMS values.
