@@ -1309,12 +1309,7 @@ impl PatchEditor {
     ) -> PatchEditorResult {
         let mut result = PatchEditorResult::default();
 
-        // Re-align effect modules when the chain order changes
-        // (effect added, removed, or reordered)
-        if effect_chain_order != self.prev_effect_chain_order {
-            self.align_effect_chain(effect_chain_order);
-            self.prev_effect_chain_order = effect_chain_order.to_vec();
-        }
+        self.realign_effect_chain_if_changed(effect_chain_order);
 
         let content_size = self.content_size();
 
@@ -3984,6 +3979,20 @@ impl PatchEditor {
     pub fn select_modules(&mut self, ids: &HashSet<ModuleId>) {
         self.selected_modules = ids.clone();
         self.selected_module = ids.iter().next().copied();
+    }
+
+    /// Treat `order` as the current baseline so the next
+    /// `realign_effect_chain_if_changed()` call with the same order is a no-op.
+    /// Used after loading a patch so manually placed effect positions survive.
+    pub fn mark_effect_chain_aligned(&mut self, order: Vec<ModuleId>) {
+        self.prev_effect_chain_order = order;
+    }
+
+    pub fn realign_effect_chain_if_changed(&mut self, effect_chain_order: &[ModuleId]) {
+        if effect_chain_order != self.prev_effect_chain_order.as_slice() {
+            self.align_effect_chain(effect_chain_order);
+            self.prev_effect_chain_order = effect_chain_order.to_vec();
+        }
     }
 
     /// Align effect chain modules in a vertical column, preserving their x-center

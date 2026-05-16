@@ -104,18 +104,30 @@ pub fn load_patch(
         }
     }
 
-    let order: Vec<ModuleId> = patch
+    let saved_order: Vec<ModuleId> = patch
         .settings
         .effect_chain_order
         .iter()
         .filter_map(|s| s.parse::<ModuleId>().ok())
         .collect();
-    if !order.is_empty() {
+    let baseline_order = if !saved_order.is_empty() {
         handle.send_blocking(EngineCommand::SetEffectChainOrder {
             instrument_id: Some(instrument_id),
-            order,
+            order: saved_order.clone(),
         });
-    }
+        saved_order
+    } else {
+        // Fallback must match the engine's implicit chain order (modules
+        // added in `patch.modules` iteration order) so the first render's
+        // change-detection sees an empty diff.
+        patch
+            .modules
+            .iter()
+            .filter_map(|m| m.id.parse::<ModuleId>().ok())
+            .filter(|id| id.module_type.is_effect())
+            .collect()
+    };
+    patch_editor.mark_effect_chain_aligned(baseline_order);
 
     // Apply per-instrument settings (always)
     keyboard.set_octave_offset(patch.settings.octave_offset);
@@ -873,13 +885,23 @@ mod tests {
     use super::*;
     use synth_core::ModuleCategory;
 
-    fn descriptor() -> ModuleDescriptor {
-        ModuleDescriptor::new("test", "test").category(ModuleCategory::Oscillator)
+    fn descriptor(category: ModuleCategory) -> ModuleDescriptor {
+        ModuleDescriptor::new("test", "test").category(category)
     }
 
     fn add(editor: &mut PatchEditor, ty: ModuleType, n: u16, pos: (f32, f32)) -> ModuleId {
+        add_cat(editor, ty, n, pos, ModuleCategory::Oscillator)
+    }
+
+    fn add_cat(
+        editor: &mut PatchEditor,
+        ty: ModuleType,
+        n: u16,
+        pos: (f32, f32),
+        category: ModuleCategory,
+    ) -> ModuleId {
         let id = ModuleId::new(ty, n);
-        editor.add_module_at(id, descriptor(), Pos2::new(pos.0, pos.1));
+        editor.add_module_at(id, descriptor(category), Pos2::new(pos.0, pos.1));
         id
     }
 
@@ -952,6 +974,64 @@ mod tests {
         assert_eq!(
             actual, expected,
             "connections must be sorted by (from sort_key, ..., to sort_key, ...)"
+        );
+    }
+
+    #[test]
+    fn baselined_chain_order_skips_first_render_realignment() {
+        let mut editor = PatchEditor::new();
+        let delay = add_cat(
+            &mut editor,
+            ModuleType::Delay,
+            1,
+            (123.0, 456.0),
+            ModuleCategory::Effect,
+        );
+        let reverb = add_cat(
+            &mut editor,
+            ModuleType::Reverb,
+            1,
+            (789.0, 1011.0),
+            ModuleCategory::Effect,
+        );
+
+        let loaded_order = vec![delay, reverb];
+        editor.mark_effect_chain_aligned(loaded_order.clone());
+
+        editor.realign_effect_chain_if_changed(&loaded_order);
+
+        let (_, delay_pos, _) = editor.get_module_data(delay).unwrap();
+        let (_, reverb_pos, _) = editor.get_module_data(reverb).unwrap();
+        assert_eq!(delay_pos, Pos2::new(123.0, 456.0));
+        assert_eq!(reverb_pos, Pos2::new(789.0, 1011.0));
+    }
+
+    #[test]
+    fn chain_order_change_still_realigns() {
+        let mut editor = PatchEditor::new();
+        let delay = add_cat(
+            &mut editor,
+            ModuleType::Delay,
+            1,
+            (100.0, 200.0),
+            ModuleCategory::Effect,
+        );
+        let reverb = add_cat(
+            &mut editor,
+            ModuleType::Reverb,
+            1,
+            (100.0, 400.0),
+            ModuleCategory::Effect,
+        );
+
+        editor.mark_effect_chain_aligned(vec![delay, reverb]);
+        editor.realign_effect_chain_if_changed(&[reverb, delay]);
+
+        let (_, delay_pos, _) = editor.get_module_data(delay).unwrap();
+        let (_, reverb_pos, _) = editor.get_module_data(reverb).unwrap();
+        assert!(
+            reverb_pos.y < delay_pos.y,
+            "after reorder, reverb should sit above delay (reverb={reverb_pos:?}, delay={delay_pos:?})"
         );
     }
 }
