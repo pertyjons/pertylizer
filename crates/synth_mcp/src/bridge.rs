@@ -832,6 +832,60 @@ pub trait SynthBridge: Send + Sync + 'static {
         tail_ms: Option<u32>,
     ) -> Result<crate::types::AnalyzeVelocityResponseResult, McpBridgeError>;
 
+    // === Composition helpers (symbolic — no audio rendering) ===
+
+    /// Parse a chord symbol (e.g. `"Cm7"`, `"F#maj7"`, `"Bbsus4"`) and
+    /// return the MIDI notes for the requested voicing rooted at `octave`
+    /// (scientific pitch notation, octave 4 = middle-C). `voicing` is one
+    /// of `"close"`, `"drop2"`, `"drop3"`, `"open"` (default `"close"`).
+    /// Pure symbolic — does not touch the song; the caller plays or places
+    /// the returned notes with `note_on` / `add_notes`.
+    fn generate_chord(
+        &self,
+        symbol: &str,
+        octave: i32,
+        voicing: Option<&str>,
+    ) -> Result<crate::types::GenerateChordResult, McpBridgeError>;
+
+    /// Transpose every note in `pattern_id` by `semitones` (signed). When
+    /// both `scale_tonic` and `scale_name` are set, any note whose
+    /// transposed pitch lands outside that scale is snapped to the nearest
+    /// in-scale pitch using `tie_break` (`"up"` / `"down"` / `"nearest"`,
+    /// default `"up"`).
+    fn transpose_notes(
+        &self,
+        pattern_id: u32,
+        semitones: i32,
+        scale_tonic: Option<u8>,
+        scale_name: Option<&str>,
+        tie_break: Option<&str>,
+    ) -> Result<crate::types::TransposeNotesResult, McpBridgeError>;
+
+    /// Snap every note in `pattern_id` to the nearest pitch of the given
+    /// key/scale. Notes already in scale are left untouched.
+    fn quantize_notes_to_scale(
+        &self,
+        pattern_id: u32,
+        scale_tonic: u8,
+        scale_name: &str,
+        tie_break: Option<&str>,
+    ) -> Result<crate::types::QuantizeNotesToScaleResult, McpBridgeError>;
+
+    /// Snap note start ticks in `pattern_id` to the requested `grid_ticks`
+    /// grid with optional swing (`0..=1`), humanization (max ±tick jitter
+    /// per note, seeded for reproducibility), and quantize strength
+    /// (`0..=1`, where `1.0` is full snap, `0.5` is half-way).
+    #[allow(clippy::too_many_arguments)]
+    fn quantize_notes_to_grid(
+        &self,
+        pattern_id: u32,
+        grid_ticks: u32,
+        strength: Option<f32>,
+        swing: Option<f32>,
+        humanize_ticks: Option<u32>,
+        humanize_seed: Option<u64>,
+    ) -> Result<crate::types::QuantizeNotesToGridResult, McpBridgeError>;
+
     // === AWE (Acoustic World Engine) ===
 
     /// Get the current AWE state (room, material, all parameters, LFOs).

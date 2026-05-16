@@ -504,12 +504,14 @@ Roadmap for the remaining tiers lives in `docs/mcp-music-tools-plan.md`.
       (`include_per_track` parameter).
 - [x] Drum-track filtering for `analyze_harmony` — v0.277.0
       (`exclude_drums` defaults to true; `exclude_track_ids` for explicit drops).
-- [ ] Tier 1: `analyze_pattern` (symbolic pattern stats — density, polyphony,
-      rhythmic and velocity variance), `analyze_instrument_range` (sweep an
-      instrument across MIDI range; flag aliasing, energy loss, pitch
-      tracking), `render_section_to_wav`.
-- [ ] Tier 2: `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`,
-      `quantize_notes_to_grid`, `analyze_groove`, `analyze_velocity_response`.
+- [x] Tier 1: `analyze_pattern` (2026-05-16), `analyze_instrument_range`
+      (v0.284.0). `render_section_to_wav` still pending — pick up when
+      `compare_to_reference` becomes relevant.
+- [x] Tier 2: `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`,
+      `quantize_notes_to_grid` (v0.285.0, Group B from §8.6 of
+      `docs/mcp-music-tools-plan.md`); `analyze_velocity_response` (v0.284.0).
+      `analyze_groove` still pending — `analyze_drum_groove` (v0.283.0)
+      already covers the highest-value groove diagnostic.
 - [ ] Tier 3: `analyze_arrangement`, `compare_to_reference`,
       `compare_patterns`, `compare_patches`, `humanize_notes`,
       `generate_variation`, `analyze_track`, `get_mix_meters`.

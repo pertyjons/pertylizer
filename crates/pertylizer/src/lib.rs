@@ -16,6 +16,7 @@
 pub mod analysis;
 pub mod audio;
 pub mod bundle;
+pub mod composition;
 pub mod group_templates;
 #[cfg(feature = "gui-egui")]
 pub mod gui;

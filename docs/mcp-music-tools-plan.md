@@ -1,6 +1,6 @@
 # MCP Music Tools — Plan
 
-> **Date:** 2026-05-11 (last update 2026-05-16: §0 sweep — `true_peak`, `lufs_momentary_max`, `lufs_short_term_max`, `pre_master_peak` shipped; `TrackContribution` restructured to embed `MixBusMetrics` (§7.6 decision); §8.3 `pre_master_peak` closed. Earlier 2026-05-16 work: higher-level music-understanding catalogue + optional ML sidecar; §8.3 pan-law documentation, §8.5.1–§8.5.5 inference round-3 fixes — Pad-precedence-by-name, Bass-gate Atonal-by-name, Lead-precedence allows Polyphonic, drum-gate wider pitch-spread when name says Drums, extended name vocabulary; §7.1 `OfflineEngineSession` engine-reuse; §8.5.6.1/§8.5.6.2 round-4 inference follow-ups.)
+> **Date:** 2026-05-11 (last update 2026-05-17: Group B from §8.6 — `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`, `quantize_notes_to_grid` — shipped in v0.285.0. Previous update 2026-05-16: §0 sweep — `true_peak`, `lufs_momentary_max`, `lufs_short_term_max`, `pre_master_peak` shipped; `TrackContribution` restructured to embed `MixBusMetrics` (§7.6 decision); §8.3 `pre_master_peak` closed. Earlier 2026-05-16 work: higher-level music-understanding catalogue + optional ML sidecar; §8.3 pan-law documentation, §8.5.1–§8.5.5 inference round-3 fixes — Pad-precedence-by-name, Bass-gate Atonal-by-name, Lead-precedence allows Polyphonic, drum-gate wider pitch-spread when name says Drums, extended name vocabulary; §7.1 `OfflineEngineSession` engine-reuse; §8.5.6.1/§8.5.6.2 round-4 inference follow-ups.)
 > **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix in two rounds post-v0.277.0; §8.2 auto-inferred instrument profiles shipped in v0.278.0; commits 74d18da + 93c0786 closed the offline-render snapshot bug class, added `get_instrument_profiles`, and applied seven inference improvements that roughly doubled live-test accuracy on synth patches; inference round-3 (§8.5.1–§8.5.5) + §8.3 pan-law doc + §7.1 engine reuse shipped 2026-05-16; §0 deferred trio (`true_peak`, LUFS-S/M, `pre_master_peak`) + §7.6 embed-MixBusMetrics decision shipped 2026-05-16.** Remaining Tier-1+ pending.
 > Post-ship live testing surfaced determinism, auto-categorization, and offline-render-state issues — see §8. §8.1, §8.2, §8.3 (doc + `pre_master_peak`), §8.4, and §8.5 are fully shipped end-to-end through the MCP bridge.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
@@ -9,7 +9,7 @@
 
 ## 0. Status snapshot
 
-### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), v0.278.0 (auto-inferred profiles), 74d18da + 93c0786 (offline-render fixes, `get_instrument_profiles`, inference round 2), v0.283.0 (drum-groove + bass-drum-lock + harmonic-function), and v0.284.0 (Group A: `analyze_instrument_range` + `analyze_velocity_response`)
+### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), v0.278.0 (auto-inferred profiles), 74d18da + 93c0786 (offline-render fixes, `get_instrument_profiles`, inference round 2), v0.283.0 (drum-groove + bass-drum-lock + harmonic-function), v0.284.0 (Group A: `analyze_instrument_range` + `analyze_velocity_response`), and v0.285.0 (Group B: `generate_chord` + `transpose_notes` + `quantize_notes_to_scale` + `quantize_notes_to_grid`)
 
 | Tool | Version | Notes |
 |------|---------|-------|
@@ -24,6 +24,10 @@
 | `analyze_harmonic_function` | v0.283.0 | Tonal-function annotation on top of `analyze_harmony`. Same scope params (pattern_id or arrangement range, `grouping_ticks`, `exclude_drums`, `exclude_track_ids`). Reuses `analyze_song_harmony` end-to-end so chord identification, key inference, and drum exclusion stay in lock-step. For every chord event: scale degree (1..=7 for diatonic), Roman numeral with quality decoration (`I`, `V7`, `ii7`, `vii°`, `ø7`, `°7`, plus `bII`/`bIII`/`bVI`/`bVII` for chromatic), function bucket (`tonic`/`subdominant`/`dominant`/`other`/`chromatic`, simplified Riemannian), and tension (function base + 0.15 for dom7 + 0.2 for dim/half-dim). Detects cadences on consecutive pairs: Authentic (V → I), Plagal (IV → I), Half (anything → V), Deceptive (V → vi). Returns the chord stream, cadence index list, function distribution (T/S/D/Other/Chromatic counts), and tension stats (mean/peak/trough/std-dev). Leading-tone in minor (interval 11) labeled as Dominant when the chord has major or dominant-7 quality (covers borrowed `V` from harmonic minor). 12 unit tests. Implementation in `crates/pertylizer/src/analysis/harmonic_function.rs`; bridge in `analyze_harmonic_function_impl`. Closes Tier-1 #10. |
 | `analyze_instrument_range` | v0.284.0 | Patch-QA sweep across a MIDI note range. One offline render per step via the existing `analyze_note` path (`step_semitones` defaults to 12 — one note per octave; cheaper than the obvious one-per-semitone sweep). Returns per-step (`note`, `note_played`, `expected_hz`, `fundamental_hz`, `pitch_error_cents`, `pitch_confidence`, `peak_amplitude`, `rms_overall`, `centroid_hz`, `clipped_samples`, plus boolean `silent` / `likely_aliased` / `pitch_lost`) and a cross-step `issues` summary (`silent_notes`, `aliased_notes` — centroid > Nyquist/2 + confidence < 0.3, `pitch_lost_notes` — fundamental more than an octave off, `clipping_notes`, `level_spread_db`). Catches the bug class where a patch sounds great at C4 in `analyze_note` and falls apart at C6 (aliasing) or C2 (energy loss). Implementation: `analyze_instrument_range_impl` in `crates/pertylizer/src/mcp_bridge.rs`; pure helpers in `crates/pertylizer/src/analysis/patch_sweep.rs`. Closes Tier-1 #11. |
 | `analyze_velocity_response` | v0.284.0 | Velocity sweep at a fixed MIDI note. Same render path as `analyze_instrument_range`, but the note is held and velocity walks `[velocity_low, velocity_high]` in steps of `velocity_step` (default 16). Returns per-velocity (`peak_amplitude`, `rms_overall`, `centroid_hz`, `clipped_samples`) and cross-step diagnostics (`amplitude_range_db`, `non_monotonic_amplitude_steps`, `non_monotonic_centroid_steps`, `velocity_unresponsive` — flagged when `amplitude_range_db < 3.0` dB). Confirms a patch actually responds to velocity in a musical way (rising amplitude, brighter filter at higher velocity) instead of being effectively velocity-deaf — common surprise on patches with the wrong envelope → amp routing. Implementation: `analyze_velocity_response_impl` in `crates/pertylizer/src/mcp_bridge.rs`; shares helpers with `analyze_instrument_range`. Closes Tier-2 #19. |
+| `generate_chord` | v0.285.0 | Pure-symbolic chord-symbol → MIDI notes. Parses `"Cm7"` / `"F#maj7"` / `"Bbsus4"` / `"G7sus4"` / `"Dm7b5"` / `"C5"` against the same suffix table the identifier emits (round-trip stable) plus synonyms `min`/`minor`, `maj`/`major`, `dim`, `aug`, `ø`. `octave` defaults to 4 (middle-C octave). Voicings: `close` (default), `drop2` (drop the 2nd-highest), `drop3` (drop the 3rd-highest), `open` (drop2+drop3 combined). Voicings that need more notes than the chord has fall back to `drop2` with a warning. Notes clamped to 0..=127 with a warning so callers can retry one octave lower. Returns parsed `root_pitch_class`, `quality`, `suffix`, applied `voicing`, and the MIDI note list. Does not touch the song — pair with `add_notes` to place. |
+| `transpose_notes` | v0.285.0 | Shifts every note in `pattern_id` by a signed semitone delta. Notes whose new pitch would leave 0..=127 stay in place, counted in `notes_out_of_range`. When both `scale_tonic` (0..12) and `scale_name` are set, off-scale results snap to the nearest in-scale pitch via `tie_break` (`up`/`down`/`nearest`, default `up`); partial constraint emits a warning and proceeds without snapping. 13 scale templates supported (major, minor, harmonic_minor, melodic_minor, dorian, phrygian, lydian, mixolydian, locrian, pentatonic_major, pentatonic_minor, blues, chromatic). Returns `notes_transposed` / `notes_out_of_range` / `notes_snapped_to_scale` plus the echoed-back scale name (lets callers detect the major-fallback on unknown input). |
+| `quantize_notes_to_scale` | v0.285.0 | Snaps every off-scale pitch in `pattern_id` to its nearest in-scale neighbour (search radius ±6 semitones — a 12-pitch-class scale always contains a member within a tritone of any input). Same scale templates + tie_break semantics as `transpose_notes`. Returns `notes_already_in_scale`, `notes_moved`, `mean_correction_semitones`, `max_correction_semitones`. |
+| `quantize_notes_to_grid` | v0.285.0 | Snaps note start ticks in `pattern_id` to a `grid_ticks` grid (240 = sixteenth at 960 PPQN, 480 = eighth, 960 = quarter) with optional `strength` (0..1, default 1.0 — full snap), `swing` (0..1, even-indexed grid positions stay, odd push back by up to half-grid), and `humanize_ticks` (max ±jitter per note, seeded with `humanize_seed` for reproducibility — same seed + same notes + same options → byte-identical output). `grid_ticks == 0` returns early with a warning; final tick clamped to `pattern_length - 1` so swing/jitter never push notes past the pattern end. Returns `notes_moved`, `mean_delta_ticks`, `max_delta_ticks`, plus all input options echoed back. |
 
 ### Deferred / in-progress
 
@@ -207,9 +211,10 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
     and whether variations are meaningfully related rather than random. Symbolic first, no audio rendering needed.
 16. **`suggest_music_fixes`** — Meta-tool that ranks concrete next actions from existing diagnostics. High agent
     usefulness, but should come after enough analyzers exist for the suggestions to be grounded.
-17. **`generate_chord`**, **`transpose_notes`**, **`quantize_notes_to_scale`**, **`quantize_notes_to_grid`** —
+17. ✅ **`generate_chord`**, **`transpose_notes`**, **`quantize_notes_to_scale`**, **`quantize_notes_to_grid`** —
     Symbolic helpers that turn a 20-tool-call sequence into a 1-tool-call sequence. Not unlocking any new
-    capability, but a large reduction in token-cost-per-musical-idea.
+    capability, but a large reduction in token-cost-per-musical-idea. **Shipped 2026-05-17 (v0.285.0) as
+    Group B from §8.6.**
 18. **`analyze_groove`** — Useful once the AI is past "write the right notes" and into "make it feel good".
     Less load-bearing than harmony analysis because timing problems are easier for humans to flag than harmonic ones.
     The new `analyze_drum_groove` should probably land first because it has clearer instrument semantics.
@@ -1073,13 +1078,14 @@ extraction + cross-step issue detection as pure helpers; the render loops live i
 `crates/pertylizer/src/mcp_bridge.rs`. 10 in-module unit tests + 5 integration tests against a real
 `SynthEngine` and a sustaining saw patch.
 
-**Group B — Symbolic composition helpers (Tier-2 #17 — four tools)**
+**Group B — Symbolic composition helpers (Tier-2 #17 — four tools)** — ✅ shipped 2026-05-17 (v0.285.0)
 
 `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`, `quantize_notes_to_grid`. All purely symbolic,
 no audio render, share a scale/interval theory module (chord templates, scale-degree tables, voicing rules —
-much of which already lives in `analyze_harmony`'s identifier). Land in one PR under
-`crates/pertylizer/src/composition/`. Big token-cost-per-musical-idea reduction for the AI agent — turns
-20-call note-edit sequences into 1-call operations.
+landed in `crates/pertylizer/src/composition/`, reusing `crate::harmony::{CHORD_TEMPLATES, SCALES,
+scale_by_name}` so identification and generation stay round-trip stable). Big token-cost-per-musical-idea
+reduction for the AI agent — turns 20-call note-edit sequences into 1-call operations. 28 in-module unit
+tests + 10 integration tests through the bridge.
 
 **Group C — Form & motifs (Tier-2 #15 + #20)**
 
@@ -1106,7 +1112,7 @@ and ranks concrete edits. Tension-curve is the data source; suggest_music_fixes 
 
 1. ✅ **Group A** — smallest scope, clear design path via `analyze_note`, catches a concrete real bug class
    (patches that work at C4 and fall apart at C6 or C2). One PR. **Shipped 2026-05-16 (v0.284.0).**
-2. **Group B** — low risk, high token-saving impact for the agent. One PR.
+2. ✅ **Group B** — low risk, high token-saving impact for the agent. One PR. **Shipped 2026-05-17 (v0.285.0).**
 3. **Group C** — needs design work (what counts as a motif, what counts as a section boundary), but
    unlocks long-form composition feedback. One PR or two depending on size.
 4. **Group D** — depends on the analyzers from earlier groups being in place. Tension curve before
@@ -1127,7 +1133,9 @@ Every §8 item is now closed; Tier-1 items 6 (`analyze_pattern`), 7 (`analyze_dr
 (`analyze_bass_drum_lock`), 9 (`analyze_masking_matrix`), and 10 (`analyze_harmonic_function`) all
 shipped 2026-05-16 — alongside §7.2 (rayon-parallel per-track renders) and §7.4 (`Song::tracks_mut`
 + `set_solo_only` helpers). Tier-1 item 11 (`analyze_instrument_range`) + Tier-2 #19
-(`analyze_velocity_response`) — Group A from §8.6 — shipped 2026-05-16 (v0.284.0). Tier-1 item 12
+(`analyze_velocity_response`) — Group A from §8.6 — shipped 2026-05-16 (v0.284.0). Tier-2 #17 — Group B
+from §8.6, four symbolic composition helpers (`generate_chord`, `transpose_notes`,
+`quantize_notes_to_scale`, `quantize_notes_to_grid`) — shipped 2026-05-17 (v0.285.0). Tier-1 item 12
 (`render_section_to_wav`) is the only remaining Tier-1 work — pick up when reference audio comes
-into the workflow (it unlocks `compare_to_reference` from Tier 3). Next groups from §8.6: Group B
-(symbolic composition helpers), Group C (form & motifs), Group D (meta-analysis).
+into the workflow (it unlocks `compare_to_reference` from Tier 3). Next groups from §8.6: Group C
+(form & motifs), Group D (meta-analysis).

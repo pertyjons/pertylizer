@@ -113,20 +113,21 @@ pub struct Chord {
 }
 
 /// Chord template: interval set above the root (always contains 0).
-struct ChordTemplate {
+pub(crate) struct ChordTemplate {
     /// Quality name (used in the output symbol after the root).
-    quality: &'static str,
+    pub quality: &'static str,
     /// Short suffix appended to the chord symbol after the root name.
     /// e.g. for `quality = "minor7"`, `suffix = "m7"` produces "Cm7".
-    suffix: &'static str,
+    pub suffix: &'static str,
     /// Interval set above the root (sorted, deduplicated).
-    intervals: &'static [u8],
+    pub intervals: &'static [u8],
 }
 
 /// Catalog of chord templates. Order matters — templates with more notes are
 /// preferred over their subsets (e.g. min7 over min) so identification picks
-/// the most specific match.
-const CHORD_TEMPLATES: &[ChordTemplate] = &[
+/// the most specific match. Also drives `composition::chord_gen`: the longest
+/// matching suffix wins when parsing a chord symbol like `"Cm7"`.
+pub(crate) const CHORD_TEMPLATES: &[ChordTemplate] = &[
     // 4-note tetrads
     ChordTemplate {
         quality: "major7",

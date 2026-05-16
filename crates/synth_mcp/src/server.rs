@@ -615,6 +615,86 @@ pub struct AnalyzeVelocityResponseParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GenerateChordParam {
+    #[schemars(
+        description = "Chord symbol like 'C', 'Cm7', 'F#maj7', 'Bbsus4', 'Dm7b5', 'G7sus4', 'C5'. Accepts synonyms 'min'/'minor' (= 'm'), 'maj'/'major' (= ''), 'dim'/'aug'. Root may be uppercase or lowercase; '#' is sharp, 'b' after a letter is flat."
+    )]
+    pub symbol: String,
+    #[schemars(
+        description = "Octave in scientific pitch notation (-1 .. 9). Default 4 = middle-C octave."
+    )]
+    pub octave: Option<i32>,
+    #[schemars(
+        description = "Voicing to apply to the close-position chord. One of 'close' (default), 'drop2', 'drop3', 'open'. Voicings that need more notes than the chord has fall back to drop2 with a warning."
+    )]
+    pub voicing: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TransposeNotesParam {
+    #[schemars(description = "Pattern to transpose.")]
+    pub pattern_id: u32,
+    #[schemars(
+        description = "Signed semitone shift (e.g. +5 = up a fourth, -12 = down an octave)."
+    )]
+    pub semitones: i32,
+    #[schemars(
+        description = "Optional scale-constraint tonic (0..12, C = 0). When both scale_tonic and scale_name are set, any transposed pitch that lands off-scale is snapped to the nearest in-scale pitch."
+    )]
+    pub scale_tonic: Option<u8>,
+    #[schemars(
+        description = "Optional scale name: 'major', 'minor', 'harmonic_minor', 'melodic_minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'locrian', 'pentatonic_major', 'pentatonic_minor', 'blues', 'chromatic'. Unknown names fall back to major."
+    )]
+    pub scale_name: Option<String>,
+    #[schemars(
+        description = "Tie-break direction for scale snap: 'up' (default — prefer higher pitch), 'down', or 'nearest'. Only meaningful when a scale is set."
+    )]
+    pub tie_break: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct QuantizeNotesToScaleParam {
+    #[schemars(description = "Pattern to operate on.")]
+    pub pattern_id: u32,
+    #[schemars(description = "Scale tonic pitch class (0..12, C = 0).")]
+    pub scale_tonic: u8,
+    #[schemars(
+        description = "Scale template name (see transpose_notes for the full list). Unknown names fall back to major."
+    )]
+    pub scale_name: String,
+    #[schemars(
+        description = "Tie-break direction when two scale degrees are equidistant: 'up' (default), 'down', or 'nearest'."
+    )]
+    pub tie_break: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct QuantizeNotesToGridParam {
+    #[schemars(description = "Pattern to operate on.")]
+    pub pattern_id: u32,
+    #[schemars(
+        description = "Grid resolution in ticks (e.g. 240 = sixteenth at 960 PPQN, 480 = eighth, 960 = quarter). Must be > 0; pass 0 to return early without changes."
+    )]
+    pub grid_ticks: u32,
+    #[schemars(
+        description = "Quantize strength in 0..=1. 1.0 (default) = full snap, 0.5 = halfway between original and grid, 0.0 = no movement."
+    )]
+    pub strength: Option<f32>,
+    #[schemars(
+        description = "Swing amount 0..=1 (default 0). Even-indexed grid positions stay put; odd positions get pushed back by up to half the grid distance."
+    )]
+    pub swing: Option<f32>,
+    #[schemars(
+        description = "Maximum ±jitter applied per note after the grid snap, in ticks (default 0 = no humanization)."
+    )]
+    pub humanize_ticks: Option<u32>,
+    #[schemars(
+        description = "Seed for humanization (default 0). Same seed + same notes + same options → same output."
+    )]
+    pub humanize_seed: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeDrumGrooveParam {
     #[schemars(
         description = "Pattern ID to analyze as a drum pattern. When set, the arrangement_* fields are ignored and the analyzer treats every note in the pattern as a drum hit (no drum-track filtering)."
@@ -1910,6 +1990,12 @@ impl SynthMcpServer {
             "analyze_masking_matrix" => analyze_masking_matrix(AnalyzeMaskingMatrixParam),
             "analyze_instrument_range" => analyze_instrument_range(AnalyzeInstrumentRangeParam),
             "analyze_velocity_response" => analyze_velocity_response(AnalyzeVelocityResponseParam),
+
+            // Symbolic composition helpers
+            "generate_chord" => generate_chord(GenerateChordParam),
+            "transpose_notes" => transpose_notes(TransposeNotesParam),
+            "quantize_notes_to_scale" => quantize_notes_to_scale(QuantizeNotesToScaleParam),
+            "quantize_notes_to_grid" => quantize_notes_to_grid(QuantizeNotesToGridParam),
         ])
     }
 }
@@ -2533,6 +2619,71 @@ impl SynthMcpServer {
             params.0.velocity_step,
             params.0.duration_ms,
             params.0.tail_ms,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Parse a chord symbol (e.g. 'Cm7', 'F#maj7', 'Bbsus4', 'G7sus4', 'C5') and return MIDI notes for the requested voicing rooted at `octave` (default 4 = middle-C octave). Voicings: 'close' (default — notes stacked above the root), 'drop2' (drop the 2nd-highest note an octave), 'drop3' (drop the 3rd-highest), 'open' (drop2+drop3 combined). Pure symbolic — does not touch the song; pair with `add_notes` to place. Saves the AI from re-deriving chord intervals by hand on every progression."
+    )]
+    async fn generate_chord(&self, params: Parameters<GenerateChordParam>) -> String {
+        match self.bridge.generate_chord(
+            &params.0.symbol,
+            params.0.octave.unwrap_or(4),
+            params.0.voicing.as_deref(),
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Transpose every note in `pattern_id` by `semitones` (signed). Notes whose new pitch would leave the 0..127 MIDI range are left untouched and counted in `notes_out_of_range`. When both `scale_tonic` (0..12) and `scale_name` are set, transposed pitches that land off-scale are snapped to the nearest in-scale pitch using `tie_break` ('up'/'down'/'nearest', default 'up') — useful for staying diatonic when the AI shifts a phrase. Scale names: major, minor, harmonic_minor, melodic_minor, dorian, phrygian, lydian, mixolydian, locrian, pentatonic_major, pentatonic_minor, blues, chromatic. Replaces a 20-call sequence of update_note transposes."
+    )]
+    async fn transpose_notes(&self, params: Parameters<TransposeNotesParam>) -> String {
+        match self.bridge.transpose_notes(
+            params.0.pattern_id,
+            params.0.semitones,
+            params.0.scale_tonic,
+            params.0.scale_name.as_deref(),
+            params.0.tie_break.as_deref(),
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Snap every note in `pattern_id` to the nearest pitch of the given key/scale. Cleans up AI-generated material that drifted off-key. Returns notes_already_in_scale + notes_moved, mean and max absolute correction in semitones. `tie_break` ('up' default / 'down' / 'nearest') decides which way to snap when a pitch is equidistant from two scale degrees. Scale names: major, minor, harmonic_minor, melodic_minor, dorian, phrygian, lydian, mixolydian, locrian, pentatonic_major, pentatonic_minor, blues, chromatic."
+    )]
+    async fn quantize_notes_to_scale(
+        &self,
+        params: Parameters<QuantizeNotesToScaleParam>,
+    ) -> String {
+        match self.bridge.quantize_notes_to_scale(
+            params.0.pattern_id,
+            params.0.scale_tonic,
+            &params.0.scale_name,
+            params.0.tie_break.as_deref(),
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Snap note start ticks in `pattern_id` to a `grid_ticks` grid (240 = sixteenth at 960 PPQN, 480 = eighth, 960 = quarter) with optional swing (0..=1, even positions stay / odd push back by up to half-grid), humanization (max ±tick jitter per note), and quantize strength (0..=1; 1.0 = full snap, 0.5 = halfway between original and grid). Humanization is deterministic given the same `humanize_seed` (default 0) — reuse the seed to A/B compare different swing/strength settings without changing the jitter pattern. Returns notes_moved, mean and max tick deltas. Pure symbolic — no rendering."
+    )]
+    async fn quantize_notes_to_grid(&self, params: Parameters<QuantizeNotesToGridParam>) -> String {
+        match self.bridge.quantize_notes_to_grid(
+            params.0.pattern_id,
+            params.0.grid_ticks,
+            params.0.strength,
+            params.0.swing,
+            params.0.humanize_ticks,
+            params.0.humanize_seed,
         ) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),

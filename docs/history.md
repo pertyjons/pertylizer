@@ -1,5 +1,112 @@
 # Version History
 
+## [0.285.0] - 2026-05-17
+### MCP music tools — Tier-2 #17: symbolic composition helpers (Group B)
+
+Group B from §8.6 of `docs/mcp-music-tools-plan.md`: four pure-symbolic
+tools that turn 20-call note-edit sequences into a single call. No audio
+rendering, no engine snapshot — the four operations work directly on the
+shared `Song`. New module
+`crates/pertylizer/src/composition/`, sharing the chord/scale theory
+tables (`CHORD_TEMPLATES`, `SCALES`, `scale_by_name`) with
+`crate::harmony` so identification and generation stay in lock-step.
+
+#### `generate_chord`
+
+Parses a chord symbol (`"Cm7"`, `"F#maj7"`, `"Bbsus4"`, `"G7sus4"`,
+`"Dm7b5"`, `"C5"`, …) and returns the MIDI notes for the requested
+voicing rooted at `octave` (scientific pitch notation, default 4 =
+middle-C octave). Synonyms `min`/`minor` (→ `m`), `maj`/`major` (→ `""`),
+`dim`, `aug`, `ø` (→ `m7b5`) are accepted. Voicings: `close` (default),
+`drop2` (drop the 2nd-highest note an octave), `drop3` (drop the
+3rd-highest), `open` (drop2+drop3 combined); voicings that need more
+notes than the chord has fall back to `drop2` with a warning. Notes
+clamped to 0..=127; clamping emits a warning so callers can retry one
+octave lower. Out-of-range octaves and unparseable suffixes return
+errors rather than producing best-effort output.
+
+#### `transpose_notes`
+
+Shifts every note in `pattern_id` by a signed semitone delta. Notes
+whose new pitch would leave 0..=127 are left in place and counted in
+`notes_out_of_range`. When both `scale_tonic` (0..12) and `scale_name`
+are set, any pitch that lands off-scale is snapped to the nearest
+in-scale pitch using `tie_break` (`up` default / `down` / `nearest`).
+Supplying only one of the two emits a warning and proceeds without
+snapping. Scale templates: major, minor, harmonic_minor, melodic_minor,
+dorian, phrygian, lydian, mixolydian, locrian, pentatonic_major,
+pentatonic_minor, blues, chromatic — unknown names fall back to major
+(the `scale_name` field on the result echoes back what was actually
+applied so callers can detect the fallback).
+
+#### `quantize_notes_to_scale`
+
+Snaps every off-scale pitch in `pattern_id` to its nearest in-scale
+neighbour (search radius ±6 semitones — a 12-pitch-class scale always
+contains a member within a tritone of any input). Returns
+`notes_already_in_scale`, `notes_moved`, `mean_correction_semitones`,
+and `max_correction_semitones`. Cleans up AI-generated material that
+drifted off-key without re-deriving every note by hand.
+
+#### `quantize_notes_to_grid`
+
+Snaps note start ticks in `pattern_id` to a `grid_ticks` grid (240 =
+sixteenth at 960 PPQN, 480 = eighth, 960 = quarter) with three optional
+shaping stages applied in order:
+
+- **strength** (`0..=1`, default 1.0) — blends original start with the
+  grid-snapped start. `0.5` is halfway, `0.0` is a no-op.
+- **swing** (`0..=1`, default 0) — odd-indexed grid positions push back
+  by up to half the grid distance. Even positions stay put.
+- **humanize_ticks** (default 0) — deterministic ±jitter per note,
+  seeded with `humanize_seed` (default 0). Same seed + same notes +
+  same options → byte-identical output, so the AI can A/B-compare swing
+  / strength without the jitter pattern shifting.
+
+`grid_ticks == 0` returns early with a warning instead of erroring;
+final tick is clamped to `pattern_length - 1` so swing or jitter never
+push notes past the end of the pattern.
+
+#### Wiring
+
+- `crates/pertylizer/src/harmony.rs` — `ChordTemplate` and
+  `CHORD_TEMPLATES` lifted to `pub(crate)` so `composition` can reuse
+  the same suffix table the identifier emits.
+- `crates/pertylizer/src/composition/{chord_gen,transpose,quantize_scale,quantize_grid}.rs`
+  — pure helpers, 28 in-module unit tests covering chord parsing
+  (flats, sharps, synonyms, voicings, MIDI clamping), transpose with
+  out-of-range skipping and scale-snap counts, scale-snap with
+  pentatonic + diatonic + tie-break direction, grid snap with
+  fractional strength, swing on odd positions, deterministic
+  humanization, and pattern-length clamping.
+- `crates/synth_mcp/src/types.rs` — `GenerateChordResult`,
+  `TransposeNotesResult`, `QuantizeNotesToScaleResult`,
+  `QuantizeNotesToGridResult` (the three pattern ops echo back the
+  scale name / grid resolution / seed that was actually applied).
+- `crates/synth_mcp/src/bridge.rs` — four new `SynthBridge` trait
+  methods with doc comments naming the failure modes (unknown
+  voicing/tie_break, partial scale constraint, missing pattern).
+- `crates/synth_mcp/src/server.rs` — four `*Param` structs with
+  schemars descriptions, four `#[tool]` handlers, and router
+  registrations.
+- `crates/pertylizer/src/mcp_bridge.rs` — `generate_chord_impl`,
+  `transpose_notes_impl`, `quantize_notes_to_scale_impl`,
+  `quantize_notes_to_grid_impl`. Pattern ops use `Pattern::note_mut`
+  (preserves note ID, duration, instrument, velocity) for pitch
+  updates and `Pattern::move_note` for tick updates (preserves the
+  internal sort invariant). Unknown voicing / tie_break / missing
+  pattern map to `McpBridgeError::Other` with the offending value
+  quoted.
+- `crates/pertylizer/tests/composition_helpers.rs` — 10 integration
+  tests through the bridge: chord round-trip, voicing rejection,
+  semitone shift, scale-snap on transpose, partial-constraint
+  warning, chromatic-passing-tone snap, grid snap, deterministic
+  humanization for the same seed, disabled-grid warning, missing
+  pattern.
+
+`cargo build`, `cargo clippy --all-targets`, `cargo fmt --check`,
+`cargo test` are all clean. `Cargo.toml` bumped to `0.285.0`.
+
 ## [0.284.0] - 2026-05-16
 ### MCP music tools — Tier-1 #11 + Tier-2 #19: `analyze_instrument_range` + `analyze_velocity_response`
 

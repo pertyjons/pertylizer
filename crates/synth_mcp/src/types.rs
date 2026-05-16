@@ -2079,3 +2079,103 @@ pub struct AnalyzeVelocityResponseResult {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub warnings: Vec<String>,
 }
+
+// ---------------------------------------------------------------------------
+// Group B — symbolic composition helper results
+// ---------------------------------------------------------------------------
+
+/// Output of `generate_chord`. Pure symbolic — returns MIDI notes for a
+/// requested chord symbol so the caller can place them with `add_notes`.
+#[derive(Debug, Clone, Serialize)]
+pub struct GenerateChordResult {
+    /// Chord symbol echoed back.
+    pub symbol: String,
+    /// Root pitch class (0..12, C = 0).
+    pub root_pitch_class: u8,
+    /// Matched quality (`"major"`, `"minor7"`, `"sus4"`, …).
+    pub quality: String,
+    /// Suffix that matched (`""`, `"m7"`, `"sus4"`, …).
+    pub suffix: String,
+    /// Voicing that was actually applied (may differ from the request when
+    /// the chord has fewer notes than the voicing needs).
+    pub voicing: String,
+    /// Generated MIDI notes in ascending order.
+    pub notes: Vec<u8>,
+    /// Non-fatal warnings (voicing fallback, MIDI clamping, …).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
+
+/// Output of `transpose_notes`. Pure symbolic — mutates a single pattern in
+/// place and returns aggregate stats.
+#[derive(Debug, Clone, Serialize)]
+pub struct TransposeNotesResult {
+    pub pattern_id: u32,
+    /// Signed semitone shift requested.
+    pub semitones: i32,
+    /// Number of notes in the pattern before the call.
+    pub notes_in: u32,
+    /// Notes whose new pitch landed inside the valid MIDI range and were
+    /// updated. Notes whose new pitch would have fallen outside are left
+    /// untouched and counted in `notes_out_of_range`.
+    pub notes_transposed: u32,
+    pub notes_out_of_range: u32,
+    /// Notes whose raw transposed pitch was outside the requested scale and
+    /// snapped to the nearest in-scale pitch. `0` when no scale was given.
+    pub notes_snapped_to_scale: u32,
+    /// Echo of the scale constraint that was applied (when any).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub scale_tonic_pitch_class: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub scale_name: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
+
+/// Output of `quantize_notes_to_scale`.
+#[derive(Debug, Clone, Serialize)]
+pub struct QuantizeNotesToScaleResult {
+    pub pattern_id: u32,
+    /// Scale tonic (0..12, C = 0).
+    pub scale_tonic_pitch_class: u8,
+    /// Scale template that was applied (may differ from the requested name
+    /// when an unknown name fell back to major).
+    pub scale_name: String,
+    pub notes_in: u32,
+    pub notes_already_in_scale: u32,
+    pub notes_moved: u32,
+    /// Mean absolute correction in semitones across `notes_moved`. `0.0`
+    /// when no notes were moved.
+    pub mean_correction_semitones: f32,
+    /// Largest single-note correction in semitones.
+    pub max_correction_semitones: u8,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
+
+/// Output of `quantize_notes_to_grid`.
+#[derive(Debug, Clone, Serialize)]
+pub struct QuantizeNotesToGridResult {
+    pub pattern_id: u32,
+    /// Grid resolution (in ticks) the snap was performed against.
+    pub grid_ticks: u32,
+    /// Quantize strength that was applied (0..1).
+    pub strength: f32,
+    /// Swing amount (0..1) — even-indexed grid positions stay, odd
+    /// positions push back by up to half the grid distance.
+    pub swing: f32,
+    /// Maximum ±jitter applied to each note after the grid snap.
+    pub humanize_ticks: u32,
+    /// Seed used for humanization. Returning this lets callers reproduce a
+    /// particular pass.
+    pub humanize_seed: u64,
+    pub notes_in: u32,
+    pub notes_moved: u32,
+    /// Mean absolute tick delta across `notes_moved`.
+    pub mean_delta_ticks: f32,
+    pub max_delta_ticks: u32,
+    /// Pattern length in ticks at the time of the call (echoed for context).
+    pub pattern_length_ticks: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
