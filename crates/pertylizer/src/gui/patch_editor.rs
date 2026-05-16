@@ -7,12 +7,11 @@
 //! Cables are rendered behind modules; hovered cables pop to the foreground.
 
 use eframe::egui::{self, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
-use egui_extras as _;
 use egui_remixicon::icons as ri;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use synth_core::{ModMatrixGridSize, ModMatrixParam, ModuleType, Param};
-use synth_core::{ModuleCategory, ModuleDescriptor, PortName, PortType};
+use synth_core::{ModuleCategory, ModuleDescriptor, ParameterDescriptor, PortName, PortType};
 use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
 
@@ -22,11 +21,11 @@ use crate::patch::{
     ModuleGroupState, ModuleState, ParamValue, Position,
 };
 
-use super::module_panel::{ModulePanelState, PortPosition, category_color};
+use super::module_panel::{category_color, ModulePanelState, PortPosition};
 use super::theme::theme;
 use super::widgets::{
-    CABLE_SPREAD, WidgetPortDirection, WidgetPortType, cable_color, closest_point_on_cable,
-    draw_cable, draw_cable_dragging, draw_cable_highlighted, draw_flow_particles, point_near_cable,
+    cable_color, closest_point_on_cable, draw_cable, draw_cable_dragging, draw_cable_highlighted,
+    draw_flow_particles, point_near_cable, WidgetPortDirection, WidgetPortType, CABLE_SPREAD,
 };
 
 /// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
@@ -50,6 +49,17 @@ fn trim_sweep_to_complete_cycles(samples: &[f32], threshold: f32) -> &[f32] {
         }
     }
     samples
+}
+
+fn blend_rgb(base: Color32, tint: Color32, amount: f32) -> Color32 {
+    let amount = amount.clamp(0.0, 1.0);
+    let inv = 1.0 - amount;
+    Color32::from_rgba_unmultiplied(
+        (f32::from(base.r()) * inv + f32::from(tint.r()) * amount).round() as u8,
+        (f32::from(base.g()) * inv + f32::from(tint.g()) * amount).round() as u8,
+        (f32::from(base.b()) * inv + f32::from(tint.b()) * amount).round() as u8,
+        base.a(),
+    )
 }
 
 /// Snap a position to the nearest grid point.
@@ -1488,9 +1498,16 @@ impl PatchEditor {
             let mut open = true;
             // Include instrument_id in the hash to prevent ID collisions across instruments
             let window_id = egui::Id::new((instrument_id, "module_window", module_id.to_string()));
+            let module_fill = {
+                let colors = theme().colors;
+                let tint_strength = if is_selected { 0.12 } else { 0.06 };
+                blend_rgb(colors.bg_module, dimmed_accent, tint_strength).gamma_multiply(opacity)
+            };
 
             // Create frame with dimming for disconnected modules
             let frame = egui::Frame::window(&ui.global_style())
+                .corner_radius(6.0)
+                .inner_margin(8.0)
                 .stroke(egui::Stroke::new(
                     if is_selected { 2.0 } else { 1.0 },
                     if is_selected {
@@ -1499,12 +1516,7 @@ impl PatchEditor {
                         dimmed_accent.gamma_multiply(0.5)
                     },
                 ))
-                .fill(
-                    ui.global_style()
-                        .visuals
-                        .window_fill()
-                        .gamma_multiply(opacity),
-                );
+                .fill(module_fill);
 
             // Check if this module needs repositioning (after auto-layout)
             let needs_reposition = self.needs_reposition.contains(&module_id);
@@ -2171,46 +2183,50 @@ impl PatchEditor {
     ) where
         F: FnOnce(&mut Ui),
     {
+        let margin = ui.spacing().window_margin;
+        let module_rect = ui.max_rect();
+        let header_top = ui.cursor().min.y - f32::from(margin.top);
+        let header_rect = egui::Rect::from_min_max(
+            egui::pos2(module_rect.left() - f32::from(margin.left), header_top),
+            egui::pos2(
+                module_rect.right() + f32::from(margin.right),
+                header_top + 34.0,
+            ),
+        );
+        let tint = accent_color.gamma_multiply(0.14);
+        let transparent = Color32::TRANSPARENT;
+        let painter = ui.painter();
+        let mut mesh = egui::Mesh::default();
+        mesh.colored_vertex(header_rect.left_top(), tint);
+        mesh.colored_vertex(header_rect.right_top(), transparent);
+        mesh.colored_vertex(header_rect.right_bottom(), transparent);
+        mesh.colored_vertex(header_rect.left_bottom(), tint.gamma_multiply(0.35));
+        mesh.add_triangle(0, 1, 2);
+        mesh.add_triangle(0, 2, 3);
+        painter.add(egui::Shape::mesh(mesh));
+
         ui.horizontal(|ui| {
             // Accent color indicator
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(3.0, 14.0), Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(4.0, 16.0), Sense::hover());
             ui.painter().rect_filled(rect, 2.0, accent_color);
 
             // Title
-            let response = ui.label(egui::RichText::new(title).strong().color(accent_color));
+            let response = ui.label(
+                egui::RichText::new(title)
+                    .strong()
+                    .size(13.0)
+                    .color(accent_color),
+            );
             if let Some(hover) = hover_text {
                 response.on_hover_text(hover);
             }
 
+            ui.add_space(4.0);
             actions(ui);
         });
 
         ui.separator();
-
-        // Gradient tint spanning full module panel, from frame edge to separator
-        let margin = ui.spacing().window_margin;
-        let module_rect = ui.max_rect();
-        let gradient_rect = egui::Rect::from_min_max(
-            egui::pos2(
-                module_rect.left() - f32::from(margin.left),
-                module_rect.top() - f32::from(margin.top),
-            ),
-            egui::pos2(
-                module_rect.right() + f32::from(margin.right),
-                ui.min_rect().bottom(),
-            ),
-        );
-        let tint = accent_color.gamma_multiply(0.12);
-        let transparent = Color32::TRANSPARENT;
-        let painter = ui.painter();
-        let mut mesh = egui::Mesh::default();
-        mesh.colored_vertex(gradient_rect.left_top(), tint);
-        mesh.colored_vertex(gradient_rect.right_top(), transparent);
-        mesh.colored_vertex(gradient_rect.right_bottom(), transparent);
-        mesh.colored_vertex(gradient_rect.left_bottom(), transparent);
-        mesh.add_triangle(0, 1, 2);
-        mesh.add_triangle(0, 2, 3);
-        painter.add(egui::Shape::mesh(mesh));
+        ui.add_space(2.0);
     }
 
     fn draw_port_column_with<F>(
@@ -2239,6 +2255,14 @@ impl PatchEditor {
                             .color(t.colors.text_dim),
                     );
                 });
+
+                let rail_x = ui.cursor().min.x + col_width * 0.5;
+                let rail_top = ui.cursor().min.y + 3.0;
+                let rail_bottom = rail_top + ports.len() as f32 * spacing - 6.0;
+                ui.painter().line_segment(
+                    [Pos2::new(rail_x, rail_top), Pos2::new(rail_x, rail_bottom)],
+                    egui::Stroke::new(1.0, t.colors.border.gamma_multiply(0.55)),
+                );
             }
 
             for port in ports {
@@ -4139,7 +4163,7 @@ impl PatchEditor {
         available_rect: egui::Rect,
         effect_chain_order: &[ModuleId],
     ) {
-        use super::auto_layout::{LayoutConnection, ModuleInfo, calculate_layout_with_chain_order};
+        use super::auto_layout::{calculate_layout_with_chain_order, LayoutConnection, ModuleInfo};
 
         // Clear saved canvas size hint — auto-layout determines the new bounds
         self.min_canvas_size = None;
@@ -4176,17 +4200,16 @@ impl PatchEditor {
             effect_chain_order,
         );
 
-        // Apply new positions and mark for repositioning
+        // Apply new positions and mark for repositioning.
+        // Auto-layout is now self-contained: the result already places
+        // effect-chain modules. `align_effect_chain()` is retained for
+        // explicit user-triggered effect-chain reorders only.
         for (module_id, position) in result.positions {
             if let Some(panel) = self.panels.get_mut(&module_id) {
                 panel.position = position;
-                // Mark this module to use current_pos() on next frame
                 self.needs_reposition.insert(module_id);
             }
         }
-
-        // Re-align effect chain into a clean vertical column after auto-layout
-        self.align_effect_chain(effect_chain_order);
     }
 }
 
@@ -4404,6 +4427,50 @@ fn draw_visualizer_display(
     }
 }
 
+fn draw_knob_grid(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    params: &[&ParameterDescriptor],
+    accent_color: Color32,
+    param_changes: &mut Vec<Param>,
+) {
+    use super::widgets::Knob;
+
+    const KNOBS_PER_ROW: usize = 5;
+    let knob_size = theme().sizes.knob_size;
+    let cell_size = Vec2::new((knob_size + 18.0).max(54.0), knob_size + 18.0);
+
+    for chunk in params.chunks(KNOBS_PER_ROW) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(5.0, 6.0);
+            for param in chunk {
+                ui.allocate_ui_with_layout(
+                    cell_size,
+                    egui::Layout::top_down(egui::Align::Center),
+                    |ui| {
+                        let current = state
+                            .param_values
+                            .get(&param.name)
+                            .copied()
+                            .unwrap_or(param.range.default);
+                        let mut value = current;
+
+                        Knob::from_descriptor(&mut value, param)
+                            .size(knob_size)
+                            .accent_color(accent_color)
+                            .show(ui);
+
+                        if (value - current).abs() > f32::EPSILON {
+                            state.param_values.insert(param.name.clone(), value);
+                            param_changes.push(param.id.with_f32(value));
+                        }
+                    },
+                );
+            }
+        });
+    }
+}
+
 /// Draw only the parameters section of a module panel.
 #[allow(clippy::too_many_arguments)]
 fn draw_module_panel_params(
@@ -4416,7 +4483,7 @@ fn draw_module_panel_params(
     sample_list: &[(u64, String)],
     audio_input_snapshot: &AudioInputSnapshot,
 ) -> PanelParamsResult {
-    use super::widgets::{EnvelopeEditor, Knob, WaveformSelector};
+    use super::widgets::{EnvelopeEditor, WaveformSelector};
     use synth_core::WidgetHint;
 
     let mut param_changes = Vec::new();
@@ -4490,32 +4557,7 @@ fn draw_module_panel_params(
             .collect();
 
         if !knob_params.is_empty() {
-            const KNOBS_PER_ROW: usize = 5;
-            for chunk in knob_params.chunks(KNOBS_PER_ROW) {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                    for param in chunk {
-                        ui.vertical(|ui| {
-                            let current = state
-                                .param_values
-                                .get(&param.name)
-                                .copied()
-                                .unwrap_or(param.range.default);
-                            let mut value = current;
-
-                            Knob::from_descriptor(&mut value, param)
-                                .size(theme().sizes.knob_size)
-                                .accent_color(accent_color)
-                                .show(ui);
-
-                            if (value - current).abs() > f32::EPSILON {
-                                state.param_values.insert(param.name.clone(), value);
-                                param_changes.push(param.id.with_f32(value));
-                            }
-                        });
-                    }
-                });
-            }
+            draw_knob_grid(ui, state, &knob_params, accent_color, &mut param_changes);
         }
 
         return PanelParamsResult {
@@ -4890,32 +4932,7 @@ fn draw_module_panel_params(
     // Draw knobs in rows of max 5
     if !knob_params.is_empty() {
         ui.add_space(4.0);
-        const KNOBS_PER_ROW: usize = 5;
-        for chunk in knob_params.chunks(KNOBS_PER_ROW) {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                for param in chunk {
-                    ui.vertical(|ui| {
-                        let current = state
-                            .param_values
-                            .get(&param.name)
-                            .copied()
-                            .unwrap_or(param.range.default);
-                        let mut value = current;
-
-                        Knob::from_descriptor(&mut value, param)
-                            .size(theme().sizes.knob_size)
-                            .accent_color(accent_color)
-                            .show(ui);
-
-                        if (value - current).abs() > f32::EPSILON {
-                            state.param_values.insert(param.name.clone(), value);
-                            param_changes.push(param.id.with_f32(value));
-                        }
-                    });
-                }
-            });
-        }
+        draw_knob_grid(ui, state, &knob_params, accent_color, &mut param_changes);
     }
 
     PanelParamsResult {
