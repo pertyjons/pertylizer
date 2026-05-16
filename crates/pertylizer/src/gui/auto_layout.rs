@@ -1,14 +1,18 @@
 //! Auto-layout algorithm for organizing modules based on signal flow analysis.
 //!
 //! This module provides automatic positioning of synth modules using a 5-phase algorithm:
-//! 1. **Classify** modules into SignalChain, Modulation, Global, or Disconnected groups
+//! 1. **Classify** modules into SignalChain, Modulation, EffectChain, Global, or
+//!    Disconnected groups
 //! 2. **Topological depth** assignment via cycle-broken Kahn → columns (left-to-right)
 //! 3. **Vertical ordering** within columns using multi-sweep median heuristic (reduces crossings)
-//! 4. **Modulation placement** one column left of their primary targets (when possible)
-//! 5. **Pixel positions** computed with fixed estimated sizes
+//! 4. **Modulation placement** one column left of their primary targets (when possible),
+//!    sorted deterministically by `(column, target_row, module_sort_key)`
+//! 5. **Pixel positions** computed from each module's actual rendered size, snapped up
+//!    to whole grid cells, anchored at `available_rect.min + GRID`
 //!
-//! Layout zones (left→right): Signal columns | Global column | Disconnected column
-//! Layout zones (top→bottom): Signal rows | Modulation gap | Modulation rows
+//! Layout zones (left→right): Signal columns | Effect-chain column | Global column |
+//! Disconnected column. Within a signal column (top→bottom): signal-chain rows, then
+//! modulation rows anchored to their target row.
 
 use std::collections::{HashMap, HashSet};
 
@@ -35,11 +39,92 @@ pub struct LayoutConnection {
     pub to_module: ModuleId,
 }
 
+/// A collapsed group treated as a single layout node.
+///
+/// Use together with [`prepare_layout_inputs`] to fold a collapsed
+/// group into one rectangle for layout. The `representative` doubles
+/// as the position key in the resulting [`LayoutResult`].
+#[derive(Debug, Clone)]
+pub(crate) struct CollapsedGroupNode {
+    /// Representative `ModuleId` used as the layout node id. Must be
+    /// one of `members` — typically the first existing one.
+    pub representative: ModuleId,
+    /// Category used to classify the group node (signal-chain vs.
+    /// modulation vs. global).
+    pub category: ModuleCategory,
+    /// Rendered size of the collapsed group box.
+    pub size: Vec2,
+    /// All `ModuleId`s belonging to the group. Hidden members are
+    /// removed from the visible set, and connection endpoints that
+    /// touch them are rewired to the representative.
+    pub members: Vec<ModuleId>,
+}
+
 /// Result of auto-layout calculation.
 #[derive(Debug, Clone, Default)]
 pub struct LayoutResult {
     /// New positions for each module.
     pub positions: HashMap<ModuleId, Pos2>,
+}
+
+/// Prepare layout inputs that fold collapsed groups into single nodes.
+///
+/// - Removes any module whose id is listed as a member of a collapsed
+///   group from `modules`.
+/// - Inserts one [`ModuleInfo`] per collapsed group, using the group's
+///   representative id, collapsed size, and category.
+/// - Rewrites connection endpoints that reference a hidden member to
+///   reference its group representative.
+/// - Drops connections whose endpoints both fall inside the same group.
+#[must_use]
+pub(crate) fn prepare_layout_inputs(
+    modules: &[ModuleInfo],
+    connections: &[LayoutConnection],
+    collapsed_groups: &[CollapsedGroupNode],
+) -> (Vec<ModuleInfo>, Vec<LayoutConnection>) {
+    let mut member_to_repr: HashMap<ModuleId, ModuleId> = HashMap::new();
+    for group in collapsed_groups {
+        for &m in &group.members {
+            member_to_repr.insert(m, group.representative);
+        }
+    }
+
+    let mut out_modules: Vec<ModuleInfo> = modules
+        .iter()
+        .filter(|m| !member_to_repr.contains_key(&m.id))
+        .cloned()
+        .collect();
+    for group in collapsed_groups {
+        out_modules.push(ModuleInfo {
+            id: group.representative,
+            category: group.category,
+            size: group.size,
+        });
+    }
+
+    let out_connections: Vec<LayoutConnection> = connections
+        .iter()
+        .filter_map(|c| {
+            let from = member_to_repr
+                .get(&c.from_module)
+                .copied()
+                .unwrap_or(c.from_module);
+            let to = member_to_repr
+                .get(&c.to_module)
+                .copied()
+                .unwrap_or(c.to_module);
+            if from == to {
+                None
+            } else {
+                Some(LayoutConnection {
+                    from_module: from,
+                    to_module: to,
+                })
+            }
+        })
+        .collect();
+
+    (out_modules, out_connections)
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -59,6 +144,9 @@ const MAX_SWEEPS: usize = 8;
 enum ModuleGroup {
     SignalChain,
     Modulation,
+    /// Engine effect-chain modules (e.g. bus effects without voice-graph cables).
+    /// Placed in a dedicated column ordered by the engine's effect chain order.
+    EffectChain,
     Global,
     Disconnected,
 }
@@ -89,6 +177,11 @@ fn classify_module(
     has_outgoing: bool,
 ) -> ModuleGroup {
     if !(has_incoming || has_outgoing) {
+        // Effects without voice-graph cables belong to the engine effect chain,
+        // not the truly disconnected zone.
+        if category == ModuleCategory::Effect {
+            return ModuleGroup::EffectChain;
+        }
         return ModuleGroup::Disconnected;
     }
 
@@ -492,18 +585,30 @@ fn crossings_between_columns(
 
 // ── Modulation placement ───────────────────────────────────────────────────
 
-/// Returns (column, modulation_row) for each modulation module.
-/// Modules are placed one column left of their primary target when possible.
+/// Final placement decision for a single modulation module.
+///
+/// Iteration order of a `Vec<ModPlacement>` is the deterministic ordering of
+/// modulators within the final layout. Sort key is `(column, target_row.unwrap_or(MAX),
+/// module_sort_key)` so that modulators with a real target row stack
+/// top-to-bottom in target-row order, with `module_sort_key` breaking ties.
+#[derive(Debug, Clone, Copy)]
+struct ModPlacement {
+    module_id: ModuleId,
+    column: usize,
+    target_row: Option<usize>,
+}
+
+/// Place modulation modules one column left of their primary target when possible.
+///
+/// Returns a vector sorted by `(column, target_row, module_sort_key)`. Iterating
+/// in order yields a deterministic top-to-bottom stack within each column.
 fn place_modulation(
     mod_modules: &[ModuleId],
     outgoing: &HashMap<ModuleId, Vec<ModuleId>>,
     signal_depth: &HashMap<ModuleId, usize>,
     signal_columns: &HashMap<usize, Vec<ModuleId>>,
-) -> HashMap<ModuleId, (usize, usize)> {
-    let mut result: HashMap<ModuleId, (usize, usize)> = HashMap::new();
-
-    // For each mod module, find its primary target (signal-chain module with lowest column)
-    let mut mod_by_column: HashMap<usize, Vec<(ModuleId, usize)>> = HashMap::new();
+) -> Vec<ModPlacement> {
+    let mut placements: Vec<ModPlacement> = Vec::with_capacity(mod_modules.len());
 
     for &mod_id in mod_modules {
         let target_col = outgoing
@@ -517,65 +622,79 @@ fn place_modulation(
             .unwrap_or(0);
         let mod_col = target_col.saturating_sub(1);
 
-        // Find the target's row position for sorting
-        let target_row = outgoing
-            .get(&mod_id)
-            .and_then(|targets| {
-                targets.iter().find_map(|t| {
-                    let col = signal_depth.get(t).copied()?;
-                    if col == target_col {
-                        let modules_in_col = signal_columns.get(&col)?;
-                        modules_in_col.iter().position(|&id| id == *t)
-                    } else {
-                        None
-                    }
-                })
+        // Find the target's row position for sorting. `None` if the module has
+        // no signal-chain target — those land after all row-anchored modulators.
+        let target_row = outgoing.get(&mod_id).and_then(|targets| {
+            targets.iter().find_map(|t| {
+                let col = signal_depth.get(t).copied()?;
+                if col == target_col {
+                    let modules_in_col = signal_columns.get(&col)?;
+                    modules_in_col.iter().position(|&id| id == *t)
+                } else {
+                    None
+                }
             })
-            .unwrap_or(0);
+        });
 
-        mod_by_column
-            .entry(mod_col)
-            .or_default()
-            .push((mod_id, target_row));
+        placements.push(ModPlacement {
+            module_id: mod_id,
+            column: mod_col,
+            target_row,
+        });
     }
 
-    // Sort modulation modules within each column by their target's row position
-    for (col, modules) in &mut mod_by_column {
-        modules.sort_by_key(|&(_, target_row)| target_row);
-        for (mod_row, &(mod_id, _)) in modules.iter().enumerate() {
-            result.insert(mod_id, (*col, mod_row));
-        }
-    }
+    placements.sort_by(|a, b| {
+        a.column.cmp(&b.column).then_with(|| {
+            // Anchored modulators (Some) sort above unanchored (None).
+            match (a.target_row, b.target_row) {
+                (Some(ar), Some(br)) => ar.cmp(&br),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+            .then_with(|| module_sort_key(&a.module_id).cmp(&module_sort_key(&b.module_id)))
+        })
+    });
 
-    result
+    placements
 }
 
 // ── Main layout function ───────────────────────────────────────────────────
 
 /// Calculate automatic layout for modules based on signal flow analysis.
 ///
-/// Layout rules:
-/// 1. Signal-chain modules: left-to-right by topological depth
-/// 2. Modulation modules: below and one column left of their primary targets (when possible)
-/// 3. Global modules (aux sinks like visualizers/utility): column after signal chain
-/// 4. Disconnected modules: rightmost column
+/// Layout rules, left → right:
+/// 1. **Signal-chain** modules: one column per topological depth, in cumulative
+///    x-order. Modulation modules attached to a column stack underneath that
+///    column's signal modules (one column left of their primary target when
+///    possible).
+/// 2. **Effect-chain** modules: a single vertical column right of the signal
+///    zone, ordered top→bottom by `effect_chain_order` (engine processing
+///    order). Effects with no voice-graph cables live here, not in the
+///    Disconnected zone.
+/// 3. **Global** modules (aux sinks like Oscilloscope, LevelMeter,
+///    SpectrumAnalyzer, ModMatrix): one vertical column right of the
+///    effect-chain zone.
+/// 4. **Disconnected** modules: the rightmost column.
 pub fn calculate_layout(
     modules: &[ModuleInfo],
     connections: &[LayoutConnection],
-    _available_rect: Rect,
+    available_rect: Rect,
 ) -> LayoutResult {
-    calculate_layout_with_chain_order(modules, connections, _available_rect, &[])
+    calculate_layout_with_chain_order(modules, connections, available_rect, &[])
 }
 
-/// Calculate layout with effect chain ordering.
+/// Calculate layout with an explicit effect-chain ordering.
 ///
-/// When `effect_chain_order` is non-empty, global modules (effects/visualizers)
-/// are placed vertically in chain order so that top-to-bottom matches
-/// processing order.
+/// `effect_chain_order` is the engine's effect processing order. When non-empty,
+/// it controls top→bottom placement in **both** the effect-chain and global
+/// zones; modules absent from the list are appended in their classification
+/// order. Pass `&[]` to fall back to classification order alone, which is what
+/// [`calculate_layout`] does.
 pub fn calculate_layout_with_chain_order(
     modules: &[ModuleInfo],
     connections: &[LayoutConnection],
-    _available_rect: Rect,
+    available_rect: Rect,
     effect_chain_order: &[ModuleId],
 ) -> LayoutResult {
     let mut result = LayoutResult::default();
@@ -588,6 +707,7 @@ pub fn calculate_layout_with_chain_order(
 
     let mut signal_ids: Vec<ModuleId> = Vec::new();
     let mut mod_ids: Vec<ModuleId> = Vec::new();
+    let mut effect_chain_ids: Vec<ModuleId> = Vec::new();
     let mut global_ids: Vec<ModuleId> = Vec::new();
     let mut disconnected_ids: Vec<ModuleId> = Vec::new();
 
@@ -611,6 +731,7 @@ pub fn calculate_layout_with_chain_order(
         match classify_module(module.id, module.category, incoming, outgoing) {
             ModuleGroup::SignalChain => signal_ids.push(module.id),
             ModuleGroup::Modulation => mod_ids.push(module.id),
+            ModuleGroup::EffectChain => effect_chain_ids.push(module.id),
             ModuleGroup::Global => global_ids.push(module.id),
             ModuleGroup::Disconnected => disconnected_ids.push(module.id),
         }
@@ -676,7 +797,7 @@ pub fn calculate_layout_with_chain_order(
 
     // ── Phase 4: Place modulation modules ──────────────────────────────
 
-    let mod_positions = place_modulation(&mod_ids, &outgoing_full, &signal_depth, &columns);
+    let mod_placements = place_modulation(&mod_ids, &outgoing_full, &signal_depth, &columns);
 
     // ── Phase 5: Size-aware pixel positions ────────────────────────────
 
@@ -685,8 +806,10 @@ pub fn calculate_layout_with_chain_order(
 
     let num_signal_columns = columns.keys().copied().max().map_or(0, |m| m + 1);
 
-    let start_x = GRID;
-    let start_y = GRID;
+    // Start one grid cell in from the rect origin, snapped up to a grid line.
+    // `Rect::min` of `(0, 0)` collapses to the historical `(GRID, GRID)` origin.
+    let start_x = snap_to_grid_up(available_rect.min.x + GRID);
+    let start_y = snap_to_grid_up(available_rect.min.y + GRID);
 
     // Compute column widths = max snapped width of modules in that column + GAP
     let mut col_widths: Vec<f32> = vec![0.0; num_signal_columns];
@@ -722,76 +845,91 @@ pub fn calculate_layout_with_chain_order(
     }
 
     // Place modulation modules directly below their assigned column's signal modules.
-    // This avoids pushing modulators far down when one column is much taller than others.
-    for (&mod_id, &(col, _mod_row)) in &mod_positions {
-        let x = col_x.get(col).copied().unwrap_or(start_x);
-        let y = col_bottom.get(col).copied().unwrap_or(start_y);
-        let snapped = snap_size_to_grid(sizes.get(&mod_id).copied().unwrap_or(DEFAULT_SIZE));
-        result.positions.insert(mod_id, Pos2::new(x, y));
-        // Update col_bottom so subsequent modulators in the same column stack below
-        if let Some(bottom) = col_bottom.get_mut(col) {
+    for placement in &mod_placements {
+        let x = col_x.get(placement.column).copied().unwrap_or(start_x);
+        let y = col_bottom.get(placement.column).copied().unwrap_or(start_y);
+        let snapped = snap_size_to_grid(
+            sizes
+                .get(&placement.module_id)
+                .copied()
+                .unwrap_or(DEFAULT_SIZE),
+        );
+        result
+            .positions
+            .insert(placement.module_id, Pos2::new(x, y));
+        if let Some(bottom) = col_bottom.get_mut(placement.column) {
             *bottom = y + snapped.y + GAP;
         }
     }
 
-    // Place unplaced modulation modules (those without signal targets)
-    let max_bottom = col_bottom.iter().copied().fold(start_y, f32::max);
-    let mut unplaced_y = max_bottom;
-    for &mod_id in &mod_ids {
-        if let std::collections::hash_map::Entry::Vacant(e) = result.positions.entry(mod_id) {
-            let snapped = snap_size_to_grid(sizes.get(&mod_id).copied().unwrap_or(DEFAULT_SIZE));
-            e.insert(Pos2::new(start_x, unplaced_y));
-            unplaced_y += snapped.y + GAP;
-        }
-    }
-
-    // x-offset for extra columns (global, disconnected)
+    // Extra zones, left→right: effect-chain | global | disconnected.
     let signal_end_x = if num_signal_columns > 0 {
         col_x[num_signal_columns - 1] + col_widths[num_signal_columns - 1]
     } else {
         start_x
     };
 
-    // Place global modules (sorted by effect chain order if available)
-    if !global_ids.is_empty() {
-        if !effect_chain_order.is_empty() {
-            global_ids.sort_by_key(|id| {
-                effect_chain_order
-                    .iter()
-                    .position(|chain_id| chain_id == id)
-                    .unwrap_or(usize::MAX)
-            });
-        }
-        let mut y = start_y;
-        for &id in &global_ids {
-            let snapped = snap_size_to_grid(sizes.get(&id).copied().unwrap_or(DEFAULT_SIZE));
-            result.positions.insert(id, Pos2::new(signal_end_x, y));
-            y += snapped.y + GAP;
-        }
-    }
-
-    // Place disconnected modules
-    if !disconnected_ids.is_empty() {
-        // Compute global column width for offset
-        let global_max_w = if global_ids.is_empty() {
-            0.0
-        } else {
-            global_ids
-                .iter()
-                .map(|id| snap_size_to_grid(sizes.get(id).copied().unwrap_or(DEFAULT_SIZE)).x)
-                .fold(0.0_f32, f32::max)
-                + GAP
-        };
-        let disc_x = signal_end_x + global_max_w;
-        let mut y = start_y;
-        for &id in &disconnected_ids {
-            let snapped = snap_size_to_grid(sizes.get(&id).copied().unwrap_or(DEFAULT_SIZE));
-            result.positions.insert(id, Pos2::new(disc_x, y));
-            y += snapped.y + GAP;
-        }
-    }
+    let mut current_x = signal_end_x;
+    current_x += place_vertical_column(
+        &mut effect_chain_ids,
+        effect_chain_order,
+        current_x,
+        start_y,
+        &sizes,
+        &mut result.positions,
+    );
+    current_x += place_vertical_column(
+        &mut global_ids,
+        effect_chain_order,
+        current_x,
+        start_y,
+        &sizes,
+        &mut result.positions,
+    );
+    let _ = place_vertical_column(
+        &mut disconnected_ids,
+        &[],
+        current_x,
+        start_y,
+        &sizes,
+        &mut result.positions,
+    );
 
     result
+}
+
+/// Place a vertical stack of modules at `x`, optionally sorted by `chain_order`.
+///
+/// Returns the x-advance for the next column (max snapped width + GAP), or 0 if
+/// the input is empty so callers can chain `current_x += …` unconditionally.
+fn place_vertical_column(
+    ids: &mut [ModuleId],
+    chain_order: &[ModuleId],
+    x: f32,
+    start_y: f32,
+    sizes: &HashMap<ModuleId, Vec2>,
+    positions: &mut HashMap<ModuleId, Pos2>,
+) -> f32 {
+    if ids.is_empty() {
+        return 0.0;
+    }
+    if !chain_order.is_empty() {
+        ids.sort_by_key(|id| {
+            chain_order
+                .iter()
+                .position(|chain_id| chain_id == id)
+                .unwrap_or(usize::MAX)
+        });
+    }
+    let mut y = start_y;
+    let mut max_w = 0.0_f32;
+    for &id in &*ids {
+        let snapped = snap_size_to_grid(sizes.get(&id).copied().unwrap_or(DEFAULT_SIZE));
+        positions.insert(id, Pos2::new(x, y));
+        y += snapped.y + GAP;
+        max_w = max_w.max(snapped.x);
+    }
+    max_w + GAP
 }
 
 /// Default module size (fallback before first render).
@@ -801,6 +939,12 @@ const DEFAULT_SIZE: Vec2 = Vec2::new(250.0, 200.0);
 #[must_use]
 fn snap_size_to_grid(size: Vec2) -> Vec2 {
     Vec2::new((size.x / GRID).ceil() * GRID, (size.y / GRID).ceil() * GRID)
+}
+
+/// Snap a position value up to the next grid line.
+#[must_use]
+fn snap_to_grid_up(value: f32) -> f32 {
+    (value / GRID).ceil() * GRID
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -1434,5 +1578,503 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── Phase 1 regression tests (added for auto-layout improvement plan) ──
+
+    /// Phase 2: modulation modules targeting different rows in the same
+    /// column should stack top-to-bottom in target-row order.
+    #[test]
+    fn test_modulators_follow_target_row_order() {
+        let rect = test_rect();
+        let osc1 = make_id(ModuleType::Oscillator, 1);
+        let osc2 = make_id(ModuleType::Oscillator, 2);
+        let osc3 = make_id(ModuleType::Oscillator, 3);
+        let f1 = make_id(ModuleType::Filter, 1);
+        let f2 = make_id(ModuleType::Filter, 2);
+        let f3 = make_id(ModuleType::Filter, 3);
+        let mix = make_id(ModuleType::Mixer, 1);
+        // Instance numbers chosen so module_sort_key is the OPPOSITE of target
+        // row order — ensures the test fails if placement falls back to
+        // module_sort_key instead of honoring target row.
+        let env_top = make_id(ModuleType::Envelope, 9); // targets f1 (row 0)
+        let env_mid = make_id(ModuleType::Envelope, 5); // targets f2 (row 1)
+        let env_bot = make_id(ModuleType::Envelope, 1); // targets f3 (row 2)
+
+        let modules = vec![
+            make_module(osc1, ModuleCategory::Oscillator),
+            make_module(osc2, ModuleCategory::Oscillator),
+            make_module(osc3, ModuleCategory::Oscillator),
+            make_module(f1, ModuleCategory::Filter),
+            make_module(f2, ModuleCategory::Filter),
+            make_module(f3, ModuleCategory::Filter),
+            make_module(mix, ModuleCategory::Mixer),
+            make_module(env_top, ModuleCategory::Envelope),
+            make_module(env_mid, ModuleCategory::Envelope),
+            make_module(env_bot, ModuleCategory::Envelope),
+        ];
+        let connections = vec![
+            LayoutConnection {
+                from_module: osc1,
+                to_module: f1,
+            },
+            LayoutConnection {
+                from_module: osc2,
+                to_module: f2,
+            },
+            LayoutConnection {
+                from_module: osc3,
+                to_module: f3,
+            },
+            LayoutConnection {
+                from_module: f1,
+                to_module: mix,
+            },
+            LayoutConnection {
+                from_module: f2,
+                to_module: mix,
+            },
+            LayoutConnection {
+                from_module: f3,
+                to_module: mix,
+            },
+            LayoutConnection {
+                from_module: env_top,
+                to_module: f1,
+            },
+            LayoutConnection {
+                from_module: env_mid,
+                to_module: f2,
+            },
+            LayoutConnection {
+                from_module: env_bot,
+                to_module: f3,
+            },
+        ];
+
+        let result = calculate_layout(&modules, &connections, rect);
+
+        let top = *result.positions.get(&env_top).unwrap();
+        let mid = *result.positions.get(&env_mid).unwrap();
+        let bot = *result.positions.get(&env_bot).unwrap();
+
+        // All three modulators are one column left of the filters → share x.
+        assert!(
+            (top.x - mid.x).abs() < 1.0 && (mid.x - bot.x).abs() < 1.0,
+            "modulators should share a column: top.x={}, mid.x={}, bot.x={}",
+            top.x,
+            mid.x,
+            bot.x
+        );
+
+        // Y-order matches target row order: env_top (row 0) above env_mid (row 1) above env_bot (row 2).
+        assert!(
+            top.y < mid.y,
+            "env_top (target row 0) should sit above env_mid (target row 1): top.y={}, mid.y={}",
+            top.y,
+            mid.y
+        );
+        assert!(
+            mid.y < bot.y,
+            "env_mid (target row 1) should sit above env_bot (target row 2): mid.y={}, bot.y={}",
+            mid.y,
+            bot.y
+        );
+    }
+
+    /// Phase 2: when multiple modulators target the same row, the tie-break
+    /// must be `module_sort_key` (deterministic), not `HashMap` iteration.
+    #[test]
+    fn test_modulators_same_target_row_tie_break() {
+        let rect = test_rect();
+        let osc = make_id(ModuleType::Oscillator, 1);
+        let flt = make_id(ModuleType::Filter, 1);
+        // Same module_type so the sort key differs only on `instance`.
+        let env_a = make_id(ModuleType::Envelope, 1); // lower sort key
+        let env_b = make_id(ModuleType::Envelope, 9); // higher sort key
+
+        let modules = vec![
+            make_module(osc, ModuleCategory::Oscillator),
+            make_module(flt, ModuleCategory::Filter),
+            make_module(env_a, ModuleCategory::Envelope),
+            make_module(env_b, ModuleCategory::Envelope),
+        ];
+        let connections = vec![
+            LayoutConnection {
+                from_module: osc,
+                to_module: flt,
+            },
+            LayoutConnection {
+                from_module: env_a,
+                to_module: flt,
+            },
+            LayoutConnection {
+                from_module: env_b,
+                to_module: flt,
+            },
+        ];
+
+        let result = calculate_layout(&modules, &connections, rect);
+        let a = *result.positions.get(&env_a).unwrap();
+        let b = *result.positions.get(&env_b).unwrap();
+
+        // Same column.
+        assert!(
+            (a.x - b.x).abs() < 1.0,
+            "envs should share a column: a.x={}, b.x={}",
+            a.x,
+            b.x
+        );
+        // env_a (lower module_sort_key) sits above env_b — deterministic tie-break.
+        assert!(
+            a.y < b.y,
+            "env_a (sort key {:?}) should sit above env_b (sort key {:?}): a.y={}, b.y={}",
+            module_sort_key(&env_a),
+            module_sort_key(&env_b),
+            a.y,
+            b.y
+        );
+    }
+
+    /// Effect-chain modules with cables plus disconnected modules: no overlap,
+    /// effects retain signal-chain order. This passes on current code and
+    /// guards against regressions in later phases.
+    #[test]
+    fn test_effects_in_chain_plus_disconnected_no_overlap() {
+        let rect = test_rect();
+        let osc = make_id(ModuleType::Oscillator, 1);
+        let delay = make_id(ModuleType::Delay, 1);
+        let reverb = make_id(ModuleType::Reverb, 1);
+        let out = make_id(ModuleType::StereoOutput, 1);
+        let disc_osc = make_id(ModuleType::Oscillator, 10);
+        let disc_flt = make_id(ModuleType::Filter, 10);
+
+        let modules = vec![
+            make_module(osc, ModuleCategory::Oscillator),
+            make_module(delay, ModuleCategory::Effect),
+            make_module(reverb, ModuleCategory::Effect),
+            make_module(out, ModuleCategory::Output),
+            make_module(disc_osc, ModuleCategory::Oscillator),
+            make_module(disc_flt, ModuleCategory::Filter),
+        ];
+        let connections = vec![
+            LayoutConnection {
+                from_module: osc,
+                to_module: delay,
+            },
+            LayoutConnection {
+                from_module: delay,
+                to_module: reverb,
+            },
+            LayoutConnection {
+                from_module: reverb,
+                to_module: out,
+            },
+        ];
+
+        let result = calculate_layout(&modules, &connections, rect);
+
+        // No pair of modules overlaps (snapped rects).
+        let sizes: HashMap<ModuleId, Vec2> = modules.iter().map(|m| (m.id, m.size)).collect();
+        let rects: Vec<(ModuleId, Rect)> = result
+            .positions
+            .iter()
+            .map(|(&id, &pos)| {
+                let snapped = snap_size_to_grid(sizes[&id]);
+                (id, Rect::from_min_size(pos, snapped))
+            })
+            .collect();
+        for i in 0..rects.len() {
+            for j in (i + 1)..rects.len() {
+                let (id_a, rect_a) = rects[i];
+                let (id_b, rect_b) = rects[j];
+                assert!(
+                    !rect_a.intersects(rect_b),
+                    "Modules {:?} ({:?}) and {:?} ({:?}) overlap!",
+                    id_a,
+                    rect_a,
+                    id_b,
+                    rect_b
+                );
+            }
+        }
+
+        // Effects keep signal-chain order: delay left of reverb.
+        let delay_pos = *result.positions.get(&delay).unwrap();
+        let reverb_pos = *result.positions.get(&reverb).unwrap();
+        assert!(
+            delay_pos.x < reverb_pos.x,
+            "Delay should sit left of Reverb in the signal chain"
+        );
+    }
+
+    /// Phase 3: Effect-chain modules with no graph cables should land in the
+    /// effect-chain zone in chain order — not in the Disconnected column.
+    #[test]
+    fn test_effects_without_cables_classified_as_effect_chain() {
+        let rect = test_rect();
+        let osc = make_id(ModuleType::Oscillator, 1);
+        let out = make_id(ModuleType::StereoOutput, 1);
+        let delay = make_id(ModuleType::Delay, 1);
+        let reverb = make_id(ModuleType::Reverb, 1);
+        // Truly disconnected non-effect module — should land in the
+        // rightmost (Disconnected) column.
+        let disc = make_id(ModuleType::Oscillator, 99);
+
+        let modules = vec![
+            make_module(osc, ModuleCategory::Oscillator),
+            make_module(out, ModuleCategory::Output),
+            make_module(delay, ModuleCategory::Effect),
+            make_module(reverb, ModuleCategory::Effect),
+            make_module(disc, ModuleCategory::Oscillator),
+        ];
+        let connections = vec![LayoutConnection {
+            from_module: osc,
+            to_module: out,
+        }];
+        let chain_order = vec![reverb, delay]; // chain order is reverb-first
+
+        let result = calculate_layout_with_chain_order(&modules, &connections, rect, &chain_order);
+
+        let delay_pos = *result.positions.get(&delay).unwrap();
+        let reverb_pos = *result.positions.get(&reverb).unwrap();
+        let disc_pos = *result.positions.get(&disc).unwrap();
+        let out_pos = *result.positions.get(&out).unwrap();
+
+        // Effects share a single x column.
+        assert!(
+            (delay_pos.x - reverb_pos.x).abs() < 1.0,
+            "Effects should share the effect-chain column: delay.x={}, reverb.x={}",
+            delay_pos.x,
+            reverb_pos.x
+        );
+
+        // Effects appear in chain order top-to-bottom: reverb above delay.
+        assert!(
+            reverb_pos.y < delay_pos.y,
+            "Effects should be in chain order: reverb above delay"
+        );
+
+        // Effects sit to the right of the signal chain, but left of truly disconnected modules.
+        assert!(
+            delay_pos.x > out_pos.x,
+            "Effects should be right of the signal chain"
+        );
+        assert!(
+            disc_pos.x > delay_pos.x,
+            "Disconnected modules should be right of the effect-chain column"
+        );
+    }
+
+    /// Phase 5: `prepare_layout_inputs` folds collapsed groups into a
+    /// single layout node — hidden members vanish, internal connections
+    /// drop, external connections retarget the representative.
+    #[test]
+    fn test_prepare_layout_inputs_folds_collapsed_groups() {
+        let osc1 = make_id(ModuleType::Oscillator, 1);
+        let osc2 = make_id(ModuleType::Oscillator, 2);
+        let flt = make_id(ModuleType::Filter, 1);
+        let amp = make_id(ModuleType::Amplifier, 1);
+        let out = make_id(ModuleType::StereoOutput, 1);
+
+        let modules = vec![
+            make_module(osc1, ModuleCategory::Oscillator),
+            make_module(osc2, ModuleCategory::Oscillator),
+            make_module(flt, ModuleCategory::Filter),
+            make_module(amp, ModuleCategory::Amplifier),
+            make_module(out, ModuleCategory::Output),
+        ];
+        let connections = vec![
+            // External: osc1 -> flt
+            LayoutConnection {
+                from_module: osc1,
+                to_module: flt,
+            },
+            // Internal to the collapsed group (flt -> amp): dropped
+            LayoutConnection {
+                from_module: flt,
+                to_module: amp,
+            },
+            // External: amp -> out (rewritten to flt -> out)
+            LayoutConnection {
+                from_module: amp,
+                to_module: out,
+            },
+            // External: osc2 -> amp (rewritten to osc2 -> flt)
+            LayoutConnection {
+                from_module: osc2,
+                to_module: amp,
+            },
+        ];
+
+        let group_node = CollapsedGroupNode {
+            representative: flt,
+            category: ModuleCategory::Mixer,
+            size: Vec2::new(300.0, 200.0),
+            members: vec![flt, amp],
+        };
+
+        let (out_modules, out_connections) =
+            prepare_layout_inputs(&modules, &connections, &[group_node]);
+
+        // Group members (flt, amp) replaced by a single representative (flt).
+        let ids: HashSet<ModuleId> = out_modules.iter().map(|m| m.id).collect();
+        assert!(ids.contains(&osc1));
+        assert!(ids.contains(&osc2));
+        assert!(ids.contains(&out));
+        assert!(ids.contains(&flt));
+        assert!(!ids.contains(&amp), "hidden member amp must be removed");
+        assert_eq!(out_modules.len(), 4);
+
+        // Representative entry uses the collapsed size + category from the node.
+        let repr = out_modules.iter().find(|m| m.id == flt).unwrap();
+        assert!((repr.size.x - 300.0).abs() < f32::EPSILON);
+        assert!((repr.size.y - 200.0).abs() < f32::EPSILON);
+        assert_eq!(repr.category, ModuleCategory::Mixer);
+
+        // Connections involving hidden members get rewired to the representative;
+        // the internal flt->amp self-loop is dropped.
+        let pairs: HashSet<(ModuleId, ModuleId)> = out_connections
+            .iter()
+            .map(|c| (c.from_module, c.to_module))
+            .collect();
+        assert!(pairs.contains(&(osc1, flt)));
+        assert!(
+            pairs.contains(&(flt, out)),
+            "amp->out should rewrite to flt->out"
+        );
+        assert!(
+            pairs.contains(&(osc2, flt)),
+            "osc2->amp should rewrite to osc2->flt"
+        );
+        assert_eq!(out_connections.len(), 3);
+    }
+
+    /// Phase 5: a collapsed group composed of effect modules is folded
+    /// into a single node and `calculate_layout_with_chain_order` places
+    /// it as part of the signal chain — hidden members are absent from
+    /// the result, and the group node takes one rectangle.
+    #[test]
+    fn test_calculate_layout_with_collapsed_group_node() {
+        let rect = test_rect();
+        let osc = make_id(ModuleType::Oscillator, 1);
+        let delay = make_id(ModuleType::Delay, 1);
+        let reverb = make_id(ModuleType::Reverb, 1);
+        let out = make_id(ModuleType::StereoOutput, 1);
+
+        let modules = vec![
+            make_module(osc, ModuleCategory::Oscillator),
+            make_module(delay, ModuleCategory::Effect),
+            make_module(reverb, ModuleCategory::Effect),
+            make_module(out, ModuleCategory::Output),
+        ];
+        let connections = vec![
+            LayoutConnection {
+                from_module: osc,
+                to_module: delay,
+            },
+            LayoutConnection {
+                from_module: delay,
+                to_module: reverb,
+            },
+            LayoutConnection {
+                from_module: reverb,
+                to_module: out,
+            },
+        ];
+
+        // Delay + Reverb are inside a collapsed group; delay is the representative.
+        let collapsed = vec![CollapsedGroupNode {
+            representative: delay,
+            category: ModuleCategory::Effect,
+            size: Vec2::new(320.0, 240.0),
+            members: vec![delay, reverb],
+        }];
+
+        let (folded_modules, folded_conns) =
+            prepare_layout_inputs(&modules, &connections, &collapsed);
+
+        let result = calculate_layout_with_chain_order(&folded_modules, &folded_conns, rect, &[]);
+
+        // Reverb (hidden member) must not appear; delay (representative) must.
+        assert!(
+            !result.positions.contains_key(&reverb),
+            "hidden member reverb should not get a position"
+        );
+        assert!(
+            result.positions.contains_key(&delay),
+            "representative delay should get a position"
+        );
+
+        let osc_pos = *result.positions.get(&osc).unwrap();
+        let group_pos = *result.positions.get(&delay).unwrap();
+        let out_pos = *result.positions.get(&out).unwrap();
+        // Group sits between osc and out in the signal chain.
+        assert!(
+            osc_pos.x < group_pos.x,
+            "collapsed group must sit right of upstream osc"
+        );
+        assert!(
+            group_pos.x < out_pos.x,
+            "collapsed group must sit left of downstream out"
+        );
+    }
+
+    /// Phase 4: when `available_rect.min` is non-zero, generated positions
+    /// must start from the rect origin plus grid padding — not from (GRID, GRID).
+    #[test]
+    fn test_non_zero_rect_origin_offsets_positions() {
+        let rect = Rect::from_min_max(Pos2::new(500.0, 300.0), Pos2::new(2000.0, 1500.0));
+        let osc = make_id(ModuleType::Oscillator, 1);
+        let out = make_id(ModuleType::StereoOutput, 1);
+        let modules = vec![
+            make_module(osc, ModuleCategory::Oscillator),
+            make_module(out, ModuleCategory::Output),
+        ];
+        let connections = vec![LayoutConnection {
+            from_module: osc,
+            to_module: out,
+        }];
+
+        let result = calculate_layout(&modules, &connections, rect);
+
+        for (id, pos) in &result.positions {
+            assert!(
+                pos.x >= rect.min.x,
+                "{:?} at x={} below rect.min.x={}",
+                id,
+                pos.x,
+                rect.min.x
+            );
+            assert!(
+                pos.y >= rect.min.y,
+                "{:?} at y={} below rect.min.y={}",
+                id,
+                pos.y,
+                rect.min.y
+            );
+        }
+
+        let leftmost_x = result
+            .positions
+            .values()
+            .map(|p| p.x)
+            .fold(f32::INFINITY, f32::min);
+        let topmost_y = result
+            .positions
+            .values()
+            .map(|p| p.y)
+            .fold(f32::INFINITY, f32::min);
+        // First placement should sit within one grid cell of rect.min plus the inset.
+        assert!(
+            leftmost_x < rect.min.x + 2.0 * GRID,
+            "leftmost x should be near rect.min.x + GRID, got {}",
+            leftmost_x
+        );
+        assert!(
+            topmost_y < rect.min.y + 2.0 * GRID,
+            "topmost y should be near rect.min.y + GRID, got {}",
+            topmost_y
+        );
     }
 }

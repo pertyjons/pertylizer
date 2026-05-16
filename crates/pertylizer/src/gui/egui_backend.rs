@@ -671,12 +671,17 @@ impl eframe::App for SynthApp {
             }
         }
 
-        // Poll MCP pending auto-layout
+        // Poll MCP pending auto-layout.
+        //
+        // Non-destructive load: a request stays set until the Rack view
+        // actually applies it (see apply site below). This means a
+        // request that arrives while the user is in AcousticWorld /
+        // Sequencer / Sample survives until they switch back to Rack.
         #[cfg(feature = "mcp")]
         let mcp_auto_layout = self.mcp_shared.as_ref().is_some_and(|shared| {
             shared
                 .pending_auto_layout
-                .swap(false, std::sync::atomic::Ordering::Relaxed)
+                .load(std::sync::atomic::Ordering::Relaxed)
         });
         #[cfg(not(feature = "mcp"))]
         let mcp_auto_layout = false;
@@ -2253,12 +2258,22 @@ impl eframe::App for SynthApp {
                             }
                         }
 
-                        // Handle auto-layout request (from GUI menu or MCP)
+                        // Handle auto-layout request (from GUI menu or MCP).
+                        //
+                        // Only here do we clear the MCP pending flag —
+                        // a request issued while another view was
+                        // active waits until the next Rack frame.
                         if (result.request_auto_layout || mcp_auto_layout)
                             && let Some(canvas_rect) = result.canvas_rect
                         {
                             patch_editor.apply_auto_layout(canvas_rect, &effect_chain_order);
                             self.mark_dirty();
+                            #[cfg(feature = "mcp")]
+                            if mcp_auto_layout && let Some(shared) = self.mcp_shared.as_ref() {
+                                shared
+                                    .pending_auto_layout
+                                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                            }
                         }
 
                         // Mark dirty if any mutations occurred

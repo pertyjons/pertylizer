@@ -856,7 +856,7 @@ impl SynthBridge for AppSynthBridge {
         self.shared
             .pending_auto_layout
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        Ok("OK: auto-layout queued for next frame".to_string())
+        Ok("OK: auto-layout queued — applied on the next Rack-view frame".to_string())
     }
 
     fn get_ui_snapshot(&self, instrument_id: u64) -> Result<UiSnapshot, McpBridgeError> {

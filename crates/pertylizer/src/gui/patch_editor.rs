@@ -21,11 +21,11 @@ use crate::patch::{
     ModuleGroupState, ModuleState, ParamValue, Position,
 };
 
-use super::module_panel::{category_color, ModulePanelState, PortPosition};
+use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
-    cable_color, closest_point_on_cable, draw_cable, draw_cable_dragging, draw_cable_highlighted,
-    draw_flow_particles, point_near_cable, WidgetPortDirection, WidgetPortType, CABLE_SPREAD,
+    CABLE_SPREAD, WidgetPortDirection, WidgetPortType, cable_color, closest_point_on_cable,
+    draw_cable, draw_cable_dragging, draw_cable_highlighted, draw_flow_particles, point_near_cable,
 };
 
 /// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
@@ -4158,18 +4158,25 @@ impl PatchEditor {
     /// Apply automatic layout to modules based on signal flow.
     ///
     /// `available_rect` should be the area available for modules (excluding side panels).
+    ///
+    /// Collapsed groups are treated as single layout nodes: the group's
+    /// collapsed box gets a position from the layout, and member panels
+    /// shift in lockstep so their internal relative layout is preserved.
     pub fn apply_auto_layout(
         &mut self,
         available_rect: egui::Rect,
         effect_chain_order: &[ModuleId],
     ) {
-        use super::auto_layout::{calculate_layout_with_chain_order, LayoutConnection, ModuleInfo};
+        use super::auto_layout::{
+            CollapsedGroupNode, LayoutConnection, ModuleInfo, calculate_layout_with_chain_order,
+            prepare_layout_inputs,
+        };
 
         // Clear saved canvas size hint — auto-layout determines the new bounds
         self.min_canvas_size = None;
 
-        // Collect module info
-        let modules: Vec<ModuleInfo> = self
+        // Collect raw module info from every visible panel.
+        let raw_modules: Vec<ModuleInfo> = self
             .panels
             .iter()
             .filter_map(|(&id, panel)| {
@@ -4181,31 +4188,84 @@ impl PatchEditor {
             })
             .collect();
 
-        // Collect connections
-        let connections: Vec<LayoutConnection> = self
+        // Build a CollapsedGroupNode per collapsed group; track the
+        // representative -> GroupId mapping so we can distribute the
+        // representative's resulting position back to its members.
+        let mut collapsed_nodes: Vec<CollapsedGroupNode> = Vec::new();
+        let mut repr_to_group: HashMap<ModuleId, GroupId> = HashMap::new();
+        for group in self.groups.values() {
+            if !group.collapsed {
+                continue;
+            }
+            let Some(&repr_id) = group
+                .members
+                .iter()
+                .find(|mid| self.panels.contains_key(mid))
+            else {
+                continue;
+            };
+            let Some(descriptor) = self.descriptors.get(&repr_id) else {
+                continue;
+            };
+            let category = descriptor.category;
+            let members: Vec<ModuleId> = group
+                .members
+                .iter()
+                .copied()
+                .filter(|m| self.panels.contains_key(m))
+                .collect();
+            collapsed_nodes.push(CollapsedGroupNode {
+                representative: repr_id,
+                category,
+                size: collapsed_group_size(group),
+                members,
+            });
+            repr_to_group.insert(repr_id, group.id);
+        }
+
+        let raw_connections: Vec<LayoutConnection> = self
             .connections
             .iter()
-            .map(|conn| LayoutConnection {
-                from_module: conn.from_module,
-                to_module: conn.to_module,
+            .map(|c| LayoutConnection {
+                from_module: c.from_module,
+                to_module: c.to_module,
             })
             .collect();
 
-        let layout_rect = available_rect;
+        let (modules, connections) =
+            prepare_layout_inputs(&raw_modules, &raw_connections, &collapsed_nodes);
 
         let result = calculate_layout_with_chain_order(
             &modules,
             &connections,
-            layout_rect,
+            available_rect,
             effect_chain_order,
         );
 
-        // Apply new positions and mark for repositioning.
         // Auto-layout is now self-contained: the result already places
-        // effect-chain modules. `align_effect_chain()` is retained for
-        // explicit user-triggered effect-chain reorders only.
+        // effect-chain modules, so `align_effect_chain()` is no longer
+        // run as a post-pass — it is retained only for explicit
+        // user-triggered effect-chain reorders.
+        //
+        // For collapsed-group representatives, shift every member
+        // panel by the same delta as the group box so the group's
+        // internal relative layout is preserved on expand.
         for (module_id, position) in result.positions {
-            if let Some(panel) = self.panels.get_mut(&module_id) {
+            if let Some(&group_id) = repr_to_group.get(&module_id) {
+                let (delta, members) = if let Some(group) = self.groups.get_mut(&group_id) {
+                    let delta = position - group.position;
+                    group.position = position;
+                    (delta, group.members.clone())
+                } else {
+                    continue;
+                };
+                for mid in members {
+                    if let Some(panel) = self.panels.get_mut(&mid) {
+                        panel.position += delta;
+                        self.needs_reposition.insert(mid);
+                    }
+                }
+            } else if let Some(panel) = self.panels.get_mut(&module_id) {
                 panel.position = position;
                 self.needs_reposition.insert(module_id);
             }

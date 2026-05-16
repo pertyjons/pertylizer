@@ -2365,7 +2365,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Request auto-layout of modules in the patch view. The GUI applies the layout on the next frame, arranging modules by signal flow."
+        description = "Request auto-layout of modules in the patch view. The GUI applies the layout on the next Rack-view frame, arranging modules by signal flow. If the user is in another view (AcousticWorld, Sequencer, Sample), the request stays pending until they return to Rack."
     )]
     async fn auto_layout(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.request_auto_layout() {
