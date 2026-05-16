@@ -2,10 +2,13 @@
 //! `Song`/engine state pair. Pure (no audio render, no lock holding) so they
 //! can run from any thread.
 
+pub mod bar_features;
 pub mod bass_drum_lock;
 pub mod drum_groove;
+pub mod form;
 pub mod harmonic_function;
 pub mod instrument_profile;
+pub mod motifs;
 pub mod patch_sweep;
 pub mod pattern_analysis;
 pub(crate) mod repetition;

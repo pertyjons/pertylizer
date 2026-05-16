@@ -2507,6 +2507,102 @@ impl SynthBridge for AppSynthBridge {
         )
     }
 
+    fn analyze_arrangement(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        similarity_threshold: Option<f32>,
+        section_min_bars: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<synth_mcp::types::AnalyzeArrangementResult, McpBridgeError> {
+        analyze_arrangement_impl(
+            &self.session,
+            &self.shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            similarity_threshold,
+            section_min_bars,
+            exclude_drums,
+            exclude_track_ids,
+        )
+    }
+
+    fn analyze_form_map(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        similarity_threshold: Option<f32>,
+        section_min_bars: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<synth_mcp::types::AnalyzeFormMapResult, McpBridgeError> {
+        analyze_form_map_impl(
+            &self.session,
+            &self.shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            similarity_threshold,
+            section_min_bars,
+            exclude_drums,
+            exclude_track_ids,
+        )
+    }
+
+    fn find_motifs(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        min_interval_length: Option<u8>,
+        max_interval_length: Option<u8>,
+        min_count: Option<u32>,
+        top_n: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<synth_mcp::types::FindMotifsResult, McpBridgeError> {
+        find_motifs_impl(
+            &self.session,
+            &self.shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            min_interval_length,
+            max_interval_length,
+            min_count,
+            top_n,
+            exclude_drums,
+            exclude_track_ids,
+        )
+    }
+
+    fn analyze_hook_strength(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        min_interval_length: Option<u8>,
+        min_count: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<synth_mcp::types::AnalyzeHookStrengthResult, McpBridgeError> {
+        analyze_hook_strength_impl(
+            &self.session,
+            &self.shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            min_interval_length,
+            min_count,
+            exclude_drums,
+            exclude_track_ids,
+        )
+    }
+
     fn analyze_mix_bus(
         &self,
         duration_seconds: f32,
@@ -5923,6 +6019,539 @@ fn analyze_harmonic_function_impl(
             std_dev: analysis.tension.std_dev,
         },
         warnings,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Group C — form & motif analyzer impls
+// ---------------------------------------------------------------------------
+
+/// Shared scope resolution for the four Group C tools. Resolves to either a
+/// single pattern or an arrangement range, applies drum-track filtering
+/// (auto-inferred + explicit) when requested in arrangement scope, and
+/// returns the scope-relative [`MelodicNote`] stream plus enough context
+/// (`HarmonyScope`, `TimeSignature`, `length_ticks`, `length_bars`,
+/// `start/end_tick`) to populate the wire-format header fields.
+#[allow(clippy::too_many_arguments)]
+fn collect_form_scope(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    pattern_id: Option<u32>,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
+    exclude_drums: bool,
+    exclude_track_ids: &[u16],
+) -> Result<FormScopeData, McpBridgeError> {
+    use crate::analysis::bar_features::MelodicNote;
+    use synth_mcp::types::HarmonyScope;
+    use synth_sequencer::{PatternId, SeqInstrumentId};
+
+    let song = shared.song.read();
+    let mut warnings: Vec<String> = Vec::new();
+
+    match pattern_id {
+        Some(pid) => {
+            let pid_typed = PatternId(pid);
+            let Some(pattern) = song.pattern(pid_typed) else {
+                return Err(McpBridgeError::Other(format!("Pattern {pid} not found")));
+            };
+            let length_ticks = pattern.length.0;
+            let ts = song.default_time_signature;
+            let ticks_per_bar = ts.ticks_per_bar().max(1);
+            let total_bars = length_ticks.div_ceil(ticks_per_bar).max(1);
+            let notes: Vec<MelodicNote> = pattern
+                .notes()
+                .iter()
+                .map(|n| MelodicNote {
+                    track_id: 0,
+                    tick: n.start.0,
+                    duration_ticks: n.duration.map(|d| d.0).unwrap_or(240).max(1),
+                    pitch: n.pitch,
+                    velocity: n.velocity.as_f32(),
+                })
+                .collect();
+            Ok(FormScopeData {
+                scope: HarmonyScope::Pattern { pattern_id: pid },
+                time_sig: ts,
+                length_ticks: u64::from(length_ticks),
+                total_bars,
+                start_tick: 0,
+                end_tick: u64::from(length_ticks),
+                notes,
+                warnings,
+            })
+        }
+        None => {
+            let (start, end) =
+                resolve_arrangement_range(&song, arrangement_start_tick, arrangement_end_tick)?;
+            let ts = song.time_signature_at(synth_sequencer::Tick(start));
+            let ticks_per_bar = ts.ticks_per_bar().max(1);
+            let span_ticks: u32 = (end - start).try_into().unwrap_or(u32::MAX);
+            let total_bars = span_ticks.div_ceil(ticks_per_bar).max(1);
+
+            // Build the drum-filter set (auto-inferred drums + explicit
+            // exclusions).
+            let mut excluded: std::collections::HashSet<synth_sequencer::TrackId> =
+                exclude_track_ids
+                    .iter()
+                    .copied()
+                    .map(synth_sequencer::TrackId)
+                    .collect();
+            if exclude_drums {
+                let drum_instrument_ids: std::collections::HashSet<SeqInstrumentId> =
+                    crate::analysis::infer_all_profiles(&song, session.state())
+                        .into_iter()
+                        .filter(|p| {
+                            p.role.role == crate::analysis::Role::Drums && p.role.confidence >= 0.6
+                        })
+                        .map(|p| SeqInstrumentId(p.instrument_id))
+                        .collect();
+                for t in song.tracks() {
+                    if let Some(seq) = t.instrument
+                        && drum_instrument_ids.contains(&seq)
+                    {
+                        excluded.insert(t.id);
+                    }
+                }
+            }
+
+            let mut notes: Vec<MelodicNote> = Vec::new();
+            for placement in
+                song.placements_in_range(synth_sequencer::Tick(start), synth_sequencer::Tick(end))
+            {
+                if excluded.contains(&placement.track_id) {
+                    continue;
+                }
+                let Some(pattern) = song.pattern(placement.pattern_id) else {
+                    continue;
+                };
+                let placement_start = placement.start.0;
+                for n in pattern.notes() {
+                    let abs_start = placement_start.saturating_add(u64::from(n.start.0));
+                    if abs_start < start || abs_start >= end {
+                        continue;
+                    }
+                    let Some(pitch) = n.pitch.transpose(placement.transpose) else {
+                        warnings.push(format!(
+                            "Note at tick {abs_start} dropped: placement transpose out of MIDI range"
+                        ));
+                        continue;
+                    };
+                    let rel = (abs_start - start) as u32;
+                    notes.push(MelodicNote {
+                        track_id: placement.track_id.0,
+                        tick: rel,
+                        duration_ticks: n.duration.map(|d| d.0).unwrap_or(240).max(1),
+                        pitch,
+                        velocity: n.velocity.as_f32(),
+                    });
+                }
+            }
+
+            if notes.is_empty() {
+                warnings.push(
+                    "No melodic notes inside the analyzed scope (drums excluded by default)"
+                        .to_string(),
+                );
+            }
+            Ok(FormScopeData {
+                scope: HarmonyScope::Arrangement {
+                    start_tick: start,
+                    end_tick: end,
+                },
+                time_sig: ts,
+                length_ticks: end - start,
+                total_bars,
+                start_tick: start,
+                end_tick: end,
+                notes,
+                warnings,
+            })
+        }
+    }
+}
+
+struct FormScopeData {
+    scope: synth_mcp::types::HarmonyScope,
+    time_sig: synth_sequencer::TimeSignature,
+    length_ticks: u64,
+    total_bars: u32,
+    start_tick: u64,
+    end_tick: u64,
+    notes: Vec<crate::analysis::bar_features::MelodicNote>,
+    warnings: Vec<String>,
+}
+
+const FORM_SIMILARITY_DEFAULT: f32 = 0.85;
+const FORM_SECTION_MIN_BARS_DEFAULT: u32 = 2;
+
+fn section_summary_to_wire(
+    s: &crate::analysis::form::SectionSummary,
+) -> synth_mcp::types::SectionSpan {
+    synth_mcp::types::SectionSpan {
+        label: s.label.clone(),
+        start_bar: s.start_bar,
+        end_bar: s.end_bar,
+        length_bars: s.length_bars,
+        mean_notes_per_bar: s.mean_notes_per_bar,
+        mean_distinct_pitch_classes: s.mean_distinct_pitch_classes,
+        mean_velocity: s.mean_velocity,
+        active_track_ids: s.active_track_ids.clone(),
+    }
+}
+
+fn clamp_similarity(t: Option<f32>) -> f32 {
+    let v = t.unwrap_or(FORM_SIMILARITY_DEFAULT);
+    if v.is_nan() {
+        FORM_SIMILARITY_DEFAULT
+    } else {
+        v.clamp(0.5, 0.999)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_arrangement_impl(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    pattern_id: Option<u32>,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
+    similarity_threshold: Option<f32>,
+    section_min_bars: Option<u32>,
+    exclude_drums: Option<bool>,
+    exclude_track_ids: Option<Vec<u16>>,
+) -> Result<synth_mcp::types::AnalyzeArrangementResult, McpBridgeError> {
+    use synth_mcp::types::{AnalyzeArrangementResult, BarFeatureSummary, SectionSpan};
+
+    let exclude_drums_v = exclude_drums.unwrap_or(true);
+    let exclude_track_ids_v = exclude_track_ids.unwrap_or_default();
+    let scope_data = collect_form_scope(
+        session,
+        shared,
+        pattern_id,
+        arrangement_start_tick,
+        arrangement_end_tick,
+        exclude_drums_v,
+        &exclude_track_ids_v,
+    )?;
+
+    let threshold = clamp_similarity(similarity_threshold);
+    let min_bars = section_min_bars
+        .unwrap_or(FORM_SECTION_MIN_BARS_DEFAULT)
+        .max(1);
+
+    let analysis = crate::analysis::form::analyze_form(
+        &scope_data.notes,
+        scope_data.time_sig,
+        scope_data.total_bars,
+        threshold,
+        min_bars,
+    );
+
+    let (start_bar, start_beat) =
+        tick_to_bar_beat_1based(scope_data.start_tick, scope_data.time_sig);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(scope_data.end_tick, scope_data.time_sig);
+
+    let bars: Vec<BarFeatureSummary> = analysis
+        .bars
+        .iter()
+        .map(|b| BarFeatureSummary {
+            bar: b.bar,
+            note_count: b.note_count,
+            distinct_pitch_classes: b.distinct_pitch_classes,
+            dominant_pitch_class: b.dominant_pitch_class,
+            mean_velocity: b.mean_velocity,
+            active_track_ids: b.active_track_ids.clone(),
+        })
+        .collect();
+
+    let sections: Vec<SectionSpan> = analysis
+        .sections
+        .iter()
+        .map(section_summary_to_wire)
+        .collect();
+
+    let mut warnings = scope_data.warnings;
+    if scope_data.total_bars < 2 {
+        warnings.push("Scope is shorter than 2 bars — section clustering skipped".to_string());
+    }
+
+    Ok(AnalyzeArrangementResult {
+        scope: scope_data.scope,
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
+        length_ticks: scope_data.length_ticks,
+        length_bars: scope_data.total_bars,
+        time_signature_numerator: scope_data.time_sig.numerator,
+        time_signature_denominator: scope_data.time_sig.denominator,
+        similarity_threshold: threshold,
+        bars,
+        sections,
+        distinct_section_count: analysis.distinct_section_count,
+        warnings,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_form_map_impl(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    pattern_id: Option<u32>,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
+    similarity_threshold: Option<f32>,
+    section_min_bars: Option<u32>,
+    exclude_drums: Option<bool>,
+    exclude_track_ids: Option<Vec<u16>>,
+) -> Result<synth_mcp::types::AnalyzeFormMapResult, McpBridgeError> {
+    use synth_mcp::types::{AnalyzeFormMapResult, SectionSpan};
+
+    let exclude_drums_v = exclude_drums.unwrap_or(true);
+    let exclude_track_ids_v = exclude_track_ids.unwrap_or_default();
+    let scope_data = collect_form_scope(
+        session,
+        shared,
+        pattern_id,
+        arrangement_start_tick,
+        arrangement_end_tick,
+        exclude_drums_v,
+        &exclude_track_ids_v,
+    )?;
+    let threshold = clamp_similarity(similarity_threshold);
+    let min_bars = section_min_bars
+        .unwrap_or(FORM_SECTION_MIN_BARS_DEFAULT)
+        .max(1);
+
+    let analysis = crate::analysis::form::analyze_form(
+        &scope_data.notes,
+        scope_data.time_sig,
+        scope_data.total_bars,
+        threshold,
+        min_bars,
+    );
+
+    let (start_bar, start_beat) =
+        tick_to_bar_beat_1based(scope_data.start_tick, scope_data.time_sig);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(scope_data.end_tick, scope_data.time_sig);
+
+    let sections: Vec<SectionSpan> = analysis
+        .sections
+        .iter()
+        .map(section_summary_to_wire)
+        .collect();
+
+    Ok(AnalyzeFormMapResult {
+        scope: scope_data.scope,
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
+        length_bars: scope_data.total_bars,
+        time_signature_numerator: scope_data.time_sig.numerator,
+        time_signature_denominator: scope_data.time_sig.denominator,
+        similarity_threshold: threshold,
+        bar_labels: analysis.bar_labels,
+        form_string: analysis.form_string,
+        sections,
+        distinct_section_count: analysis.distinct_section_count,
+        warnings: scope_data.warnings,
+    })
+}
+
+const MOTIF_MIN_LEN_DEFAULT: u8 = 3;
+const MOTIF_MAX_LEN_DEFAULT: u8 = 6;
+const MOTIF_MIN_COUNT_DEFAULT: u32 = 3;
+const MOTIF_TOP_N_DEFAULT: u32 = 10;
+const MOTIF_LEN_HARD_CAP: u8 = 12;
+
+fn clamp_motif_lengths(min_len: Option<u8>, max_len: Option<u8>) -> (u8, u8) {
+    let lo = min_len
+        .unwrap_or(MOTIF_MIN_LEN_DEFAULT)
+        .clamp(2, MOTIF_LEN_HARD_CAP);
+    let mut hi = max_len
+        .unwrap_or(MOTIF_MAX_LEN_DEFAULT)
+        .min(MOTIF_LEN_HARD_CAP);
+    if hi < lo {
+        hi = lo;
+    }
+    (lo, hi)
+}
+
+fn motif_occurrences_to_wire(
+    hits: &[crate::analysis::motifs::MotifHit],
+    scope_start_tick: u64,
+    time_sig: synth_sequencer::TimeSignature,
+) -> Vec<synth_mcp::types::MotifOccurrence> {
+    hits.iter()
+        .map(|h| {
+            let abs_tick = scope_start_tick + u64::from(h.start_tick);
+            let (bar, beat) = tick_to_bar_beat_1based(abs_tick, time_sig);
+            synth_mcp::types::MotifOccurrence {
+                track_id: h.track_id,
+                start_tick: abs_tick,
+                start_bar: bar,
+                start_beat: beat,
+                first_pitch: h.first_pitch,
+            }
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn find_motifs_impl(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    pattern_id: Option<u32>,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
+    min_interval_length: Option<u8>,
+    max_interval_length: Option<u8>,
+    min_count: Option<u32>,
+    top_n: Option<u32>,
+    exclude_drums: Option<bool>,
+    exclude_track_ids: Option<Vec<u16>>,
+) -> Result<synth_mcp::types::FindMotifsResult, McpBridgeError> {
+    use synth_mcp::types::{FindMotifsResult, MotifEntry};
+
+    let exclude_drums_v = exclude_drums.unwrap_or(true);
+    let exclude_track_ids_v = exclude_track_ids.unwrap_or_default();
+    let scope_data = collect_form_scope(
+        session,
+        shared,
+        pattern_id,
+        arrangement_start_tick,
+        arrangement_end_tick,
+        exclude_drums_v,
+        &exclude_track_ids_v,
+    )?;
+
+    let (min_len, max_len) = clamp_motif_lengths(min_interval_length, max_interval_length);
+    let min_count_v = min_count.unwrap_or(MOTIF_MIN_COUNT_DEFAULT).max(2);
+    let top_n_v = top_n.unwrap_or(MOTIF_TOP_N_DEFAULT).max(1);
+
+    let motifs = crate::analysis::motifs::find_motifs(
+        &scope_data.notes,
+        min_len,
+        max_len,
+        min_count_v,
+        top_n_v,
+    );
+
+    let (start_bar, start_beat) =
+        tick_to_bar_beat_1based(scope_data.start_tick, scope_data.time_sig);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(scope_data.end_tick, scope_data.time_sig);
+
+    let wire_motifs: Vec<MotifEntry> = motifs
+        .iter()
+        .map(|m| MotifEntry {
+            length: m.length,
+            intervals: m.intervals.clone(),
+            count: m.count(),
+            occurrences: motif_occurrences_to_wire(
+                &m.occurrences,
+                scope_data.start_tick,
+                scope_data.time_sig,
+            ),
+        })
+        .collect();
+
+    let mut warnings = scope_data.warnings;
+    if scope_data.notes.len() < (max_len as usize) + 1 {
+        warnings.push(format!(
+            "Only {} melodic notes in scope — too few to form motifs of length {}",
+            scope_data.notes.len(),
+            max_len + 1
+        ));
+    }
+
+    Ok(FindMotifsResult {
+        scope: scope_data.scope,
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
+        min_interval_length: min_len,
+        max_interval_length: max_len,
+        min_count: min_count_v,
+        total_notes: scope_data.notes.len() as u32,
+        motifs: wire_motifs,
+        warnings,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_hook_strength_impl(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    pattern_id: Option<u32>,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
+    min_interval_length: Option<u8>,
+    min_count: Option<u32>,
+    exclude_drums: Option<bool>,
+    exclude_track_ids: Option<Vec<u16>>,
+) -> Result<synth_mcp::types::AnalyzeHookStrengthResult, McpBridgeError> {
+    use synth_mcp::types::{AnalyzeHookStrengthResult, MotifEntry};
+
+    let exclude_drums_v = exclude_drums.unwrap_or(true);
+    let exclude_track_ids_v = exclude_track_ids.unwrap_or_default();
+    let scope_data = collect_form_scope(
+        session,
+        shared,
+        pattern_id,
+        arrangement_start_tick,
+        arrangement_end_tick,
+        exclude_drums_v,
+        &exclude_track_ids_v,
+    )?;
+
+    let min_len = min_interval_length
+        .unwrap_or(MOTIF_MIN_LEN_DEFAULT)
+        .clamp(2, MOTIF_LEN_HARD_CAP);
+    let min_count_v = min_count.unwrap_or(MOTIF_MIN_COUNT_DEFAULT).max(2);
+    // Hook-strength always sweeps up to the hard cap so a long but rare
+    // motif can still win — the caller controls the *minimum*, not the
+    // maximum length considered.
+    let motifs = crate::analysis::motifs::find_motifs(
+        &scope_data.notes,
+        min_len,
+        MOTIF_LEN_HARD_CAP,
+        min_count_v,
+        50,
+    );
+    let analysis =
+        crate::analysis::motifs::hook_strength(&scope_data.notes, &motifs, min_len, min_count_v);
+
+    let (start_bar, start_beat) =
+        tick_to_bar_beat_1based(scope_data.start_tick, scope_data.time_sig);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(scope_data.end_tick, scope_data.time_sig);
+
+    let strongest_wire = analysis.strongest.map(|m| MotifEntry {
+        length: m.length,
+        intervals: m.intervals.clone(),
+        count: m.count(),
+        occurrences: motif_occurrences_to_wire(
+            &m.occurrences,
+            scope_data.start_tick,
+            scope_data.time_sig,
+        ),
+    });
+
+    Ok(AnalyzeHookStrengthResult {
+        scope: scope_data.scope,
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
+        total_notes: scope_data.notes.len() as u32,
+        hook_score: analysis.score,
+        coverage_ratio: analysis.coverage,
+        strongest_motif: strongest_wire,
+        min_interval_length: min_len,
+        min_count: min_count_v,
+        warnings: scope_data.warnings,
     })
 }
 

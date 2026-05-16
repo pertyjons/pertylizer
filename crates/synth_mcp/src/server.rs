@@ -739,6 +739,124 @@ pub struct AnalyzeHarmonicFunctionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeArrangementParam {
+    #[schemars(
+        description = "Pattern ID to analyze. When set, the analyzer runs over the pattern's bars (in pattern-relative ticks) instead of the arrangement. arrangement_* fields are ignored when this is set."
+    )]
+    pub pattern_id: Option<u32>,
+    #[schemars(
+        description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0. Ignored when pattern_id is set."
+    )]
+    pub arrangement_start_tick: Option<u64>,
+    #[schemars(
+        description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length. Ignored when pattern_id is set."
+    )]
+    pub arrangement_end_tick: Option<u64>,
+    #[schemars(
+        description = "Cosine similarity above which two bars are treated as 'the same' for section labeling. Default 0.85 — lower for looser grouping, higher for stricter."
+    )]
+    pub similarity_threshold: Option<f32>,
+    #[schemars(
+        description = "Minimum bars a detected section must span. Sections shorter than this are merged with the longer of their neighbours. Default 2."
+    )]
+    pub section_min_bars: Option<u32>,
+    #[schemars(
+        description = "Exclude notes from tracks classified as Drums (default true). Drum tracks pollute pitch-class histograms and bias the similarity matrix. Arrangement scope only."
+    )]
+    pub exclude_drums: Option<bool>,
+    #[schemars(
+        description = "Explicit list of track IDs to exclude, combined with exclude_drums. Arrangement scope only."
+    )]
+    pub exclude_track_ids: Option<Vec<u16>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeFormMapParam {
+    #[schemars(description = "Pattern ID. When set, the arrangement_* fields are ignored.")]
+    pub pattern_id: Option<u32>,
+    #[schemars(description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0.")]
+    pub arrangement_start_tick: Option<u64>,
+    #[schemars(
+        description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
+    )]
+    pub arrangement_end_tick: Option<u64>,
+    #[schemars(
+        description = "Cosine similarity above which two bars are treated as 'the same' for section labeling (default 0.85)."
+    )]
+    pub similarity_threshold: Option<f32>,
+    #[schemars(
+        description = "Minimum bars a section must span before short runs are merged (default 2)."
+    )]
+    pub section_min_bars: Option<u32>,
+    #[schemars(
+        description = "Exclude notes from tracks classified as Drums (default true). Arrangement scope only."
+    )]
+    pub exclude_drums: Option<bool>,
+    #[schemars(
+        description = "Explicit list of track IDs to exclude from feature extraction. Arrangement scope only."
+    )]
+    pub exclude_track_ids: Option<Vec<u16>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct FindMotifsParam {
+    #[schemars(description = "Pattern ID. When set, arrangement_* fields are ignored.")]
+    pub pattern_id: Option<u32>,
+    #[schemars(description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0.")]
+    pub arrangement_start_tick: Option<u64>,
+    #[schemars(
+        description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
+    )]
+    pub arrangement_end_tick: Option<u64>,
+    #[schemars(
+        description = "Shortest motif length in intervals (= notes − 1). Default 3 = 4-note phrases. Clamped to [2, 12]."
+    )]
+    pub min_interval_length: Option<u8>,
+    #[schemars(
+        description = "Longest motif length in intervals. Default 6 = 7-note phrases. Clamped to [min_interval_length, 12]."
+    )]
+    pub max_interval_length: Option<u8>,
+    #[schemars(
+        description = "Minimum number of occurrences for a motif to be reported (default 3). Lower = more candidates, more noise."
+    )]
+    pub min_count: Option<u32>,
+    #[schemars(
+        description = "Maximum motifs returned, sorted by descending score = length × log2(1 + count). Default 10."
+    )]
+    pub top_n: Option<u32>,
+    #[schemars(
+        description = "Exclude drum tracks (default true). Drum hits don't have a melodic interval contour."
+    )]
+    pub exclude_drums: Option<bool>,
+    #[schemars(description = "Explicit list of track IDs to exclude. Arrangement scope only.")]
+    pub exclude_track_ids: Option<Vec<u16>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeHookStrengthParam {
+    #[schemars(description = "Pattern ID. When set, arrangement_* fields are ignored.")]
+    pub pattern_id: Option<u32>,
+    #[schemars(description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0.")]
+    pub arrangement_start_tick: Option<u64>,
+    #[schemars(
+        description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
+    )]
+    pub arrangement_end_tick: Option<u64>,
+    #[schemars(
+        description = "Shortest motif length in intervals to consider for the hook score (default 3 = 4-note phrases). Shorter motifs are too generic to be hooks."
+    )]
+    pub min_interval_length: Option<u8>,
+    #[schemars(
+        description = "Minimum repeat count for a motif to count toward the hook score (default 3)."
+    )]
+    pub min_count: Option<u32>,
+    #[schemars(description = "Exclude drum tracks (default true).")]
+    pub exclude_drums: Option<bool>,
+    #[schemars(description = "Explicit list of track IDs to exclude. Arrangement scope only.")]
+    pub exclude_track_ids: Option<Vec<u16>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeBassDrumLockParam {
     #[schemars(
         description = "Pattern ID to analyze. When set, the analyzer treats notes with GM kick MIDI numbers (35, 36) as kicks and everything else as bass. Useful for combined rhythm-section patterns. Ignored when arrangement_* fields are set."
@@ -1990,6 +2108,10 @@ impl SynthMcpServer {
             "analyze_masking_matrix" => analyze_masking_matrix(AnalyzeMaskingMatrixParam),
             "analyze_instrument_range" => analyze_instrument_range(AnalyzeInstrumentRangeParam),
             "analyze_velocity_response" => analyze_velocity_response(AnalyzeVelocityResponseParam),
+            "analyze_arrangement" => analyze_arrangement(AnalyzeArrangementParam),
+            "analyze_form_map" => analyze_form_map(AnalyzeFormMapParam),
+            "find_motifs" => find_motifs(FindMotifsParam),
+            "analyze_hook_strength" => analyze_hook_strength(AnalyzeHookStrengthParam),
 
             // Symbolic composition helpers
             "generate_chord" => generate_chord(GenerateChordParam),
@@ -2619,6 +2741,80 @@ impl SynthMcpServer {
             params.0.velocity_step,
             params.0.duration_ms,
             params.0.tail_ms,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Section-level form analysis. Walks the arrangement (or a single pattern's bars in pattern scope) one bar at a time, builds a duration-weighted pitch-class histogram + note-density + active-track feature row per bar, computes a cosine self-similarity matrix, and merges adjacent similar bars into sections. Sections that match a previously labeled section (similarity >= threshold) reuse its letter; near-matches get a prime (e.g. A'). Returns the per-bar feature rows, the detected sections with per-section stats, and the distinct section count. Pure symbolic — no audio rendering. Pair with `analyze_form_map` for the compact letter-string view. `exclude_drums` defaults to true."
+    )]
+    async fn analyze_arrangement(&self, params: Parameters<AnalyzeArrangementParam>) -> String {
+        match self.bridge.analyze_arrangement(
+            params.0.pattern_id,
+            params.0.arrangement_start_tick,
+            params.0.arrangement_end_tick,
+            params.0.similarity_threshold,
+            params.0.section_min_bars,
+            params.0.exclude_drums,
+            params.0.exclude_track_ids,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Compact view of the same section clustering as `analyze_arrangement`: one label per bar and a run-length-compressed form string like 'AABA' or 'ABACABA'. Cheaper to read for 'what's the structure of this song?' prompts. Uses the same default similarity threshold (0.85) and section_min_bars (2) merging. Empty bars (no melodic notes) appear as '·' in `bar_labels` and are skipped in the form string."
+    )]
+    async fn analyze_form_map(&self, params: Parameters<AnalyzeFormMapParam>) -> String {
+        match self.bridge.analyze_form_map(
+            params.0.pattern_id,
+            params.0.arrangement_start_tick,
+            params.0.arrangement_end_tick,
+            params.0.similarity_threshold,
+            params.0.section_min_bars,
+            params.0.exclude_drums,
+            params.0.exclude_track_ids,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Find recurring melodic motifs in the scope. Converts each track's notes into a pitch-interval sequence (signed semitone deltas between consecutive notes in time order, ignoring rests), slides an n-gram window across each track (lengths min_interval_length..=max_interval_length, defaults 3..=6), counts identical interval sequences, and returns the top_n motifs (default 10) that appear at least min_count times (default 3). Transposition-invariant — the same shape rooted at different pitches collapses to one entry. Each motif lists its interval sequence, count, and per-occurrence locations (track id, start tick, bar/beat, first pitch). Pure symbolic — no audio rendering. `exclude_drums` defaults to true."
+    )]
+    async fn find_motifs(&self, params: Parameters<FindMotifsParam>) -> String {
+        match self.bridge.find_motifs(
+            params.0.pattern_id,
+            params.0.arrangement_start_tick,
+            params.0.arrangement_end_tick,
+            params.0.min_interval_length,
+            params.0.max_interval_length,
+            params.0.min_count,
+            params.0.top_n,
+            params.0.exclude_drums,
+            params.0.exclude_track_ids,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Single-number 'does this song have a hook?' diagnostic. Runs `find_motifs` internally with min_interval_length (default 3) and min_count (default 3), then scores the result: hook_score = 0.5 × normalized_longest_motif_length + 0.3 × log2(1 + best_count) / log2(1 + total_notes) + 0.2 × coverage_ratio, clamped to [0, 1]. coverage_ratio is the fraction of melodic notes that participate in at least one qualifying motif. `strongest_motif` is the longest motif (ties broken by count) if any qualify; absent when the score is 0. Pure symbolic — no audio rendering."
+    )]
+    async fn analyze_hook_strength(&self, params: Parameters<AnalyzeHookStrengthParam>) -> String {
+        match self.bridge.analyze_hook_strength(
+            params.0.pattern_id,
+            params.0.arrangement_start_tick,
+            params.0.arrangement_end_tick,
+            params.0.min_interval_length,
+            params.0.min_count,
+            params.0.exclude_drums,
+            params.0.exclude_track_ids,
         ) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),

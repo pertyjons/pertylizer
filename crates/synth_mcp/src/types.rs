@@ -2179,3 +2179,206 @@ pub struct QuantizeNotesToGridResult {
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub warnings: Vec<String>,
 }
+
+// ---------------------------------------------------------------------------
+// Group C — form & motif analysis result types
+// ---------------------------------------------------------------------------
+
+/// Per-bar feature summary shared by `analyze_arrangement` and
+/// `analyze_form_map`. Compact projection of every bar in the analyzed scope:
+/// note density, distinct pitch classes, dominant pitch class, mean velocity,
+/// and the set of tracks that contributed notes to the bar. Lets the caller
+/// inspect the raw matrix the section clustering ran on.
+#[derive(Debug, Clone, Serialize)]
+pub struct BarFeatureSummary {
+    /// 1-indexed bar number in the scope (1 = first bar of the analyzed range).
+    pub bar: u32,
+    /// Number of melodic notes that started inside this bar.
+    pub note_count: u32,
+    /// Distinct pitch classes used in the bar (0..=12).
+    pub distinct_pitch_classes: u8,
+    /// Dominant pitch class (0..12) — duration-weighted argmax of the bar's
+    /// pitch-class histogram. Omitted for empty bars.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dominant_pitch_class: Option<u8>,
+    /// Mean velocity (0..=1) across notes that started in the bar.
+    pub mean_velocity: f32,
+    /// Track IDs that had at least one note start in this bar. Empty in
+    /// pattern scope (single pattern = single virtual track).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub active_track_ids: Vec<u16>,
+}
+
+/// One detected section in `analyze_arrangement` — a contiguous bar range
+/// labeled by clustering similar adjacent bars and matching against
+/// previously seen labels.
+#[derive(Debug, Clone, Serialize)]
+pub struct SectionSpan {
+    /// Section label assigned by clustering (`"A"`, `"B"`, `"A'"`, …). Labels
+    /// reflect first-appearance order; primes mark near-matches to an earlier
+    /// label that fell just under the equality threshold.
+    pub label: String,
+    /// 1-indexed start bar (inclusive) of the section in the analyzed scope.
+    pub start_bar: u32,
+    /// 1-indexed end bar (inclusive) of the section.
+    pub end_bar: u32,
+    /// Section length in bars.
+    pub length_bars: u32,
+    /// Mean notes per bar across the section.
+    pub mean_notes_per_bar: f32,
+    /// Mean distinct pitch-class count per bar across the section.
+    pub mean_distinct_pitch_classes: f32,
+    /// Mean velocity across notes in the section (0..=1).
+    pub mean_velocity: f32,
+    /// Distinct track IDs that contributed notes anywhere inside the section.
+    /// Empty in pattern scope.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub active_track_ids: Vec<u16>,
+}
+
+/// Output of `analyze_arrangement`. Section-level structural diagnostic built
+/// from bar features and self-similarity clustering: detects repeating
+/// sections, labels them, and reports per-section stats.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeArrangementResult {
+    pub scope: HarmonyScope,
+    pub start_bar: u32,
+    pub start_beat: u32,
+    pub end_bar: u32,
+    pub end_beat: u32,
+    pub length_ticks: u64,
+    pub length_bars: u32,
+    pub time_signature_numerator: u8,
+    pub time_signature_denominator: u8,
+    /// Cosine-similarity threshold above which two adjacent bars merge into
+    /// one section, and above which a new section is considered equivalent
+    /// to a previously labeled one.
+    pub similarity_threshold: f32,
+    /// Per-bar feature rows (1-indexed bars, length = `length_bars`).
+    pub bars: Vec<BarFeatureSummary>,
+    /// Detected sections in time order. Sections never overlap and cover
+    /// every bar of the scope.
+    pub sections: Vec<SectionSpan>,
+    /// Number of distinct section labels found (`"A"` and `"A'"` count as
+    /// the same root label).
+    pub distinct_section_count: u32,
+    /// Warnings (empty scope, fewer than 2 bars, ambiguous clustering, …).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
+
+/// Output of `analyze_form_map`. Compact view of the same clustering as
+/// `analyze_arrangement` — one label per bar, plus a coalesced run-length
+/// "form string" (`"AABA"`, `"ABACABA"`, …) that captures song structure at
+/// a glance.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeFormMapResult {
+    pub scope: HarmonyScope,
+    pub start_bar: u32,
+    pub start_beat: u32,
+    pub end_bar: u32,
+    pub end_beat: u32,
+    pub length_bars: u32,
+    pub time_signature_numerator: u8,
+    pub time_signature_denominator: u8,
+    pub similarity_threshold: f32,
+    /// One label per bar in time order. Length = `length_bars`. `"·"` for
+    /// empty bars (no melodic notes).
+    pub bar_labels: Vec<String>,
+    /// Run-length compression of `bar_labels`: each adjacent run of the
+    /// same label collapses to a single character. Example: `["A", "A",
+    /// "B", "A"]` → `"ABA"` (with section_min_bars merging applied first).
+    pub form_string: String,
+    /// Section spans (same as `analyze_arrangement.sections`) so the caller
+    /// can recover where each form-string letter starts and ends without
+    /// re-running clustering.
+    pub sections: Vec<SectionSpan>,
+    pub distinct_section_count: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
+
+/// One occurrence of a motif inside the analyzed scope.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct MotifOccurrence {
+    /// Track that the motif starts on. `0` in pattern scope.
+    pub track_id: u16,
+    /// Absolute start tick of the first note in the motif. Pattern-relative
+    /// in pattern scope.
+    pub start_tick: u64,
+    /// 1-indexed bar number at the motif start.
+    pub start_bar: u32,
+    /// 1-indexed beat within `start_bar`.
+    pub start_beat: u32,
+    /// MIDI pitch of the first note in the motif — useful for spotting
+    /// transposed restatements without having to re-derive the contour.
+    pub first_pitch: u8,
+}
+
+/// One motif candidate — a recurring sequence of pitch intervals.
+#[derive(Debug, Clone, Serialize)]
+pub struct MotifEntry {
+    /// Length in intervals (i.e. one less than the number of notes).
+    pub length: u8,
+    /// Signed pitch deltas in semitones, in occurrence order. Length =
+    /// `length`. Encoded as `i16` for JSON readability — single notes never
+    /// hit i16 bounds.
+    pub intervals: Vec<i16>,
+    /// Number of times this exact interval sequence appears in the scope.
+    pub count: u32,
+    /// Where the motif occurs. Sorted by `(track_id, start_tick)`.
+    pub occurrences: Vec<MotifOccurrence>,
+}
+
+/// Output of `find_motifs`. Lists the top-N pitch-interval n-grams that
+/// recur at least `min_count` times across the scope. Transposition-
+/// invariant — the same melodic shape rooted at different pitches collapses
+/// to one entry.
+#[derive(Debug, Clone, Serialize)]
+pub struct FindMotifsResult {
+    pub scope: HarmonyScope,
+    pub start_bar: u32,
+    pub start_beat: u32,
+    pub end_bar: u32,
+    pub end_beat: u32,
+    /// Echoed search parameters so the caller can audit what was scanned.
+    pub min_interval_length: u8,
+    pub max_interval_length: u8,
+    pub min_count: u32,
+    /// Number of melodic notes considered (drum tracks excluded by default).
+    pub total_notes: u32,
+    /// Motifs sorted by descending `score = length * log2(1 + count)`,
+    /// truncated to `top_n`. Empty when no n-gram met `min_count`.
+    pub motifs: Vec<MotifEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
+
+/// Output of `analyze_hook_strength`. Single-number diagnostic answering
+/// "does this song actually have a hook?" — high score = a clear, long,
+/// repeating motif covers a meaningful share of the melodic notes; low
+/// score = melody noodles without a memorable shape.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeHookStrengthResult {
+    pub scope: HarmonyScope,
+    pub start_bar: u32,
+    pub start_beat: u32,
+    pub end_bar: u32,
+    pub end_beat: u32,
+    pub total_notes: u32,
+    /// Hook score in `0..=1`. Combines longest-recurring motif length,
+    /// repeat count, and the fraction of melodic notes that participate in
+    /// some repeating motif. `0.0` when no motif meets the threshold.
+    pub hook_score: f32,
+    /// Fraction of melodic notes that belong to at least one motif of
+    /// length ≥ `min_interval_length` that recurs ≥ `min_count` times.
+    pub coverage_ratio: f32,
+    /// Strongest motif found (longest × repeat count tie-break). Skipped
+    /// when no motif met the threshold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strongest_motif: Option<MotifEntry>,
+    pub min_interval_length: u8,
+    pub min_count: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}

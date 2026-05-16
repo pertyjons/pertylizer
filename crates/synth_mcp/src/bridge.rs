@@ -757,6 +757,74 @@ pub trait SynthBridge: Send + Sync + 'static {
         exclude_track_ids: Option<Vec<u16>>,
     ) -> Result<crate::types::AnalyzeHarmonicFunctionResult, McpBridgeError>;
 
+    /// Section-level form diagnostic. Walks the analyzed scope one bar at a
+    /// time, builds a per-bar feature vector (duration-weighted pitch-class
+    /// histogram + density + mean velocity + active tracks), computes a
+    /// cosine self-similarity matrix, merges adjacent similar bars into
+    /// sections, and labels sections by first appearance (`"A"`, `"B"`,
+    /// `"A'"` for near-matches). Returns per-bar features + per-section
+    /// stats. Pure symbolic.
+    #[allow(clippy::too_many_arguments)]
+    fn analyze_arrangement(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        similarity_threshold: Option<f32>,
+        section_min_bars: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<crate::types::AnalyzeArrangementResult, McpBridgeError>;
+
+    /// Compact view of the same clustering as `analyze_arrangement`: one
+    /// label per bar plus a run-length-compressed `form_string` like
+    /// `"AABA"`. Same default thresholds.
+    #[allow(clippy::too_many_arguments)]
+    fn analyze_form_map(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        similarity_threshold: Option<f32>,
+        section_min_bars: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<crate::types::AnalyzeFormMapResult, McpBridgeError>;
+
+    /// Find recurring pitch-interval motifs in the scope. Converts each
+    /// track's notes into signed semitone deltas, slides an n-gram window
+    /// (lengths `min_interval_length..=max_interval_length`, defaults `3..=6`),
+    /// and returns the top-N entries that appear at least `min_count` times
+    /// (default 3). Transposition-invariant. `top_n` defaults to 10.
+    #[allow(clippy::too_many_arguments)]
+    fn find_motifs(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        min_interval_length: Option<u8>,
+        max_interval_length: Option<u8>,
+        min_count: Option<u32>,
+        top_n: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<crate::types::FindMotifsResult, McpBridgeError>;
+
+    /// Hook-strength diagnostic. Runs the motif finder internally and
+    /// reduces the result to a single `hook_score` in `[0, 1]` plus the
+    /// strongest motif found.
+    #[allow(clippy::too_many_arguments)]
+    fn analyze_hook_strength(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        min_interval_length: Option<u8>,
+        min_count: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<crate::types::AnalyzeHookStrengthResult, McpBridgeError>;
+
     /// Render `duration_seconds` of the master bus offline and return
     /// mix-level metrics (LUFS-I, true peak proxy, RMS, crest factor, banded
     /// energy, stereo correlation, mid/side, mono-compatibility).

@@ -1,6 +1,6 @@
 # MCP Music Tools — Plan
 
-> **Date:** 2026-05-11 (last update 2026-05-17: Group B from §8.6 — `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`, `quantize_notes_to_grid` — shipped in v0.285.0. Previous update 2026-05-16: §0 sweep — `true_peak`, `lufs_momentary_max`, `lufs_short_term_max`, `pre_master_peak` shipped; `TrackContribution` restructured to embed `MixBusMetrics` (§7.6 decision); §8.3 `pre_master_peak` closed. Earlier 2026-05-16 work: higher-level music-understanding catalogue + optional ML sidecar; §8.3 pan-law documentation, §8.5.1–§8.5.5 inference round-3 fixes — Pad-precedence-by-name, Bass-gate Atonal-by-name, Lead-precedence allows Polyphonic, drum-gate wider pitch-spread when name says Drums, extended name vocabulary; §7.1 `OfflineEngineSession` engine-reuse; §8.5.6.1/§8.5.6.2 round-4 inference follow-ups.)
+> **Date:** 2026-05-11 (last update 2026-05-17: Group C from §8.6 — `analyze_arrangement`, `analyze_form_map`, `find_motifs`, `analyze_hook_strength` — shipped in v0.286.0. Earlier 2026-05-17: Group B from §8.6 — `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`, `quantize_notes_to_grid` — shipped in v0.285.0. Previous update 2026-05-16: §0 sweep — `true_peak`, `lufs_momentary_max`, `lufs_short_term_max`, `pre_master_peak` shipped; `TrackContribution` restructured to embed `MixBusMetrics` (§7.6 decision); §8.3 `pre_master_peak` closed. Earlier 2026-05-16 work: higher-level music-understanding catalogue + optional ML sidecar; §8.3 pan-law documentation, §8.5.1–§8.5.5 inference round-3 fixes — Pad-precedence-by-name, Bass-gate Atonal-by-name, Lead-precedence allows Polyphonic, drum-gate wider pitch-spread when name says Drums, extended name vocabulary; §7.1 `OfflineEngineSession` engine-reuse; §8.5.6.1/§8.5.6.2 round-4 inference follow-ups.)
 > **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix in two rounds post-v0.277.0; §8.2 auto-inferred instrument profiles shipped in v0.278.0; commits 74d18da + 93c0786 closed the offline-render snapshot bug class, added `get_instrument_profiles`, and applied seven inference improvements that roughly doubled live-test accuracy on synth patches; inference round-3 (§8.5.1–§8.5.5) + §8.3 pan-law doc + §7.1 engine reuse shipped 2026-05-16; §0 deferred trio (`true_peak`, LUFS-S/M, `pre_master_peak`) + §7.6 embed-MixBusMetrics decision shipped 2026-05-16.** Remaining Tier-1+ pending.
 > Post-ship live testing surfaced determinism, auto-categorization, and offline-render-state issues — see §8. §8.1, §8.2, §8.3 (doc + `pre_master_peak`), §8.4, and §8.5 are fully shipped end-to-end through the MCP bridge.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
@@ -9,7 +9,7 @@
 
 ## 0. Status snapshot
 
-### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), v0.278.0 (auto-inferred profiles), 74d18da + 93c0786 (offline-render fixes, `get_instrument_profiles`, inference round 2), v0.283.0 (drum-groove + bass-drum-lock + harmonic-function), v0.284.0 (Group A: `analyze_instrument_range` + `analyze_velocity_response`), and v0.285.0 (Group B: `generate_chord` + `transpose_notes` + `quantize_notes_to_scale` + `quantize_notes_to_grid`)
+### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), v0.278.0 (auto-inferred profiles), 74d18da + 93c0786 (offline-render fixes, `get_instrument_profiles`, inference round 2), v0.283.0 (drum-groove + bass-drum-lock + harmonic-function), v0.284.0 (Group A: `analyze_instrument_range` + `analyze_velocity_response`), v0.285.0 (Group B: `generate_chord` + `transpose_notes` + `quantize_notes_to_scale` + `quantize_notes_to_grid`), and v0.286.0 (Group C: `analyze_arrangement` + `analyze_form_map` + `find_motifs` + `analyze_hook_strength`)
 
 | Tool | Version | Notes |
 |------|---------|-------|
@@ -207,8 +207,9 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 14. **`analyze_tension_curve`** — Higher-level song-shape diagnostic built from existing analyzers. Useful for
     "the chorus doesn't lift" and "the build peaks too early" feedback; less foundational than the lower-level
     tools it consumes.
-15. **`find_motifs` / `analyze_hook_strength`** — Helps verify whether a song has recognizable recurring ideas
-    and whether variations are meaningfully related rather than random. Symbolic first, no audio rendering needed.
+15. ✅ **`find_motifs`** + **`analyze_hook_strength`** — shipped in v0.286.0 as Group C from §8.6. Pitch-interval
+    n-gram motif search (transposition-invariant, lengths 3..=6 by default, hard cap 12); hook score blends
+    longest motif length, repeat count, and coverage ratio.
 16. **`suggest_music_fixes`** — Meta-tool that ranks concrete next actions from existing diagnostics. High agent
     usefulness, but should come after enough analyzers exist for the suggestions to be grounded.
 17. ✅ **`generate_chord`**, **`transpose_notes`**, **`quantize_notes_to_scale`**, **`quantize_notes_to_grid`** —
@@ -222,9 +223,9 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
     §8.6. Holds one MIDI note and sweeps velocity. Returns per-velocity amplitude/centroid plus
     `amplitude_range_db`, `non_monotonic_amplitude_steps`, `non_monotonic_centroid_steps`, and a
     `velocity_unresponsive` flag (< 3 dB spread across the sweep).
-20. **`analyze_arrangement` / `analyze_form_map`** — Useful for long-form composition and section contrast. A
-    deterministic first version can be built from bar-level features and self-similarity; heavier audio-structure
-    models belong in the future sidecar category.
+20. ✅ **`analyze_arrangement`** + **`analyze_form_map`** — shipped in v0.286.0 as Group C from §8.6. Per-bar
+    feature row + cosine self-similarity + adjacent-merge clustering with first-appearance section labels
+    (primes mark soft matches). `analyze_form_map` adds the run-length-compressed form string.
 
 ### Tier 3 — Specialized, build only when needed
 
@@ -1087,12 +1088,19 @@ scale_by_name}` so identification and generation stay round-trip stable). Big to
 reduction for the AI agent — turns 20-call note-edit sequences into 1-call operations. 28 in-module unit
 tests + 10 integration tests through the bridge.
 
-**Group C — Form & motifs (Tier-2 #15 + #20)**
+**Group C — Form & motifs (Tier-2 #15 + #20)** — ✅ shipped 2026-05-17 (v0.286.0)
 
-`find_motifs` / `analyze_hook_strength` and `analyze_arrangement` / `analyze_form_map` both consume the
-same underlying matrix: bar-level features (pitch histogram, rhythmic density, instrument activity) ×
-self-similarity. Building them together avoids two divergent feature-extractor implementations. Symbolic
-only — no audio rendering required for the first deterministic version.
+`find_motifs` / `analyze_hook_strength` and `analyze_arrangement` / `analyze_form_map` shipped together,
+sharing the bar-level feature matrix (`analysis/bar_features.rs` — duration-weighted pitch-class
+histogram + density + active-track set per bar, plus cosine self-similarity and adjacent-merge section
+clustering with prime-label soft matches). Form tools live in `analysis/form.rs` (section summaries +
+run-length-compressed form string); motif tools live in `analysis/motifs.rs` (pitch-interval n-grams,
+transposition-invariant by construction, prefix-suppression so the longest informative motif wins).
+`analyze_hook_strength` reduces the motif catalogue to a single `[0, 1]` score blending longest-motif
+length, repeat count, and coverage ratio. All four tools take optional pattern_id (pattern scope) or
+arrangement_start/end_tick (arrangement scope), reusing the harmony tools' resolve_arrangement_range +
+HarmonyScope. `exclude_drums` defaults to true via `infer_all_profiles`. 17 in-module unit tests + 5
+bridge integration tests in `tests/form_motifs_integration.rs`.
 
 **Group D — Meta-analysis (Tier-2 #14 + #16)**
 
@@ -1113,8 +1121,8 @@ and ranks concrete edits. Tension-curve is the data source; suggest_music_fixes 
 1. ✅ **Group A** — smallest scope, clear design path via `analyze_note`, catches a concrete real bug class
    (patches that work at C4 and fall apart at C6 or C2). One PR. **Shipped 2026-05-16 (v0.284.0).**
 2. ✅ **Group B** — low risk, high token-saving impact for the agent. One PR. **Shipped 2026-05-17 (v0.285.0).**
-3. **Group C** — needs design work (what counts as a motif, what counts as a section boundary), but
-   unlocks long-form composition feedback. One PR or two depending on size.
+3. ✅ **Group C** — auto-detect section boundaries from self-similarity, pitch-interval n-gram motifs.
+   One PR. **Shipped 2026-05-17 (v0.286.0).**
 4. **Group D** — depends on the analyzers from earlier groups being in place. Tension curve before
    suggest_music_fixes.
 

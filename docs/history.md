@@ -1,5 +1,69 @@
 # Version History
 
+## [0.286.0] - 2026-05-17
+### MCP music tools — Tier-2 #15 + #20: form & motif analysis (Group C)
+
+Group C from §8.6 of `docs/mcp-music-tools-plan.md`: four pure-symbolic
+tools sharing one bar-level feature matrix + self-similarity layer. No
+audio rendering. New analyzer modules:
+`crates/pertylizer/src/analysis/bar_features.rs` (per-bar feature
+extraction + cosine similarity + section clustering),
+`crates/pertylizer/src/analysis/form.rs` (section-level summary +
+form string compression), and
+`crates/pertylizer/src/analysis/motifs.rs` (pitch-interval n-gram
+search + hook scoring). 17 in-module unit tests + 5 integration tests
+through the bridge.
+
+#### `analyze_arrangement`
+
+Walks the analyzed scope one bar at a time, builds a duration-weighted
+pitch-class histogram + note count + distinct PC count + mean velocity
++ active-track set per bar, computes a cosine self-similarity matrix
+between adjacent bars, and merges them into sections. Sections that
+match a previously seen section (cosine ≥ threshold + 0.05) reuse that
+section's letter (`"A"`, `"B"`, …); soft matches that cross only the
+base threshold get a prime (`"A'"`). Sections shorter than
+`section_min_bars` (default 2) are absorbed into the longer neighbour.
+Returns per-bar feature rows + per-section summaries +
+`distinct_section_count` (primes count as the same root letter).
+`exclude_drums` defaults to true and reuses `infer_all_profiles` for
+auto-classification; `exclude_track_ids` adds explicit exclusions.
+`similarity_threshold` defaults to 0.85, clamped to `[0.5, 0.999]`.
+
+#### `analyze_form_map`
+
+Compact view of the same clustering — one label per bar (`bar_labels`,
+length = `length_bars`, empty bars show as `"·"`) plus a run-length
+compressed `form_string` like `"AABA"` or `"ABACABA"` (empty bars
+skipped). Sections array re-emitted so callers can recover where each
+letter starts and ends without re-running the analyzer.
+
+#### `find_motifs`
+
+Converts each track's notes into a signed pitch-delta stream (in time
+order, ties broken by ascending pitch so simultaneous chord tones
+produce a stable contour), slides an n-gram window across each track
+(lengths `min_interval_length..=max_interval_length`, defaults `3..=6`,
+hard-capped at 12), and counts identical interval sequences across the
+scope. Transposition-invariant by construction. Motifs that are strict
+prefixes of a longer motif with the same count are dropped — the
+longer motif is always more informative. Returns the top `top_n`
+(default 10) entries sorted by descending `score = length × log2(1 +
+count)`. Each entry carries its interval sequence, count, and per-
+occurrence locations (track id, absolute start tick, 1-indexed
+bar/beat, first MIDI pitch). `exclude_drums` defaults to true.
+
+#### `analyze_hook_strength`
+
+Single-number "does this song have a hook?" diagnostic. Runs the motif
+finder internally up to the hard cap (12 intervals) with the caller's
+`min_interval_length` (default 3) and `min_count` (default 3), then
+reduces the result: `hook_score = 0.5 × (longest_motif / 8) + 0.3 ×
+log2(1 + best_count) / log2(1 + total_notes) + 0.2 × coverage_ratio`,
+clamped to `[0, 1]`. `coverage_ratio` is the fraction of melodic notes
+that participate in at least one qualifying motif. Returns 0 (and no
+`strongest_motif`) when nothing meets the threshold.
+
 ## [0.285.0] - 2026-05-17
 ### MCP music tools — Tier-2 #17: symbolic composition helpers (Group B)
 
