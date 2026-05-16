@@ -21,14 +21,15 @@ use synth_mcp::bridge::{
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
-    AnalyzeHarmonyResult, AnalyzeMixBusResult, AnalyzeSectionResult, ApplyExamplePatchResult,
-    AutomationLaneInfo, AutomationPointInfo, AweLfoInfo, AwePresetInfo, AweStateInfo,
-    BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo,
-    DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent,
-    HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MixBusMetrics, ModuleInfo,
-    ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo,
-    PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo, PlacementInfo, SetSongResult,
-    SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    AnalyzeHarmonyResult, AnalyzeMixBusResult, AnalyzePatternResult, AnalyzeSectionResult,
+    ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo, AweLfoInfo, AwePresetInfo,
+    AweStateInfo, BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionCheckResult,
+    ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
+    HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo,
+    MixBusMetrics, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo,
+    ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
+    PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo,
+    UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -2447,6 +2448,10 @@ impl SynthBridge for AppSynthBridge {
             exclude_drums,
             exclude_track_ids,
         )
+    }
+
+    fn analyze_pattern(&self, pattern_id: u32) -> Result<AnalyzePatternResult, McpBridgeError> {
+        analyze_pattern_impl(&self.shared, pattern_id)
     }
 
     fn analyze_mix_bus(
@@ -4951,6 +4956,78 @@ pub fn analyze_song_harmony(
         harmonic_stability_score: analysis.harmonic_stability_score,
         stats,
         warnings,
+    })
+}
+
+fn analyze_pattern_impl(
+    shared: &McpSharedState,
+    pattern_id: u32,
+) -> Result<AnalyzePatternResult, McpBridgeError> {
+    use synth_mcp::types::{
+        AnalyzePatternResult, PatternDensity, PatternPitch, PatternRepetition, PatternRhythm,
+        PatternVelocity,
+    };
+    use synth_sequencer::PatternId;
+
+    let song = shared.song.read();
+    let pid = PatternId(pattern_id);
+    let Some(pattern) = song.pattern(pid) else {
+        return Err(McpBridgeError::Other(format!(
+            "Pattern {pattern_id} not found"
+        )));
+    };
+    let length_ticks = pattern.length.0;
+    let pattern_name = pattern.name.clone();
+    let notes: Vec<synth_sequencer::Note> = pattern.notes().to_vec();
+    let time_sig = song.default_time_signature;
+    drop(song);
+
+    let analysis = crate::analysis::pattern_analysis::analyze(&notes, length_ticks, time_sig);
+
+    Ok(AnalyzePatternResult {
+        pattern_id,
+        pattern_name,
+        length_ticks: analysis.length_ticks,
+        length_bars: analysis.length_bars,
+        time_signature_numerator: time_sig.numerator,
+        time_signature_denominator: time_sig.denominator,
+        note_count: analysis.note_count,
+        density: PatternDensity {
+            notes_per_bar: analysis.density.notes_per_bar,
+            notes_per_beat: analysis.density.notes_per_beat,
+            active_ratio: analysis.density.active_ratio,
+        },
+        pitch: PatternPitch {
+            low: analysis.pitch.low,
+            high: analysis.pitch.high,
+            range_semitones: analysis.pitch.range_semitones,
+            mean: analysis.pitch.mean,
+            distinct_count: analysis.pitch.distinct_count,
+            class_histogram: analysis.pitch.class_histogram,
+        },
+        velocity: PatternVelocity {
+            min: analysis.velocity.min,
+            max: analysis.velocity.max,
+            mean: analysis.velocity.mean,
+            std_dev: analysis.velocity.std_dev,
+            range: analysis.velocity.range,
+        },
+        rhythm: PatternRhythm {
+            max_polyphony: analysis.rhythm.max_polyphony,
+            mean_polyphony: analysis.rhythm.mean_polyphony,
+            is_monophonic: analysis.rhythm.is_monophonic,
+            distinct_onset_count: analysis.rhythm.distinct_onset_count,
+            distinct_duration_count: analysis.rhythm.distinct_duration_count,
+            mean_ioi_ticks: analysis.rhythm.mean_ioi_ticks,
+            ioi_std_ticks: analysis.rhythm.ioi_std_ticks,
+            regularity_score: analysis.rhythm.regularity_score,
+        },
+        repetition: PatternRepetition {
+            distinct_bars: analysis.repetition.distinct_bars,
+            total_bars: analysis.repetition.total_bars,
+            bar_repetition_score: analysis.repetition.bar_repetition_score,
+        },
+        warnings: analysis.warnings,
     })
 }
 

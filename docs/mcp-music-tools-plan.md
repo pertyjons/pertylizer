@@ -17,6 +17,7 @@
 | `analyze_mix_bus` | v0.276.0 + 74d18da | Renders N seconds (default 10, max 300) of the master bus offline from `start_tick` (default 0). Returns sample peak, RMS, crest factor, integrated LUFS (ITU-R BS.1770-4 K-weighted + 400 ms gating, 75 % overlap, abs −70 / rel −10 gates), 4-band frequency-balance RMS (sub/low/mid/high) windowed across the full buffer, stereo correlation, mid/side RMS, stereo width, mono-compatibility score, clipped-sample count. Includes `start_bar`/`end_bar`/`start_beat`/`end_beat`. **74d18da** threaded `SharedSampleLibrary` through the offline renderer so sampler-based instruments stop rendering silence — see §8.4. |
 | `analyze_section` | v0.276.0 + v0.277.0 + 74d18da | Same metrics as `analyze_mix_bus` but takes explicit `[start_tick, end_tick)`. **v0.277.0 added per-track contribution breakdown**: `include_per_track` (default false) opts in to one extra soloed render per audible track that overlaps the section, returning `TrackContribution { track_id, track_name, instrument_id, peak, peak_dbfs, rms, rms_dbfs, lufs_integrated, energy_bands, clipped_samples, rms_share }`. Soloing is implemented by cloning the song, setting only the target track's `solo = true`, and rendering via `render_arrangement_to_buffer_with_song`. **74d18da** propagated samples per soloed render so per-track contributions on sample-based instruments report real metrics. |
 | `get_instrument_profiles` | 93c0786 | Returns `Vec<InstrumentProfileResult>`, one entry per instrument routed to by at least one track. Each profile carries the inferred `role` plus a `confidence: 0.0..=1.0` and a `signals` trail listing every axis that contributed (`decision`, `name`, `envelope`, `graph`, `pattern`, `manual`). Same inference path that `analyze_harmony`'s `exclude_drums = true` uses — exposed directly so users can debug or override the classification. Manual `set_instrument_category` short-circuits the decision tree and reports as `manual-override` with confidence 1.0. Wire format uses snake_case strings for role/envelope_shape/etc. so the MCP type stays decoupled from pertylizer-internal enums. |
+| `analyze_pattern` | 2026-05-16 | Pure symbolic single-pattern analyzer; no audio render. Reads a pattern's notes directly and reports `density` (notes per bar/beat, active ratio), `pitch` (low/high/range, mean, distinct count, duration-weighted pitch-class histogram), `velocity` (min/max/mean/std/range), `rhythm` (max/mean polyphony, monophonic flag, distinct onsets+durations, IOI mean+std, regularity score), and `repetition` (distinct bar signatures quantized to a 32nd-note grid, repetition score). `length_bars` and `notes_per_bar` use the song's default time signature. Notes that start past the pattern length are dropped with a warning. Implementation in `crates/pertylizer/src/analysis/pattern_analysis.rs`; bridge in `analyze_pattern_impl`. Closes Tier-1 #6. |
 
 ### Deferred / in-progress
 
@@ -164,9 +165,13 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 5. ✅ **Drum-track filtering on `analyze_harmony`** — shipped in v0.277.0. Two new parameters:
    `exclude_drums` (default true) honours `InstrumentCategory::Drums`; `exclude_track_ids` is an explicit drop list.
    Both apply to arrangement scope only; pattern scope warns when filters are passed.
-6. **`analyze_pattern`** — Cheap, no audio rendering. Density, range, velocity variance, repetition factor. Lets
-   the AI verify "is this pattern interesting?" without rendering, and is a prerequisite for sane
-   `generate_variation` heuristics.
+6. ✅ **`analyze_pattern`** — shipped 2026-05-16. Pure symbolic — reads a single pattern's notes directly,
+   reports density (notes per bar/beat, active ratio), pitch shape (range, mean, distinct count,
+   duration-weighted pitch-class histogram), velocity dynamics (min/max/mean/std/range), rhythmic
+   structure (max/mean polyphony, distinct onsets/durations, IOI mean+std, regularity score), and
+   bar-level repetition (distinct bar signatures quantized to a 32nd-note grid, repetition score).
+   Implementation lives in `crates/pertylizer/src/analysis/pattern_analysis.rs`; bridge in
+   `analyze_pattern_impl`.
 7. **`analyze_drum_groove`** — Drum-specific feel analysis is more actionable than a generic groove score:
    backbeat strength, hat subdivision, fills, ghost notes, and repeated-bar sameness are exactly the issues that
    make AI-written beats sound flat. Pure symbolic path, using the shipped instrument-profile inference.
@@ -266,7 +271,7 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 
 4. ✅ Per-track contribution breakdown for `analyze_section` — v0.277.0.
 5. ✅ Drum-track filtering on `analyze_harmony` — v0.277.0.
-6. `analyze_pattern` — pure symbolic, fast win.
+6. ✅ `analyze_pattern` — shipped 2026-05-16. Pure symbolic, no audio render.
 7. `analyze_drum_groove` — pure symbolic drum feel diagnostics, using inferred drum profiles.
 8. `analyze_bass_drum_lock` — symbolic groove + low-end relationship between kick, bass, and chord roots.
 9. `analyze_masking_matrix` — pairwise per-track spectral masking on top of deterministic solo renders.
@@ -1008,4 +1013,5 @@ doc fix (pan-law attenuation in per-track peak/RMS) and the optional `pre_master
 2026-05-16. All five §8.5 round-3 inference follow-ups (§8.5.1–§8.5.5) shipped 2026-05-16. §8.5.6.1
 (Plucked-Mono-Lead misclassification) and §8.5.6.2 (0.60-threshold margin for name-conflict drums) — both
 surfaced by the 2026-05-16 end-to-end verification on the "Neuro F#m 174" project — also shipped 2026-05-16.
-Every §8 item is now closed; the next blind spot to address is Tier-1 item 6 (`analyze_pattern`).
+Every §8 item is now closed; Tier-1 item 6 (`analyze_pattern`) shipped 2026-05-16. The next blind
+spot to address is Tier-1 item 7 (`analyze_drum_groove`).

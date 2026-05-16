@@ -559,6 +559,12 @@ pub struct AnalyzeHarmonyParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzePatternParam {
+    #[schemars(description = "Pattern ID to analyze.")]
+    pub pattern_id: u32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeNoteParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
     pub instrument_id: u64,
@@ -1781,6 +1787,7 @@ impl SynthMcpServer {
 
             // Music analysis
             "analyze_harmony" => analyze_harmony(AnalyzeHarmonyParam),
+            "analyze_pattern" => analyze_pattern(AnalyzePatternParam),
             "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
             "analyze_section" => analyze_section(AnalyzeSectionParam),
         ])
@@ -2339,6 +2346,16 @@ impl SynthMcpServer {
             params.0.exclude_drums,
             params.0.exclude_track_ids,
         ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Symbolic structural analysis of a single pattern. Reports density (notes per bar/beat, active ratio), pitch shape (range, mean, distinct count, duration-weighted pitch-class histogram), velocity dynamics (min/max/mean/std/range), rhythm (max/mean polyphony, distinct onsets/durations, inter-onset-interval mean+std, regularity score), and bar-level repetition (distinct bar signatures, repetition score). Pure symbolic — no audio rendering. Use to verify whether a pattern is interesting (varied vs. flat, dense vs. sparse, repetitive vs. through-composed) without listening, and as a prerequisite for variation generation heuristics."
+    )]
+    async fn analyze_pattern(&self, params: Parameters<AnalyzePatternParam>) -> String {
+        match self.bridge.analyze_pattern(params.0.pattern_id) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }

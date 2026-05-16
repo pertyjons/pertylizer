@@ -680,6 +680,22 @@ pub trait SynthBridge: Send + Sync + 'static {
         exclude_track_ids: Option<Vec<u16>>,
     ) -> Result<crate::types::AnalyzeHarmonyResult, McpBridgeError>;
 
+    /// Symbolic structural analysis of a single pattern.
+    ///
+    /// Reads the pattern's notes directly — no audio rendering, no engine
+    /// snapshot needed. Reports density (notes per bar/beat, active ratio),
+    /// pitch shape (range, mean, distinct count, duration-weighted pitch
+    /// class histogram), velocity dynamics (min/max/mean/std/range),
+    /// rhythmic structure (max/mean polyphony, distinct onsets/durations,
+    /// inter-onset-interval stats, regularity score), and bar-level
+    /// repetition.
+    ///
+    /// `length_bars` / `notes_per_bar` use the song's default time signature.
+    fn analyze_pattern(
+        &self,
+        pattern_id: u32,
+    ) -> Result<crate::types::AnalyzePatternResult, McpBridgeError>;
+
     /// Render `duration_seconds` of the master bus offline and return
     /// mix-level metrics (LUFS-I, true peak proxy, RMS, crest factor, banded
     /// energy, stereo correlation, mid/side, mono-compatibility).

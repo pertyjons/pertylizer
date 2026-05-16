@@ -1386,3 +1386,124 @@ pub struct ProfileSignalResult {
     /// `"percussive"`, `"manual-override"`.
     pub detail: String,
 }
+
+// ---------------------------------------------------------------------------
+// analyze_pattern result types
+// ---------------------------------------------------------------------------
+
+/// Density-related metrics for a pattern.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct PatternDensity {
+    /// Average notes per bar over the pattern's length, using the song's
+    /// default time signature.
+    pub notes_per_bar: f32,
+    /// Average notes per beat.
+    pub notes_per_beat: f32,
+    /// Fraction of the pattern's tick span covered by at least one sounding
+    /// note (0.0..=1.0). 1.0 = something always playing; 0.0 = silence.
+    pub active_ratio: f32,
+}
+
+/// Pitch-shape metrics for a pattern.
+#[derive(Debug, Clone, Serialize)]
+pub struct PatternPitch {
+    /// Lowest MIDI note encountered (0 when the pattern has no notes).
+    pub low: u8,
+    /// Highest MIDI note encountered (0 when the pattern has no notes).
+    pub high: u8,
+    /// `high - low`, in semitones.
+    pub range_semitones: u8,
+    /// Duration-weighted mean MIDI pitch.
+    pub mean: f32,
+    /// Number of distinct MIDI pitches in the pattern.
+    pub distinct_count: u32,
+    /// Duration-weighted pitch-class histogram, normalized so the values sum
+    /// to 1.0 when the pattern has notes (else all zero). Index 0 = C.
+    pub class_histogram: [f32; 12],
+}
+
+/// Velocity-dynamics metrics for a pattern.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct PatternVelocity {
+    /// Lowest velocity (0..=1.0).
+    pub min: f32,
+    /// Highest velocity.
+    pub max: f32,
+    /// Arithmetic mean.
+    pub mean: f32,
+    /// Population standard deviation (0 when fewer than 2 notes).
+    pub std_dev: f32,
+    /// `max - min`.
+    pub range: f32,
+}
+
+/// Rhythmic-structure metrics for a pattern.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct PatternRhythm {
+    /// Maximum simultaneous voices observed at any tick.
+    pub max_polyphony: u32,
+    /// Mean simultaneous-voice count, weighted by the time at least one note
+    /// was sounding. `1.0` for strictly monophonic patterns.
+    pub mean_polyphony: f32,
+    /// True when no two notes overlap in time.
+    pub is_monophonic: bool,
+    /// Number of distinct onset tick positions.
+    pub distinct_onset_count: u32,
+    /// Number of distinct note durations.
+    pub distinct_duration_count: u32,
+    /// Mean inter-onset interval across distinct onsets (ticks).
+    pub mean_ioi_ticks: f32,
+    /// Standard deviation of inter-onset intervals (ticks). Zero on a
+    /// perfectly regular grid.
+    pub ioi_std_ticks: f32,
+    /// `1.0 - clamp(ioi_std / ioi_mean, 0, 1)`. `1.0` = perfectly regular
+    /// grid; `0.0` for fewer than two distinct onsets.
+    pub regularity_score: f32,
+}
+
+/// Bar-level self-similarity metrics for a pattern.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct PatternRepetition {
+    /// Number of distinct bar-content signatures across the pattern. Bars are
+    /// hashed by `(onset_quantized_to_32nd, midi_note)`; durations and
+    /// velocities are ignored.
+    pub distinct_bars: u32,
+    /// `ceil(length_ticks / ticks_per_bar)`.
+    pub total_bars: u32,
+    /// `0.0..=1.0`. `1.0` = every bar carries the same notes; `0.0` = every
+    /// bar unique. `0.0` for single-bar patterns (no repetition to measure)
+    /// — accompanied by a warning.
+    pub bar_repetition_score: f32,
+}
+
+/// Output of `analyze_pattern`.
+///
+/// Pure symbolic — no audio rendering. Reads a pattern's notes directly and
+/// reports density, pitch shape, velocity dynamics, rhythmic structure, and
+/// bar-level repetition.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzePatternResult {
+    /// Pattern ID that was analyzed.
+    pub pattern_id: u32,
+    /// Pattern name (may be empty).
+    pub pattern_name: String,
+    /// Authored pattern length, in ticks.
+    pub length_ticks: u32,
+    /// Authored pattern length expressed in bars under the song's default
+    /// time signature (may be fractional).
+    pub length_bars: f32,
+    /// Time-signature numerator used for `length_bars` / `notes_per_bar`.
+    pub time_signature_numerator: u8,
+    /// Time-signature denominator used for `length_bars` / `notes_per_bar`.
+    pub time_signature_denominator: u8,
+    /// Total note count after dropping out-of-bounds notes.
+    pub note_count: u32,
+    pub density: PatternDensity,
+    pub pitch: PatternPitch,
+    pub velocity: PatternVelocity,
+    pub rhythm: PatternRhythm,
+    pub repetition: PatternRepetition,
+    /// Warnings encountered during analysis (empty pattern, out-of-bounds
+    /// notes, single-bar patterns where bar repetition isn't meaningful, …).
+    pub warnings: Vec<String>,
+}
