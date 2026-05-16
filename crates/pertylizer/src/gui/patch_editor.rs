@@ -3023,7 +3023,9 @@ impl PatchEditor {
                 continue;
             }
 
-            if let Some(area_rect) = ui.memory(|mem| mem.area_rect(area_id)) {
+            if !self.suppress_position_readback
+                && let Some(area_rect) = ui.memory(|mem| mem.area_rect(area_id))
+            {
                 let logical_pos = area_rect.min - area_origin + scroll_offset;
                 self.move_collapsed_group(group_id, snap_to_grid(logical_pos));
             }
