@@ -476,7 +476,12 @@ pub fn create_patch_from_editor(
         })
         .unwrap_or_default();
 
-    for module_id in patch_editor.module_ids() {
+    // Emit in a deterministic order so re-saving an unchanged patch produces
+    // byte-identical JSON. `ModuleId: Ord` sorts by (module_type, instance).
+    let mut sorted_ids = patch_editor.module_ids();
+    sorted_ids.sort();
+
+    for module_id in sorted_ids {
         if let Some((descriptor, position, gui_params)) = patch_editor.get_module_data(module_id) {
             let mut param_map = BTreeMap::new();
 
@@ -512,12 +517,16 @@ pub fn create_patch_from_editor(
         }
     }
 
-    for conn in patch_editor.connections() {
-        patch.connections.push(ConnectionState {
-            from: (conn.from_module.to_string(), conn.from_port.into()),
-            to: (conn.to_module.to_string(), conn.to_port.into()),
-        });
-    }
+    // Port names are interned `PortName(u32)` whose numeric ordering depends
+    // on intern-time and is not stable across runs, so the secondary sort key
+    // uses the rendered string form.
+    let mut sorted_conns: Vec<Connection> = patch_editor.connections().to_vec();
+    sorted_conns.sort_by_cached_key(|c| {
+        let from_port: String = c.from_port.into();
+        let to_port: String = c.to_port.into();
+        (c.from_module, from_port, c.to_module, to_port)
+    });
+    patch.connections = sorted_conns.iter().map(ConnectionState::from).collect();
 
     patch.groups = patch_editor.group_states();
 
@@ -856,4 +865,93 @@ pub fn paste_clipboard_modules(
     }
 
     new_ids
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use synth_core::ModuleCategory;
+
+    fn descriptor() -> ModuleDescriptor {
+        ModuleDescriptor::new("test", "test").category(ModuleCategory::Oscillator)
+    }
+
+    fn add(editor: &mut PatchEditor, ty: ModuleType, n: u16, pos: (f32, f32)) -> ModuleId {
+        let id = ModuleId::new(ty, n);
+        editor.add_module_at(id, descriptor(), Pos2::new(pos.0, pos.1));
+        id
+    }
+
+    #[test]
+    fn create_patch_module_order_is_stable_and_sorted() {
+        let mut editor = PatchEditor::new();
+        // osc-10 vs osc-2 catches accidental string ordering.
+        add(&mut editor, ModuleType::Oscillator, 2, (0.0, 0.0));
+        add(&mut editor, ModuleType::Filter, 1, (0.0, 0.0));
+        add(&mut editor, ModuleType::Oscillator, 10, (0.0, 0.0));
+        add(&mut editor, ModuleType::Oscillator, 1, (0.0, 0.0));
+        add(&mut editor, ModuleType::Amplifier, 3, (0.0, 0.0));
+
+        let patch = create_patch_from_editor("Test", &editor, None);
+
+        let actual: Vec<&str> = patch.modules.iter().map(|m| m.id.as_str()).collect();
+        let expected: Vec<&str> = vec!["osc-1", "osc-2", "osc-10", "flt-1", "amp-3"];
+        assert_eq!(
+            actual, expected,
+            "modules must be sorted by (module_type, instance) numerically"
+        );
+    }
+
+    #[test]
+    fn create_patch_repeated_save_is_byte_identical() {
+        let mut editor = PatchEditor::new();
+        let osc1 = add(&mut editor, ModuleType::Oscillator, 1, (10.0, 20.0));
+        let osc2 = add(&mut editor, ModuleType::Oscillator, 2, (30.0, 40.0));
+        let flt1 = add(&mut editor, ModuleType::Filter, 1, (50.0, 60.0));
+        let amp1 = add(&mut editor, ModuleType::Amplifier, 1, (70.0, 80.0));
+
+        // Add connections in an order that doesn't match the desired sort.
+        editor.add_connection(Connection::new(osc2, "out", flt1, "in"));
+        editor.add_connection(Connection::new(flt1, "out", amp1, "in"));
+        editor.add_connection(Connection::new(osc1, "out", flt1, "in"));
+
+        let first = create_patch_from_editor("Test", &editor, None);
+        let second = create_patch_from_editor("Test", &editor, None);
+
+        let first_json = serde_json::to_string_pretty(&first).unwrap();
+        let second_json = serde_json::to_string_pretty(&second).unwrap();
+        assert_eq!(
+            first_json, second_json,
+            "re-saving an unchanged patch must produce byte-identical JSON"
+        );
+    }
+
+    #[test]
+    fn create_patch_connections_sorted_by_endpoint() {
+        let mut editor = PatchEditor::new();
+        let osc1 = add(&mut editor, ModuleType::Oscillator, 1, (0.0, 0.0));
+        let osc2 = add(&mut editor, ModuleType::Oscillator, 2, (0.0, 0.0));
+        let flt1 = add(&mut editor, ModuleType::Filter, 1, (0.0, 0.0));
+
+        // Insertion order is intentionally scrambled.
+        editor.add_connection(Connection::new(osc2, "out", flt1, "in"));
+        editor.add_connection(Connection::new(osc1, "out", flt1, "in"));
+
+        let patch = create_patch_from_editor("Test", &editor, None);
+
+        let actual: Vec<(String, String)> = patch
+            .connections
+            .iter()
+            .map(|c| (c.from.0.clone(), c.to.0.clone()))
+            .collect();
+        let expected = vec![
+            ("osc-1".to_string(), "flt-1".to_string()),
+            ("osc-2".to_string(), "flt-1".to_string()),
+        ];
+        assert_eq!(
+            actual, expected,
+            "connections must be sorted by (from sort_key, ..., to sort_key, ...)"
+        );
+    }
 }
