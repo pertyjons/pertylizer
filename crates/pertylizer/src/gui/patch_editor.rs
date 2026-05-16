@@ -921,6 +921,27 @@ impl PatchEditor {
         }
     }
 
+    /// Move a collapsed group's box to `new_position` and shift every member
+    /// panel by the same delta so the group's internal relative layout is
+    /// preserved when the user expands it again.
+    fn move_collapsed_group(&mut self, group_id: GroupId, new_position: Pos2) {
+        let Some(group) = self.groups.get_mut(&group_id) else {
+            return;
+        };
+        let delta = new_position - group.position;
+        if delta == Vec2::ZERO {
+            return;
+        }
+        group.position = new_position;
+        let members = group.members.clone();
+        for mid in members {
+            if let Some(panel) = self.panels.get_mut(&mid) {
+                panel.position += delta;
+                self.needs_reposition.insert(mid);
+            }
+        }
+    }
+
     fn delete_group(&mut self, group_id: GroupId, result: &mut PatchEditorResult) {
         let Some(group) = self.groups.get(&group_id).cloned() else {
             return;
@@ -3002,11 +3023,9 @@ impl PatchEditor {
                 continue;
             }
 
-            if let Some(area_rect) = ui.memory(|mem| mem.area_rect(area_id))
-                && let Some(group_mut) = self.groups.get_mut(&group_id)
-            {
+            if let Some(area_rect) = ui.memory(|mem| mem.area_rect(area_id)) {
                 let logical_pos = area_rect.min - area_origin + scroll_offset;
-                group_mut.position = snap_to_grid(logical_pos);
+                self.move_collapsed_group(group_id, snap_to_grid(logical_pos));
             }
 
             if toggle_clicked && let Some(group_mut) = self.groups.get_mut(&group_id) {
@@ -4255,25 +4274,9 @@ impl PatchEditor {
         // effect-chain modules, so `align_effect_chain()` is no longer
         // run as a post-pass — it is retained only for explicit
         // user-triggered effect-chain reorders.
-        //
-        // For collapsed-group representatives, shift every member
-        // panel by the same delta as the group box so the group's
-        // internal relative layout is preserved on expand.
         for (module_id, position) in result.positions {
             if let Some(&group_id) = repr_to_group.get(&module_id) {
-                let (delta, members) = if let Some(group) = self.groups.get_mut(&group_id) {
-                    let delta = position - group.position;
-                    group.position = position;
-                    (delta, group.members.clone())
-                } else {
-                    continue;
-                };
-                for mid in members {
-                    if let Some(panel) = self.panels.get_mut(&mid) {
-                        panel.position += delta;
-                        self.needs_reposition.insert(mid);
-                    }
-                }
+                self.move_collapsed_group(group_id, position);
             } else if let Some(panel) = self.panels.get_mut(&module_id) {
                 panel.position = position;
                 self.needs_reposition.insert(module_id);
