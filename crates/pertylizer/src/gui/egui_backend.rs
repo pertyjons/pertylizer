@@ -2263,10 +2263,8 @@ impl eframe::App for SynthApp {
                         // Only here do we clear the MCP pending flag —
                         // a request issued while another view was
                         // active waits until the next Rack frame.
-                        if (result.request_auto_layout || mcp_auto_layout)
-                            && let Some(canvas_rect) = result.canvas_rect
-                        {
-                            patch_editor.apply_auto_layout(canvas_rect, &effect_chain_order);
+                        if result.request_auto_layout || mcp_auto_layout {
+                            patch_editor.apply_auto_layout(&effect_chain_order);
                             self.mark_dirty();
                             #[cfg(feature = "mcp")]
                             if mcp_auto_layout && let Some(shared) = self.mcp_shared.as_ref() {

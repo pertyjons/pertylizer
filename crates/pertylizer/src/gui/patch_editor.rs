@@ -1365,12 +1365,8 @@ impl PatchEditor {
                 scroll_rect
             });
 
-        let scroll_rect = scroll_output.inner;
         let scroll_offset = scroll_output.state.offset;
         let area_origin = visible_rect.min.to_vec2();
-
-        // Store the canvas rect for auto-layout calculations (in logical coordinates)
-        result.canvas_rect = Some(scroll_rect);
 
         // Compute group layout (bounds + hidden modules) before drawing cables
         let group_layout = self.compute_group_layout(area_origin, scroll_offset);
@@ -4187,16 +4183,14 @@ impl PatchEditor {
 
     /// Apply automatic layout to modules based on signal flow.
     ///
-    /// `available_rect` should be the area available for modules (excluding side panels).
+    /// Module positions are placed in the canvas's logical coordinate system
+    /// starting at `(GRID, GRID)`; the surrounding `ScrollArea` grows around
+    /// the result via `content_size()`, so no screen-space rect is needed.
     ///
     /// Collapsed groups are treated as single layout nodes: the group's
     /// collapsed box gets a position from the layout, and member panels
     /// shift in lockstep so their internal relative layout is preserved.
-    pub fn apply_auto_layout(
-        &mut self,
-        available_rect: egui::Rect,
-        effect_chain_order: &[ModuleId],
-    ) {
+    pub fn apply_auto_layout(&mut self, effect_chain_order: &[ModuleId]) {
         use super::auto_layout::{
             CollapsedGroupNode, LayoutConnection, ModuleInfo, calculate_layout_with_chain_order,
             prepare_layout_inputs,
@@ -4265,12 +4259,7 @@ impl PatchEditor {
         let (modules, connections) =
             prepare_layout_inputs(&raw_modules, &raw_connections, &collapsed_nodes);
 
-        let result = calculate_layout_with_chain_order(
-            &modules,
-            &connections,
-            available_rect,
-            effect_chain_order,
-        );
+        let result = calculate_layout_with_chain_order(&modules, &connections, effect_chain_order);
 
         // Auto-layout is now self-contained: the result already places
         // effect-chain modules, so `align_effect_chain()` is no longer
@@ -4307,8 +4296,6 @@ pub struct PatchEditorResult {
     pub connections_to_remove: Vec<Connection>,
     /// Request auto-layout of modules.
     pub request_auto_layout: bool,
-    /// The available canvas area (for auto-layout calculations).
-    pub canvas_rect: Option<egui::Rect>,
     /// Bypass state toggles (module_id, new_bypass_state).
     /// true = bypassed (module is off), false = active (module is on).
     pub bypass_toggles: Vec<(ModuleId, bool)>,

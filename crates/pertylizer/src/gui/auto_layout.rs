@@ -8,7 +8,9 @@
 //! 4. **Modulation placement** one column left of their primary targets (when possible),
 //!    sorted deterministically by `(column, target_row, module_sort_key)`
 //! 5. **Pixel positions** computed from each module's actual rendered size, snapped up
-//!    to whole grid cells, anchored at `available_rect.min + GRID`
+//!    to whole grid cells, anchored at logical `(GRID, GRID)`. Positions are in the
+//!    canvas's logical coordinate system; the surrounding `ScrollArea` grows around
+//!    them via `content_size()`, so no screen-space rect is needed here.
 //!
 //! Layout zones (left→right): Signal columns | Effect-chain column | Global column |
 //! Disconnected column. Within a signal column (top→bottom): signal-chain rows, then
@@ -16,7 +18,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use eframe::egui::{Pos2, Rect, Vec2};
+use eframe::egui::{Pos2, Vec2};
 
 use synth_core::{ModuleCategory, ModuleType};
 use synth_engine::ModuleId;
@@ -676,12 +678,8 @@ fn place_modulation(
 ///    SpectrumAnalyzer, ModMatrix): one vertical column right of the
 ///    effect-chain zone.
 /// 4. **Disconnected** modules: the rightmost column.
-pub fn calculate_layout(
-    modules: &[ModuleInfo],
-    connections: &[LayoutConnection],
-    available_rect: Rect,
-) -> LayoutResult {
-    calculate_layout_with_chain_order(modules, connections, available_rect, &[])
+pub fn calculate_layout(modules: &[ModuleInfo], connections: &[LayoutConnection]) -> LayoutResult {
+    calculate_layout_with_chain_order(modules, connections, &[])
 }
 
 /// Calculate layout with an explicit effect-chain ordering.
@@ -694,7 +692,6 @@ pub fn calculate_layout(
 pub fn calculate_layout_with_chain_order(
     modules: &[ModuleInfo],
     connections: &[LayoutConnection],
-    available_rect: Rect,
     effect_chain_order: &[ModuleId],
 ) -> LayoutResult {
     let mut result = LayoutResult::default();
@@ -806,10 +803,11 @@ pub fn calculate_layout_with_chain_order(
 
     let num_signal_columns = columns.keys().copied().max().map_or(0, |m| m + 1);
 
-    // Start one grid cell in from the rect origin, snapped up to a grid line.
-    // `Rect::min` of `(0, 0)` collapses to the historical `(GRID, GRID)` origin.
-    let start_x = snap_to_grid_up(available_rect.min.x + GRID);
-    let start_y = snap_to_grid_up(available_rect.min.y + GRID);
+    // Module positions are in logical canvas coordinates. Always start at
+    // (GRID, GRID); the surrounding `ScrollArea` grows around the resulting
+    // content via `content_size()`.
+    let start_x = GRID;
+    let start_y = GRID;
 
     // Compute column widths = max snapped width of modules in that column + GAP
     let mut col_widths: Vec<f32> = vec![0.0; num_signal_columns];
@@ -941,18 +939,13 @@ fn snap_size_to_grid(size: Vec2) -> Vec2 {
     Vec2::new((size.x / GRID).ceil() * GRID, (size.y / GRID).ceil() * GRID)
 }
 
-/// Snap a position value up to the next grid line.
-#[must_use]
-fn snap_to_grid_up(value: f32) -> f32 {
-    (value / GRID).ceil() * GRID
-}
-
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use eframe::egui::Rect;
 
     /// Default test size for modules.
     const TEST_SIZE: Vec2 = Vec2::new(200.0, 180.0);
@@ -969,13 +962,9 @@ mod tests {
         }
     }
 
-    fn test_rect() -> Rect {
-        Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1600.0, 1000.0))
-    }
-
     #[test]
     fn test_empty_layout() {
-        let result = calculate_layout(&[], &[], test_rect());
+        let result = calculate_layout(&[], &[]);
         assert!(result.positions.is_empty());
     }
 
@@ -985,20 +974,18 @@ mod tests {
             make_id(ModuleType::Oscillator, 1),
             ModuleCategory::Oscillator,
         )];
-        let rect = test_rect();
-        let result = calculate_layout(&modules, &[], rect);
+        let result = calculate_layout(&modules, &[]);
 
         let pos = result
             .positions
             .get(&make_id(ModuleType::Oscillator, 1))
             .unwrap();
-        assert!(pos.x >= rect.min.x);
-        assert!(pos.y >= rect.min.y);
+        assert_eq!(pos.x, GRID);
+        assert_eq!(pos.y, GRID);
     }
 
     #[test]
     fn test_linear_chain_within_bounds() {
-        let rect = test_rect();
         let modules = vec![
             make_module(
                 make_id(ModuleType::Oscillator, 1),
@@ -1018,12 +1005,11 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
 
-        // All positions should be within bounds
         for pos in result.positions.values() {
-            assert!(pos.x >= rect.min.x, "x {} < min {}", pos.x, rect.min.x);
-            assert!(pos.y >= rect.min.y, "y {} < min {}", pos.y, rect.min.y);
+            assert!(pos.x >= GRID);
+            assert!(pos.y >= GRID);
         }
 
         // Should be left to right
@@ -1045,7 +1031,6 @@ mod tests {
 
     #[test]
     fn test_modulation_below_and_within_bounds() {
-        let rect = test_rect();
         let modules = vec![
             make_module(
                 make_id(ModuleType::Oscillator, 1),
@@ -1065,7 +1050,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
 
         let osc_pos = result
             .positions
@@ -1089,16 +1074,14 @@ mod tests {
             "Envelope should align with the previous column"
         );
 
-        // All within bounds
         for pos in result.positions.values() {
-            assert!(pos.x >= rect.min.x);
-            assert!(pos.y >= rect.min.y);
+            assert!(pos.x >= GRID);
+            assert!(pos.y >= GRID);
         }
     }
 
     #[test]
     fn test_disconnected_modules_in_corner() {
-        let rect = test_rect();
         let modules = vec![
             // Connected chain
             make_module(
@@ -1121,7 +1104,7 @@ mod tests {
             to_module: make_id(ModuleType::Filter, 2),
         }];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
 
         let connected_pos_1 = result
             .positions
@@ -1153,7 +1136,6 @@ mod tests {
 
     #[test]
     fn test_multi_source_to_mixer() {
-        let rect = test_rect();
         let modules = vec![
             make_module(
                 make_id(ModuleType::Oscillator, 1),
@@ -1176,7 +1158,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
 
         let osc1 = result
             .positions
@@ -1212,7 +1194,6 @@ mod tests {
 
     #[test]
     fn test_complex_patch() {
-        let rect = test_rect();
         let modules = vec![
             make_module(
                 make_id(ModuleType::Oscillator, 1),
@@ -1249,7 +1230,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
 
         let osc = result
             .positions
@@ -1294,7 +1275,6 @@ mod tests {
 
     #[test]
     fn test_no_overlap() {
-        let rect = test_rect();
         let modules = vec![
             make_module(
                 make_id(ModuleType::Oscillator, 1),
@@ -1336,7 +1316,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
         let positions: Vec<(ModuleId, Pos2)> = result
             .positions
             .iter()
@@ -1364,7 +1344,6 @@ mod tests {
 
     #[test]
     fn test_output_rightmost() {
-        let rect = test_rect();
         let modules = vec![
             make_module(
                 make_id(ModuleType::Oscillator, 1),
@@ -1384,7 +1363,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
 
         let osc = result
             .positions
@@ -1411,7 +1390,6 @@ mod tests {
 
     #[test]
     fn test_effect_in_signal_chain() {
-        let rect = test_rect();
         let modules = vec![
             make_module(
                 make_id(ModuleType::Oscillator, 1),
@@ -1431,7 +1409,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
 
         let osc = result
             .positions
@@ -1452,7 +1430,6 @@ mod tests {
 
     #[test]
     fn test_utility_in_signal_chain() {
-        let rect = test_rect();
         let modules = vec![
             make_module(
                 make_id(ModuleType::Oscillator, 1),
@@ -1472,7 +1449,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
 
         let osc = result
             .positions
@@ -1493,7 +1470,6 @@ mod tests {
 
     #[test]
     fn test_no_overlap_mixed_sizes() {
-        let rect = test_rect();
         // Simulate realistic mixed sizes: small oscillator, tall envelope, wide mixer
         let modules = vec![
             ModuleInfo {
@@ -1550,7 +1526,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
 
         // Build rects from positions + snapped sizes
         let sizes: HashMap<ModuleId, Vec2> = modules.iter().map(|m| (m.id, m.size)).collect();
@@ -1586,7 +1562,6 @@ mod tests {
     /// column should stack top-to-bottom in target-row order.
     #[test]
     fn test_modulators_follow_target_row_order() {
-        let rect = test_rect();
         let osc1 = make_id(ModuleType::Oscillator, 1);
         let osc2 = make_id(ModuleType::Oscillator, 2);
         let osc3 = make_id(ModuleType::Oscillator, 3);
@@ -1652,7 +1627,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
 
         let top = *result.positions.get(&env_top).unwrap();
         let mid = *result.positions.get(&env_mid).unwrap();
@@ -1686,7 +1661,6 @@ mod tests {
     /// must be `module_sort_key` (deterministic), not `HashMap` iteration.
     #[test]
     fn test_modulators_same_target_row_tie_break() {
-        let rect = test_rect();
         let osc = make_id(ModuleType::Oscillator, 1);
         let flt = make_id(ModuleType::Filter, 1);
         // Same module_type so the sort key differs only on `instance`.
@@ -1714,7 +1688,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
         let a = *result.positions.get(&env_a).unwrap();
         let b = *result.positions.get(&env_b).unwrap();
 
@@ -1741,7 +1715,6 @@ mod tests {
     /// guards against regressions in later phases.
     #[test]
     fn test_effects_in_chain_plus_disconnected_no_overlap() {
-        let rect = test_rect();
         let osc = make_id(ModuleType::Oscillator, 1);
         let delay = make_id(ModuleType::Delay, 1);
         let reverb = make_id(ModuleType::Reverb, 1);
@@ -1772,7 +1745,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_layout(&modules, &connections, rect);
+        let result = calculate_layout(&modules, &connections);
 
         // No pair of modules overlaps (snapped rects).
         let sizes: HashMap<ModuleId, Vec2> = modules.iter().map(|m| (m.id, m.size)).collect();
@@ -1812,7 +1785,6 @@ mod tests {
     /// effect-chain zone in chain order — not in the Disconnected column.
     #[test]
     fn test_effects_without_cables_classified_as_effect_chain() {
-        let rect = test_rect();
         let osc = make_id(ModuleType::Oscillator, 1);
         let out = make_id(ModuleType::StereoOutput, 1);
         let delay = make_id(ModuleType::Delay, 1);
@@ -1834,7 +1806,7 @@ mod tests {
         }];
         let chain_order = vec![reverb, delay]; // chain order is reverb-first
 
-        let result = calculate_layout_with_chain_order(&modules, &connections, rect, &chain_order);
+        let result = calculate_layout_with_chain_order(&modules, &connections, &chain_order);
 
         let delay_pos = *result.positions.get(&delay).unwrap();
         let reverb_pos = *result.positions.get(&reverb).unwrap();
@@ -1956,7 +1928,6 @@ mod tests {
     /// the result, and the group node takes one rectangle.
     #[test]
     fn test_calculate_layout_with_collapsed_group_node() {
-        let rect = test_rect();
         let osc = make_id(ModuleType::Oscillator, 1);
         let delay = make_id(ModuleType::Delay, 1);
         let reverb = make_id(ModuleType::Reverb, 1);
@@ -1994,7 +1965,7 @@ mod tests {
         let (folded_modules, folded_conns) =
             prepare_layout_inputs(&modules, &connections, &collapsed);
 
-        let result = calculate_layout_with_chain_order(&folded_modules, &folded_conns, rect, &[]);
+        let result = calculate_layout_with_chain_order(&folded_modules, &folded_conns, &[]);
 
         // Reverb (hidden member) must not appear; delay (representative) must.
         assert!(
@@ -2020,11 +1991,11 @@ mod tests {
         );
     }
 
-    /// Phase 4: when `available_rect.min` is non-zero, generated positions
-    /// must start from the rect origin plus grid padding — not from (GRID, GRID).
+    /// Module positions are in the canvas's logical coordinate system and
+    /// always anchored at `(GRID, GRID)`. The surrounding `ScrollArea` grows
+    /// around the result via `content_size()`, so auto-layout takes no rect.
     #[test]
-    fn test_non_zero_rect_origin_offsets_positions() {
-        let rect = Rect::from_min_max(Pos2::new(500.0, 300.0), Pos2::new(2000.0, 1500.0));
+    fn test_layout_origin_is_grid_grid() {
         let osc = make_id(ModuleType::Oscillator, 1);
         let out = make_id(ModuleType::StereoOutput, 1);
         let modules = vec![
@@ -2036,24 +2007,7 @@ mod tests {
             to_module: out,
         }];
 
-        let result = calculate_layout(&modules, &connections, rect);
-
-        for (id, pos) in &result.positions {
-            assert!(
-                pos.x >= rect.min.x,
-                "{:?} at x={} below rect.min.x={}",
-                id,
-                pos.x,
-                rect.min.x
-            );
-            assert!(
-                pos.y >= rect.min.y,
-                "{:?} at y={} below rect.min.y={}",
-                id,
-                pos.y,
-                rect.min.y
-            );
-        }
+        let result = calculate_layout(&modules, &connections);
 
         let leftmost_x = result
             .positions
@@ -2065,16 +2019,7 @@ mod tests {
             .values()
             .map(|p| p.y)
             .fold(f32::INFINITY, f32::min);
-        // First placement should sit within one grid cell of rect.min plus the inset.
-        assert!(
-            leftmost_x < rect.min.x + 2.0 * GRID,
-            "leftmost x should be near rect.min.x + GRID, got {}",
-            leftmost_x
-        );
-        assert!(
-            topmost_y < rect.min.y + 2.0 * GRID,
-            "topmost y should be near rect.min.y + GRID, got {}",
-            topmost_y
-        );
+        assert_eq!(leftmost_x, GRID, "leftmost x must equal GRID");
+        assert_eq!(topmost_y, GRID, "topmost y must equal GRID");
     }
 }
