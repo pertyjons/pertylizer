@@ -1026,7 +1026,60 @@ same edit pass on `classify_role` and `role_from_name`. Verified end-to-end agai
 "Neuro F#m 174" project: Arp Lead now resolves as `lead 0.90` (previously `pluck 0.40` with
 name-conflict), Impact resolves as `drums 1.00` (previously `drums 0.60` at the threshold edge).
 
-### 8.6 Cross-reference
+### 8.6 Next-session priorities (added 2026-05-16)
+
+With every §8 item closed and Tier-1 items 4–10 plus 13 shipped, the next concrete work splits into natural
+groups. Order chosen to maximize shared infrastructure per PR and to land the highest-leverage items first.
+
+**Group A — Patch-QA sweeps (Tier-1 #11 + Tier-2 #19)**
+
+`analyze_instrument_range` and `analyze_velocity_response` are both `analyze_note`-driven sweeps with the same
+plumbing: loop over a parameter (MIDI note or velocity), call the existing single-note render path per step,
+collect per-step metrics, return a curve plus stability flags. Shared result-struct shape (per-step entries +
+overall warnings), shared aliasing/non-monotonic detection helpers, shared "render N notes against one
+instrument" infrastructure. Build as one unit in `crates/pertylizer/src/analysis/patch_sweep.rs` (or similar)
+so the helpers don't get duplicated.
+
+**Group B — Symbolic composition helpers (Tier-2 #17 — four tools)**
+
+`generate_chord`, `transpose_notes`, `quantize_notes_to_scale`, `quantize_notes_to_grid`. All purely symbolic,
+no audio render, share a scale/interval theory module (chord templates, scale-degree tables, voicing rules —
+much of which already lives in `analyze_harmony`'s identifier). Land in one PR under
+`crates/pertylizer/src/composition/`. Big token-cost-per-musical-idea reduction for the AI agent — turns
+20-call note-edit sequences into 1-call operations.
+
+**Group C — Form & motifs (Tier-2 #15 + #20)**
+
+`find_motifs` / `analyze_hook_strength` and `analyze_arrangement` / `analyze_form_map` both consume the
+same underlying matrix: bar-level features (pitch histogram, rhythmic density, instrument activity) ×
+self-similarity. Building them together avoids two divergent feature-extractor implementations. Symbolic
+only — no audio rendering required for the first deterministic version.
+
+**Group D — Meta-analysis (Tier-2 #14 + #16)**
+
+`analyze_tension_curve` first — consumes the existing harmony/dynamics/spectral analyzers and produces a
+bar-level curve. Then `suggest_music_fixes` on top, which consumes everything including the tension curve
+and ranks concrete edits. Tension-curve is the data source; suggest_music_fixes is the packaging layer.
+
+**Standalone / lower priority**
+
+- **Tier-1 #12 `render_section_to_wav`** — wait until the reference-comparison workflow comes up. It's the
+  prerequisite for Tier-3 `compare_to_reference`, so pick up when that becomes relevant rather than
+  speculatively.
+- **Tier-2 #18 `analyze_groove`** — the drum-specific `analyze_drum_groove` already covers the highest-value
+  groove diagnostic. Generic-track groove is lower urgency.
+
+**Recommended landing order**
+
+1. **Group A** — smallest scope, clear design path via `analyze_note`, catches a concrete real bug class
+   (patches that work at C4 and fall apart at C6 or C2). One PR.
+2. **Group B** — low risk, high token-saving impact for the agent. One PR.
+3. **Group C** — needs design work (what counts as a motif, what counts as a section boundary), but
+   unlocks long-form composition feedback. One PR or two depending on size.
+4. **Group D** — depends on the analyzers from earlier groups being in place. Tension curve before
+   suggest_music_fixes.
+
+### 8.7 Cross-reference
 
 §8.1 is fully fixed (Round 1 + Round 2); §4's "deterministic output for a given project state" claim holds
 bit-exact end-to-end through the MCP bridge, not just inside the determinism unit tests. §8.2 (auto-inferred
