@@ -25,7 +25,8 @@ use pertylizer::synth_engine::{AllocationMode, AllocatorConfig, SynthEngine};
 const MCP_PORT: u16 = 9850;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!(
+    // stderr so stdout stays a clean JSON-RPC channel in --headless mode.
+    eprintln!(
         "Pertylizer v{} ({})",
         env!("CARGO_PKG_VERSION"),
         env!("BUILD_DATE"),
