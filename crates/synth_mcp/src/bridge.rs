@@ -696,6 +696,67 @@ pub trait SynthBridge: Send + Sync + 'static {
         pattern_id: u32,
     ) -> Result<crate::types::AnalyzePatternResult, McpBridgeError>;
 
+    /// Symbolic drum-feel diagnostics. Identifies drum tracks via the same
+    /// `infer_all_profiles` path that `analyze_harmony`'s `exclude_drums`
+    /// default uses, classifies each hit (kick / snare / hat / tom / cymbal /
+    /// clap / other) via the General MIDI drum map, and reports backbeat
+    /// strength, hat subdivision, ghost-note count, fill candidates, and
+    /// bar-level repetition. Pure symbolic — no audio rendering.
+    ///
+    /// Scope is selected by which fields are `Some`:
+    /// - `pattern_id = Some(p)` analyzes one pattern's notes (no drum-track
+    ///   filtering — assumes the pattern is a drum pattern).
+    /// - otherwise analyzes drum tracks in the arrangement range
+    ///   `[arrangement_start_tick, arrangement_end_tick)`. When both are
+    ///   `None`, the full arrangement is analyzed.
+    fn analyze_drum_groove(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+    ) -> Result<crate::types::AnalyzeDrumGrooveResult, McpBridgeError>;
+
+    /// Symbolic kick/bass-lock diagnostics. Pure symbolic — no audio
+    /// rendering. In arrangement scope, identifies drum tracks (Role::Drums,
+    /// confidence ≥ 0.6) and bass tracks (Role::Bass, confidence ≥ 0.6) via
+    /// `infer_all_profiles`, then aligns kick onsets (GM MIDI 35/36) against
+    /// bass note onsets within a tolerance and reports lock_score,
+    /// coverage_score, kick-only / bass-only counts, and a bass-pitch
+    /// stability summary.
+    ///
+    /// `onset_tolerance_ticks` defaults to 120 (±1/32-note at 960 PPQN);
+    /// clamped to `[30, 960]`.
+    ///
+    /// In pattern scope, the analyzer treats every note with a kick-mapped
+    /// MIDI number as a kick and every other note as bass — useful for
+    /// rhythm-section patterns that are stored as a single combined pattern.
+    fn analyze_bass_drum_lock(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        onset_tolerance_ticks: Option<u32>,
+    ) -> Result<crate::types::AnalyzeBassDrumLockResult, McpBridgeError>;
+
+    /// Tonal-function analysis on top of `analyze_harmony`. Runs the same
+    /// chord-identification + key-inference pipeline, then annotates each
+    /// chord event with a scale-degree Roman numeral, a function bucket
+    /// (Tonic / Subdominant / Dominant / Other / Chromatic), and a 0..1
+    /// tension score, and detects cadences (Authentic V → I, Plagal IV → I,
+    /// Half — anything → V, Deceptive V → vi) on consecutive chord pairs.
+    ///
+    /// Parameters mirror `analyze_harmony`: pattern scope when
+    /// `pattern_id = Some(p)`, arrangement range otherwise.
+    fn analyze_harmonic_function(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        grouping_ticks: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<crate::types::AnalyzeHarmonicFunctionResult, McpBridgeError>;
+
     /// Render `duration_seconds` of the master bus offline and return
     /// mix-level metrics (LUFS-I, true peak proxy, RMS, crest factor, banded
     /// energy, stereo correlation, mid/side, mono-compatibility).

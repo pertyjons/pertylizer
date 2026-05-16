@@ -1,5 +1,124 @@
 # Version History
 
+## [0.283.0] - 2026-05-16
+### MCP music tools — Tier-1 items 7, 8, 10: drum-groove, bass-drum-lock, harmonic-function
+
+Closes the next batch of `docs/mcp-music-tools-plan.md` Tier-1 work. Three
+new pure-symbolic MCP analyzers, each scoped to a pattern or to an
+arrangement range, sharing the same `infer_all_profiles` instrument-role
+inference that `analyze_harmony`'s drum filter already uses. All three
+return one typed result struct per call and emit non-fatal warnings when
+the scope is empty or ambiguous.
+
+#### `crates/pertylizer/src/analysis/drum_groove.rs` — `analyze_drum_groove`
+
+Drum-feel diagnostics that explain *why* an AI-written beat sounds flat
+without listening. Classifies every drum hit via the General MIDI drum
+map (kick / snare / closed-hat / open-hat / tom / cymbal / clap / other —
+unknown notes fall through to `other` so custom drum maps still produce
+a usable analysis) and reports:
+
+- **Backbeat strength** — fraction of expected backbeat positions (beats
+  2 and 4 in 4/4, beat 2 in 3/4) that carry a snare hit within a 16th-note
+  tolerance. `0.0` = no backbeat, `1.0` = tight.
+- **Hat subdivision** — dominant IOI between hat onsets, classified as
+  `quarter` / `8th` / `16th` / `triplet_8th` / `triplet_16th` / `irregular`
+  / `none`. Requires ≥ 60% of IOIs to match a single subdivision to lock
+  in a name; everything else stays `irregular`.
+- **Ghost notes** — snare hits below half the loudest snare velocity, only
+  reported when both quiet and loud snares are present.
+- **Fill candidates** — bars whose drum density exceeds 2× the scope mean.
+- **Bar repetition** — distinct bar signatures over a 32nd-note grid,
+  expressed as `1.0 - (distinct-1)/(total-1)`.
+
+In arrangement scope the analyzer pulls notes only from tracks classified
+as `Role::Drums` with confidence ≥ 0.6 and reports each contributing track
+in the result (`drum_tracks`). In pattern scope it treats every note in
+the pattern as a drum hit so combined-rhythm patterns can be inspected
+directly. 13 unit tests cover the GM mapping, empty/zero-length scopes,
+out-of-bounds notes, every backbeat case, hat subdivision detection,
+ghost notes, fills, and the repetition extremes.
+
+#### `crates/pertylizer/src/analysis/bass_drum_lock.rs` — `analyze_bass_drum_lock`
+
+Kick/bass relationship answers "does the bass actually work with the
+beat?". Identifies kicks (GM MIDI 35/36 hits on drum tracks) and bass
+(`Role::Bass` confidence ≥ 0.6), then aligns onsets within an
+`onset_tolerance_ticks` window (default 120 = ±1/32-note at 960 PPQN,
+clamped to [30, 960]). Reports:
+
+- **`alignment`** — `matched_onsets`, `kick_only`, `bass_only`,
+  `lock_score` = matched/total kicks (how often the kick gets bass
+  support), `coverage_score` = matched/total bass onsets (how often the
+  bass has a kick beneath it).
+- **`bass_pitch`** — most common pitch class on matched onsets and its
+  share, plus distinct PC counts on-kick vs total. High `on_kick_root_share`
+  is the fingerprint of a rooted bass line; low share + many distinct
+  PCs is a walking/melodic bass.
+
+Pattern scope treats GM-kick-mapped notes as kicks and everything else as
+bass, useful for combined rhythm-section patterns. The closest-bass-to-kick
+matcher inside the tolerance window is O(K·B); fine for symbolic inputs.
+11 unit tests cover the perfect-lock and no-overlap cases, tolerance
+clamping, duplicate-kick collapse, the bass-only / kick-only counts, and
+the most-common-PC detection.
+
+#### `crates/pertylizer/src/analysis/harmonic_function.rs` — `analyze_harmonic_function`
+
+Tonal-function layer on top of `analyze_harmony`. Runs the same chord-
+identification + key-inference pipeline (so the drum-exclusion behaviour
+stays in lock-step), then annotates each chord event:
+
+- **Scale degree (1..=7)** for diatonic chords, omitted otherwise.
+- **Roman numeral with quality decoration** — `I`, `V7`, `IV`, `vii°`,
+  `ø7` for half-diminished, `°7` for fully-diminished, `bII` / `bIII` /
+  `bVI` / `bVII` for common chromatic alterations.
+- **Function bucket** — `tonic` / `subdominant` / `dominant` / `other`
+  (mediants iii, vi, III, VI) / `chromatic` (non-diatonic roots).
+- **Per-chord tension** — function base (T 0.0 / S 0.3 / D 0.7 / Other
+  0.5 / Chromatic 1.0) plus +0.15 for dominant 7ths and +0.2 for
+  diminished / half-diminished qualities.
+- **Cadence** — detected on consecutive chord pairs: Authentic (V → I),
+  Plagal (IV → I), Half-cadence (anything → V), Deceptive (V → vi).
+
+Aggregate output adds a `function_distribution` count and a `tension`
+summary (mean / peak / trough / std dev) so callers can answer "where
+does the tension peak?" or "does this song actually resolve?" without
+walking the chord array themselves. The leading-tone (interval 11 from
+tonic in minor) gets a dominant function when it carries a major or
+dominant-7 quality — captures the harmonic-minor `V` borrowed pattern.
+12 unit tests cover the I-IV-V-I authentic cadence, plagal/deceptive/
+half cadences, minor-key labels, chromatic chords, tension peaks on V7,
+the no-key fallback, and the missing-chord edge case.
+
+#### Wiring — types, trait, bridge, server
+
+- `crates/synth_mcp/src/types.rs` — three new wire-format result structs
+  with full doc comments (`AnalyzeDrumGrooveResult`, `AnalyzeBassDrumLockResult`,
+  `AnalyzeHarmonicFunctionResult`) plus their nested types
+  (`DrumComposition` / `DrumBackbeat` / `DrumHat` / `DrumGhostNotes` /
+  `DrumFills` / `DrumRepetition` / `DrumTrackInfo` / `BassTrackInfo` /
+  `BassDrumAlignment` / `BassPitchStability` / `ChordFunctionEvent` /
+  `HarmonicCadenceEvent` / `FunctionDistribution` / `TensionStats`). Cadence
+  kinds and function buckets travel as snake_case strings.
+- `crates/synth_mcp/src/bridge.rs` — three new `SynthBridge` trait methods
+  with doc comments describing scope, parameters, and tolerance handling.
+- `crates/pertylizer/src/mcp_bridge.rs` — three impl functions
+  (`analyze_drum_groove_impl`, `analyze_bass_drum_lock_impl`,
+  `analyze_harmonic_function_impl`) plus a shared `resolve_arrangement_range`
+  helper. `analyze_harmonic_function_impl` reuses `analyze_song_harmony`
+  end-to-end so chord identification and drum exclusion stay identical.
+- `crates/synth_mcp/src/server.rs` — three new MCP tools registered:
+  `analyze_drum_groove`, `analyze_bass_drum_lock`, `analyze_harmonic_function`,
+  each with an extensive `#[tool(description = ...)]` block explaining
+  the metric semantics and when to reach for them.
+
+#### Test coverage
+
+36 new unit tests across the three analyzer modules; the full pertylizer
+test suite is now 181 unit tests, all passing. `cargo build`, `cargo
+clippy --all-targets`, `cargo test`, `cargo fmt --check` are all clean.
+
 ## [0.282.0] - 2026-05-16
 ### MCP mix analysis: true peak, LUFS-S/M, analytical `pre_master_peak`
 

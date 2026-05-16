@@ -9,7 +9,7 @@
 
 ## 0. Status snapshot
 
-### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), v0.278.0 (auto-inferred profiles), and 74d18da + 93c0786 (offline-render fixes, `get_instrument_profiles`, inference round 2)
+### Shipped — v0.276.0 (Tier 0), v0.277.0 (Tier-1 first wave), v0.278.0 (auto-inferred profiles), 74d18da + 93c0786 (offline-render fixes, `get_instrument_profiles`, inference round 2), and v0.283.0 (drum-groove + bass-drum-lock + harmonic-function)
 
 | Tool | Version | Notes |
 |------|---------|-------|
@@ -18,6 +18,9 @@
 | `analyze_section` | v0.276.0 + v0.277.0 + 74d18da | Same metrics as `analyze_mix_bus` but takes explicit `[start_tick, end_tick)`. **v0.277.0 added per-track contribution breakdown**: `include_per_track` (default false) opts in to one extra soloed render per audible track that overlaps the section, returning `TrackContribution { track_id, track_name, instrument_id, peak, peak_dbfs, rms, rms_dbfs, lufs_integrated, energy_bands, clipped_samples, rms_share }`. Soloing is implemented by cloning the song, setting only the target track's `solo = true`, and rendering via `render_arrangement_to_buffer_with_song`. **74d18da** propagated samples per soloed render so per-track contributions on sample-based instruments report real metrics. |
 | `get_instrument_profiles` | 93c0786 | Returns `Vec<InstrumentProfileResult>`, one entry per instrument routed to by at least one track. Each profile carries the inferred `role` plus a `confidence: 0.0..=1.0` and a `signals` trail listing every axis that contributed (`decision`, `name`, `envelope`, `graph`, `pattern`, `manual`). Same inference path that `analyze_harmony`'s `exclude_drums = true` uses — exposed directly so users can debug or override the classification. Manual `set_instrument_category` short-circuits the decision tree and reports as `manual-override` with confidence 1.0. Wire format uses snake_case strings for role/envelope_shape/etc. so the MCP type stays decoupled from pertylizer-internal enums. |
 | `analyze_pattern` | 2026-05-16 | Pure symbolic single-pattern analyzer; no audio render. Reads a pattern's notes directly and reports `density` (notes per bar/beat, active ratio), `pitch` (low/high/range, mean, distinct count, duration-weighted pitch-class histogram), `velocity` (min/max/mean/std/range), `rhythm` (max/mean polyphony, monophonic flag, distinct onsets+durations, IOI mean+std, regularity score), and `repetition` (distinct bar signatures quantized to a 32nd-note grid, repetition score). `length_bars` and `notes_per_bar` use the song's default time signature. Notes that start past the pattern length are dropped with a warning. Implementation in `crates/pertylizer/src/analysis/pattern_analysis.rs`; bridge in `analyze_pattern_impl`. Closes Tier-1 #6. |
+| `analyze_drum_groove` | v0.283.0 | Pure-symbolic drum-feel diagnostics. Pattern or arrangement scope. In arrangement scope identifies drum tracks via `infer_all_profiles` (Role::Drums, confidence ≥ 0.6) and pulls notes from them; pattern scope treats every note as a drum hit. Classifies each note via the GM drum map (kick / snare / closed-hat / open-hat / tom / cymbal / clap / other — unknown notes still flow through as `other` for custom maps). Reports `composition` (per-component counts), `backbeat` (snare hits on beats 2/4 within a 16th-note tolerance — strength + matched + off-backbeat counts), `hat` (subdivision in `quarter`/`8th`/`16th`/`triplet_8th`/`triplet_16th`/`irregular`/`none`, density per beat, hat count), `ghost_notes` (snare hits below half the loudest snare velocity, only counted when both quiet and loud snares are present), `fills` (bar density exceeding 2× scope mean), `repetition` (distinct bar signatures on a 32nd-note grid). 13 unit tests. Implementation in `crates/pertylizer/src/analysis/drum_groove.rs`; bridge in `analyze_drum_groove_impl`. Closes Tier-1 #7. |
+| `analyze_bass_drum_lock` | v0.283.0 | Pure-symbolic kick/bass relationship. Identifies drum tracks (Role::Drums, conf ≥ 0.6) and bass tracks (Role::Bass, conf ≥ 0.6) via the same `infer_all_profiles` path. Aligns kick onsets (GM MIDI 35/36) against bass-note onsets within `onset_tolerance_ticks` (default 120 = ±1/32-note at 960 PPQN, clamped to [30, 960]). Returns `alignment` (matched / kick-only / bass-only counts plus `lock_score = matched/kicks` and `coverage_score = matched/bass`) and `bass_pitch` (most common pitch class on matched onsets + its share + distinct PC counts on-kick vs total + mean bass MIDI). Pattern scope splits a combined rhythm-section pattern into kicks (GM kick MIDI) and bass (everything else). 11 unit tests. Implementation in `crates/pertylizer/src/analysis/bass_drum_lock.rs`; bridge in `analyze_bass_drum_lock_impl`. Closes Tier-1 #8. |
+| `analyze_harmonic_function` | v0.283.0 | Tonal-function annotation on top of `analyze_harmony`. Same scope params (pattern_id or arrangement range, `grouping_ticks`, `exclude_drums`, `exclude_track_ids`). Reuses `analyze_song_harmony` end-to-end so chord identification, key inference, and drum exclusion stay in lock-step. For every chord event: scale degree (1..=7 for diatonic), Roman numeral with quality decoration (`I`, `V7`, `ii7`, `vii°`, `ø7`, `°7`, plus `bII`/`bIII`/`bVI`/`bVII` for chromatic), function bucket (`tonic`/`subdominant`/`dominant`/`other`/`chromatic`, simplified Riemannian), and tension (function base + 0.15 for dom7 + 0.2 for dim/half-dim). Detects cadences on consecutive pairs: Authentic (V → I), Plagal (IV → I), Half (anything → V), Deceptive (V → vi). Returns the chord stream, cadence index list, function distribution (T/S/D/Other/Chromatic counts), and tension stats (mean/peak/trough/std-dev). Leading-tone in minor (interval 11) labeled as Dominant when the chord has major or dominant-7 quality (covers borrowed `V` from harmonic minor). 12 unit tests. Implementation in `crates/pertylizer/src/analysis/harmonic_function.rs`; bridge in `analyze_harmonic_function_impl`. Closes Tier-1 #10. |
 
 ### Deferred / in-progress
 
@@ -172,17 +175,12 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
    bar-level repetition (distinct bar signatures quantized to a 32nd-note grid, repetition score).
    Implementation lives in `crates/pertylizer/src/analysis/pattern_analysis.rs`; bridge in
    `analyze_pattern_impl`.
-7. **`analyze_drum_groove`** — Drum-specific feel analysis is more actionable than a generic groove score:
-   backbeat strength, hat subdivision, fills, ghost notes, and repeated-bar sameness are exactly the issues that
-   make AI-written beats sound flat. Pure symbolic path, using the shipped instrument-profile inference.
-8. **`analyze_bass_drum_lock`** — The kick/bass relationship carries a large share of perceived groove and
-   low-end clarity in electronic music. This gives the AI concrete answers to "does the bass actually work with
-   the beat?" without requiring external models.
+7. ✅ **`analyze_drum_groove`** — shipped 2026-05-16. Drum-specific feel analysis is more actionable than a generic groove score: backbeat strength, hat subdivision, fills, ghost notes, and repeated-bar sameness — the exact dimensions that make AI-written beats sound flat. Pure symbolic, built on the instrument-profile inference.
+8. ✅ **`analyze_bass_drum_lock`** — shipped 2026-05-16. The kick/bass relationship carries a large share of perceived groove and low-end clarity. Gives concrete answers to "does the bass actually work with the beat?" via onset alignment with a configurable tolerance, plus a bass-pitch-stability summary on matched onsets.
 9. **`analyze_masking_matrix`** — Extends the shipped per-track contribution work from "which track owns which
    band?" to "which track conflicts with which other track?". High mix utility once `analyze_section` can render
    per-track contributions deterministically.
-10. **`analyze_harmonic_function`** — Chord labels and key fit are useful; functional roles, cadence candidates,
-    and phrase-level tension are what let the AI reason about progression quality and direction.
+10. ✅ **`analyze_harmonic_function`** — shipped 2026-05-16. Roman numerals + simplified Riemannian function buckets + per-chord tension + cadence detection (authentic/plagal/half/deceptive). Built on `analyze_harmony` so chord ID + key inference + drum exclusion stay in lock-step.
 11. **`analyze_instrument_range`** — Catches the bug class where a patch sounds great at C4 in `analyze_note` and
    falls apart at C6 or C2. Especially important once an AI is committing patches into a project without a human
    playing test notes.
@@ -272,10 +270,10 @@ Sorted by how much each tool removes a current blind spot, weighted by how often
 4. ✅ Per-track contribution breakdown for `analyze_section` — v0.277.0.
 5. ✅ Drum-track filtering on `analyze_harmony` — v0.277.0.
 6. ✅ `analyze_pattern` — shipped 2026-05-16. Pure symbolic, no audio render.
-7. `analyze_drum_groove` — pure symbolic drum feel diagnostics, using inferred drum profiles.
-8. `analyze_bass_drum_lock` — symbolic groove + low-end relationship between kick, bass, and chord roots.
+7. ✅ `analyze_drum_groove` — shipped 2026-05-16. Pure symbolic drum-feel diagnostics built on `infer_all_profiles`. Reports backbeat strength, hat subdivision, ghost notes, fill candidates, bar repetition; classifies hits via the General MIDI drum map (kick/snare/hat/tom/cymbal/clap/other).
+8. ✅ `analyze_bass_drum_lock` — shipped 2026-05-16. Symbolic kick/bass-onset alignment with configurable tolerance (default ±1/32-note). Returns lock_score / coverage_score / kick-only / bass-only counts plus bass-pitch stability (most common PC on matched onsets).
 9. `analyze_masking_matrix` — pairwise per-track spectral masking on top of deterministic solo renders.
-10. `analyze_harmonic_function` — Roman numerals, functional roles, cadence/tension analysis on top of harmony.
+10. ✅ `analyze_harmonic_function` — shipped 2026-05-16. Roman numerals + Tonic/Subdominant/Dominant/Other/Chromatic function buckets + per-chord tension (T 0.0 / S 0.3 / D 0.7, +0.15 for dom7, +0.2 for dim/half-dim) + cadence detection (authentic/plagal/half/deceptive) on top of `analyze_harmony`.
 11. `analyze_instrument_range` — sweep on top of `analyze_note`.
 12. `render_section_to_wav` — generalization of the renderer that writes out instead of analyzing.
 13. ✅ True-peak + LUFS-S/M on `analyze_mix_bus` — shipped 2026-05-16.
@@ -1013,5 +1011,7 @@ doc fix (pan-law attenuation in per-track peak/RMS) and the optional `pre_master
 2026-05-16. All five §8.5 round-3 inference follow-ups (§8.5.1–§8.5.5) shipped 2026-05-16. §8.5.6.1
 (Plucked-Mono-Lead misclassification) and §8.5.6.2 (0.60-threshold margin for name-conflict drums) — both
 surfaced by the 2026-05-16 end-to-end verification on the "Neuro F#m 174" project — also shipped 2026-05-16.
-Every §8 item is now closed; Tier-1 item 6 (`analyze_pattern`) shipped 2026-05-16. The next blind
-spot to address is Tier-1 item 7 (`analyze_drum_groove`).
+Every §8 item is now closed; Tier-1 items 6 (`analyze_pattern`), 7 (`analyze_drum_groove`), 8
+(`analyze_bass_drum_lock`), and 10 (`analyze_harmonic_function`) all shipped 2026-05-16. The next
+blind spot to address is Tier-1 item 9 (`analyze_masking_matrix`), or — when reference audio
+becomes a workflow — Tier-1 item 12 (`render_section_to_wav`).

@@ -1507,3 +1507,328 @@ pub struct AnalyzePatternResult {
     /// notes, single-bar patterns where bar repetition isn't meaningful, …).
     pub warnings: Vec<String>,
 }
+
+// ---------------------------------------------------------------------------
+// analyze_drum_groove result types
+// ---------------------------------------------------------------------------
+
+/// Per-component note counts inside the analyzed scope.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct DrumComposition {
+    pub kick: u32,
+    pub snare: u32,
+    pub hat_closed: u32,
+    pub hat_open: u32,
+    pub tom: u32,
+    pub cymbal: u32,
+    pub clap: u32,
+    /// Anything outside the General MIDI percussion map (Cowbell, Tambourine,
+    /// or custom drum maps the user defined themselves).
+    pub other: u32,
+}
+
+/// Backbeat = snare hits landing on beats 2 and 4 (in 4-beat bars). `strength`
+/// is the fraction of expected backbeat positions that actually carry a snare
+/// hit (1.0 = tight, 0.0 = no backbeat).
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct DrumBackbeat {
+    /// 0.0..=1.0.
+    pub strength: f32,
+    /// Total number of expected backbeat slots across the scope.
+    pub expected_backbeats: u32,
+    /// How many of those slots had a snare hit within tolerance.
+    pub matched_backbeats: u32,
+    /// Snare hits that did NOT land near a backbeat slot.
+    pub off_backbeat_snares: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DrumHat {
+    /// `"quarter" | "8th" | "16th" | "triplet_8th" | "triplet_16th" |
+    /// "irregular" | "none"`. `"none"` when no hat hits were found.
+    pub subdivision: String,
+    pub hat_density_per_beat: f32,
+    pub hat_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct DrumGhostNotes {
+    pub count: u32,
+    /// Velocity threshold (0..=1) below which a snare hit is counted as a
+    /// ghost note. Reported so callers can sanity-check the heuristic.
+    pub velocity_threshold: f32,
+}
+
+/// Fill detection per bar. A bar is flagged as a "fill candidate" when its
+/// drum-note density exceeds a fixed multiple of the mean drum density across
+/// the whole range.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct DrumFills {
+    pub fill_bar_count: u32,
+    pub density_threshold: f32,
+    pub mean_density_per_bar: f32,
+}
+
+/// Bar-level self-similarity over drum notes.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct DrumRepetition {
+    pub distinct_bars: u32,
+    pub total_bars: u32,
+    /// `0.0..=1.0`. `1.0` = every bar carries the same drum hits; `0.0` =
+    /// every bar unique. `0.0` for fewer than 2 bars of drum activity.
+    pub bar_repetition_score: f32,
+}
+
+/// One drum track that contributed notes to the analysis (arrangement scope
+/// only — `analyze_drum_groove` lists every track classified as Drums with
+/// confidence >= 0.6 by [`crate::types::InstrumentProfileResult`]).
+#[derive(Debug, Clone, Serialize)]
+pub struct DrumTrackInfo {
+    pub track_id: u16,
+    pub track_name: String,
+    pub instrument_id: u16,
+    pub instrument_name: String,
+    pub drum_confidence: f32,
+}
+
+/// Output of `analyze_drum_groove`.
+///
+/// Pure symbolic — drum-feel diagnostics built on top of
+/// `analysis::infer_all_profiles`. Reports backbeat strength, hat subdivision,
+/// ghost-note count, fill candidates, and bar-level repetition. Use this to
+/// answer "why does this beat sound flat?" without listening.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeDrumGrooveResult {
+    /// What was analyzed (pattern id or arrangement range).
+    pub scope: HarmonyScope,
+    /// 1-indexed bar number at scope start (arrangement scope) or 1 (pattern
+    /// scope).
+    pub start_bar: u32,
+    /// 1-indexed beat within `start_bar`.
+    pub start_beat: u32,
+    /// 1-indexed bar number at scope end.
+    pub end_bar: u32,
+    /// 1-indexed beat within `end_bar`.
+    pub end_beat: u32,
+    /// Span in ticks the analyzer actually walked.
+    pub length_ticks: u32,
+    /// `length_ticks` expressed in bars under the scope time signature.
+    pub length_bars: f32,
+    pub time_signature_numerator: u8,
+    pub time_signature_denominator: u8,
+    /// Total drum-note count contributing to the analysis.
+    pub total_drum_notes: u32,
+    /// Drum tracks the analyzer pulled notes from. Empty in pattern scope.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub drum_tracks: Vec<DrumTrackInfo>,
+    pub composition: DrumComposition,
+    pub backbeat: DrumBackbeat,
+    pub hat: DrumHat,
+    pub ghost_notes: DrumGhostNotes,
+    pub fills: DrumFills,
+    pub repetition: DrumRepetition,
+    /// Warnings encountered during analysis (empty scope, no drum tracks
+    /// found, single-bar drum activity, …). Empty when analysis ran cleanly.
+    pub warnings: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// analyze_bass_drum_lock result types
+// ---------------------------------------------------------------------------
+
+/// One bass-only track that contributed notes to a bass/drum-lock analysis.
+/// Reported alongside the drum tracks so callers can see what the analyzer
+/// pulled notes from. Mirrors `DrumTrackInfo` but for bass.
+#[derive(Debug, Clone, Serialize)]
+pub struct BassTrackInfo {
+    pub track_id: u16,
+    pub track_name: String,
+    pub instrument_id: u16,
+    pub instrument_name: String,
+    pub bass_confidence: f32,
+}
+
+/// Onset-level kick/bass alignment metrics. The two scores answer different
+/// questions: `lock_score` is "how often does the kick get bass support?";
+/// `coverage_score` is "how often does the bass have a kick beneath it?".
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct BassDrumAlignment {
+    pub matched_onsets: u32,
+    pub kick_only: u32,
+    pub bass_only: u32,
+    /// `matched_onsets / kick_onset_count` (0.0..=1.0). Higher = tighter
+    /// lock. 0.0 when there are no kicks.
+    pub lock_score: f32,
+    /// `matched_onsets / bass_onset_count` (0.0..=1.0). Higher = bass mostly
+    /// supported by kicks. 0.0 when there are no bass onsets.
+    pub coverage_score: f32,
+}
+
+/// Bass-pitch stability on the matched (kick + bass) onsets. The bass usually
+/// plays the chord root on the kick — high `on_kick_root_share` is the
+/// fingerprint of a "rooted" bass line; low share + many distinct PCs is the
+/// fingerprint of a walking or melodic bass.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct BassPitchStability {
+    /// Most common bass pitch class on matched onsets (0 = C, 11 = B).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_kick_root_pc: Option<u8>,
+    /// Name of that pitch class for human-readable output (e.g. `"C"`,
+    /// `"F#"`). Skipped from JSON when no matched onsets exist.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_kick_root_name: Option<String>,
+    /// Fraction of matched onsets that hit `on_kick_root_pc` (0.0..=1.0).
+    pub on_kick_root_share: f32,
+    /// Distinct pitch classes the bass plays on matched onsets.
+    pub distinct_pcs_on_kick: u32,
+    /// Distinct pitch classes the bass plays across the entire scope.
+    pub distinct_pcs_total: u32,
+    /// Mean MIDI pitch of the bass across all onsets.
+    pub mean_bass_midi: f32,
+}
+
+/// Output of `analyze_bass_drum_lock`.
+///
+/// Pure symbolic kick/bass relationship diagnostics. Identifies drum tracks
+/// (for kicks: GM MIDI 35/36) and bass tracks (`infer_all_profiles` → Role
+/// `Bass`) the same way `analyze_harmony`'s drum filter does, then walks
+/// onsets and reports onset alignment, kick/bass solo counts, and a bass-
+/// pitch stability summary.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeBassDrumLockResult {
+    pub scope: HarmonyScope,
+    pub start_bar: u32,
+    pub start_beat: u32,
+    pub end_bar: u32,
+    pub end_beat: u32,
+    pub length_ticks: u32,
+    pub length_bars: f32,
+    pub time_signature_numerator: u8,
+    pub time_signature_denominator: u8,
+    /// Drum tracks the analyzer pulled kicks from. Empty in pattern scope.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub drum_tracks: Vec<DrumTrackInfo>,
+    /// Bass tracks the analyzer pulled notes from. Empty in pattern scope.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub bass_tracks: Vec<BassTrackInfo>,
+    pub kick_onset_count: u32,
+    pub bass_onset_count: u32,
+    /// Maximum |Δtick| between a kick and a bass onset that still counts as
+    /// a match. Reported so callers can see the tolerance band the
+    /// metrics were computed against; clamped to `[120, 960]` internally.
+    pub onset_tolerance_ticks: u32,
+    pub alignment: BassDrumAlignment,
+    pub bass_pitch: BassPitchStability,
+    /// Warnings encountered during analysis. Empty when analysis ran cleanly.
+    pub warnings: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// analyze_harmonic_function result types
+// ---------------------------------------------------------------------------
+
+/// One chord event annotated with its tonal function. Mirrors
+/// `analysis::ChordFunction`; enums travel as snake_case strings so the MCP
+/// crate stays free of pertylizer-side types.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChordFunctionEvent {
+    /// Chord symbol, e.g. `"Cm7"`. `"?"` when no chord was identified.
+    pub symbol: String,
+    /// 1-indexed bar number at the chord-event start, using the song's time
+    /// signature at `start_tick`.
+    pub start_bar: u32,
+    /// 1-indexed beat within `start_bar`.
+    pub start_beat: u32,
+    /// Window start in absolute ticks (or pattern-relative for pattern scope).
+    pub start_tick: u64,
+    /// Window end (exclusive).
+    pub end_tick: u64,
+    /// Scale degree (1..=7 for diatonic, omitted for chromatic / unidentified
+    /// chords).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scale_degree: Option<u8>,
+    /// Roman numeral with quality decoration, e.g. `"V7"`, `"ii7"`, `"vii°"`.
+    /// For chromatic roots the analyzer emits altered numerals like `"bII"`.
+    /// `"?"` when no chord was identified at this position.
+    pub roman_numeral: String,
+    /// `"tonic" | "subdominant" | "dominant" | "other" | "chromatic"`.
+    pub function: String,
+    /// 0.0..=1.0. Per-chord tension contribution (function-based + extra
+    /// from dominant 7th / diminished qualities).
+    pub tension: f32,
+    /// `chord.in_key` from `analyze_harmony` — true when every pitch in the
+    /// window belongs to the inferred key's scale.
+    pub in_key: bool,
+    /// `"authentic" | "plagal" | "half_cadence" | "deceptive"` when this
+    /// chord closes a cadence with the previous chord. Skipped otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cadence: Option<String>,
+}
+
+/// Cadence event — one entry per detected cadence ending in the chord stream.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct HarmonicCadenceEvent {
+    /// Index into `AnalyzeHarmonicFunctionResult.chords` of the closing
+    /// chord of the cadence.
+    pub chord_index: u32,
+    /// `"authentic" | "plagal" | "half_cadence" | "deceptive"`.
+    pub kind: HarmonicCadenceKind,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HarmonicCadenceKind {
+    Authentic,
+    Plagal,
+    HalfCadence,
+    Deceptive,
+}
+
+/// Per-function counts across the chord stream.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct FunctionDistribution {
+    pub tonic: u32,
+    pub subdominant: u32,
+    pub dominant: u32,
+    pub other: u32,
+    pub chromatic: u32,
+}
+
+/// Tension-curve summary.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct TensionStats {
+    /// Mean per-chord tension across the analyzed range (0.0..=1.0).
+    pub mean: f32,
+    /// Highest per-chord tension in the range.
+    pub peak: f32,
+    /// Lowest per-chord tension in the range.
+    pub trough: f32,
+    /// Standard deviation of per-chord tension (0 for ≤ 1 chord).
+    pub std_dev: f32,
+}
+
+/// Output of `analyze_harmonic_function`.
+///
+/// Builds on `analyze_harmony`: same scope (pattern or arrangement range),
+/// same key inference. For each chord event, the analyzer assigns a scale-
+/// degree Roman numeral, a tonal-function bucket, and a tension score;
+/// cadences are detected on consecutive chord pairs.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeHarmonicFunctionResult {
+    pub scope: HarmonyScope,
+    /// Inferred key tonic name (`"C"`, `"F#"`, …) and mode (`"major"` /
+    /// `"minor"`). `None` for empty input or when the analyzer could not
+    /// infer a key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<HarmonyKeyEstimate>,
+    /// Chord events in time order, each annotated with function + Roman
+    /// numeral + tension.
+    pub chords: Vec<ChordFunctionEvent>,
+    /// Detected cadences. Each entry points into `chords`.
+    pub cadences: Vec<HarmonicCadenceEvent>,
+    pub function_distribution: FunctionDistribution,
+    pub tension: TensionStats,
+    /// Warnings emitted by the underlying `analyze_harmony` call AND by the
+    /// function-analysis layer.
+    pub warnings: Vec<String>,
+}

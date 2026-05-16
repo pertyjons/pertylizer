@@ -565,6 +565,70 @@ pub struct AnalyzePatternParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeDrumGrooveParam {
+    #[schemars(
+        description = "Pattern ID to analyze as a drum pattern. When set, the arrangement_* fields are ignored and the analyzer treats every note in the pattern as a drum hit (no drum-track filtering)."
+    )]
+    pub pattern_id: Option<u32>,
+    #[schemars(
+        description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0. Ignored when pattern_id is set."
+    )]
+    pub arrangement_start_tick: Option<u64>,
+    #[schemars(
+        description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length. Ignored when pattern_id is set."
+    )]
+    pub arrangement_end_tick: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeHarmonicFunctionParam {
+    #[schemars(
+        description = "Pattern ID to analyze. When set, the arrangement_* fields are ignored and analysis runs on that pattern's notes in pattern-relative ticks. Leave unset to analyze the arrangement instead."
+    )]
+    pub pattern_id: Option<u32>,
+    #[schemars(
+        description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0 (song beginning). Ignored when pattern_id is set."
+    )]
+    pub arrangement_start_tick: Option<u64>,
+    #[schemars(
+        description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length. Ignored when pattern_id is set."
+    )]
+    pub arrangement_end_tick: Option<u64>,
+    #[schemars(
+        description = "Chord-detection window size in ticks (default 960 = one quarter note at 960 PPQN, or 3840 = one bar in arrangement scope). Smaller values produce more, finer chord events; larger values aggregate."
+    )]
+    pub grouping_ticks: Option<u32>,
+    #[schemars(
+        description = "Exclude notes from tracks classified as Drums (default true), matching analyze_harmony's behaviour."
+    )]
+    pub exclude_drums: Option<bool>,
+    #[schemars(
+        description = "Explicit list of track IDs to exclude from chord identification, combined with exclude_drums. Arrangement scope only."
+    )]
+    pub exclude_track_ids: Option<Vec<u16>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeBassDrumLockParam {
+    #[schemars(
+        description = "Pattern ID to analyze. When set, the analyzer treats notes with GM kick MIDI numbers (35, 36) as kicks and everything else as bass. Useful for combined rhythm-section patterns. Ignored when arrangement_* fields are set."
+    )]
+    pub pattern_id: Option<u32>,
+    #[schemars(
+        description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0. Ignored when pattern_id is set."
+    )]
+    pub arrangement_start_tick: Option<u64>,
+    #[schemars(
+        description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length. Ignored when pattern_id is set."
+    )]
+    pub arrangement_end_tick: Option<u64>,
+    #[schemars(
+        description = "Maximum |Δtick| between a kick onset and a bass onset that still counts as a match. Default 120 (±1/32-note at 960 PPQN). Clamped to [30, 960]."
+    )]
+    pub onset_tolerance_ticks: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeNoteParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
     pub instrument_id: u64,
@@ -1788,6 +1852,9 @@ impl SynthMcpServer {
             // Music analysis
             "analyze_harmony" => analyze_harmony(AnalyzeHarmonyParam),
             "analyze_pattern" => analyze_pattern(AnalyzePatternParam),
+            "analyze_drum_groove" => analyze_drum_groove(AnalyzeDrumGrooveParam),
+            "analyze_bass_drum_lock" => analyze_bass_drum_lock(AnalyzeBassDrumLockParam),
+            "analyze_harmonic_function" => analyze_harmonic_function(AnalyzeHarmonicFunctionParam),
             "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
             "analyze_section" => analyze_section(AnalyzeSectionParam),
         ])
@@ -2356,6 +2423,55 @@ impl SynthMcpServer {
     )]
     async fn analyze_pattern(&self, params: Parameters<AnalyzePatternParam>) -> String {
         match self.bridge.analyze_pattern(params.0.pattern_id) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Symbolic drum-feel analysis. Classifies each drum note via the General MIDI drum map (kick / snare / closed-hat / open-hat / tom / cymbal / clap / other) and reports backbeat strength (snare hits landing on beats 2 and 4), hat subdivision (quarter / 8th / 16th / triplet_8th / triplet_16th / irregular / none), hat density per beat, ghost-note count (snare hits below half the loudest snare velocity), fill candidates (bars whose density exceeds 2× the mean), and bar-level repetition over drum notes. Pure symbolic — no audio rendering. Pass `pattern_id` to analyze one pattern as-is (no drum-track filtering); omit it (with optional `arrangement_start_tick` / `arrangement_end_tick`) to analyze every track auto-classified as Drums by `get_instrument_profiles` (confidence ≥ 0.6). Useful for answering 'why does this beat sound flat?' without listening."
+    )]
+    async fn analyze_drum_groove(&self, params: Parameters<AnalyzeDrumGrooveParam>) -> String {
+        match self.bridge.analyze_drum_groove(
+            params.0.pattern_id,
+            params.0.arrangement_start_tick,
+            params.0.arrangement_end_tick,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Symbolic kick/bass-lock diagnostics — answers 'does the bass actually work with the beat?' without listening. Identifies drum tracks (Role::Drums, conf ≥ 0.6) and bass tracks (Role::Bass, conf ≥ 0.6) via the same `infer_all_profiles` path that `analyze_harmony`'s drum filter uses, then aligns kick onsets (GM MIDI 35/36) against bass note onsets within `onset_tolerance_ticks` (default 120 = ±1/32-note at 960 PPQN). Reports `lock_score` (matched kicks / total kicks — how often the kick gets bass support), `coverage_score` (matched / total bass onsets — how often the bass has a kick beneath it), kick-only / bass-only counts, and a bass-pitch stability summary (most common pitch class on matched onsets and its share — high share = rooted bass, low share + many PCs = walking or melodic bass). Pass `pattern_id` to analyze a single combined rhythm-section pattern (kicks = GM kick MIDI, bass = everything else); omit it for arrangement scope across track-classified content."
+    )]
+    async fn analyze_bass_drum_lock(&self, params: Parameters<AnalyzeBassDrumLockParam>) -> String {
+        match self.bridge.analyze_bass_drum_lock(
+            params.0.pattern_id,
+            params.0.arrangement_start_tick,
+            params.0.arrangement_end_tick,
+            params.0.onset_tolerance_ticks,
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Tonal-function analysis on top of analyze_harmony. Runs the same chord-identification + key inference pipeline, then annotates each chord with a scale-degree Roman numeral (I, V7, IV, vii°, …), a function bucket (tonic / subdominant / dominant / other / chromatic), and a 0..1 tension score; detects cadences (authentic V → I, plagal IV → I, half — anything → V, deceptive V → vi) on consecutive chord pairs and reports a function distribution + tension-curve summary. Use this to reason about progression quality and direction — 'does this song actually resolve?' or 'where does the tension peak?'. Pass `pattern_id` for one pattern, or omit it (with optional `arrangement_start_tick` / `arrangement_end_tick`) for an arrangement range. `exclude_drums` defaults to true."
+    )]
+    async fn analyze_harmonic_function(
+        &self,
+        params: Parameters<AnalyzeHarmonicFunctionParam>,
+    ) -> String {
+        match self.bridge.analyze_harmonic_function(
+            params.0.pattern_id,
+            params.0.arrangement_start_tick,
+            params.0.arrangement_end_tick,
+            params.0.grouping_ticks,
+            params.0.exclude_drums,
+            params.0.exclude_track_ids,
+        ) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }

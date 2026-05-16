@@ -2454,6 +2454,59 @@ impl SynthBridge for AppSynthBridge {
         analyze_pattern_impl(&self.shared, pattern_id)
     }
 
+    fn analyze_drum_groove(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+    ) -> Result<synth_mcp::types::AnalyzeDrumGrooveResult, McpBridgeError> {
+        analyze_drum_groove_impl(
+            &self.session,
+            &self.shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+        )
+    }
+
+    fn analyze_bass_drum_lock(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        onset_tolerance_ticks: Option<u32>,
+    ) -> Result<synth_mcp::types::AnalyzeBassDrumLockResult, McpBridgeError> {
+        analyze_bass_drum_lock_impl(
+            &self.session,
+            &self.shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            onset_tolerance_ticks,
+        )
+    }
+
+    fn analyze_harmonic_function(
+        &self,
+        pattern_id: Option<u32>,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
+        grouping_ticks: Option<u32>,
+        exclude_drums: Option<bool>,
+        exclude_track_ids: Option<Vec<u16>>,
+    ) -> Result<synth_mcp::types::AnalyzeHarmonicFunctionResult, McpBridgeError> {
+        analyze_harmonic_function_impl(
+            &self.session,
+            &self.shared,
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            grouping_ticks,
+            exclude_drums,
+            exclude_track_ids,
+        )
+    }
+
     fn analyze_mix_bus(
         &self,
         duration_seconds: f32,
@@ -4736,14 +4789,8 @@ pub fn analyze_song_harmony(
             )
         }
         None => {
-            let song_end = song.calculate_length().0;
-            let start = arrangement_start_tick.unwrap_or(0);
-            let end = arrangement_end_tick.unwrap_or(song_end);
-            if end <= start {
-                return Err(McpBridgeError::Other(format!(
-                    "Arrangement range invalid: end ({end}) must be greater than start ({start})"
-                )));
-            }
+            let (start, end) =
+                resolve_arrangement_range(&song, arrangement_start_tick, arrangement_end_tick)?;
 
             // Resolve which tracks to skip. A track is excluded when either:
             //   1. It appears in the explicit `exclude_track_ids` list, or
@@ -5028,6 +5075,570 @@ fn analyze_pattern_impl(
             bar_repetition_score: analysis.repetition.bar_repetition_score,
         },
         warnings: analysis.warnings,
+    })
+}
+
+/// Resolve the arrangement range used by `analyze_drum_groove` /
+/// `analyze_bass_drum_lock` / `analyze_harmonic_function` when the caller
+/// passes `start`/`end` as `None`.
+fn resolve_arrangement_range(
+    song: &synth_sequencer::Song,
+    start: Option<u64>,
+    end: Option<u64>,
+) -> Result<(u64, u64), McpBridgeError> {
+    let song_end = song.calculate_length().0;
+    let start = start.unwrap_or(0);
+    let end = end.unwrap_or(song_end);
+    if end <= start {
+        return Err(McpBridgeError::Other(format!(
+            "Arrangement range invalid: end ({end}) must be greater than start ({start})"
+        )));
+    }
+    Ok((start, end))
+}
+
+fn analyze_drum_groove_impl(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    pattern_id: Option<u32>,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
+) -> Result<synth_mcp::types::AnalyzeDrumGrooveResult, McpBridgeError> {
+    use synth_mcp::types::{
+        AnalyzeDrumGrooveResult, DrumBackbeat, DrumComposition, DrumFills, DrumGhostNotes, DrumHat,
+        DrumRepetition, DrumTrackInfo, HarmonyScope,
+    };
+    use synth_sequencer::{PatternId, SeqInstrumentId};
+
+    let song = shared.song.read();
+    let mut warnings: Vec<String> = Vec::new();
+
+    let (scope, time_sig, length_ticks, notes, drum_tracks, start_tick, end_tick) = match pattern_id
+    {
+        Some(pid) => {
+            let pid_typed = PatternId(pid);
+            let Some(pattern) = song.pattern(pid_typed) else {
+                return Err(McpBridgeError::Other(format!("Pattern {pid} not found")));
+            };
+            let length_ticks = pattern.length.0;
+            let notes: Vec<crate::analysis::DrumNote> = pattern
+                .notes()
+                .iter()
+                .map(|n| crate::analysis::DrumNote::from_note(n, 0))
+                .collect();
+            let ts = song.default_time_signature;
+            (
+                HarmonyScope::Pattern { pattern_id: pid },
+                ts,
+                length_ticks,
+                notes,
+                Vec::<DrumTrackInfo>::new(),
+                0u64,
+                u64::from(length_ticks),
+            )
+        }
+        None => {
+            let (start, end) =
+                resolve_arrangement_range(&song, arrangement_start_tick, arrangement_end_tick)?;
+
+            // Find drum-track candidates the same way `analyze_harmony` does.
+            let drum_profiles: std::collections::HashMap<
+                SeqInstrumentId,
+                crate::analysis::InstrumentProfile,
+            > = crate::analysis::infer_all_profiles(&song, session.state())
+                .into_iter()
+                .filter(|p| p.role.role == crate::analysis::Role::Drums && p.role.confidence >= 0.6)
+                .map(|p| (SeqInstrumentId(p.instrument_id), p))
+                .collect();
+
+            if drum_profiles.is_empty() {
+                warnings.push(
+                    "No drum tracks identified by infer_all_profiles (confidence >= 0.6)"
+                        .to_string(),
+                );
+            }
+
+            let mut drum_track_infos: Vec<DrumTrackInfo> = song
+                .tracks()
+                .filter_map(|t| {
+                    let seq = t.instrument?;
+                    let profile = drum_profiles.get(&seq)?;
+                    Some(DrumTrackInfo {
+                        track_id: t.id.0,
+                        track_name: t.name.clone(),
+                        instrument_id: seq.0,
+                        instrument_name: profile.instrument_name.clone(),
+                        drum_confidence: profile.role.confidence,
+                    })
+                })
+                .collect();
+            drum_track_infos.sort_by_key(|d| d.track_id);
+
+            let drum_track_ids: std::collections::HashSet<synth_sequencer::TrackId> =
+                drum_track_infos
+                    .iter()
+                    .map(|d| synth_sequencer::TrackId(d.track_id))
+                    .collect();
+
+            let mut notes: Vec<crate::analysis::DrumNote> = Vec::new();
+            for placement in
+                song.placements_in_range(synth_sequencer::Tick(start), synth_sequencer::Tick(end))
+            {
+                if !drum_track_ids.contains(&placement.track_id) {
+                    continue;
+                }
+                let Some(pattern) = song.pattern(placement.pattern_id) else {
+                    continue;
+                };
+                let placement_start = placement.start.0;
+                for n in pattern.notes() {
+                    let abs_start = placement_start.saturating_add(u64::from(n.start.0));
+                    if abs_start < start || abs_start >= end {
+                        continue;
+                    }
+                    // Drum analysis works in range-relative tick space so
+                    // `length_ticks = end - start` and per-bar math lines
+                    // up with the analyzed window.
+                    let rel = (abs_start - start) as u32;
+                    notes.push(crate::analysis::DrumNote {
+                        tick: rel,
+                        midi: n.pitch.as_midi(),
+                        velocity: n.velocity.as_f32(),
+                    });
+                }
+            }
+
+            let length_ticks: u32 = (end - start).try_into().unwrap_or(u32::MAX);
+            let ts = song.time_signature_at(synth_sequencer::Tick(start));
+            (
+                HarmonyScope::Arrangement {
+                    start_tick: start,
+                    end_tick: end,
+                },
+                ts,
+                length_ticks,
+                notes,
+                drum_track_infos,
+                start,
+                end,
+            )
+        }
+    };
+
+    drop(song);
+
+    let mut analysis = crate::analysis::drum_groove::analyze(&notes, length_ticks, time_sig);
+    warnings.append(&mut analysis.warnings);
+
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(start_tick, time_sig);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(end_tick, time_sig);
+
+    Ok(AnalyzeDrumGrooveResult {
+        scope,
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
+        length_ticks: analysis.length_ticks,
+        length_bars: analysis.length_bars,
+        time_signature_numerator: time_sig.numerator,
+        time_signature_denominator: time_sig.denominator,
+        total_drum_notes: analysis.total_drum_notes,
+        drum_tracks,
+        composition: DrumComposition {
+            kick: analysis.composition.kick,
+            snare: analysis.composition.snare,
+            hat_closed: analysis.composition.hat_closed,
+            hat_open: analysis.composition.hat_open,
+            tom: analysis.composition.tom,
+            cymbal: analysis.composition.cymbal,
+            clap: analysis.composition.clap,
+            other: analysis.composition.other,
+        },
+        backbeat: DrumBackbeat {
+            strength: analysis.backbeat.strength,
+            expected_backbeats: analysis.backbeat.expected_backbeats,
+            matched_backbeats: analysis.backbeat.matched_backbeats,
+            off_backbeat_snares: analysis.backbeat.off_backbeat_snares,
+        },
+        hat: DrumHat {
+            subdivision: analysis.hat.subdivision,
+            hat_density_per_beat: analysis.hat.hat_density_per_beat,
+            hat_count: analysis.hat.hat_count,
+        },
+        ghost_notes: DrumGhostNotes {
+            count: analysis.ghost_notes.count,
+            velocity_threshold: analysis.ghost_notes.velocity_threshold,
+        },
+        fills: DrumFills {
+            fill_bar_count: analysis.fills.fill_bar_count,
+            density_threshold: analysis.fills.density_threshold,
+            mean_density_per_bar: analysis.fills.mean_density_per_bar,
+        },
+        repetition: DrumRepetition {
+            distinct_bars: analysis.repetition.distinct_bars,
+            total_bars: analysis.repetition.total_bars,
+            bar_repetition_score: analysis.repetition.bar_repetition_score,
+        },
+        warnings,
+    })
+}
+
+fn analyze_bass_drum_lock_impl(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    pattern_id: Option<u32>,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
+    onset_tolerance_ticks: Option<u32>,
+) -> Result<synth_mcp::types::AnalyzeBassDrumLockResult, McpBridgeError> {
+    use synth_mcp::types::{
+        AnalyzeBassDrumLockResult, BassDrumAlignment, BassPitchStability, BassTrackInfo,
+        DrumTrackInfo, HarmonyScope,
+    };
+    use synth_sequencer::{PatternId, SeqInstrumentId};
+
+    let song = shared.song.read();
+    let mut warnings: Vec<String> = Vec::new();
+    let tolerance = onset_tolerance_ticks
+        .unwrap_or(crate::analysis::bass_drum_lock::DEFAULT_ONSET_TOLERANCE_TICKS);
+
+    let (
+        scope,
+        time_sig,
+        length_ticks,
+        kicks,
+        bass,
+        drum_tracks,
+        bass_tracks,
+        start_tick,
+        end_tick,
+    ) = match pattern_id {
+        Some(pid) => {
+            let pid_typed = PatternId(pid);
+            let Some(pattern) = song.pattern(pid_typed) else {
+                return Err(McpBridgeError::Other(format!("Pattern {pid} not found")));
+            };
+            let length_ticks = pattern.length.0;
+            let mut kicks: Vec<crate::analysis::KickOnset> = Vec::new();
+            let mut bass: Vec<crate::analysis::BassOnset> = Vec::new();
+            for n in pattern.notes() {
+                let midi = n.pitch.as_midi();
+                if matches!(
+                    crate::analysis::DrumComponent::from_midi(midi),
+                    crate::analysis::DrumComponent::Kick
+                ) {
+                    kicks.push(crate::analysis::KickOnset { tick: n.start.0 });
+                } else {
+                    bass.push(crate::analysis::BassOnset {
+                        tick: n.start.0,
+                        midi,
+                    });
+                }
+            }
+            (
+                HarmonyScope::Pattern { pattern_id: pid },
+                song.default_time_signature,
+                length_ticks,
+                kicks,
+                bass,
+                Vec::<DrumTrackInfo>::new(),
+                Vec::<BassTrackInfo>::new(),
+                0u64,
+                u64::from(length_ticks),
+            )
+        }
+        None => {
+            let (start, end) =
+                resolve_arrangement_range(&song, arrangement_start_tick, arrangement_end_tick)?;
+
+            let profiles = crate::analysis::infer_all_profiles(&song, session.state());
+            let drum_profiles: std::collections::HashMap<
+                SeqInstrumentId,
+                crate::analysis::InstrumentProfile,
+            > = profiles
+                .iter()
+                .filter(|p| p.role.role == crate::analysis::Role::Drums && p.role.confidence >= 0.6)
+                .cloned()
+                .map(|p| (SeqInstrumentId(p.instrument_id), p))
+                .collect();
+            let bass_profiles: std::collections::HashMap<
+                SeqInstrumentId,
+                crate::analysis::InstrumentProfile,
+            > = profiles
+                .into_iter()
+                .filter(|p| p.role.role == crate::analysis::Role::Bass && p.role.confidence >= 0.6)
+                .map(|p| (SeqInstrumentId(p.instrument_id), p))
+                .collect();
+
+            if drum_profiles.is_empty() {
+                warnings.push(
+                    "No drum tracks identified by infer_all_profiles — kick onset count will be 0"
+                        .to_string(),
+                );
+            }
+            if bass_profiles.is_empty() {
+                warnings.push(
+                    "No bass tracks identified by infer_all_profiles — bass onset count will be 0"
+                        .to_string(),
+                );
+            }
+
+            let mut drum_track_infos: Vec<DrumTrackInfo> = song
+                .tracks()
+                .filter_map(|t| {
+                    let seq = t.instrument?;
+                    let profile = drum_profiles.get(&seq)?;
+                    Some(DrumTrackInfo {
+                        track_id: t.id.0,
+                        track_name: t.name.clone(),
+                        instrument_id: seq.0,
+                        instrument_name: profile.instrument_name.clone(),
+                        drum_confidence: profile.role.confidence,
+                    })
+                })
+                .collect();
+            drum_track_infos.sort_by_key(|d| d.track_id);
+            let mut bass_track_infos: Vec<BassTrackInfo> = song
+                .tracks()
+                .filter_map(|t| {
+                    let seq = t.instrument?;
+                    let profile = bass_profiles.get(&seq)?;
+                    Some(BassTrackInfo {
+                        track_id: t.id.0,
+                        track_name: t.name.clone(),
+                        instrument_id: seq.0,
+                        instrument_name: profile.instrument_name.clone(),
+                        bass_confidence: profile.role.confidence,
+                    })
+                })
+                .collect();
+            bass_track_infos.sort_by_key(|b| b.track_id);
+
+            let drum_track_ids: std::collections::HashSet<synth_sequencer::TrackId> =
+                drum_track_infos
+                    .iter()
+                    .map(|d| synth_sequencer::TrackId(d.track_id))
+                    .collect();
+            let bass_track_ids: std::collections::HashSet<synth_sequencer::TrackId> =
+                bass_track_infos
+                    .iter()
+                    .map(|b| synth_sequencer::TrackId(b.track_id))
+                    .collect();
+
+            let mut kicks: Vec<crate::analysis::KickOnset> = Vec::new();
+            let mut bass: Vec<crate::analysis::BassOnset> = Vec::new();
+            for placement in
+                song.placements_in_range(synth_sequencer::Tick(start), synth_sequencer::Tick(end))
+            {
+                let is_drum = drum_track_ids.contains(&placement.track_id);
+                let is_bass = bass_track_ids.contains(&placement.track_id);
+                if !is_drum && !is_bass {
+                    continue;
+                }
+                let Some(pattern) = song.pattern(placement.pattern_id) else {
+                    continue;
+                };
+                let placement_start = placement.start.0;
+                for n in pattern.notes() {
+                    let abs_start = placement_start.saturating_add(u64::from(n.start.0));
+                    if abs_start < start || abs_start >= end {
+                        continue;
+                    }
+                    let rel = (abs_start - start) as u32;
+                    let midi = n.pitch.as_midi();
+                    if is_drum {
+                        if matches!(
+                            crate::analysis::DrumComponent::from_midi(midi),
+                            crate::analysis::DrumComponent::Kick
+                        ) {
+                            kicks.push(crate::analysis::KickOnset { tick: rel });
+                        }
+                    } else {
+                        let transposed = n.pitch.transpose(placement.transpose);
+                        let Some(p) = transposed else {
+                            continue;
+                        };
+                        bass.push(crate::analysis::BassOnset {
+                            tick: rel,
+                            midi: p.as_midi(),
+                        });
+                    }
+                }
+            }
+
+            let length_ticks: u32 = (end - start).try_into().unwrap_or(u32::MAX);
+            let ts = song.time_signature_at(synth_sequencer::Tick(start));
+            (
+                HarmonyScope::Arrangement {
+                    start_tick: start,
+                    end_tick: end,
+                },
+                ts,
+                length_ticks,
+                kicks,
+                bass,
+                drum_track_infos,
+                bass_track_infos,
+                start,
+                end,
+            )
+        }
+    };
+
+    drop(song);
+
+    let mut analysis =
+        crate::analysis::bass_drum_lock::analyze(&kicks, &bass, length_ticks, time_sig, tolerance);
+    warnings.append(&mut analysis.warnings);
+
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(start_tick, time_sig);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(end_tick, time_sig);
+
+    let on_kick_root_name = analysis
+        .bass_pitch
+        .on_kick_root_pc
+        .map(|pc| synth_sequencer::NoteName::from_midi(pc).to_string());
+
+    Ok(AnalyzeBassDrumLockResult {
+        scope,
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
+        length_ticks: analysis.length_ticks,
+        length_bars: analysis.length_bars,
+        time_signature_numerator: time_sig.numerator,
+        time_signature_denominator: time_sig.denominator,
+        drum_tracks,
+        bass_tracks,
+        kick_onset_count: analysis.kick_onset_count,
+        bass_onset_count: analysis.bass_onset_count,
+        onset_tolerance_ticks: analysis.onset_tolerance_ticks,
+        alignment: BassDrumAlignment {
+            matched_onsets: analysis.alignment.matched_onsets,
+            kick_only: analysis.alignment.kick_only,
+            bass_only: analysis.alignment.bass_only,
+            lock_score: analysis.alignment.lock_score,
+            coverage_score: analysis.alignment.coverage_score,
+        },
+        bass_pitch: BassPitchStability {
+            on_kick_root_pc: analysis.bass_pitch.on_kick_root_pc,
+            on_kick_root_name,
+            on_kick_root_share: analysis.bass_pitch.on_kick_root_share,
+            distinct_pcs_on_kick: analysis.bass_pitch.distinct_pcs_on_kick,
+            distinct_pcs_total: analysis.bass_pitch.distinct_pcs_total,
+            mean_bass_midi: analysis.bass_pitch.mean_bass_midi,
+        },
+        warnings,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn analyze_harmonic_function_impl(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    pattern_id: Option<u32>,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
+    grouping_ticks: Option<u32>,
+    exclude_drums: Option<bool>,
+    exclude_track_ids: Option<Vec<u16>>,
+) -> Result<synth_mcp::types::AnalyzeHarmonicFunctionResult, McpBridgeError> {
+    use synth_mcp::types::{
+        AnalyzeHarmonicFunctionResult, ChordFunctionEvent, FunctionDistribution,
+        HarmonicCadenceEvent, HarmonicCadenceKind, TensionStats,
+    };
+
+    // Reuse the harmony analyzer end-to-end so the key inference + chord
+    // identification + drum-exclusion behaviour stays in lock-step with
+    // analyze_harmony.
+    let harmony = analyze_song_harmony(
+        session,
+        shared,
+        pattern_id,
+        arrangement_start_tick,
+        arrangement_end_tick,
+        grouping_ticks,
+        exclude_drums,
+        exclude_track_ids,
+    )?;
+
+    let key_mode = harmony
+        .inferred_key
+        .as_ref()
+        .map(|k| crate::analysis::KeyMode::from_label(&k.mode))
+        .unwrap_or(crate::analysis::KeyMode::Major);
+    let tonic = harmony.inferred_key.as_ref().map(|k| k.tonic);
+
+    let chord_inputs: Vec<crate::analysis::ChordInput> = harmony
+        .chords
+        .iter()
+        .map(|e| crate::analysis::ChordInput {
+            symbol: e.symbol.clone(),
+            root: e.root,
+            quality: e.quality.clone(),
+            in_key: e.in_key,
+        })
+        .collect();
+
+    let analysis = crate::analysis::harmonic_function::analyze(&chord_inputs, tonic, key_mode);
+
+    let mut warnings = harmony.warnings.clone();
+    warnings.extend(analysis.warnings.iter().cloned());
+
+    let chord_events: Vec<ChordFunctionEvent> = harmony
+        .chords
+        .iter()
+        .zip(analysis.chords.iter())
+        .map(|(harmony_event, fn_event)| ChordFunctionEvent {
+            symbol: fn_event.symbol.clone(),
+            start_bar: harmony_event.start_bar,
+            start_beat: harmony_event.start_beat,
+            start_tick: harmony_event.start_tick,
+            end_tick: harmony_event.end_tick,
+            scale_degree: fn_event.scale_degree,
+            roman_numeral: fn_event.roman_numeral.clone(),
+            function: fn_event.function.as_str().to_string(),
+            tension: fn_event.tension,
+            in_key: fn_event.in_key,
+            cadence: fn_event.cadence.map(|c| c.as_str().to_string()),
+        })
+        .collect();
+
+    let cadences: Vec<HarmonicCadenceEvent> = analysis
+        .cadences
+        .iter()
+        .map(|c| HarmonicCadenceEvent {
+            chord_index: c.chord_index,
+            kind: match c.kind {
+                crate::analysis::CadenceKind::Authentic => HarmonicCadenceKind::Authentic,
+                crate::analysis::CadenceKind::Plagal => HarmonicCadenceKind::Plagal,
+                crate::analysis::CadenceKind::HalfCadence => HarmonicCadenceKind::HalfCadence,
+                crate::analysis::CadenceKind::Deceptive => HarmonicCadenceKind::Deceptive,
+            },
+        })
+        .collect();
+
+    Ok(AnalyzeHarmonicFunctionResult {
+        scope: harmony.scope,
+        key: harmony.inferred_key.clone(),
+        chords: chord_events,
+        cadences,
+        function_distribution: FunctionDistribution {
+            tonic: analysis.function_distribution.tonic,
+            subdominant: analysis.function_distribution.subdominant,
+            dominant: analysis.function_distribution.dominant,
+            other: analysis.function_distribution.other,
+            chromatic: analysis.function_distribution.chromatic,
+        },
+        tension: TensionStats {
+            mean: analysis.tension.mean,
+            peak: analysis.tension.peak,
+            trough: analysis.tension.trough,
+            std_dev: analysis.tension.std_dev,
+        },
+        warnings,
     })
 }
 

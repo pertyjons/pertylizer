@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use synth_sequencer::{Note, Pitch, TICKS_PER_QUARTER, TimeSignature};
+use synth_sequencer::{Note, Pitch, TimeSignature};
 
 use crate::harmony::weighted_pitch_class_histogram;
 
@@ -81,8 +81,7 @@ pub struct RepetitionStats {
     pub bar_repetition_score: f32,
 }
 
-/// 32nd-note quantization step for the bar-repetition canonical hash.
-const REPETITION_GRID_TICKS: u32 = TICKS_PER_QUARTER / 8;
+use crate::analysis::repetition::{BarSignatureNote, REPETITION_GRID_TICKS, bar_repetition_score};
 
 #[derive(Debug, Clone, Copy)]
 struct Kept {
@@ -333,25 +332,18 @@ pub fn analyze(notes: &[Note], length_ticks: u32, time_sig: TimeSignature) -> Pa
         }
     } else {
         let grid = REPETITION_GRID_TICKS.max(1);
-        let mut sigs: Vec<Vec<(u32, u8)>> = vec![Vec::new(); total_bars as usize];
-        for k in &kept {
-            let bar = (k.start / ticks_per_bar) as usize;
-            if bar >= sigs.len() {
-                continue;
-            }
-            let quantized = (k.start % ticks_per_bar) / grid * grid;
-            sigs[bar].push((quantized, k.pitch.as_midi()));
-        }
-        for sig in &mut sigs {
-            sig.sort_unstable();
-        }
-        let distinct = sigs.iter().collect::<HashSet<_>>().len() as u32;
-        let denom = (total_bars - 1) as f32;
-        let score = if denom > 0.0 {
-            (1.0 - (distinct.saturating_sub(1)) as f32 / denom).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+        let signature_notes: Vec<BarSignatureNote<u8>> = kept
+            .iter()
+            .filter_map(|k| {
+                let bar = (k.start / ticks_per_bar) as usize;
+                (bar < total_bars as usize).then(|| BarSignatureNote {
+                    bar,
+                    tick_in_bar: (k.start % ticks_per_bar) / grid * grid,
+                    discriminant: k.pitch.as_midi(),
+                })
+            })
+            .collect();
+        let (distinct, score) = bar_repetition_score(&signature_notes, total_bars);
         RepetitionStats {
             distinct_bars: distinct,
             total_bars,
