@@ -667,6 +667,9 @@ impl AnalyzeWindow {
             if r.flags.off_pitch {
                 chip(ui, "OFF PITCH", ChipKind::Bad, pt);
             }
+            if r.flags.pitch_unreliable {
+                chip(ui, "PITCH UNRELIABLE", ChipKind::Warn, pt);
+            }
         });
     }
 
@@ -1260,7 +1263,7 @@ enum ChipKind {
 fn overall_status(flags: &AnalyzeFlags) -> ChipKind {
     if flags.silent || flags.clipping || flags.off_pitch {
         ChipKind::Bad
-    } else if flags.has_dc_offset || flags.low_output {
+    } else if flags.has_dc_offset || flags.low_output || flags.pitch_unreliable {
         ChipKind::Warn
     } else {
         ChipKind::Good

@@ -401,10 +401,16 @@ pub fn fundamental_frequency(samples: &[f32], sample_rate: u32, min_hz: f32, max
     fundamental_frequency_with_confidence(samples, sample_rate, min_hz, max_hz).0
 }
 
+/// Below this confidence, the loudest in-range bin barely dominates its
+/// competitors — typical for filter-resonance latching, Karplus delay-line
+/// octave doubling, or formant-heavy / noise-based patches. Reported
+/// `pitch_error_cents` should be treated as unreliable.
+pub const PITCH_CONFIDENCE_RELIABLE_FLOOR: f32 = 0.3;
+
 /// Like [`fundamental_frequency`] but additionally returns a confidence
 /// estimate in `0.0..=1.0` based on how much the loudest in-range bin
-/// dominates the next-loudest non-adjacent bin. Treat
-/// `pitch_error_cents` cautiously when this is below ~0.3.
+/// dominates the next-loudest non-adjacent bin. See
+/// [`PITCH_CONFIDENCE_RELIABLE_FLOOR`].
 #[must_use]
 pub fn fundamental_frequency_with_confidence(
     samples: &[f32],

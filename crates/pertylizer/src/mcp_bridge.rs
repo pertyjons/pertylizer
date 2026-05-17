@@ -8265,13 +8265,13 @@ pub fn analyze_rendered_buffer(
         _ => peak_amplitude < 0.05,
     };
 
-    // off_pitch only fires when we are confident in the detected fundamental.
-    // A low confidence (e.g. 0.2) means the loudest in-range bin is barely
-    // taller than competing peaks — typical for filter-resonance latching
-    // (Screamer Lead) or Karplus delay-line octave doubling.
-    const PITCH_CONFIDENCE_THRESHOLD: f32 = 0.3;
+    // Split the two pitch-quality flags on the shared confidence floor so
+    // callers can distinguish "locked on the wrong note" (`off_pitch`) from
+    // "couldn't lock at all" (`pitch_unreliable`).
+    use crate::audio::analysis::PITCH_CONFIDENCE_RELIABLE_FLOOR;
     let off_pitch_real =
-        pitch_error_cents.abs() > 50.0 && pitch_confidence >= PITCH_CONFIDENCE_THRESHOLD;
+        pitch_error_cents.abs() > 50.0 && pitch_confidence >= PITCH_CONFIDENCE_RELIABLE_FLOOR;
+    let pitch_unreliable = pitch_confidence < PITCH_CONFIDENCE_RELIABLE_FLOOR;
 
     let flags = synth_mcp::types::AnalyzeFlags {
         silent: stereo_silent,
@@ -8279,6 +8279,7 @@ pub fn analyze_rendered_buffer(
         has_dc_offset: dc_offset.abs() > 0.01 || stereo_dc,
         low_output: stereo_low_output,
         off_pitch: off_pitch_real,
+        pitch_unreliable,
     };
 
     synth_mcp::types::AnalyzeNoteResult {

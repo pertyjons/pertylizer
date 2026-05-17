@@ -609,7 +609,7 @@ pub struct AnalyzeEnvelopeEstimate {
 }
 
 /// Boolean quality flags. Cheap one-glance status for an LLM agent.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct AnalyzeFlags {
     /// True when `peak_amplitude < 0.005` — patch produced essentially
     /// nothing audible.
@@ -622,9 +622,16 @@ pub struct AnalyzeFlags {
     /// True when `peak_amplitude < 0.05` — quieter than typical bus level,
     /// likely needs a gain boost.
     pub low_output: bool,
-    /// True when `pitch_error_cents.abs() > 50.0` — fundamental is more
-    /// than half a semitone away from the expected note.
+    /// True when the detector locked onto a pitch more than half a semitone
+    /// from the expected note *with confidence*. Mutually exclusive with
+    /// `pitch_unreliable`: this one fires only when the reported
+    /// fundamental is trustworthy enough to act on.
     pub off_pitch: bool,
+    /// True when the pitch detector couldn't pick a clear fundamental —
+    /// formant-heavy, sub-bass-dominant, or atonal/noisy content.
+    /// `fundamental_hz` should not be trusted; see `off_pitch` for the
+    /// "locked on the wrong note" case.
+    pub pitch_unreliable: bool,
 }
 
 /// Which signal `fundamental_hz` (and the spectral metrics derived from

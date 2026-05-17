@@ -9,6 +9,12 @@
 - In rack view, when a module is below/under the instrument list to the left the module is getting the mouse input not
   the instrument list.
 - When a song ends (last track) the song should stop, the timer and the the vertikal bar should also stop
+- MCP `save_project` / `load_project` / `new_project` time out when the Pertylizer window is minimized, hidden, or
+  unfocused. The `pending_project_action` poll lives inside `eframe::App::ui()` (egui_backend.rs:689), so when
+  eframe pauses repaints for an inactive window the queue is never drained and `submit_project_action`'s 30 s
+  condvar wait expires. Workaround: click the window. Proper fix: call `ctx.request_repaint()` from
+  `submit_project_action` (needs an `egui::Context` handle in `McpSharedState`), or run a separate watcher
+  thread that polls the queue independently of the repaint cycle.
 
 ### 0.2 Project settings — unsaved instrument strip parameters
 
@@ -23,7 +29,7 @@ project/patch files:
 - [x] `VelocityAmpSensitivity` — velocity → amplitude mapping sensitivity. Persisted; live-editable.
 - [x] `VelocityFilterSensitivity` — velocity → filter cutoff mapping sensitivity. Persisted; live-editable.
 
----
+--- 
 
 ## ★ Description fields on user-facing entities (for AI context)
 
