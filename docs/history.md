@@ -13,6 +13,26 @@
   earliest crossing note, Seeks there, renders prefix + visible range, and
   trims the prefix before returning; prefix capped at 30 s.
 
+### §2 / §3 follow-ups
+
+- **§2.1 Tempo set/remove undo** — Apply/Remove on the arrangement-ruler
+  tempo menu mutated the song without pushing an undo entry. New
+  `UndoAction::SetTempo { tick, old_bpm, new_bpm: Option<Bpm> }` covers
+  apply, edit and remove via the Option pair; wired through `apply_undo_action`.
+- **§2.7 Transport loop region — visibility + MCP control** — the loop was
+  invisible on the ruler and unreachable from MCP, so an arrangement grown
+  past a stale `loop_end` silently clipped playback (Neuro F#m 174 session,
+  2026-05-13). `TransportState` now mirrors `SequencerEngine`'s loop region
+  via `sync_loop_to_transport`; the ruler shows it, the transport bar shows
+  a clickable "LOOP s–e" badge, `SongInfo` carries it, and new
+  `set_transport_loop` / `clear_transport_loop` MCP tools drive the same
+  `EngineCommand::SetLoop` the GUI uses. `place_pattern` / `place_patterns`
+  auto-extend `loop_end` when a new placement reaches past it.
+- **§3.4 Sidechain cycle detection (docs only)** — TODO entry was stale;
+  arbitrary-depth cycle detection already lives in
+  `SynthEngine::sidechain_chain_contains` and the MCP bridge pre-check
+  (734b0e6).
+
 ## [0.288.0] - 2026-05-17
 ### MCP music tools — §9 follow-ups from headless end-to-end testing
 
