@@ -167,6 +167,7 @@ fn find_motifs_returns_repeating_phrase() {
         Some(3),
         Some(3),
         Some(10),
+        None,
         Some(false),
         None,
     )
@@ -198,6 +199,7 @@ fn analyze_hook_strength_zero_for_unique_melody() {
         None,
         Some(3),
         Some(3),
+        None,
         Some(false),
         None,
     )
@@ -227,6 +229,7 @@ fn analyze_hook_strength_positive_for_strong_motif() {
         None,
         Some(3),
         Some(3),
+        None,
         Some(false),
         None,
     )

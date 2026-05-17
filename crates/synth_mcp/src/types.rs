@@ -1427,7 +1427,10 @@ pub struct AnalyzeMaskingMatrixResult {
     /// Number of audible tracks that overlapped the section. The pair
     /// count is `track_count·(track_count − 1) / 2`.
     pub track_count: u32,
-    /// One entry per unordered pair, sorted by descending `conflict_score`.
+    /// Total unordered pair count before any `top_pairs` truncation.
+    pub total_pair_count: u32,
+    /// One entry per unordered pair, sorted by descending `conflict_score`,
+    /// truncated to the caller's `top_pairs` (default 20).
     pub pairs: Vec<MaskingPair>,
     /// Non-fatal warnings emitted during the render.
     pub warnings: Vec<String>,

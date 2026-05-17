@@ -829,6 +829,7 @@ fn analyze_masking_matrix_emits_pair_with_well_formed_bands() {
         &shared,
         Some(0),
         Some(3840),
+        None,
     )
     .expect("masking matrix should succeed");
 
@@ -895,6 +896,7 @@ fn analyze_masking_matrix_is_deterministic_across_calls() {
         &shared,
         Some(0),
         Some(3840),
+        None,
     )
     .expect("first call");
     let b = analyze_masking_matrix_impl(
@@ -903,6 +905,7 @@ fn analyze_masking_matrix_is_deterministic_across_calls() {
         &shared,
         Some(0),
         Some(3840),
+        None,
     )
     .expect("second call");
 
@@ -947,6 +950,7 @@ fn analyze_masking_matrix_rejects_inverted_range() {
         &shared,
         Some(3840),
         Some(1920),
+        None,
     )
     .expect_err("inverted range must error");
     let msg = err.to_string();
@@ -988,6 +992,7 @@ fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
         &shared,
         Some(0),
         Some(3840),
+        None,
     )
     .expect("single-track masking matrix should succeed (just empty)");
     assert_eq!(result.track_count, 1);
@@ -1009,7 +1014,7 @@ fn analyze_masking_matrix_defaults_to_full_arrangement_when_range_omitted() {
     let shared = McpSharedState::with_song(song);
 
     let result =
-        analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, None, None)
+        analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, None, None, None)
             .expect("default range should succeed");
     // The two-track fixture spans [0, 3840) — explicit and default ranges agree.
     assert_eq!(result.start_tick, 0);

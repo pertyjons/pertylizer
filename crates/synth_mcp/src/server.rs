@@ -41,6 +41,22 @@ fn to_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|e| format!("Serialization error: {e}"))
 }
 
+/// Run a blocking bridge call on a dedicated worker so the tokio executor
+/// stays available for SSE keep-alives, then format the result as JSON (or
+/// `"Error: …"` on failure). Use for every tool that performs offline
+/// rendering or other long-running synchronous work.
+fn run_blocking_json<T, E, F>(f: F) -> String
+where
+    T: serde::Serialize,
+    E: std::fmt::Display,
+    F: FnOnce() -> Result<T, E>,
+{
+    tokio::task::block_in_place(|| match f() {
+        Ok(result) => to_json(&result),
+        Err(e) => format!("Error: {e}"),
+    })
+}
+
 fn validate_midi_note(note: u8) -> Result<(), McpBridgeError> {
     if note > 127 {
         return Err(McpBridgeError::InvalidMidiNote(note));
@@ -540,6 +556,10 @@ pub struct AnalyzeMaskingMatrixParam {
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
     )]
     pub arrangement_end_tick: Option<u64>,
+    #[schemars(
+        description = "Maximum pairs to return, sorted by descending conflict_score (default 20, clamped to [1, 200]). The pair matrix is O(N²) in audible-track count, so the full list explodes the response size — only the top conflicts are usually actionable. `total_pair_count` in the result still reflects the full pair count."
+    )]
+    pub top_pairs: Option<u32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -829,6 +849,10 @@ pub struct FindMotifsParam {
     )]
     pub top_n: Option<u32>,
     #[schemars(
+        description = "Per-motif cap on the returned `occurrences` list (default 5, clamped to [0, 50]). The motif's `count` field is always the authoritative total; the list is just a sample of locations. Set 0 to omit the list entirely. Highly-repetitive hooks can hit 50+ occurrences and would otherwise blow up the response."
+    )]
+    pub max_occurrences_per_motif: Option<u32>,
+    #[schemars(
         description = "Exclude drum tracks (default true). Drum hits don't have a melodic interval contour."
     )]
     pub exclude_drums: Option<bool>,
@@ -854,6 +878,10 @@ pub struct AnalyzeHookStrengthParam {
         description = "Minimum repeat count for a motif to count toward the hook score (default 3)."
     )]
     pub min_count: Option<u32>,
+    #[schemars(
+        description = "Per-motif cap on the returned `strongest_motif.occurrences` list (default 5, clamped to [0, 50]). The motif's `count` field is always the authoritative total. Set 0 to omit the list entirely."
+    )]
+    pub max_occurrences_per_motif: Option<u32>,
     #[schemars(description = "Exclude drum tracks (default true).")]
     pub exclude_drums: Option<bool>,
     #[schemars(description = "Explicit list of track IDs to exclude. Arrangement scope only.")]
@@ -2690,9 +2718,8 @@ impl SynthMcpServer {
             validate_midi_note(expected).map_err(mcp_err)?;
         }
 
-        let result = self
-            .bridge
-            .analyze_note(
+        let result = tokio::task::block_in_place(|| {
+            self.bridge.analyze_note(
                 params.0.instrument_id,
                 params.0.note,
                 params.0.velocity,
@@ -2700,7 +2727,8 @@ impl SynthMcpServer {
                 tail_ms,
                 params.0.expected_note,
             )
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        })
+        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         let json = serde_json::to_string_pretty(&result)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
@@ -2712,24 +2740,20 @@ impl SynthMcpServer {
     )]
     async fn analyze_mix_bus(&self, params: Parameters<AnalyzeMixBusParam>) -> String {
         let duration = params.0.duration_seconds.unwrap_or(10.0);
-        match self.bridge.analyze_mix_bus(duration, params.0.start_tick) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
-        }
+        run_blocking_json(|| self.bridge.analyze_mix_bus(duration, params.0.start_tick))
     }
 
     #[tool(
         description = "Render an explicit arrangement range [start_tick, end_tick) offline and return the same mix-bus metrics as analyze_mix_bus (LUFS-I/S/M, sample peak, true peak in dBTP, RMS, crest, banded energy, stereo correlation, mid/side, mono-compatibility, clipped samples). Use this when you want to A/B verses vs. choruses, compare a buildup to a drop, or inspect a specific musical passage rather than a fixed-duration window from the song start. Pass `include_per_track: true` to also receive a per-track breakdown (one soloed render per audible track) so you can tell which track is responsible for clipping, dominant energy, or sub-bass — costs roughly O(track_count) extra render time. Per-track `metrics.peak`/`metrics.rms` include pan-law attenuation (-3 dB at center pan: a center-panned source with internal peak 1.0 reports ~0.7071). Per-track `pre_master_peak` analytically reverses the instrument's pan + volume attenuation from the per-channel peaks and reports the patch's internal signal peak directly, so you can see internal clipping that would otherwise be hidden by a quiet pan-down."
     )]
     async fn analyze_section(&self, params: Parameters<AnalyzeSectionParam>) -> String {
-        match self.bridge.analyze_section(
-            params.0.start_tick,
-            params.0.end_tick,
-            params.0.include_per_track,
-        ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
-        }
+        run_blocking_json(|| {
+            self.bridge.analyze_section(
+                params.0.start_tick,
+                params.0.end_tick,
+                params.0.include_per_track,
+            )
+        })
     }
 
     #[tool(
@@ -2739,13 +2763,13 @@ impl SynthMcpServer {
         &self,
         params: Parameters<AnalyzeMaskingMatrixParam>,
     ) -> String {
-        match self.bridge.analyze_masking_matrix(
-            params.0.arrangement_start_tick,
-            params.0.arrangement_end_tick,
-        ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
-        }
+        run_blocking_json(|| {
+            self.bridge.analyze_masking_matrix(
+                params.0.arrangement_start_tick,
+                params.0.arrangement_end_tick,
+                params.0.top_pairs,
+            )
+        })
     }
 
     #[tool(
@@ -2782,18 +2806,17 @@ impl SynthMcpServer {
         &self,
         params: Parameters<AnalyzeInstrumentRangeParam>,
     ) -> String {
-        match self.bridge.analyze_instrument_range(
-            params.0.instrument_id,
-            params.0.low_note,
-            params.0.high_note,
-            params.0.step_semitones,
-            params.0.velocity,
-            params.0.duration_ms,
-            params.0.tail_ms,
-        ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
-        }
+        run_blocking_json(|| {
+            self.bridge.analyze_instrument_range(
+                params.0.instrument_id,
+                params.0.low_note,
+                params.0.high_note,
+                params.0.step_semitones,
+                params.0.velocity,
+                params.0.duration_ms,
+                params.0.tail_ms,
+            )
+        })
     }
 
     #[tool(
@@ -2803,18 +2826,17 @@ impl SynthMcpServer {
         &self,
         params: Parameters<AnalyzeVelocityResponseParam>,
     ) -> String {
-        match self.bridge.analyze_velocity_response(
-            params.0.instrument_id,
-            params.0.note,
-            params.0.velocity_low,
-            params.0.velocity_high,
-            params.0.velocity_step,
-            params.0.duration_ms,
-            params.0.tail_ms,
-        ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
-        }
+        run_blocking_json(|| {
+            self.bridge.analyze_velocity_response(
+                params.0.instrument_id,
+                params.0.note,
+                params.0.velocity_low,
+                params.0.velocity_high,
+                params.0.velocity_step,
+                params.0.duration_ms,
+                params.0.tail_ms,
+            )
+        })
     }
 
     #[tool(
@@ -2865,6 +2887,7 @@ impl SynthMcpServer {
             params.0.max_interval_length,
             params.0.min_count,
             params.0.top_n,
+            params.0.max_occurrences_per_motif,
             params.0.exclude_drums,
             params.0.exclude_track_ids,
         ) {
@@ -2883,6 +2906,7 @@ impl SynthMcpServer {
             params.0.arrangement_end_tick,
             params.0.min_interval_length,
             params.0.min_count,
+            params.0.max_occurrences_per_motif,
             params.0.exclude_drums,
             params.0.exclude_track_ids,
         ) {
@@ -2895,38 +2919,36 @@ impl SynthMcpServer {
         description = "Bar-level tension curve over the scope. Builds per-bar rows from existing analyzers — harmonic_function for chord tension, bar_features for density/register/rhythmic activity, plus (in audio mode) a single offline render sliced per bar for loudness, brightness, band entropy, and stereo width. Returns per-bar values, the cluster-derived section labels (so the caller can map bars to A/B/A'), a peak/trough/mean/std-dev summary, and shape warnings: chorus reprises with lower energy, builds that peak too early, drops that lose low-end, and otherwise monotone curves. `include_audio` defaults to true in arrangement scope and false in pattern scope. No new measurements — pure synthesis on top of the existing analyzers."
     )]
     async fn analyze_tension_curve(&self, params: Parameters<AnalyzeTensionCurveParam>) -> String {
-        match self.bridge.analyze_tension_curve(
-            params.0.pattern_id,
-            params.0.arrangement_start_tick,
-            params.0.arrangement_end_tick,
-            params.0.include_audio,
-            params.0.similarity_threshold,
-            params.0.section_min_bars,
-            params.0.exclude_drums,
-            params.0.exclude_track_ids,
-        ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
-        }
+        run_blocking_json(|| {
+            self.bridge.analyze_tension_curve(
+                params.0.pattern_id,
+                params.0.arrangement_start_tick,
+                params.0.arrangement_end_tick,
+                params.0.include_audio,
+                params.0.similarity_threshold,
+                params.0.section_min_bars,
+                params.0.exclude_drums,
+                params.0.exclude_track_ids,
+            )
+        })
     }
 
     #[tool(
         description = "Meta-analysis: runs the relevant analyzers across harmony, mix, groove, arrangement, composition, and patch categories, applies a rule set per category, and returns ranked fix suggestions with supporting evidence. No new measurements — every suggestion references metrics already produced by the underlying analyzer tools. `categories` is a subset of [harmony, mix, groove, arrangement, composition, patch] (empty/null = all). `include_audio` (default true) gates the mix-bus / masking / audio-augmented tension-curve checks. `max_suggestions` defaults to 15."
     )]
     async fn suggest_music_fixes(&self, params: Parameters<SuggestMusicFixesParam>) -> String {
-        match self.bridge.suggest_music_fixes(
-            params.0.pattern_id,
-            params.0.arrangement_start_tick,
-            params.0.arrangement_end_tick,
-            params.0.categories,
-            params.0.include_audio,
-            params.0.max_suggestions,
-            params.0.exclude_drums,
-            params.0.exclude_track_ids,
-        ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
-        }
+        run_blocking_json(|| {
+            self.bridge.suggest_music_fixes(
+                params.0.pattern_id,
+                params.0.arrangement_start_tick,
+                params.0.arrangement_end_tick,
+                params.0.categories,
+                params.0.include_audio,
+                params.0.max_suggestions,
+                params.0.exclude_drums,
+                params.0.exclude_track_ids,
+            )
+        })
     }
 
     #[tool(
@@ -4490,10 +4512,10 @@ impl SynthMcpServer {
         if let Err(e) = validate_file_path(&params.0.path) {
             return e;
         }
-        match self.bridge.save_project(&params.0.path) {
+        tokio::task::block_in_place(|| match self.bridge.save_project(&params.0.path) {
             Ok(msg) => format!("OK: {msg}"),
             Err(e) => format!("Error: {e}"),
-        }
+        })
     }
 
     #[tool(
@@ -4503,10 +4525,10 @@ impl SynthMcpServer {
         if let Err(e) = validate_file_path(&params.0.path) {
             return e;
         }
-        match self.bridge.load_project(&params.0.path) {
+        tokio::task::block_in_place(|| match self.bridge.load_project(&params.0.path) {
             Ok(msg) => format!("OK: {msg}"),
             Err(e) => format!("Error: {e}"),
-        }
+        })
     }
 
     #[tool(

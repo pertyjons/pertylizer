@@ -32,6 +32,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         env!("BUILD_DATE"),
     );
 
+    // Leave at least one CPU for the tokio executor: offline analyzers spawn
+    // rayon-parallel renders that otherwise pin every core and starve the MCP
+    // server's SSE keep-alive, which axum/hyper aborts after ~15 s — dropping
+    // the active client session. Floor at 2 so 2-core CI/VM hosts still
+    // parallelise per-track renders (mild oversubscription is benign for the
+    // short analyzer bursts; tokio is otherwise idle during the render).
+    let rayon_threads = std::thread::available_parallelism()
+        .map(|n| n.get().saturating_sub(1).max(2))
+        .unwrap_or(2);
+    if let Err(e) = rayon::ThreadPoolBuilder::new()
+        .num_threads(rayon_threads)
+        .build_global()
+    {
+        eprintln!("rayon thread pool already initialized: {e}");
+    }
+
     let args: Vec<String> = env::args().collect();
 
     if args.iter().any(|a| a == "--help" || a == "-h") {

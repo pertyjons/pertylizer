@@ -2,6 +2,14 @@
 
 ## 0. Known Bugs
 
+### 0.1 Misc findings
+
+- When saving a project with samples, the save should always be in zip-format and file extention .zip, and all other
+  should be saved in json with file extention .json
+- In rack view, when a module is below/under the instrument list to the left the module is getting the mouse input not
+  the instrument list.
+- When a song ends (last track) the song should stop, the timer and the the vertikal bar should also stop
+
 ### 0.2 Project settings — unsaved instrument strip parameters
 
 The following `InstrumentParam` variants exist in the engine but have no UI controls and are not persisted in
@@ -38,20 +46,20 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 
 ### Current status of description fields
 
-| Entity                     | Field exists?                         | MCP read | MCP write |
-|----------------------------|---------------------------------------|----------|-----------|
-| `InstrumentState`          | ✅ `patch.rs:697`                     | ❌       | ❌        |
-| `Patch`                    | ✅ `patch.rs:130, 307` (Option)       | ❌       | ❌        |
-| `AwePresetFile`            | ✅ `patch.rs:792`                     | ❌       | ❌        |
-| `Song`                     | ❌ — add to `synth_sequencer/song.rs` | ❌       | ❌        |
-| `Pattern`                  | ❌ — add to `synth_sequencer`         | ❌       | ❌        |
-| `SequencerTrack`           | ❌ — add to `synth_sequencer`         | ❌       | ❌        |
-| `Sample` entry             | ❌ — add to sample registry           | ❌       | ❌        |
-| Module *instance* (in patch) | ❌ — separate from `ModuleDescriptor` | ❌       | ❌        |
-| `ModuleDescriptor` (type)  | ✅ `module_traits.rs:869`             | ✅       | n/a (hardcoded) |
-| `ParameterDescriptor` (type) | ✅ `module_traits.rs:586`            | ✅       | n/a       |
-| `PortDescriptor` (type)    | ✅                                    | ✅       | n/a       |
-| `ChoiceOption` (type)      | ✅ `module_traits.rs:557` (Option)    | partial  | n/a       |
+| Entity                       | Field exists?                        | MCP read | MCP write       |
+|------------------------------|--------------------------------------|----------|-----------------|
+| `InstrumentState`            | ✅ `patch.rs:697`                     | ❌        | ❌               |
+| `Patch`                      | ✅ `patch.rs:130, 307` (Option)       | ❌        | ❌               |
+| `AwePresetFile`              | ✅ `patch.rs:792`                     | ❌        | ❌               |
+| `Song`                       | ❌ — add to `synth_sequencer/song.rs` | ❌        | ❌               |
+| `Pattern`                    | ❌ — add to `synth_sequencer`         | ❌        | ❌               |
+| `SequencerTrack`             | ❌ — add to `synth_sequencer`         | ❌        | ❌               |
+| `Sample` entry               | ❌ — add to sample registry           | ❌        | ❌               |
+| Module *instance* (in patch) | ❌ — separate from `ModuleDescriptor` | ❌        | ❌               |
+| `ModuleDescriptor` (type)    | ✅ `module_traits.rs:869`             | ✅        | n/a (hardcoded) |
+| `ParameterDescriptor` (type) | ✅ `module_traits.rs:586`             | ✅        | n/a             |
+| `PortDescriptor` (type)      | ✅                                    | ✅        | n/a             |
+| `ChoiceOption` (type)        | ✅ `module_traits.rs:557` (Option)    | partial  | n/a             |
 
 ### Phase 1 — entities whose fields already exist; only MCP plumbing needed
 
@@ -76,17 +84,17 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
   `McpSharedState.awe_description` directly (no engine command since description never
   affects audio). Accepts `""` to clear.
 - [x] Editable from GUI for the remaining two fields:
-  - **Patch description** — `InstrumentUiState.patch_description: String` mirror, multiline
-    `TextEdit` in the instrument-edit window directly below the existing Description field.
-    Hover tooltips on both labels distinguish per-instance song-role intent vs sound-design
-    intent. Dispatches `EngineCommand::SetPatchDescription` on change; loads from
-    `inst_state.patch.description`.
-  - **AWE description** — `AweUiState.description: String` mirror with an
-    `description_edit_in_progress` flag, multiline `TextEdit` at the top of the AWE controls
-    panel. Two-way sync with `McpSharedState.awe_description`: GUI → shared while the user is
-    typing (edit-in-progress guard), shared → GUI otherwise so MCP writes propagate back.
-    Persists separately as `GlobalProjectState.awe_description: Option<String>` so the text
-    survives project save / load round-trips.
+    - **Patch description** — `InstrumentUiState.patch_description: String` mirror, multiline
+      `TextEdit` in the instrument-edit window directly below the existing Description field.
+      Hover tooltips on both labels distinguish per-instance song-role intent vs sound-design
+      intent. Dispatches `EngineCommand::SetPatchDescription` on change; loads from
+      `inst_state.patch.description`.
+    - **AWE description** — `AweUiState.description: String` mirror with an
+      `description_edit_in_progress` flag, multiline `TextEdit` at the top of the AWE controls
+      panel. Two-way sync with `McpSharedState.awe_description`: GUI → shared while the user is
+      typing (edit-in-progress guard), shared → GUI otherwise so MCP writes propagate back.
+      Persists separately as `GlobalProjectState.awe_description: Option<String>` so the text
+      survives project save / load round-trips.
 
 ### Phase 2 — add new description fields + MCP read/write tools
 
@@ -148,12 +156,12 @@ existing getter response, write via a dedicated setter routed through
 
 ### Current status of color fields
 
-| Entity            | Field exists?                            | MCP read | MCP write |
-|-------------------|------------------------------------------|----------|-----------|
-| `InstrumentState` | ✅ `patch.rs:700` `Option<HexColor>`     | ❌       | ❌        |
-| `Patch`           | ✅ `patch.rs:255` `Option<HexColor>`     | ❌       | ❌        |
-| `Group`           | ✅ `patch.rs:316` `Option<HexColor>`     | ❌       | ❌        |
-| `SequencerTrack`  | ✅ in song JSON `{r, g, b}` per track    | ❌       | ❌        |
+| Entity            | Field exists?                        | MCP read | MCP write |
+|-------------------|--------------------------------------|----------|-----------|
+| `InstrumentState` | ✅ `patch.rs:700` `Option<HexColor>`  | ❌        | ❌         |
+| `Patch`           | ✅ `patch.rs:255` `Option<HexColor>`  | ❌        | ❌         |
+| `Group`           | ✅ `patch.rs:316` `Option<HexColor>`  | ❌        | ❌         |
+| `SequencerTrack`  | ✅ in song JSON `{r, g, b}` per track | ❌        | ❌         |
 
 ### Work to do
 
@@ -312,16 +320,16 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
   (Ableton, FL Studio, Renoise, Bitwig) loop the pattern internally instead, so a 1-bar drum pattern
   stretched to 4 bars plays four times. Implementing it touches three places in
   `crates/synth_engine/src/sequencer_engine.rs`:
-  1. **Modulo on `pattern_tick`** — `collect_events_at_tick` currently computes
-     `pattern_tick = (current_tick - placement.start) as u32`. With looping it becomes
-     `pattern_tick = raw % pattern.length.0`. Trivial.
-  2. **NoteOff timing across loop boundaries.** A note starting at `pattern_tick=800` with duration
-     `200` in a 960-tick pattern would NoteOff at 1000 — past the loop. The active-notes buffer must
-     hold the *absolute* end-tick (not modulo), and the next loop iteration's identical NoteOn must
-     either retrigger or be coalesced with the still-ringing note. Pick a policy and document it.
-  3. **Automation re-trigger.** Automation points need a re-trigger or "carry-over last value"
-     decision per loop iteration. Today there is only one playback of each automation lane per
-     placement — see `pattern.automation` collection at line ~360.
+    1. **Modulo on `pattern_tick`** — `collect_events_at_tick` currently computes
+       `pattern_tick = (current_tick - placement.start) as u32`. With looping it becomes
+       `pattern_tick = raw % pattern.length.0`. Trivial.
+    2. **NoteOff timing across loop boundaries.** A note starting at `pattern_tick=800` with duration
+       `200` in a 960-tick pattern would NoteOff at 1000 — past the loop. The active-notes buffer must
+       hold the *absolute* end-tick (not modulo), and the next loop iteration's identical NoteOn must
+       either retrigger or be coalesced with the still-ringing note. Pick a policy and document it.
+    3. **Automation re-trigger.** Automation points need a re-trigger or "carry-over last value"
+       decision per loop iteration. Today there is only one playback of each automation lane per
+       placement — see `pattern.automation` collection at line ~360.
 - [ ] **Mini-note visualization should mirror the loop.** `NoteMiniature.start_frac` is currently
   fraction-of-pattern-length. For loop-within semantics the rendering in
   `gui/sequencer/mod.rs` (mini-note loop, near the `inst_color_cache` use) should repeat the miniature
@@ -381,36 +389,36 @@ position with no visual hint, and there is no MCP tool to inspect or clear the r
 
 - [x] Use one instrument's audio to control another (e.g. sidechain compression). Full path
   shipped: data model + persistence + MCP + GUI + engine audio routing.
-  - [x] `Instrument.sidechain_source_id: Option<InstrumentId>` engine field + getter/setter.
-  - [x] `EngineCommand::SetSidechainSource` + handler (rejects self-routing). `transactions::try_clone`
-        and `hub.rs` permission gate updated.
-  - [x] `InstrumentSnapshot.sidechain_source_id` exposed to MCP via `InstrumentInfo`.
-  - [x] `Session::set_sidechain_source` + `SynthBridge::set_sidechain_source` + new MCP tool
-        `set_sidechain_source(instrument_id, source: Option<u64>)`.
-  - [x] `InstrumentState.sidechain_source_id` persistence (`#[serde(default)]`) + load path sends
-        the engine command after instrument construction.
-  - [x] GUI combobox in the instrument-edit window listing all other instruments + `— None —`.
-  - [x] **Engine audio routing**:
-    - `SynthEngine::prev_instrument_outputs: HashMap<InstrumentId, AudioBuffer>` — pre-allocated
-      on instrument add/remove (no audio-thread allocs).
-    - `Instrument::last_output_interleaved()` exposes the post-effect-chain interleaved-stereo
-      output for the engine to capture after each `process()`.
-    - `Instrument::feed_sidechain_inputs(buffer)` walks the effect chain and calls
-      `AudioEffect::set_sidechain_input` on every effect slot. Default trait method is a
-      no-op; `Compressor` overrides to forward into its existing inherent
-      `set_sidechain_input`.
-    - `SynthEngine::process_voices` uses previous-callback semantics (read source's
-      previous output, then process, then capture this callback's output for next time).
-      Introduces ~1 audio-buffer of sidechain detection latency. Order of `self.instruments`
-      no longer matters — A and B can sidechain each other safely.
-    - Removing an instrument clears its prev cache *and* clears any other instrument's
-      `sidechain_source_id` that pointed at it.
-  - [x] Cycle detection deeper than 1 — both the engine
-        (`SynthEngine::sidechain_chain_contains`) and the MCP bridge
-        (`set_sidechain_source` pre-check) walk the proposed chain up to
-        `instruments.len()` hops and reject anything that loops back through
-        the target instrument. Bounded iteration so a corrupted chain can't
-        spin forever; MCP returns a clear "would form a cycle" error.
+    - [x] `Instrument.sidechain_source_id: Option<InstrumentId>` engine field + getter/setter.
+    - [x] `EngineCommand::SetSidechainSource` + handler (rejects self-routing). `transactions::try_clone`
+      and `hub.rs` permission gate updated.
+    - [x] `InstrumentSnapshot.sidechain_source_id` exposed to MCP via `InstrumentInfo`.
+    - [x] `Session::set_sidechain_source` + `SynthBridge::set_sidechain_source` + new MCP tool
+      `set_sidechain_source(instrument_id, source: Option<u64>)`.
+    - [x] `InstrumentState.sidechain_source_id` persistence (`#[serde(default)]`) + load path sends
+      the engine command after instrument construction.
+    - [x] GUI combobox in the instrument-edit window listing all other instruments + `— None —`.
+    - [x] **Engine audio routing**:
+        - `SynthEngine::prev_instrument_outputs: HashMap<InstrumentId, AudioBuffer>` — pre-allocated
+          on instrument add/remove (no audio-thread allocs).
+        - `Instrument::last_output_interleaved()` exposes the post-effect-chain interleaved-stereo
+          output for the engine to capture after each `process()`.
+        - `Instrument::feed_sidechain_inputs(buffer)` walks the effect chain and calls
+          `AudioEffect::set_sidechain_input` on every effect slot. Default trait method is a
+          no-op; `Compressor` overrides to forward into its existing inherent
+          `set_sidechain_input`.
+        - `SynthEngine::process_voices` uses previous-callback semantics (read source's
+          previous output, then process, then capture this callback's output for next time).
+          Introduces ~1 audio-buffer of sidechain detection latency. Order of `self.instruments`
+          no longer matters — A and B can sidechain each other safely.
+        - Removing an instrument clears its prev cache *and* clears any other instrument's
+          `sidechain_source_id` that pointed at it.
+    - [x] Cycle detection deeper than 1 — both the engine
+      (`SynthEngine::sidechain_chain_contains`) and the MCP bridge
+      (`set_sidechain_source` pre-check) walk the proposed chain up to
+      `instruments.len()` hops and reject anything that loops back through
+      the target instrument. Bounded iteration so a corrupted chain can't
+      spin forever; MCP returns a clear "would form a cycle" error.
 
 ### 3.5 Polyphony settings
 
@@ -469,21 +477,21 @@ roadmap doc (`docs/mcp-music-tools-plan.md`) was closed and deleted on
 2026-05-17 — remaining work for that roadmap lives below.
 
 - [x] Per-track stem breakdown for `analyze_section` — v0.277.0
-      (`include_per_track` parameter).
+  (`include_per_track` parameter).
 - [x] Drum-track filtering for `analyze_harmony` — v0.277.0
-      (`exclude_drums` defaults to true; `exclude_track_ids` for explicit drops).
+  (`exclude_drums` defaults to true; `exclude_track_ids` for explicit drops).
 - [x] Tier 1: `analyze_pattern` (2026-05-16), `analyze_instrument_range`
-      (v0.284.0). `render_section_to_wav` still pending — pick up when
-      `compare_to_reference` becomes relevant.
+  (v0.284.0). `render_section_to_wav` still pending — pick up when
+  `compare_to_reference` becomes relevant.
 - [x] Tier 2: `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`,
-      `quantize_notes_to_grid` (v0.285.0); `analyze_velocity_response` (v0.284.0);
-      `analyze_arrangement`, `analyze_form_map`, `find_motifs`,
-      `analyze_hook_strength` (v0.286.0); `analyze_tension_curve`,
-      `suggest_music_fixes` (v0.287.0 — closes Tier-2 #14 and #16).
-      `analyze_groove` still pending — `analyze_drum_groove` (v0.283.0)
-      already covers the highest-value groove diagnostic.
+  `quantize_notes_to_grid` (v0.285.0); `analyze_velocity_response` (v0.284.0);
+  `analyze_arrangement`, `analyze_form_map`, `find_motifs`,
+  `analyze_hook_strength` (v0.286.0); `analyze_tension_curve`,
+  `suggest_music_fixes` (v0.287.0 — closes Tier-2 #14 and #16).
+  `analyze_groove` still pending — `analyze_drum_groove` (v0.283.0)
+  already covers the highest-value groove diagnostic.
 - [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
-      `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
+  `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
 - [ ] Enable AI to "play freely" via MCP to autonomously generate complete songs and arrangements
 - [ ] Implement real-time parameter interpolation (gliding) to allow smoother AI-driven sound design
 
@@ -496,34 +504,34 @@ rayon-parallel per-track renders, `Song::tracks_mut` / `set_solo_only` helpers, 
 ship dates.
 
 - [ ] **`HarmonyScope` enum to fix `analyze_song_harmony` argument sprawl.** `analyze_song_harmony`
-      takes 8 arguments and carries `#[allow(clippy::too_many_arguments)]`. Two of them
-      (`exclude_drums`, `exclude_track_ids`) are only meaningful in arrangement scope; pattern scope
-      currently emits a runtime warning if they're passed. Introduce
-      `enum HarmonyScope { Pattern { pattern_id: PatternId }, Arrangement { start: Option<u64>,
-      end: Option<u64>, exclude_drums: bool, exclude_track_ids: HashSet<TrackId> } }` at the bridge
-      boundary; the flat `AnalyzeHarmonyParam` (JSON-schema layer requires it) maps into the enum
-      inside the bridge. The runtime "ignored in pattern scope" warning becomes a compile-time
-      impossibility and the `#[allow]` disappears. Touches `synth_mcp::bridge`, the bridge impl,
-      and the arrangement-vs-pattern branch in `analyze_song_harmony`. Medium impact — pick up
-      when next touching the harmony analyzer.
+  takes 8 arguments and carries `#[allow(clippy::too_many_arguments)]`. Two of them
+  (`exclude_drums`, `exclude_track_ids`) are only meaningful in arrangement scope; pattern scope
+  currently emits a runtime warning if they're passed. Introduce
+  `enum HarmonyScope { Pattern { pattern_id: PatternId }, Arrangement { start: Option<u64>,
+  end: Option<u64>, exclude_drums: bool, exclude_track_ids: HashSet<TrackId> } }` at the bridge
+  boundary; the flat `AnalyzeHarmonyParam` (JSON-schema layer requires it) maps into the enum
+  inside the bridge. The runtime "ignored in pattern scope" warning becomes a compile-time
+  impossibility and the `#[allow]` disappears. Touches `synth_mcp::bridge`, the bridge impl,
+  and the arrangement-vs-pattern branch in `analyze_song_harmony`. Medium impact — pick up
+  when next touching the harmony analyzer.
 - [ ] **`synth_sequencer::shared_song(Song) -> Arc<RwLock<Song>>` constructor.** Grep finds ~9 sites
-      that wrap a `Song` in `Arc::new(parking_lot::RwLock::new(...))` verbatim
-      (`crates/pertylizer/src/audio/export.rs:214`, `main.rs:83`, `mcp_shared.rs:56`, sequencer
-      tests, the per-track render loop, etc.). Strictly cosmetic; not on any hot path. Pick up
-      as a drive-by when next touching one of those sites.
+  that wrap a `Song` in `Arc::new(parking_lot::RwLock::new(...))` verbatim
+  (`crates/pertylizer/src/audio/export.rs:214`, `main.rs:83`, `mcp_shared.rs:56`, sequencer
+  tests, the per-track render loop, etc.). Strictly cosmetic; not on any hot path. Pick up
+  as a drive-by when next touching one of those sites.
 - [ ] **`OfflineNoteSession` — engine reuse across patch-sweep steps.** `analyze_instrument_range_impl`
-      and `analyze_velocity_response_impl` (`crates/pertylizer/src/mcp_bridge.rs`) call
-      `analyze_rendered_note` once per swept value; each call goes through
-      `audio::preview::render_note_to_buffer`, spins up a fresh `SynthEngine`, and reloads the
-      instrument's module graph + sample data. For a 60-note semitone-step sweep that's 60 fresh
-      engines; for the default 8-step velocity sweep that's 8. Mirror §7.1's `OfflineEngineSession`
-      — wrapper takes `SynthSession` + `SharedSampleLibrary` + `InstrumentId` at construction,
-      builds the engine + loads the patch + samples once, then exposes
-      `render(note, velocity, duration_ms, tail_ms) -> RenderedNote` per call. Reproduce the
-      voice-bleed drain between renders (same problem as §7.1). Determinism tests would mirror
-      `tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`.
-      After session-reuse lands, parallelize the sweep target vector with `par_iter` for a 2-4×
-      speedup on top (same sequence as §7.1 → §7.2).
+  and `analyze_velocity_response_impl` (`crates/pertylizer/src/mcp_bridge.rs`) call
+  `analyze_rendered_note` once per swept value; each call goes through
+  `audio::preview::render_note_to_buffer`, spins up a fresh `SynthEngine`, and reloads the
+  instrument's module graph + sample data. For a 60-note semitone-step sweep that's 60 fresh
+  engines; for the default 8-step velocity sweep that's 8. Mirror §7.1's `OfflineEngineSession`
+  — wrapper takes `SynthSession` + `SharedSampleLibrary` + `InstrumentId` at construction,
+  builds the engine + loads the patch + samples once, then exposes
+  `render(note, velocity, duration_ms, tail_ms) -> RenderedNote` per call. Reproduce the
+  voice-bleed drain between renders (same problem as §7.1). Determinism tests would mirror
+  `tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`.
+  After session-reuse lands, parallelize the sweep target vector with `par_iter` for a 2-4×
+  speedup on top (same sequence as §7.1 → §7.2).
 
 ---
 

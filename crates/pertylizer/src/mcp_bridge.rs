@@ -376,6 +376,15 @@ impl SynthBridge for AppSynthBridge {
         // modules are "in use" even with no cable connections.
         let mod_matrix_sources = collect_mod_matrix_sources(&modules);
 
+        // ModuleStateSnapshot::has_inputs/has_outputs read from
+        // input_connection_counts/output_connection_counts, which currently
+        // have no writers (see shared_state.rs) — they always return false,
+        // so every module would otherwise be flagged disconnected.
+        let modules_with_input: HashSet<ModuleId> =
+            connections.iter().map(|c| c.to_module).collect();
+        let modules_with_output: HashSet<ModuleId> =
+            connections.iter().map(|c| c.from_module).collect();
+
         // Check for disconnected modules
         for module in &modules {
             let id_str = module.id.to_string();
@@ -399,8 +408,8 @@ impl SynthBridge for AppSynthBridge {
                 continue;
             }
 
-            let has_input = module.has_inputs();
-            let has_output_conn = module.has_outputs();
+            let has_input = modules_with_input.contains(&module.id);
+            let has_output_conn = modules_with_output.contains(&module.id);
 
             if !has_input && !has_output_conn {
                 diagnostics.push(GraphDiagnostic {
@@ -2610,6 +2619,7 @@ impl SynthBridge for AppSynthBridge {
         max_interval_length: Option<u8>,
         min_count: Option<u32>,
         top_n: Option<u32>,
+        max_occurrences_per_motif: Option<u32>,
         exclude_drums: Option<bool>,
         exclude_track_ids: Option<Vec<u16>>,
     ) -> Result<synth_mcp::types::FindMotifsResult, McpBridgeError> {
@@ -2623,6 +2633,7 @@ impl SynthBridge for AppSynthBridge {
             max_interval_length,
             min_count,
             top_n,
+            max_occurrences_per_motif,
             exclude_drums,
             exclude_track_ids,
         )
@@ -2635,6 +2646,7 @@ impl SynthBridge for AppSynthBridge {
         arrangement_end_tick: Option<u64>,
         min_interval_length: Option<u8>,
         min_count: Option<u32>,
+        max_occurrences_per_motif: Option<u32>,
         exclude_drums: Option<bool>,
         exclude_track_ids: Option<Vec<u16>>,
     ) -> Result<synth_mcp::types::AnalyzeHookStrengthResult, McpBridgeError> {
@@ -2646,6 +2658,7 @@ impl SynthBridge for AppSynthBridge {
             arrangement_end_tick,
             min_interval_length,
             min_count,
+            max_occurrences_per_motif,
             exclude_drums,
             exclude_track_ids,
         )
@@ -2737,6 +2750,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         arrangement_start_tick: Option<u64>,
         arrangement_end_tick: Option<u64>,
+        top_pairs: Option<u32>,
     ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
         analyze_masking_matrix_impl(
             &self.session,
@@ -2744,6 +2758,7 @@ impl SynthBridge for AppSynthBridge {
             &self.shared,
             arrangement_start_tick,
             arrangement_end_tick,
+            top_pairs,
         )
     }
 
@@ -4703,12 +4718,15 @@ impl AppSynthBridge {
             ));
         }
 
-        // Wait for the GUI to process and signal the result (timeout 5s)
+        // Wait for the GUI to process and signal the result. Save/load on
+        // large projects (and the snapshot read after a heavy batch of
+        // state-mutating commands) routinely exceeds a few seconds, so
+        // we allow 30s before declaring the GUI unresponsive.
         let (lock, cvar) = &self.shared.project_action_result;
         let guard = lock
             .lock()
             .map_err(|e| McpBridgeError::Other(format!("Lock error: {e}")))?;
-        let timeout = std::time::Duration::from_secs(5);
+        let timeout = std::time::Duration::from_secs(30);
         let (mut guard, wait_result) = cvar
             .wait_timeout_while(
                 guard,
@@ -6504,6 +6522,19 @@ const MOTIF_MAX_LEN_DEFAULT: u8 = 6;
 const MOTIF_MIN_COUNT_DEFAULT: u32 = 3;
 const MOTIF_TOP_N_DEFAULT: u32 = 10;
 const MOTIF_LEN_HARD_CAP: u8 = 12;
+/// Default cap on the `occurrences` list per motif on the wire. The
+/// authoritative count is always carried in `MotifEntry.count`; the list
+/// is a sample of locations and would otherwise blow up the response on
+/// repetitive hooks.
+const MOTIF_OCCURRENCES_DEFAULT_CAP: u32 = 5;
+const MOTIF_OCCURRENCES_HARD_CAP: u32 = 50;
+
+/// Resolve the caller's `max_occurrences_per_motif` against the
+/// default/hard-cap. Lives next to `clamp_motif_lengths` for symmetry.
+fn clamp_motif_occurrences(n: Option<u32>) -> u32 {
+    n.unwrap_or(MOTIF_OCCURRENCES_DEFAULT_CAP)
+        .min(MOTIF_OCCURRENCES_HARD_CAP)
+}
 
 fn clamp_motif_lengths(min_len: Option<u8>, max_len: Option<u8>) -> (u8, u8) {
     let lo = min_len
@@ -6522,8 +6553,11 @@ fn motif_occurrences_to_wire(
     hits: &[crate::analysis::motifs::MotifHit],
     scope_start_tick: u64,
     time_sig: synth_sequencer::TimeSignature,
+    max_per_motif: u32,
 ) -> Vec<synth_mcp::types::MotifOccurrence> {
+    let limit = (max_per_motif as usize).min(hits.len());
     hits.iter()
+        .take(limit)
         .map(|h| {
             let abs_tick = scope_start_tick + u64::from(h.start_tick);
             let (bar, beat) = tick_to_bar_beat_1based(abs_tick, time_sig);
@@ -6549,6 +6583,7 @@ pub fn find_motifs_impl(
     max_interval_length: Option<u8>,
     min_count: Option<u32>,
     top_n: Option<u32>,
+    max_occurrences_per_motif: Option<u32>,
     exclude_drums: Option<bool>,
     exclude_track_ids: Option<Vec<u16>>,
 ) -> Result<synth_mcp::types::FindMotifsResult, McpBridgeError> {
@@ -6569,6 +6604,7 @@ pub fn find_motifs_impl(
     let (min_len, max_len) = clamp_motif_lengths(min_interval_length, max_interval_length);
     let min_count_v = min_count.unwrap_or(MOTIF_MIN_COUNT_DEFAULT).max(2);
     let top_n_v = top_n.unwrap_or(MOTIF_TOP_N_DEFAULT).max(1);
+    let max_occ = clamp_motif_occurrences(max_occurrences_per_motif);
 
     let motifs = crate::analysis::motifs::find_motifs(
         &scope_data.notes,
@@ -6592,6 +6628,7 @@ pub fn find_motifs_impl(
                 &m.occurrences,
                 scope_data.start_tick,
                 scope_data.time_sig,
+                max_occ,
             ),
         })
         .collect();
@@ -6629,6 +6666,7 @@ pub fn analyze_hook_strength_impl(
     arrangement_end_tick: Option<u64>,
     min_interval_length: Option<u8>,
     min_count: Option<u32>,
+    max_occurrences_per_motif: Option<u32>,
     exclude_drums: Option<bool>,
     exclude_track_ids: Option<Vec<u16>>,
 ) -> Result<synth_mcp::types::AnalyzeHookStrengthResult, McpBridgeError> {
@@ -6650,6 +6688,7 @@ pub fn analyze_hook_strength_impl(
         .unwrap_or(MOTIF_MIN_LEN_DEFAULT)
         .clamp(2, MOTIF_LEN_HARD_CAP);
     let min_count_v = min_count.unwrap_or(MOTIF_MIN_COUNT_DEFAULT).max(2);
+    let max_occ = clamp_motif_occurrences(max_occurrences_per_motif);
     // Hook-strength always sweeps up to the hard cap so a long but rare
     // motif can still win — the caller controls the *minimum*, not the
     // maximum length considered.
@@ -6675,6 +6714,7 @@ pub fn analyze_hook_strength_impl(
             &m.occurrences,
             scope_data.start_tick,
             scope_data.time_sig,
+            max_occ,
         ),
     });
 
@@ -7097,6 +7137,7 @@ pub fn suggest_music_fixes_impl(
             arrangement_end_tick,
             None,
             None,
+            None,
             Some(exclude_drums_v),
             Some(exclude_track_ids_v.clone()),
         ) {
@@ -7208,6 +7249,7 @@ pub fn suggest_music_fixes_impl(
             shared,
             Some(scope_data.start_tick),
             Some(scope_data.end_tick),
+            None,
         ) {
             Ok(r) => Some(r),
             Err(e) => {
@@ -7744,9 +7786,17 @@ fn build_masking_pairs(contributions: &[synth_mcp::types::TrackContribution]) ->
     pairs
 }
 
+/// Default cap on returned pairs. The pair count is O(N²) in audible
+/// tracks; without truncation a typical 18-track section emits 153 pair
+/// objects with full per-band data, which exceeds the MCP response size
+/// limit. `total_pair_count` in the result preserves the unclamped count.
+const MASKING_TOP_PAIRS_DEFAULT: u32 = 20;
+const MASKING_TOP_PAIRS_HARD_CAP: u32 = 200;
+
 /// `analyze_masking_matrix` bridge implementation. Renders every audible
 /// track soloed, then computes pairwise per-band overlap and an optional
-/// textual hint. Returns pairs sorted by descending `conflict_score`.
+/// textual hint. Returns pairs sorted by descending `conflict_score`,
+/// truncated to `top_pairs` (default 20).
 #[doc(hidden)]
 pub fn analyze_masking_matrix_impl(
     session: &SynthSession,
@@ -7754,6 +7804,7 @@ pub fn analyze_masking_matrix_impl(
     shared: &McpSharedState,
     arrangement_start_tick: Option<u64>,
     arrangement_end_tick: Option<u64>,
+    top_pairs: Option<u32>,
 ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
     let (start_tick, end_tick) = {
         let song = shared.song.read();
@@ -7777,7 +7828,14 @@ pub fn analyze_masking_matrix_impl(
         ));
     }
 
-    let pairs = build_masking_pairs(&contributions);
+    let mut pairs = build_masking_pairs(&contributions);
+    let total_pair_count = pairs.len() as u32;
+    let cap = top_pairs
+        .unwrap_or(MASKING_TOP_PAIRS_DEFAULT)
+        .clamp(1, MASKING_TOP_PAIRS_HARD_CAP) as usize;
+    if pairs.len() > cap {
+        pairs.truncate(cap);
+    }
 
     let ts = shared
         .song
@@ -7794,6 +7852,7 @@ pub fn analyze_masking_matrix_impl(
         start_tick,
         end_tick,
         track_count: contributions.len() as u32,
+        total_pair_count,
         pairs,
         warnings,
     })

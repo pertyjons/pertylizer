@@ -818,6 +818,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         max_interval_length: Option<u8>,
         min_count: Option<u32>,
         top_n: Option<u32>,
+        max_occurrences_per_motif: Option<u32>,
         exclude_drums: Option<bool>,
         exclude_track_ids: Option<Vec<u16>>,
     ) -> Result<crate::types::FindMotifsResult, McpBridgeError>;
@@ -833,6 +834,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         arrangement_end_tick: Option<u64>,
         min_interval_length: Option<u8>,
         min_count: Option<u32>,
+        max_occurrences_per_motif: Option<u32>,
         exclude_drums: Option<bool>,
         exclude_track_ids: Option<Vec<u16>>,
     ) -> Result<crate::types::AnalyzeHookStrengthResult, McpBridgeError>;
@@ -875,6 +877,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         arrangement_start_tick: Option<u64>,
         arrangement_end_tick: Option<u64>,
+        top_pairs: Option<u32>,
     ) -> Result<crate::types::AnalyzeMaskingMatrixResult, McpBridgeError>;
 
     /// Sweep an instrument across a MIDI note range, render-and-analyze each
