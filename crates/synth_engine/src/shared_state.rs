@@ -364,6 +364,22 @@ pub struct InstrumentSnapshot {
     pub effect_count: usize,
     /// Effect chain slot order (module IDs in processing order).
     pub effect_chain_order: Vec<ModuleId>,
+    /// Key range for keyboard splitting (low/high MIDI notes inclusive).
+    pub key_range: crate::instrument::KeyRange,
+    /// Transpose offset in semitones.
+    pub transpose: synth_core::Semitones,
+    /// Oversampling factor (Off/2x/4x).
+    pub oversampling: synth_dsp::OversamplingFactor,
+    /// Voice allocation mode (Poly / Mono / Legato / Unison).
+    pub allocation_mode: crate::voice_allocator::AllocationMode,
+    /// Strategy for stealing voices when all are busy.
+    pub stealing_strategy: crate::voice_allocator::StealingStrategy,
+    /// Maximum polyphony for this instrument.
+    pub max_voices: synth_core::VoiceCount,
+    /// Velocity → amplitude sensitivity (0 = constant, 1 = full dynamic).
+    pub velocity_amp_sensitivity: synth_core::NormalizedValue,
+    /// Velocity → filter cutoff sensitivity (0 = none, 1 = full).
+    pub velocity_filter_sensitivity: synth_core::NormalizedValue,
 }
 
 /// Thread-safe snapshot of graph topology.

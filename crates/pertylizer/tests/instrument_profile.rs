@@ -61,6 +61,14 @@ fn instrument_snapshot(seq: u16, name: &str, category: InstrumentCategory) -> In
         module_count: 0,
         effect_count: 0,
         effect_chain_order: Vec::new(),
+        key_range: synth_engine::instrument::KeyRange::FULL,
+        transpose: synth_core::Semitones::ZERO,
+        oversampling: synth_dsp::OversamplingFactor::default(),
+        allocation_mode: synth_engine::voice_allocator::AllocationMode::default(),
+        stealing_strategy: synth_engine::voice_allocator::StealingStrategy::default(),
+        max_voices: synth_core::VoiceCount::OCTO,
+        velocity_amp_sensitivity: NormalizedValue::MAX,
+        velocity_filter_sensitivity: NormalizedValue::MIN,
     }
 }
 

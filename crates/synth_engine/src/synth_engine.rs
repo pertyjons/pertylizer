@@ -2128,6 +2128,7 @@ impl SynthEngine {
                     .instrument_mapping
                     .seq_id(inst.id())
                     .map_or(inst.id().as_u64() as u16, |s| s.0);
+                let allocator_cfg = inst.allocator().config();
                 crate::shared_state::InstrumentSnapshot {
                     id: inst.id(),
                     seq_instrument_id: seq_id,
@@ -2147,6 +2148,14 @@ impl SynthEngine {
                     module_count: inst.voice_graph().len(),
                     effect_count: inst.effect_chain().slots().len(),
                     effect_chain_order: inst.effect_chain().slot_order(),
+                    key_range: inst.key_range(),
+                    transpose: inst.transpose(),
+                    oversampling: inst.oversampling(),
+                    allocation_mode: allocator_cfg.mode,
+                    stealing_strategy: allocator_cfg.stealing,
+                    max_voices: allocator_cfg.max_voices,
+                    velocity_amp_sensitivity: inst.velocity_amp_sensitivity(),
+                    velocity_filter_sensitivity: inst.velocity_filter_sensitivity(),
                 }
             })
             .collect();

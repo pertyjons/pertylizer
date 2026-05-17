@@ -10,6 +10,7 @@
 //! Used by the headless MCP worker in `main.rs::run_headless_mcp` to service
 //! `pending_project_action` requests originating from MCP.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
@@ -18,13 +19,14 @@ use parking_lot::RwLock as PRwLock;
 
 use synth_core::{ModuleType, VoiceCount};
 use synth_engine::commands::InstrumentParam;
+use synth_engine::shared_state::{ConnectionSnapshot, InstrumentSnapshot, ModuleStateSnapshot};
 use synth_engine::{CommandSender, EngineCommand, InstrumentId, MidiChannel, ModuleId};
 use synth_sampler::SampleLibrary;
 use synth_sequencer::Song;
 
 use crate::mcp_shared::{McpSharedState, ProjectAction};
-use crate::patch::{InstrumentState, Patch};
-use crate::project::ProjectFile;
+use crate::patch::{ConnectionState, InstrumentState, ModuleState, ParamValue, Patch, Position};
+use crate::project::{GlobalProjectState, ProjectFile};
 use crate::session::{SessionError, SynthSession};
 
 type SharedSong = Arc<PRwLock<Song>>;
@@ -189,20 +191,173 @@ pub(crate) fn load_file_into_engine(
     }
 }
 
-/// Headless `save_project` stub. Not yet supported because `InstrumentSnapshot`
-/// (engine-side metadata exposed by `SynthSession::list_instruments`) is
-/// missing seven fields the project file records (`key_range`, `transpose`,
-/// `oversampling`, `allocation_mode`, `stealing_strategy`, `max_voices`, plus
-/// the two velocity sensitivities). The GUI path reads them from
-/// `InstrumentUiState`. Extending the snapshot is the right fix — see §9.7 of
-/// `docs/mcp-music-tools-plan.md`.
+/// Save the current engine + session + song state to `path` as a JSON
+/// `ProjectFile`. Headless counterpart of `egui_backend::create_project_from_app`,
+/// reading instrument metadata from `InstrumentSnapshot` (engine-mirrored,
+/// extended in §9.7 to carry every field the file format records) and module
+/// graphs from `SharedGraphState`.
+///
+/// Limitations versus the GUI save path:
+/// - Module positions default to `(0, 0)` (headless has no patch-editor canvas).
+/// - Author metadata is omitted (no settings/UI source).
+/// - AWE state is not persisted (no engine-side getter — only `EngineCommand`
+///   writes exist; the audio thread is the only owner). This is acceptable
+///   because §9.7 scope is the per-instrument persisted fields; AWE round-trip
+///   from headless is tracked as a separate open item.
+/// - `glide_time` and `octave_offset` use defaults.
 pub(crate) fn save_project_to(
-    _path: &std::path::Path,
-    _session: &SynthSession,
-    _song: &SharedSong,
+    path: &std::path::Path,
+    session: &SynthSession,
+    song: &SharedSong,
     _sample_library: &SharedSampleLibrary,
 ) -> Result<String, String> {
-    Err("save_project is not yet supported in --headless mode (InstrumentSnapshot is missing several persisted fields). Run the GUI build to save.".to_string())
+    let snapshots = session.list_instruments();
+    let engine_state = session.state();
+    let shared_graph = &engine_state.shared_graph;
+
+    let mut instrument_states: Vec<InstrumentState> = Vec::with_capacity(snapshots.len());
+    for snap in &snapshots {
+        let modules = shared_graph.get_modules_for_instrument(snap.id);
+        let connections = shared_graph.get_connections_for_instrument(snap.id);
+        let patch = build_patch_from_engine(session, snap, &modules, &connections);
+        instrument_states.push(snapshot_to_instrument_state(snap, patch));
+    }
+
+    let song_clone = { song.read().clone() };
+    let master_volume = synth_core::Gain::new(engine_state.master_volume.load());
+    let global = GlobalProjectState {
+        master_volume,
+        ..GlobalProjectState::default()
+    };
+
+    let active_instrument_id = snapshots.first().map_or(0, |s| s.id.as_u64());
+    let project = ProjectFile::new(
+        instrument_states,
+        active_instrument_id,
+        None,
+        song_clone,
+        global,
+    );
+
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create parent dir: {e}"))?;
+    }
+
+    project.save(path).map_err(|e| e.to_string())?;
+
+    let pattern_count = project.song.patterns().count();
+    let track_count = project.song.tracks().count();
+    Ok(format!(
+        "Saved project: {} ({} instrument(s), {} pattern(s), {} track(s))",
+        path.display(),
+        project.instruments.len(),
+        pattern_count,
+        track_count
+    ))
+}
+
+/// Translate an `InstrumentSnapshot` + freshly-built `Patch` into the
+/// serializable `InstrumentState`. Mirrors `create_project_from_app`'s
+/// per-instrument struct construction but reads exclusively from the engine
+/// snapshot — no `InstrumentUiState` involvement.
+fn snapshot_to_instrument_state(snap: &InstrumentSnapshot, mut patch: Patch) -> InstrumentState {
+    patch.description = snap.patch_description.clone();
+    InstrumentState {
+        id: snap.id,
+        name: snap.name.clone(),
+        channel: snap.midi_channel.as_u8(),
+        volume: snap.volume,
+        pan: snap.pan,
+        muted: snap.muted,
+        solo: snap.solo,
+        key_range: (snap.key_range.low.as_u8(), snap.key_range.high.as_u8()),
+        transpose: snap.transpose,
+        oversampling: snap.oversampling.factor() as u8,
+        category: snap.category.as_u8(),
+        description: snap.description.clone(),
+        color: None,
+        allocation_mode: snap.allocation_mode,
+        stealing_strategy: snap.stealing_strategy,
+        max_voices: snap.max_voices,
+        velocity_amp_sensitivity: snap.velocity_amp_sensitivity,
+        velocity_filter_sensitivity: snap.velocity_filter_sensitivity,
+        sidechain_source_id: snap.sidechain_source_id.map(|id| id.as_u64()),
+        patch,
+    }
+}
+
+/// Build a `Patch` for one instrument from the engine's shared graph state.
+///
+/// Mirrors `patch_bridge::create_patch_from_editor` but skips the
+/// `PatchEditor` (canvas positions, group metadata): headless has none. For
+/// each module we look up its descriptor on `SynthSession` to map engine
+/// `Param` values to descriptor `type_id` keys — same scheme the GUI uses, so
+/// the saved JSON round-trips cleanly through `apply_patch` on load.
+fn build_patch_from_engine(
+    session: &SynthSession,
+    snap: &InstrumentSnapshot,
+    modules: &[ModuleStateSnapshot],
+    connections: &[ConnectionSnapshot],
+) -> Patch {
+    let mut patch = Patch::new(&snap.name);
+    patch.description = snap.patch_description.clone();
+
+    // Emit modules in stable order: `ModuleId: Ord` sorts by (module_type,
+    // instance). Same ordering as the GUI's `create_patch_from_editor`, so
+    // GUI-saved and headless-saved JSON for the same engine state are
+    // structurally identical.
+    let mut sorted_modules: Vec<&ModuleStateSnapshot> = modules.iter().collect();
+    sorted_modules.sort_by_key(|m| m.id);
+
+    for module in sorted_modules {
+        let mut param_map: BTreeMap<String, ParamValue> = BTreeMap::new();
+        if let Some(descriptor) = session.module_descriptor(snap.id, module.id) {
+            for desc_param in &descriptor.parameters {
+                if let Some(engine_param) = module
+                    .parameters
+                    .iter()
+                    .find(|p| p.same_kind(&desc_param.id))
+                {
+                    param_map.insert(
+                        desc_param.type_id.clone(),
+                        ParamValue::from_param(engine_param),
+                    );
+                }
+            }
+        }
+        patch.modules.push(ModuleState {
+            id: module.id.to_string(),
+            module_type: module.module_type,
+            position: Position::default(),
+            parameters: param_map,
+        });
+    }
+
+    // Sort connections by (from_module, from_port, to_module, to_port) so
+    // re-saving an unchanged engine state produces byte-identical JSON.
+    let mut sorted_conns: Vec<&ConnectionSnapshot> = connections.iter().collect();
+    sorted_conns.sort_by_cached_key(|c| {
+        let from_port: String = c.from_port.into();
+        let to_port: String = c.to_port.into();
+        (c.from_module, from_port, c.to_module, to_port)
+    });
+    patch.connections = sorted_conns
+        .iter()
+        .map(|c| ConnectionState {
+            from: (c.from_module.to_string(), c.from_port.into()),
+            to: (c.to_module.to_string(), c.to_port.into()),
+        })
+        .collect();
+
+    patch.settings.effect_chain_order = snap
+        .effect_chain_order
+        .iter()
+        .map(ModuleId::to_string)
+        .collect();
+
+    patch
 }
 
 fn load_bundle_into_engine(
@@ -466,5 +621,226 @@ fn wait_for_instrument_count(session: &SynthSession, target: usize, timeout_ms: 
 fn log_err<T>(op: &str, result: Result<T, SessionError>) {
     if let Err(e) = result {
         eprintln!("{op}: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use synth_core::audio::SampleRate as HwSampleRate;
+    use synth_core::{
+        AudioCallbackContext, AudioProcessor, BipolarValue, MidiNote, NormalizedValue,
+    };
+    use synth_engine::SynthEngine;
+    use synth_engine::instrument::KeyRange;
+    use synth_engine::voice_allocator::{AllocationMode, StealingStrategy};
+
+    use crate::patch::ModuleBuilder;
+
+    const TEST_SR: u32 = 44_100;
+
+    /// Build a minimal patch (Osc → Amp → StereoOutput) so the saved JSON
+    /// has at least one module + connections to exercise the engine→Patch
+    /// translation in `build_patch_from_engine`.
+    fn minimal_patch(name: &str) -> Patch {
+        let mut patch = Patch::new(name);
+        patch.add_module(
+            ModuleBuilder::new(1, ModuleType::Oscillator)
+                .waveform("sawtooth")
+                .param_f("level", 0.7)
+                .build(),
+        );
+        patch.add_module(
+            ModuleBuilder::new(1, ModuleType::Amplifier)
+                .param_f("level", 1.0)
+                .build(),
+        );
+        patch.add_module(
+            ModuleBuilder::new(1, ModuleType::StereoOutput)
+                .param_f("master", 1.0)
+                .build(),
+        );
+        patch.add_connection("osc-1", "out", "amp-1", "in");
+        patch.add_connection("amp-1", "left", "out-1", "in_l");
+        patch.add_connection("amp-1", "right", "out-1", "in_r");
+        patch
+    }
+
+    fn drive(engine: &mut SynthEngine, blocks: usize) {
+        let mut block = vec![0.0f32; 256 * 2];
+        let context = AudioCallbackContext {
+            sample_rate: HwSampleRate(TEST_SR),
+            frames: 256,
+            channels: 2,
+            stream_time: 0.0,
+            sample_position: 0,
+            output_latency: synth_core::Seconds::ZERO,
+        };
+        for _ in 0..blocks {
+            block.fill(0.0);
+            engine.process(&mut block, &context);
+        }
+    }
+
+    /// Spin up a fresh engine, install two instruments with patches and
+    /// non-default per-instrument settings, drain a few process() blocks so
+    /// `update_shared_instruments` mirrors everything into the snapshot, then
+    /// save + reload and assert all seven new persisted fields round-trip.
+    #[test]
+    fn save_project_round_trip_preserves_extended_instrument_fields() {
+        let (mut engine, handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let song: SharedSong = Arc::new(PRwLock::new(Song::new("RoundTrip")));
+        let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        ));
+
+        // --- Instrument 0: lead (Mono / SameNote, custom key range, oversampling 2x) ---
+        let lead_id = InstrumentId::new(0);
+        let lead_cfg = synth_engine::voice_allocator::AllocatorConfig {
+            max_voices: VoiceCount::new(6),
+            mode: AllocationMode::Mono,
+            stealing: StealingStrategy::SameNote,
+            ..Default::default()
+        };
+        session
+            .add_instrument_with_id_and_config(lead_id, "Lead", Some(lead_cfg))
+            .expect("add lead");
+        let _ = session.apply_patch(lead_id, &minimal_patch("Lead Patch"));
+        session
+            .set_instrument_volume(lead_id, synth_core::Gain::new(0.42))
+            .expect("set lead volume");
+        session
+            .set_instrument_pan(lead_id, BipolarValue::new(-0.5))
+            .expect("set lead pan");
+
+        let lead_param_cmds = [
+            InstrumentParam::KeyRange(KeyRange::new(MidiNote::new(36), MidiNote::new(72))),
+            InstrumentParam::Transpose(synth_core::Semitones::new(7.0)),
+            InstrumentParam::OversamplingFactor(synth_dsp::OversamplingFactor::X2),
+            InstrumentParam::VelocityAmpSensitivity(NormalizedValue::new(0.75)),
+            InstrumentParam::VelocityFilterSensitivity(NormalizedValue::new(0.5)),
+        ];
+        for param in lead_param_cmds {
+            session
+                .command_sender()
+                .send(EngineCommand::SetInstrumentParameter {
+                    instrument_id: lead_id,
+                    param,
+                });
+        }
+
+        // --- Instrument 1: pad (Unison / Oldest, 4 voices) ---
+        let pad_id = InstrumentId::new(1);
+        let pad_cfg = synth_engine::voice_allocator::AllocatorConfig {
+            max_voices: VoiceCount::new(4),
+            mode: AllocationMode::Unison,
+            stealing: StealingStrategy::Oldest,
+            ..Default::default()
+        };
+        session
+            .add_instrument_with_id_and_config(pad_id, "Pad", Some(pad_cfg))
+            .expect("add pad");
+        let _ = session.apply_patch(pad_id, &minimal_patch("Pad Patch"));
+        session
+            .command_sender()
+            .send(EngineCommand::SetInstrumentParameter {
+                instrument_id: pad_id,
+                param: InstrumentParam::KeyRange(KeyRange::new(
+                    MidiNote::new(48),
+                    MidiNote::new(96),
+                )),
+            });
+
+        // Drain so add_instrument / apply_patch / SetInstrumentParameter all
+        // land and `update_shared_instruments` mirrors the post-state into
+        // `InstrumentSnapshot`.
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate(TEST_SR),
+            buffer_size: synth_core::BufferSize(256),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+        drive(&mut engine, 32);
+
+        // --- Save ---
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("round_trip.json");
+        let save_msg = save_project_to(&path, &session, &song, &sample_library)
+            .expect("save_project_to should succeed in headless mode");
+        assert!(save_msg.contains("Saved project"));
+        assert!(path.exists(), "saved file must exist at {}", path.display());
+
+        // --- Reload as raw ProjectFile and validate the persisted JSON ---
+        let reloaded = ProjectFile::load(&path).expect("reload project");
+        assert_eq!(
+            reloaded.instruments.len(),
+            2,
+            "two instruments round-tripped"
+        );
+
+        let lead = reloaded
+            .instruments
+            .iter()
+            .find(|i| i.name == "Lead")
+            .expect("Lead survives");
+        assert_eq!(lead.key_range, (36, 72), "lead key_range");
+        assert!(
+            (lead.transpose.as_f32() - 7.0).abs() < f32::EPSILON,
+            "lead transpose 7 semitones"
+        );
+        assert_eq!(lead.oversampling, 2, "lead 2x oversampling");
+        assert_eq!(lead.allocation_mode, AllocationMode::Mono);
+        assert_eq!(lead.stealing_strategy, StealingStrategy::SameNote);
+        assert_eq!(lead.max_voices, VoiceCount::new(6));
+        assert!(
+            (lead.velocity_amp_sensitivity.as_f32() - 0.75).abs() < 1e-6,
+            "lead velocity_amp_sensitivity"
+        );
+        assert!(
+            (lead.velocity_filter_sensitivity.as_f32() - 0.5).abs() < 1e-6,
+            "lead velocity_filter_sensitivity"
+        );
+
+        let pad = reloaded
+            .instruments
+            .iter()
+            .find(|i| i.name == "Pad")
+            .expect("Pad survives");
+        assert_eq!(pad.key_range, (48, 96), "pad key_range");
+        assert_eq!(pad.allocation_mode, AllocationMode::Unison);
+        assert_eq!(pad.max_voices, VoiceCount::new(4));
+
+        // --- Round-trip 2: reapply the saved project to a fresh engine and
+        // confirm the engine snapshot of the lead instrument matches what we
+        // wrote in the first place (the JSON is round-trippable end-to-end).
+        let (mut engine2, handle2) = SynthEngine::new();
+        let session2 = SynthSession::new(handle2.command_sender(), Arc::clone(&handle2.state));
+        let song2: SharedSong = Arc::new(PRwLock::new(Song::new("RoundTrip2")));
+        let sample_library2: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        ));
+        engine2.on_stream_start(&stream_info);
+        apply_project(&reloaded, &session2, &song2, &sample_library2)
+            .expect("apply reloaded project");
+        drive(&mut engine2, 32);
+
+        let reapplied = session2.list_instruments();
+        assert_eq!(reapplied.len(), 2, "reapplied two instruments");
+        let lead2 = reapplied
+            .iter()
+            .find(|s| s.name == "Lead")
+            .expect("lead survives reapply");
+        assert_eq!(lead2.key_range.low.as_u8(), 36);
+        assert_eq!(lead2.key_range.high.as_u8(), 72);
+        assert_eq!(lead2.allocation_mode, AllocationMode::Mono);
+        assert_eq!(lead2.max_voices, VoiceCount::new(6));
+        assert!(
+            (lead2.velocity_amp_sensitivity.as_f32() - 0.75).abs() < 1e-6,
+            "velocity_amp_sensitivity round-trips through engine"
+        );
     }
 }
