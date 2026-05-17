@@ -221,14 +221,19 @@ fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
     let bridge = std::sync::Arc::new(pertylizer::mcp_bridge::AppSynthBridge::new(
         std::sync::Arc::clone(&session),
         std::sync::Arc::clone(&shared),
-        sample_library,
+        std::sync::Arc::clone(&sample_library),
     ));
 
-    // Run MCP on stdio (blocking)
+    let worker = pertylizer::project_apply::spawn_worker(
+        std::sync::Arc::clone(&shared),
+        std::sync::Arc::clone(&session),
+        std::sync::Arc::clone(&sample_library),
+    );
+
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(synth_mcp::serve_stdio(bridge))?;
 
-    // Keep host alive until MCP exits
+    worker.shutdown();
     host.stop()?;
 
     Ok(())

@@ -30,6 +30,7 @@ pub mod module_factory;
 pub mod patch;
 pub mod patches;
 pub mod project;
+pub mod project_apply;
 pub mod session;
 pub(crate) mod undo;
 

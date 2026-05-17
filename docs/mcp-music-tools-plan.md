@@ -1,6 +1,6 @@
 # MCP Music Tools — Plan
 
-> **Date:** 2026-05-11 (last update 2026-05-17: Group D from §8.6 — `analyze_tension_curve`, `suggest_music_fixes` — shipped in v0.287.0. Earlier 2026-05-17: Group C from §8.6 — `analyze_arrangement`, `analyze_form_map`, `find_motifs`, `analyze_hook_strength` — shipped in v0.286.0. Earlier 2026-05-17: Group B from §8.6 — `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`, `quantize_notes_to_grid` — shipped in v0.285.0. Previous update 2026-05-16: §0 sweep — `true_peak`, `lufs_momentary_max`, `lufs_short_term_max`, `pre_master_peak` shipped; `TrackContribution` restructured to embed `MixBusMetrics` (§7.6 decision); §8.3 `pre_master_peak` closed. Earlier 2026-05-16 work: higher-level music-understanding catalogue + optional ML sidecar; §8.3 pan-law documentation, §8.5.1–§8.5.5 inference round-3 fixes — Pad-precedence-by-name, Bass-gate Atonal-by-name, Lead-precedence allows Polyphonic, drum-gate wider pitch-spread when name says Drums, extended name vocabulary; §7.1 `OfflineEngineSession` engine-reuse; §8.5.6.1/§8.5.6.2 round-4 inference follow-ups.)
+> **Date:** 2026-05-11 (last update 2026-05-17: headless project-loading refactor — `crates/pertylizer/src/project_apply.rs` + `run_headless_mcp` worker — closes the GUI-only `submit_project_action` blocker; six new findings catalogued in §9 from end-to-end `--headless` testing on `Neuro F#m 174.json`. Earlier 2026-05-17: Group D from §8.6 — `analyze_tension_curve`, `suggest_music_fixes` — shipped in v0.287.0. Earlier 2026-05-17: Group C from §8.6 — `analyze_arrangement`, `analyze_form_map`, `find_motifs`, `analyze_hook_strength` — shipped in v0.286.0. Earlier 2026-05-17: Group B from §8.6 — `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`, `quantize_notes_to_grid` — shipped in v0.285.0. Previous update 2026-05-16: §0 sweep — `true_peak`, `lufs_momentary_max`, `lufs_short_term_max`, `pre_master_peak` shipped; `TrackContribution` restructured to embed `MixBusMetrics` (§7.6 decision); §8.3 `pre_master_peak` closed. Earlier 2026-05-16 work: higher-level music-understanding catalogue + optional ML sidecar; §8.3 pan-law documentation, §8.5.1–§8.5.5 inference round-3 fixes — Pad-precedence-by-name, Bass-gate Atonal-by-name, Lead-precedence allows Polyphonic, drum-gate wider pitch-spread when name says Drums, extended name vocabulary; §7.1 `OfflineEngineSession` engine-reuse; §8.5.6.1/§8.5.6.2 round-4 inference follow-ups.)
 > **Status:** **Tier 0 shipped in v0.276.0; Tier-1 items 4 and 5 shipped in v0.277.0; offline-render determinism fix in two rounds post-v0.277.0; §8.2 auto-inferred instrument profiles shipped in v0.278.0; commits 74d18da + 93c0786 closed the offline-render snapshot bug class, added `get_instrument_profiles`, and applied seven inference improvements that roughly doubled live-test accuracy on synth patches; inference round-3 (§8.5.1–§8.5.5) + §8.3 pan-law doc + §7.1 engine reuse shipped 2026-05-16; §0 deferred trio (`true_peak`, LUFS-S/M, `pre_master_peak`) + §7.6 embed-MixBusMetrics decision shipped 2026-05-16.** Remaining Tier-1+ pending.
 > Post-ship live testing surfaced determinism, auto-categorization, and offline-render-state issues — see §8. §8.1, §8.2, §8.3 (doc + `pre_master_peak`), §8.4, and §8.5 are fully shipped end-to-end through the MCP bridge.
 > **Scope:** New MCP tools that give an AI agent the ability to evaluate and shape music as a whole, not only individual sounds.
@@ -1162,3 +1162,205 @@ into the workflow (it unlocks `compare_to_reference` from Tier 3). Group D from 
 tension_curve` + `suggest_music_fixes`) shipped 2026-05-17 (v0.287.0), closing Tier-2 #14 and #16.
 All §8.6 groups (A/B/C/D) are now shipped; remaining Tier-2 work is item #18 `analyze_groove`
 (deferred — `analyze_drum_groove` already covers the highest-value case).
+
+---
+
+## 9. Issues surfaced by `--headless` end-to-end testing on `Neuro F#m 174` (2026-05-17, post-v0.287.0)
+
+### 9.0 Context
+
+`--headless` mode previously couldn't load projects: `AppSynthBridge::load_project` routed through
+`pending_project_action` + a condvar that only the GUI thread consumed, so MCP `load_project` always
+returned `Error: Timeout waiting for GUI to process project action` in headless mode. The first part of
+this work was an audit of all GUI-gated bridge calls — only `submit_project_action` (used by
+`new_project` / `save_project` / `load_project`) genuinely needed the GUI thread; the other `pending_*`
+slots (`pending_patch`, `pending_auto_layout`, `pending_awe_state`) are GUI-side label / panel updates
+where the bridge already mutates engine state directly.
+
+**Refactor shipped:** new `crates/pertylizer/src/project_apply.rs` with `apply_project` /
+`reset_to_new_project` / `load_file_into_engine` that touch only `SynthSession` + shared `Song` +
+`SampleLibrary`. `run_headless_mcp` in `main.rs` spawns a worker thread that polls
+`pending_project_action` and dispatches to those functions — mirroring what the GUI's per-frame poll
+does, without depending on `SynthApp`. `apply_project` ends with a `wait_for_instrument_count`
+poll so MCP clients calling `list_instruments` immediately after `load_project` don't see a
+half-populated snapshot. GUI mode is untouched; the existing `egui_backend::load_project_data`
+path keeps working. Headless `save_project` returns an error until §9.7 ships
+(`InstrumentSnapshot` is missing seven fields the project file format needs).
+
+Test driver (`python3 /tmp/mcp_test.py <project.json>`) exercises 18 MCP tools end-to-end through
+stdio JSON-RPC against the loaded project. First validation target was `Neon Horizon.json`
+(all tools clean). Second target was `Neuro F#m 174.json` (174 BPM neurofunk, F#m, 12 instruments,
+16 patterns, 12 tracks, 24-bar ABA arrangement). That second run is the source of §9.1–§9.6.
+
+### 9.1 `analyze_drum_groove` + `analyze_bass_drum_lock` assume GM-MIDI mapping — HIGH
+
+The Neuro project's `Kick` pattern triggers on **MIDI 30** (verified via `list_notes` — each drum
+has its own per-instrument trigger note, not a shared multi-sample drum kit). `DrumComponent::from_midi`
+in `crates/pertylizer/src/analysis/drum_groove.rs:32` only recognises MIDI 35/36 as kick, so MIDI 30
+falls through to `OtherPercussion`. Concrete user-visible symptoms:
+
+- `analyze_drum_groove.composition`: `kick = 0`, `hat_closed = 0`, `hat_open = 0`, `clap = 0`,
+  `snare = 73`, `tom = 45`, `other = 437`. 79 % of all drum notes uncategorised.
+- `analyze_bass_drum_lock`: `kick_onset_count = 0`, `lock_score = 0.0`, with warning
+  *"No kick onsets in scope — lock_score reports 0"* — for a song that audibly has bass locked
+  to a four-on-the-floor kick.
+- `suggest_music_fixes` consequently can't fire `groove.loose_bass_kick_lock` (the underlying data
+  reports perfect alignment trivially: 0/0). `groove.weak_backbeat (0.85)` fires legitimately
+  off the snare data, which is still classified.
+
+The classifier already has the information it needs to recover: `analyze_drum_groove` returns
+`drum_tracks` with each track's name, instrument name, and `drum_confidence`. Track 3 in this project
+is named `"Kick"` with `drum_confidence = 1.0` — every note that came from track 3 is by construction
+a kick hit regardless of MIDI number.
+
+**Proposed fix:** classify by track-role first, fall back to GM-MIDI for tracks whose role isn't
+specific. Map track names with substring matches: `"kick"|"bd"` → Kick, `"snare"|"sd"` → Snare,
+`"hat"|"hh"|"hi-hat"|"hihat"` → HatClosed (+ `"open"` modifier → HatOpen), `"clap"|"cp"` → Clap,
+`"tom"|"floor"|"rack"` → Tom, `"crash"|"ride"|"cymbal"|"china"|"splash"` → Cymbal, `"rim"` → Snare
+(rimshots are snare family). Touch `analysis/drum_groove.rs` (classifier source) and
+`analysis/bass_drum_lock.rs` (kick-onset gathering). Should also let `analyze_bass_drum_lock`
+treat a track as the kick when its name says so even if MIDI != 35/36. Estimate: ~50 LOC + 4-6
+unit tests.
+
+### 9.2 `analyze_masking_matrix` has inconsistent API — HIGH
+
+```
+ERROR -32602: missing field `start_tick`
+```
+
+`AnalyzeMaskingMatrixParam` in `crates/synth_mcp/src/server.rs:534` declares `start_tick: u64` and
+`end_tick: u64` as required fields. Every other arrangement-scope analyzer
+(`analyze_harmony`, `analyze_harmonic_function`, `analyze_arrangement`, `analyze_form_map`,
+`find_motifs`, `analyze_hook_strength`, `analyze_tension_curve`, `suggest_music_fixes`) uses
+`Option<u64>` for the equivalent range fields and defaults to the full arrangement when omitted.
+Clients calling `analyze_masking_matrix` with `{}` get a schema-validation error and have to
+first call `get_song_info` to pull length — friction every other tool avoids.
+
+**Proposed fix:** rename `start_tick` / `end_tick` to `arrangement_start_tick` / `arrangement_end_tick`
+for consistency with the other tools, make both `Option<u64>`, and default to `[0, song_length)`
+in `analyze_masking_matrix_impl`. Estimate: ~15 LOC + one test.
+
+### 9.3 `analyze_instrument_range` misses pitch-tracking failure — HIGH
+
+Tested Neuro Reese Bass across `[36..=96]` step 12. At note 96:
+
+```
+"pitch_error_cents": 517.76,
+"pitch_confidence": 0.007,
+"likely_aliased": false,
+"pitch_lost": false
+```
+
+The current `pitch_lost` threshold in `analysis/patch_sweep.rs` fires only when the fundamental
+is more than an octave (>1200 cents) off. 517 cents is below that bound, so the flag stays false —
+even though `pitch_confidence ≈ 0` means the centroid/fundamental measurements aren't usable
+in the first place. The cross-step `issues` summary for this case reported only
+`level_spread_db: 2.88` — a caller reading just `issues` would conclude the patch is fine.
+
+This is the bug class the tool was designed to catch: patches that sound right at C4 and fall apart
+at C7. The Reese bass is correctly *useless* at C7 — that's what should be flagged.
+
+**Proposed fix:** add `pitch_unreliable: bool` to `RangeStep` (true when
+`pitch_confidence < 0.10`), surface a `pitch_unreliable_notes: u32` count in `issues`, and
+expand `pitch_lost` to fire when `confidence < 0.20 OR cent_error.abs() > 1200`. Estimate: ~20 LOC
++ updated tests in `patch_sweep_integration.rs`.
+
+### 9.4 `analyze_form_map` doesn't merge adjacent same-label sections — MEDIUM
+
+`form_string` came back correct as `"ABA"`, but `sections` had **six** entries — A bars 1-6, A bars
+7-8, B bars 9-12, B bars 13-17, A bars 18-22, A bars 23-24. The adjacent same-label entries have
+identical `active_track_ids`. A consumer reading `sections.len()` infers form "AABBAA"; one
+reading `form_string` infers "ABA". The two views disagree.
+
+Root cause is in `analysis/form.rs` — the prime-label clustering decides bars get the same label,
+but the run-length emit step splits on something subtler (mean_notes_per_bar drifts: 37.66 → 41.5
+at the bars 1-6 / 7-8 boundary). The label-decision and section-emit steps need to agree.
+
+**Proposed fix:** after run-length compressing into `sections`, do a final pass that merges
+consecutive entries when `sections[i].label == sections[i+1].label`, recomputing the merged
+`mean_*` fields as weighted averages by `length_bars`. Estimate: ~15 LOC + one test in
+`form.rs` covering an "AABBAA" → "ABA" merge.
+
+### 9.5 `analyze_velocity_response` threshold is too lenient — MEDIUM
+
+Neuro Reese Bass at note 60 across velocities 16..127 step 32:
+
+```
+"amplitude_range_db": 7.91,
+"non_monotonic_amplitude_steps": 0,
+"non_monotonic_centroid_steps": 3,   // centroid *drops* with velocity
+"velocity_unresponsive": false
+```
+
+`velocity_unresponsive` only flags when the range is below 3 dB. Between 3 and ~10 dB the patch
+is musically compressed: velocity barely affects loudness and (here) inversely affects timbre.
+Three non-monotonic centroid steps out of four also passes silently.
+
+**Proposed fix:** add a `velocity_compressed_response: bool` (true when
+`3.0 <= amplitude_range_db < 10.0`) and a `velocity_brightness_inverted: bool` (true when
+`non_monotonic_centroid_steps >= steps / 2` AND the last-step centroid is below the first-step
+centroid). Estimate: ~10 LOC + tests.
+
+### 9.6 `get_instrument_profiles` — `Sweep FX` still mis-classified as drums (0.65)
+
+Already documented in §8.5.6.2 — the `name-conflict` signal docks confidence by a fixed amount but
+not enough to push past the 0.60 auto-exclude threshold when the rest of the decision tree (envelope
+plucked + graph noise-no-osc) confidently triggers the drums-gate. `"Sweep FX"` hits both the
+positive FX-name vocabulary AND the negative ("sweep" registers as drum-adjacent given the noise
+graph). The round-4 fix in §8.5.6.2 mitigated similar cases but not this one.
+
+**Proposed fix:** when `name-conflict` fires AND the name explicitly contains an FX-vocabulary
+word (`fx`/`sweep`/`riser`/`impact`/`atmo`/`ambience`/`drone`), force the role to `FX` with
+the original confidence × 0.85, bypassing the decision tree. Estimate: ~15 LOC in
+`analysis/instrument_profile.rs` + 2-3 unit tests. Same file already has the `name-priority`
+machinery from §8.5.1.
+
+### 9.7 `save_project` not yet supported in `--headless` — LOW (documented)
+
+The headless refactor stubs `project_apply::save_project_to` with
+*"save_project is not yet supported in --headless mode (InstrumentSnapshot is missing several
+persisted fields). Run the GUI build to save."*
+
+`InstrumentSnapshot` in `crates/synth_engine/src/shared_state.rs:331` covers
+id / name / description / patch_description / sidechain_source_id / category / midi_channel /
+volume / pan / enabled / muted / solo / module_count / effect_count / effect_chain_order. It's
+missing **seven** fields the project file format records and the GUI reads from `InstrumentUiState`:
+`key_range`, `transpose`, `oversampling`, `allocation_mode`, `stealing_strategy`, `max_voices`,
+`velocity_amp_sensitivity`, `velocity_filter_sensitivity`. (Last two count as one bullet but
+distinct fields.)
+
+**Proposed fix:** extend `InstrumentSnapshot` (and the audio thread's
+`InstrumentMetadataSnapshot` population) with those fields, then have `save_project_to` build a
+`ProjectFile` by iterating `session.list_instruments()` and `state.shared_graph.get_*_for_instrument()`
+— mirrors `egui_backend::create_project_from_app` but uses the engine snapshot instead of
+GUI cache. Module positions in the saved patch default to `(0, 0)` since headless has no canvas.
+Estimate: ~80 LOC + tests + audio-thread snapshot update.
+
+### 9.8 Headless audio underrun noise — LOW (cosmetic)
+
+`"Audio stream error: Buffer underrun/overrun occurred."` leaks to stderr during heavy offline
+renders (`analyze_mix_bus`, `analyze_section`, `analyze_masking_matrix`, audio-augmented
+`analyze_tension_curve`). The real-time audio thread gets starved when the foreground render
+saturates the CPU, but the engine recovers; nothing breaks. In headless mode there's no listener
+anyway — the audio output is just a side-effect of reusing the same engine.
+
+**Proposed fix:** default `run_headless_mcp` to the null audio host (or add a `--with-audio` opt-in
+flag if headless audio playback is ever wanted). Removes the noise plus the wasted real-time
+budget. Estimate: ~5 LOC.
+
+### 9.9 Suggested fix order
+
+| Pri | Item | Surface area | Impact |
+|---|---|---|---|
+| 1 | §9.1 drum classification by track-role | `drum_groove.rs` + `bass_drum_lock.rs` | Unblocks `analyze_drum_groove`, `analyze_bass_drum_lock`, and the `groove.*` suggestions in `suggest_music_fixes` for any project that doesn't use GM kick MIDI |
+| 2 | §9.2 `analyze_masking_matrix` optional range | `synth_mcp/src/server.rs:534` + bridge | API consistency — makes the tool callable with `{}` like every other arrangement-scope tool |
+| 3 | §9.3 `pitch_unreliable` flag | `analysis/patch_sweep.rs` | Closes the original bug class `analyze_instrument_range` was designed for |
+| 4 | §9.4 merge same-label sections | `analysis/form.rs` | `sections.len()` becomes consistent with `form_string` |
+| 5 | §9.5 `velocity_compressed_response` | `analysis/patch_sweep.rs` | Catches musically-compressed patches that pass the 3 dB threshold |
+| 6 | §9.6 `Sweep FX` mis-classification | `analysis/instrument_profile.rs` | One more round of round-4 follow-ups for FX-name precedence |
+| 7 | §9.8 null audio in headless | `main.rs::run_headless_mcp` | Quiet stderr; small CPU win |
+| 8 | §9.7 headless `save_project` | `synth_engine/src/shared_state.rs` + `project_apply.rs` | Closes the last headless-vs-GUI capability gap |
+
+Items 1, 2, 3, 4 are tightly scoped and would land cleanly as one PR each. Item 1 is the highest
+leverage — it not only fixes the directly-affected analyzers but also unlocks the corresponding
+rule families in `suggest_music_fixes`.
