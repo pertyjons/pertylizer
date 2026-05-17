@@ -2687,15 +2687,15 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_masking_matrix(
         &self,
-        start_tick: u64,
-        end_tick: u64,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
     ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
         analyze_masking_matrix_impl(
             &self.session,
             &self.sample_library,
             &self.shared,
-            start_tick,
-            end_tick,
+            arrangement_start_tick,
+            arrangement_end_tick,
         )
     }
 
@@ -5513,6 +5513,22 @@ fn analyze_pattern_impl(
 /// Resolve the arrangement range used by `analyze_drum_groove` /
 /// `analyze_bass_drum_lock` / `analyze_harmonic_function` when the caller
 /// passes `start`/`end` as `None`.
+/// Build a `TrackId → DrumComponent` map from per-track drum infos by running
+/// each track name through [`crate::analysis::DrumComponent::from_track_name`].
+/// Tracks whose name is generic (`"Drums"`, `"Percussion"`, …) are omitted so
+/// callers fall back to GM-MIDI for those.
+fn drum_components_by_track_id(
+    infos: &[synth_mcp::types::DrumTrackInfo],
+) -> std::collections::HashMap<synth_sequencer::TrackId, crate::analysis::DrumComponent> {
+    infos
+        .iter()
+        .filter_map(|d| {
+            crate::analysis::DrumComponent::from_track_name(&d.track_name)
+                .map(|c| (synth_sequencer::TrackId(d.track_id), c))
+        })
+        .collect()
+}
+
 fn resolve_arrangement_range(
     song: &synth_sequencer::Song,
     start: Option<u64>,
@@ -5611,6 +5627,7 @@ fn analyze_drum_groove_impl(
                     .iter()
                     .map(|d| synth_sequencer::TrackId(d.track_id))
                     .collect();
+            let track_role_by_id = drum_components_by_track_id(&drum_track_infos);
 
             let mut notes: Vec<crate::analysis::DrumNote> = Vec::new();
             for placement in
@@ -5622,6 +5639,7 @@ fn analyze_drum_groove_impl(
                 let Some(pattern) = song.pattern(placement.pattern_id) else {
                     continue;
                 };
+                let component_hint = track_role_by_id.get(&placement.track_id).copied();
                 let placement_start = placement.start.0;
                 for n in pattern.notes() {
                     let abs_start = placement_start.saturating_add(u64::from(n.start.0));
@@ -5636,6 +5654,7 @@ fn analyze_drum_groove_impl(
                         tick: rel,
                         midi: n.pitch.as_midi(),
                         velocity: n.velocity.as_f32(),
+                        component_hint,
                     });
                 }
             }
@@ -5857,6 +5876,11 @@ fn analyze_bass_drum_lock_impl(
                     .iter()
                     .map(|b| synth_sequencer::TrackId(b.track_id))
                     .collect();
+            // Tracks whose name explicitly marks them as the kick — every hit
+            // on these counts as a kick onset regardless of MIDI number. Lets
+            // projects that map each drum to its own trigger note still get
+            // accurate kick/bass-lock analysis without GM-MIDI assumptions.
+            let track_role_by_id = drum_components_by_track_id(&drum_track_infos);
 
             let mut kicks: Vec<crate::analysis::KickOnset> = Vec::new();
             let mut bass: Vec<crate::analysis::BassOnset> = Vec::new();
@@ -5868,6 +5892,8 @@ fn analyze_bass_drum_lock_impl(
                 if !is_drum && !is_bass {
                     continue;
                 }
+                let track_is_kick_by_name = track_role_by_id.get(&placement.track_id)
+                    == Some(&crate::analysis::DrumComponent::Kick);
                 let Some(pattern) = song.pattern(placement.pattern_id) else {
                     continue;
                 };
@@ -5880,10 +5906,12 @@ fn analyze_bass_drum_lock_impl(
                     let rel = (abs_start - start) as u32;
                     let midi = n.pitch.as_midi();
                     if is_drum {
-                        if matches!(
-                            crate::analysis::DrumComponent::from_midi(midi),
-                            crate::analysis::DrumComponent::Kick
-                        ) {
+                        let is_kick_hit = track_is_kick_by_name
+                            || matches!(
+                                crate::analysis::DrumComponent::from_midi(midi),
+                                crate::analysis::DrumComponent::Kick
+                            );
+                        if is_kick_hit {
                             kicks.push(crate::analysis::KickOnset { tick: rel });
                         }
                     } else {
@@ -7119,8 +7147,8 @@ pub fn suggest_music_fixes_impl(
             session,
             sample_library,
             shared,
-            scope_data.start_tick,
-            scope_data.end_tick,
+            Some(scope_data.start_tick),
+            Some(scope_data.end_tick),
         ) {
             Ok(r) => Some(r),
             Err(e) => {
@@ -7665,14 +7693,13 @@ pub fn analyze_masking_matrix_impl(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
-    start_tick: u64,
-    end_tick: u64,
+    arrangement_start_tick: Option<u64>,
+    arrangement_end_tick: Option<u64>,
 ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
-    if end_tick <= start_tick {
-        return Err(McpBridgeError::Other(format!(
-            "Section range invalid: end_tick ({end_tick}) must be greater than start_tick ({start_tick})"
-        )));
-    }
+    let (start_tick, end_tick) = {
+        let song = shared.song.read();
+        resolve_arrangement_range(&song, arrangement_start_tick, arrangement_end_tick)?
+    };
 
     let mut warnings: Vec<String> = Vec::new();
     let contributions = render_per_track_contributions(

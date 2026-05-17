@@ -532,10 +532,14 @@ pub struct AnalyzeSectionParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeMaskingMatrixParam {
-    #[schemars(description = "Absolute tick where the section starts (inclusive).")]
-    pub start_tick: u64,
-    #[schemars(description = "Absolute tick where the section ends (exclusive).")]
-    pub end_tick: u64,
+    #[schemars(
+        description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0 (song beginning)."
+    )]
+    pub arrangement_start_tick: Option<u64>,
+    #[schemars(
+        description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
+    )]
+    pub arrangement_end_tick: Option<u64>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2723,10 +2727,10 @@ impl SynthMcpServer {
         &self,
         params: Parameters<AnalyzeMaskingMatrixParam>,
     ) -> String {
-        match self
-            .bridge
-            .analyze_masking_matrix(params.0.start_tick, params.0.end_tick)
-        {
+        match self.bridge.analyze_masking_matrix(
+            params.0.arrangement_start_tick,
+            params.0.arrangement_end_tick,
+        ) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }

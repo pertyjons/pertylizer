@@ -1952,9 +1952,16 @@ pub struct InstrumentRangeStep {
     /// half the Nyquist. Signals likely aliasing in the top octaves.
     pub likely_aliased: bool,
     /// True when the pitch tracker reported `fundamental_hz < expected_hz / 2`
-    /// or `> expected_hz * 2` — the patch stopped tracking pitch at this note
-    /// (octave error or fully detuned).
+    /// or `> expected_hz * 2`, when `|pitch_error_cents| > 1200`, or when
+    /// confidence dropped below `0.20`. Catches patches that fall apart at
+    /// the extremes — large detune *or* hopeless pitch tracking both count.
     pub pitch_lost: bool,
+    /// True when `pitch_confidence < 0.10`. The fundamental and centroid
+    /// measurements at this step are noise-level — readings should not be
+    /// trusted even if `pitch_lost` is false. Stricter than `pitch_lost`
+    /// because it answers a different question ("is the reading usable?"
+    /// vs "did the patch break?").
+    pub pitch_unreliable: bool,
 }
 
 /// Cross-range warnings derived from a `Vec<InstrumentRangeStep>`. Each flag
@@ -1972,6 +1979,10 @@ pub struct InstrumentRangeIssues {
     /// Notes where `pitch_lost == true`.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub pitch_lost_notes: Vec<u8>,
+    /// Notes where `pitch_unreliable == true` — confidence under 0.10, so the
+    /// fundamental and centroid columns for that step are not meaningful.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub pitch_unreliable_notes: Vec<u8>,
     /// Notes where `clipped_samples > 0`.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub clipping_notes: Vec<u8>,
@@ -2051,6 +2062,14 @@ pub struct VelocityResponseIssues {
     /// (`amplitude_range_db < 3.0`) — flagged because patches that ignore
     /// velocity often surprise users.
     pub velocity_unresponsive: bool,
+    /// True when the patch is musically compressed by velocity
+    /// (`3.0 <= amplitude_range_db < 10.0`). The patch responds to velocity
+    /// but barely — sits between "unresponsive" and "normal".
+    pub velocity_compressed_response: bool,
+    /// True when at least half of the centroid transitions invert AND the
+    /// last step's centroid is below the first step's — velocity makes the
+    /// patch *darker* instead of brighter. Almost always a routing mistake.
+    pub velocity_brightness_inverted: bool,
 }
 
 /// Output of `analyze_velocity_response`. Holds one MIDI note across a swept

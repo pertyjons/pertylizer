@@ -823,8 +823,14 @@ fn analyze_masking_matrix_emits_pair_with_well_formed_bands() {
     let song = build_two_track_song();
     let shared = McpSharedState::with_song(song);
 
-    let result = analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("masking matrix should succeed");
+    let result = analyze_masking_matrix_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        Some(0),
+        Some(3840),
+    )
+    .expect("masking matrix should succeed");
 
     assert_eq!(result.track_count, 2);
     assert_eq!(
@@ -883,10 +889,22 @@ fn analyze_masking_matrix_is_deterministic_across_calls() {
     let song = build_two_track_song();
     let shared = McpSharedState::with_song(song);
 
-    let a = analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("first call");
-    let b = analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("second call");
+    let a = analyze_masking_matrix_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        Some(0),
+        Some(3840),
+    )
+    .expect("first call");
+    let b = analyze_masking_matrix_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        Some(0),
+        Some(3840),
+    )
+    .expect("second call");
 
     assert_eq!(a.pairs.len(), b.pairs.len());
     for (ap, bp) in a.pairs.iter().zip(b.pairs.iter()) {
@@ -923,12 +941,18 @@ fn analyze_masking_matrix_rejects_inverted_range() {
     let song = build_two_track_song();
     let shared = McpSharedState::with_song(song);
 
-    let err = analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, 3840, 1920)
-        .expect_err("inverted range must error");
+    let err = analyze_masking_matrix_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        Some(3840),
+        Some(1920),
+    )
+    .expect_err("inverted range must error");
     let msg = err.to_string();
     assert!(
-        msg.contains("end_tick") && msg.contains("start_tick"),
-        "error message should mention both end_tick and start_tick: {msg}"
+        msg.contains("Arrangement range invalid"),
+        "error message should describe the invalid arrangement range: {msg}"
     );
 }
 
@@ -958,8 +982,14 @@ fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
 
-    let result = analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("single-track masking matrix should succeed (just empty)");
+    let result = analyze_masking_matrix_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        Some(0),
+        Some(3840),
+    )
+    .expect("single-track masking matrix should succeed (just empty)");
     assert_eq!(result.track_count, 1);
     assert!(result.pairs.is_empty());
     assert!(
@@ -970,4 +1000,19 @@ fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
         "expected an explanatory warning, got {:?}",
         result.warnings
     );
+}
+
+#[test]
+fn analyze_masking_matrix_defaults_to_full_arrangement_when_range_omitted() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let result =
+        analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, None, None)
+            .expect("default range should succeed");
+    // The two-track fixture spans [0, 3840) — explicit and default ranges agree.
+    assert_eq!(result.start_tick, 0);
+    assert_eq!(result.end_tick, 3840);
+    assert_eq!(result.track_count, 2);
 }

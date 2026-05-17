@@ -49,6 +49,44 @@ impl DrumComponent {
         }
     }
 
+    /// Map a track name to a kit-specific drum component when the name calls
+    /// out a single piece (e.g. `"Kick"`, `"Open Hat"`, `"Snare 1"`). Returns
+    /// `None` for generic names like `"Drums"` or `"Percussion"` so the caller
+    /// falls back to the GM-MIDI mapping. Word-match (not substring) so a track
+    /// called `"Kickback"` doesn't trigger `Kick`. Required for projects that
+    /// don't follow GM kit MIDI — common in electronic music where each drum
+    /// gets its own trigger note.
+    #[must_use]
+    pub fn from_track_name(track_name: &str) -> Option<Self> {
+        let tokens = crate::analysis::instrument_profile::tokenize_name(track_name);
+        let has = |word: &str| tokens.iter().any(|t| t == word);
+
+        // Hi-hats first so "Open Hat" wins over the plain hat fallthrough.
+        if has("hat") || has("hh") || has("hihat") {
+            return Some(if has("open") {
+                Self::HatOpen
+            } else {
+                Self::HatClosed
+            });
+        }
+        if has("kick") || has("bd") || has("bassdrum") {
+            return Some(Self::Kick);
+        }
+        if has("snare") || has("sd") || has("rim") || has("rimshot") {
+            return Some(Self::Snare);
+        }
+        if has("clap") || has("cp") {
+            return Some(Self::Clap);
+        }
+        if has("tom") || has("floor") || has("rack") {
+            return Some(Self::Tom);
+        }
+        if has("crash") || has("ride") || has("cymbal") || has("china") || has("splash") {
+            return Some(Self::Cymbal);
+        }
+        None
+    }
+
     /// Friendly name for warnings / serialization.
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -66,12 +104,16 @@ impl DrumComponent {
 }
 
 /// One drum note positioned in absolute or pattern-relative ticks. Input to
-/// [`analyze`].
+/// [`analyze`]. `component_hint` lets the caller pre-classify the hit using
+/// track-role context (e.g. notes from a track named `"Kick"` are kicks
+/// regardless of MIDI number) — when set, the hint takes precedence over the
+/// GM-MIDI mapping inside [`analyze`].
 #[derive(Debug, Clone, Copy)]
 pub struct DrumNote {
     pub tick: u32,
     pub midi: u8,
     pub velocity: f32,
+    pub component_hint: Option<DrumComponent>,
 }
 
 impl DrumNote {
@@ -81,6 +123,7 @@ impl DrumNote {
             tick: base_tick.saturating_add(n.start.0),
             midi: n.pitch.as_midi(),
             velocity: n.velocity.as_f32(),
+            component_hint: None,
         }
     }
 }
@@ -222,7 +265,9 @@ pub fn analyze(
         if n.tick >= length_ticks {
             continue;
         }
-        let component = DrumComponent::from_midi(n.midi);
+        let component = n
+            .component_hint
+            .unwrap_or_else(|| DrumComponent::from_midi(n.midi));
         match component {
             DrumComponent::Kick => composition.kick += 1,
             DrumComponent::Snare => composition.snare += 1,
@@ -546,6 +591,16 @@ mod tests {
             tick,
             midi,
             velocity: vel,
+            component_hint: None,
+        }
+    }
+
+    fn dn_hint(tick: u32, midi: u8, vel: f32, hint: DrumComponent) -> DrumNote {
+        DrumNote {
+            tick,
+            midi,
+            velocity: vel,
+            component_hint: Some(hint),
         }
     }
 
@@ -697,5 +752,112 @@ mod tests {
         let notes = vec![dn(0, 36, 1.0), dn(5000, 36, 1.0)];
         let out = analyze(&notes, 3840, TimeSignature::COMMON);
         assert_eq!(out.total_drum_notes, 1);
+    }
+
+    #[test]
+    fn track_name_classifier_recognises_kit_pieces() {
+        assert_eq!(
+            DrumComponent::from_track_name("Kick"),
+            Some(DrumComponent::Kick)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("kick L"),
+            Some(DrumComponent::Kick)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("BD"),
+            Some(DrumComponent::Kick)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("Snare 1"),
+            Some(DrumComponent::Snare)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("SD-top"),
+            Some(DrumComponent::Snare)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("Rim"),
+            Some(DrumComponent::Snare)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("Closed Hat"),
+            Some(DrumComponent::HatClosed)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("HH"),
+            Some(DrumComponent::HatClosed)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("HiHat"),
+            Some(DrumComponent::HatClosed)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("Open Hat"),
+            Some(DrumComponent::HatOpen)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("Hi-Hat Open"),
+            Some(DrumComponent::HatOpen)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("Clap"),
+            Some(DrumComponent::Clap)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("Floor Tom"),
+            Some(DrumComponent::Tom)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("Crash 1"),
+            Some(DrumComponent::Cymbal)
+        );
+        assert_eq!(
+            DrumComponent::from_track_name("Ride"),
+            Some(DrumComponent::Cymbal)
+        );
+    }
+
+    #[test]
+    fn track_name_classifier_returns_none_for_generic_names() {
+        // Generic names should fall through to MIDI mapping.
+        assert_eq!(DrumComponent::from_track_name("Drums"), None);
+        assert_eq!(DrumComponent::from_track_name("Percussion"), None);
+        assert_eq!(DrumComponent::from_track_name("Beat"), None);
+        assert_eq!(DrumComponent::from_track_name(""), None);
+    }
+
+    #[test]
+    fn track_name_classifier_is_word_match_not_substring() {
+        // "Kickback" would substring-match "kick" but is not a kick track.
+        assert_eq!(DrumComponent::from_track_name("Kickback"), None);
+        // "Hatchet" would substring-match "hat" but is not a hat track.
+        assert_eq!(DrumComponent::from_track_name("Hatchet"), None);
+    }
+
+    #[test]
+    fn component_hint_overrides_midi_classification() {
+        // MIDI 30 falls outside GM kick range, but a track-name hint says kick.
+        let notes = vec![
+            dn_hint(0, 30, 1.0, DrumComponent::Kick),
+            dn_hint(960, 38, 1.0, DrumComponent::Snare),
+            dn_hint(1920, 30, 1.0, DrumComponent::Kick),
+            dn_hint(2880, 38, 1.0, DrumComponent::Snare),
+        ];
+        let out = analyze(&notes, 3840, TimeSignature::COMMON);
+        assert_eq!(out.composition.kick, 2);
+        assert_eq!(out.composition.snare, 2);
+        assert_eq!(out.composition.other, 0);
+        // Backbeat detection sees the snare on beats 2 + 4.
+        assert!((out.backbeat.strength - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn component_hint_none_falls_back_to_midi() {
+        // No hint → existing GM-MIDI behaviour preserved.
+        let notes = vec![dn(0, 36, 1.0), dn(960, 38, 1.0)];
+        let out = analyze(&notes, 3840, TimeSignature::COMMON);
+        assert_eq!(out.composition.kick, 1);
+        assert_eq!(out.composition.snare, 1);
     }
 }

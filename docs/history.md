@@ -1,5 +1,109 @@
 # Version History
 
+## [0.288.0] - 2026-05-17
+### MCP music tools — §9 follow-ups from headless end-to-end testing
+
+Eight fixes driven by `--headless` end-to-end testing on the `Neuro F#m 174`
+project (§9 of `docs/mcp-music-tools-plan.md`). One bundled release rather
+than per-fix bumps because every change is small and the §9 items share
+the same root cause: assumptions in analyzers that survived the GUI test
+loop but broke under non-GM-MIDI projects and non-listener headless use.
+
+#### §9.1 — Drum classification by track-role
+
+`analyze_drum_groove` and `analyze_bass_drum_lock` were hard-coded to GM
+MIDI 35/36 for kick detection. The Neuro project triggers its `Kick`
+patch on MIDI 30, so 79 % of drum notes fell through to `OtherPercussion`
+and `kick_onset_count` reported 0 for an audibly four-on-the-floor track.
+New `DrumComponent::from_track_name` does word-matched substring lookup
+(`kick`/`bd`/`snare`/`hat`/`open`/`clap`/`tom`/`crash`/`ride`/`rim` etc.)
+and `DrumNote.component_hint` carries the track-role decision into
+`analyze`, taking precedence over GM-MIDI when set. Track names that are
+generic (`Drums`, `Percussion`) still fall back to MIDI. The bridge
+pre-resolves a `TrackId → DrumComponent` map once per analyzer call so
+classification is per-track, not per-note.
+
+#### §9.2 — `analyze_masking_matrix` optional range
+
+`start_tick` / `end_tick` were required `u64` while every other
+arrangement-scope analyzer used `Option<u64>` with a full-song default.
+Calling `analyze_masking_matrix` with `{}` got a schema-validation error
+that no other tool produced. Renamed to `arrangement_start_tick` /
+`arrangement_end_tick`, both now `Option<u64>`, default resolves via the
+shared `resolve_arrangement_range` helper.
+
+#### §9.3 — `pitch_unreliable` flag + expanded `pitch_lost`
+
+`pitch_lost` only fired when the fundamental was more than an octave off.
+At MIDI 96 on Neuro Reese Bass, `pitch_confidence = 0.007` and
+`pitch_error_cents = 517` — well below the octave bound, so the flag
+stayed false even though the measurement was hopeless. New
+`pitch_unreliable` fires on `pitch_confidence < 0.10` (the reading is
+noise); `pitch_lost` now also fires on `confidence < 0.20` OR
+`|cent_error| > 1200`. `pitch_unreliable_notes` joins the existing
+issue-summary vectors.
+
+#### §9.4 — `analyze_form_map` adjacent-section merge
+
+`form_string` correctly compressed to `"ABA"`, but `sections.len()`
+returned 6 (`A A B B A A`) when the prime-decision and run-length steps
+disagreed about a bar-to-bar drift. The two views told different stories
+to consumers. Fix collapses adjacent same-label `ClusteredSection`s
+upstream of `section_summary` so the aggregate stats are computed once
+over the merged bar range — no parallel weighted-average path.
+
+#### §9.5 — `velocity_compressed_response` + `velocity_brightness_inverted`
+
+`velocity_unresponsive` only fired below 3 dB amplitude range. Patches
+in the 3–10 dB band are musically compressed without being technically
+unresponsive — new `velocity_compressed_response` catches them. New
+`velocity_brightness_inverted` fires when at least half of the centroid
+transitions invert AND the last step's centroid sits below the first —
+velocity makes the patch darker overall, almost always a routing
+mistake.
+
+#### §9.6 — Sweep FX classification rescue
+
+`Sweep FX` and similar patches with noise + plucked envelope still
+classified as Drums (confidence 0.65) despite the explicit name. New
+post-cascade override: when the decision tree disagreed with an explicit
+FX name (`name-conflict` signal present AND the name contains
+`fx`/`sweep`/`riser`/`impact`/`atmo`/`ambience`/`drone`), the role flips
+to FX with `confidence × 0.85`. `role_from_name`'s FX bucket also
+gained `atmo`/`ambience`/`drone`.
+
+#### §9.7 — `save_project` in `--headless` mode
+
+`InstrumentSnapshot` was missing eight fields the project file format
+records (`key_range`, `transpose`, `oversampling`, `allocation_mode`,
+`stealing_strategy`, `max_voices`, `velocity_amp_sensitivity`,
+`velocity_filter_sensitivity`). Extended the snapshot and the audio-
+thread mirror (`update_shared_instruments`); new
+`project_apply::save_project_to` builds a `ProjectFile` from
+`session.list_instruments()` + a single read of `SharedGraphState`'s
+modules/connections (grouped locally by instrument id, to avoid the N+1
+lock-and-scan pattern). Module positions default to `(0, 0)` since
+headless has no canvas. AWE state, `glide_time`, and `octave_offset`
+remain GUI-only — documented limitations.
+
+#### §9.8 — Null audio host in headless
+
+`run_headless_mcp` now defaults to the null audio host. The real backend
+was just decoration in headless mode — no listener, no realtime budget
+to make — and produced underrun stderr spam every time an offline render
+(`analyze_mix_bus`, `analyze_section`, …) saturated the CPU.
+
+#### Shared cleanup
+
+- New `tokenize_name` / `tokenize_combined_names` helpers in
+  `instrument_profile.rs` collapse three near-identical word-tokenizer
+  copies into one.
+- New `drum_components_by_track_id` helper in `mcp_bridge.rs` is shared
+  by `analyze_drum_groove_impl` and `analyze_bass_drum_lock_impl`.
+- `analyze_masking_matrix_impl` delegates range validation to
+  `resolve_arrangement_range` so its error wording matches every other
+  arrangement-scope analyzer.
+
 ## [0.287.0] - 2026-05-17
 ### MCP music tools — Tier-2 #14 + #16: meta-analysis (Group D)
 

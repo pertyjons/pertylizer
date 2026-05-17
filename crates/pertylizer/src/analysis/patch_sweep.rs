@@ -19,8 +19,24 @@ pub const SILENCE_FLOOR: f32 = 0.001;
 /// Confidence below which a high-centroid step is flagged as likely aliased.
 const ALIASING_CONFIDENCE_CEILING: f32 = 0.3;
 
+/// Confidence below which the fundamental / centroid columns for a step are
+/// treated as unusable noise (not the same as `pitch_lost`, which answers
+/// "did the patch break" — this answers "is the reading meaningful").
+const PITCH_UNRELIABLE_CONFIDENCE_CEILING: f32 = 0.10;
+
+/// Confidence below which `pitch_lost` fires regardless of cent error.
+const PITCH_LOST_CONFIDENCE_CEILING: f32 = 0.20;
+
+/// Cent error magnitude above which `pitch_lost` fires regardless of confidence.
+const PITCH_LOST_CENTS_CEILING: f32 = 1200.0;
+
 /// Velocity-range smaller than this in dB flags the patch as unresponsive.
 const VELOCITY_RESPONSE_MIN_DB: f32 = 3.0;
+
+/// Upper bound (exclusive) of the "musically compressed" band. Patches that
+/// respond to velocity but with a tight dynamic envelope (3..10 dB) get the
+/// compressed-response flag instead of `velocity_unresponsive`.
+const VELOCITY_COMPRESSED_MAX_DB: f32 = 10.0;
 
 /// Median of `centroid_envelope` (sustain-time brightness). `0.0` when empty
 /// or all-zero. Median (not mean) so a noisy attack/release window doesn't
@@ -47,7 +63,8 @@ pub fn range_step_from_analysis(
     let silent = result.peak_amplitude < SILENCE_FLOOR;
     let likely_aliased =
         !silent && pitch_confidence < ALIASING_CONFIDENCE_CEILING && centroid_hz > nyquist_hz * 0.5;
-    let pitch_lost = !silent && pitch_lost_for(result);
+    let pitch_unreliable = !silent && pitch_confidence < PITCH_UNRELIABLE_CONFIDENCE_CEILING;
+    let pitch_lost = !silent && pitch_lost_for(result, pitch_confidence);
 
     InstrumentRangeStep {
         note,
@@ -63,13 +80,28 @@ pub fn range_step_from_analysis(
         silent,
         likely_aliased,
         pitch_lost,
+        pitch_unreliable,
     }
 }
 
-/// Octave boundary chosen because pitch detectors commonly swap octaves on
-/// sub-bass and waveform-folded patches; sub-octave drift is normal, full-
-/// register drift is not.
-fn pitch_lost_for(result: &AnalyzeNoteResult) -> bool {
+/// `pitch_lost` fires when the pitch tracker is so far off that the step's
+/// data is unusable — three independent paths can trip it:
+///
+/// * Confidence below `PITCH_LOST_CONFIDENCE_CEILING` (0.20). The detected
+///   fundamental is essentially noise even when its ratio to the expected
+///   pitch *looks* fine.
+/// * Cent error magnitude above `PITCH_LOST_CENTS_CEILING` (1200). A full
+///   octave off in cents, even when the ratio sits inside the octave window
+///   below (e.g. confidence-weighted blend reports an in-range Hz but the
+///   per-channel cent measurement disagrees).
+/// * Ratio outside `[0.5, 2.0]` — the original octave-error guard.
+fn pitch_lost_for(result: &AnalyzeNoteResult, pitch_confidence: f32) -> bool {
+    if pitch_confidence < PITCH_LOST_CONFIDENCE_CEILING {
+        return true;
+    }
+    if result.pitch_error_cents.abs() > PITCH_LOST_CENTS_CEILING {
+        return true;
+    }
     if result.expected_fundamental_hz <= 0.0 || result.fundamental_hz <= 0.0 {
         return false;
     }
@@ -94,6 +126,9 @@ pub fn range_issues_from_steps(steps: &[InstrumentRangeStep]) -> InstrumentRange
         }
         if step.pitch_lost {
             issues.pitch_lost_notes.push(step.note);
+        }
+        if step.pitch_unreliable {
+            issues.pitch_unreliable_notes.push(step.note);
         }
         if step.clipped_samples > 0 {
             issues.clipping_notes.push(step.note);
@@ -148,6 +183,22 @@ pub fn velocity_issues_from_steps(steps: &[VelocityResponseStep]) -> VelocityRes
         }
     }
     issues.velocity_unresponsive = issues.amplitude_range_db < VELOCITY_RESPONSE_MIN_DB;
+    issues.velocity_compressed_response = issues.amplitude_range_db >= VELOCITY_RESPONSE_MIN_DB
+        && issues.amplitude_range_db < VELOCITY_COMPRESSED_MAX_DB;
+    // Centroid inversion plus a last-step centroid below the first-step
+    // centroid means velocity makes the patch darker overall — almost always
+    // a routing mistake (filter cutoff bound to inverse velocity, etc.).
+    let half_steps = (steps.len() as u32) / 2;
+    let endpoints_inverted = steps
+        .first()
+        .zip(steps.last())
+        .is_some_and(|(first, last)| {
+            first.centroid_hz > 0.0
+                && last.centroid_hz > 0.0
+                && last.centroid_hz < first.centroid_hz
+        });
+    issues.velocity_brightness_inverted =
+        half_steps > 0 && issues.non_monotonic_centroid_steps >= half_steps && endpoints_inverted;
     issues
 }
 
@@ -297,6 +348,54 @@ mod tests {
     }
 
     #[test]
+    fn pitch_unreliable_when_confidence_below_threshold() {
+        // Reese-style failure case: ratio looks OK but confidence is at noise
+        // level and the cent error is way outside musical range.
+        let mut result = dummy_result(0.5, 1000.0, 440.0, 440.0);
+        result.pitch_confidence = Some(0.007);
+        let step = range_step_from_analysis(96, &result, 22_050.0);
+        assert!(step.pitch_unreliable);
+        // Confidence 0.007 < 0.20 → pitch_lost also fires.
+        assert!(step.pitch_lost);
+    }
+
+    #[test]
+    fn pitch_lost_when_cent_error_exceeds_octave() {
+        // Cent error magnitude well above 1200 → pitch_lost regardless of the
+        // fundamental_hz / expected_hz ratio.
+        let mut result = dummy_result(0.5, 1000.0, 440.0, 440.0);
+        result.pitch_error_cents = 1500.0;
+        result.pitch_confidence = Some(0.5);
+        let step = range_step_from_analysis(69, &result, 22_050.0);
+        assert!(step.pitch_lost);
+        // Confidence above 0.10 → not flagged as unreliable.
+        assert!(!step.pitch_unreliable);
+    }
+
+    #[test]
+    fn pitch_lost_when_confidence_at_floor() {
+        let mut result = dummy_result(0.5, 1000.0, 440.0, 440.0);
+        result.pitch_confidence = Some(0.05);
+        let step = range_step_from_analysis(69, &result, 22_050.0);
+        assert!(step.pitch_lost);
+        assert!(step.pitch_unreliable);
+    }
+
+    #[test]
+    fn range_issues_collect_pitch_unreliable_notes() {
+        let mut a = dummy_result(0.5, 1000.0, 440.0, 440.0);
+        a.pitch_confidence = Some(0.05);
+        let mut b = dummy_result(0.5, 1000.0, 440.0, 440.0);
+        b.pitch_confidence = Some(0.5);
+        let steps = [
+            range_step_from_analysis(60, &a, 22_050.0),
+            range_step_from_analysis(72, &b, 22_050.0),
+        ];
+        let issues = range_issues_from_steps(&steps);
+        assert_eq!(issues.pitch_unreliable_notes, vec![60]);
+    }
+
+    #[test]
     fn range_issues_collect_per_note_problems() {
         let mut a = dummy_result(0.5, 1000.0, 440.0, 440.0);
         a.clipped_samples = 5;
@@ -373,5 +472,66 @@ mod tests {
         ];
         let issues = velocity_issues_from_steps(&steps);
         assert_eq!(issues.non_monotonic_centroid_steps, 1);
+    }
+
+    #[test]
+    fn velocity_issues_flag_compressed_response_between_3_and_10_db() {
+        // 0.3 vs 0.5 → 20*log10(0.5/0.3) ≈ 4.4 dB — in the compressed band.
+        let a = dummy_result(0.3, 1000.0, 440.0, 440.0);
+        let b = dummy_result(0.5, 1000.0, 440.0, 440.0);
+        let steps = [
+            velocity_step_from_analysis(40, &a),
+            velocity_step_from_analysis(127, &b),
+        ];
+        let issues = velocity_issues_from_steps(&steps);
+        assert!(!issues.velocity_unresponsive);
+        assert!(issues.velocity_compressed_response);
+    }
+
+    #[test]
+    fn velocity_issues_no_compressed_flag_for_responsive_patch() {
+        // 0.05 vs 1.0 → 26 dB range — well past the 10 dB ceiling.
+        let a = dummy_result(0.05, 1000.0, 440.0, 440.0);
+        let b = dummy_result(1.0, 1000.0, 440.0, 440.0);
+        let steps = [
+            velocity_step_from_analysis(40, &a),
+            velocity_step_from_analysis(127, &b),
+        ];
+        let issues = velocity_issues_from_steps(&steps);
+        assert!(!issues.velocity_unresponsive);
+        assert!(!issues.velocity_compressed_response);
+    }
+
+    #[test]
+    fn velocity_issues_flag_brightness_inversion() {
+        // Centroid drops monotonically with velocity, last < first.
+        let a = dummy_result(0.2, 4000.0, 440.0, 440.0);
+        let b = dummy_result(0.5, 3000.0, 440.0, 440.0);
+        let c = dummy_result(0.8, 2000.0, 440.0, 440.0);
+        let d = dummy_result(1.0, 1000.0, 440.0, 440.0);
+        let steps = [
+            velocity_step_from_analysis(16, &a),
+            velocity_step_from_analysis(48, &b),
+            velocity_step_from_analysis(80, &c),
+            velocity_step_from_analysis(112, &d),
+        ];
+        let issues = velocity_issues_from_steps(&steps);
+        assert_eq!(issues.non_monotonic_centroid_steps, 3);
+        assert!(issues.velocity_brightness_inverted);
+    }
+
+    #[test]
+    fn velocity_issues_brightness_not_flagged_when_endpoints_match() {
+        // One mid-step dip but the last centroid is still ≥ the first.
+        let a = dummy_result(0.2, 2000.0, 440.0, 440.0);
+        let b = dummy_result(0.5, 1500.0, 440.0, 440.0);
+        let c = dummy_result(0.8, 2500.0, 440.0, 440.0);
+        let steps = [
+            velocity_step_from_analysis(40, &a),
+            velocity_step_from_analysis(80, &b),
+            velocity_step_from_analysis(120, &c),
+        ];
+        let issues = velocity_issues_from_steps(&steps);
+        assert!(!issues.velocity_brightness_inverted);
     }
 }

@@ -861,8 +861,8 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// first.
     fn analyze_masking_matrix(
         &self,
-        start_tick: u64,
-        end_tick: u64,
+        arrangement_start_tick: Option<u64>,
+        arrangement_end_tick: Option<u64>,
     ) -> Result<crate::types::AnalyzeMaskingMatrixResult, McpBridgeError>;
 
     /// Sweep an instrument across a MIDI note range, render-and-analyze each

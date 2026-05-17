@@ -51,7 +51,14 @@ pub fn analyze_form(
     section_min_bars: u32,
 ) -> FormAnalysis {
     let bars = build_bar_features(notes, time_sig, total_bars);
-    let clustered = cluster_sections(&bars, similarity_threshold, section_min_bars);
+    // Collapse adjacent same-label clusters upstream so `section_summary` runs
+    // once per merged span — keeps `sections.len()` and `form_string` in lock-
+    // step even when prime-decision and run-length-emit disagree on a drift.
+    let clustered = merge_adjacent_clusters(cluster_sections(
+        &bars,
+        similarity_threshold,
+        section_min_bars,
+    ));
 
     let sections: Vec<SectionSummary> = clustered
         .iter()
@@ -118,6 +125,19 @@ fn section_summary(sec: &ClusteredSection, bars: &[BarFeature]) -> SectionSummar
         mean_velocity: vel_sum / denom,
         active_track_ids: active,
     }
+}
+
+/// Collapse runs of same-label `ClusteredSection`s into single spans so
+/// downstream `section_summary` computes one aggregate per logical section.
+fn merge_adjacent_clusters(clustered: Vec<ClusteredSection>) -> Vec<ClusteredSection> {
+    let mut out: Vec<ClusteredSection> = Vec::with_capacity(clustered.len());
+    for sec in clustered {
+        match out.last_mut() {
+            Some(prev) if prev.label == sec.label => prev.end_bar = sec.end_bar,
+            _ => out.push(sec),
+        }
+    }
+    out
 }
 
 fn compress_run_length(labels: &[String]) -> String {
@@ -193,6 +213,52 @@ mod tests {
         assert!(analysis.bar_labels.iter().any(|l| l == "·"));
         // Form string only contains letters, no '·'.
         assert!(!analysis.form_string.contains('·'));
+    }
+
+    #[test]
+    fn aabbaa_merges_to_aba() {
+        // Synthetic AABBAA cluster run — adjacent same-label spans collapse
+        // into single ClusteredSections covering the combined bar range.
+        let clusters = vec![
+            ClusteredSection {
+                label: "A".to_string(),
+                start_bar: 1,
+                end_bar: 6,
+            },
+            ClusteredSection {
+                label: "A".to_string(),
+                start_bar: 7,
+                end_bar: 8,
+            },
+            ClusteredSection {
+                label: "B".to_string(),
+                start_bar: 9,
+                end_bar: 12,
+            },
+            ClusteredSection {
+                label: "B".to_string(),
+                start_bar: 13,
+                end_bar: 17,
+            },
+            ClusteredSection {
+                label: "A".to_string(),
+                start_bar: 18,
+                end_bar: 22,
+            },
+            ClusteredSection {
+                label: "A".to_string(),
+                start_bar: 23,
+                end_bar: 24,
+            },
+        ];
+        let merged = merge_adjacent_clusters(clusters);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].label, "A");
+        assert_eq!((merged[0].start_bar, merged[0].end_bar), (1, 8));
+        assert_eq!(merged[1].label, "B");
+        assert_eq!((merged[1].start_bar, merged[1].end_bar), (9, 17));
+        assert_eq!(merged[2].label, "A");
+        assert_eq!((merged[2].start_bar, merged[2].end_bar), (18, 24));
     }
 
     #[test]

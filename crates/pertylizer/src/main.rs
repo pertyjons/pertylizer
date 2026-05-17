@@ -182,17 +182,12 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
 fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
     let (engine, handle) = SynthEngine::new();
 
-    // Start audio
-    let mut host: Box<dyn AudioHostTrait> = match audio::default_host() {
-        Ok(h) => {
-            eprintln!("✓ Audio backend: {}", h.backend_name());
-            Box::new(h)
-        }
-        Err(e) => {
-            eprintln!("⚠ Could not initialize audio: {e}");
-            Box::new(audio::null_host())
-        }
-    };
+    // Headless mode runs the engine purely as an offline-render driver for
+    // MCP analyzers — no listener, no realtime budget to make. The null host
+    // avoids underrun noise the real backend would produce when offline
+    // renders saturate the CPU.
+    let mut host: Box<dyn AudioHostTrait> = Box::new(audio::null_host());
+    eprintln!("✓ Audio backend: {} (headless)", host.backend_name());
 
     let stream_config = StreamConfig {
         sample_rate: SampleRate::DVD_QUALITY,

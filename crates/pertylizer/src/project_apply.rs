@@ -35,8 +35,8 @@ type SharedSampleLibrary = Arc<std::sync::RwLock<SampleLibrary>>;
 /// Handle returned by [`spawn_worker`] — the caller signals shutdown via the
 /// flag and then joins the thread to wait for it to exit.
 pub struct HeadlessWorker {
-    pub running: Arc<AtomicBool>,
-    pub handle: JoinHandle<()>,
+    running: Arc<AtomicBool>,
+    handle: JoinHandle<()>,
 }
 
 impl HeadlessWorker {
@@ -215,10 +215,31 @@ pub(crate) fn save_project_to(
     let engine_state = session.state();
     let shared_graph = &engine_state.shared_graph;
 
+    // Acquire the two shared-graph read locks exactly once, then bucket by
+    // instrument id locally. `get_modules_for_instrument` / `_connections_*`
+    // each take their own lock and re-scan the entire collection — calling
+    // them in a per-instrument loop would be O(N*M) lock churn.
+    let mut modules_by_inst: std::collections::HashMap<InstrumentId, Vec<ModuleStateSnapshot>> =
+        std::collections::HashMap::with_capacity(snapshots.len());
+    for module in shared_graph.get_all_modules() {
+        modules_by_inst
+            .entry(module.instrument_id)
+            .or_default()
+            .push(module);
+    }
+    let mut conns_by_inst: std::collections::HashMap<InstrumentId, Vec<ConnectionSnapshot>> =
+        std::collections::HashMap::with_capacity(snapshots.len());
+    for conn in shared_graph.get_connections() {
+        conns_by_inst
+            .entry(conn.instrument_id)
+            .or_default()
+            .push(conn);
+    }
+
     let mut instrument_states: Vec<InstrumentState> = Vec::with_capacity(snapshots.len());
     for snap in &snapshots {
-        let modules = shared_graph.get_modules_for_instrument(snap.id);
-        let connections = shared_graph.get_connections_for_instrument(snap.id);
+        let modules = modules_by_inst.remove(&snap.id).unwrap_or_default();
+        let connections = conns_by_inst.remove(&snap.id).unwrap_or_default();
         let patch = build_patch_from_engine(session, snap, &modules, &connections);
         instrument_states.push(snapshot_to_instrument_state(snap, patch));
     }

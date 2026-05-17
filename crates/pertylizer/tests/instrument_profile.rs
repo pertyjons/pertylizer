@@ -68,7 +68,7 @@ fn instrument_snapshot(seq: u16, name: &str, category: InstrumentCategory) -> In
         stealing_strategy: synth_engine::voice_allocator::StealingStrategy::default(),
         max_voices: synth_core::VoiceCount::OCTO,
         velocity_amp_sensitivity: NormalizedValue::MAX,
-        velocity_filter_sensitivity: NormalizedValue::MIN,
+        velocity_filter_sensitivity: NormalizedValue::CENTER,
     }
 }
 
@@ -379,8 +379,10 @@ fn role_from_name_recognizes_extended_pluck_vocab() {
 #[test]
 fn role_from_name_extended_vocab_stays_word_match() {
     // "Stable" must not trigger "stab"; "Doorbell" must not trigger "bell".
-    assert_eq!(role_from_name("Stable Drone", None), None);
+    assert_eq!(role_from_name("Stable", None), None);
     assert_eq!(role_from_name("Doorbell", None), None);
+    // "Drone" is now legitimate FX vocab, so the previous "Stable Drone"
+    // combination wouldn't survive — the second word legitimately matches.
 }
 
 // ---------------------------------------------------------------------------
@@ -1112,6 +1114,78 @@ fn manual_category_overrides_inference() {
 
     // And every non-Uncategorized variant should map to a role.
     snap.category = InstrumentCategory::FX;
+    let profile = infer_instrument_profile(&snap, &modules, &[], &notes);
+    assert_eq!(profile.role.role, Role::Fx);
+}
+
+// §9.6: when the cascade lands on Drums via DSP signals but the name says
+// Sweep / FX, the post-cascade override rescues the patch as FX.
+#[test]
+fn sweep_fx_drum_misclassification_is_overridden_to_fx() {
+    let snap = instrument_snapshot(7, "Sweep FX", InstrumentCategory::Uncategorized);
+    // Noise source + short plucked envelope = the drum-gate's `noise-no-osc +
+    // plucked` shortcut, which used to fire confidently on "Sweep FX".
+    let modules = vec![
+        module(7, ModuleType::Noise, 1),
+        envelope_module(7, 1, 0.001, 0.15, 0.0, 0.2),
+        module(7, ModuleType::Amplifier, 1),
+    ];
+    let notes = vec![note(60, 0, Some(60))];
+    let profile = infer_instrument_profile(&snap, &modules, &[], &notes);
+    assert_eq!(profile.role.role, Role::Fx);
+    assert!(
+        profile
+            .role
+            .signals
+            .iter()
+            .any(|s| s.detail == "explicit-fx-override"),
+        "expected explicit-fx-override signal, got {:?}",
+        profile.role.signals,
+    );
+    // Confidence dropped to 0.85× of the original drum-gate value.
+    assert!(
+        profile.role.confidence > 0.0 && profile.role.confidence < 0.9,
+        "expected reduced confidence under override, got {}",
+        profile.role.confidence,
+    );
+}
+
+// §9.6 negative: when the cascade already lands on FX, no override fires.
+#[test]
+fn fx_classification_without_drum_misclassification_skips_override() {
+    let snap = instrument_snapshot(8, "Riser FX", InstrumentCategory::Uncategorized);
+    // Noise + sustained envelope falls through to the FX-gate directly.
+    let modules = vec![
+        module(8, ModuleType::Noise, 1),
+        envelope_module(8, 1, 0.005, 0.05, 0.8, 0.1),
+        module(8, ModuleType::Amplifier, 1),
+    ];
+    let notes = vec![note(60, 0, Some(2000))];
+    let profile = infer_instrument_profile(&snap, &modules, &[], &notes);
+    assert_eq!(profile.role.role, Role::Fx);
+    assert!(
+        !profile
+            .role
+            .signals
+            .iter()
+            .any(|s| s.detail == "explicit-fx-override"),
+        "no override should fire when the cascade already chose FX, got {:?}",
+        profile.role.signals,
+    );
+}
+
+#[test]
+fn name_is_explicit_fx_recognises_extended_vocabulary() {
+    use synth_sequencer::SeqInstrumentId;
+    // Spot-check via infer_instrument_profile that the new vocab is wired in.
+    let mut snap = instrument_snapshot(9, "Atmo Drone", InstrumentCategory::Uncategorized);
+    snap.seq_instrument_id = SeqInstrumentId(9).0;
+    let modules = vec![
+        module(9, ModuleType::Noise, 1),
+        envelope_module(9, 1, 0.001, 0.15, 0.0, 0.2),
+        module(9, ModuleType::Amplifier, 1),
+    ];
+    let notes = vec![note(60, 0, Some(60))];
     let profile = infer_instrument_profile(&snap, &modules, &[], &notes);
     assert_eq!(profile.role.role, Role::Fx);
 }

@@ -181,23 +181,31 @@ pub struct NoteRef {
 // Axis 1: signals from the instrument and track names.
 // ---------------------------------------------------------------------------
 
-/// Tokenize on non-alphanumeric, lowercase, then word-match against a small
-/// vocabulary. Returns `None` when no word maps to a role.
-///
-/// Word-match (not substring) so "bassoon" doesn't trigger "bass".
+/// Lowercase, then split on non-alphanumeric and drop empty fragments. Used
+/// by every name-vocabulary check in the analysis module — word-match (not
+/// substring) so `"bassoon"` doesn't trigger `"bass"`.
 #[must_use]
-pub fn role_from_name(instrument_name: &str, track_name: Option<&str>) -> Option<Role> {
-    let mut combined = instrument_name.to_string();
-    if let Some(t) = track_name {
-        combined.push(' ');
-        combined.push_str(t);
-    }
-    let lowered = combined.to_lowercase();
-    let tokens: Vec<&str> = lowered
+pub(super) fn tokenize_name(text: &str) -> Vec<String> {
+    text.to_lowercase()
         .split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|t| !t.is_empty())
-        .collect();
-    let has = |word: &str| tokens.contains(&word);
+        .map(String::from)
+        .collect()
+}
+
+fn tokenize_combined_names(instrument_name: &str, track_name: Option<&str>) -> Vec<String> {
+    match track_name {
+        Some(t) => tokenize_name(&format!("{instrument_name} {t}")),
+        None => tokenize_name(instrument_name),
+    }
+}
+
+/// Tokenize on non-alphanumeric, lowercase, then word-match against a small
+/// vocabulary. Returns `None` when no word maps to a role.
+#[must_use]
+pub fn role_from_name(instrument_name: &str, track_name: Option<&str>) -> Option<Role> {
+    let tokens = tokenize_combined_names(instrument_name, track_name);
+    let has = |word: &str| tokens.iter().any(|t| t == word);
 
     // Order matters: Bass needs to be checked after Drums so "bass drum"
     // resolves as Drums, but standalone "bass" still wins later.
@@ -244,10 +252,35 @@ pub fn role_from_name(instrument_name: &str, track_name: Option<&str>) -> Option
     if has("keys") || has("piano") || has("epiano") || has("ep") || has("rhodes") || has("organ") {
         return Some(Role::Keys);
     }
-    if has("fx") || has("riser") || has("sweep") || has("noise") {
+    if has("fx")
+        || has("riser")
+        || has("sweep")
+        || has("noise")
+        || has("atmo")
+        || has("ambience")
+        || has("drone")
+    {
         return Some(Role::Fx);
     }
     None
+}
+
+/// Re-check the patch/track name against the dedicated FX-override vocabulary.
+/// Used by the post-cascade override that rescues patches like `"Sweep FX"`
+/// from drums mis-classification when the DSP signals look percussive but the
+/// name screams FX. Distinct from [`role_from_name`]'s FX bucket because the
+/// override vocabulary includes percussive-sounding words (`impact`) that
+/// otherwise belong to Drums for non-name-conflict cases.
+#[must_use]
+fn name_is_explicit_fx(instrument_name: &str, track_name: Option<&str>) -> bool {
+    tokenize_combined_names(instrument_name, track_name)
+        .iter()
+        .any(|t| {
+            matches!(
+                t.as_str(),
+                "fx" | "sweep" | "riser" | "impact" | "atmo" | "ambience" | "drone"
+            )
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -858,6 +891,27 @@ pub fn infer_instrument_profile(
         register,
         texture,
     );
+
+    // Rescue patches whose name explicitly says FX from a confident non-FX
+    // classification. Fires only when the cascade already disagreed with the
+    // name (`name-conflict` signal present) — patches whose decision tree
+    // agreed with the name keep their original confidence path. Confidence
+    // drops to 0.85× so the override is reflected in the score.
+    let name_conflict_fired = role.signals.iter().any(|s| s.detail == "name-conflict");
+    let role = if role.role != Role::Fx
+        && name_conflict_fired
+        && name_is_explicit_fx(&snapshot.name, track_name)
+    {
+        let mut signals = role.signals;
+        signals.push(ProfileSignal::new(SignalAxis::Name, "explicit-fx-override"));
+        RoleInference {
+            role: Role::Fx,
+            confidence: (role.confidence * 0.85).clamp(0.0, 1.0),
+            signals,
+        }
+    } else {
+        role
+    };
 
     InstrumentProfile {
         instrument_id: snapshot.seq_instrument_id,
