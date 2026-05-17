@@ -119,26 +119,28 @@ pub fn setup_with_patch(patch: &Patch) -> Rig {
     }
 }
 
-/// One-bar 4-note C-major arpeggio on `SeqInstrumentId(0)`, placed at tick 0.
-/// At 120 BPM the pattern spans exactly 2 s (3840 ticks).
-pub fn build_arpeggio_song() -> Arc<RwLock<Song>> {
-    let mut song = Song::new("Arpeggio");
+/// Build a single-pattern, single-track song on `SeqInstrumentId(0)` placed
+/// at tick 0. `notes` lists `(start, pitch_midi, duration)` triples; the
+/// pattern length is `SeqDuration::WHOLE` (3840 ticks = 2 s at 120 BPM).
+pub fn build_single_pattern_song(
+    name: &str,
+    notes: &[(PatternTick, u8, SeqDuration)],
+) -> Arc<RwLock<Song>> {
+    let mut song = Song::new(name);
     let pattern_id = song.create_pattern(SeqDuration::WHOLE);
     {
         let pattern = song
             .pattern_mut(pattern_id)
             .expect("pattern just created should exist");
-        let pitches = [60u8, 64, 67, 72];
-        for (i, midi) in pitches.iter().enumerate() {
-            let start = PatternTick(i as u32 * 960);
+        for (start, midi, duration) in notes {
             let nid = pattern.add_note(
-                start,
+                *start,
                 Pitch::new(*midi).expect("valid MIDI note"),
                 Velocity::MF,
                 SeqInstrumentId(0),
             );
             if let Some(note) = pattern.note_mut(nid) {
-                note.duration = Some(SeqDuration(900));
+                note.duration = Some(*duration);
             }
         }
     }
@@ -153,6 +155,17 @@ pub fn build_arpeggio_song() -> Arc<RwLock<Song>> {
     );
 
     Arc::new(RwLock::new(song))
+}
+
+/// One-bar 4-note C-major arpeggio on `SeqInstrumentId(0)`, placed at tick 0.
+/// At 120 BPM the pattern spans exactly 2 s (3840 ticks).
+pub fn build_arpeggio_song() -> Arc<RwLock<Song>> {
+    let notes: Vec<_> = [60u8, 64, 67, 72]
+        .iter()
+        .enumerate()
+        .map(|(i, midi)| (PatternTick(i as u32 * 960), *midi, SeqDuration(900)))
+        .collect();
+    build_single_pattern_song("Arpeggio", &notes)
 }
 
 /// RMS of a stereo-interleaved buffer's left channel.

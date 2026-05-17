@@ -25,14 +25,17 @@ use parking_lot::RwLock;
 use synth_core::AudioProcessor;
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_engine::SynthEngine;
-use synth_sequencer::Song;
+use synth_sequencer::{Duration as SeqDuration, PatternTick, Song};
 
 use pertylizer::audio::arrangement_render::render_arrangement_to_buffer;
 use pertylizer::audio::mix_analysis::analyze_mix_buffer;
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::session::SynthSession;
 
-use common::{TEST_SR, build_arpeggio_song, left_rms, setup_with_patch, sustain_patch};
+use common::{
+    TEST_SR, build_arpeggio_song, build_single_pattern_song, left_rms, setup_with_patch,
+    sustain_patch,
+};
 
 #[test]
 fn renders_audible_arrangement_from_engine_snapshot() {
@@ -152,6 +155,92 @@ fn render_rejects_inverted_range() {
 
     let result = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 3840, 0);
     assert!(result.is_err(), "inverted range should fail");
+}
+
+/// One sustained MIDI 60 note spanning the full pattern length (3840 ticks).
+/// Used to exercise the pre-roll path: a render that begins mid-note must
+/// still trigger the note via Seek-from-earliest-overlap.
+fn build_sustained_note_song() -> Arc<RwLock<Song>> {
+    build_single_pattern_song("Sustained", &[(PatternTick(0), 60, SeqDuration(3840))])
+}
+
+#[test]
+fn render_mid_note_pre_rolls_sustained_note() {
+    // A render starting after the NoteOn of a sustained note must still
+    // produce audible output (the pre-roll path seeds the voice).
+    let rig = setup_with_patch(&sustain_patch());
+    let song = build_sustained_note_song();
+    let shared = McpSharedState::with_song(song);
+
+    // Start 1 quarter (~0.5 s @ 120 BPM) into the 4-quarter sustained note.
+    let start_tick = 960u64;
+    let end_tick = 2880u64;
+
+    let rendered = render_arrangement_to_buffer(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        start_tick,
+        end_tick,
+    )
+    .expect("mid-note arrangement render should succeed");
+
+    assert_eq!(rendered.start_tick, start_tick);
+    assert_eq!(rendered.end_tick, end_tick);
+    assert!(
+        rendered.duration_seconds > 0.9 && rendered.duration_seconds < 1.1,
+        "expected ~1s render, got {} s",
+        rendered.duration_seconds
+    );
+
+    // The buffer length must match the *visible* range only — the pre-roll
+    // prefix must not leak into the returned samples.
+    let frame_count = rendered.samples.len() / 2;
+    let expected_frames = (rendered.duration_seconds * rendered.sample_rate as f32) as usize;
+    assert!(
+        frame_count.abs_diff(expected_frames) <= 1,
+        "buffer length {frame_count} frames doesn't match visible-range expected {expected_frames}; \
+         prefix leakage suspected"
+    );
+
+    let rms = left_rms(&rendered.samples);
+    assert!(
+        rms > 0.01,
+        "sustained-note mid-range render should be audible (left RMS = {rms}); \
+         pre-roll did not seed the voice"
+    );
+}
+
+#[test]
+fn render_with_no_overlap_skips_preroll() {
+    // Arpeggio notes (duration 900) end before the next 960-tick boundary, so
+    // a render starting at tick 1920 has no in-flight note crossing it.
+    let rig = setup_with_patch(&sustain_patch());
+    let song = build_arpeggio_song();
+    let shared = McpSharedState::with_song(song);
+
+    let start_tick = 1920u64;
+    let end_tick = 2880u64;
+
+    let rendered = render_arrangement_to_buffer(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        start_tick,
+        end_tick,
+    )
+    .expect("non-overlap render should succeed");
+
+    assert!(
+        rendered.warnings.is_empty(),
+        "non-overlap render should produce no warnings, got {:?}",
+        rendered.warnings
+    );
+    assert!(
+        rendered.duration_seconds > 0.45 && rendered.duration_seconds < 0.55,
+        "expected ~0.5s render, got {} s",
+        rendered.duration_seconds
+    );
 }
 
 #[test]

@@ -34,6 +34,13 @@ git commit -m "<short description of changes>"
 2. Review `docs/TODO.md` and mark completed tasks
 3. Update version number in `Cargo.toml`
 
+### `docs/history.md` style
+
+Keep each fix / change description to **one or two sentences** — what was
+broken (or added) and the one-line essence of the fix. No multi-paragraph
+explanations, no full design rationale, no test-list enumerations. The
+commit and the code carry the detail; history.md is the index.
+
 ---
 
 ## Architecture

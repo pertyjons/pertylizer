@@ -387,9 +387,25 @@ impl SequencerEngine {
             }
         } // Lock released here
 
-        // Now process the collected notes without holding the lock
+        // Legato across placement boundaries: if a new note shares
+        // (pitch, instrument) with an active note ending at this exact tick,
+        // extend the active note instead of emitting NoteOff+NoteOn. The
+        // extended end_tick keeps `check_note_offs` below from firing the
+        // pending NoteOff, so the voice sustains across the boundary.
         for i in 0..self.scratch_notes.len() {
             let (pitch, velocity, instrument, end_tick) = self.scratch_notes[i];
+
+            let extending_idx = self.active_notes.iter().position(|n| {
+                n.pitch == pitch
+                    && n.instrument == instrument
+                    && n.end_tick == Some(self.current_tick)
+            });
+
+            if let Some(idx) = extending_idx {
+                self.active_notes[idx].end_tick = end_tick;
+                continue;
+            }
+
             self.active_notes.push(ActiveNote {
                 pitch,
                 instrument,
@@ -593,6 +609,53 @@ mod tests {
         seq.seek(target);
 
         assert_eq!(seq.current_tick(), target);
+    }
+
+    #[test]
+    fn test_legato_across_placement_boundary_skips_retrigger() {
+        // Two back-to-back placements of a same-pitch sustained note: the
+        // sequencer must coalesce the boundary NoteOff+NoteOn into one voice.
+        let mut song = Song::new("Legato").with_tempo(Bpm::new(120.0));
+        let pattern_len = Duration::WHOLE;
+        let pattern_id = song.create_pattern(pattern_len);
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            let nid = pattern.add_note(
+                PatternTick(0),
+                Pitch::new(60).unwrap(),
+                Velocity::MF,
+                SeqInstrumentId(0),
+            );
+            if let Some(note) = pattern.note_mut(nid) {
+                note.duration = Some(pattern_len);
+            }
+        }
+        let track_id = song.create_track("T");
+        song.place_pattern(pattern_id, track_id, Tick::ZERO);
+        song.place_pattern(pattern_id, track_id, Tick(pattern_len.0 as u64));
+
+        let song = Arc::new(RwLock::new(song));
+        let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
+        seq.play();
+
+        // 5s of audio covers both placements (4s) plus the final NoteOff at
+        // tick 7680 — 4s would land it exactly on the trailing edge.
+        let mut events = Vec::new();
+        let frames = (SampleRate::DVD_QUALITY.as_f32() * 5.0).round() as usize;
+        seq.process(SampleCount::new(frames), &mut events);
+
+        let note_ons = events.iter().filter(|e| e.is_note_on()).count();
+        let note_offs = events.iter().filter(|e| e.is_note_off()).count();
+
+        assert_eq!(
+            note_ons, 1,
+            "expected exactly 1 NoteOn (the second placement's NoteOn should be \
+             coalesced into the sustaining voice): {events:?}"
+        );
+        assert_eq!(
+            note_offs, 1,
+            "expected exactly 1 NoteOff (only at the final note end, not at the \
+             placement boundary): {events:?}"
+        );
     }
 
     #[test]

@@ -1,5 +1,18 @@
 # Version History
 
+## [unreleased]
+### §0 known-bug fixes
+
+- **§0.1 Sequencer legato across placement boundaries** — adjacent same-pitch
+  placements emitted NoteOff+NoteOn at the boundary, fading pads/strings every
+  pattern. `collect_events_at_tick` now extends the active note's `end_tick`
+  instead, so one voice spans both placements.
+- **§0.3 `analyze_section` pre-roll for crossing notes** — the offline
+  renderer Seek'd straight to `start_tick`, leaving notes that began earlier
+  silent (visible on per-track soloed pads). `render_range` now scans for the
+  earliest crossing note, Seeks there, renders prefix + visible range, and
+  trims the prefix before returning; prefix capped at 30 s.
+
 ## [0.288.0] - 2026-05-17
 ### MCP music tools — §9 follow-ups from headless end-to-end testing
 

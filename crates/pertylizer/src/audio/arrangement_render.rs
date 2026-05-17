@@ -15,10 +15,12 @@
 //!
 //! **Limitations (v1):**
 //! - No per-track stems. The output is the master mix only.
-//! - Notes that started before `start_tick` are not pre-rolled. A range
-//!   that begins mid-note will not produce sound for that note. Surrounded
-//!   ranges are rendered exactly; choose ranges that start on note
-//!   boundaries for fidelity.
+//! - Notes that started before `start_tick` are pre-rolled by seeking the
+//!   offline engine to the earliest crossing note's start (capped by
+//!   [`MAX_PREROLL_SECONDS`]) and trimming the prefix from the output. Pre-roll
+//!   that would push total render time above [`MAX_RENDER_SECONDS`] is shrunk
+//!   to fit, with a warning. Notes that started further back than the cap are
+//!   silent for the duration of the render.
 
 use std::sync::Arc;
 
@@ -49,6 +51,14 @@ const CHANNELS: usize = 2;
 /// keep the MCP request bounded. 5 minutes at 44.1 kHz stereo ≈ 105 MB f32
 /// — comfortably above any reasonable analysis window.
 const MAX_RENDER_SECONDS: f32 = 300.0;
+
+/// Maximum amount of pre-roll (audio before the requested `start_tick`) that
+/// the renderer will run to seed sustained notes that started before the
+/// range. The prefix is rendered and then discarded; this cap keeps an extreme
+/// drone or 10-minute pad from forcing an analyze_section call to render the
+/// entire song. Notes that started further back than this are silent in the
+/// output — same as the pre-pre-roll behaviour, but with a warning.
+const MAX_PREROLL_SECONDS: f32 = 30.0;
 
 /// Fixed seed for `fastrand`'s thread-local RNG at the start of every offline
 /// render. Several DSP modules pull from `fastrand` during processing —
@@ -286,32 +296,58 @@ impl OfflineEngineSession {
 
         let mut warnings: Vec<String> = Vec::new();
 
-        // Wall-clock duration of the tick range, computed via the song's own
-        // tick→second conversion so tempo changes inside the range are honoured.
-        let duration_seconds = {
+        let (visible_seconds, prefix_seconds, effective_start_tick) = {
             let song_read = song.read();
             let start_s = song_read.tick_to_seconds(Tick(start_tick));
             let end_s = song_read.tick_to_seconds(Tick(end_tick));
-            let dur = (end_s - start_s).max(0.0) as f32;
-            if dur > MAX_RENDER_SECONDS {
+            let raw_effective_s =
+                song_read.tick_to_seconds(earliest_active_note_start(&song_read, Tick(start_tick)));
+            let raw_prefix_s = (start_s - raw_effective_s).max(0.0);
+
+            let prefix_s = raw_prefix_s.min(f64::from(MAX_PREROLL_SECONDS));
+            if raw_prefix_s > f64::from(MAX_PREROLL_SECONDS) {
                 warnings.push(format!(
-                    "Requested arrangement range is {dur:.1}s; clamping to {MAX_RENDER_SECONDS:.0}s",
+                    "Pre-roll requested {raw_prefix_s:.1}s; capping at {MAX_PREROLL_SECONDS:.0}s. \
+                     Notes that began earlier are silent in the output."
                 ));
-                MAX_RENDER_SECONDS
-            } else {
-                dur
             }
+
+            let raw_visible_s = (end_s - start_s).max(0.0);
+            let max_visible_s = f64::from(MAX_RENDER_SECONDS) - prefix_s;
+            let visible_s = if raw_visible_s > max_visible_s {
+                warnings.push(format!(
+                    "Requested arrangement range is {raw_visible_s:.1}s; clamping to {max_visible_s:.1}s \
+                     (pre-roll uses {prefix_s:.1}s of the {MAX_RENDER_SECONDS:.0}s render budget).",
+                ));
+                max_visible_s.max(0.0)
+            } else {
+                raw_visible_s
+            };
+
+            // `Song::seconds_to_tick` is the exact tempo-aware inverse of
+            // `tick_to_seconds`, so the Seek lands on the tick whose wall-clock
+            // position is `prefix_s` before `start_tick`.
+            let effective_tick = if prefix_s > 0.0 {
+                song_read.seconds_to_tick(start_s - prefix_s)
+            } else {
+                Tick(start_tick)
+            };
+
+            (visible_s as f32, prefix_s as f32, effective_tick)
         };
 
-        if duration_seconds <= 0.0 {
+        if visible_seconds <= 0.0 {
             return Err(McpBridgeError::Other(
                 "Arrangement range resolves to zero render duration — check tempo settings"
                     .to_string(),
             ));
         }
 
-        let total_frames =
-            (f64::from(duration_seconds) * f64::from(RENDER_SAMPLE_RATE)).ceil() as u64;
+        let visible_frames =
+            (f64::from(visible_seconds) * f64::from(RENDER_SAMPLE_RATE)).ceil() as u64;
+        let prefix_frames =
+            (f64::from(prefix_seconds) * f64::from(RENDER_SAMPLE_RATE)).round() as u64;
+        let total_frames = prefix_frames + visible_frames;
         if total_frames == 0 {
             return Err(McpBridgeError::Other(
                 "Arrangement range too short to produce any samples".to_string(),
@@ -374,12 +410,12 @@ impl OfflineEngineSession {
         // Play, then Seek — in that order. Play transitions the sequencer from
         // Stopped → Playing, which has the side effect of resetting current_tick
         // to zero (see `SequencerEngine::play`). Sending Seek *after* Play
-        // overrides that reset so the real render starts at `start_tick`.
+        // overrides that reset so the real render starts at `effective_start_tick`.
         // Both commands drain together at the top of the first real process
         // call below, so the sequencer hasn't advanced yet when Seek lands.
         self.handle.send_blocking(EngineCommand::Play);
         self.handle.send_blocking(EngineCommand::Seek {
-            tick: Tick(start_tick),
+            tick: effective_start_tick,
         });
 
         let mut samples: Vec<f32> = Vec::with_capacity((total_frames as usize) * CHANNELS);
@@ -403,6 +439,15 @@ impl OfflineEngineSession {
             frames_written += this_buffer as u64;
         }
 
+        // Drop the pre-roll prefix so the returned buffer covers exactly
+        // [start_tick, end_tick). The prefix was rendered to seed sustained
+        // notes that started before `start_tick`; it must not appear in the
+        // analysed output.
+        let prefix_samples = (prefix_frames as usize).saturating_mul(CHANNELS);
+        if prefix_samples > 0 && prefix_samples <= samples.len() {
+            samples.drain(0..prefix_samples);
+        }
+
         // No trailing Stop: the next `render_range` issues its own Stop at the
         // top, which handles both flushing this render's voices and any prior
         // state. Dropping the session without a follow-up render is also fine
@@ -411,13 +456,54 @@ impl OfflineEngineSession {
         Ok(RenderedArrangement {
             samples,
             sample_rate: RENDER_SAMPLE_RATE,
-            duration_seconds,
+            duration_seconds: visible_seconds,
             channels: CHANNELS as u16,
             start_tick,
             end_tick,
             warnings,
         })
     }
+}
+
+/// Earliest absolute tick at which a note that is still ringing at
+/// `start_tick` was triggered. Returns `start_tick` when no note overlaps.
+///
+/// Mute / solo respected so a soloed per-track render does not pre-roll for
+/// notes on tracks that will be silent anyway.
+fn earliest_active_note_start(song: &Song, start_tick: Tick) -> Tick {
+    let any_solo = song.any_solo();
+    let mut earliest = start_tick;
+
+    for placement in song.arrangement() {
+        if placement.start >= start_tick {
+            continue;
+        }
+        if let Some(track) = song.track(placement.track_id)
+            && !track.is_audible(any_solo)
+        {
+            continue;
+        }
+        let Some(pattern) = song.pattern(placement.pattern_id) else {
+            continue;
+        };
+
+        for note in pattern.notes() {
+            let abs_start = Tick::from_pattern_tick(placement.start, note.start);
+            if abs_start >= start_tick {
+                continue;
+            }
+            // Notes with no duration ring indefinitely until cut.
+            let still_active = match note.duration {
+                Some(d) => abs_start.0 + u64::from(d.0) > start_tick.0,
+                None => true,
+            };
+            if still_active && abs_start < earliest {
+                earliest = abs_start;
+            }
+        }
+    }
+
+    earliest
 }
 
 /// Load one instrument's voice graph + effect chain into the offline engine.

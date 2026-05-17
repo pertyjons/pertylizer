@@ -2,46 +2,6 @@
 
 ## 0. Known Bugs
 
-### 0.1 Sequencer — identical-pitch retrigger across placement boundaries fades sustained notes
-
-When two adjacent pattern placements both hold a note at the same pitch and the first note's end
-coincides with (or precedes) the second's start, the sequencer emits `note_off` followed immediately
-by `note_on`. On instruments with long release + long attack envelopes (pads, strings) this produces
-an audible "breath" every pattern boundary instead of a continuous sustained tone — the release tail
-fades out while the new attack ramps up.
-
-**Repro:** create a 16-beat pad pattern with a Cm7 chord (notes `start_beat=0, duration_beats=16`) on
-an instrument with `Attack=0.6s, Release=1.5s`, place it at beats 0, 16, 32, 48. The pad will fade
-every 16 beats. **Workaround:** use a single placement with one long note covering the whole
-duration (this is what `Sidechain Demo.json` does).
-
-**Possible fixes (sequencer-side):**
-- Detect adjacent same-pitch note edges within a small epsilon and skip the redundant
-  `note_off` + `note_on` pair so the voice sustains.
-- Per-track or per-placement "legato across boundaries" toggle.
-- Or document this as expected DAW retrigger semantics and only offer the toggle on opt-in.
-
-### 0.3 `analyze_section` per-track render misses notes that started before the section
-
-When `analyze_section` is called with `include_per_track: true` and `start_tick > 0`, the offline
-renderer for each soloed track starts a fresh engine at `start_tick`. Long-running notes whose
-NoteOn fires *before* `start_tick` are never triggered in that render, so the per-track metrics
-falsely report silence for sustained tracks.
-
-**Repro:** in `Sidechain Demo.json`, the Pad pattern has one 80-beat note at start_beat=0. Call
-`analyze_section(start_tick=15360, end_tick=61440, include_per_track=true)` — the master metrics
-report normal pad energy, but the per-track row for Pad reports `peak: 0.0, peak_dbfs: -200.0,
-rms_share: 0.0` because the soloed pad render starts at tick 15360 with no active voice.
-
-Same class of bug as the one fixed in 74d18da (see memory note
-`project_analyze_offline_render_snapshot_bug`), but for the per-track soloed render path inside
-`analyze_section` rather than the master path. The fix likely needs to either (a) warm the engine
-from tick 0 and only return metrics from `start_tick` onward, or (b) seed active voices for any
-note placement that straddles `start_tick`.
-
-**Workaround:** call `analyze_section(start_tick=0, ...)` and rely on the master metrics; or
-analyze each section starting from tick 0 with a longer `end_tick`.
-
 ### 0.2 Project settings — unsaved instrument strip parameters
 
 The following `InstrumentParam` variants exist in the engine but have no UI controls and are not persisted in
