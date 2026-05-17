@@ -497,8 +497,9 @@ position with no visual hint, and there is no MCP tool to inspect or clear the r
 
 Tier-0 music-analysis tools shipped in v0.276.0 (`analyze_harmony`,
 `analyze_mix_bus`, `analyze_section`); Tier-1 follow-ups for drum-track
-filtering and per-track contribution breakdown shipped in v0.277.0.
-Roadmap for the remaining tiers lives in `docs/mcp-music-tools-plan.md`.
+filtering and per-track contribution breakdown shipped in v0.277.0. The
+roadmap doc (`docs/mcp-music-tools-plan.md`) was closed and deleted on
+2026-05-17 — remaining work for that roadmap lives below.
 
 - [x] Per-track stem breakdown for `analyze_section` — v0.277.0
       (`include_per_track` parameter).
@@ -508,17 +509,54 @@ Roadmap for the remaining tiers lives in `docs/mcp-music-tools-plan.md`.
       (v0.284.0). `render_section_to_wav` still pending — pick up when
       `compare_to_reference` becomes relevant.
 - [x] Tier 2: `generate_chord`, `transpose_notes`, `quantize_notes_to_scale`,
-      `quantize_notes_to_grid` (v0.285.0, Group B from §8.6 of
-      `docs/mcp-music-tools-plan.md`); `analyze_velocity_response` (v0.284.0);
+      `quantize_notes_to_grid` (v0.285.0); `analyze_velocity_response` (v0.284.0);
       `analyze_arrangement`, `analyze_form_map`, `find_motifs`,
-      `analyze_hook_strength` (v0.286.0, Group C); `analyze_tension_curve`,
-      `suggest_music_fixes` (v0.287.0, Group D — closes Tier-2 #14 and #16).
+      `analyze_hook_strength` (v0.286.0); `analyze_tension_curve`,
+      `suggest_music_fixes` (v0.287.0 — closes Tier-2 #14 and #16).
       `analyze_groove` still pending — `analyze_drum_groove` (v0.283.0)
       already covers the highest-value groove diagnostic.
 - [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
       `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
 - [ ] Enable AI to "play freely" via MCP to autonomously generate complete songs and arrangements
 - [ ] Implement real-time parameter interpolation (gliding) to allow smoother AI-driven sound design
+
+### 6.2 Technical follow-ups from the MCP music tools plan
+
+Moved from §7 of the (now-deleted) MCP music tools plan on 2026-05-17 when the plan was
+closed. The four shipped follow-ups (`OfflineEngineSession` for arrangement renders,
+rayon-parallel per-track renders, `Song::tracks_mut` / `set_solo_only` helpers, embed
+`MixBusMetrics` in `TrackContribution`) are documented in `docs/history.md` against their
+ship dates.
+
+- [ ] **`HarmonyScope` enum to fix `analyze_song_harmony` argument sprawl.** `analyze_song_harmony`
+      takes 8 arguments and carries `#[allow(clippy::too_many_arguments)]`. Two of them
+      (`exclude_drums`, `exclude_track_ids`) are only meaningful in arrangement scope; pattern scope
+      currently emits a runtime warning if they're passed. Introduce
+      `enum HarmonyScope { Pattern { pattern_id: PatternId }, Arrangement { start: Option<u64>,
+      end: Option<u64>, exclude_drums: bool, exclude_track_ids: HashSet<TrackId> } }` at the bridge
+      boundary; the flat `AnalyzeHarmonyParam` (JSON-schema layer requires it) maps into the enum
+      inside the bridge. The runtime "ignored in pattern scope" warning becomes a compile-time
+      impossibility and the `#[allow]` disappears. Touches `synth_mcp::bridge`, the bridge impl,
+      and the arrangement-vs-pattern branch in `analyze_song_harmony`. Medium impact — pick up
+      when next touching the harmony analyzer.
+- [ ] **`synth_sequencer::shared_song(Song) -> Arc<RwLock<Song>>` constructor.** Grep finds ~9 sites
+      that wrap a `Song` in `Arc::new(parking_lot::RwLock::new(...))` verbatim
+      (`crates/pertylizer/src/audio/export.rs:214`, `main.rs:83`, `mcp_shared.rs:56`, sequencer
+      tests, the per-track render loop, etc.). Strictly cosmetic; not on any hot path. Pick up
+      as a drive-by when next touching one of those sites.
+- [ ] **`OfflineNoteSession` — engine reuse across patch-sweep steps.** `analyze_instrument_range_impl`
+      and `analyze_velocity_response_impl` (`crates/pertylizer/src/mcp_bridge.rs`) call
+      `analyze_rendered_note` once per swept value; each call goes through
+      `audio::preview::render_note_to_buffer`, spins up a fresh `SynthEngine`, and reloads the
+      instrument's module graph + sample data. For a 60-note semitone-step sweep that's 60 fresh
+      engines; for the default 8-step velocity sweep that's 8. Mirror §7.1's `OfflineEngineSession`
+      — wrapper takes `SynthSession` + `SharedSampleLibrary` + `InstrumentId` at construction,
+      builds the engine + loads the patch + samples once, then exposes
+      `render(note, velocity, duration_ms, tail_ms) -> RenderedNote` per call. Reproduce the
+      voice-bleed drain between renders (same problem as §7.1). Determinism tests would mirror
+      `tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`.
+      After session-reuse lands, parallelize the sweep target vector with `par_iter` for a 2-4×
+      speedup on top (same sequence as §7.1 → §7.2).
 
 ---
 

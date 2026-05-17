@@ -407,6 +407,5 @@ rendered to a buffer. The live engine is untouched.
 ## See Also
 
 - [`README.md`](../README.md) — main project overview
-- [`docs/mcp-music-tools-plan.md`](mcp-music-tools-plan.md) — design notes for the analysis tools
 - [`docs/history.md`](history.md) — version history including MCP tool additions
 - [Model Context Protocol spec](https://modelcontextprotocol.io)

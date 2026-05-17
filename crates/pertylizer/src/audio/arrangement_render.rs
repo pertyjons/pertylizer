@@ -54,9 +54,9 @@ const MAX_RENDER_SECONDS: f32 = 300.0;
 /// render. Several DSP modules pull from `fastrand` during processing —
 /// noise/LFO-S&H output, oscillator phase randomization on note-on, mechanical
 /// noise, drift. Without a deterministic seed, two consecutive renders of the
-/// same song-state diverge by enough to mask sub-dB mix differences (see
-/// `docs/mcp-music-tools-plan.md` §8.1). `fastrand`'s free functions use a
-/// thread-local RNG, so reseeding here doesn't disturb the audio thread.
+/// same song-state diverge by enough to mask sub-dB mix differences.
+/// `fastrand`'s free functions use a thread-local RNG, so reseeding here
+/// doesn't disturb the audio thread.
 pub(crate) const OFFLINE_RENDER_SEED: u64 = 0x5EED_5EED_5EED_5EED;
 
 /// Upper bound on how long the voice-bleed drain in `render_range` may run
