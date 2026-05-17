@@ -344,6 +344,18 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Set the song name.
     fn set_song_name(&self, name: &str) -> Result<(), McpBridgeError>;
 
+    /// Set the transport loop region. When `enabled` is true, playback wraps
+    /// from `end_beats` back to `start_beats`.
+    fn set_transport_loop(
+        &self,
+        start_beats: f32,
+        end_beats: f32,
+        enabled: bool,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Clear the transport loop region (disable wrapping).
+    fn clear_transport_loop(&self) -> Result<(), McpBridgeError>;
+
     // === Sequencer: Patterns ===
 
     /// List all patterns in the song.

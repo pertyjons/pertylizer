@@ -311,6 +311,8 @@ const MIN_ZOOM: f32 = 0.25;
 const MAX_ZOOM: f32 = 4.0;
 /// Maximum number of note miniatures per placement.
 const MAX_MINIATURE_NOTES: usize = 200;
+/// Accent colour for the transport-loop ruler markers and status badge.
+const LOOP_COLOR: Color32 = Color32::from_rgb(120, 220, 180);
 
 // Piano roll constants
 /// Minimum default height for the piano roll bottom panel.
@@ -675,6 +677,30 @@ fn draw_transport_bar(
             });
         }
 
+        // Without a status badge, a stale loop region quietly clips
+        // playback — only the right-click menu reveals it exists.
+        let (loop_enabled, loop_start, loop_end) = handle.state.transport.loop_state();
+        if loop_enabled && loop_end.0 > loop_start.0 {
+            let (s_bar, _, _) = loop_start.to_bar_beat_tick(time_sig);
+            let (e_bar, _, _) = loop_end.to_bar_beat_tick(time_sig);
+            let badge = format!("LOOP {}–{}", s_bar + 1, e_bar + 1);
+            let resp = ui
+                .add(
+                    egui::Button::new(RichText::new(badge).color(LOOP_COLOR).strong()).frame(false),
+                )
+                .on_hover_text("Transport loop active — click to clear.");
+            if resp.clicked() {
+                handle.send(EngineCommand::SetLoop {
+                    start: Tick::ZERO,
+                    end: Tick::ZERO,
+                    enabled: false,
+                });
+                view_state.loop_start_tick = None;
+                view_state.loop_end_tick = None;
+            }
+            ui.separator();
+        }
+
         ui.separator();
 
         // Status indicator
@@ -891,6 +917,16 @@ fn draw_arrangement(
     use egui_remixicon::icons as ri;
     let t = theme();
     let track_count = data.tracks.len();
+
+    // Mirror the engine's loop region into view_state so MCP-set and
+    // song-repeat loops surface as ruler markers without having to be
+    // re-set via the right-click menu first.
+    let (engine_loop_enabled, engine_loop_start, engine_loop_end) =
+        handle.state.transport.loop_state();
+    if engine_loop_enabled && engine_loop_end.0 > engine_loop_start.0 {
+        view_state.loop_start_tick = Some(engine_loop_start);
+        view_state.loop_end_tick = Some(engine_loop_end);
+    }
 
     // ── Empty state: show "Add Track" button ──
     if track_count == 0 {
@@ -2082,11 +2118,20 @@ fn draw_arrangement(
                                     .suffix(" BPM"),
                             );
                             if ui.button("Apply").clicked() {
-                                song.write().set_tempo_at(Tick(snapped), Bpm::new(bpm));
+                                let new_bpm = Bpm::new(bpm);
+                                let old_bpm = existing_bpm.map(Bpm::new);
+                                if old_bpm != Some(new_bpm) {
+                                    song.write().set_tempo_at(Tick(snapped), new_bpm);
+                                    undo_manager.push(crate::undo::UndoAction::SetTempo {
+                                        tick: Tick(snapped),
+                                        old_bpm,
+                                        new_bpm: Some(new_bpm),
+                                    });
+                                }
                                 ui.close();
                             }
                         });
-                        if existing_bpm.is_some() {
+                        if let Some(existing) = existing_bpm {
                             ui.separator();
                             if ui
                                 .button(
@@ -2095,7 +2140,13 @@ fn draw_arrangement(
                                 )
                                 .clicked()
                             {
-                                song.write().remove_tempo_change(Tick(snapped));
+                                if song.write().remove_tempo_change(Tick(snapped)) {
+                                    undo_manager.push(crate::undo::UndoAction::SetTempo {
+                                        tick: Tick(snapped),
+                                        old_bpm: Some(Bpm::new(existing)),
+                                        new_bpm: None,
+                                    });
+                                }
                                 ui.close();
                             }
                         }
@@ -2330,36 +2381,32 @@ fn draw_arrangement(
                 let x_a = tick_to_x(loop_start.0);
                 let x_b = tick_to_x(loop_end.0);
                 let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
-                let loop_color = Color32::from_rgb(120, 220, 180);
+                let band_fill = Color32::from_rgba_unmultiplied(
+                    LOOP_COLOR.r(),
+                    LOOP_COLOR.g(),
+                    LOOP_COLOR.b(),
+                    24,
+                );
 
-                // Faint band over the row area
                 painter.rect_filled(
                     Rect::from_min_max(
                         Pos2::new(x_a, tl_y + RULER_HEIGHT),
                         Pos2::new(x_b, line_bottom),
                     ),
                     0.0,
-                    Color32::from_rgba_unmultiplied(120, 220, 180, 24),
+                    band_fill,
                 );
 
-                // Bracket A
-                painter.line_segment(
-                    [Pos2::new(x_a, tl_y), Pos2::new(x_a, tl_y + RULER_HEIGHT)],
-                    Stroke::new(2.0, loop_color),
-                );
-                painter.line_segment(
-                    [Pos2::new(x_a, tl_y + 4.0), Pos2::new(x_a + 6.0, tl_y + 4.0)],
-                    Stroke::new(2.0, loop_color),
-                );
-                // Bracket B
-                painter.line_segment(
-                    [Pos2::new(x_b, tl_y), Pos2::new(x_b, tl_y + RULER_HEIGHT)],
-                    Stroke::new(2.0, loop_color),
-                );
-                painter.line_segment(
-                    [Pos2::new(x_b - 6.0, tl_y + 4.0), Pos2::new(x_b, tl_y + 4.0)],
-                    Stroke::new(2.0, loop_color),
-                );
+                for (x, dx) in [(x_a, 6.0), (x_b, -6.0)] {
+                    painter.line_segment(
+                        [Pos2::new(x, tl_y), Pos2::new(x, tl_y + RULER_HEIGHT)],
+                        Stroke::new(2.0, LOOP_COLOR),
+                    );
+                    painter.line_segment(
+                        [Pos2::new(x, tl_y + 4.0), Pos2::new(x + dx, tl_y + 4.0)],
+                        Stroke::new(2.0, LOOP_COLOR),
+                    );
+                }
             }
 
             // ── Tempo change markers on the ruler ──

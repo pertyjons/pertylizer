@@ -1023,6 +1023,7 @@ impl SynthBridge for AppSynthBridge {
     // === Sequencer: Song ===
 
     fn get_song_info(&self) -> Result<SongInfo, McpBridgeError> {
+        let (loop_enabled, loop_start, loop_end) = self.session.transport_loop_state();
         let song = self.shared.song.read();
         let ts = song.default_time_signature;
         Ok(SongInfo {
@@ -1033,7 +1034,38 @@ impl SynthBridge for AppSynthBridge {
             length_seconds: song.length_seconds(),
             pattern_count: song.pattern_count(),
             track_count: song.track_count(),
+            transport_loop_enabled: loop_enabled,
+            transport_loop_start_beats: ticks_to_beats_u64(loop_start.0),
+            transport_loop_end_beats: ticks_to_beats_u64(loop_end.0),
         })
+    }
+
+    fn set_transport_loop(
+        &self,
+        start_beats: f32,
+        end_beats: f32,
+        enabled: bool,
+    ) -> Result<(), McpBridgeError> {
+        if enabled && end_beats <= start_beats {
+            return Err(McpBridgeError::Other(format!(
+                "transport loop: end_beats ({end_beats}) must be > start_beats ({start_beats})"
+            )));
+        }
+        let start = synth_sequencer::Tick(u64::from(beats_to_ticks(start_beats)));
+        let end = synth_sequencer::Tick(u64::from(beats_to_ticks(end_beats)));
+        self.session
+            .set_transport_loop(start, end, enabled)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
+    }
+
+    fn clear_transport_loop(&self) -> Result<(), McpBridgeError> {
+        self.session
+            .set_transport_loop(
+                synth_sequencer::Tick::ZERO,
+                synth_sequencer::Tick::ZERO,
+                false,
+            )
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 
     fn set_song_tempo(&self, bpm: f32) -> Result<(), McpBridgeError> {
@@ -1272,20 +1304,24 @@ impl SynthBridge for AppSynthBridge {
         track_id: u16,
         start_beat: f32,
     ) -> Result<(), McpBridgeError> {
-        let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let tid = synth_sequencer::TrackId(track_id);
         let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(start_beat)));
 
-        // Validate pattern and track exist
-        if song.pattern(pid).is_none() {
-            return Err(McpBridgeError::PatternNotFound(pattern_id));
-        }
-        if song.track(tid).is_none() {
-            return Err(McpBridgeError::TrackNotFound(track_id));
-        }
+        let placement_end = {
+            let mut song = self.shared.song.write();
+            let pattern_length = song
+                .pattern(pid)
+                .ok_or(McpBridgeError::PatternNotFound(pattern_id))?
+                .length;
+            if song.track(tid).is_none() {
+                return Err(McpBridgeError::TrackNotFound(track_id));
+            }
+            song.place_pattern(pid, tid, tick);
+            synth_sequencer::PatternPlacement::new(pid, tid, tick).end(pattern_length)
+        };
 
-        song.place_pattern(pid, tid, tick);
+        self.auto_extend_transport_loop(placement_end);
         Ok(())
     }
 
@@ -1553,43 +1589,55 @@ impl SynthBridge for AppSynthBridge {
         &self,
         placements: &[BridgePlacementData],
     ) -> Result<BatchResult, McpBridgeError> {
-        let mut song = self.shared.song.write();
-
         let mut items = Vec::with_capacity(placements.len());
         let mut succeeded = 0usize;
+        let mut max_end = synth_sequencer::Tick::ZERO;
 
-        for (i, p) in placements.iter().enumerate() {
-            let pid = synth_sequencer::PatternId::new(p.pattern_id);
-            let tid = synth_sequencer::TrackId(p.track_id);
-            let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(p.start_beat)));
+        {
+            let mut song = self.shared.song.write();
 
-            if song.pattern(pid).is_none() {
+            for (i, p) in placements.iter().enumerate() {
+                let pid = synth_sequencer::PatternId::new(p.pattern_id);
+                let tid = synth_sequencer::TrackId(p.track_id);
+                let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(p.start_beat)));
+
+                let Some(pattern_length) = song.pattern(pid).map(|p| p.length) else {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: false,
+                        id: None,
+                        error: Some(format!("pattern not found: {}", p.pattern_id)),
+                    });
+                    continue;
+                };
+                if song.track(tid).is_none() {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: false,
+                        id: None,
+                        error: Some(format!("track not found: {}", p.track_id)),
+                    });
+                    continue;
+                }
+
+                song.place_pattern(pid, tid, tick);
+                let placement_end =
+                    synth_sequencer::PatternPlacement::new(pid, tid, tick).end(pattern_length);
+                if placement_end.0 > max_end.0 {
+                    max_end = placement_end;
+                }
                 items.push(BatchItemResult {
                     index: i,
-                    success: false,
+                    success: true,
                     id: None,
-                    error: Some(format!("pattern not found: {}", p.pattern_id)),
+                    error: None,
                 });
-                continue;
+                succeeded += 1;
             }
-            if song.track(tid).is_none() {
-                items.push(BatchItemResult {
-                    index: i,
-                    success: false,
-                    id: None,
-                    error: Some(format!("track not found: {}", p.track_id)),
-                });
-                continue;
-            }
+        }
 
-            song.place_pattern(pid, tid, tick);
-            items.push(BatchItemResult {
-                index: i,
-                success: true,
-                id: None,
-                error: None,
-            });
-            succeeded += 1;
+        if succeeded > 0 {
+            self.auto_extend_transport_loop(max_end);
         }
 
         Ok(BatchResult {
@@ -4622,6 +4670,17 @@ fn apply_awe_param_to_state(state: &mut synth_awe::AweState, param: &synth_awe::
 }
 
 impl AppSynthBridge {
+    /// Extend an active transport loop's end so a newly-added placement
+    /// isn't silently clipped. No-op if the loop is disabled or if the
+    /// placement already fits.
+    fn auto_extend_transport_loop(&self, new_end: synth_sequencer::Tick) {
+        let (enabled, start, end) = self.session.transport_loop_state();
+        if !enabled || new_end.0 <= end.0 {
+            return;
+        }
+        let _ = self.session.set_transport_loop(start, new_end, true);
+    }
+
     /// Submit a project action to the GUI thread and wait for the result.
     fn submit_project_action(
         &self,

@@ -4060,6 +4060,14 @@ impl SynthApp {
                     pattern.length = *new_length;
                 }
             }
+            UndoAction::SetTempo { tick, new_bpm, .. } => {
+                let mut song_w = self.song.write();
+                if let Some(bpm) = *new_bpm {
+                    song_w.set_tempo_at(*tick, bpm);
+                } else {
+                    song_w.remove_tempo_change(*tick);
+                }
+            }
             UndoAction::MovePlacement {
                 pattern_id,
                 old_track_id,

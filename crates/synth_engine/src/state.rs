@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU32 as StdAtomicU32, AtomicU64, Ordering};
 use parking_lot::RwLock;
 
 use synth_core::{Amplitude, Bpm};
+use synth_sequencer::Tick;
 
 use crate::instrument::InstrumentId;
 use crate::recording::RecordingState;
@@ -200,6 +201,15 @@ pub struct TransportState {
     pub recording: StdAtomicU32,
     /// Metronome state: 0=off, 1=on.
     pub metronome: StdAtomicU32,
+    /// Transport loop region: 1 = enabled, 0 = disabled.
+    /// Mirrors `SequencerEngine.{looping, loop_start, loop_end}` so the GUI
+    /// and MCP can observe the current loop region without touching the
+    /// audio thread.
+    pub loop_enabled: std::sync::atomic::AtomicBool,
+    /// Transport loop start in sequencer ticks.
+    pub loop_start_ticks: AtomicU64,
+    /// Transport loop end in sequencer ticks (exclusive).
+    pub loop_end_ticks: AtomicU64,
 }
 
 impl TransportState {
@@ -212,6 +222,9 @@ impl TransportState {
             is_playing: std::sync::atomic::AtomicBool::new(false),
             recording: StdAtomicU32::new(0),
             metronome: StdAtomicU32::new(0),
+            loop_enabled: std::sync::atomic::AtomicBool::new(false),
+            loop_start_ticks: AtomicU64::new(0),
+            loop_end_ticks: AtomicU64::new(0),
         }
     }
 
@@ -286,6 +299,23 @@ impl TransportState {
     /// Set metronome state.
     pub fn set_metronome(&self, enabled: bool) {
         self.metronome.store(u32::from(enabled), Ordering::Relaxed);
+    }
+
+    /// Update the transport loop region. Read by GUI ruler markers and MCP
+    /// `get_song_info` via [`loop_state`](Self::loop_state).
+    pub fn set_loop_state(&self, start: Tick, end: Tick, enabled: bool) {
+        self.loop_start_ticks.store(start.0, Ordering::Relaxed);
+        self.loop_end_ticks.store(end.0, Ordering::Relaxed);
+        self.loop_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Read the current transport loop region as `(enabled, start, end)`.
+    pub fn loop_state(&self) -> (bool, Tick, Tick) {
+        (
+            self.loop_enabled.load(Ordering::Relaxed),
+            Tick(self.loop_start_ticks.load(Ordering::Relaxed)),
+            Tick(self.loop_end_ticks.load(Ordering::Relaxed)),
+        )
     }
 }
 

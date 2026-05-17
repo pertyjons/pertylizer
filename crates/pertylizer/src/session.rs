@@ -234,6 +234,33 @@ impl SynthSession {
         Ok(())
     }
 
+    /// Set or clear the transport loop region.
+    ///
+    /// Routes through `EngineCommand::SetLoop`. The engine mirrors the new
+    /// state into `EngineState::transport`, so a follow-up call to
+    /// `transport_loop_state()` reflects the change once the command is
+    /// processed (next audio callback).
+    pub fn set_transport_loop(
+        &self,
+        start: synth_sequencer::Tick,
+        end: synth_sequencer::Tick,
+        enabled: bool,
+    ) -> Result<(), SessionError> {
+        if !self.command_sender.send(EngineCommand::SetLoop {
+            start,
+            end,
+            enabled,
+        }) {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
+    /// Read the current transport loop region as `(enabled, start, end)`.
+    pub fn transport_loop_state(&self) -> (bool, synth_sequencer::Tick, synth_sequencer::Tick) {
+        self.state.transport.loop_state()
+    }
+
     /// Set or clear an instrument's sidechain source.
     pub fn set_sidechain_source(
         &self,

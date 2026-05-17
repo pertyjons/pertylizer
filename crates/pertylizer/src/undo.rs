@@ -4,6 +4,7 @@
 //! to the caller for execution. The caller (GUI code) is responsible for
 //! actually applying the inverse action via the existing session/song APIs.
 
+use synth_core::Bpm;
 use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
@@ -87,6 +88,19 @@ pub(crate) enum UndoAction {
         pattern_id: PatternId,
         old_length: SeqDuration,
         new_length: SeqDuration,
+    },
+
+    // ── Tempo curve ──
+    /// A tempo change at a specific tick was set, replaced, or removed.
+    ///
+    /// `old_bpm = None` means there was no explicit change at this tick;
+    /// `new_bpm = None` means the change was removed. The two together cover
+    /// "Set tempo here…" (None → Some), edit (Some(a) → Some(b)) and
+    /// "Remove tempo change here" (Some → None).
+    SetTempo {
+        tick: Tick,
+        old_bpm: Option<Bpm>,
+        new_bpm: Option<Bpm>,
     },
 
     // ── Arrangement ──
@@ -400,6 +414,15 @@ impl UndoManager {
                 old_length: *new_length,
                 new_length: *old_length,
             },
+            UndoAction::SetTempo {
+                tick,
+                old_bpm,
+                new_bpm,
+            } => UndoAction::SetTempo {
+                tick: *tick,
+                old_bpm: *new_bpm,
+                new_bpm: *old_bpm,
+            },
             UndoAction::MovePlacement {
                 pattern_id,
                 old_track_id,
@@ -707,6 +730,49 @@ mod tests {
             assert_eq!(new_start, PatternTick(0));
         } else {
             panic!("Expected MoveNote inverse");
+        }
+    }
+
+    #[test]
+    fn test_inverse_of_set_tempo_apply_round_trips() {
+        // Apply tempo at a tick that had no explicit change → inverse must be a remove.
+        let apply = UndoAction::SetTempo {
+            tick: Tick(960),
+            old_bpm: None,
+            new_bpm: Some(Bpm::new(140.0)),
+        };
+        let inv = UndoManager::inverse(&apply);
+        if let UndoAction::SetTempo {
+            tick,
+            old_bpm,
+            new_bpm,
+        } = inv
+        {
+            assert_eq!(tick, Tick(960));
+            assert_eq!(old_bpm, Some(Bpm::new(140.0)));
+            assert_eq!(new_bpm, None);
+        } else {
+            panic!("Expected SetTempo inverse");
+        }
+    }
+
+    #[test]
+    fn test_inverse_of_set_tempo_remove_round_trips() {
+        // Remove an existing tempo change → inverse must re-apply it.
+        let remove = UndoAction::SetTempo {
+            tick: Tick(1920),
+            old_bpm: Some(Bpm::new(96.0)),
+            new_bpm: None,
+        };
+        let inv = UndoManager::inverse(&remove);
+        if let UndoAction::SetTempo {
+            old_bpm, new_bpm, ..
+        } = inv
+        {
+            assert_eq!(old_bpm, None);
+            assert_eq!(new_bpm, Some(Bpm::new(96.0)));
+        } else {
+            panic!("Expected SetTempo inverse");
         }
     }
 

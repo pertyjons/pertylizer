@@ -380,6 +380,15 @@ pub struct SongInfo {
     pub pattern_count: usize,
     /// Number of tracks.
     pub track_count: usize,
+    /// Transport loop active. When true, playback wraps from `loop_end_beats`
+    /// back to `loop_start_beats`. Set via `set_transport_loop`.
+    pub transport_loop_enabled: bool,
+    /// Transport loop start in beats. Only meaningful when
+    /// `transport_loop_enabled` is true.
+    pub transport_loop_start_beats: f32,
+    /// Transport loop end (exclusive) in beats. Only meaningful when
+    /// `transport_loop_enabled` is true.
+    pub transport_loop_end_beats: f32,
 }
 
 /// Information about a pattern.

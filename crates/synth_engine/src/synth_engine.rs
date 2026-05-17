@@ -945,6 +945,7 @@ impl SynthEngine {
                             let loop_end =
                                 synth_sequencer::Tick(region_start.0 + pattern_length.0 as u64);
                             self.sequencer.set_loop(region_start, loop_end, true);
+                            self.sync_loop_to_transport();
                         }
 
                         // Enable metronome during count-in
@@ -1014,9 +1015,11 @@ impl SynthEngine {
                 enabled,
             } => {
                 self.sequencer.set_loop(start, end, enabled);
+                self.sync_loop_to_transport();
             }
             EngineCommand::SetRepeat { enabled } => {
                 self.sequencer.set_repeat_song(enabled);
+                self.sync_loop_to_transport();
             }
             EngineCommand::PlayPattern { pattern_id } => {
                 // Find pattern in arrangement and get boundaries
@@ -1031,6 +1034,7 @@ impl SynthEngine {
                     self.sequencer.play();
                     let _ = self.sequencer.seek(start);
                     self.sequencer.set_loop(start, end, true);
+                    self.sync_loop_to_transport();
                     self.state.transport.set_playing(true);
                     self.state.transport.set_ticks(start.0);
                 } else {
@@ -1056,6 +1060,7 @@ impl SynthEngine {
                         synth_sequencer::Tick::ZERO,
                         false,
                     );
+                    self.sync_loop_to_transport();
                     self.state.transport.set_playing(true);
                     self.state.transport.set_ticks(start.0);
                 } else {
@@ -1522,7 +1527,19 @@ impl SynthEngine {
     fn restore_pre_record_loop(&mut self) {
         if let Some((start, end, enabled)) = self.pre_record_loop.take() {
             self.sequencer.set_loop(start, end, enabled);
+            self.sync_loop_to_transport();
         }
+    }
+
+    /// Mirror the current sequencer loop region into `TransportState` so the
+    /// GUI ruler markers and MCP `get_song_info` can observe it without
+    /// touching the audio thread.
+    fn sync_loop_to_transport(&self) {
+        self.state.transport.set_loop_state(
+            self.sequencer.loop_start(),
+            self.sequencer.loop_end(),
+            self.sequencer.is_looping(),
+        );
     }
 
     // ========================================================================

@@ -1133,6 +1133,16 @@ pub struct SetSongTempoParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTransportLoopParam {
+    #[schemars(description = "Loop start in beats (1 beat = quarter note)")]
+    pub start_beats: f32,
+    #[schemars(description = "Loop end (exclusive) in beats; must be > start_beats")]
+    pub end_beats: f32,
+    #[schemars(description = "Whether the loop is enabled (true) or just stored (false)")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetSongNameParam {
     #[schemars(description = "New song name")]
     pub name: String,
@@ -2057,6 +2067,8 @@ impl SynthMcpServer {
             "set_song_name" => set_song_name(SetSongNameParam),
             "set_song_author" => set_song_author(SetSongAuthorParam),
             "set_song_time_signature" => set_song_time_signature(SetSongTimeSignatureParam),
+            "set_transport_loop" => set_transport_loop(SetTransportLoopParam),
+            "clear_transport_loop" => clear_transport_loop(NoParams),
 
             // Patterns
             "list_patterns" => list_patterns(NoParams),
@@ -3485,6 +3497,45 @@ impl SynthMcpServer {
         }
         match self.bridge.set_song_tempo(params.0.bpm) {
             Ok(()) => format!("OK: tempo set to {} BPM", params.0.bpm),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set the transport loop region in beats. When enabled, playback wraps from end_beats back to start_beats. Visible on the arrangement ruler. Use clear_transport_loop to disable, or get_song_info to inspect the current state."
+    )]
+    async fn set_transport_loop(&self, params: Parameters<SetTransportLoopParam>) -> String {
+        if let Err(e) = validate_range("start_beats", params.0.start_beats, 0.0, 9999.0) {
+            return validation_err(e);
+        }
+        if let Err(e) = validate_range("end_beats", params.0.end_beats, 0.0, 9999.0) {
+            return validation_err(e);
+        }
+        match self.bridge.set_transport_loop(
+            params.0.start_beats,
+            params.0.end_beats,
+            params.0.enabled,
+        ) {
+            Ok(()) => {
+                if params.0.enabled {
+                    format!(
+                        "OK: transport loop {} -> {} beats (enabled)",
+                        params.0.start_beats, params.0.end_beats
+                    )
+                } else {
+                    "OK: transport loop stored (disabled)".to_string()
+                }
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Clear the transport loop region. Equivalent to set_transport_loop with enabled=false; playback stops wrapping."
+    )]
+    async fn clear_transport_loop(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.clear_transport_loop() {
+            Ok(()) => "OK: transport loop cleared".to_string(),
             Err(e) => format!("Error: {e}"),
         }
     }

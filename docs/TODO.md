@@ -281,7 +281,9 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
   the BPM number.
 - [ ] Tempo curve interpolation (currently step changes only — accelerando ramps would smooth between
   two adjacent points)
-- [ ] Undo for tempo set / remove (not yet wired into `UndoManager`)
+- [x] Undo for tempo set / remove — `UndoAction::SetTempo { tick, old_bpm,
+  new_bpm }` captures both apply and remove paths via `Option<Bpm>`; pushed
+  on every Apply/Remove menu click and applied through `apply_undo_action`.
 
 ### 2.2 Section markers
 
@@ -337,23 +339,25 @@ ruler — the only way to discover it exists is via the right-click context menu
 extends the arrangement past a previously-set `loop_end`, playback keeps wrapping at the stale
 position with no visual hint, and there is no MCP tool to inspect or clear the region.
 
-- [ ] **Persistent visual markers on the timeline ruler** showing loop start, loop end, and the active
-  region (highlight band between the two flags, distinct flag markers, contrasting fill on the
-  ruler segment). The right-click menu can stay as the editor; the ruler needs to *display* the
-  current state at all times.
-- [ ] **Status indicator in the transport bar** when a loop is active — e.g. a loop icon that
-  lights up, or a small "LOOP 1.1–16.4" readout next to play/stop. Cheap visual cue so a stale
-  loop can't hide.
-- [ ] **MCP exposure of the transport loop** — `set_transport_loop(start_beats, end_beats, enabled)`
-  and `clear_transport_loop()` tools routed through `bridge.rs` → `mcp_bridge.rs` → `server.rs`,
-  driving the same `EngineCommand::SetLoop` path the GUI uses. Surface current loop state in
-  `get_song_info` (or a new `get_transport_state`) so AI can detect a stale loop region before
-  building out longer arrangements.
-- [ ] **Auto-extend or warn on arrangement growth** — when a placement is added past `loop_end` and
-  a loop is currently active, either auto-extend `loop_end` to the new arrangement length or
-  return a warning in the operation response. The "AI extended the song to 24 bars but a stale
-  16-bar loop silently kept playback short" pitfall is real — discovered during the Neuro F#m 174
-  session, 2026-05-13.
+- [x] **Persistent visual markers on the timeline ruler** — `TransportState`
+  now mirrors `SequencerEngine` loop state into `(loop_enabled,
+  loop_start_ticks, loop_end_ticks)` atomics; the arrangement ruler draws a
+  cyan ribbon, faint timeline band, vertical edges and inward-pointing flag
+  triangles whenever the loop is enabled.
+- [x] **Status indicator in the transport bar** — small "LOOP s–e" badge
+  (bar-numbered) appears in `draw_transport_bar` when the loop is active;
+  clicking it sends `EngineCommand::SetLoop { enabled: false }` to clear.
+- [x] **MCP exposure of the transport loop** — `set_transport_loop(start_beats,
+  end_beats, enabled)` and `clear_transport_loop()` tools route through
+  `bridge.rs` → `mcp_bridge.rs` → `server.rs` onto the same
+  `EngineCommand::SetLoop` path used by the GUI. `SongInfo` now carries
+  `transport_loop_enabled`, `transport_loop_start_beats`,
+  `transport_loop_end_beats` so AI can detect a stale region.
+- [x] **Auto-extend on arrangement growth** — `place_pattern` /
+  `place_patterns` compute the new placement's end tick and call
+  `AppSynthBridge::auto_extend_transport_loop`, which only extends when the
+  loop is already enabled and the placement reaches past `loop_end`. The
+  Neuro F#m 174 (2026-05-13) pitfall no longer silently clips playback.
 
 ---
 
@@ -401,9 +405,12 @@ position with no visual hint, and there is no MCP tool to inspect or clear the r
       no longer matters — A and B can sidechain each other safely.
     - Removing an instrument clears its prev cache *and* clears any other instrument's
       `sidechain_source_id` that pointed at it.
-  - [ ] Cycle detection deeper than 1 (currently only self-routing is rejected at the engine
-        boundary; longer cycles are harmless thanks to previous-buffer semantics but produce
-        unintuitive ducking patterns).
+  - [x] Cycle detection deeper than 1 — both the engine
+        (`SynthEngine::sidechain_chain_contains`) and the MCP bridge
+        (`set_sidechain_source` pre-check) walk the proposed chain up to
+        `instruments.len()` hops and reject anything that loops back through
+        the target instrument. Bounded iteration so a corrupted chain can't
+        spin forever; MCP returns a clear "would form a cycle" error.
 
 ### 3.5 Polyphony settings
 
