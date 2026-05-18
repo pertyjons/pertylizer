@@ -54,7 +54,7 @@ rosc = "0.11.4"
 fastrand = "2.4.1"
 
 # Data parallelism (used by offline per-track renderers)
-rayon = "1.10"
+rayon = "1.12"
 
 # WAV export
 hound = "3.5.1"
@@ -63,7 +63,7 @@ hound = "3.5.1"
 base64 = "0.22.1"
 
 # ZIP archive (bundle project format)
-zip = { version = "8.5.1", default-features = false, features = ["deflate"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 # Testing
 tempfile = "3.27.0"
@@ -75,7 +75,7 @@ arrayvec = "0.7.6"
 dirs = "6.0.0"
 
 # MCP (Model Context Protocol)
-rmcp = { version = "1.6", features = ["server", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "1.7", features = ["server", "transport-io", "transport-streamable-http-server"] }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "io-std", "net"] }
 schemars = "1.2"
 axum = "0.8"
@@ -94,6 +94,10 @@ egui_extras = { version = "0.34.2", features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 egui-file-dialog = { version = "0.13.0" }
 egui-remixicon = { version = "0.34.0" }
+
+# Winit — pinned to the version eframe depends on. Linux-only override
+# in pertylizer adds wayland-csd-adwaita so GNOME draws a title bar.
+winit = { version = "0.30", default-features = false }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

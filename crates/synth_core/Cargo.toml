@@ -1,11 +1,11 @@
 [package]
 name = "synth_core"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.94"
+edition.workspace = true
+rust-version.workspace = true
 description = "Core types, traits, and audio abstractions for Pertylizer"
-authors = ["Per"]
-license = "MIT"
+authors.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true

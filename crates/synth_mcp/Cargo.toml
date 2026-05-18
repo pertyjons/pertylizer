@@ -1,11 +1,11 @@
 [package]
 name = "synth_mcp"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.94"
+edition.workspace = true
+rust-version.workspace = true
 description = "MCP server for Pertylizer remote inspection and control"
-authors = ["Per"]
-license = "MIT"
+authors.workspace = true
+license.workspace = true
 
 [lints]
 workspace = true

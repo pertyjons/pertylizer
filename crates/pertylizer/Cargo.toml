@@ -1,11 +1,11 @@
 [package]
 name = "pertylizer"
 version = "0.288.0"
-edition = "2024"
-rust-version = "1.95"
+edition.workspace = true
+rust-version.workspace = true
 description = "Pertylizer — a modular synthesizer"
-authors = ["Per"]
-license = "MIT"
+authors.workspace = true
+license.workspace = true
 default-run = "pertylizer"
 
 [lints]
@@ -80,7 +80,7 @@ synth_osc = { path = "../synth_osc", optional = true }
 # no title bar). Cargo unifies features across the dep graph, so adding
 # the feature here applies to the same winit crate eframe uses.
 [target.'cfg(target_os = "linux")'.dependencies]
-winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
+winit = { workspace = true, features = ["wayland-csd-adwaita"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
