@@ -10,6 +10,72 @@
   per instrument); pick up later.
 - When saving a project with samples, the save should always be in zip-format and file extention .zip, and all other
   should be saved in json with file extention .json
+- [ ] **Bridge race: `apply_example_patch` → `set_instrument_volume` in same `batch_execute` fails
+  with `"instrument not found"`.** Reproduced 2026-05-18 building the Prodigy session. Sequence
+  inside one batch: `apply_example_patch "Screamer Lead"` returned `instrument_id: 5`; immediately
+  after, `create_track {instrument_id: 5}` **succeeded** ("created track 4"); two ops later,
+  `set_instrument_volume {instrument_id: 5, volume: 0.8}` **failed** with `Error: instrument not
+  found: 5`. Retrying the volume call ~200 ms later in a separate batch succeeded. Implies
+  `create_track` and `set_instrument_volume` resolve the instrument against different registries
+  inside the bridge — one updates synchronously when `apply_example_patch` returns, the other only
+  after an engine-command-tick. Same async-settling pattern also surfaces as `set_instrument_volume`
+  → `list_instruments` in one batch: the write returns OK and the audio reflects the change, but
+  the immediately-following list still reports the old `volume: 1.0`. Find the divergent lookup
+  and unify it (or make `apply_example_patch` await both registries before returning), so single
+  batches that build *and* tune an instrument don't randomly drop the tuning ops.
+- [ ] **Tracing filter masks transient bridge errors.** The §1 logging added today routes
+  batch-dispatch tool errors (the `Ok(s)` where `s.starts_with("Error:")` branch in
+  `synth_mcp::server::dispatch_tool`) to `tracing::debug!`, intended for noisy validation
+  failures. But the bridge-race above also lands in that branch — meaning a real transient bug
+  is invisible at the default `info` filter. Split the level: `warn!` for bridge-error responses
+  (anything mentioning "not found" / "bridge" / similar engine state), keep `debug!` for
+  validation rejections (range, type, schema). Or expose a separate `bridge_error` log target
+  the operator can enable independently.
+- [ ] **MCP disconnects = tokio worker thread death (strace-confirmed 2026-05-18).** Until today
+  the working hypothesis from the §1 MCP-stability investigation was "tool-handler panics inside
+  `block_in_place` kill the worker; `LocalSessionManager` loses session state with the dying worker;
+  rmcp returns `404 Session not found` on the next request and the client experiences a disconnect".
+  This was proven during the Prodigy session: with `strace -e write=2` attached to all 20
+  `tokio-rt-worker` threads of the GUI process (PID 671814) covering TIDs 671846–671865, a
+  `build_instrument` call with a non-default mix of param values (numeric enum indices for `Waveform` /
+  `Model`, the param name `"Key Tracking"`, and a small `Env Amount: 0.1`) returned
+  `Streamable HTTP error: Not Found: Session not found` on the client. The strace log showed:
+  `671856 +++ exited with 0 +++`, `671862 +++ exited with 0 +++`, `671863 +++ exited with 0 +++`
+  (three workers terminated). A subsequent thread-list of the same process showed the worker count
+  was back at 20, but with three new TIDs (678806, 678948, 679054) replacing the dead ones — the
+  tokio runtime respawned, but the session state was already gone.
+  Crucially **none of the §1 tracing fires for this** — the panic happens beneath the tracing
+  layer, in `block_in_place`'s panic-handling path, so `on_initialized` / `Drop` / the `tracing::warn!`
+  on the dispatch-error branch all sit silent. The only signal an operator sees is the worker exit
+  in `strace -e write=2` (or an external panic hook, which is not currently installed).
+  This is concrete validation for two §1 follow-ups that should be promoted to actual TODO items:
+  (a) **panic catching around tool dispatch** in `synth_mcp::server` (`AssertUnwindSafe` +
+  `FutureExt::catch_unwind` around the `tool_router` and `dispatch_tool` calls) so a single bad
+  tool call surfaces as `ErrorData::internal_error` to the client instead of killing a worker;
+  (b) **migrate the CPU-bound bridge calls from `block_in_place` to `spawn_blocking`** so panic
+  recovery is the standard tokio task path (`spawn_blocking` returns a `JoinHandle` whose `await`
+  yields `JoinError::Panic`, while a panic in `block_in_place` propagates up the worker's polling
+  loop and kills it). Both fixes are explicitly named in §1 of the MCP stability plan; (a) is the
+  high-leverage one (one place, ~20 lines, removes the entire class of "single bad call kills
+  the session"). After either lands, also extend the §1 tracing with a
+  `std::panic::set_hook` that logs `tracing::error!("MCP task panicked", message, location, ...)`
+  so operators see panics without needing `strace`.
+- [ ] **Example patch `Formant Voice` self-clips and produces large DC offset at normal velocity.**
+  `analyze_note {instrument: <formant voice>, note: 57 (A3), velocity: 105, duration: 500 ms}`
+  reports: peak `1.0` (= 0 dBFS), `clipped_samples: 16 399 / 44 100` (**~37 % of the audio**),
+  `dc_offset: 0.29` (the analyzer's "has_dc_offset" threshold is `0.005`, so this is ~58×
+  over), `sustain` spectrum peaks all in the 21.5 kHz band (aliasing — content reaches Nyquist),
+  and the pitch detector returns `29.6 Hz` for an A3 note with confidence 0.23 (formants
+  dominate over any carrier fundamental). In the Prodigy session today this patch was loaded
+  on a track at `volume: 0.7` and immediately blew the master peak to `+2.09 dBTP` with 273
+  clipped samples from that one track over a 3.5 s loop; dropping its `volume` to `0.18` was
+  needed to keep the master out of clip — but at that volume the patch's DC offset is still
+  `0.052` on the mix bus, ~10× the analyzer threshold.
+  Likely fixes inside the patch graph (need to inspect): osc level too high, missing
+  amplifier attenuation before output, env curve too aggressive, or formant filter resonance
+  pushing through unbounded. Either fix the patch itself (recommended — example patches
+  should sound usable out of the box) or add a high-pass + level-trim at the output as
+  a band-aid. Repro: `apply_example_patch "Formant Voice"` → `analyze_note 57 105`.
 
 --- 
 
@@ -315,6 +381,29 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
 - [ ] Phase 3: Probes data pipeline (ringbuffers, audio-thread safe collection)
 - [ ] Phase 3: Probe rendering (waveform/spectrum/meter) with PortType-based signal type
 - [ ] Phase 3: Polyphony probes = sum of voices (mixdown)
+
+### 4.4 Mod Matrix routing visibility
+
+When a module (e.g. `env-2`, `lfo-1`) is referenced only via Mod Matrix slots — not via cables —
+it *looks* unused: no visible cable in the patch-editor graph, and `list_modules` reports
+`output_ports: []` because the matrix routes by parameter selectors, not ports. The graph is
+healthy and `get_graph_diagnostics` confirms that, but the user has no way to see *why* from the
+cable view alone. Real example: the `Acid Bass` example patch — `env-2` modulates Filter cutoff
+via Mod Matrix slot 1 with amount 0.9, zero cables, and looks dead.
+
+- [ ] **GUI: badge on module headers when referenced by Mod Matrix.** Show a small icon on any
+  module whose semantic ID appears as a `Slot N Source` or `Slot N Dest`, with a hover tooltip
+  listing the slots that reference it. Distinguishes "actually dead" from "routed via matrix".
+- [ ] **GUI: ghost cables for Mod Matrix routings.** In the cable view, draw faint dashed lines
+  (different colour) from matrix sources to their destinations (e.g. `env-2` → `flt-1.cutoff`),
+  togglable in the View menu. Both routing paradigms become visible in one canvas.
+- [ ] **MCP: surface Mod Matrix routings in `get_connections`.** Add a `mod_matrix_routings`
+  array `[{source: "Env 2", dest: "Filter 1 Cutoff", amount: 0.9, slot: 1}]` (or a separate
+  `get_mod_matrix_routing` tool) so AI inspecting a patch sees the full modulation graph in one
+  call instead of decoding `Slot N` parameters by hand.
+- [ ] **MCP: stop reporting `output_ports: []` on matrix-only modules.** Either expose a
+  semantic `"matrix"` port or document the convention in `get_module_info` so AI doesn't
+  conclude "this module has no output and is dead".
 
 ---
 

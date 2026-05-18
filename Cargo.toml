@@ -81,6 +81,10 @@ schemars = "1.2"
 axum = "0.8"
 tokio-util = { version = "0.7", features = ["rt"] }
 
+# Structured logging (used by MCP server to trace session lifecycle / errors)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+
 # GUI - egui
 eframe = { version = "0.34.2", default-features = false, features = [
     "default_fonts",

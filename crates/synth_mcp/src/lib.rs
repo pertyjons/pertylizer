@@ -34,8 +34,22 @@ use rmcp::service::{RoleServer, RunningService};
 pub async fn serve_stdio(bridge: Arc<dyn SynthBridge>) -> Result<(), Box<dyn std::error::Error>> {
     let server = SynthMcpServer::new(bridge);
     let transport = (tokio::io::stdin(), tokio::io::stdout());
-    let ct: RunningService<RoleServer, _> = server.serve(transport).await?;
-    let _ = ct.waiting().await?;
+    tracing::info!(transport = "stdio", "MCP server starting");
+    let ct: RunningService<RoleServer, _> = match server.serve(transport).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!(transport = "stdio", error = %e, "MCP server failed to start");
+            return Err(e.into());
+        }
+    };
+    let result = ct.waiting().await;
+    match &result {
+        Ok(_) => tracing::info!(transport = "stdio", "MCP stdio client disconnected"),
+        Err(e) => {
+            tracing::error!(transport = "stdio", error = %e, "MCP stdio session ended with error")
+        }
+    }
+    let _ = result?;
     Ok(())
 }
 
@@ -77,14 +91,31 @@ pub async fn serve_http(
     );
 
     let router = axum::Router::new().nest_service("/mcp", service);
-    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await?;
-    eprintln!("MCP HTTP server listening on http://127.0.0.1:{port}/mcp");
+    let listener = match tokio::net::TcpListener::bind(format!("127.0.0.1:{port}")).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(port, error = %e, "MCP HTTP server: failed to bind TCP listener");
+            return Err(e.into());
+        }
+    };
+    tracing::info!(
+        url = %format!("http://127.0.0.1:{port}/mcp"),
+        port,
+        stateful_mode = true,
+        "MCP HTTP server listening"
+    );
 
-    axum::serve(listener, router)
+    let serve_result = axum::serve(listener, router)
         .with_graceful_shutdown(async move {
             ct.cancelled().await;
         })
-        .await?;
+        .await;
+
+    match &serve_result {
+        Ok(()) => tracing::info!(port, "MCP HTTP server shut down gracefully"),
+        Err(e) => tracing::error!(port, error = %e, "MCP HTTP server exited with error"),
+    }
+    serve_result?;
 
     Ok(())
 }

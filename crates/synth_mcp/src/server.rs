@@ -4,6 +4,7 @@
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -339,24 +340,41 @@ impl McpSessionRegistry {
     /// Allocate a new session ID and register a placeholder (client info filled in later).
     fn register(&self) -> u64 {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.session_count.fetch_add(1, Ordering::Relaxed);
+        let count = self.session_count.fetch_add(1, Ordering::Relaxed) + 1;
+        tracing::info!(
+            session_id = id,
+            active_sessions = count,
+            "MCP session opened (awaiting initialize)"
+        );
         id
     }
 
     /// Fill in the client info for a session after the initialize handshake.
     fn set_client_info(&self, id: u64, info: McpSessionInfo) {
+        tracing::info!(
+            session_id = id,
+            client = %info.client_name,
+            client_version = %info.client_version,
+            protocol = %info.protocol_version,
+            "MCP client initialized"
+        );
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.push(info);
-            let _ = id; // id already embedded in info
         }
     }
 
     /// Remove a session when the client disconnects.
     fn unregister(&self, id: u64) {
-        self.session_count.fetch_sub(1, Ordering::Relaxed);
+        let prev = self.session_count.fetch_sub(1, Ordering::Relaxed);
+        let active = prev.saturating_sub(1);
         if let Ok(mut sessions) = self.sessions.lock() {
             sessions.retain(|s| s.id != id);
         }
+        tracing::info!(
+            session_id = id,
+            active_sessions = active,
+            "MCP session closed"
+        );
     }
 
     /// Number of active sessions (lock-free).
@@ -1945,6 +1963,9 @@ pub struct SynthMcpServer {
     registry: Option<McpSessionRegistry>,
     /// This session's unique ID within the registry.
     session_id: u64,
+    /// When this server instance was constructed; used to report session
+    /// lifetime in the disconnect log line.
+    started_at: Instant,
 }
 
 impl SynthMcpServer {
@@ -1969,6 +1990,7 @@ impl SynthMcpServer {
             tool_router: Self::build_router(disabled_tools),
             registry: None,
             session_id: 0,
+            started_at: Instant::now(),
         }
     }
 
@@ -1985,6 +2007,7 @@ impl SynthMcpServer {
             tool_router: Self::build_router(disabled_tools),
             registry: Some(registry),
             session_id,
+            started_at: Instant::now(),
         }
     }
 
@@ -2032,6 +2055,39 @@ impl SynthMcpServer {
     /// Dispatch a tool call by name with JSON params.
     /// Used by `batch_execute` to run arbitrary tool calls.
     async fn dispatch_tool(&self, tool: &str, params: serde_json::Value) -> Result<String, String> {
+        let started = Instant::now();
+        let result = self.dispatch_tool_inner(tool, params).await;
+        let elapsed_ms = started.elapsed().as_millis();
+        match &result {
+            Err(msg) => tracing::warn!(
+                session_id = self.session_id,
+                tool,
+                elapsed_ms,
+                error = %msg,
+                "MCP batch dispatch rejected tool call"
+            ),
+            Ok(s) if s.starts_with("Error:") => tracing::debug!(
+                session_id = self.session_id,
+                tool,
+                elapsed_ms,
+                error = %s,
+                "MCP tool returned validation/bridge error"
+            ),
+            Ok(_) => tracing::trace!(
+                session_id = self.session_id,
+                tool,
+                elapsed_ms,
+                "MCP tool call succeeded"
+            ),
+        }
+        result
+    }
+
+    async fn dispatch_tool_inner(
+        &self,
+        tool: &str,
+        params: serde_json::Value,
+    ) -> Result<String, String> {
         dispatch_tools!(self, tool, params, [
             // Read operations
             "list_instruments" => list_instruments(NoParams),
@@ -2223,6 +2279,12 @@ impl SynthMcpServer {
 impl Drop for SynthMcpServer {
     fn drop(&mut self) {
         if let Some(registry) = &self.registry {
+            let lifetime_ms = self.started_at.elapsed().as_millis();
+            tracing::info!(
+                session_id = self.session_id,
+                lifetime_ms,
+                "MCP server instance dropped"
+            );
             registry.unregister(self.session_id);
         }
     }
@@ -2314,6 +2376,10 @@ impl ServerHandler for SynthMcpServer {
                         peer_info.protocol_version.as_str().to_owned(),
                     )
                 } else {
+                    tracing::warn!(
+                        session_id = self.session_id,
+                        "MCP client sent 'initialized' notification but peer_info was unavailable"
+                    );
                     ("unknown".to_owned(), String::new(), String::new())
                 };
             registry.set_client_info(

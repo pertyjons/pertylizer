@@ -72,6 +72,11 @@ image = { workspace = true, optional = true }
 synth_mcp = { path = "../synth_mcp", optional = true }
 tokio = { workspace = true, optional = true }
 
+# Structured logging (subscriber init lives in main; library code uses
+# `tracing` macros which compile to no-ops when no subscriber is set).
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
 # OSC telemetry (optional)
 synth_osc = { path = "../synth_osc", optional = true }
 

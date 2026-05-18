@@ -25,6 +25,13 @@ use pertylizer::synth_engine::{AllocationMode, AllocatorConfig, SynthEngine};
 const MCP_PORT: u16 = 9850;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialise tracing FIRST. Writer is locked to stderr so --headless mode
+    // (which speaks JSON-RPC over stdout) is not corrupted by log output.
+    // Default filter keeps our crates at info and silences chatty deps; the
+    // RUST_LOG env var overrides if set, e.g.
+    //   RUST_LOG=synth_mcp=debug,pertylizer=info
+    init_tracing();
+
     // stderr so stdout stays a clean JSON-RPC channel in --headless mode.
     eprintln!(
         "Pertylizer v{} ({})",
@@ -45,7 +52,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .num_threads(rayon_threads)
         .build_global()
     {
-        eprintln!("rayon thread pool already initialized: {e}");
+        tracing::warn!(error = %e, "rayon global thread pool was already initialised");
     }
 
     let args: Vec<String> = env::args().collect();
@@ -129,7 +136,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
                 Err(e) => {
-                    eprintln!("Failed to create tokio runtime for MCP: {e}");
+                    tracing::error!(error = %e, "MCP: failed to create tokio runtime; MCP disabled");
                     return;
                 }
             };
@@ -138,7 +145,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                     .mcp_listening
                     .store(true, std::sync::atomic::Ordering::Relaxed);
                 if let Err(e) = synth_mcp::serve_http(bridge, MCP_PORT, Some(registry)).await {
-                    eprintln!("MCP server error: {e}");
+                    tracing::error!(error = %e, port = MCP_PORT, "MCP HTTP server stopped");
                     shared_for_flag
                         .mcp_listening
                         .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -241,6 +248,26 @@ fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
     host.stop()?;
 
     Ok(())
+}
+
+/// Install a `tracing` subscriber that writes to stderr.
+///
+/// Headless mode uses stdout for JSON-RPC, so logs MUST go to stderr to avoid
+/// corrupting the MCP protocol stream. Default filter shows `info` for our
+/// crates and silences chatty dependencies; override with `RUST_LOG`.
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("warn,pertylizer=info,synth_mcp=info,synth_engine=info")
+    });
+    let result = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_target(true)
+        .try_init();
+    if let Err(e) = result {
+        eprintln!("warning: failed to install tracing subscriber: {e}");
+    }
 }
 
 fn print_help() {
