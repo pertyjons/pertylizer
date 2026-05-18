@@ -5,7 +5,7 @@
 //! In headless mode (`--mcp`) there is no GUI, so `SynthSession` is the
 //! sole owner of module state.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use synth_core::{BipolarValue, Gain, ModuleCategory, ModuleDescriptor, ModuleType, PortName};
@@ -58,6 +58,13 @@ pub struct SynthSession {
     registry: Mutex<HashMap<(InstrumentId, ModuleId), ModuleDescriptor>>,
     /// Next instrument ID (starts at 1 since 0 is the default).
     instrument_counter: Mutex<u64>,
+    /// Synchronous mirror of instrument IDs currently owned by this session.
+    /// Why: `EngineState::instrument_snapshots` is only rebuilt on the audio
+    /// thread after it pops an `EngineCommand`, so a write-then-validate inside
+    /// one `batch_execute` would race the audio tick. This set is updated
+    /// inline at allocation and removal so `instrument_exists` answers
+    /// correctly during that window.
+    alive_instruments: Mutex<HashSet<InstrumentId>>,
 }
 
 impl SynthSession {
@@ -69,6 +76,7 @@ impl SynthSession {
             counters: Mutex::new(HashMap::new()),
             registry: Mutex::new(HashMap::new()),
             instrument_counter: Mutex::new(1), // 0 is reserved for default
+            alive_instruments: Mutex::new(HashSet::new()),
         }
     }
 
@@ -89,12 +97,21 @@ impl SynthSession {
             id
         };
 
+        self.alive_instruments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id);
+
         let instrument = Box::new(Instrument::new(id, name));
 
         if !self
             .command_sender
             .send(EngineCommand::AddInstrument { instrument })
         {
+            self.alive_instruments
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&id);
             return Err(SessionError::SendFailed);
         }
 
@@ -133,6 +150,11 @@ impl SynthSession {
             }
         }
 
+        self.alive_instruments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id);
+
         let instrument = Box::new(match config {
             Some(cfg) => Instrument::with_config(id, name, cfg),
             None => Instrument::new(id, name),
@@ -142,6 +164,10 @@ impl SynthSession {
             .command_sender
             .send(EngineCommand::AddInstrument { instrument })
         {
+            self.alive_instruments
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&id);
             return Err(SessionError::SendFailed);
         }
 
@@ -170,6 +196,10 @@ impl SynthSession {
             let mut counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
             counters.retain(|&(inst_id, _), _| inst_id != instrument_id);
         }
+        self.alive_instruments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&instrument_id);
         // Drop any per-instrument metadata held in shared engine state.
         self.state().clear_octave_offset(instrument_id);
 
@@ -640,13 +670,14 @@ impl SynthSession {
         self.command_sender.clone()
     }
 
-    /// Check if an instrument exists in the shared snapshots.
+    /// Check if an instrument is known to this session. See
+    /// [`Self::alive_instruments`] for why this reads the synchronous mirror
+    /// rather than `EngineState::instrument_snapshots`.
     pub fn instrument_exists(&self, instrument_id: InstrumentId) -> bool {
-        self.state
-            .instrument_snapshots
-            .read()
-            .iter()
-            .any(|s| s.id == instrument_id)
+        self.alive_instruments
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&instrument_id)
     }
 
     // ------------------------------------------------------------------

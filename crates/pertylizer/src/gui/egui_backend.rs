@@ -3913,9 +3913,9 @@ impl SynthApp {
             .collect();
         let removed_instruments = to_remove.len();
         for inst_id in &to_remove {
-            self.handle.send(EngineCommand::RemoveInstrument {
-                instrument_id: *inst_id,
-            });
+            if let Err(e) = self.session.remove_instrument(*inst_id) {
+                eprintln!("Failed to remove instrument {inst_id:?}: {e}");
+            }
         }
         self.instruments
             .retain(|inst| !to_remove.contains(&inst.id));

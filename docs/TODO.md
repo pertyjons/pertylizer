@@ -10,19 +10,19 @@
   per instrument); pick up later.
 - When saving a project with samples, the save should always be in zip-format and file extention .zip, and all other
   should be saved in json with file extention .json
-- [ ] **Bridge race: `apply_example_patch` → `set_instrument_volume` in same `batch_execute` fails
-  with `"instrument not found"`.** Reproduced 2026-05-18 building the Prodigy session. Sequence
-  inside one batch: `apply_example_patch "Screamer Lead"` returned `instrument_id: 5`; immediately
-  after, `create_track {instrument_id: 5}` **succeeded** ("created track 4"); two ops later,
-  `set_instrument_volume {instrument_id: 5, volume: 0.8}` **failed** with `Error: instrument not
-  found: 5`. Retrying the volume call ~200 ms later in a separate batch succeeded. Implies
-  `create_track` and `set_instrument_volume` resolve the instrument against different registries
-  inside the bridge — one updates synchronously when `apply_example_patch` returns, the other only
-  after an engine-command-tick. Same async-settling pattern also surfaces as `set_instrument_volume`
-  → `list_instruments` in one batch: the write returns OK and the audio reflects the change, but
-  the immediately-following list still reports the old `volume: 1.0`. Find the divergent lookup
-  and unify it (or make `apply_example_patch` await both registries before returning), so single
-  batches that build *and* tune an instrument don't randomly drop the tuning ops.
+- [ ] **Follow-up: stale `list_instruments` readback inside one `batch_execute`.** The primary
+  bridge-race (set/get validation failing with `"instrument not found"` right after
+  `apply_example_patch`) was fixed by adding a synchronous `alive_instruments` mirror on
+  `SynthSession` (parallel to the existing module `registry`). What's left: `list_instruments`,
+  `get_instrument_info`, and other readers that pull `volume`/`pan`/`mute` etc. still read
+  `EngineState::instrument_snapshots`, which is only rebuilt on the audio thread. So
+  `set_instrument_volume(5, 0.8)` followed by `list_instruments` in the same batch still reports
+  the old `volume: 1.0` until the audio thread ticks (~one buffer, 5–10 ms at 44.1 kHz / 256
+  samples). The audio itself is already correct; only the metadata is stale. Fix by layering
+  write-through onto the `set_instrument_*` handlers in `session.rs` — patch
+  `instrument_snapshots[i].volume` (etc.) under the same write lock as the queued
+  `EngineCommand`. Maintenance burden: every new `set_*` tool needs to remember the write-through.
+  Original diagnosis with file:line references in commit history.
 - [ ] **Tracing filter masks transient bridge errors.** The §1 logging added today routes
   batch-dispatch tool errors (the `Ok(s)` where `s.starts_with("Error:")` branch in
   `synth_mcp::server::dispatch_tool`) to `tracing::debug!`, intended for noisy validation
