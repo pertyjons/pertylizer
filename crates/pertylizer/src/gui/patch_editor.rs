@@ -1441,15 +1441,6 @@ impl PatchEditor {
         // Collect data before mutable iteration
         let module_ids: Vec<_> = self.z_order.clone();
 
-        // Constrain rect: prevent modules going to negative logical coords,
-        // allow extending right/down (content grows to fit)
-        let content_origin_screen = Pos2::new(
-            visible_rect.min.x - scroll_offset.x,
-            visible_rect.min.y - scroll_offset.y,
-        );
-        let constrain_rect =
-            Rect::from_min_size(content_origin_screen, Vec2::new(20000.0, 20000.0));
-
         // Track which module to bring to front
         let mut bring_to_front: Option<ModuleId> = None;
 
@@ -1541,10 +1532,16 @@ impl PatchEditor {
             // Use Area + Frame instead of Window so modules render at Order::Background
             // (same layer as panels). The keyboard panel renders at Order::Middle
             // to ensure it always has input priority over module Areas.
+            // `constrain_to(visible_rect)` also clips the Area's interact_rect
+            // (`state.rect().intersect(constrain_rect)` in egui's Area::begin) so
+            // modules drawn under surrounding panels don't steal hover/clicks
+            // from them. `constrain(false)` keeps positions unclamped so
+            // logical-x=0 modules still scroll under the panel visually.
             let area = egui::Area::new(window_id)
                 .order(Order::Background)
                 .movable(true)
-                .constrain_to(constrain_rect)
+                .constrain_to(visible_rect)
+                .constrain(false)
                 .current_pos(screen_pos);
 
             // Get processing info for this module
@@ -1554,9 +1551,6 @@ impl PatchEditor {
             let is_inline_monitor = descriptor.type_id.0 == "inline_signal_monitor";
 
             let area_response = area.show(ui.ctx(), |ui| {
-                // Clip to the visible scroll area so modules don't paint over panels
-                ui.set_clip_rect(visible_rect);
-
                 // Inline Signal Monitor: compact 100×50px with just oscilloscope + close button
                 if is_inline_monitor {
                     let inline_frame = egui::Frame::new()
@@ -2887,9 +2881,16 @@ impl PatchEditor {
                 });
 
             let area_id = Id::new((instrument_id, "group_box", group_id.0));
+            // Same input-routing guard as module Areas: clipping the
+            // interact_rect to visible_rect via constrain_to (with
+            // constrain(false) so positions aren't clamped) keeps the group
+            // box from stealing hover/clicks from surrounding panels when
+            // it's drawn outside the patch editor.
             let area = egui::Area::new(area_id)
                 .order(Order::Background)
                 .movable(true)
+                .constrain_to(visible_rect)
+                .constrain(false)
                 .current_pos(rect_screen.min);
 
             let mut toggle_clicked = false;
@@ -2897,7 +2898,6 @@ impl PatchEditor {
             let mut menu_clicked = false;
             let mut menu_pos = Pos2::ZERO;
             let response = area.show(ui.ctx(), |ui| {
-                ui.set_clip_rect(visible_rect);
                 let base_color = self.group_color(&group);
                 let stroke_width = if self.selected_group == Some(group_id) {
                     2.0
