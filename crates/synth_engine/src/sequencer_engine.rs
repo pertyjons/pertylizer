@@ -60,6 +60,9 @@ pub struct SequencerEngine {
     active_notes: Vec<ActiveNote>,
     /// Cached tempo (BPM) to avoid locking song every sample.
     cached_tempo: Bpm,
+    /// Cached song length (end tick of last placement) used to auto-stop
+    /// playback when looping is disabled.
+    cached_song_length: Tick,
     /// Whether we're looping.
     looping: bool,
     /// Loop start position.
@@ -90,6 +93,7 @@ impl SequencerEngine {
             sample_rate,
             active_notes: Vec::with_capacity(64),
             cached_tempo: default_tempo,
+            cached_song_length: Tick::ZERO,
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
@@ -102,7 +106,10 @@ impl SequencerEngine {
 
     /// Create a sequencer engine with a shared song reference.
     pub fn with_song(song: Arc<RwLock<Song>>, sample_rate: SampleRate) -> Self {
-        let cached_tempo = song.read().default_tempo;
+        let (cached_tempo, cached_song_length) = {
+            let s = song.read();
+            (s.default_tempo, s.calculate_length())
+        };
 
         Self {
             song,
@@ -112,6 +119,7 @@ impl SequencerEngine {
             sample_rate,
             active_notes: Vec::with_capacity(64),
             cached_tempo,
+            cached_song_length,
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
@@ -161,7 +169,7 @@ impl SequencerEngine {
             self.tick_accumulator = 0.0;
         }
         self.play_state = PlayState::Playing;
-        self.update_cached_tempo();
+        self.update_cached_state();
     }
 
     /// Pause playback at current position.
@@ -190,7 +198,7 @@ impl SequencerEngine {
         self.last_automation_values.clear();
         self.current_tick = tick;
         self.tick_accumulator = 0.0;
-        self.update_cached_tempo();
+        self.update_cached_state();
         events
     }
 
@@ -277,9 +285,25 @@ impl SequencerEngine {
                 self.active_notes.clear();
                 self.last_automation_values.clear();
                 self.current_tick = self.loop_start;
+            } else if !self.looping
+                && self.cached_song_length > Tick::ZERO
+                && self.current_tick >= self.cached_song_length
+            {
+                // Reached end of arrangement — auto-stop. Mirrors
+                // EngineCommand::Stop: release notes, reset to start,
+                // transition to Stopped. The audio thread observes the
+                // play_state change and clears transport.is_playing +
+                // all_notes_off (see SynthEngine::process).
+                self.release_all_notes_into(events);
+                self.active_notes.clear();
+                self.last_automation_values.clear();
+                self.play_state = PlayState::Stopped;
+                self.current_tick = Tick::ZERO;
+                self.tick_accumulator = 0.0;
+                break;
             }
 
-            self.update_cached_tempo();
+            self.update_cached_state();
         }
 
         chunk
@@ -297,10 +321,11 @@ impl SequencerEngine {
         }
     }
 
-    /// Update the cached tempo from the song.
-    fn update_cached_tempo(&mut self) {
+    /// Refresh the cached tempo and song length from the song.
+    fn update_cached_state(&mut self) {
         if let Some(song) = self.song.try_read() {
             self.cached_tempo = song.tempo_at(self.current_tick);
+            self.cached_song_length = song.calculate_length();
         }
     }
 
@@ -494,7 +519,7 @@ impl SequencerEngine {
     pub fn set_song(&mut self, song: Arc<RwLock<Song>>) {
         let _ = self.stop();
         self.song = song;
-        self.update_cached_tempo();
+        self.update_cached_state();
     }
 }
 

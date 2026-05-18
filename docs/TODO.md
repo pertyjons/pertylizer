@@ -9,7 +9,13 @@
   should be saved in json with file extention .json
 - In rack view, when a module is below/under the instrument list to the left the module is getting the mouse input not
   the instrument list.
-- When a song ends (last track) the song should stop, the timer and the the vertikal bar should also stop
+- [x] **When a song ends (last track) the song should stop, the timer and the vertical bar should also
+  stop.** Fixed by caching `Song::calculate_length()` in `SequencerEngine` and adding a non-looping
+  auto-stop branch to the per-tick loop next to the existing loop-wrap branch: at the song end the
+  sequencer releases active notes, resets to tick 0, and transitions to `PlayState::Stopped`. The
+  audio thread observes the `Playing → !Playing` transition after `sequencer.process()` and mirrors
+  `EngineCommand::Stop` on the transport side (clear `is_playing`, `all_notes_off` on every
+  instrument), so the GUI playhead and time counter stop together.
 - [x] **MCP `save_project` / `load_project` / `new_project` time out when the Pertylizer window is minimized,
   hidden, or unfocused.** Fixed by routing MCP project I/O off the GUI thread — the bridge now calls
   `project_apply::apply_project` directly with `block_in_place`, and notifies the GUI via

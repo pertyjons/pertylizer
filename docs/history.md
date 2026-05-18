@@ -13,6 +13,12 @@
   directly under `block_in_place` and notifies the GUI via `pending_project_refresh`
   + `project_revision`; the old `submit_project_action` / `pending_project_action` /
   `project_action_result` are gone.
+- **§0.1 Song doesn't stop at end of arrangement** — playhead kept advancing
+  past the last placement; the timer and vertical bar never stopped.
+  `SequencerEngine` now caches `Song::calculate_length()` and auto-stops in the
+  per-tick loop when `!looping && current_tick >= cached_song_length`; the
+  audio thread mirrors `EngineCommand::Stop` on the `Playing → !Playing`
+  transition so transport `is_playing` clears and voices are released.
 - **§0.3 `analyze_section` pre-roll for crossing notes** — the offline
   renderer Seek'd straight to `start_tick`, leaving notes that began earlier
   silent (visible on per-track soloed pads). `render_range` now scans for the

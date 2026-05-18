@@ -19,7 +19,7 @@ use crate::instrument::{Instrument, InstrumentId, MidiChannel};
 use crate::instrument_mapping::InstrumentMapping;
 use crate::metering::MeteringSystem;
 use crate::recording::RecordingState;
-use crate::sequencer_engine::SequencerEngine;
+use crate::sequencer_engine::{PlayState, SequencerEngine};
 use crate::shared_state::{ConnectionSnapshot, ModuleStateSnapshot};
 use crate::state::EngineState;
 use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
@@ -2494,6 +2494,7 @@ impl AudioProcessor for SynthEngine {
 
         // Save tick before sequencer advances (for beat boundary detection)
         let prev_tick = self.sequencer.current_tick();
+        let was_playing = self.sequencer.play_state() == PlayState::Playing;
 
         // Process sequencer events
         self.sequencer_event_buffer.clear();
@@ -2503,6 +2504,16 @@ impl AudioProcessor for SynthEngine {
         let curr_tick = self.sequencer.current_tick();
 
         self.state.transport.set_ticks(curr_tick.0);
+
+        // If the sequencer auto-stopped inside process() (reached end of the
+        // arrangement with looping disabled), mirror EngineCommand::Stop on
+        // the transport side: clear is_playing and release all voices.
+        if was_playing && self.sequencer.play_state() != PlayState::Playing {
+            self.state.transport.set_playing(false);
+            for instrument in &mut self.instruments {
+                instrument.all_notes_off();
+            }
+        }
 
         // Tick the recording state machine
         self.recording.tick(curr_tick);
