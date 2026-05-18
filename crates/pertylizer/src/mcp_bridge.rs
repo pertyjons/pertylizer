@@ -4723,7 +4723,10 @@ impl AppSynthBridge {
 
         let project: Box<crate::project::ProjectFile> =
             match load_file(path).map_err(|e| McpBridgeError::Other(e.to_string()))? {
-                LoadedFile::Project(p) => p,
+                LoadedFile::Project(p) => {
+                    crate::project_apply::clear_sample_library(&self.sample_library);
+                    p
+                }
                 LoadedFile::Bundle(bundle_path) => {
                     let mut lib = self
                         .sample_library

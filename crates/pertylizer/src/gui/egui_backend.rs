@@ -5501,6 +5501,8 @@ impl SynthApp {
 
     /// Load a project file, replacing all current state.
     fn load_project_data(&mut self, project: ProjectFile) {
+        crate::project_apply::clear_sample_library(&self.sample_library);
+        self.sample_view_state.invalidate_peaks();
         if let Err(e) = crate::project_apply::apply_project(
             &project,
             &self.session,

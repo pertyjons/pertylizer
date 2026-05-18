@@ -22,6 +22,15 @@ use crate::session::{SessionError, SynthSession};
 type SharedSong = Arc<PRwLock<Song>>;
 type SharedSampleLibrary = Arc<std::sync::RwLock<SampleLibrary>>;
 
+/// Empty the shared sample library. Call this before applying a plain-JSON
+/// project — JSON projects carry no embedded sample data, and a non-empty
+/// library silently switches the next save to bundle format and re-embeds
+/// the stale samples. Bundle loads clear inside `bundle::load_bundle`.
+pub(crate) fn clear_sample_library(sample_library: &SharedSampleLibrary) {
+    let mut lib = sample_library.write().unwrap_or_else(|e| e.into_inner());
+    lib.clear();
+}
+
 /// Replace all engine/session/song state with the contents of `project`.
 ///
 /// Visualizer modules in the patch (Oscilloscope, LevelMeter, SpectrumAnalyzer,
@@ -101,11 +110,8 @@ pub fn reset_to_new_project(
         Song::new("Untitled"),
         crate::project::GlobalProjectState::default(),
     );
-    let result = apply_project(&empty, session, song, sample_library)?;
-    if let Ok(mut lib) = sample_library.write() {
-        lib.clear();
-    }
-    Ok(result)
+    clear_sample_library(sample_library);
+    apply_project(&empty, session, song, sample_library)
 }
 
 /// Load any project-ish file (project JSON, ZIP bundle, single patch, AWE
@@ -123,7 +129,10 @@ pub fn load_file_into_engine(
     }
 
     match load_file(path).map_err(|e| e.to_string())? {
-        LoadedFile::Project(proj) => apply_project(&proj, session, song, sample_library),
+        LoadedFile::Project(proj) => {
+            clear_sample_library(sample_library);
+            apply_project(&proj, session, song, sample_library)
+        }
         LoadedFile::Patch(patch) => apply_patch_as_single_instrument(&patch, session),
         LoadedFile::AwePreset(_) => {
             Err("AWE preset files cannot be loaded as a project in headless mode".to_string())
