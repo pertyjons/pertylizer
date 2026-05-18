@@ -124,6 +124,24 @@ pub enum LoadedFile {
     Bundle(PathBuf),
 }
 
+/// The file extension a project should be saved with given whether the
+/// sample library is non-empty: `"zip"` for bundles (sample-embedded),
+/// `"json"` otherwise. Lets the filename on disk tell the truth about
+/// the format inside.
+#[must_use]
+pub fn project_extension(has_samples: bool) -> &'static str {
+    if has_samples { "zip" } else { "json" }
+}
+
+/// Return `path` with its extension forced to match the save format
+/// for `has_samples`. Idempotent.
+#[must_use]
+pub fn normalize_project_path(path: &Path, has_samples: bool) -> PathBuf {
+    let mut p = path.to_path_buf();
+    p.set_extension(project_extension(has_samples));
+    p
+}
+
 /// Read a file, auto-detect whether it's a ZIP bundle, patch, project, or AWE preset,
 /// and parse it.
 ///

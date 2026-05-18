@@ -334,7 +334,13 @@ fn save_project_works_without_gui() {
         .expect("load_project");
     rig.pump(32);
 
-    let tmp = tempfile::NamedTempFile::new().expect("temp file");
+    // Use a .json suffix so `normalize_project_path` is a no-op — the
+    // loaded example has no samples, so save chooses JSON and we want
+    // the temp file's name to match.
+    let tmp = tempfile::Builder::new()
+        .suffix(".json")
+        .tempfile()
+        .expect("temp file");
     let target = tmp.path().to_str().expect("UTF-8 path");
     rig.bridge
         .save_project(target)

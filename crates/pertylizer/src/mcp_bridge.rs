@@ -4774,6 +4774,7 @@ impl AppSynthBridge {
         let _guard = self.shared.project_io_lock.lock();
 
         let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+        let path = crate::project::normalize_project_path(&path, has_samples);
         let opts = self.build_save_options();
 
         let result = if has_samples {

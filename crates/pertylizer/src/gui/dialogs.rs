@@ -181,7 +181,7 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "Project files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json" || e == "zip")),
             )
             .add_file_filter("All files", Filter::new(|_: &Path| true));
         if let Some(dir) = initial_dir {
@@ -197,7 +197,7 @@ impl DialogState {
         let mut dialog = FileDialog::new()
             .add_file_filter(
                 "Project files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json" || e == "zip")),
             )
             .default_file_name(default_name);
         if let Some(dir) = initial_dir {

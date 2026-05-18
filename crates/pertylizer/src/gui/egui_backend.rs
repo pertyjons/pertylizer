@@ -889,13 +889,16 @@ impl eframe::App for SynthApp {
                         .button(format!("{} Save Project As...", ri::SAVE_LINE))
                         .clicked()
                     {
+                        let has_samples =
+                            self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+                        let fallback =
+                            format!("project.{}", crate::project::project_extension(has_samples));
                         let default_name = self
                             .current_project_path
                             .as_ref()
                             .and_then(|p| p.file_name())
                             .and_then(|n| n.to_str())
-                            .unwrap_or("project.json")
-                            .to_string();
+                            .map_or(fallback, ToString::to_string);
                         let initial_dir = self.resolve_project_dir();
                         self.dialog_state
                             .open_save_project_dialog(&default_name, initial_dir.as_deref());
@@ -4614,8 +4617,8 @@ impl SynthApp {
                         self.settings.directories.last_project_dir = Some(parent.to_path_buf());
                     }
                     let proj = self.create_project_from_app();
-                    // Use bundle format if there are samples, plain JSON otherwise
                     let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+                    let path = crate::project::normalize_project_path(&path, has_samples);
                     let save_result = if has_samples {
                         if let Ok(lib) = self.sample_library.read() {
                             crate::bundle::save_bundle(&proj, &lib, &path)
@@ -5612,9 +5615,8 @@ impl SynthApp {
     fn save_current_project(&mut self) -> bool {
         if let Some(path) = self.current_project_path.clone() {
             let proj = self.create_project_from_app();
-            // Bundle format whenever samples exist — otherwise the WAV data
-            // is silently dropped and the project loads back without audio.
             let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+            let path = crate::project::normalize_project_path(&path, has_samples);
             let save_result = if has_samples {
                 if let Ok(lib) = self.sample_library.read() {
                     crate::bundle::save_bundle(&proj, &lib, &path)
@@ -5626,6 +5628,7 @@ impl SynthApp {
             };
             match save_result {
                 Ok(()) => {
+                    self.current_project_path = Some(path.clone());
                     self.dirty = false;
                     self.settings.add_recent_project(path.clone());
                     self.settings.save();
@@ -5640,7 +5643,9 @@ impl SynthApp {
                 }
             }
         } else {
-            let default_name = "project.json".to_string();
+            let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+            let default_name =
+                format!("project.{}", crate::project::project_extension(has_samples));
             let initial_dir = self.resolve_project_dir();
             self.dialog_state
                 .open_save_project_dialog(&default_name, initial_dir.as_deref());
