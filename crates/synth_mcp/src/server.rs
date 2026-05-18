@@ -2051,6 +2051,15 @@ macro_rules! dispatch_tools {
     }
 }
 
+/// Classify a tool's `"Error: ..."` response: bridge/engine-state errors
+/// (caller asked for an entity that does not exist, or the engine queue refused
+/// the command) should surface at `warn!` so transient races are visible at the
+/// default `info` filter. Pure validation rejections (bad enum, range, schema)
+/// stay at `debug!`.
+fn is_bridge_error(msg: &str) -> bool {
+    msg.contains("not found") || msg.contains("failed to send")
+}
+
 impl SynthMcpServer {
     /// Dispatch a tool call by name with JSON params.
     /// Used by `batch_execute` to run arbitrary tool calls.
@@ -2066,13 +2075,25 @@ impl SynthMcpServer {
                 error = %msg,
                 "MCP batch dispatch rejected tool call"
             ),
-            Ok(s) if s.starts_with("Error:") => tracing::debug!(
-                session_id = self.session_id,
-                tool,
-                elapsed_ms,
-                error = %s,
-                "MCP tool returned validation/bridge error"
-            ),
+            Ok(s) if s.starts_with("Error:") => {
+                if is_bridge_error(s) {
+                    tracing::warn!(
+                        session_id = self.session_id,
+                        tool,
+                        elapsed_ms,
+                        error = %s,
+                        "MCP tool returned bridge/engine-state error"
+                    );
+                } else {
+                    tracing::debug!(
+                        session_id = self.session_id,
+                        tool,
+                        elapsed_ms,
+                        error = %s,
+                        "MCP tool returned validation error"
+                    );
+                }
+            }
             Ok(_) => tracing::trace!(
                 session_id = self.session_id,
                 tool,

@@ -23,14 +23,6 @@
   `instrument_snapshots[i].volume` (etc.) under the same write lock as the queued
   `EngineCommand`. Maintenance burden: every new `set_*` tool needs to remember the write-through.
   Original diagnosis with file:line references in commit history.
-- [ ] **Tracing filter masks transient bridge errors.** The §1 logging added today routes
-  batch-dispatch tool errors (the `Ok(s)` where `s.starts_with("Error:")` branch in
-  `synth_mcp::server::dispatch_tool`) to `tracing::debug!`, intended for noisy validation
-  failures. But the bridge-race above also lands in that branch — meaning a real transient bug
-  is invisible at the default `info` filter. Split the level: `warn!` for bridge-error responses
-  (anything mentioning "not found" / "bridge" / similar engine state), keep `debug!` for
-  validation rejections (range, type, schema). Or expose a separate `bridge_error` log target
-  the operator can enable independently.
 - [ ] **MCP disconnects = tokio worker thread death (strace-confirmed 2026-05-18).** Until today
   the working hypothesis from the §1 MCP-stability investigation was "tool-handler panics inside
   `block_in_place` kill the worker; `LocalSessionManager` loses session state with the dying worker;
