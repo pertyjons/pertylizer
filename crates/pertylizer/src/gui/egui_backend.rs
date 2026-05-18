@@ -278,6 +278,13 @@ struct SynthApp {
     #[cfg(feature = "mcp")]
     last_seen_project_revision: u64,
 
+    /// Last `McpSharedState::gui_revision` value the GUI consumed. Same
+    /// fast-path idea as `last_seen_project_revision`, but for one-shot
+    /// MCP→GUI mirror payloads (`pending_patch`, `pending_awe_state`).
+    /// Idle frames skip both slot mutexes entirely.
+    #[cfg(feature = "mcp")]
+    last_seen_gui_revision: u64,
+
     // OSC shared state
     #[cfg(feature = "osc")]
     osc_shared: Option<synth_osc::OscSharedState>,
@@ -412,6 +419,8 @@ impl SynthApp {
             mcp_shared: config.mcp_shared,
             #[cfg(feature = "mcp")]
             last_seen_project_revision: 0,
+            #[cfg(feature = "mcp")]
+            last_seen_gui_revision: 0,
             #[cfg(feature = "osc")]
             osc_shared: config.osc_shared,
             settings,
@@ -664,23 +673,6 @@ impl eframe::App for SynthApp {
             }
         }
 
-        // Poll MCP pending patch
-        #[cfg(feature = "mcp")]
-        {
-            let pending_patch = self.mcp_shared.as_ref().and_then(|shared| {
-                shared
-                    .pending_patch
-                    .lock()
-                    .ok()
-                    .and_then(|mut pending| pending.take())
-            });
-            if let Some((patch, name)) = pending_patch {
-                self.current_patch_name = name;
-                self.current_patch_path = None;
-                self.load_patch_data(&patch);
-            }
-        }
-
         // Poll MCP pending auto-layout.
         //
         // Non-destructive load: a request stays set until the Rack view
@@ -754,43 +746,41 @@ impl eframe::App for SynthApp {
             }
         }
 
-        // Poll MCP pending AWE state
+        // Revision-gated drain of MCP→GUI one-shot mirror payloads
+        // (`pending_patch`, `pending_awe_state`). Same shape as the
+        // `project_revision` drain just above.
         #[cfg(feature = "mcp")]
-        {
-            let pending_awe = self.mcp_shared.as_ref().and_then(|shared| {
-                shared
+        if let Some(shared) = self.mcp_shared.as_ref().map(std::sync::Arc::clone) {
+            let current_rev = shared
+                .gui_revision
+                .load(std::sync::atomic::Ordering::Acquire);
+            if current_rev != self.last_seen_gui_revision {
+                let pending_patch = shared
+                    .pending_patch
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                if let Some((patch, name)) = pending_patch {
+                    self.current_patch_name = name;
+                    self.current_patch_path = None;
+                    self.load_patch_data(&patch);
+                }
+
+                let pending_awe = shared
                     .pending_awe_state
                     .lock()
-                    .ok()
-                    .and_then(|mut pending| pending.take())
-            });
-            if let Some(awe_state) = pending_awe {
-                self.awe_enabled = awe_state.enabled;
-                self.awe_ui.restore_from(&awe_state);
-                // Send engine commands so audio matches
-                self.handle
-                    .send(synth_engine::EngineCommand::SetAweEnabled {
-                        enabled: awe_state.enabled,
-                    });
-                self.handle
-                    .send(synth_engine::EngineCommand::SetAweParameter {
-                        param: synth_awe::AweParam::RoomShape(awe_state.room),
-                    });
-                self.handle
-                    .send(synth_engine::EngineCommand::SetAweParameter {
-                        param: synth_awe::AweParam::Material(awe_state.material),
-                    });
-                self.handle.send(synth_engine::EngineCommand::SetAweState {
-                    snapshot: awe_state.snapshot,
-                });
-                self.handle
-                    .send(synth_engine::EngineCommand::SetAweParameter {
-                        param: synth_awe::AweParam::SpatialEnabled(awe_state.spatial_enabled),
-                    });
-                self.handle
-                    .send(synth_engine::EngineCommand::SetAweParameter {
-                        param: synth_awe::AweParam::NoteMapping(awe_state.note_mapping),
-                    });
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                if let Some(awe_state) = pending_awe {
+                    self.awe_enabled = awe_state.enabled;
+                    self.awe_ui.restore_from(&awe_state);
+                    crate::project_apply::apply_awe_state(
+                        &self.handle.command_sender(),
+                        &awe_state,
+                    );
+                }
+
+                self.last_seen_gui_revision = current_rev;
             }
         }
 

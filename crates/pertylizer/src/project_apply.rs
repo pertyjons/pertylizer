@@ -571,7 +571,7 @@ fn tear_down_all_instruments(session: &SynthSession) {
 /// Push every field of `awe` onto the engine. Uses non-blocking sends because
 /// these all land in the same audio callback batch and no later step gates on
 /// their arrival — matches `egui_backend::load_project_data`.
-fn apply_awe_state(sender: &CommandSender, awe: &synth_awe::AweState) {
+pub(crate) fn apply_awe_state(sender: &CommandSender, awe: &synth_awe::AweState) {
     sender.send(EngineCommand::SetAweEnabled {
         enabled: awe.enabled,
     });

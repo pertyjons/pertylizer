@@ -851,6 +851,7 @@ impl SynthBridge for AppSynthBridge {
                     if let Ok(mut pending) = self.shared.pending_patch.lock() {
                         *pending = Some((patch, patch_name.clone()));
                     }
+                    self.bump_gui_revision();
                     return Ok(format!(
                         "OK: {patch_name} loaded as instrument {}",
                         inst_id.as_u64()
@@ -2890,16 +2891,7 @@ impl SynthBridge for AppSynthBridge {
         if let Ok(mut state) = self.shared.awe_state.lock() {
             state.enabled = enabled;
         }
-        // Queue for GUI consumption
-        if let Ok(mut pending) = self.shared.pending_awe_state.lock() {
-            let current = self
-                .shared
-                .awe_state
-                .lock()
-                .map_err(|_| McpBridgeError::Other("AWE state lock poisoned".to_string()))?
-                .clone();
-            *pending = Some(current);
-        }
+        queue_awe_for_gui(&self.shared)?;
         // Send engine command
         if !self
             .session
@@ -4291,7 +4283,9 @@ fn meta_to_sample_info(meta: &synth_sampler::SampleMeta) -> synth_mcp::types::Sa
 
 // === AWE helper functions ===
 
-/// Queue the current shared AWE state for GUI consumption.
+/// Queue the current shared AWE state for GUI consumption and bump
+/// `gui_revision` so the GUI's revision-gated poll picks it up on the
+/// next frame.
 fn queue_awe_for_gui(shared: &crate::mcp_shared::McpSharedState) -> Result<(), McpBridgeError> {
     let current = shared
         .awe_state
@@ -4301,6 +4295,9 @@ fn queue_awe_for_gui(shared: &crate::mcp_shared::McpSharedState) -> Result<(), M
     if let Ok(mut pending) = shared.pending_awe_state.lock() {
         *pending = Some(current);
     }
+    shared
+        .gui_revision
+        .fetch_add(1, std::sync::atomic::Ordering::Release);
     Ok(())
 }
 
@@ -4871,6 +4868,17 @@ impl AppSynthBridge {
             .pending_project_refresh
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(refresh);
+    }
+
+    /// Bump `gui_revision` so the GUI's revision-gated poll picks up a
+    /// one-shot mirror payload (`pending_patch` or `pending_awe_state`)
+    /// on its next frame. Same role as `record_io_status` plays for
+    /// project I/O, but kept distinct because the GUI consumes them via
+    /// separate paths.
+    fn bump_gui_revision(&self) {
+        self.shared
+            .gui_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
     }
 
     /// Record the outcome of a project I/O operation and bump

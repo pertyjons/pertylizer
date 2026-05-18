@@ -42,6 +42,13 @@ pub struct McpSharedState {
     /// Registry of active MCP sessions with client identity info.
     pub mcp_sessions: McpSessionRegistry,
     /// Auto-layout requested by MCP (consumed by GUI each frame).
+    ///
+    /// Stays a plain `AtomicBool` rather than riding `gui_revision`
+    /// because auto-layout has view-gated latching semantics: a request
+    /// issued while the user is in a non-Rack view must wait until the
+    /// Rack view is drawn before it consumes the flag. A one-shot
+    /// revision bump would either fire too early or race with the
+    /// view switch.
     pub pending_auto_layout: AtomicBool,
     /// Serializes concurrent project I/O (save vs. load, two MCP clients
     /// racing). Held for the duration of one apply.
@@ -49,6 +56,13 @@ pub struct McpSharedState {
     /// Bumped on every successful project apply (load / reset). The GUI
     /// observes increments to detect "something changed; refresh".
     pub project_revision: AtomicU64,
+    /// Bumped whenever MCP writes a one-shot GUI-mirror payload
+    /// (`pending_patch`, `pending_awe_state`). Same fast-path pattern as
+    /// `project_revision`: the GUI checks this atomic at the top of each
+    /// frame and only locks the slot mutexes when it actually changed,
+    /// so idle frames pay only one `Acquire` load instead of two mutex
+    /// acquisitions.
+    pub gui_revision: AtomicU64,
     /// UI-refresh queue populated by MCP/non-GUI loads, drained by the
     /// GUI on each frame. `None` between events.
     pub pending_project_refresh: Mutex<Option<ProjectRefresh>>,
@@ -93,6 +107,7 @@ impl McpSharedState {
             pending_auto_layout: AtomicBool::new(false),
             project_io_lock: parking_lot::Mutex::new(()),
             project_revision: AtomicU64::new(0),
+            gui_revision: AtomicU64::new(0),
             pending_project_refresh: Mutex::new(None),
             last_loaded_project_path: Mutex::new(None),
             last_project_io_status: Mutex::new(None),

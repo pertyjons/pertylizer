@@ -13,6 +13,13 @@
   directly under `block_in_place` and notifies the GUI via `pending_project_refresh`
   + `project_revision`; the old `submit_project_action` / `pending_project_action` /
   `project_action_result` are gone.
+- **§0.1 Remaining `pending_*` queues migrated to revision-marker pattern** —
+  follow-up to the project-I/O fix above. `pending_patch` and `pending_awe_state`
+  now ride a new `gui_revision: AtomicU64` so the GUI's per-frame poll skips both
+  slot mutexes on idle frames (single `Acquire` load), and the architecture matches
+  `project_revision`. `pending_auto_layout` intentionally kept as a plain
+  `AtomicBool` — it's already non-blocking and its view-gated latching semantics
+  (request waits until Rack view is drawn) don't fit a one-shot revision bump.
 - **§0.1 Song doesn't stop at end of arrangement** — playhead kept advancing
   past the last placement; the timer and vertical bar never stopped.
   `SequencerEngine` now caches `Song::calculate_length()` and auto-stops in the

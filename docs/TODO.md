@@ -41,10 +41,19 @@
   `project_apply::apply_project` directly with `block_in_place`, and notifies the GUI via
   `McpSharedState.pending_project_refresh` + `project_revision`. `submit_project_action`,
   `pending_project_action`, and `project_action_result` are removed.
-- **Follow-up: same fix template applies to the other `pending_*` queues.** `pending_patch`,
-  `pending_awe_state`, and `pending_auto_layout` are still GUI-drained and will hang the same way if MCP-side
-  writes ever block on confirmation. They don't today (none use a condvar), but the architectural shape is
-  worth migrating: MCP writes shared state directly, GUI consumes a refresh marker. Filed as separate task.
+- [x] **Follow-up: same fix template applies to the other `pending_*` queues.** Migrated
+  `pending_patch` and `pending_awe_state` to the same `project_revision`-style fast path: new
+  `McpSharedState.gui_revision: AtomicU64` is bumped by every MCP write to either slot
+  (`load_example_patch` directly, `queue_awe_for_gui` for all 6 AWE setters); GUI's per-frame
+  poll now does a single `Acquire` load and only locks the slot mutexes when revision changed
+  (`egui_backend.rs` — replaces two unconditional per-frame mutex acquisitions). Drive-by during
+  cleanup: `set_awe_enabled` no longer inlines pending-queue writes (calls `queue_awe_for_gui` like
+  the other 5 setters) and the new drain reuses `project_apply::apply_awe_state` (now `pub(crate)`)
+  for the 6-command engine push, removing 22 lines of duplicated `SetAweEnabled` / `RoomShape` /
+  `Material` / `SetAweState` / `SpatialEnabled` / `NoteMapping` sends. `pending_auto_layout`
+  intentionally stays as a plain `AtomicBool`: it's already non-blocking and has view-gated
+  latching semantics (a request waits until the Rack view is drawn) that don't fit a one-shot
+  revision bump — doc-commented on the field.
 
 ### 0.2 Project settings — unsaved instrument strip parameters
 
