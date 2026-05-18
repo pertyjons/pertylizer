@@ -631,34 +631,19 @@ fn push_loaded_sample_data(
     }
 }
 
-/// Walk every instrument's live module graph and collect the
-/// `SampleId`s referenced by `Sampler` modules' `SampleSelect` param.
-/// Ids of 0 (default "no sample") are skipped. Mirrors the snapshot
-/// path used by `push_loaded_sample_data`, but reads from the live
-/// engine rather than a `ProjectFile`.
+/// Collect `SampleId`s referenced by live `Sampler` modules. Live-engine
+/// counterpart of `push_loaded_sample_data` (which reads a `ProjectFile`).
 pub(crate) fn collect_used_sample_ids(
     session: &SynthSession,
 ) -> std::collections::HashSet<synth_sampler::SampleId> {
-    use synth_core::{Param, SamplerParam};
-
-    let mut used = std::collections::HashSet::new();
     let state = session.state();
-    for snap in session.list_instruments() {
-        let modules = state.shared_graph.get_modules_for_instrument(snap.id);
-        for m in modules {
-            if m.module_type != ModuleType::Sampler {
-                continue;
-            }
-            for param in &m.parameters {
-                if let Param::Sampler(SamplerParam::SampleSelect(sid)) = param
-                    && sid.0 != 0
-                {
-                    used.insert(synth_sampler::SampleId::new(sid.0));
-                }
-            }
-        }
-    }
-    used
+    session
+        .list_instruments()
+        .into_iter()
+        .flat_map(|snap| state.shared_graph.get_modules_for_instrument(snap.id))
+        .filter(|m| m.module_type == ModuleType::Sampler)
+        .filter_map(|m| crate::audio::preview::sampler_sample_id(&m))
+        .collect()
 }
 
 /// Drop samples no `Sampler` module currently references. Returns the
@@ -670,6 +655,16 @@ pub(crate) fn prune_unused_samples(
     session: &SynthSession,
     sample_library: &SharedSampleLibrary,
 ) -> Vec<String> {
+    // Empty library is the common case for sample-free projects; bail
+    // before the engine walk so the menu action stays cheap.
+    if sample_library
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_empty()
+    {
+        return Vec::new();
+    }
+
     let used = collect_used_sample_ids(session);
     let mut lib = sample_library.write().unwrap_or_else(|e| e.into_inner());
     let mut to_remove: Vec<(synth_sampler::SampleId, String)> = lib
