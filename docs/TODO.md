@@ -4,6 +4,16 @@
 
 ### 0.1 Misc findings
 
+- **`optimize_project` doesn't remove unused samples (or dead modules).** Today it only walks the song
+  (unused patterns, tracks, instruments via `Song::remove_unused`). The `SampleLibrary` is untouched, so
+  imported wavs that no `Sampler` module references stay forever and bloat the next save (the library
+  being non-empty forces bundle format — same path the recent JSON-load sample-clear and `.zip`/`.json`
+  extension fixes closed from the other end). Logic: collect used `SampleId`s by scanning every
+  instrument's `Sampler` modules' `sample_select` parameter (mirror `push_loaded_sample_data` in
+  `project_apply.rs`), subtract from `library.list()`, remove the rest. Extend `OptimizeResult` with
+  `removed_samples: Vec<String>` (`synth_mcp/src/types.rs:534`). Same pass should also flag/remove
+  dead modules inside patch graphs (modules not reverse-reachable from `StereoOutput` and any
+  sidechain source through `connections`) — bigger scope, do as a follow-up.
 - [x] **There is no way to look at pattern which is not in a track. Need some sort of view/list of
   patterns.** Fixed by adding a dedicated `Pattern` tab (between AWE and Seq) with a left-side browser
   that lists Used and Orphan patterns separately, search filter, `[+]` to create orphans, and a
