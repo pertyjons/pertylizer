@@ -13,8 +13,8 @@ pub fn patch_formant_voice() -> Patch {
 SIGNAL FLOW:
 Formant synthesis creates vocal-like sounds by simulating the resonances
 of the human vocal tract. The formant algorithm generates a carrier
-wave with decaying resonant peaks at specific frequencies. An LPC
-Vocoder further shapes the spectral envelope for enhanced vocal character.
+wave with decaying resonant peaks at specific frequencies. A chorus
+adds vocal width and the reverb places it in a small room.
 
 PARAMETERS:
 - Param A: Formant frequency ratio (vowel character)
@@ -46,7 +46,7 @@ or "singing" effects. LFO modulation adds natural movement.
             .param_f("param_a", 0.5) // Formant frequency
             .param_f("param_b", 0.4) // Decay
             .param_f("param_c", 0.5)
-            .param_f("level", 0.8)
+            .param_f("level", 1.0)
             .build(),
     );
 
@@ -85,17 +85,7 @@ or "singing" effects. LFO modulation adds natural movement.
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Amplifier)
             .position(850.0, 50.0)
-            .param_f("level", 0.7)
-            .build(),
-    );
-
-    // LPC Vocoder — spectral envelope shaping (vcd-1)
-    patch.add_module(
-        ModuleBuilder::new(1, ModuleType::Vocoder)
-            .position(1600.0, 50.0)
-            .param_f("order", 0.6)
-            .param_f("window", 25.0)
-            .param_f("mix", 0.5)
+            .param_f("level", 2.0)
             .build(),
     );
 
@@ -105,7 +95,7 @@ or "singing" effects. LFO modulation adds natural movement.
             .position(2000.0, 50.0)
             .param_f("rate", 0.6)
             .param_f("depth", 0.3)
-            .param_f("mix", 0.3)
+            .param_f("mix", 0.15)
             .build(),
     );
 
@@ -115,7 +105,7 @@ or "singing" effects. LFO modulation adds natural movement.
             .position(2000.0, 300.0)
             .param_f("room_size", 0.6)
             .param_f("damping", 0.4)
-            .param_f("mix", 0.3)
+            .param_f("mix", 0.2)
             .build(),
     );
 

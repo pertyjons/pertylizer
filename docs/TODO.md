@@ -8,6 +8,32 @@
   a stretch goal — modules not reverse-reachable from `StereoOutput` (and any sidechain source)
   through `connections` should also go in `optimize_project`. Bigger scope (needs graph traversal
   per instrument); pick up later.
+- [ ] **LPC Vocoder: missing synthesis gain + auto-vocoder positive feedback.** The
+  `Vocoder` effect (`crates/synth_modules/src/effects/vocoder.rs`) is "stable" but
+  unmusical on resonant inputs — it amplified the `Formant Voice` patch by ~25× and
+  produced a -0 dB peak at 18–20 kHz in the §0.1 Formant Voice investigation. Two
+  concrete bugs:
+  (a) **No gain factor `G` from LPC analysis.** The canonical LPC synthesis filter
+  is `y[n] = G·x[n] − Σ a_k·y[n−k]` where `G = sqrt(error)` (residual energy).
+  `levinson_durbin_fixed` (`math.rs:825`) computes `error` but never returns it, and
+  `lpc_analysis_fixed` (`math.rs:869`) discards it. `Vocoder::filter_sample`
+  (`vocoder.rs:79`) uses `G = 1` implicit. Fix: have `lpc_analysis_fixed` return the
+  final `error`, store it on the `Vocoder`, and multiply `input` by `sqrt(error)` in
+  `filter_sample`.
+  (b) **Auto-vocoder: single input used as both modulator and carrier.** LPC analysis
+  places poles at the input's spectral peaks; filtering the same input through
+  `1/A(z)` amplifies exactly those peaks → positive feedback. Standard fix: split
+  into `in_carrier` + `in_modulator` ports, run LPC on the modulator, filter the
+  carrier. Backwards-compatible fallback: when only one input is connected, derive
+  the carrier as a saw/noise pulse train so the auto-mode still sounds like a
+  vocoder instead of a self-resonator. Note that the existing
+  `vocoder_stable_on_decaying_carrier` test (`vocoder.rs:271`) only checks
+  `|output| < 50` — it documents the loudness problem rather than guards against it;
+  tighten to a "musical" threshold (e.g. `peak ≤ 2.5·input_peak`) once the gain fix
+  lands.
+  Effect-chain order matters but is only a symptom: vocoder first → narrowband input
+  → poles cluster at formant → 25× gain; vocoder after chorus+reverb → broader
+  input → poles spread → modest gain.
 - When saving a project with samples, the save should always be in zip-format and file extention .zip, and all other
   should be saved in json with file extention .json
 - [ ] **Follow-up: stale `list_instruments` readback inside one `batch_execute`.** The primary
@@ -52,22 +78,6 @@
   the session"). After either lands, also extend the §1 tracing with a
   `std::panic::set_hook` that logs `tracing::error!("MCP task panicked", message, location, ...)`
   so operators see panics without needing `strace`.
-- [ ] **Example patch `Formant Voice` self-clips and produces large DC offset at normal velocity.**
-  `analyze_note {instrument: <formant voice>, note: 57 (A3), velocity: 105, duration: 500 ms}`
-  reports: peak `1.0` (= 0 dBFS), `clipped_samples: 16 399 / 44 100` (**~37 % of the audio**),
-  `dc_offset: 0.29` (the analyzer's "has_dc_offset" threshold is `0.005`, so this is ~58×
-  over), `sustain` spectrum peaks all in the 21.5 kHz band (aliasing — content reaches Nyquist),
-  and the pitch detector returns `29.6 Hz` for an A3 note with confidence 0.23 (formants
-  dominate over any carrier fundamental). In the Prodigy session today this patch was loaded
-  on a track at `volume: 0.7` and immediately blew the master peak to `+2.09 dBTP` with 273
-  clipped samples from that one track over a 3.5 s loop; dropping its `volume` to `0.18` was
-  needed to keep the master out of clip — but at that volume the patch's DC offset is still
-  `0.052` on the mix bus, ~10× the analyzer threshold.
-  Likely fixes inside the patch graph (need to inspect): osc level too high, missing
-  amplifier attenuation before output, env curve too aggressive, or formant filter resonance
-  pushing through unbounded. Either fix the patch itself (recommended — example patches
-  should sound usable out of the box) or add a high-pass + level-trim at the output as
-  a band-aid. Repro: `apply_example_patch "Formant Voice"` → `analyze_note 57 105`.
 
 --- 
 

@@ -7,7 +7,7 @@
 //! - Internal state for chaos attractors and physical modeling
 
 use std::collections::HashMap;
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
@@ -162,12 +162,35 @@ impl MathOscillator {
             }
 
             MathAlgo::Formant => {
-                // Vocal formant simulation
+                // FOF-style vocal formant grain. The bare `sin·exp(-d·t)`
+                // form aliases badly at typical decay rates: at t=1 the
+                // envelope is still ~exp(-d) and jumps to 1.0 at the next
+                // phase wrap, producing a slope discontinuity that bleeds
+                // up to Nyquist, plus a strong DC bias from the asymmetric
+                // first positive lobe. Three shaping terms fix both:
+                // half-cosine attack and release ramps that force the
+                // grain to start and end at zero with zero slope, and an
+                // exponential decay normalized to reach exactly 0 at t=1.
                 let formant_freq = 1.0 + a * 20.0;
                 let decay_rate = 1.0 + b * 15.0;
+                let attack_len = 0.1;
+                let release_start = 0.9;
+                let attack = if t < attack_len {
+                    0.5 - 0.5 * (PI * t / attack_len).cos()
+                } else {
+                    1.0
+                };
+                let release = if t > release_start {
+                    let r = (t - release_start) / (1.0 - release_start);
+                    0.5 + 0.5 * (PI * r).cos()
+                } else {
+                    1.0
+                };
+                let raw_env = (-t * decay_rate).exp();
+                let end_env = (-decay_rate).exp();
+                let env = ((raw_env - end_env) / (1.0 - end_env)).max(0.0);
                 let carrier = (TAU * t * formant_freq).sin();
-                let window = (-t * decay_rate).exp();
-                carrier * window
+                carrier * env * attack * release
             }
 
             MathAlgo::PhaseDist => {
@@ -813,6 +836,35 @@ mod tests {
             max_diff > 1e-5,
             "layer increments are sweep-insensitive (broken-algo regression)"
         );
+    }
+
+    #[test]
+    fn formant_grain_is_dc_free_and_bounded() {
+        // The bare `sin·exp(-d·t)` grain produced ~0.30 DC and a slope
+        // discontinuity at phase wrap that aliased up to Nyquist. After
+        // adding the half-cosine attack and the end-normalized envelope,
+        // a long render at the example-patch defaults (a=0.5, b=0.4) must
+        // sit below the analyzer's 0.005 has_dc_offset threshold and stay
+        // strictly inside ±1.
+        let mut osc = MathOscillator::new();
+        osc.algo = MathAlgo::Formant;
+        osc.sample_rate = SampleRate::DVD_QUALITY;
+        osc.var_a = NormalizedValue::new(0.5);
+        osc.var_b = NormalizedValue::new(0.4);
+        osc.var_c = NormalizedValue::new(0.5);
+
+        for &note in &[57_u8, 60, 69] {
+            osc.reset_state();
+            osc.set_note(MidiNote::new(note));
+            let samples = osc.sample_rate.as_f32() as usize;
+            let (peak, _rms, mean) = render_metrics(&mut osc, samples);
+            assert!(
+                mean.abs() < 0.005,
+                "Formant DC at note={note} too high: {mean}"
+            );
+            assert!(peak <= 1.0, "Formant peak at note={note} clips: {peak}");
+            assert!(peak > 0.05, "Formant peak at note={note} too quiet: {peak}");
+        }
     }
 
     #[test]
