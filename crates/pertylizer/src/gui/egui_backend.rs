@@ -34,9 +34,7 @@ use crate::gui::widgets::{draw_oscilloscope, draw_stereo_meter};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
 use crate::io::{GroupTemplateManager, MidiHandler, PatchManager};
-use crate::patch::{
-    Author, AwePresetFile, GroupCategory, InstrumentState, Patch, categorized_patches,
-};
+use crate::patch::{Author, AwePresetFile, GroupCategory, Patch, categorized_patches};
 use crate::project::{self, GlobalProjectState, LoadedFile, ProjectFile};
 use synth_core::{Describable, ModuleCategory};
 use synth_core::{Seconds, Velocity};
@@ -271,6 +269,11 @@ struct SynthApp {
     #[cfg(feature = "mcp")]
     mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
 
+    /// Last `McpSharedState::project_revision` value the GUI consumed.
+    /// Lets the per-frame poll skip locking when no I/O has happened.
+    #[cfg(feature = "mcp")]
+    last_seen_project_revision: u64,
+
     // OSC shared state
     #[cfg(feature = "osc")]
     osc_shared: Option<synth_osc::OscSharedState>,
@@ -402,6 +405,8 @@ impl SynthApp {
             sequencer_view_state: crate::gui::sequencer::SequencerViewState::new(),
             #[cfg(feature = "mcp")]
             mcp_shared: config.mcp_shared,
+            #[cfg(feature = "mcp")]
+            last_seen_project_revision: 0,
             #[cfg(feature = "osc")]
             osc_shared: config.osc_shared,
             settings,
@@ -686,68 +691,61 @@ impl eframe::App for SynthApp {
         #[cfg(not(feature = "mcp"))]
         let mcp_auto_layout = false;
 
-        // Poll MCP pending project action
+        // Single revision-gated drain for everything MCP project I/O
+        // pushes back to the GUI: the refresh queue, source path, and
+        // status line. `project_revision` is the lock-free fast path —
+        // when nothing has happened we don't touch any mutex.
         #[cfg(feature = "mcp")]
-        {
-            use crate::mcp_shared::ProjectAction;
+        if let Some(shared) = self.mcp_shared.as_ref().map(std::sync::Arc::clone) {
+            let current_rev = shared
+                .project_revision
+                .load(std::sync::atomic::Ordering::Acquire);
+            if current_rev != self.last_seen_project_revision {
+                use crate::mcp_shared::ProjectRefresh;
 
-            let action = self.mcp_shared.as_ref().and_then(|shared| {
-                shared
-                    .pending_project_action
+                // Load / new stash a refresh; save leaves it empty.
+                let refresh = shared
+                    .pending_project_refresh
                     .lock()
-                    .ok()
-                    .and_then(|mut a| a.take())
-            });
-            if let Some(action) = action {
-                let result = match action {
-                    ProjectAction::New => {
-                        self.reset_to_new_project();
-                        Ok("New project created".to_string())
-                    }
-                    ProjectAction::Save(path) => {
-                        let proj = self.create_project_from_app();
-                        let has_samples =
-                            self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
-                        let save_result = if has_samples {
-                            if let Ok(lib) = self.sample_library.read() {
-                                crate::bundle::save_bundle(&proj, &lib, &path)
-                            } else {
-                                proj.save(&path)
-                            }
-                        } else {
-                            proj.save(&path)
-                        };
-                        save_result
-                            .map(|()| format!("Saved to {}", path.display()))
-                            .map_err(|e| e.to_string())
-                    }
-                    ProjectAction::Load(path) => match project::load_file(&path) {
-                        Ok(LoadedFile::Project(proj)) => {
-                            self.load_project_data(*proj);
-                            self.current_project_path = Some(path.clone());
-                            Ok(format!("Loaded {}", path.display()))
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                if let Some(refresh) = refresh {
+                    match refresh {
+                        ProjectRefresh::Loaded(project) => {
+                            self.current_project_path = shared
+                                .last_loaded_project_path
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .clone();
+                            self.refresh_ui_from_project(&project);
+                            self.dirty = false;
                         }
-                        Ok(LoadedFile::Patch(patch)) => {
-                            self.current_patch_name = patch.name.clone();
-                            self.current_patch_path = Some(path.clone());
-                            self.load_patch_data(&patch);
-                            Ok(format!("Loaded patch from {}", path.display()))
+                        ProjectRefresh::Reset => {
+                            self.refresh_ui_after_reset();
+                            self.current_project_path = None;
+                            self.current_patch_name = "Init".to_string();
+                            self.current_patch_path = None;
+                            self.dirty = false;
                         }
-                        Ok(LoadedFile::AwePreset(preset)) => {
-                            self.load_awe_preset_data(&preset);
-                            Ok(format!("Loaded AWE preset: {}", preset.name))
-                        }
-                        Ok(LoadedFile::Bundle(bundle_path)) => self.load_bundle_file(&bundle_path),
-                        Err(e) => Err(e.to_string()),
-                    },
-                };
-                if let Some(shared) = &self.mcp_shared {
-                    let (lock, cvar) = &shared.project_action_result;
-                    if let Ok(mut guard) = lock.lock() {
-                        *guard = Some(result);
-                        cvar.notify_one();
                     }
                 }
+
+                // Surface the most recent I/O outcome (success or error)
+                // in the status line.
+                let status = shared
+                    .last_project_io_status
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                if let Some(status) = status {
+                    let msg = match status {
+                        Ok(m) => m,
+                        Err(e) => format!("Error: {e}"),
+                    };
+                    self.dialog_state.set_status(msg);
+                }
+
+                self.last_seen_project_revision = current_rev;
             }
         }
 
@@ -5185,70 +5183,51 @@ impl SynthApp {
     // Project save/load
     // ------------------------------------------------------------------
 
-    /// Build a `ProjectFile` from the current application state.
+    /// Build a `ProjectFile` from the current application state — the
+    /// canonical engine-side builder plus a GUI overlay for fields the
+    /// engine doesn't track (color, module positions, group metadata,
+    /// canvas size, visualizer modules).
     fn create_project_from_app(&self) -> ProjectFile {
-        let engine_state = self.session.state();
-        // Pull a fresh snapshot of engine-owned fields (description,
-        // patch_description, category, midi_channel, sidechain_source_id)
-        // so they survive a save → load round-trip even if reconcile_instruments
-        // hasn't yet mirrored a recent MCP write into the GUI state.
-        let snapshots = self.session.list_instruments();
-        let instrument_states: Vec<InstrumentState> = self
-            .instruments
-            .iter()
-            .map(|inst| {
-                let mut patch = patch_bridge::create_patch_from_editor(
-                    &inst.name,
-                    &inst.patch_editor,
-                    Some((engine_state.as_ref(), inst.id)),
-                );
-                let snap = snapshots.iter().find(|s| s.id == inst.id);
-                patch.description = snap.and_then(|s| s.patch_description.clone());
-                let description =
-                    snap.map_or_else(|| inst.description.clone(), |s| s.description.clone());
-                let category = snap.map_or(inst.category.as_u8(), |s| s.category.as_u8());
-                let channel =
-                    snap.map_or(inst.channel.as_one_indexed(), |s| s.midi_channel.as_u8());
-                let sidechain_source_id = snap.map_or_else(
-                    || inst.sidechain_source_id.map(|id| id.as_u64()),
-                    |s| s.sidechain_source_id.map(|id| id.as_u64()),
-                );
-                InstrumentState {
-                    id: inst.id,
-                    name: inst.name.clone(),
-                    channel,
-                    volume: inst.volume,
-                    pan: inst.pan,
-                    muted: inst.muted,
-                    solo: inst.solo,
-                    key_range: (inst.key_range.low.as_u8(), inst.key_range.high.as_u8()),
-                    transpose: inst.transpose,
-                    oversampling: inst.oversampling.factor() as u8,
-                    category,
-                    description,
-                    color: inst.color.clone(),
-                    allocation_mode: inst.allocation_mode,
-                    stealing_strategy: inst.stealing_strategy,
-                    max_voices: inst.max_voices,
-                    velocity_amp_sensitivity: inst.velocity_amp_sensitivity,
-                    velocity_filter_sensitivity: inst.velocity_filter_sensitivity,
-                    sidechain_source_id,
-                    patch,
-                }
-            })
-            .collect();
+        let opts = self.build_save_options();
+        let mut project = crate::project_apply::build_project_from_engine(
+            &self.session,
+            &self.song,
+            &self.sample_library,
+            opts,
+        );
+        // Snapshot ordering may differ from UI-state ordering; honour
+        // whichever active id the GUI thinks it has so the file matches
+        // the user's focused instrument.
+        project.active_instrument_id = self.active_instrument_id.map_or(0, |id| id.as_u64());
+        self.overlay_ui_metadata(&mut project);
+        project
+    }
 
-        let song = self.song.read().clone();
+    /// Build save options from current GUI state (author, AWE, glide,
+    /// octave). MCP uses the same `ProjectBuildOptions` type with its
+    /// own field sources (`McpSharedState`); this is the GUI's mirror.
+    fn build_save_options(&self) -> crate::project_apply::ProjectBuildOptions {
+        let author = if self.current_project_author.is_empty() {
+            None
+        } else {
+            Some(self.current_project_author.clone())
+        };
 
-        // Pull awe_description from the MCP-shared cell when available,
-        // so a recent MCP write survives a save in the same frame (the
+        // Prefer the MCP-shared `awe_description` slot when present so a
+        // recent MCP write survives a save in the same frame (the
         // bi-directional sync at the top of update() runs *after* the
-        // project-action handler, so self.awe_ui.description can be stale).
+        // refresh handler, so self.awe_ui.description can be stale).
         #[cfg(feature = "mcp")]
         let awe_description = self
             .mcp_shared
             .as_ref()
-            .and_then(|shared| shared.awe_description.lock().ok().map(|s| s.clone()))
+            .map(|shared| {
+                shared
+                    .awe_description
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone()
+            })
             .filter(|s| !s.is_empty())
             .or_else(|| {
                 if self.awe_ui.description.is_empty() {
@@ -5264,32 +5243,87 @@ impl SynthApp {
             Some(self.awe_ui.description.clone())
         };
 
-        let global = GlobalProjectState {
-            master_volume: synth_core::Gain::new(self.handle.master_volume()),
-            octave_offset: self.keyboard.octave_offset(),
-            glide_time: self.glide_time,
-            awe: if self.awe_enabled {
-                Some(self.awe_ui.to_awe_state(true))
-            } else {
-                None
-            },
-            awe_preset: None,
-            awe_description,
-        };
-
-        let author = if self.current_project_author.is_empty() {
-            None
+        let awe = if self.awe_enabled {
+            Some(self.awe_ui.to_awe_state(true))
         } else {
-            Some(self.current_project_author.clone())
+            None
         };
 
-        ProjectFile::new(
-            instrument_states,
-            self.active_instrument_id.map_or(0, |id| id.as_u64()),
+        crate::project_apply::ProjectBuildOptions {
             author,
-            song,
-            global,
-        )
+            awe,
+            awe_description,
+            glide_time: Some(self.glide_time),
+            octave_offset: Some(self.keyboard.octave_offset()),
+        }
+    }
+
+    /// Overlay GUI-only patch metadata onto a project built from engine
+    /// state: instrument color, module positions, group metadata,
+    /// canvas size, and visualizer modules (the engine doesn't track
+    /// them — they live only in `PatchEditor`).
+    fn overlay_ui_metadata(&self, project: &mut ProjectFile) {
+        use std::collections::HashSet;
+        for inst_state in &mut project.instruments {
+            let Some(ui_inst) = self.instruments.iter().find(|i| i.id == inst_state.id) else {
+                continue;
+            };
+
+            inst_state.color = ui_inst.color.clone();
+
+            let patch = &mut inst_state.patch;
+
+            let content_size = ui_inst.patch_editor.content_size();
+            patch.settings.canvas_size = Some(crate::patch::CanvasSize::new(
+                content_size.x,
+                content_size.y,
+            ));
+            patch.groups = ui_inst.patch_editor.group_states();
+
+            // Overwrite default `(0, 0)` positions on engine-tracked
+            // modules with the canvas positions from the patch editor.
+            for module in &mut patch.modules {
+                if let Ok(module_id) = module.id.parse::<ModuleId>()
+                    && let Some((_, pos, _)) = ui_inst.patch_editor.get_module_data(module_id)
+                {
+                    module.position = crate::patch::Position::new(pos.x, pos.y);
+                }
+            }
+
+            // Append visualizer modules that exist in the PatchEditor
+            // but not in the engine (apply_project skips visualizers,
+            // so build_project_from_engine doesn't emit them either).
+            let engine_ids: HashSet<String> = patch.modules.iter().map(|m| m.id.clone()).collect();
+            for module_id in ui_inst.patch_editor.module_ids() {
+                let id_str = module_id.to_string();
+                if engine_ids.contains(&id_str) {
+                    continue;
+                }
+                let Some((descriptor, position, gui_params)) =
+                    ui_inst.patch_editor.get_module_data(module_id)
+                else {
+                    continue;
+                };
+                let name_to_type_id: std::collections::HashMap<&str, &str> = descriptor
+                    .parameters
+                    .iter()
+                    .map(|p| (p.name.as_str(), p.type_id.as_str()))
+                    .collect();
+                let mut param_map = std::collections::BTreeMap::new();
+                for (display_name, value) in &gui_params {
+                    let key = name_to_type_id
+                        .get(display_name.as_str())
+                        .map_or_else(|| display_name.clone(), |tid| (*tid).to_string());
+                    param_map.insert(key, crate::patch::ParamValue::Float(*value));
+                }
+                patch.modules.push(crate::patch::ModuleState {
+                    id: id_str,
+                    module_type: module_id.module_type,
+                    position: crate::patch::Position::new(position.x, position.y),
+                    parameters: param_map,
+                });
+            }
+        }
     }
 
     /// Load a ZIP bundle project file with embedded samples.
@@ -5311,65 +5345,27 @@ impl SynthApp {
         ))
     }
 
-    /// Send `LoadSampleData` for every Sampler module in the project that has
-    /// `SampleSelect != 0`. Setting the param only stores the id; the engine
-    /// also needs the audio buffer (mirrors `assign_sample_to_module`).
-    fn send_loaded_sample_data(&mut self, project: &ProjectFile) {
-        let Ok(lib) = self.sample_library.read() else {
-            return;
-        };
-        for inst_state in &project.instruments {
-            for module in &inst_state.patch.modules {
-                if module.module_type != synth_core::ModuleType::Sampler {
-                    continue;
-                }
-                let sample_id = match module.parameters.get("sample_select") {
-                    Some(crate::patch::ParamValue::SampleId { sample_id }) => *sample_id,
-                    _ => continue,
-                };
-                if sample_id == 0 {
-                    continue;
-                }
-                let Ok(mod_id) = module.id.parse::<ModuleId>() else {
-                    continue;
-                };
-                let Some(sample) = lib.get(synth_sampler::SampleId::new(sample_id)) else {
-                    continue;
-                };
-                self.handle
-                    .send(crate::audio::preview::load_sample_data_command(
-                        inst_state.id,
-                        mod_id,
-                        sample,
-                    ));
-            }
-        }
-    }
-
-    /// Load a project file, replacing all current state.
-    fn load_project_data(&mut self, project: ProjectFile) {
-        // 1. Stop sequencer playback
-        self.handle.send(EngineCommand::Stop);
-
-        // 2. Remove visualizers and clear all instruments
-        let all_ids: Vec<InstrumentId> = self.instruments.iter().map(|i| i.id).collect();
-        for inst_id in &all_ids {
+    /// Rebuild the GUI's UI mirrors against `project`. Assumes engine
+    /// state has already been written via `project_apply::apply_project`;
+    /// this only touches `InstrumentUiState`, `PatchEditor` canvases,
+    /// visualization buffers, glide / awe / keyboard widgets, and the
+    /// active-instrument bookkeeping.
+    fn refresh_ui_from_project(&mut self, project: &ProjectFile) {
+        // 1. Tear down old UI mirrors. The engine instruments are already
+        //    gone (apply_project ran tear_down_all_instruments); we just
+        //    need to drop the GUI's visualization buffers and the
+        //    `InstrumentUiState` vector.
+        let old_ids: Vec<InstrumentId> = self.instruments.iter().map(|i| i.id).collect();
+        for inst_id in &old_ids {
             self.remove_visualizers_for_instrument(*inst_id);
-            // Failures are non-fatal during load — instruments are being torn down.
-            if let Err(e) = self.session.clear_graph(*inst_id) {
-                eprintln!("clear_graph({inst_id:?}) failed during project load: {e}");
-            }
-            if let Err(e) = self.session.remove_instrument(*inst_id) {
-                eprintln!("remove_instrument({inst_id:?}) failed during project load: {e}");
-            }
         }
-
-        // 3. Clear GUI state
         self.instruments.clear();
         self.active_instrument_id = None;
         self.handle.visualization_buffers.clear();
 
-        // 4. Recreate instruments from project file
+        // 2. Build fresh InstrumentUiState per instrument and populate the
+        //    patch editor canvases. Engine state is already loaded; the
+        //    patch_editor population reads descriptors from `session`.
         let mut max_id: u64 = 0;
         for inst_state in &project.instruments {
             let inst_id = inst_state.id;
@@ -5377,55 +5373,25 @@ impl SynthApp {
                 max_id = inst_id.as_u64();
             }
 
-            // Construct with the saved allocator config so voice pool /
-            // mode / stealing match the project; runtime `MaxVoices`
-            // command is a no-op (engine can't resize the voice pool).
-            let cfg = synth_engine::voice_allocator::AllocatorConfig {
-                max_voices: inst_state.max_voices,
-                mode: inst_state.allocation_mode,
-                stealing: inst_state.stealing_strategy,
-                ..Default::default()
-            };
-            if let Err(e) =
-                self.session
-                    .add_instrument_with_id_and_config(inst_id, &inst_state.name, Some(cfg))
-            {
-                eprintln!(
-                    "Warning: failed to create instrument {}: {e}",
-                    inst_state.name
-                );
-                continue;
-            }
-
-            // Reset counters before loading patch
-            self.session.reset_counters_for_instrument(inst_id);
-
-            // Create UI state
             let channel =
                 MidiChannel::from_one_indexed(inst_state.channel).unwrap_or(MidiChannel::CH1);
             let mut ui_inst =
                 InstrumentUiState::new(inst_id, &inst_state.name).with_channel(channel);
 
-            // Load the patch into this instrument
-            patch_bridge::load_patch(
+            patch_bridge::populate_editor_from_patch(
                 &inst_state.patch,
                 &mut ui_inst.patch_editor,
                 &self.session,
                 &mut self.handle,
-                &mut self.keyboard,
-                &mut self.glide_time,
                 inst_id,
-                true,
             );
 
-            // Restore canvas size so the scroll area matches the original layout
             if let Some(cs) = inst_state.patch.settings.canvas_size {
                 ui_inst
                     .patch_editor
                     .set_min_canvas_size(eframe::egui::Vec2::new(cs.width, cs.height));
             }
 
-            // Apply instrument-level settings
             ui_inst.volume = inst_state.volume;
             ui_inst.pan = inst_state.pan;
             ui_inst.muted = inst_state.muted;
@@ -5451,194 +5417,95 @@ impl SynthApp {
             ui_inst.sidechain_source_id = inst_state.sidechain_source_id.map(InstrumentId::new);
             ui_inst.patch_description = inst_state.patch.description.clone().unwrap_or_default();
 
-            // Send engine commands for instrument parameters
-            if let Err(e) = self.session.rename_instrument(inst_id, &inst_state.name) {
-                eprintln!("Failed to rename instrument {inst_id:?}: {e}");
-            }
-            if !inst_state.description.is_empty()
-                && let Err(e) = self
-                    .session
-                    .set_instrument_description(inst_id, &inst_state.description)
-            {
-                eprintln!("Failed to set instrument description {inst_id:?}: {e}");
-            }
-            // Mirror the saved patch.description into the runtime mirror
-            // on the engine so MCP can read it via get_instrument_info.
-            if let Some(patch_desc) = inst_state.patch.description.as_deref()
-                && !patch_desc.is_empty()
-                && let Err(e) = self
-                    .session
-                    .set_patch_description(inst_id, Some(patch_desc))
-            {
-                eprintln!("Failed to set patch description {inst_id:?}: {e}");
-            }
-            if let Some(src) = inst_state.sidechain_source_id
-                && let Err(e) = self
-                    .session
-                    .set_sidechain_source(inst_id, Some(InstrumentId::new(src)))
-            {
-                eprintln!("Failed to set sidechain source for {inst_id:?}: {e}");
-            }
-            if let Err(e) = self
-                .session
-                .set_instrument_category(inst_id, ui_inst.category)
-            {
-                eprintln!("Failed to set instrument category {inst_id:?}: {e}");
-            }
-            if let Err(e) = self
-                .session
-                .set_instrument_volume(inst_id, inst_state.volume)
-            {
-                eprintln!("Failed to set instrument volume {inst_id:?}: {e}");
-            }
-            if let Err(e) = self.session.set_instrument_pan(inst_id, inst_state.pan) {
-                eprintln!("Failed to set instrument pan {inst_id:?}: {e}");
-            }
-            if let Err(e) = self.session.set_instrument_mute(inst_id, inst_state.muted) {
-                eprintln!("Failed to set instrument mute {inst_id:?}: {e}");
-            }
-            if let Err(e) = self.session.set_instrument_solo(inst_id, inst_state.solo) {
-                eprintln!("Failed to set instrument solo {inst_id:?}: {e}");
-            }
-            if let Err(e) = self.session.set_instrument_midi_channel(inst_id, channel) {
-                eprintln!("Failed to set instrument MIDI channel {inst_id:?}: {e}");
-            }
-
-            // Send oversampling, key range, transpose via engine commands
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: inst_id,
-                param: synth_engine::InstrumentParam::OversamplingFactor(ui_inst.oversampling),
-            });
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: inst_id,
-                param: synth_engine::InstrumentParam::KeyRange(ui_inst.key_range),
-            });
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: inst_id,
-                param: synth_engine::InstrumentParam::Transpose(ui_inst.transpose),
-            });
-            // Voice allocator config + velocity sensitivities. NB: the
-            // engine's `MaxVoices` command is a no-op (voice pool can't
-            // resize at runtime); it is honoured at instrument
-            // construction time below via `session.add_instrument_with_config`.
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: inst_id,
-                param: synth_engine::InstrumentParam::AllocationMode(ui_inst.allocation_mode),
-            });
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: inst_id,
-                param: synth_engine::InstrumentParam::StealingStrategy(ui_inst.stealing_strategy),
-            });
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: inst_id,
-                param: synth_engine::InstrumentParam::VelocityAmpSensitivity(
-                    ui_inst.velocity_amp_sensitivity,
-                ),
-            });
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: inst_id,
-                param: synth_engine::InstrumentParam::VelocityFilterSensitivity(
-                    ui_inst.velocity_filter_sensitivity,
-                ),
-            });
-
             self.instruments.push(ui_inst);
         }
 
-        // 4b. Push audio data for any sampler that was loaded with a
-        // SampleSelect — set_param only stored the id on the module.
-        self.send_loaded_sample_data(&project);
-
-        // 5. Replace song (move instead of clone since we own the project)
-        // MCP get_engine_status reads tempo from transport (not Song), so
-        // sync it explicitly here.
-        self.handle
-            .send(EngineCommand::SetTempo(project.song.default_tempo));
-        {
-            let mut song = self.song.write();
-            *song = project.song;
-        }
-
-        // Project-level author: use the value stored in the file, falling
-        // back to the global default identity from settings.
+        // 3. Global UI mirrors.
         self.current_project_author = project
             .author
+            .clone()
             .unwrap_or_else(|| self.settings.author.clone());
-
-        // 6. Restore global state
-        self.handle
-            .send(EngineCommand::SetMasterVolume(project.global.master_volume));
+        // Mirror the loaded author into the MCP-shared slot so an
+        // MCP-side save reads the loaded value, not a stale one.
+        #[cfg(feature = "mcp")]
+        if let Some(shared) = &self.mcp_shared {
+            *shared.author.lock().unwrap_or_else(|e| e.into_inner()) = project.author.clone();
+        }
+        self.glide_time = project.global.glide_time;
         self.keyboard
             .set_octave_offset(project.global.octave_offset);
-        self.glide_time = project.global.glide_time;
-        self.handle
-            .send(EngineCommand::SetGlideTime(project.global.glide_time));
 
-        // AWE description lives outside AweState (see project.rs). Seed both the UI
-        // buffer and the MCP-shared slot so the next frame's two-way sync doesn't
-        // pull the still-empty shared value back over the loaded one.
+        // AWE description goes into the UI buffer and the MCP-shared slot.
+        // Seeding both prevents the next frame's two-way sync from pulling
+        // a stale empty value back over the just-loaded one.
         self.awe_ui.description = project.global.awe_description.clone().unwrap_or_default();
         #[cfg(feature = "mcp")]
-        if let Some(shared) = &self.mcp_shared
-            && let Ok(mut desc) = shared.awe_description.lock()
-        {
-            desc.clone_from(&self.awe_ui.description);
+        if let Some(shared) = &self.mcp_shared {
+            shared
+                .awe_description
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone_from(&self.awe_ui.description);
         }
 
         if let Some(awe) = &project.global.awe {
             self.awe_enabled = awe.enabled;
             self.awe_ui.restore_from(awe);
-            self.handle.send(EngineCommand::SetAweEnabled {
-                enabled: awe.enabled,
-            });
-            self.handle.send(EngineCommand::SetAweParameter {
-                param: synth_awe::AweParam::RoomShape(awe.room),
-            });
-            self.handle.send(EngineCommand::SetAweParameter {
-                param: synth_awe::AweParam::Material(awe.material),
-            });
-            self.handle.send(EngineCommand::SetAweState {
-                snapshot: awe.to_snapshot(),
-            });
-            self.handle.send(EngineCommand::SetAweParameter {
-                param: synth_awe::AweParam::SpatialEnabled(awe.spatial_enabled),
-            });
-            self.handle.send(EngineCommand::SetAweParameter {
-                param: synth_awe::AweParam::NoteMapping(awe.note_mapping),
-            });
         } else {
             self.awe_enabled = false;
             self.awe_ui = crate::gui::awe_view::AweUiState::default();
         }
 
-        // 7. Update instrument counter
+        // 4. Active-instrument bookkeeping. `apply_project` already sent
+        //    `SetFocusedInstrument` to the engine; we only mirror it
+        //    locally.
         self.next_instrument_id = max_id + 1;
-
-        // 8. Set active instrument
         let target_id = InstrumentId::new(project.active_instrument_id);
-        if self.instruments.iter().any(|i| i.id == target_id) {
-            self.active_instrument_id = Some(target_id);
+        self.active_instrument_id = if self.instruments.iter().any(|i| i.id == target_id) {
+            Some(target_id)
         } else {
-            self.active_instrument_id = self.instruments.first().map(|i| i.id);
-        }
-        self.handle
-            .set_focused_instrument(self.active_instrument_id);
+            self.instruments.first().map(|i| i.id)
+        };
     }
 
-    /// Reset to a new empty project, clearing all instruments and song data.
-    fn reset_to_new_project(&mut self) {
-        let project = ProjectFile::new(
-            vec![],
+    /// Refresh UI mirrors after `project_apply::reset_to_new_project`
+    /// has cleared the engine. Equivalent to a refresh against an empty
+    /// `ProjectFile`.
+    fn refresh_ui_after_reset(&mut self) {
+        let empty = ProjectFile::new(
+            Vec::new(),
             0,
             None,
             synth_sequencer::Song::new("Untitled"),
             GlobalProjectState::default(),
         );
-        self.load_project_data(project);
-        if let Ok(mut lib) = self.sample_library.write() {
-            lib.clear();
+        self.refresh_ui_from_project(&empty);
+    }
+
+    /// Load a project file, replacing all current state.
+    fn load_project_data(&mut self, project: ProjectFile) {
+        if let Err(e) = crate::project_apply::apply_project(
+            &project,
+            &self.session,
+            &self.song,
+            &self.sample_library,
+        ) {
+            eprintln!("apply_project failed during GUI load: {e}");
+        }
+        self.refresh_ui_from_project(&project);
+    }
+
+    /// Reset to a new empty project, clearing all instruments and song data.
+    fn reset_to_new_project(&mut self) {
+        if let Err(e) = crate::project_apply::reset_to_new_project(
+            &self.session,
+            &self.song,
+            &self.sample_library,
+        ) {
+            eprintln!("reset_to_new_project failed: {e}");
         }
         self.sample_view_state.invalidate_peaks();
+        self.refresh_ui_after_reset();
         self.current_project_path = None;
         self.current_patch_name = "Init".to_string();
         self.current_patch_path = None;

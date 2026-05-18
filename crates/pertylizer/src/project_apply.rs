@@ -1,19 +1,10 @@
-//! Headless project lifecycle — apply a `ProjectFile` to the engine/session/song
-//! without depending on any GUI state.
-//!
-//! The GUI's `egui_backend::load_project_data` does the same job but also
-//! rebuilds `InstrumentUiState`, `PatchEditor` canvases, visualization buffers,
-//! and `PianoKeyboard` state. In headless mode none of that exists, so this
-//! module provides a smaller path that touches only the shared engine state
-//! (`SynthSession`, `Song`, `SampleLibrary`, and the engine command channel).
-//!
-//! Used by the headless MCP worker in `main.rs::run_headless_mcp` to service
-//! `pending_project_action` requests originating from MCP.
+//! Canonical engine-side project lifecycle: apply a `ProjectFile` to
+//! the engine/session/song without touching any GUI state. Visualizer
+//! modules are skipped here — they need a GUI-owned
+//! `VisualizationBuffer` to write into.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::JoinHandle;
 
 use parking_lot::RwLock as PRwLock;
 
@@ -24,7 +15,6 @@ use synth_engine::{CommandSender, EngineCommand, InstrumentId, MidiChannel, Modu
 use synth_sampler::SampleLibrary;
 use synth_sequencer::Song;
 
-use crate::mcp_shared::{McpSharedState, ProjectAction};
 use crate::patch::{ConnectionState, InstrumentState, ModuleState, ParamValue, Patch, Position};
 use crate::project::{GlobalProjectState, ProjectFile};
 use crate::session::{SessionError, SynthSession};
@@ -32,73 +22,13 @@ use crate::session::{SessionError, SynthSession};
 type SharedSong = Arc<PRwLock<Song>>;
 type SharedSampleLibrary = Arc<std::sync::RwLock<SampleLibrary>>;
 
-/// Handle returned by [`spawn_worker`] — the caller signals shutdown via the
-/// flag and then joins the thread to wait for it to exit.
-pub struct HeadlessWorker {
-    running: Arc<AtomicBool>,
-    handle: JoinHandle<()>,
-}
-
-impl HeadlessWorker {
-    /// Signal the worker to stop and wait for it to finish in-flight work.
-    pub fn shutdown(self) {
-        self.running.store(false, Ordering::Relaxed);
-        let _ = self.handle.join();
-    }
-}
-
-/// Spawn the headless MCP project-action worker. Mirrors the GUI's per-frame
-/// poll of `pending_project_action`; without it, `submit_project_action`
-/// would always hit the 5-second condvar timeout in `--headless` mode.
-pub fn spawn_worker(
-    shared: Arc<McpSharedState>,
-    session: Arc<SynthSession>,
-    sample_library: SharedSampleLibrary,
-) -> HeadlessWorker {
-    let running = Arc::new(AtomicBool::new(true));
-    let running_clone = Arc::clone(&running);
-    let handle = std::thread::spawn(move || {
-        while running_clone.load(Ordering::Relaxed) {
-            let action = shared
-                .pending_project_action
-                .lock()
-                .ok()
-                .and_then(|mut a| a.take());
-            let Some(action) = action else {
-                std::thread::sleep(std::time::Duration::from_millis(25));
-                continue;
-            };
-            let result = dispatch_action(action, &session, &shared.song, &sample_library);
-            let (lock, cvar) = &shared.project_action_result;
-            if let Ok(mut guard) = lock.lock() {
-                *guard = Some(result);
-                cvar.notify_one();
-            }
-        }
-    });
-    HeadlessWorker { running, handle }
-}
-
-fn dispatch_action(
-    action: ProjectAction,
-    session: &SynthSession,
-    song: &SharedSong,
-    sample_library: &SharedSampleLibrary,
-) -> Result<String, String> {
-    match action {
-        ProjectAction::New => reset_to_new_project(session, song, sample_library),
-        ProjectAction::Save(path) => save_project_to(&path, session, song, sample_library),
-        ProjectAction::Load(path) => load_file_into_engine(&path, session, song, sample_library),
-    }
-}
-
 /// Replace all engine/session/song state with the contents of `project`.
 ///
 /// Visualizer modules in the patch (Oscilloscope, LevelMeter, SpectrumAnalyzer,
 /// SignalMonitor) surface as `VisualizerRequiresGui` entries in the
 /// per-instrument error log and are silently skipped — the session refuses
 /// them because they need a GUI-side `VisualizationBuffer` to write into.
-pub(crate) fn apply_project(
+pub fn apply_project(
     project: &ProjectFile,
     session: &SynthSession,
     song: &SharedSong,
@@ -134,6 +64,19 @@ pub(crate) fn apply_project(
         apply_awe_state(&sender, awe);
     }
 
+    // Focus the saved active instrument (or the first one) so MIDI /
+    // keyboard input is routed correctly. Without this, focus stays on
+    // whatever instrument was focused before the load.
+    let focused = {
+        let target = InstrumentId::new(project.active_instrument_id);
+        if project.instruments.iter().any(|i| i.id == target) {
+            Some(target)
+        } else {
+            project.instruments.first().map(|i| i.id)
+        }
+    };
+    sender.send(EngineCommand::SetFocusedInstrument(focused));
+
     let pattern_count = project.song.patterns().count();
     let track_count = project.song.tracks().count();
     Ok(format!(
@@ -146,7 +89,7 @@ pub(crate) fn apply_project(
 
 /// Reset to an empty project — clears all instruments and replaces the song
 /// with a freshly-named "Untitled".
-pub(crate) fn reset_to_new_project(
+pub fn reset_to_new_project(
     session: &SynthSession,
     song: &SharedSong,
     sample_library: &SharedSampleLibrary,
@@ -167,7 +110,7 @@ pub(crate) fn reset_to_new_project(
 
 /// Load any project-ish file (project JSON, ZIP bundle, single patch, AWE
 /// preset). Mirrors the GUI's `LoadedFile` dispatch.
-pub(crate) fn load_file_into_engine(
+pub fn load_file_into_engine(
     path: &std::path::Path,
     session: &SynthSession,
     song: &SharedSong,
@@ -205,12 +148,67 @@ pub(crate) fn load_file_into_engine(
 ///   because §9.7 scope is the per-instrument persisted fields; AWE round-trip
 ///   from headless is tracked as a separate open item.
 /// - `glide_time` and `octave_offset` use defaults.
-pub(crate) fn save_project_to(
+pub fn save_project_to(
     path: &std::path::Path,
     session: &SynthSession,
     song: &SharedSong,
-    _sample_library: &SharedSampleLibrary,
+    sample_library: &SharedSampleLibrary,
+    opts: ProjectBuildOptions,
 ) -> Result<String, String> {
+    let project = build_project_from_engine(session, song, sample_library, opts);
+
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create parent dir: {e}"))?;
+    }
+
+    project.save(path).map_err(|e| e.to_string())?;
+
+    let pattern_count = project.song.patterns().count();
+    let track_count = project.song.tracks().count();
+    Ok(format!(
+        "Saved project: {} ({} instrument(s), {} pattern(s), {} track(s))",
+        path.display(),
+        project.instruments.len(),
+        pattern_count,
+        track_count
+    ))
+}
+
+/// Caller-supplied fields that are not derivable from engine state alone.
+/// Headless / MCP callers fill in only what shared state knows (author,
+/// awe, awe_description); the GUI also passes `glide_time` and
+/// `octave_offset` from its widget state.
+#[derive(Debug, Clone, Default)]
+pub struct ProjectBuildOptions {
+    /// Project author / composer. `None` writes a missing `author` field.
+    pub author: Option<crate::patch::Author>,
+    /// AWE state to persist. `None` means AWE was disabled.
+    pub awe: Option<synth_awe::AweState>,
+    /// AWE acoustic-character description. Empty/`None` writes a
+    /// missing `awe_description` field.
+    pub awe_description: Option<String>,
+    /// Global glide / portamento time. Defaults to `Seconds::ZERO` when
+    /// unset (matches `GlobalProjectState::default()`).
+    pub glide_time: Option<synth_core::Seconds>,
+    /// Keyboard octave offset. Defaults to `0` when unset.
+    pub octave_offset: Option<i32>,
+}
+
+/// Build a `ProjectFile` from current engine + session + song state,
+/// in memory. Engine-derived fields (instruments, module graph, song,
+/// master volume) come from `session` / `song`; anything not in engine
+/// state (author, AWE, octave, glide) comes from `opts`. Module
+/// positions default to `Position::default()` — GUI callers overlay
+/// their `PatchEditor` positions afterwards.
+#[must_use]
+pub fn build_project_from_engine(
+    session: &SynthSession,
+    song: &SharedSong,
+    _sample_library: &SharedSampleLibrary,
+    opts: ProjectBuildOptions,
+) -> ProjectFile {
     let snapshots = session.list_instruments();
     let engine_state = session.state();
     let shared_graph = &engine_state.shared_graph;
@@ -248,35 +246,21 @@ pub(crate) fn save_project_to(
     let master_volume = synth_core::Gain::new(engine_state.master_volume.load());
     let global = GlobalProjectState {
         master_volume,
-        ..GlobalProjectState::default()
+        octave_offset: opts.octave_offset.unwrap_or(0),
+        glide_time: opts.glide_time.unwrap_or(synth_core::Seconds::ZERO),
+        awe: opts.awe,
+        awe_preset: None,
+        awe_description: opts.awe_description.filter(|s| !s.is_empty()),
     };
 
     let active_instrument_id = snapshots.first().map_or(0, |s| s.id.as_u64());
-    let project = ProjectFile::new(
+    ProjectFile::new(
         instrument_states,
         active_instrument_id,
-        None,
+        opts.author,
         song_clone,
         global,
-    );
-
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create parent dir: {e}"))?;
-    }
-
-    project.save(path).map_err(|e| e.to_string())?;
-
-    let pattern_count = project.song.patterns().count();
-    let track_count = project.song.tracks().count();
-    Ok(format!(
-        "Saved project: {} ({} instrument(s), {} pattern(s), {} track(s))",
-        path.display(),
-        project.instruments.len(),
-        pattern_count,
-        track_count
-    ))
+    )
 }
 
 /// Translate an `InstrumentSnapshot` + freshly-built `Patch` into the
@@ -463,6 +447,15 @@ fn install_instrument(
 
     apply_instrument_metadata(session, inst_state, inst_id);
     push_instrument_params(sender, inst_state, inst_id);
+
+    // Default-enable on install — otherwise the instrument produces no
+    // audio until something else (solo/mute logic, manual toggle) flips
+    // the flag.
+    sender.send(EngineCommand::SetInstrumentEnabled {
+        instrument_id: inst_id,
+        enabled: true,
+    });
+
     Ok(())
 }
 
@@ -790,8 +783,14 @@ mod tests {
         // --- Save ---
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("round_trip.json");
-        let save_msg = save_project_to(&path, &session, &song, &sample_library)
-            .expect("save_project_to should succeed in headless mode");
+        let save_msg = save_project_to(
+            &path,
+            &session,
+            &song,
+            &sample_library,
+            ProjectBuildOptions::default(),
+        )
+        .expect("save_project_to should succeed in headless mode");
         assert!(save_msg.contains("Saved project"));
         assert!(path.exists(), "saved file must exist at {}", path.display());
 

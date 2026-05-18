@@ -190,60 +190,16 @@ fn load_module(
 
     let position = Pos2::new(module_state.position.x, module_state.position.y);
 
-    // Special cases: modules that need VisualizationBuffer injection (GUI-only)
-    match module_state.module_type {
-        ModuleType::SignalMonitor => {
-            load_signal_monitor(
-                module_id,
-                module_state,
-                patch_editor,
-                session,
-                handle,
-                instrument_id,
-                position,
-            );
-            return;
-        }
-        ModuleType::Oscilloscope => {
-            load_visualizer(
-                module_id,
-                patch_editor,
-                session,
-                handle,
-                instrument_id,
-                position,
-                synth_engine::commands::VisualizerType::Oscilloscope,
-                Oscilloscope::new().descriptor(),
-            );
-            return;
-        }
-        ModuleType::LevelMeter => {
-            load_visualizer(
-                module_id,
-                patch_editor,
-                session,
-                handle,
-                instrument_id,
-                position,
-                synth_engine::commands::VisualizerType::LevelMeter,
-                LevelMeter::new().descriptor(),
-            );
-            return;
-        }
-        ModuleType::SpectrumAnalyzer => {
-            load_visualizer(
-                module_id,
-                patch_editor,
-                session,
-                handle,
-                instrument_id,
-                position,
-                synth_engine::commands::VisualizerType::SpectrumAnalyzer,
-                SpectrumAnalyzer::new().descriptor(),
-            );
-            return;
-        }
-        _ => {}
+    if try_load_visualizer_module(
+        module_state,
+        module_id,
+        position,
+        patch_editor,
+        session,
+        handle,
+        instrument_id,
+    ) {
+        return;
     }
 
     // All other modules: delegate to session
@@ -266,6 +222,77 @@ fn load_module(
         handle,
         instrument_id,
     );
+}
+
+/// Visualizer/SignalMonitor modules need a `VisualizationBuffer`
+/// allocated GUI-side and shared with the engine via `Arc`. Returns
+/// `true` if `module_state` was a visualizer and has been installed,
+/// `false` for any other module type (caller must continue with the
+/// normal session path).
+#[allow(clippy::too_many_arguments)]
+fn try_load_visualizer_module(
+    module_state: &ModuleState,
+    module_id: ModuleId,
+    position: Pos2,
+    patch_editor: &mut PatchEditor,
+    session: &SynthSession,
+    handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
+) -> bool {
+    match module_state.module_type {
+        ModuleType::SignalMonitor => {
+            load_signal_monitor(
+                module_id,
+                module_state,
+                patch_editor,
+                session,
+                handle,
+                instrument_id,
+                position,
+            );
+            true
+        }
+        ModuleType::Oscilloscope => {
+            load_visualizer(
+                module_id,
+                patch_editor,
+                session,
+                handle,
+                instrument_id,
+                position,
+                synth_engine::commands::VisualizerType::Oscilloscope,
+                Oscilloscope::new().descriptor(),
+            );
+            true
+        }
+        ModuleType::LevelMeter => {
+            load_visualizer(
+                module_id,
+                patch_editor,
+                session,
+                handle,
+                instrument_id,
+                position,
+                synth_engine::commands::VisualizerType::LevelMeter,
+                LevelMeter::new().descriptor(),
+            );
+            true
+        }
+        ModuleType::SpectrumAnalyzer => {
+            load_visualizer(
+                module_id,
+                patch_editor,
+                session,
+                handle,
+                instrument_id,
+                position,
+                synth_engine::commands::VisualizerType::SpectrumAnalyzer,
+                SpectrumAnalyzer::new().descriptor(),
+            );
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Load a SignalMonitor module (needs VisualizationBuffer injection).
@@ -352,6 +379,35 @@ fn load_visualizer(
     });
 }
 
+/// Resolve a parameter name (descriptor `type_id`, falling back to
+/// display `name`, both case-insensitive) and mirror its value into
+/// the editor's cache. Returns the matched descriptor so callers that
+/// also need to drive the engine can compute `value.to_param(...)`.
+fn apply_param_to_editor<'a>(
+    module_id: ModuleId,
+    descriptor: &'a ModuleDescriptor,
+    param_name: &str,
+    value: &ParamValue,
+    patch_editor: &mut PatchEditor,
+) -> Option<&'a synth_core::ParameterDescriptor> {
+    let lower = param_name.to_lowercase();
+    let param_desc = descriptor
+        .parameters
+        .iter()
+        .find(|p| p.type_id.to_lowercase() == lower)
+        .or_else(|| {
+            descriptor
+                .parameters
+                .iter()
+                .find(|p| p.name.to_lowercase() == lower)
+        })?;
+    // GUI cache uses f32 (lossy for SampleId is fine — display only).
+    // Engine command uses to_param so SampleId round-trips losslessly.
+    let f32_value = value.to_f32(param_desc);
+    patch_editor.set_parameter_by_name(module_id, &param_desc.name, f32_value);
+    Some(param_desc)
+}
+
 /// Apply parameters to a module during patch loading.
 ///
 /// Routes effect-chain modules through `SetEffectParameter` (so duplicate
@@ -367,47 +423,158 @@ pub fn apply_module_parameters(
 ) {
     let is_effect = module_id.module_type.is_effect();
     for (param_name, value) in parameters {
-        // Find the parameter descriptor by type_id (stable JSON key),
-        // falling back to name for legacy files.
-        let param_desc = descriptor
-            .parameters
-            .iter()
-            .find(|p| p.type_id.to_lowercase() == param_name.to_lowercase())
-            .or_else(|| {
-                descriptor
-                    .parameters
-                    .iter()
-                    .find(|p| p.name.to_lowercase() == param_name.to_lowercase())
+        let Some(param_desc) =
+            apply_param_to_editor(module_id, descriptor, param_name, value, patch_editor)
+        else {
+            continue;
+        };
+        let param = value.to_param(param_desc);
+        if is_effect {
+            handle.send(EngineCommand::SetEffectParameter {
+                instrument_id: Some(instrument_id),
+                module_id,
+                param,
             });
-
-        if let Some(param_desc) = param_desc {
-            // GUI cache uses f32 (lossy for SampleId is fine — display only).
-            // Engine command uses to_param so SampleId round-trips losslessly.
-            let f32_value = value.to_f32(param_desc);
-            // Use descriptor name (not patch file name) — matches the key case
-            // used when param_values was initialized from the descriptor.
-            patch_editor.set_parameter_by_name(module_id, &param_desc.name, f32_value);
-
-            let param = value.to_param(param_desc);
-
-            if is_effect {
-                // Effects are per-instrument - send to this instrument's effect chain
-                handle.send(EngineCommand::SetEffectParameter {
-                    instrument_id: Some(instrument_id),
-                    module_id,
-                    param,
-                });
-            } else {
-                // Voice modules - use SetModuleParameter with direct module_id
-                // This correctly handles arbitrary module instances (env-3, amp-2, etc)
-                // that don't fit the fixed PolyModule enum
-                handle.send(EngineCommand::SetModuleParameter {
-                    instrument_id: Some(instrument_id),
-                    module_id,
-                    param,
-                });
-            }
+        } else {
+            // SetModuleParameter (not SetVoiceParameter) so arbitrary
+            // module instances like env-3 / amp-2 — outside the fixed
+            // PolyModule enum — still route correctly.
+            handle.send(EngineCommand::SetModuleParameter {
+                instrument_id: Some(instrument_id),
+                module_id,
+                param,
+            });
         }
+    }
+}
+
+/// Populate `patch_editor` from a patch when the engine already has it
+/// applied. Reads descriptors back from `session`, registers visualizer
+/// modules (which the engine-side apply skips because they need a
+/// GUI-owned `VisualizationBuffer`), and adds connections + effect-chain
+/// order to the editor's view.
+pub fn populate_editor_from_patch(
+    patch: &Patch,
+    patch_editor: &mut PatchEditor,
+    session: &SynthSession,
+    handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
+) {
+    patch_editor.clear();
+
+    for module_state in &patch.modules {
+        populate_editor_module(module_state, patch_editor, session, handle, instrument_id);
+    }
+
+    patch_editor.load_groups_from_patch(&patch.groups);
+
+    for conn in &patch.connections {
+        let from_result = conn.from.0.parse::<ModuleId>();
+        let to_result = conn.to.0.parse::<ModuleId>();
+        if from_result.is_err() || to_result.is_err() {
+            eprintln!(
+                "populate_editor_from_patch: skipping connection with invalid module ID(s): '{}' -> '{}'",
+                conn.from.0, conn.to.0
+            );
+            continue;
+        }
+        if let (Ok(from_id), Ok(to_id)) = (from_result, to_result) {
+            let connection = Connection::new(from_id, &*conn.from.1, to_id, &*conn.to.1);
+            patch_editor.add_connection(connection);
+        }
+    }
+
+    let saved_order: Vec<ModuleId> = patch
+        .settings
+        .effect_chain_order
+        .iter()
+        .filter_map(|s| s.parse::<ModuleId>().ok())
+        .collect();
+    let baseline_order = if saved_order.is_empty() {
+        patch
+            .modules
+            .iter()
+            .filter_map(|m| m.id.parse::<ModuleId>().ok())
+            .filter(|id| id.module_type.is_effect())
+            .collect()
+    } else {
+        saved_order
+    };
+    patch_editor.mark_effect_chain_aligned(baseline_order);
+}
+
+/// Add a single module to `patch_editor` after `apply_project` has run.
+///
+/// Visualizers and SignalMonitor are still created here (with their
+/// `VisualizationBuffer`s) because `apply_project` skips them. All other
+/// modules read their descriptor from `session` and only update the
+/// editor's local cache — no engine commands are sent.
+fn populate_editor_module(
+    module_state: &ModuleState,
+    patch_editor: &mut PatchEditor,
+    session: &SynthSession,
+    handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
+) {
+    let module_id: ModuleId = match module_state.id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            eprintln!(
+                "populate_editor_from_patch: skipping module with invalid ID {:?} in instrument {instrument_id:?}",
+                module_state.id
+            );
+            return;
+        }
+    };
+
+    let position = Pos2::new(module_state.position.x, module_state.position.y);
+
+    if try_load_visualizer_module(
+        module_state,
+        module_id,
+        position,
+        patch_editor,
+        session,
+        handle,
+        instrument_id,
+    ) {
+        return;
+    }
+
+    // Non-visualizer modules: `apply_project` already registered the
+    // descriptor and sent the engine commands; only the editor cache
+    // needs filling.
+    let descriptor = match session.module_descriptor(instrument_id, module_id) {
+        Some(d) => d,
+        None => {
+            eprintln!(
+                "populate_editor_from_patch: missing descriptor for {module_id} in instrument {instrument_id:?} \
+                 (apply_project failed earlier?); skipping module"
+            );
+            return;
+        }
+    };
+
+    patch_editor.add_module_at(module_id, descriptor.clone(), position);
+    apply_module_parameters_ui(
+        module_id,
+        &descriptor,
+        &module_state.parameters,
+        patch_editor,
+    );
+}
+
+/// UI-only counterpart of `apply_module_parameters` — updates the
+/// editor's parameter cache only. Used after `apply_project` has
+/// already written the engine values via `session.apply_patch`.
+fn apply_module_parameters_ui(
+    module_id: ModuleId,
+    descriptor: &ModuleDescriptor,
+    parameters: &BTreeMap<String, ParamValue>,
+    patch_editor: &mut PatchEditor,
+) {
+    for (param_name, value) in parameters {
+        apply_param_to_editor(module_id, descriptor, param_name, value, patch_editor);
     }
 }
 

@@ -7,6 +7,13 @@
   placements emitted NoteOff+NoteOn at the boundary, fading pads/strings every
   pattern. `collect_events_at_tick` now extends the active note's `end_tick`
   instead, so one voice spans both placements.
+- **§0.1 MCP project I/O hangs when the window is minimized** — `save_project` /
+  `load_project` / `new_project` blocked on a GUI condvar that wasn't drained
+  while eframe paused repaints. The bridge now calls `project_apply::apply_project`
+  directly under `block_in_place` and notifies the GUI via `pending_project_refresh`
+  + `project_revision`; the old `submit_project_action` / `pending_project_action` /
+  `project_action_result` are gone. See `docs/project-io-off-gui-thread.md` for
+  the five-session execution log.
 - **§0.3 `analyze_section` pre-roll for crossing notes** — the offline
   renderer Seek'd straight to `start_tick`, leaving notes that began earlier
   silent (visible on per-track soloed pads). `render_range` now scans for the

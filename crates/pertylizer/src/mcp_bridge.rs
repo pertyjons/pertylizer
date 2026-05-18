@@ -2396,23 +2396,15 @@ impl SynthBridge for AppSynthBridge {
     // === Project management ===
 
     fn new_project(&self) -> Result<String, McpBridgeError> {
-        self.submit_project_action(crate::mcp_shared::ProjectAction::New)
+        self.do_new_project()
     }
 
     fn save_project(&self, path: &str) -> Result<String, McpBridgeError> {
-        let path = std::path::PathBuf::from(path);
-        self.submit_project_action(crate::mcp_shared::ProjectAction::Save(path))
+        self.do_save_project(std::path::PathBuf::from(path))
     }
 
     fn load_project(&self, path: &str) -> Result<String, McpBridgeError> {
-        let path = std::path::PathBuf::from(path);
-        if !path.exists() {
-            return Err(McpBridgeError::Other(format!(
-                "File not found: {}",
-                path.display()
-            )));
-        }
-        self.submit_project_action(crate::mcp_shared::ProjectAction::Load(path))
+        self.do_load_project(std::path::PathBuf::from(path))
     }
 
     fn optimize_project(&self) -> Result<OptimizeResult, McpBridgeError> {
@@ -4696,57 +4688,248 @@ impl AppSynthBridge {
         let _ = self.session.set_transport_loop(start, new_end, true);
     }
 
-    /// Submit a project action to the GUI thread and wait for the result.
-    fn submit_project_action(
-        &self,
-        action: crate::mcp_shared::ProjectAction,
-    ) -> Result<String, McpBridgeError> {
-        // Clear any stale result
-        {
-            let (lock, _) = &self.shared.project_action_result;
-            if let Ok(mut guard) = lock.lock() {
-                *guard = None;
+    /// Apply a `ProjectFile` to the engine, stash it for the GUI to
+    /// refresh on next frame, and update the path/status/revision
+    /// metadata. The runtime guards against concurrent loads with the
+    /// shared `project_io_lock`.
+    fn do_load_project(&self, path: std::path::PathBuf) -> Result<String, McpBridgeError> {
+        use crate::mcp_shared::ProjectRefresh;
+
+        let _guard = self.shared.project_io_lock.lock();
+
+        match self.load_project_inner(&path) {
+            Ok((msg, project)) => {
+                // Sync project-level metadata so an immediate follow-up
+                // save (before the GUI's revision-gated refresh runs)
+                // sees the loaded values rather than stale ones.
+                self.set_shared_author(project.author.clone());
+                self.stash_refresh(ProjectRefresh::Loaded(project));
+                self.set_last_loaded_path(Some(path));
+                self.record_io_status(Ok(msg.clone()));
+                Ok(msg)
+            }
+            Err(e) => {
+                self.record_io_status(Err(e.to_string()));
+                Err(e)
             }
         }
+    }
 
-        // Queue the action
-        if let Ok(mut pending) = self.shared.pending_project_action.lock() {
-            *pending = Some(action);
+    fn load_project_inner(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<(String, Box<crate::project::ProjectFile>), McpBridgeError> {
+        use crate::project::{LoadedFile, load_file};
+
+        let project: Box<crate::project::ProjectFile> =
+            match load_file(path).map_err(|e| McpBridgeError::Other(e.to_string()))? {
+                LoadedFile::Project(p) => p,
+                LoadedFile::Bundle(bundle_path) => {
+                    let mut lib = self
+                        .sample_library
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner());
+                    let p = crate::bundle::load_bundle(&bundle_path, &mut lib)
+                        .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+                    Box::new(p)
+                }
+                LoadedFile::Patch(_) => {
+                    return Err(McpBridgeError::Other(
+                    "File is a single-instrument patch — use load_patch instead of load_project"
+                        .to_string(),
+                ));
+                }
+                LoadedFile::AwePreset(_) => {
+                    return Err(McpBridgeError::Other(
+                        "File is an AWE preset — use load_awe_preset instead of load_project"
+                            .to_string(),
+                    ));
+                }
+            };
+
+        crate::project_apply::apply_project(
+            &project,
+            &self.session,
+            &self.shared.song,
+            &self.sample_library,
+        )
+        .map_err(McpBridgeError::Other)?;
+
+        Ok((format!("Loaded {}", path.display()), project))
+    }
+
+    /// Save the current shared state as a project file (bundle if the
+    /// sample library is non-empty, plain JSON otherwise).
+    ///
+    /// Module positions, group metadata, canvas size, instrument
+    /// colour, and visualiser modules default to engine-only values
+    /// because this path doesn't have access to a `PatchEditor` —
+    /// re-loading an MCP-saved project into the GUI will collapse
+    /// those fields. Use the GUI File-menu save when canvas fidelity
+    /// matters.
+    fn do_save_project(&self, path: std::path::PathBuf) -> Result<String, McpBridgeError> {
+        let _guard = self.shared.project_io_lock.lock();
+
+        let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+        let opts = self.build_save_options();
+
+        let result = if has_samples {
+            self.save_project_as_bundle(&path, opts)
         } else {
-            return Err(McpBridgeError::Other(
-                "Failed to queue project action".to_string(),
-            ));
-        }
-
-        // Wait for the GUI to process and signal the result. Save/load on
-        // large projects (and the snapshot read after a heavy batch of
-        // state-mutating commands) routinely exceeds a few seconds, so
-        // we allow 30s before declaring the GUI unresponsive.
-        let (lock, cvar) = &self.shared.project_action_result;
-        let guard = lock
-            .lock()
-            .map_err(|e| McpBridgeError::Other(format!("Lock error: {e}")))?;
-        let timeout = std::time::Duration::from_secs(30);
-        let (mut guard, wait_result) = cvar
-            .wait_timeout_while(
-                guard,
-                timeout,
-                |result: &mut Option<Result<String, String>>| result.is_none(),
+            crate::project_apply::save_project_to(
+                &path,
+                &self.session,
+                &self.shared.song,
+                &self.sample_library,
+                opts,
             )
-            .map_err(|e| McpBridgeError::Other(format!("Wait error: {e}")))?;
+            .map_err(McpBridgeError::Other)
+        };
 
-        if wait_result.timed_out() {
-            return Err(McpBridgeError::Other(
-                "Timeout waiting for GUI to process project action".to_string(),
-            ));
+        match result {
+            Ok(msg) => {
+                self.record_io_status(Ok(msg.clone()));
+                Ok(msg)
+            }
+            Err(e) => {
+                self.record_io_status(Err(e.to_string()));
+                Err(e)
+            }
+        }
+    }
+
+    fn do_new_project(&self) -> Result<String, McpBridgeError> {
+        use crate::mcp_shared::ProjectRefresh;
+
+        let _guard = self.shared.project_io_lock.lock();
+
+        let result = crate::project_apply::reset_to_new_project(
+            &self.session,
+            &self.shared.song,
+            &self.sample_library,
+        )
+        .map_err(McpBridgeError::Other);
+
+        match result {
+            Ok(msg) => {
+                self.set_shared_author(None);
+                self.stash_refresh(ProjectRefresh::Reset);
+                self.set_last_loaded_path(None);
+                self.record_io_status(Ok(msg.clone()));
+                Ok(msg)
+            }
+            Err(e) => {
+                self.record_io_status(Err(e.to_string()));
+                Err(e)
+            }
+        }
+    }
+
+    /// Construct a `ProjectFile` from engine state, bundle it with the
+    /// current sample library, and write to disk.
+    fn save_project_as_bundle(
+        &self,
+        path: &std::path::Path,
+        opts: crate::project_apply::ProjectBuildOptions,
+    ) -> Result<String, McpBridgeError> {
+        let project = crate::project_apply::build_project_from_engine(
+            &self.session,
+            &self.shared.song,
+            &self.sample_library,
+            opts,
+        );
+
+        let lib = self
+            .sample_library
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| McpBridgeError::Other(format!("create parent dir: {e}")))?;
         }
 
-        match guard.take() {
-            Some(Ok(msg)) => Ok(msg),
-            Some(Err(e)) => Err(McpBridgeError::Other(e)),
-            None => Err(McpBridgeError::Other(
-                "No result from project action".to_string(),
-            )),
+        crate::bundle::save_bundle(&project, &lib, path)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+
+        Ok(format!(
+            "Saved bundle: {} ({} sample(s))",
+            path.display(),
+            lib.list().len()
+        ))
+    }
+
+    fn stash_refresh(&self, refresh: crate::mcp_shared::ProjectRefresh) {
+        *self
+            .shared
+            .pending_project_refresh
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(refresh);
+    }
+
+    /// Record the outcome of a project I/O operation and bump
+    /// `project_revision` so the GUI's revision-gated poll picks it
+    /// up. Save events ride the same signal as load/new — there's no
+    /// `pending_project_refresh` in the save case, but the status
+    /// message still needs to surface in the GUI status line.
+    fn record_io_status(&self, status: Result<String, String>) {
+        *self
+            .shared
+            .last_project_io_status
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(status);
+        self.shared
+            .project_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+
+    fn set_last_loaded_path(&self, path: Option<std::path::PathBuf>) {
+        *self
+            .shared
+            .last_loaded_project_path
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = path;
+    }
+
+    fn set_shared_author(&self, author: Option<crate::patch::Author>) {
+        *self.shared.author.lock().unwrap_or_else(|e| e.into_inner()) = author;
+    }
+
+    /// Snapshot shared-state metadata (author, AWE) into save options for
+    /// `project_apply::build_project_from_engine`. The MCP path doesn't
+    /// know about GUI-only fields (glide_time / octave_offset) so they
+    /// stay `None` and default to `0` on save.
+    fn build_save_options(&self) -> crate::project_apply::ProjectBuildOptions {
+        let author = self
+            .shared
+            .author
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let awe_snapshot = self
+            .shared
+            .awe_state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let awe_description = self
+            .shared
+            .awe_description
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        crate::project_apply::ProjectBuildOptions {
+            author,
+            awe: if awe_snapshot.enabled {
+                Some(awe_snapshot)
+            } else {
+                None
+            },
+            awe_description: Some(awe_description).filter(|s| !s.is_empty()),
+            glide_time: None,
+            octave_offset: None,
         }
     }
 }

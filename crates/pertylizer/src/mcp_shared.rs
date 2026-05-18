@@ -4,23 +4,29 @@
 //! the `AppSynthBridge` (MCP side) and `SynthApp` (GUI side).
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use synth_awe::AweState;
 
-use crate::patch::Patch;
+use crate::patch::{Author, Patch};
+use crate::project::ProjectFile;
 use synth_mcp::McpSessionRegistry;
 use synth_sequencer::Song;
 
-/// Action requested by MCP that must be executed on the GUI thread.
-pub enum ProjectAction {
-    /// Reset to a new empty project.
-    New,
-    /// Save the current project to a file.
-    Save(PathBuf),
-    /// Load a project from a file.
-    Load(PathBuf),
+/// UI-refresh notification produced when MCP (or any non-GUI caller)
+/// applies a project to the engine. The GUI consumes this on its next
+/// frame to rebuild its UI mirrors via `refresh_ui_from_project` /
+/// `refresh_ui_after_reset`. Stays `None` after a save — saves don't
+/// change engine state so the UI has nothing to refresh.
+pub enum ProjectRefresh {
+    /// A project was loaded — the GUI must rebuild every UI mirror
+    /// (instruments, patch editor canvases, AWE UI, keyboard octave, …).
+    Loaded(Box<ProjectFile>),
+    /// The project was reset to empty — equivalent to loading an empty
+    /// `ProjectFile`. The GUI rebuilds its mirrors against the empty
+    /// state.
+    Reset,
 }
 
 /// Shared state for communication between MCP bridge and GUI.
@@ -37,10 +43,22 @@ pub struct McpSharedState {
     pub mcp_sessions: McpSessionRegistry,
     /// Auto-layout requested by MCP (consumed by GUI each frame).
     pub pending_auto_layout: AtomicBool,
-    /// Project action queued by MCP (consumed by GUI each frame).
-    pub pending_project_action: Mutex<Option<ProjectAction>>,
-    /// Result of the last project action, signaled via condvar.
-    pub project_action_result: (Mutex<Option<Result<String, String>>>, Condvar),
+    /// Serializes concurrent project I/O (save vs. load, two MCP clients
+    /// racing). Held for the duration of one apply.
+    pub project_io_lock: parking_lot::Mutex<()>,
+    /// Bumped on every successful project apply (load / reset). The GUI
+    /// observes increments to detect "something changed; refresh".
+    pub project_revision: AtomicU64,
+    /// UI-refresh queue populated by MCP/non-GUI loads, drained by the
+    /// GUI on each frame. `None` between events.
+    pub pending_project_refresh: Mutex<Option<ProjectRefresh>>,
+    /// Path of the most recently loaded project, for the GUI title bar
+    /// and "Save" → existing-path detection. Cleared on `new_project`.
+    pub last_loaded_project_path: Mutex<Option<PathBuf>>,
+    /// Result of the most recent project I/O op (load / save / new) so
+    /// the GUI can surface errors in the status line. `None` before any
+    /// op has run.
+    pub last_project_io_status: Mutex<Option<Result<String, String>>>,
     /// Current AWE state (written by GUI each frame, read by MCP).
     pub awe_state: Mutex<AweState>,
     /// Pending AWE state change from MCP (consumed by GUI each frame).
@@ -49,25 +67,18 @@ pub struct McpSharedState {
     /// Lives outside `AweState` to avoid touching 36+ literal initializers
     /// in the preset table. Empty string == not set. Both GUI and MCP
     /// read/write this directly.
-    pub awe_description: Mutex<String>,
+    pub awe_description: Arc<Mutex<String>>,
+    /// Project author / composer metadata. Both GUI ("Project → Edit
+    /// metadata…") and MCP (future `set_project_author`) read and write
+    /// this directly. `None` when not set — file-save then emits a
+    /// missing `author` field.
+    pub author: Arc<Mutex<Option<Author>>>,
 }
 
 impl McpSharedState {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            pending_patch: Mutex::new(None),
-            ui_layout: Mutex::new(UiLayoutData::default()),
-            song: Arc::new(parking_lot::RwLock::new(Song::new("Untitled"))),
-            mcp_listening: AtomicBool::new(false),
-            mcp_sessions: McpSessionRegistry::new(),
-            pending_auto_layout: AtomicBool::new(false),
-            pending_project_action: Mutex::new(None),
-            project_action_result: (Mutex::new(None), Condvar::new()),
-            awe_state: Mutex::new(AweState::default()),
-            pending_awe_state: Mutex::new(None),
-            awe_description: Mutex::new(String::new()),
-        }
+        Self::with_song(Arc::new(parking_lot::RwLock::new(Song::new("Untitled"))))
     }
 
     /// Create with a pre-existing shared Song (so GUI and MCP share the same instance).
@@ -80,11 +91,15 @@ impl McpSharedState {
             mcp_listening: AtomicBool::new(false),
             mcp_sessions: McpSessionRegistry::new(),
             pending_auto_layout: AtomicBool::new(false),
-            pending_project_action: Mutex::new(None),
-            project_action_result: (Mutex::new(None), Condvar::new()),
+            project_io_lock: parking_lot::Mutex::new(()),
+            project_revision: AtomicU64::new(0),
+            pending_project_refresh: Mutex::new(None),
+            last_loaded_project_path: Mutex::new(None),
+            last_project_io_status: Mutex::new(None),
             awe_state: Mutex::new(AweState::default()),
             pending_awe_state: Mutex::new(None),
-            awe_description: Mutex::new(String::new()),
+            awe_description: Arc::new(Mutex::new(String::new())),
+            author: Arc::new(Mutex::new(None)),
         }
     }
 

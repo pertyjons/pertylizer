@@ -4,17 +4,22 @@
 
 ### 0.1 Misc findings
 
+- There is no way to look at pattern which is not in a track.. Need some sort of view/list of patterns.
 - When saving a project with samples, the save should always be in zip-format and file extention .zip, and all other
   should be saved in json with file extention .json
 - In rack view, when a module is below/under the instrument list to the left the module is getting the mouse input not
   the instrument list.
 - When a song ends (last track) the song should stop, the timer and the the vertikal bar should also stop
-- MCP `save_project` / `load_project` / `new_project` time out when the Pertylizer window is minimized, hidden, or
-  unfocused. The `pending_project_action` poll lives inside `eframe::App::ui()` (egui_backend.rs:689), so when
-  eframe pauses repaints for an inactive window the queue is never drained and `submit_project_action`'s 30 s
-  condvar wait expires. Workaround: click the window. Proper fix: call `ctx.request_repaint()` from
-  `submit_project_action` (needs an `egui::Context` handle in `McpSharedState`), or run a separate watcher
-  thread that polls the queue independently of the repaint cycle.
+- [x] **MCP `save_project` / `load_project` / `new_project` time out when the Pertylizer window is minimized,
+  hidden, or unfocused.** Fixed by routing MCP project I/O off the GUI thread — the bridge now calls
+  `project_apply::apply_project` directly with `block_in_place`, and notifies the GUI via
+  `McpSharedState.pending_project_refresh` + `project_revision`. `submit_project_action`,
+  `pending_project_action`, and `project_action_result` are removed. See
+  [docs/project-io-off-gui-thread.md](project-io-off-gui-thread.md) for the full design + execution log.
+- **Follow-up: same fix template applies to the other `pending_*` queues.** `pending_patch`,
+  `pending_awe_state`, and `pending_auto_layout` are still GUI-drained and will hang the same way if MCP-side
+  writes ever block on confirmation. They don't today (none use a condvar), but the architectural shape is
+  worth migrating: MCP writes shared state directly, GUI consumes a refresh marker. Filed as separate task.
 
 ### 0.2 Project settings — unsaved instrument strip parameters
 
