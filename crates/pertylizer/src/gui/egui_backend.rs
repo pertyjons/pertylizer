@@ -124,6 +124,7 @@ impl GuiBackend for EguiBackend {
             options,
             Box::new(move |cc| {
                 setup_custom_fonts(&cc.egui_ctx);
+                egui_extras::install_image_loaders(&cc.egui_ctx);
                 startup_theme.apply();
                 setup_custom_style(&cc.egui_ctx);
                 Ok(Box::new(app))

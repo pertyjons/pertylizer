@@ -90,7 +90,8 @@ eframe = { version = "0.34.2", default-features = false, features = [
     "x11",
 ] }
 egui = { version = "0.34.2" }
-egui_extras = { version = "0.34.2" }
+egui_extras = { version = "0.34.2", features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 egui-file-dialog = { version = "0.13.0" }
 egui-remixicon = { version = "0.34.0" }
 

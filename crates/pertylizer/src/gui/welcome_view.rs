@@ -34,19 +34,22 @@ pub fn show(ui: &mut egui::Ui, t: &Theme, recent_projects: &[PathBuf]) -> Option
     let mut action: Option<WelcomeAction> = None;
 
     ui.vertical_centered(|ui| {
-        ui.add_space(48.0);
+        ui.add_space(32.0);
 
-        ui.label(
-            RichText::new("Pertylizer")
-                .size(t.fonts.size_large * 1.5)
-                .color(t.colors.accent_primary)
-                .strong(),
+        ui.add(
+            egui::Image::new(egui::include_image!("../../assets/images/pertylizer.png"))
+                .fit_to_exact_size(egui::vec2(640.0, 640.0)),
         );
-        ui.add_space(4.0);
+
+        ui.add_space(8.0);
         ui.label(
-            RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
-                .size(t.fonts.size_small)
-                .color(t.colors.text_dim),
+            RichText::new(format!(
+                "v{}  ·  {}",
+                env!("CARGO_PKG_VERSION"),
+                env!("BUILD_DATE")
+            ))
+            .size(t.fonts.size_small)
+            .color(t.colors.text_dim),
         );
 
         ui.add_space(24.0);
