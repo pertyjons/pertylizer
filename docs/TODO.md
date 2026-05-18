@@ -4,16 +4,19 @@
 
 ### 0.1 Misc findings
 
-- **`optimize_project` doesn't remove unused samples (or dead modules).** Today it only walks the song
-  (unused patterns, tracks, instruments via `Song::remove_unused`). The `SampleLibrary` is untouched, so
-  imported wavs that no `Sampler` module references stay forever and bloat the next save (the library
-  being non-empty forces bundle format — same path the recent JSON-load sample-clear and `.zip`/`.json`
-  extension fixes closed from the other end). Logic: collect used `SampleId`s by scanning every
-  instrument's `Sampler` modules' `sample_select` parameter (mirror `push_loaded_sample_data` in
-  `project_apply.rs`), subtract from `library.list()`, remove the rest. Extend `OptimizeResult` with
-  `removed_samples: Vec<String>` (`synth_mcp/src/types.rs:534`). Same pass should also flag/remove
-  dead modules inside patch graphs (modules not reverse-reachable from `StereoOutput` and any
-  sidechain source through `connections`) — bigger scope, do as a follow-up.
+- [x] **`optimize_project` doesn't remove unused samples.** Fixed by adding a shared
+  `project_apply::prune_unused_samples` helper that walks every instrument's live module graph,
+  collects `SampleId`s referenced by `Sampler::SampleSelect`, and drops everything else from the
+  `SampleLibrary`. Called by both the MCP bridge `optimize_project` and the GUI menu's
+  `optimize_project` (same fix in two places — they share the helper). `OptimizeResult` gained a
+  `removed_samples: Vec<String>` field and the MCP tool description was updated to list samples.
+  Regression test in `project_apply.rs` adds two samples + one Sampler referencing only one of them
+  and asserts the orphan is removed. Result: a project loaded as plain JSON, optimized, and saved
+  no longer gets silently bumped into bundle format.
+- [ ] **Follow-up: remove dead modules inside patch graphs.** Original §0.1 entry included this as
+  a stretch goal — modules not reverse-reachable from `StereoOutput` (and any sidechain source)
+  through `connections` should also go in `optimize_project`. Bigger scope (needs graph traversal
+  per instrument); pick up later.
 - [x] **There is no way to look at pattern which is not in a track. Need some sort of view/list of
   patterns.** Fixed by adding a dedicated `Pattern` tab (between AWE and Seq) with a left-side browser
   that lists Used and Orphan patterns separately, search filter, `[+]` to create orphans, and a

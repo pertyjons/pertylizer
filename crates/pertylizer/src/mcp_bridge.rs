@@ -2428,13 +2428,23 @@ impl SynthBridge for AppSynthBridge {
             }
         }
 
-        let total_removed =
-            removed_patterns.len() + removed_tracks.len() + removed_instruments.len();
+        // Drop samples no remaining Sampler references — only meaningful
+        // after the instrument removal above. An empty library lets the
+        // next save stay on plain JSON instead of being forced into a
+        // bundle.
+        let removed_samples =
+            crate::project_apply::prune_unused_samples(&self.session, &self.sample_library);
+
+        let total_removed = removed_patterns.len()
+            + removed_tracks.len()
+            + removed_instruments.len()
+            + removed_samples.len();
 
         Ok(OptimizeResult {
             removed_patterns,
             removed_tracks,
             removed_instruments,
+            removed_samples,
             total_removed,
         })
     }

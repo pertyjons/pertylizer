@@ -631,6 +631,60 @@ fn push_loaded_sample_data(
     }
 }
 
+/// Walk every instrument's live module graph and collect the
+/// `SampleId`s referenced by `Sampler` modules' `SampleSelect` param.
+/// Ids of 0 (default "no sample") are skipped. Mirrors the snapshot
+/// path used by `push_loaded_sample_data`, but reads from the live
+/// engine rather than a `ProjectFile`.
+pub(crate) fn collect_used_sample_ids(
+    session: &SynthSession,
+) -> std::collections::HashSet<synth_sampler::SampleId> {
+    use synth_core::{Param, SamplerParam};
+
+    let mut used = std::collections::HashSet::new();
+    let state = session.state();
+    for snap in session.list_instruments() {
+        let modules = state.shared_graph.get_modules_for_instrument(snap.id);
+        for m in modules {
+            if m.module_type != ModuleType::Sampler {
+                continue;
+            }
+            for param in &m.parameters {
+                if let Param::Sampler(SamplerParam::SampleSelect(sid)) = param
+                    && sid.0 != 0
+                {
+                    used.insert(synth_sampler::SampleId::new(sid.0));
+                }
+            }
+        }
+    }
+    used
+}
+
+/// Drop samples no `Sampler` module currently references. Returns the
+/// removed samples' names, ordered by `SampleId` for deterministic
+/// output. A non-empty library forces the next save into bundle
+/// format, so pruning here keeps round-trips on plain JSON when the
+/// user never needed samples in the first place.
+pub(crate) fn prune_unused_samples(
+    session: &SynthSession,
+    sample_library: &SharedSampleLibrary,
+) -> Vec<String> {
+    let used = collect_used_sample_ids(session);
+    let mut lib = sample_library.write().unwrap_or_else(|e| e.into_inner());
+    let mut to_remove: Vec<(synth_sampler::SampleId, String)> = lib
+        .list()
+        .iter()
+        .filter(|m| !used.contains(&m.id))
+        .map(|m| (m.id, m.name.clone()))
+        .collect();
+    to_remove.sort_by_key(|(id, _)| id.0);
+    for (id, _) in &to_remove {
+        lib.remove(*id);
+    }
+    to_remove.into_iter().map(|(_, name)| name).collect()
+}
+
 fn wait_for_instrument_count(session: &SynthSession, target: usize, timeout_ms: u64) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
     while std::time::Instant::now() < deadline {
@@ -871,5 +925,75 @@ mod tests {
             (lead2.velocity_amp_sensitivity.as_f32() - 0.75).abs() < 1e-6,
             "velocity_amp_sensitivity round-trips through engine"
         );
+    }
+
+    #[test]
+    fn prune_unused_samples_keeps_referenced_drops_orphans() {
+        use synth_sampler::Sample;
+        use synth_sampler::types::{SampleMeta, SampleSource};
+
+        fn make_sample(name: &str) -> Sample {
+            Sample::new(
+                SampleMeta {
+                    id: synth_sampler::SampleId::new(0),
+                    name: name.to_string(),
+                    sample_rate: HwSampleRate(44_100),
+                    channels: synth_core::ChannelCount::Mono,
+                    frame_count: synth_core::SampleCount::new(100),
+                    root_note: None,
+                    loop_region: None,
+                    crop: None,
+                    source: SampleSource::Generated,
+                },
+                vec![0.0_f32; 100].into(),
+            )
+        }
+
+        let (mut engine, handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        ));
+
+        // Two samples live in the library; only "kept" is referenced.
+        let (kept_id, orphan_id) = {
+            let mut lib = sample_library.write().unwrap();
+            (lib.add(make_sample("kept")), lib.add(make_sample("orphan")))
+        };
+
+        let inst_id = InstrumentId::new(0);
+        session
+            .add_instrument_with_id_and_config(inst_id, "Inst", None)
+            .expect("add instrument");
+        let (mod_id, _) = session
+            .add_module(inst_id, ModuleType::Sampler)
+            .expect("add Sampler module");
+        session
+            .command_sender()
+            .send(EngineCommand::SetModuleParameter {
+                instrument_id: Some(inst_id),
+                module_id: mod_id,
+                param: synth_core::Param::Sampler(synth_core::SamplerParam::SampleSelect(
+                    synth_core::SampleId(kept_id.0),
+                )),
+            });
+
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate(TEST_SR),
+            buffer_size: synth_core::BufferSize(256),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+        drive(&mut engine, 32);
+
+        let removed = prune_unused_samples(&session, &sample_library);
+        assert_eq!(removed, vec!["orphan".to_string()]);
+
+        let lib = sample_library.read().unwrap();
+        assert_eq!(lib.len(), 1, "only the referenced sample remains");
+        assert!(lib.get(kept_id).is_some(), "kept sample still in library");
+        assert!(lib.get(orphan_id).is_none(), "orphan sample removed");
     }
 }

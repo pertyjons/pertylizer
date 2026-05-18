@@ -538,6 +538,11 @@ pub struct OptimizeResult {
     pub removed_tracks: Vec<String>,
     /// Names of removed instruments.
     pub removed_instruments: Vec<String>,
+    /// Names of removed samples (no `Sampler` module's `sample_select`
+    /// referenced them). Pruning samples keeps `SampleLibrary` empty
+    /// when nothing uses it, which in turn lets the next save use the
+    /// plain JSON format instead of being forced into a bundle.
+    pub removed_samples: Vec<String>,
     /// Total number of items removed.
     pub total_removed: usize,
 }

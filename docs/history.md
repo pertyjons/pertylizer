@@ -13,6 +13,14 @@
   directly under `block_in_place` and notifies the GUI via `pending_project_refresh`
   + `project_revision`; the old `submit_project_action` / `pending_project_action` /
   `project_action_result` are gone.
+- **§0.1 `optimize_project` now prunes unused samples** — the pass walked the
+  song (patterns, tracks, instruments) but left `SampleLibrary` alone, so
+  imported wavs no `Sampler` referenced silently forced the next save into
+  bundle format. New `project_apply::prune_unused_samples` helper collects
+  used `SampleId`s from every instrument's live module graph and drops the
+  rest; called by both MCP `optimize_project` and the GUI menu. `OptimizeResult`
+  gained `removed_samples: Vec<String>`. Dead-modules-in-patch-graphs left as
+  a follow-up.
 - **§0.1 Remaining `pending_*` queues migrated to revision-marker pattern** —
   follow-up to the project-I/O fix above. `pending_patch` and `pending_awe_state`
   now ride a new `gui_revision: AtomicU64` so the GUI's per-frame poll skips both

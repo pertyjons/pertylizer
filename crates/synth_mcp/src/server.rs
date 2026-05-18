@@ -4533,8 +4533,10 @@ impl SynthMcpServer {
 
     #[tool(
         description = "Optimize the project by removing unused patterns (not placed in arrangement), \
-                       unused tracks (no placements), and unused instruments (not referenced by any track or note). \
-                       Returns a summary of what was removed."
+                       unused tracks (no placements), unused instruments (not referenced by any track or note), \
+                       and unused samples (no `Sampler` module's `sample_select` references them). Pruning samples \
+                       keeps the sample library empty when nothing uses it, which lets the next save stay on plain \
+                       JSON instead of being forced into bundle format. Returns a summary of what was removed."
     )]
     async fn optimize_project(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.optimize_project() {

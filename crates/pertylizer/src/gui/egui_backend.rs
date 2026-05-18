@@ -3930,12 +3930,22 @@ impl SynthApp {
                 .set_focused_instrument(self.active_instrument_id);
         }
 
-        let total = removed_patterns.len() + removed_tracks.len() + removed_instruments;
+        // Drop samples no remaining Sampler references — keeps the
+        // library empty when nothing uses it so the next save can stay
+        // on plain JSON instead of being forced into bundle format.
+        let removed_samples =
+            crate::project_apply::prune_unused_samples(&self.session, &self.sample_library);
+
+        let total = removed_patterns.len()
+            + removed_tracks.len()
+            + removed_instruments
+            + removed_samples.len();
         if total > 0 {
             eprintln!(
-                "Optimized project: removed {} patterns, {} tracks, {removed_instruments} instruments",
+                "Optimized project: removed {} patterns, {} tracks, {removed_instruments} instruments, {} samples",
                 removed_patterns.len(),
                 removed_tracks.len(),
+                removed_samples.len(),
             );
         }
     }
