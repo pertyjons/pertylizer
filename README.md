@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="crates/pertylizer/assets/images/pertylizer.png" alt="Pertylizer logo" width="320">
+</p>
+
 # Pertylizer
 
 [![Build & Test](https://github.com/pertyjons/pertylizer/actions/workflows/build.yml/badge.svg)](https://github.com/pertyjons/pertylizer/actions/workflows/build.yml)
