@@ -168,6 +168,12 @@ impl Duration {
     pub fn as_pattern_tick(self) -> PatternTick {
         PatternTick(self.0)
     }
+
+    /// Convert this duration to beats (quarter notes).
+    #[must_use]
+    pub fn as_beats(self) -> f32 {
+        self.0 as f32 / TICKS_PER_QUARTER as f32
+    }
 }
 
 impl Add for Duration {

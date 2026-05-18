@@ -4,11 +4,21 @@
 
 ### 0.1 Misc findings
 
-- There is no way to look at pattern which is not in a track.. Need some sort of view/list of patterns.
+- [x] **There is no way to look at pattern which is not in a track. Need some sort of view/list of
+  patterns.** Fixed by adding a dedicated `Pattern` tab (between AWE and Seq) with a left-side browser
+  that lists Used and Orphan patterns separately, search filter, `[+]` to create orphans, and a
+  right-click menu (Rename / Duplicate / Delete) with undo. The central panel hosts the existing
+  piano roll widget unchanged; selection is shared with the Seq view's bottom panel via
+  `SequencerViewState.opened_pattern`. Supporting helpers: `Duration::as_beats()`,
+  `Song::pattern_playhead_for()`, `SequencerViewState::close_piano_roll()`, and the extracted
+  `commit_pattern_rename` — also adopted at the existing Seq-view sites.
 - When saving a project with samples, the save should always be in zip-format and file extention .zip, and all other
   should be saved in json with file extention .json
-- In rack view, when a module is below/under the instrument list to the left the module is getting the mouse input not
-  the instrument list.
+- [x] **In rack view, when a module is below/under the instrument list to the left the module is getting the mouse
+  input not the instrument list.** Fixed by tightening the patch-editor `Area::constrain_to` from a 20000×20000
+  region to `visible_rect` and adding `constrain(false)` so module Areas no longer register interact rects under
+  the surrounding `SidePanel`/`TopBottomPanel`. Redundant manual `set_clip_rect(visible_rect)` calls dropped —
+  `Area::content_ui` already applies the constrain rect as its clip rect.
 - [x] **When a song ends (last track) the song should stop, the timer and the vertical bar should also
   stop.** Fixed by caching `Song::calculate_length()` in `SequencerEngine` and adding a non-looping
   auto-stop branch to the per-tick loop next to the existing loop-wrap branch: at the song end the

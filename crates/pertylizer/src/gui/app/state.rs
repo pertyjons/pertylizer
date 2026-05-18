@@ -16,6 +16,8 @@ pub enum AppView {
     Rack,
     /// Acoustic World Engine view.
     AcousticWorld,
+    /// Pattern browser and editor view (orphan patterns + full-window piano roll).
+    Pattern,
     /// Sequencer view (piano roll / arrangement).
     Sequencer,
     /// Sample browser and editor view.

@@ -266,6 +266,9 @@ struct SynthApp {
     song: std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>>,
     sequencer_view_state: crate::gui::sequencer::SequencerViewState,
 
+    // Pattern view state (tab-local UI bits; selection shared via sequencer_view_state)
+    pattern_view_state: crate::gui::pattern_view::PatternViewState,
+
     // MCP shared state
     #[cfg(feature = "mcp")]
     mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
@@ -404,6 +407,7 @@ impl SynthApp {
             awe_ui: crate::gui::awe_view::AweUiState::default(),
             song,
             sequencer_view_state: crate::gui::sequencer::SequencerViewState::new(),
+            pattern_view_state: crate::gui::pattern_view::PatternViewState::default(),
             #[cfg(feature = "mcp")]
             mcp_shared: config.mcp_shared,
             #[cfg(feature = "mcp")]
@@ -1118,12 +1122,13 @@ impl eframe::App for SynthApp {
                 ui.separator();
                 {
                     let t = theme();
-                    let views: [(AppView, &str); 4] = [
+                    let views: [(AppView, &str); 5] = [
                         (AppView::Rack, &format!("{} Rack", ri::LAYOUT_GRID_FILL)),
                         (
                             AppView::AcousticWorld,
                             &format!("{} AWE", ri::SURROUND_SOUND_FILL),
                         ),
+                        (AppView::Pattern, &format!("{} Pattern", ri::PIANO_FILL)),
                         (AppView::Sequencer, &format!("{} Seq", ri::PLAY_LIST_FILL)),
                         (AppView::Sample, &format!("{} Sample", ri::MUSIC_FILL)),
                     ];
@@ -2320,6 +2325,17 @@ impl eframe::App for SynthApp {
                         }
                         crate::gui::awe_view::AweViewAction::None => {}
                     }
+                }
+                AppView::Pattern => {
+                    crate::gui::pattern_view::draw_pattern_view(
+                        ui,
+                        &mut self.handle,
+                        &self.song,
+                        &mut self.sequencer_view_state,
+                        &mut self.pattern_view_state,
+                        &self.instruments,
+                        &mut self.undo_manager,
+                    );
                 }
                 AppView::Sequencer => {
                     crate::gui::sequencer::draw_sequencer_view(

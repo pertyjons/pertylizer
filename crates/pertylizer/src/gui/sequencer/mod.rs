@@ -155,8 +155,10 @@ pub struct SequencerViewState {
     step_entry_mode: bool,
     /// Step entry cursor position.
     step_cursor_tick: PatternTick,
-    /// Currently opened pattern (None = piano roll closed).
-    opened_pattern: Option<PatternId>,
+    /// Currently opened pattern (None = piano roll closed). Shared between
+    /// the Seq view's bottom panel and the Pattern tab — see
+    /// `docs/pattern-tab-plan.md` §5.
+    pub(crate) opened_pattern: Option<PatternId>,
     /// Currently selected notes.
     selected_notes: HashSet<NoteId>,
     /// Active edit tool.
@@ -167,8 +169,9 @@ pub struct SequencerViewState {
     selected_automation: Option<AutomationTarget>,
     /// Track currently being renamed (inline text edit).
     editing_track_name: Option<(TrackId, String)>,
-    /// Pattern currently being renamed (inline text edit).
-    editing_pattern_name: Option<(PatternId, String)>,
+    /// Pattern currently being renamed (inline text edit). Shared between
+    /// the Seq view's piano-roll toolbar and the Pattern tab browser.
+    pub(crate) editing_pattern_name: Option<(PatternId, String)>,
     /// Repeat song (loop entire song).
     repeat_enabled: bool,
     /// Pattern solo: when true (default), mini-transport play isolates the
@@ -281,11 +284,48 @@ impl SequencerViewState {
             fallback_ticks_per_row as u32
         })
     }
+
+    /// Close the piano roll — clears the opened pattern, selection, and any
+    /// in-flight drag. Called when the user clicks the piano-roll close
+    /// button or when the open pattern is deleted from elsewhere.
+    pub(crate) fn close_piano_roll(&mut self) {
+        self.opened_pattern = None;
+        self.selected_notes.clear();
+        self.drag = None;
+    }
 }
 
 impl Default for SequencerViewState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Apply a rename to a pattern under a short write-lock and push a
+/// `RenamePattern` undo entry. No-op if the name is unchanged or the pattern
+/// no longer exists.
+pub(crate) fn commit_pattern_rename(
+    song: &Arc<RwLock<Song>>,
+    undo_manager: &mut crate::undo::UndoManager,
+    pattern_id: PatternId,
+    new_name: String,
+) {
+    let mut old_name: Option<String> = None;
+    {
+        let mut song_w = song.write();
+        if let Some(pat) = song_w.pattern_mut(pattern_id)
+            && pat.name != new_name
+        {
+            old_name = Some(pat.name.clone());
+            pat.name = new_name.clone();
+        }
+    }
+    if let Some(old) = old_name {
+        undo_manager.push(crate::undo::UndoAction::RenamePattern {
+            pattern_id,
+            old_name: old,
+            new_name,
+        });
     }
 }
 
@@ -2513,7 +2553,7 @@ struct AutomationLaneSnapshot {
 }
 
 /// Collected data for piano roll rendering.
-struct PianoRollData {
+pub(crate) struct PianoRollData {
     pattern_name: String,
     pattern_id: PatternId,
     length_ticks: SeqDuration,
@@ -2531,7 +2571,7 @@ struct PianoRollData {
 }
 
 /// Collect piano roll data from song (short read-lock, then release).
-fn collect_piano_roll_data(
+pub(crate) fn collect_piano_roll_data(
     song: &Arc<RwLock<Song>>,
     pattern_id: PatternId,
 ) -> Option<PianoRollData> {
@@ -2692,7 +2732,7 @@ fn quantize_tick(tick: PatternTick, ticks_per_row: u16) -> PatternTick {
 /// Draw the piano roll in a bottom panel.
 /// Returns false if the close button was clicked.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
-fn draw_piano_roll(
+pub(crate) fn draw_piano_roll(
     ui: &mut egui::Ui,
     data: &PianoRollData,
     playhead_tick: Option<PatternTick>,
@@ -2719,25 +2759,7 @@ fn draw_piano_roll(
                         .font(egui::FontId::proportional(14.0)),
                 );
                 if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    let new_name = name_buf.clone();
-                    let pid = data.pattern_id;
-                    let mut old_name: Option<String> = None;
-                    {
-                        let mut song_w = song.write();
-                        if let Some(pat) = song_w.pattern_mut(pid)
-                            && pat.name != new_name
-                        {
-                            old_name = Some(pat.name.clone());
-                            pat.name = new_name.clone();
-                        }
-                    }
-                    if let Some(old) = old_name {
-                        undo_manager.push(crate::undo::UndoAction::RenamePattern {
-                            pattern_id: pid,
-                            old_name: old,
-                            new_name,
-                        });
-                    }
+                    commit_pattern_rename(song, undo_manager, data.pattern_id, name_buf.clone());
                     view_state.editing_pattern_name = None;
                 } else if !resp.has_focus() {
                     resp.request_focus();
@@ -5676,16 +5698,13 @@ pub(crate) fn draw_sequencer_view(
                         instruments,
                         undo_manager,
                     ) {
-                        view_state.opened_pattern = None;
-                        view_state.selected_notes.clear();
-                        view_state.drag = None;
+                        view_state.close_piano_roll();
                         // Closing the piano roll resumes normal multi-pattern playback.
                         handle.send(EngineCommand::SetSoloPattern(None));
                     }
                 } else {
-                    // Pattern no longer exists
                     ui.label(RichText::new("Pattern not found").color(theme().colors.text_dim));
-                    view_state.opened_pattern = None;
+                    view_state.close_piano_roll();
                     handle.send(EngineCommand::SetSoloPattern(None));
                 }
             });

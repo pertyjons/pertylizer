@@ -60,6 +60,9 @@ pub mod panels;
 pub mod sequencer;
 
 #[cfg(feature = "gui-egui")]
+pub mod pattern_view;
+
+#[cfg(feature = "gui-egui")]
 pub mod sample_view;
 
 #[cfg(feature = "gui-egui")]

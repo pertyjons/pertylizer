@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ids::{PatternId, SeqInstrumentId, TrackId};
 use super::pattern::Pattern;
-use super::time::{Duration, TICKS_PER_QUARTER, Tick, TimeSignature};
+use super::time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 use super::track::SequencerTrack;
 use synth_core::{Bpm, Gain, Semitones};
 
@@ -489,6 +489,29 @@ impl Song {
     /// Get all placements.
     pub fn arrangement(&self) -> &[PatternPlacement] {
         &self.arrangement
+    }
+
+    /// If `pattern_id` is currently playing through some placement at
+    /// `current_tick`, return the pattern-relative tick. Otherwise `None`.
+    #[must_use]
+    pub fn pattern_playhead_for(
+        &self,
+        pattern_id: PatternId,
+        current_tick: Tick,
+    ) -> Option<PatternTick> {
+        let pattern_length = self.pattern(pattern_id)?.length;
+        self.arrangement.iter().find_map(|p| {
+            if p.pattern_id != pattern_id {
+                return None;
+            }
+            let end = p.end(pattern_length);
+            if current_tick >= p.start && current_tick < end {
+                #[allow(clippy::cast_possible_truncation)]
+                Some(PatternTick((current_tick.0 - p.start.0) as u32))
+            } else {
+                None
+            }
+        })
     }
 
     /// Get placements in a time range.
