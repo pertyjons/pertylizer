@@ -14,8 +14,7 @@
   hidden, or unfocused.** Fixed by routing MCP project I/O off the GUI thread — the bridge now calls
   `project_apply::apply_project` directly with `block_in_place`, and notifies the GUI via
   `McpSharedState.pending_project_refresh` + `project_revision`. `submit_project_action`,
-  `pending_project_action`, and `project_action_result` are removed. See
-  [docs/project-io-off-gui-thread.md](project-io-off-gui-thread.md) for the full design + execution log.
+  `pending_project_action`, and `project_action_result` are removed.
 - **Follow-up: same fix template applies to the other `pending_*` queues.** `pending_patch`,
   `pending_awe_state`, and `pending_auto_layout` are still GUI-drained and will hang the same way if MCP-side
   writes ever block on confirmation. They don't today (none use a condvar), but the architectural shape is

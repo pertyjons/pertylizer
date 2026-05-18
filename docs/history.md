@@ -12,8 +12,7 @@
   while eframe paused repaints. The bridge now calls `project_apply::apply_project`
   directly under `block_in_place` and notifies the GUI via `pending_project_refresh`
   + `project_revision`; the old `submit_project_action` / `pending_project_action` /
-  `project_action_result` are gone. See `docs/project-io-off-gui-thread.md` for
-  the five-session execution log.
+  `project_action_result` are gone.
 - **§0.3 `analyze_section` pre-roll for crossing notes** — the offline
   renderer Seek'd straight to `start_tick`, leaving notes that began earlier
   silent (visible on per-track soloed pads). `render_range` now scans for the
