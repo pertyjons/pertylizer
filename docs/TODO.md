@@ -393,19 +393,19 @@ healthy and `get_graph_diagnostics` confirms that, but the user has no way to se
 cable view alone. Real example: the `Acid Bass` example patch — `env-2` modulates Filter cutoff
 via Mod Matrix slot 1 with amount 0.9, zero cables, and looks dead.
 
-- [ ] **GUI: badge on module headers when referenced by Mod Matrix.** Show a small icon on any
-  module whose semantic ID appears as a `Slot N Source` or `Slot N Dest`, with a hover tooltip
-  listing the slots that reference it. Distinguishes "actually dead" from "routed via matrix".
+- [x] **GUI: badge on module headers when referenced by Mod Matrix.** Done in 0.289.0 —
+  `PatchAnalysis` collects matrix sources/destinations and the header shows an
+  arrow badge with a tooltip pointing at the Mod Matrix module.
 - [ ] **GUI: ghost cables for Mod Matrix routings.** In the cable view, draw faint dashed lines
   (different colour) from matrix sources to their destinations (e.g. `env-2` → `flt-1.cutoff`),
   togglable in the View menu. Both routing paradigms become visible in one canvas.
-- [ ] **MCP: surface Mod Matrix routings in `get_connections`.** Add a `mod_matrix_routings`
-  array `[{source: "Env 2", dest: "Filter 1 Cutoff", amount: 0.9, slot: 1}]` (or a separate
-  `get_mod_matrix_routing` tool) so AI inspecting a patch sees the full modulation graph in one
-  call instead of decoding `Slot N` parameters by hand.
-- [ ] **MCP: stop reporting `output_ports: []` on matrix-only modules.** Either expose a
-  semantic `"matrix"` port or document the convention in `get_module_info` so AI doesn't
-  conclude "this module has no output and is dead".
+- [x] **MCP: surface Mod Matrix routings in `get_connections`.** Done in 0.289.0 —
+  new `get_mod_matrix_routings` tool returns `[{source, source_name, destination,
+  destination_name, amount, enabled, slot}]` with positional `ModSource` /
+  `ModDestination` resolution.
+- [x] **MCP: stop reporting `output_ports: []` on matrix-only modules.** Done in
+  0.289.0 — `list_modules` surfaces a virtual `"matrix"` port on the matrix
+  module and on every module referenced by an active matrix slot.
 
 ---
 

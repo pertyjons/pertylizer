@@ -10,7 +10,7 @@ use eframe::egui::{self, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec
 use egui_remixicon::icons as ri;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
-use synth_core::{ModMatrixGridSize, ModMatrixParam, ModuleType, Param};
+use synth_core::{ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource, ModuleType, Param};
 use synth_core::{ModuleCategory, ModuleDescriptor, ParameterDescriptor, PortName, PortType};
 use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
@@ -130,24 +130,148 @@ fn group_menu_icon_rect(rect: Rect) -> Rect {
     )
 }
 
+/// Paint a tinted, framed, labelled background zone around a set of panels.
+/// Returns silently when no panels are supplied so callers can pass a
+/// filtered iterator without an outer empty-check.
+fn draw_module_zone<'a>(
+    ui: &mut Ui,
+    scroll_rect: Rect,
+    panels: impl IntoIterator<Item = &'a ModulePanelState>,
+    color: Color32,
+    label: &str,
+) {
+    let mut min_x = f32::MAX;
+    let mut min_y = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut max_y = f32::MIN;
+    let mut found = false;
+
+    for panel in panels {
+        found = true;
+        min_x = min_x.min(panel.position.x);
+        min_y = min_y.min(panel.position.y);
+        max_x = max_x.max(panel.position.x + panel.size.x);
+        max_y = max_y.max(panel.position.y + panel.size.y);
+    }
+
+    if !found {
+        return;
+    }
+
+    let padding = GRID_SIZE;
+    let origin = scroll_rect.min.to_vec2();
+    let zone_rect = Rect::from_min_max(
+        Pos2::new(
+            ((min_x - padding) / GRID_SIZE).floor() * GRID_SIZE + origin.x,
+            ((min_y - padding) / GRID_SIZE).floor() * GRID_SIZE + origin.y,
+        ),
+        Pos2::new(
+            ((max_x + padding) / GRID_SIZE).ceil() * GRID_SIZE + origin.x,
+            ((max_y + padding) / GRID_SIZE).ceil() * GRID_SIZE + origin.y,
+        ),
+    );
+
+    let painter = ui.painter();
+    painter.rect_filled(zone_rect, 4.0, color.gamma_multiply(0.06));
+    painter.rect_stroke(
+        zone_rect,
+        4.0,
+        egui::Stroke::new(1.0, color.gamma_multiply(0.15)),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        zone_rect.min + egui::vec2(8.0, 4.0),
+        egui::Align2::LEFT_TOP,
+        label,
+        egui::FontId::proportional(11.0),
+        color.gamma_multiply(0.35),
+    );
+}
+
 /// Patch analysis: counts module types to enable smart display names and filtering.
 ///
 /// Built once per frame from the current panels. Used for:
 /// - Numbered module titles ("LFO 1" / "LFO 2" when 2+ LFOs, "LFO" when only 1)
 /// - Filtering mod matrix dropdown choices (hide "LFO 2" source if only 1 LFO exists)
+/// - Mod-matrix-reference lookups for the header badge (so source/destination
+///   modules show that they're wired through the matrix even with zero cables)
 pub(crate) struct PatchAnalysis {
     /// How many of each module type exist.
     module_counts: HashMap<ModuleType, u16>,
+    /// Modules referenced as a Mod Matrix source.
+    mod_matrix_sources: HashSet<ModuleId>,
+    /// Modules referenced as a Mod Matrix destination.
+    mod_matrix_destinations: HashSet<ModuleId>,
 }
 
 impl PatchAnalysis {
     /// Build from current patch panels.
     fn from_panels(panels: &HashMap<ModuleId, ModulePanelState>) -> Self {
         let mut module_counts: HashMap<ModuleType, u16> = HashMap::new();
+        let mut positions: HashMap<ModuleType, Vec<ModuleId>> = HashMap::new();
         for id in panels.keys() {
             *module_counts.entry(id.module_type).or_insert(0) += 1;
+            positions.entry(id.module_type).or_default().push(*id);
         }
-        Self { module_counts }
+        for v in positions.values_mut() {
+            v.sort_by_key(|id| id.instance);
+        }
+        let position_lookup = |mt: ModuleType, pos: usize| -> Option<ModuleId> {
+            positions.get(&mt)?.get(pos).copied()
+        };
+
+        let mut mod_matrix_sources: HashSet<ModuleId> = HashSet::new();
+        let mut mod_matrix_destinations: HashSet<ModuleId> = HashSet::new();
+
+        for (id, panel) in panels {
+            if id.module_type != ModuleType::ModMatrix {
+                continue;
+            }
+
+            let grid_size = panel
+                .param_values
+                .get(ModMatrixParam::GridSize(ModMatrixGridSize::default()).name())
+                .map(|v| ModMatrixGridSize::from_index(v.round() as usize))
+                .unwrap_or_default();
+
+            for slot in 0..grid_size.slot_count() as u8 {
+                let enabled_name = ModMatrixParam::SlotEnabled(slot, true).name();
+                let enabled = panel
+                    .param_values
+                    .get(enabled_name)
+                    .map(|v| *v != 0.0)
+                    .unwrap_or(true);
+                if !enabled {
+                    continue;
+                }
+
+                let source_name = ModMatrixParam::SlotSource(slot, ModSource::None).name();
+                if let Some(src_idx) = panel.param_values.get(source_name) {
+                    let src = ModSource::from_index(src_idx.round() as usize);
+                    if let Some((mt, pos)) = src.module_type_and_position()
+                        && let Some(mid) = position_lookup(mt, pos)
+                    {
+                        mod_matrix_sources.insert(mid);
+                    }
+                }
+
+                let dest_name = ModMatrixParam::SlotDestination(slot, ModDestination::None).name();
+                if let Some(dst_idx) = panel.param_values.get(dest_name) {
+                    let dst = ModDestination::from_index(dst_idx.round() as usize);
+                    if let Some((mt, pos, _)) = dst.module_target_position()
+                        && let Some(mid) = position_lookup(mt, pos)
+                    {
+                        mod_matrix_destinations.insert(mid);
+                    }
+                }
+            }
+        }
+
+        Self {
+            module_counts,
+            mod_matrix_sources,
+            mod_matrix_destinations,
+        }
     }
 
     /// Get count of a specific module type.
@@ -162,6 +286,16 @@ impl PatchAnalysis {
     #[must_use]
     fn display_name(&self, module_id: ModuleId, base_name: &str) -> String {
         format!("{base_name} {}", module_id.instance)
+    }
+
+    /// `true` if any Mod Matrix slot routes from this module.
+    fn is_mod_matrix_source(&self, module_id: ModuleId) -> bool {
+        self.mod_matrix_sources.contains(&module_id)
+    }
+
+    /// `true` if any Mod Matrix slot routes to this module.
+    fn is_mod_matrix_destination(&self, module_id: ModuleId) -> bool {
+        self.mod_matrix_destinations.contains(&module_id)
     }
 }
 
@@ -337,6 +471,11 @@ pub struct PatchEditor {
     sample_list: Vec<(u64, String)>,
     /// Cached effect chain order from previous frame (for change detection).
     prev_effect_chain_order: Vec<ModuleId>,
+    /// Cached set of cable-less Mod Matrix attachment modules from the
+    /// previous frame (for change detection). When this set changes,
+    /// attachments are auto-stacked beneath the matrix module so they
+    /// fall inside the Mod Matrix framed zone.
+    prev_mod_matrix_attachments: Vec<ModuleId>,
     /// Cached connected ports per module (rebuilt when connections change).
     connected_ports_cache: HashMap<ModuleId, Vec<PortName>>,
     /// When true, skip reading positions back from egui Area state.
@@ -374,6 +513,7 @@ impl PatchEditor {
             sample_list: Vec::new(),
             suppress_position_readback: false,
             prev_effect_chain_order: Vec::new(),
+            prev_mod_matrix_attachments: Vec::new(),
             connected_ports_cache: HashMap::new(),
         }
     }
@@ -1259,6 +1399,26 @@ impl PatchEditor {
         }
     }
 
+    /// Mirror engine parameter values into the panel's cache, skipping
+    /// entries already at the engine value. Reconciling an engine→GUI
+    /// round-trip of a mid-drag knob must not clobber the user's value,
+    /// so equal values are a no-op.
+    pub fn sync_module_params(&mut self, module_id: ModuleId, params: &[Param]) {
+        let Some(panel) = self.panels.get_mut(&module_id) else {
+            return;
+        };
+        for param in params {
+            let name = param.name();
+            let new_value = param.as_f32();
+            match panel.param_values.get(name) {
+                Some(current) if (*current - new_value).abs() <= f32::EPSILON => continue,
+                _ => {
+                    panel.param_values.insert(name.to_string(), new_value);
+                }
+            }
+        }
+    }
+
     /// Set the position of a module in the rack view.
     pub fn set_module_position(&mut self, module_id: ModuleId, position: Pos2) {
         if let Some(panel) = self.panels.get_mut(&module_id) {
@@ -1331,6 +1491,8 @@ impl PatchEditor {
         let mut result = PatchEditorResult::default();
 
         self.realign_effect_chain_if_changed(effect_chain_order);
+        let analysis = PatchAnalysis::from_panels(&self.panels);
+        self.realign_mod_matrix_attachments_if_changed(&analysis);
 
         let content_size = self.content_size();
 
@@ -1357,6 +1519,7 @@ impl PatchEditor {
 
                 // Draw tinted background zone behind effect modules
                 self.draw_effect_zone(ui, scroll_rect);
+                self.draw_mod_matrix_zone(ui, scroll_rect, &analysis);
 
                 // Save scroll area layer + clip rect for cable drawing (behind modules)
                 scroll_layer_id = Some(ui.layer_id());
@@ -1435,9 +1598,6 @@ impl PatchEditor {
         // Now clear port positions so modules can repopulate them for next frame
         self.port_positions.clear();
 
-        // Build patch analysis for display names and mod matrix filtering
-        let analysis = PatchAnalysis::from_panels(&self.panels);
-
         // Collect data before mutable iteration
         let module_ids: Vec<_> = self.z_order.clone();
 
@@ -1483,11 +1643,16 @@ impl PatchEditor {
                 ModuleCategory::Effect | ModuleCategory::Visualizer | ModuleCategory::Utility
             );
 
-            // Dim modules that aren't connected to output, or are bypassed
+            // Dim modules that aren't connected to output, or are bypassed.
+            // Matrix-referenced modules count as connected (routed via slot
+            // instead of cable).
             let opacity = if is_bypassed {
-                0.4 // Heavily dimmed when bypassed
-            } else if is_global_module {
-                1.0 // Global modules are always active
+                0.4
+            } else if is_global_module
+                || analysis.is_mod_matrix_source(module_id)
+                || analysis.is_mod_matrix_destination(module_id)
+            {
+                1.0
             } else {
                 match connectivity_status {
                     ModuleConnectivity::Connected => 1.0,
@@ -1805,6 +1970,36 @@ impl PatchEditor {
                                 .min_size(button_min_size),
                             )
                             .on_hover_text(conn_tooltip);
+
+                            let is_matrix_source = analysis.is_mod_matrix_source(module_id);
+                            let is_matrix_destination =
+                                analysis.is_mod_matrix_destination(module_id);
+                            if is_matrix_source || is_matrix_destination {
+                                let badge_color = t.colors.accent_purple;
+                                let badge_icon = if is_matrix_source && is_matrix_destination {
+                                    ri::ARROW_LEFT_RIGHT_LINE
+                                } else if is_matrix_source {
+                                    ri::ARROW_RIGHT_UP_LINE
+                                } else {
+                                    ri::ARROW_LEFT_DOWN_LINE
+                                };
+                                let badge_tip = match (is_matrix_source, is_matrix_destination) {
+                                    (true, true) => "Mod Matrix\nRouted as both source and destination via the Mod Matrix.",
+                                    (true, false) => "Mod Matrix Source\nThis module drives one or more Mod Matrix slots.\nLook in the Mod Matrix module for slot details.",
+                                    (false, true) => "Mod Matrix Destination\nA Mod Matrix slot modulates a parameter on this module.\nLook in the Mod Matrix module for slot details.",
+                                    _ => "",
+                                };
+                                ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(badge_icon)
+                                            .color(badge_color)
+                                            .size(12.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(button_min_size),
+                                )
+                                .on_hover_text(badge_tip);
+                            }
 
                             // Power/bypass button
                             let (power_icon, power_color) = if is_bypassed {
@@ -2436,69 +2631,51 @@ impl PatchEditor {
 
     /// Draw a tinted background zone behind effect (and visualizer) modules.
     fn draw_effect_zone(&self, ui: &mut Ui, scroll_rect: Rect) {
-        let padding = GRID_SIZE;
-
-        // Compute bounding box of effect/visualizer modules in logical coordinates
-        let mut min_x = f32::MAX;
-        let mut min_y = f32::MAX;
-        let mut max_x = f32::MIN;
-        let mut max_y = f32::MIN;
-        let mut has_effects = false;
-
-        for (id, panel) in &self.panels {
+        let panels = self.panels.iter().filter_map(|(id, p)| {
             let category = self.descriptors.get(id).map(|d| d.category);
-            if matches!(
+            matches!(
                 category,
                 Some(ModuleCategory::Effect | ModuleCategory::Visualizer)
-            ) {
-                has_effects = true;
-                min_x = min_x.min(panel.position.x);
-                min_y = min_y.min(panel.position.y);
-                max_x = max_x.max(panel.position.x + panel.size.x);
-                max_y = max_y.max(panel.position.y + panel.size.y);
-            }
-        }
+            )
+            .then_some(p)
+        });
+        draw_module_zone(
+            ui,
+            scroll_rect,
+            panels,
+            category_color(ModuleCategory::Effect),
+            &format!("{} Effect Chain", ri::FLASHLIGHT_FILL),
+        );
+    }
 
-        if !has_effects {
+    /// Draw a tinted framed zone behind any Mod Matrix modules. The bounding
+    /// box expands to include cable-less matrix attachments (modules wired
+    /// only through a matrix slot, auto-stacked beneath the matrix by
+    /// `align_mod_matrix_attachments`) so they sit visibly inside the same
+    /// frame. Modules that *also* have cables stay in the voice-graph flow
+    /// and the frame does not engulf them.
+    fn draw_mod_matrix_zone(&self, ui: &mut Ui, scroll_rect: Rect, analysis: &PatchAnalysis) {
+        if analysis.count(ModuleType::ModMatrix) == 0 {
             return;
         }
-
-        // Expand to grid-aligned bounds with padding
-        let origin = scroll_rect.min.to_vec2();
-        let zone_rect = Rect::from_min_max(
-            Pos2::new(
-                ((min_x - padding) / GRID_SIZE).floor() * GRID_SIZE + origin.x,
-                ((min_y - padding) / GRID_SIZE).floor() * GRID_SIZE + origin.y,
-            ),
-            Pos2::new(
-                ((max_x + padding) / GRID_SIZE).ceil() * GRID_SIZE + origin.x,
-                ((max_y + padding) / GRID_SIZE).ceil() * GRID_SIZE + origin.y,
-            ),
-        );
-
-        let painter = ui.painter();
-
-        // Tinted background
-        let fx_color = category_color(ModuleCategory::Effect);
-        let tint = fx_color.gamma_multiply(0.06);
-        painter.rect_filled(zone_rect, 4.0, tint);
-
-        // Border
-        painter.rect_stroke(
-            zone_rect,
-            4.0,
-            egui::Stroke::new(1.0, fx_color.gamma_multiply(0.15)),
-            egui::StrokeKind::Inside,
-        );
-
-        // Label in top-left corner
-        let label_pos = zone_rect.min + egui::vec2(8.0, 4.0);
-        painter.text(
-            label_pos,
-            egui::Align2::LEFT_TOP,
-            format!("{} Effect Chain", ri::FLASHLIGHT_FILL),
-            egui::FontId::proportional(11.0),
-            fx_color.gamma_multiply(0.35),
+        // `prev_mod_matrix_attachments` was refreshed earlier this frame by
+        // `realign_mod_matrix_attachments_if_changed`, so it matches the
+        // current attachment set without a second walk over all panels.
+        let matrix_panels = self
+            .panels
+            .iter()
+            .filter(|(id, _)| id.module_type == ModuleType::ModMatrix)
+            .map(|(_, p)| p);
+        let attachment_panels = self
+            .prev_mod_matrix_attachments
+            .iter()
+            .filter_map(|id| self.panels.get(id));
+        draw_module_zone(
+            ui,
+            scroll_rect,
+            matrix_panels.chain(attachment_panels),
+            theme().colors.accent_purple,
+            &format!("{} Mod Matrix", ri::PULSE_FILL),
         );
     }
 
@@ -4025,6 +4202,83 @@ impl PatchEditor {
             .extend_from_slice(effect_chain_order);
     }
 
+    /// Cable-less voice-graph modules whose only routing is through a Mod
+    /// Matrix slot (source or destination). Sorted by `ModuleId` for stable
+    /// diffing against `prev_mod_matrix_attachments`.
+    fn collect_mod_matrix_attachments(&self, analysis: &PatchAnalysis) -> Vec<ModuleId> {
+        let mut attachments: Vec<ModuleId> = self
+            .panels
+            .keys()
+            .filter(|id| {
+                if id.module_type == ModuleType::ModMatrix {
+                    return false;
+                }
+                let referenced =
+                    analysis.is_mod_matrix_source(**id) || analysis.is_mod_matrix_destination(**id);
+                if !referenced {
+                    return false;
+                }
+                self.connected_ports_cache
+                    .get(*id)
+                    .map(|s| s.is_empty())
+                    .unwrap_or(true)
+            })
+            .copied()
+            .collect();
+        attachments.sort();
+        attachments
+    }
+
+    /// Treat the current attachments set as baseline so the next
+    /// `realign_mod_matrix_attachments_if_changed()` call is a no-op.
+    /// Use after loading a project so saved positions survive.
+    pub fn mark_mod_matrix_attachments_aligned(&mut self) {
+        let analysis = PatchAnalysis::from_panels(&self.panels);
+        self.prev_mod_matrix_attachments = self.collect_mod_matrix_attachments(&analysis);
+    }
+
+    /// If the set of cable-less matrix-referenced modules changed (slot
+    /// edited, module added/removed), stack them vertically below the
+    /// anchor matrix module so the Mod Matrix framed zone naturally
+    /// encloses them.
+    fn realign_mod_matrix_attachments_if_changed(&mut self, analysis: &PatchAnalysis) {
+        let current = self.collect_mod_matrix_attachments(analysis);
+        if current == self.prev_mod_matrix_attachments {
+            return;
+        }
+        self.align_mod_matrix_attachments(&current);
+        self.prev_mod_matrix_attachments = current;
+    }
+
+    /// Stack matrix attachments vertically beneath the first Mod Matrix
+    /// module on the canvas. No-op when no matrix exists or no
+    /// attachments resolved (e.g., every referenced module also has audio
+    /// cables and is therefore exempted by `collect_mod_matrix_attachments`).
+    fn align_mod_matrix_attachments(&mut self, attachments: &[ModuleId]) {
+        if attachments.is_empty() {
+            return;
+        }
+        let anchor = self
+            .panels
+            .iter()
+            .find(|(id, _)| id.module_type == ModuleType::ModMatrix)
+            .map(|(_, p)| (p.position, p.size));
+        let Some((anchor_pos, anchor_size)) = anchor else {
+            return;
+        };
+
+        let gap = GRID_SIZE;
+        let mut y = anchor_pos.y + anchor_size.y + gap;
+        for &id in attachments {
+            if let Some(panel) = self.panels.get_mut(&id) {
+                let x = anchor_pos.x;
+                panel.position = snap_to_grid(Pos2::new(x, y));
+                y = panel.position.y + panel.size.y + gap;
+                self.needs_reposition.insert(id);
+            }
+        }
+    }
+
     /// Align effect chain modules in a vertical column, preserving their x-center
     /// and stacking them top-to-bottom in chain order with consistent spacing.
     fn align_effect_chain(&mut self, effect_chain_order: &[ModuleId]) {
@@ -4286,6 +4540,14 @@ impl PatchEditor {
                 self.needs_reposition.insert(module_id);
             }
         }
+
+        // Force the frame-loop realign to fire even when the attachment
+        // set hasn't changed — auto-layout just scattered modulators into
+        // the Modulation zone by category, but matrix attachments belong
+        // beneath the matrix.
+        self.prev_mod_matrix_attachments.clear();
+        let analysis = PatchAnalysis::from_panels(&self.panels);
+        self.realign_mod_matrix_attachments_if_changed(&analysis);
     }
 }
 
@@ -5108,25 +5370,85 @@ fn draw_mod_matrix_grid(
                     matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotEnabled(s, _)) if s as usize == slot_idx)
                 });
 
-                ui.group(|ui| {
+                // Read current values up front so we can pick a frame
+                // colour that reflects the slot's overall state.
+                let src_val = src_param.and_then(|p| {
+                    state.param_values.get(&p.name).copied()
+                        .or(Some(p.range.default))
+                });
+                let dst_val = dst_param.and_then(|p| {
+                    state.param_values.get(&p.name).copied()
+                        .or(Some(p.range.default))
+                });
+                let amount_val = amt_param.and_then(|p| {
+                    state.param_values.get(&p.name).copied()
+                        .or(Some(p.range.default))
+                }).unwrap_or(0.0);
+                let enabled = en_param
+                    .and_then(|p| state.param_values.get(&p.name).copied().or(Some(p.range.default)))
+                    .map(|v| v > 0.5)
+                    .unwrap_or(true);
+
+                let has_source = src_val.map(|v| v.round() as usize != 0).unwrap_or(false);
+                let has_dest = dst_val.map(|v| v.round() as usize != 0).unwrap_or(false);
+                let fully_configured = has_source && has_dest;
+
+                // Slot state determines the frame stroke + the row tint:
+                //  - Active (enabled + both ends): purple accent, full opacity
+                //  - Disabled (enabled=false): dim grey frame, dimmed text
+                //  - Half-configured (enabled but src or dst is None): orange
+                //    warning frame so the user sees the slot won't route.
+                let (frame_stroke_color, content_tint) = if !enabled {
+                    (theme().colors.text_dim, theme().colors.text_dim)
+                } else if !fully_configured {
+                    (theme().colors.accent_orange, theme().colors.text_secondary)
+                } else {
+                    (theme().colors.accent_purple, theme().colors.text_primary)
+                };
+
+                let slot_frame = egui::Frame::group(ui.style())
+                    .stroke(egui::Stroke::new(1.0, frame_stroke_color.gamma_multiply(0.6)))
+                    .fill(frame_stroke_color.gamma_multiply(0.04));
+
+                slot_frame.show(ui, |ui| {
                     ui.set_width(slot_width);
                     ui.vertical(|ui| {
-                        // Slot label
-                        ui.label(
-                            egui::RichText::new(format!("Slot {slot_num}"))
-                                .size(theme().fonts.size_small)
-                                .color(theme().colors.text_dim),
-                        );
+                        // Slot header: "Slot 1" + state hint on the right.
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("Slot {slot_num}"))
+                                    .size(theme().fonts.size_small)
+                                    .color(content_tint),
+                            );
+                            if !enabled || !fully_configured {
+                                let (icon, color, tip) = if !enabled {
+                                    (ri::CLOSE_CIRCLE_LINE, theme().colors.text_dim, "Slot disabled")
+                                } else {
+                                    (
+                                        ri::ALERT_LINE,
+                                        theme().colors.accent_orange,
+                                        "Slot has no effect — set both Source and Destination",
+                                    )
+                                };
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            egui::RichText::new(icon)
+                                                .size(theme().fonts.size_small)
+                                                .color(color),
+                                        )
+                                        .on_hover_text(tip);
+                                    },
+                                );
+                            }
+                        });
 
                         // Source ComboBox
                         if let Some(sp) = src_param
                             && let Some(ref choices) = sp.choices
                         {
-                            let current = state
-                                .param_values
-                                .get(&sp.name)
-                                .copied()
-                                .unwrap_or(sp.range.default);
+                            let current = src_val.unwrap_or(sp.range.default);
                             let mut selected = current.round() as usize;
                             let text = choices
                                 .get(selected)
@@ -5158,15 +5480,33 @@ fn draw_mod_matrix_grid(
                             }
                         }
 
+                        // Signal-flow arrow with the modulation amount inline.
+                        // Arrow direction (down + sign-marker) and colour map
+                        // directly to slot state so a glance tells you whether
+                        // the routing is active, polar, or inert.
+                        let arrow_icon = if amount_val >= 0.0 {
+                            ri::ARROW_DOWN_LINE
+                        } else {
+                            ri::ARROW_UP_LINE
+                        };
+                        let arrow_text = if amount_val.abs() > 0.001 {
+                            format!("{arrow_icon}  {amount_val:+.2}")
+                        } else {
+                            arrow_icon.to_string()
+                        };
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                egui::RichText::new(arrow_text)
+                                    .size(theme().fonts.size_small)
+                                    .color(frame_stroke_color),
+                            );
+                        });
+
                         // Destination ComboBox
                         if let Some(dp) = dst_param
                             && let Some(ref choices) = dp.choices
                         {
-                            let current = state
-                                .param_values
-                                .get(&dp.name)
-                                .copied()
-                                .unwrap_or(dp.range.default);
+                            let current = dst_val.unwrap_or(dp.range.default);
                             let mut selected = current.round() as usize;
                             let text = choices
                                 .get(selected)
@@ -5198,14 +5538,10 @@ fn draw_mod_matrix_grid(
                             }
                         }
 
-                        // Amount knob + Enabled checkbox side by side
+                        // Amount knob + Active toggle side by side.
                         ui.horizontal(|ui| {
                             if let Some(ap) = amt_param {
-                                let current = state
-                                    .param_values
-                                    .get(&ap.name)
-                                    .copied()
-                                    .unwrap_or(ap.range.default);
+                                let current = amount_val;
                                 let mut value = current;
                                 Knob::from_descriptor(&mut value, ap)
                                     .label("Amount")
@@ -5219,14 +5555,13 @@ fn draw_mod_matrix_grid(
                             }
 
                             if let Some(ep) = en_param {
-                                let current = state
-                                    .param_values
-                                    .get(&ep.name)
-                                    .copied()
-                                    .unwrap_or(ep.range.default);
-                                let mut enabled = current > 0.5;
-                                if ui.checkbox(&mut enabled, "").changed() {
-                                    let val = if enabled { 1.0 } else { 0.0 };
+                                let mut is_on = enabled;
+                                if ui
+                                    .checkbox(&mut is_on, "Active")
+                                    .on_hover_text("Enable this slot")
+                                    .changed()
+                                {
+                                    let val = if is_on { 1.0 } else { 0.0 };
                                     state.param_values.insert(ep.name.clone(), val);
                                     param_changes.push(ep.id.with_f32(val));
                                 }
@@ -5607,5 +5942,93 @@ fn convert_port_type(port_type: synth_core::PortType) -> WidgetPortType {
         synth_core::PortType::Control => WidgetPortType::Control,
         synth_core::PortType::Gate => WidgetPortType::Gate,
         synth_core::PortType::Midi => WidgetPortType::Midi,
+    }
+}
+
+#[cfg(test)]
+mod patch_analysis_tests {
+    use super::*;
+
+    fn matrix_panel(slot_setups: &[(usize, ModSource, ModDestination, bool)]) -> ModulePanelState {
+        let mut state =
+            ModulePanelState::new(ModuleId::new(ModuleType::ModMatrix, 1), Pos2::new(0.0, 0.0));
+        state.param_values.insert(
+            "Grid Size".to_string(),
+            ModMatrixGridSize::Grid4x4.index() as f32,
+        );
+        for (slot_num, src, dst, enabled) in slot_setups {
+            state
+                .param_values
+                .insert(format!("Slot {slot_num} Source"), src.index() as f32);
+            state
+                .param_values
+                .insert(format!("Slot {slot_num} Dest"), dst.index() as f32);
+            state.param_values.insert(
+                format!("Slot {slot_num} Enabled"),
+                if *enabled { 1.0 } else { 0.0 },
+            );
+        }
+        state
+    }
+
+    fn stub_panel(mt: ModuleType, instance: u16) -> (ModuleId, ModulePanelState) {
+        let id = ModuleId::new(mt, instance);
+        (id, ModulePanelState::new(id, Pos2::ZERO))
+    }
+
+    /// `ModSource::Envelope(1)` resolves to the *second* envelope in this
+    /// instrument's panel set, not to `ModuleId(Envelope, 2)`. With
+    /// envelopes at non-canonical instances env-5/env-6 the badge must
+    /// still land on env-6 (and Filter 1 Cutoff on flt-3 — the only
+    /// filter in this instrument).
+    #[test]
+    fn analysis_marks_source_and_destination_positional() {
+        let mut panels = HashMap::new();
+        panels.insert(
+            ModuleId::new(ModuleType::ModMatrix, 2),
+            matrix_panel(&[(
+                1,
+                ModSource::Envelope(1),
+                ModDestination::FilterCutoff(0),
+                true,
+            )]),
+        );
+        for (id, state) in [
+            stub_panel(ModuleType::Envelope, 5),
+            stub_panel(ModuleType::Envelope, 6),
+            stub_panel(ModuleType::Filter, 3),
+        ] {
+            panels.insert(id, state);
+        }
+
+        let analysis = PatchAnalysis::from_panels(&panels);
+        assert!(analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Envelope, 6)));
+        assert!(analysis.is_mod_matrix_destination(ModuleId::new(ModuleType::Filter, 3)));
+        // The bug we're fixing: env-2/flt-1 don't exist in this instrument,
+        // so they must NOT be flagged.
+        assert!(!analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Envelope, 2)));
+        assert!(!analysis.is_mod_matrix_destination(ModuleId::new(ModuleType::Filter, 1)));
+        // The first envelope is not the slot's target.
+        assert!(!analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Envelope, 5)));
+    }
+
+    /// Disabled slots must drop out of the reference sets so toggling a
+    /// slot off in the matrix UI clears the badge immediately.
+    #[test]
+    fn disabled_slot_clears_references() {
+        let mut panels = HashMap::new();
+        panels.insert(
+            ModuleId::new(ModuleType::ModMatrix, 1),
+            matrix_panel(&[(1, ModSource::Lfo(0), ModDestination::OscPitch(0), false)]),
+        );
+        for (id, state) in [
+            stub_panel(ModuleType::Lfo, 1),
+            stub_panel(ModuleType::Oscillator, 1),
+        ] {
+            panels.insert(id, state);
+        }
+        let analysis = PatchAnalysis::from_panels(&panels);
+        assert!(!analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Lfo, 1)));
+        assert!(!analysis.is_mod_matrix_destination(ModuleId::new(ModuleType::Oscillator, 1)));
     }
 }

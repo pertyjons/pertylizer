@@ -219,6 +219,31 @@ impl ModSource {
             .map(|s| crate::module_traits::ChoiceOption::new(s.id(), s.name()))
             .collect()
     }
+
+    /// `(ModuleType, positional_index)` this source maps to, or `None` for
+    /// implicit sources that are not module instances (`Velocity`,
+    /// `NoteNumber`, `ModWheel`, `PitchBend`, `Aftertouch`, `PolyAftertouch`).
+    /// Kinetic axes all resolve to `KineticModulator` position 0 — it's a
+    /// single physical module emitting three outputs.
+    ///
+    /// `positional_index` is 0-based and refers to the i-th module of
+    /// `ModuleType` in the *containing instrument's* voice graph, sorted by
+    /// `ModuleId.instance`. Resolve to an actual `ModuleId` via the caller's
+    /// per-instrument module enumeration — `ModuleId::new(mt, position + 1)`
+    /// is only correct when the global instance counter happens to match
+    /// positions (typical for the first instrument in a fresh project).
+    pub fn module_type_and_position(&self) -> Option<(crate::ModuleType, usize)> {
+        let pair = match self {
+            Self::Lfo(i) => (crate::ModuleType::Lfo, *i as usize),
+            Self::Envelope(i) => (crate::ModuleType::Envelope, *i as usize),
+            Self::EnvFollower(i) => (crate::ModuleType::EnvelopeFollower, *i as usize),
+            Self::KineticPos | Self::KineticVel | Self::KineticAcc => {
+                (crate::ModuleType::KineticModulator, 0)
+            }
+            _ => return None,
+        };
+        Some(pair)
+    }
 }
 
 // ============================================================================
@@ -349,6 +374,27 @@ impl ModDestination {
             .iter()
             .map(|d| crate::module_traits::ChoiceOption::new(d.id(), d.name()))
             .collect()
+    }
+
+    /// `(ModuleType, positional_index, param_name)` this destination maps
+    /// to, or `None` for [`Self::None`]. `positional_index` is 0-based and
+    /// refers to the i-th module of `ModuleType` in the containing
+    /// instrument — resolve to an actual `ModuleId` via the caller's
+    /// per-instrument module enumeration. See
+    /// [`ModSource::module_type_and_position`] for the same convention.
+    pub fn module_target_position(&self) -> Option<(crate::ModuleType, usize, &'static str)> {
+        let (mt, i, param) = match self {
+            Self::None => return None,
+            Self::OscPitch(i) => (crate::ModuleType::Oscillator, *i, "pitch"),
+            Self::OscLevel(i) => (crate::ModuleType::Oscillator, *i, "level"),
+            Self::FilterCutoff(i) => (crate::ModuleType::Filter, *i, "cutoff"),
+            Self::FilterResonance(i) => (crate::ModuleType::Filter, *i, "resonance"),
+            Self::AmpLevel(i) => (crate::ModuleType::Amplifier, *i, "level"),
+            Self::AmpPan(i) => (crate::ModuleType::Amplifier, *i, "pan"),
+            Self::LfoRate(i) => (crate::ModuleType::Lfo, *i, "rate"),
+            Self::LfoDepth(i) => (crate::ModuleType::Lfo, *i, "depth"),
+        };
+        Some((mt, i as usize, param))
     }
 }
 

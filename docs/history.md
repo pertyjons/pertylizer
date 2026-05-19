@@ -1,6 +1,51 @@
 # Version History
 
 ## [unreleased]
+
+## [0.289.0] - 2026-05-19
+### §4.4 Mod Matrix routing visibility + cleanup
+
+- **§4.4 Header badge on matrix-referenced modules** — `PatchAnalysis` now
+  collects matrix sources/destinations from slot params; module headers show a
+  purple arrow badge with a tooltip pointing at the Mod Matrix slot. Modules
+  routed only via the matrix no longer dim to "disconnected".
+- **§4.4 MCP `get_mod_matrix_routings` tool** — returns
+  `[{source, source_name, destination, destination_name, amount, enabled, slot}]`
+  with positional `ModSource`/`ModDestination` resolution (e.g. `Envelope(1)`
+  resolves to the second envelope in that instrument's graph, not the global
+  `env-2`). New `ModSource::module_type_and_position` /
+  `ModDestination::module_target_position` helpers replace a buggy `+1`
+  global-instance guess.
+- **§4.4 Virtual `"matrix"` port** — `list_modules` surfaces a `"matrix"` port
+  on the Mod Matrix module and on every module referenced by an active slot,
+  so MCP clients no longer see matrix-only modules as `output_ports: []` /
+  dead.
+- **Mod Matrix parameter edits now reach the engine** — the GUI's category
+  dispatch dropped any param edit that wasn't in an explicit whitelist
+  (`Oscillator | Filter | …`), so Mod Matrix knobs/dropdowns updated the GUI
+  but never the engine. Replaced with the same `is_effect()` test
+  `session.set_parameter` uses — Effect → `SetEffectParameter`, everything
+  else → `SetModuleParameter`.
+- **Auto-layout: dedicated Mod Matrix column with zone padding** — Mod Matrix
+  modules pin to their own group regardless of cable connectivity, placed
+  right of the Global column with `ZONE_PADDING = 2 * GRID` extra space so
+  the Effect-zone and Mod Matrix zone rectangles get one clear grid cell of
+  separation. Cable-less aux visualisers (Oscilloscope, LevelMeter,
+  SpectrumAnalyzer) now also land in Global so the Effect zone doesn't stretch
+  across the canvas.
+- **`apply_auto_layout` re-stacks matrix attachments** — auto-layout placed
+  cable-less modulators in the Modulation zone by category, leaving the Mod
+  Matrix zone rectangle stretched across empty space. Forces a realign post-pass
+  so attachments stack under the matrix in the same grid column.
+- **`draw_module_zone` helper** — Effect-zone and Mod Matrix-zone drawing
+  collapse into one helper that takes an iterator of panels + colour + label,
+  removing ~120 lines of near-duplicate code.
+- **Reconcile fast path** — `reconcile_with_session` now compares
+  `SharedGraphState::version()` against a cached `last_seen_graph_version`
+  and skips the per-frame clone of every module snapshot when the engine
+  hasn't changed. Eliminates ~4·N·instruments HashMap allocations per idle
+  frame.
+
 ### §0 known-bug fixes
 
 - **§0.1 Sequencer legato across placement boundaries** — adjacent same-pitch

@@ -2117,6 +2117,7 @@ impl SynthMcpServer {
             "list_modules" => list_modules(InstrumentIdParam),
             "get_module_info" => get_module_info(ModuleParam),
             "get_connections" => get_connections(InstrumentIdParam),
+            "get_mod_matrix_routings" => get_mod_matrix_routings(InstrumentIdParam),
             "get_parameter" => get_parameter(GetParameterParam),
             "get_engine_status" => get_engine_status(NoParams),
             "get_graph_diagnostics" => get_graph_diagnostics(InstrumentIdParam),
@@ -2629,6 +2630,16 @@ impl SynthMcpServer {
     async fn get_connections(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.get_connections(params.0.instrument_id) {
             Ok(conns) => to_json(&conns),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Get all active Mod Matrix routings across every Mod Matrix module in the instrument. Slot rows include semantic source IDs (e.g. 'lfo-1', 'env-2', or 'velocity'/'mod_wheel' for non-module sources) and dotted destination IDs (e.g. 'flt-1.cutoff'), plus amount in -1..1 and enabled flag. Inactive slots (None → None) are filtered out."
+    )]
+    async fn get_mod_matrix_routings(&self, params: Parameters<InstrumentIdParam>) -> String {
+        match self.bridge.get_mod_matrix_routings(params.0.instrument_id) {
+            Ok(routings) => to_json(&routings),
             Err(e) => format!("Error: {e}"),
         }
     }

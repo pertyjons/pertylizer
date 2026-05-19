@@ -3,12 +3,12 @@
 //! `AppSynthBridge` implements `SynthBridge` by reading from `EngineState`
 //! (shared graph, meters, transport) and sending commands via `CommandSender`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use synth_core::{
-    BipolarValue, Gain, MidiNote, ModMatrixParam, ModSource, NormalizedValue, Param, ParameterUnit,
-    PortDirection, SampleCount, Velocity,
+    BipolarValue, Gain, MidiNote, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
+    ModuleType, NormalizedValue, Param, ParameterUnit, PortDirection, SampleCount, Velocity,
 };
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
@@ -26,14 +26,19 @@ use synth_mcp::types::{
     AweLfoInfo, AwePresetInfo, AweStateInfo, BandOverlap, BatchItemResult, BatchResult,
     BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity, EngineStatus,
     ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope,
-    HarmonyStats, InstrumentInfo, MaskingPair, MixBusMetrics, ModuleInfo, ModuleTypeInfo, NoteInfo,
-    OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue,
-    PatchResourceData, PatternInfo, PlacementInfo, SetSongResult, SongInfo, TrackInfo,
-    UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo, MixBusMetrics, ModuleInfo,
+    ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo,
+    PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo, PlacementInfo, SetSongResult,
+    SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
 use crate::session::SynthSession;
+
+/// Virtual port name surfaced on `ModuleInfo.input_ports` / `output_ports`
+/// to mark a module that is wired only through a Mod Matrix slot rather
+/// than via real audio/CV cables.
+const MATRIX_VIRTUAL_PORT: &str = "matrix";
 
 /// Bridge implementation for the Pertylizer application.
 pub struct AppSynthBridge {
@@ -160,6 +165,10 @@ impl SynthBridge for AppSynthBridge {
         let modules = state.shared_graph.get_modules_for_instrument(inst_id);
         let connections = state.shared_graph.get_connections_for_instrument(inst_id);
 
+        let module_index = InstrumentModuleIndex::from_snapshots(&modules);
+        let matrix_sources = collect_mod_matrix_sources(&modules, &module_index);
+        let matrix_destinations = collect_mod_matrix_destinations(&modules, &module_index);
+
         Ok(modules
             .into_iter()
             .map(|m| {
@@ -192,6 +201,29 @@ impl SynthBridge for AppSynthBridge {
 
                 // Get descriptor for parameter ranges and units
                 let descriptor = self.session.module_descriptor(inst_id, m.id);
+
+                // Matrix routings aren't cables — surface a virtual port so
+                // matrix-only modules don't read as dead, and attach the
+                // live slot table for matrix modules themselves.
+                let is_mod_matrix = m.module_type == ModuleType::ModMatrix;
+                let mod_matrix_routings = if is_mod_matrix {
+                    Some(collect_mod_matrix_routings(&m.parameters, &module_index))
+                } else {
+                    None
+                };
+                if is_mod_matrix && outputs.is_empty() {
+                    outputs.push(MATRIX_VIRTUAL_PORT.to_string());
+                }
+                if matrix_sources.contains(&m.id)
+                    && !outputs.iter().any(|p| p == MATRIX_VIRTUAL_PORT)
+                {
+                    outputs.push(MATRIX_VIRTUAL_PORT.to_string());
+                }
+                if matrix_destinations.contains(&m.id)
+                    && !inputs.iter().any(|p| p == MATRIX_VIRTUAL_PORT)
+                {
+                    inputs.push(MATRIX_VIRTUAL_PORT.to_string());
+                }
 
                 ModuleInfo {
                     id: id_str,
@@ -229,6 +261,7 @@ impl SynthBridge for AppSynthBridge {
                         .collect(),
                     input_ports: inputs,
                     output_ports: outputs,
+                    mod_matrix_routings,
                 }
             })
             .collect())
@@ -262,6 +295,26 @@ impl SynthBridge for AppSynthBridge {
                 to_module: c.to_module.to_string(),
                 to_port: c.to_port.to_string(),
             })
+            .collect())
+    }
+
+    fn get_mod_matrix_routings(
+        &self,
+        instrument_id: u64,
+    ) -> Result<Vec<MatrixRoutingInfo>, McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+
+        let modules = self
+            .session
+            .state()
+            .shared_graph
+            .get_modules_for_instrument(InstrumentId::new(instrument_id));
+        let module_index = InstrumentModuleIndex::from_snapshots(&modules);
+
+        Ok(modules
+            .iter()
+            .filter(|m| m.module_type == ModuleType::ModMatrix)
+            .flat_map(|m| collect_mod_matrix_routings(&m.parameters, &module_index))
             .collect())
     }
 
@@ -374,7 +427,8 @@ impl SynthBridge for AppSynthBridge {
         // Collect module IDs referenced as sources by any Mod Matrix slot.
         // The Mod Matrix routes via parameter slots (not cables), so these
         // modules are "in use" even with no cable connections.
-        let mod_matrix_sources = collect_mod_matrix_sources(&modules);
+        let module_index = InstrumentModuleIndex::from_snapshots(&modules);
+        let mod_matrix_sources = collect_mod_matrix_sources(&modules, &module_index);
 
         // ModuleStateSnapshot::has_inputs/has_outputs read from
         // input_connection_counts/output_connection_counts, which currently
@@ -404,7 +458,7 @@ impl SynthBridge for AppSynthBridge {
             }
 
             // Modulator referenced by a Mod Matrix slot is in use.
-            if mod_matrix_sources.contains(&id_str) {
+            if mod_matrix_sources.contains(&module.id) {
                 continue;
             }
 
@@ -4206,70 +4260,156 @@ impl SynthBridge for AppSynthBridge {
     }
 }
 
-/// Collect module IDs referenced as sources by any enabled Mod Matrix slot.
+/// Decoded slot state from a Mod Matrix module's parameter snapshot.
+#[derive(Debug, Clone, Copy)]
+struct ModMatrixSlot {
+    source: ModSource,
+    destination: ModDestination,
+    amount: f32,
+    enabled: bool,
+}
+
+impl Default for ModMatrixSlot {
+    fn default() -> Self {
+        Self {
+            source: ModSource::None,
+            destination: ModDestination::None,
+            amount: 0.0,
+            enabled: true,
+        }
+    }
+}
+
+/// Decode one Mod Matrix module's `Param` list into a typed slot table.
+/// Slots beyond the configured grid size are returned untouched (callers
+/// truncate via `grid_size.slot_count()`).
+fn decode_mod_matrix_slots(
+    params: &[Param],
+) -> (
+    ModMatrixGridSize,
+    [ModMatrixSlot; synth_core::MAX_MOD_MATRIX_SLOTS],
+) {
+    let mut grid_size = ModMatrixGridSize::default();
+    let mut slots = [ModMatrixSlot::default(); synth_core::MAX_MOD_MATRIX_SLOTS];
+
+    for p in params {
+        let Param::ModMatrix(mp) = p else { continue };
+        match mp {
+            ModMatrixParam::GridSize(gs) => grid_size = *gs,
+            ModMatrixParam::SlotSource(i, src) => {
+                if let Some(s) = slots.get_mut(*i as usize) {
+                    s.source = *src;
+                }
+            }
+            ModMatrixParam::SlotDestination(i, dst) => {
+                if let Some(s) = slots.get_mut(*i as usize) {
+                    s.destination = *dst;
+                }
+            }
+            ModMatrixParam::SlotAmount(i, amt) => {
+                if let Some(s) = slots.get_mut(*i as usize) {
+                    s.amount = amt.as_f32();
+                }
+            }
+            ModMatrixParam::SlotEnabled(i, en) => {
+                if let Some(s) = slots.get_mut(*i as usize) {
+                    s.enabled = *en;
+                }
+            }
+        }
+    }
+
+    (grid_size, slots)
+}
+
+/// Iterate active slots (within grid size, enabled) across every Mod Matrix
+/// module in the snapshot.
+fn active_mod_matrix_slots(
+    modules: &[synth_engine::ModuleStateSnapshot],
+) -> impl Iterator<Item = ModMatrixSlot> + '_ {
+    modules
+        .iter()
+        .filter(|m| m.id.module_type == synth_core::ModuleType::ModMatrix)
+        .flat_map(|m| {
+            let (grid_size, slots) = decode_mod_matrix_slots(&m.parameters);
+            slots
+                .into_iter()
+                .take(grid_size.slot_count())
+                .filter(|s| s.enabled)
+        })
+}
+
+/// Per-instrument positional lookup: for each `ModuleType`, the in-instrument
+/// `ModuleId`s sorted ascending by `instance`. The audio engine resolves
+/// `ModSource::Envelope(i)` and `ModDestination::OscPitch(i)` positionally —
+/// i.e. as the i-th envelope / oscillator in the instrument's voice graph —
+/// so MCP and GUI surfaces must do the same lookup to report the actual
+/// module instance rather than a global-instance guess.
+struct InstrumentModuleIndex {
+    by_type: HashMap<synth_core::ModuleType, Vec<ModuleId>>,
+}
+
+impl InstrumentModuleIndex {
+    fn from_snapshots(modules: &[synth_engine::ModuleStateSnapshot]) -> Self {
+        let mut by_type: HashMap<synth_core::ModuleType, Vec<ModuleId>> = HashMap::new();
+        for m in modules {
+            by_type.entry(m.id.module_type).or_default().push(m.id);
+        }
+        for v in by_type.values_mut() {
+            v.sort_by_key(|id| id.instance);
+        }
+        Self { by_type }
+    }
+
+    fn position(&self, mt: synth_core::ModuleType, position: usize) -> Option<ModuleId> {
+        self.by_type.get(&mt)?.get(position).copied()
+    }
+}
+
+/// Resolve a `ModSource` to the actual `ModuleId` in this instrument, or
+/// `None` for non-module sources (Velocity, ModWheel, ...) or when the
+/// referenced positional slot is empty (e.g. `Envelope(1)` with only one
+/// envelope in the graph).
+fn resolve_source(source: ModSource, idx: &InstrumentModuleIndex) -> Option<ModuleId> {
+    let (mt, pos) = source.module_type_and_position()?;
+    idx.position(mt, pos)
+}
+
+/// Resolve a `ModDestination` to `(ModuleId, param_name)` in this instrument,
+/// or `None` for `ModDestination::None` / unfilled positional slots.
+fn resolve_destination(
+    dest: ModDestination,
+    idx: &InstrumentModuleIndex,
+) -> Option<(ModuleId, &'static str)> {
+    let (mt, pos, param) = dest.module_target_position()?;
+    idx.position(mt, pos).map(|id| (id, param))
+}
+
+/// Collect module IDs referenced as sources by any active Mod Matrix slot.
 ///
 /// The Mod Matrix routes via parameter slots rather than cables, so an LFO,
 /// Envelope, or Envelope Follower selected in `Slot N Source` is considered
 /// "in use" by the diagnostic even if it has no cable connections.
-fn collect_mod_matrix_sources(modules: &[synth_engine::ModuleStateSnapshot]) -> HashSet<String> {
-    let mut sources = HashSet::new();
-    for module in modules {
-        if module.id.module_type != synth_core::ModuleType::ModMatrix {
-            continue;
-        }
-
-        let mut enabled = [true; synth_core::MAX_MOD_MATRIX_SLOTS];
-        let mut slot_source: [Option<ModSource>; synth_core::MAX_MOD_MATRIX_SLOTS] =
-            [None; synth_core::MAX_MOD_MATRIX_SLOTS];
-
-        for param in &module.parameters {
-            if let Param::ModMatrix(mmx) = param {
-                match mmx {
-                    ModMatrixParam::SlotEnabled(slot, en) => {
-                        if let Some(cell) = enabled.get_mut(*slot as usize) {
-                            *cell = *en;
-                        }
-                    }
-                    ModMatrixParam::SlotSource(slot, src) => {
-                        if let Some(cell) = slot_source.get_mut(*slot as usize) {
-                            *cell = Some(*src);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        for (slot, source) in slot_source.iter().enumerate() {
-            if !enabled[slot] {
-                continue;
-            }
-            let Some(source) = source else { continue };
-            if let Some(id) = mod_source_to_module_id(*source) {
-                sources.insert(id);
-            }
-        }
-    }
-    sources
+fn collect_mod_matrix_sources(
+    modules: &[synth_engine::ModuleStateSnapshot],
+    idx: &InstrumentModuleIndex,
+) -> HashSet<ModuleId> {
+    active_mod_matrix_slots(modules)
+        .filter_map(|s| resolve_source(s.source, idx))
+        .collect()
 }
 
-/// Map a `ModSource` variant to the module ID it references, if any.
-/// Returns `None` for global sources (Velocity, ModWheel, etc.).
-///
-/// `ModSource` indexes its source families from 0; `ModuleId` instances start
-/// at 1, hence the `+ 1` offset.
-fn mod_source_to_module_id(source: ModSource) -> Option<String> {
-    use synth_core::ModuleType;
-    let typed = match source {
-        ModSource::Lfo(i) => ModuleId::new(ModuleType::Lfo, u16::from(i) + 1),
-        ModSource::Envelope(i) => ModuleId::new(ModuleType::Envelope, u16::from(i) + 1),
-        ModSource::EnvFollower(i) => ModuleId::new(ModuleType::EnvelopeFollower, u16::from(i) + 1),
-        ModSource::KineticPos | ModSource::KineticVel | ModSource::KineticAcc => {
-            ModuleId::new(ModuleType::KineticModulator, 1)
-        }
-        _ => return None,
-    };
-    Some(typed.to_string())
+/// Collect module IDs referenced as destinations by any active Mod Matrix
+/// slot. Used to surface `"matrix"` as a virtual input port so destination
+/// modules don't look unused in MCP responses.
+fn collect_mod_matrix_destinations(
+    modules: &[synth_engine::ModuleStateSnapshot],
+    idx: &InstrumentModuleIndex,
+) -> HashSet<ModuleId> {
+    active_mod_matrix_slots(modules)
+        .filter_map(|s| resolve_destination(s.destination, idx))
+        .map(|(id, _)| id)
+        .collect()
 }
 
 fn meta_to_sample_info(meta: &synth_sampler::SampleMeta) -> synth_mcp::types::SampleInfo {
@@ -5016,6 +5156,47 @@ fn ticks_to_beats(ticks: u32) -> f32 {
 /// Normalize a parameter name for fuzzy matching (lowercase, underscores → spaces).
 fn normalize_param_name(s: &str) -> String {
     s.to_lowercase().replace('_', " ")
+}
+
+/// Extract Mod Matrix routings from a `ModMatrix` module's parameter
+/// snapshot. Skips slots beyond the configured grid size and fully-empty
+/// slots (`None → None`); partially-configured slots (only source or only
+/// destination set) are reported so clients can see them.
+///
+/// `idx` is the *containing instrument's* positional module index — used to
+/// resolve `Envelope(1)` etc. to the actual envelope `ModuleId` in this
+/// instrument rather than a global-instance guess. Falls back to the
+/// source/destination's static `id()` when the position is unfilled.
+fn collect_mod_matrix_routings(
+    params: &[Param],
+    idx: &InstrumentModuleIndex,
+) -> Vec<MatrixRoutingInfo> {
+    let (grid_size, slots) = decode_mod_matrix_slots(params);
+    slots
+        .iter()
+        .enumerate()
+        .take(grid_size.slot_count())
+        .filter(|(_, s)| {
+            !matches!(s.source, ModSource::None) || !matches!(s.destination, ModDestination::None)
+        })
+        .map(|(i, s)| {
+            let source = resolve_source(s.source, idx)
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| s.source.id().to_string());
+            let destination = resolve_destination(s.destination, idx)
+                .map(|(id, p)| format!("{id}.{p}"))
+                .unwrap_or_else(|| s.destination.id().to_string());
+            MatrixRoutingInfo {
+                slot: i as u8 + 1,
+                source,
+                source_name: s.source.name().to_string(),
+                destination,
+                destination_name: s.destination.name().to_string(),
+                amount: s.amount,
+                enabled: s.enabled,
+            }
+        })
+        .collect()
 }
 
 /// Convert a sequencer `Note` to MCP `NoteInfo`.
@@ -8998,6 +9179,182 @@ fn parse_tie_break(s: Option<&str>) -> Result<crate::composition::ScaleTieBreak,
                 "unknown tie_break {raw:?}; expected one of up, down, nearest"
             ))
         }),
+    }
+}
+
+#[cfg(test)]
+mod mod_matrix_routing_tests {
+    use super::*;
+    use synth_core::{
+        BipolarValue, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource, ModuleType,
+    };
+    use synth_engine::ModuleStateSnapshot;
+    use synth_engine::instrument::InstrumentId;
+
+    fn stub_module(mt: ModuleType, instance: u16) -> ModuleStateSnapshot {
+        ModuleStateSnapshot::new(
+            ModuleId::new(mt, instance),
+            InstrumentId::new(1),
+            mt,
+            format!("{}-{}", mt.prefix(), instance),
+        )
+    }
+
+    fn matrix_snapshot(matrix_instance: u16, params: Vec<Param>) -> ModuleStateSnapshot {
+        let mut snap = stub_module(ModuleType::ModMatrix, matrix_instance);
+        snap.parameters = params;
+        snap
+    }
+
+    /// Acid Bass shape under non-canonical global instances: this
+    /// instrument's envelopes are env-5 and env-6 and its filter is flt-3
+    /// (because earlier instruments consumed the lower instance numbers).
+    /// `ModSource::Envelope(1)` resolves positionally to the *second*
+    /// envelope in this instrument — env-6 — not the global `env-2`.
+    #[test]
+    fn positional_resolution_picks_correct_instance() {
+        let modules = vec![
+            stub_module(ModuleType::Envelope, 5),
+            stub_module(ModuleType::Envelope, 6),
+            stub_module(ModuleType::Filter, 3),
+            matrix_snapshot(
+                2,
+                vec![
+                    Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::Grid1x1)),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(0, ModSource::Envelope(1))),
+                    Param::ModMatrix(ModMatrixParam::SlotDestination(
+                        0,
+                        ModDestination::FilterCutoff(0),
+                    )),
+                    Param::ModMatrix(ModMatrixParam::SlotAmount(0, BipolarValue::new(0.9))),
+                    Param::ModMatrix(ModMatrixParam::SlotEnabled(0, true)),
+                ],
+            ),
+        ];
+
+        let idx = InstrumentModuleIndex::from_snapshots(&modules);
+        let matrix_params = &modules.last().unwrap().parameters;
+        let routings = collect_mod_matrix_routings(matrix_params, &idx);
+        assert_eq!(routings.len(), 1);
+        let r = &routings[0];
+        assert_eq!(r.source, "env-6");
+        assert_eq!(r.source_name, "Env 2");
+        assert_eq!(r.destination, "flt-3.cutoff");
+        assert_eq!(r.destination_name, "Filter 1 Cutoff");
+        assert!((r.amount - 0.9).abs() < 1e-4);
+        assert!(r.enabled);
+
+        // Sources/destinations sets agree with the routing — these feed the
+        // virtual "matrix" port surfaced on the actual module instances.
+        let sources = collect_mod_matrix_sources(&modules, &idx);
+        let destinations = collect_mod_matrix_destinations(&modules, &idx);
+        let env_6 = ModuleId::new(ModuleType::Envelope, 6);
+        let env_2 = ModuleId::new(ModuleType::Envelope, 2);
+        let flt_3 = ModuleId::new(ModuleType::Filter, 3);
+        assert!(sources.contains(&env_6), "sources={sources:?}");
+        assert!(
+            destinations.contains(&flt_3),
+            "destinations={destinations:?}"
+        );
+        assert!(!sources.contains(&env_2));
+    }
+
+    /// Slots beyond the current grid size must be ignored even if they
+    /// carry valid source/dest — the user shrunk the grid and expects
+    /// only the visible slots to apply.
+    #[test]
+    fn slots_beyond_grid_size_are_ignored() {
+        let modules = vec![
+            stub_module(ModuleType::Lfo, 1),
+            stub_module(ModuleType::Envelope, 1),
+            stub_module(ModuleType::Oscillator, 1),
+            stub_module(ModuleType::Amplifier, 1),
+            matrix_snapshot(
+                1,
+                vec![
+                    Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::Grid1x1)),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(0, ModSource::Lfo(0))),
+                    Param::ModMatrix(ModMatrixParam::SlotDestination(
+                        0,
+                        ModDestination::OscPitch(0),
+                    )),
+                    // Slot 5 is past 1×1 (1 slot) — must not appear.
+                    Param::ModMatrix(ModMatrixParam::SlotSource(4, ModSource::Envelope(0))),
+                    Param::ModMatrix(ModMatrixParam::SlotDestination(
+                        4,
+                        ModDestination::AmpLevel(0),
+                    )),
+                ],
+            ),
+        ];
+
+        let idx = InstrumentModuleIndex::from_snapshots(&modules);
+        let routings = collect_mod_matrix_routings(&modules.last().unwrap().parameters, &idx);
+        assert_eq!(routings.len(), 1);
+        assert_eq!(routings[0].slot, 1);
+        assert_eq!(routings[0].source, "lfo-1");
+        assert_eq!(routings[0].destination, "osc-1.pitch");
+    }
+
+    /// Disabled slots should not contribute to either the source or
+    /// destination sets — otherwise toggling a slot off would still leave
+    /// the badge / `"matrix"` port lingering.
+    #[test]
+    fn disabled_slots_drop_from_both_sets() {
+        let modules = vec![
+            stub_module(ModuleType::Lfo, 1),
+            stub_module(ModuleType::Oscillator, 1),
+            matrix_snapshot(
+                1,
+                vec![
+                    Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::Grid1x1)),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(0, ModSource::Lfo(0))),
+                    Param::ModMatrix(ModMatrixParam::SlotDestination(
+                        0,
+                        ModDestination::OscPitch(0),
+                    )),
+                    Param::ModMatrix(ModMatrixParam::SlotEnabled(0, false)),
+                ],
+            ),
+        ];
+
+        let idx = InstrumentModuleIndex::from_snapshots(&modules);
+        assert!(collect_mod_matrix_sources(&modules, &idx).is_empty());
+        assert!(collect_mod_matrix_destinations(&modules, &idx).is_empty());
+    }
+
+    /// Non-module sources like Velocity / Mod Wheel have no positional
+    /// resolution; the helper falls back to the source's static `id()`
+    /// string.
+    #[test]
+    fn implicit_sources_use_source_id_fallback() {
+        let modules = vec![
+            stub_module(ModuleType::Amplifier, 1),
+            stub_module(ModuleType::Filter, 1),
+            matrix_snapshot(
+                1,
+                vec![
+                    Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::Grid2x2)),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(0, ModSource::Velocity)),
+                    Param::ModMatrix(ModMatrixParam::SlotDestination(
+                        0,
+                        ModDestination::AmpLevel(0),
+                    )),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(1, ModSource::ModWheel)),
+                    Param::ModMatrix(ModMatrixParam::SlotDestination(
+                        1,
+                        ModDestination::FilterCutoff(0),
+                    )),
+                ],
+            ),
+        ];
+
+        let idx = InstrumentModuleIndex::from_snapshots(&modules);
+        let routings = collect_mod_matrix_routings(&modules.last().unwrap().parameters, &idx);
+        assert_eq!(routings.len(), 2);
+        assert_eq!(routings[0].source, "velocity");
+        assert_eq!(routings[0].source_name, "Velocity");
+        assert_eq!(routings[1].source, "mod_wheel");
     }
 }
 

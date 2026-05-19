@@ -56,8 +56,35 @@ pub struct ModuleInfo {
     pub parameters: Vec<ParameterInfo>,
     /// Input port names.
     pub input_ports: Vec<String>,
-    /// Output port names.
+    /// Output port names. For Mod Matrix modules this is `["matrix"]` — a
+    /// virtual port marker so callers don't mistake the matrix for a dead
+    /// module just because it has no audio/CV cables.
     pub output_ports: Vec<String>,
+    /// Active modulation routings carried by this module. Populated only
+    /// for Mod Matrix modules; absent on every other module type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mod_matrix_routings: Option<Vec<MatrixRoutingInfo>>,
+}
+
+/// One row of a Mod Matrix's routing table.
+#[derive(Debug, Clone, Serialize)]
+pub struct MatrixRoutingInfo {
+    /// 1-based slot index (1..=16).
+    pub slot: u8,
+    /// Source semantic ID (e.g. `"lfo-1"`, `"env-2"`, or for non-module
+    /// sources the source key `"velocity"`, `"mod_wheel"`, etc.).
+    pub source: String,
+    /// Source display name (e.g. `"LFO 1"`, `"Velocity"`).
+    pub source_name: String,
+    /// Destination as `"module-id.param"` (e.g. `"flt-1.cutoff"`).
+    pub destination: String,
+    /// Destination display name (e.g. `"Filter 1 Cutoff"`).
+    pub destination_name: String,
+    /// Modulation amount in `-1.0..=1.0`.
+    pub amount: f32,
+    /// Whether the slot is enabled (an enabled slot can still be inactive
+    /// if source or destination is `None`).
+    pub enabled: bool,
 }
 
 /// Information about a parameter.

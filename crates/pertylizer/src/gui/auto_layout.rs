@@ -13,8 +13,10 @@
 //!    them via `content_size()`, so no screen-space rect is needed here.
 //!
 //! Layout zones (left→right): Signal columns | Effect-chain column | Global column |
-//! Disconnected column. Within a signal column (top→bottom): signal-chain rows, then
-//! modulation rows anchored to their target row.
+//! Mod Matrix column | Disconnected column. Within a signal column (top→bottom):
+//! signal-chain rows, then modulation rows anchored to their target row. The Mod
+//! Matrix column is separated from its neighbours by `ZONE_PADDING` so the Mod
+//! Matrix and Effect zone background rectangles don't overlap.
 
 use std::collections::{HashMap, HashSet};
 
@@ -137,6 +139,12 @@ const GRID: f32 = super::patch_editor::GRID_SIZE;
 /// Extra gap between modules (1 grid cell).
 const GAP: f32 = GRID;
 
+/// Extra horizontal space between zone-bearing columns. Each zone rectangle
+/// adds `GRID` of padding around its content (see `draw_module_zone` in
+/// `patch_editor`); using `2 * GRID` here leaves one clear grid cell between
+/// neighbouring zone rectangles instead of letting them touch on the same x.
+const ZONE_PADDING: f32 = 2.0 * GRID;
+
 /// Number of ordering sweeps for crossing reduction.
 const MAX_SWEEPS: usize = 8;
 
@@ -150,6 +158,9 @@ enum ModuleGroup {
     /// Placed in a dedicated column ordered by the engine's effect chain order.
     EffectChain,
     Global,
+    /// Mod Matrix modules. Pinned to their own column with `ZONE_PADDING` so
+    /// the Mod Matrix zone rectangle doesn't overlap the Effect zone.
+    ModMatrix,
     Disconnected,
 }
 
@@ -178,11 +189,30 @@ fn classify_module(
     has_incoming: bool,
     has_outgoing: bool,
 ) -> ModuleGroup {
+    // Mod Matrix routes via parameter slots rather than cables, so it never
+    // has voice-graph connections of its own. Pin it to its own padded column
+    // regardless of connectivity so the Mod Matrix zone rectangle stays clear
+    // of the Effect zone.
+    if module_id.module_type == ModuleType::ModMatrix {
+        return ModuleGroup::ModMatrix;
+    }
+
     if !(has_incoming || has_outgoing) {
         // Effects without voice-graph cables belong to the engine effect chain,
         // not the truly disconnected zone.
         if category == ModuleCategory::Effect {
             return ModuleGroup::EffectChain;
+        }
+        // Aux visualizers (Oscilloscope, LevelMeter, SpectrumAnalyzer) sit
+        // next to the effect chain even without cables — the Effect zone
+        // wraps them by category, so placing them far right in Disconnected
+        // would stretch that zone across the whole canvas.
+        if matches!(
+            category,
+            ModuleCategory::Visualizer | ModuleCategory::Utility
+        ) && is_global_aux_type(module_id.module_type)
+        {
+            return ModuleGroup::Global;
         }
         return ModuleGroup::Disconnected;
     }
@@ -208,10 +238,7 @@ fn classify_module(
 fn is_global_aux_type(module_type: ModuleType) -> bool {
     matches!(
         module_type,
-        ModuleType::Oscilloscope
-            | ModuleType::LevelMeter
-            | ModuleType::SpectrumAnalyzer
-            | ModuleType::ModMatrix
+        ModuleType::Oscilloscope | ModuleType::LevelMeter | ModuleType::SpectrumAnalyzer
     )
 }
 
@@ -675,9 +702,11 @@ fn place_modulation(
 ///    order). Effects with no voice-graph cables live here, not in the
 ///    Disconnected zone.
 /// 3. **Global** modules (aux sinks like Oscilloscope, LevelMeter,
-///    SpectrumAnalyzer, ModMatrix): one vertical column right of the
-///    effect-chain zone.
-/// 4. **Disconnected** modules: the rightmost column.
+///    SpectrumAnalyzer): one vertical column right of the effect-chain zone.
+/// 4. **Mod Matrix** modules: one vertical column right of global, with
+///    `ZONE_PADDING` extra space on each side so the Mod Matrix zone rectangle
+///    doesn't overlap the Effect zone.
+/// 5. **Disconnected** modules: the rightmost column.
 pub fn calculate_layout(modules: &[ModuleInfo], connections: &[LayoutConnection]) -> LayoutResult {
     calculate_layout_with_chain_order(modules, connections, &[])
 }
@@ -706,6 +735,7 @@ pub fn calculate_layout_with_chain_order(
     let mut mod_ids: Vec<ModuleId> = Vec::new();
     let mut effect_chain_ids: Vec<ModuleId> = Vec::new();
     let mut global_ids: Vec<ModuleId> = Vec::new();
+    let mut mod_matrix_ids: Vec<ModuleId> = Vec::new();
     let mut disconnected_ids: Vec<ModuleId> = Vec::new();
 
     let mut categories: HashMap<ModuleId, ModuleCategory> = HashMap::new();
@@ -730,6 +760,7 @@ pub fn calculate_layout_with_chain_order(
             ModuleGroup::Modulation => mod_ids.push(module.id),
             ModuleGroup::EffectChain => effect_chain_ids.push(module.id),
             ModuleGroup::Global => global_ids.push(module.id),
+            ModuleGroup::ModMatrix => mod_matrix_ids.push(module.id),
             ModuleGroup::Disconnected => disconnected_ids.push(module.id),
         }
     }
@@ -876,6 +907,8 @@ pub fn calculate_layout_with_chain_order(
         &sizes,
         &mut result.positions,
     );
+    // EffectChain and Global panels share the Effect zone rectangle, so they
+    // sit in adjacent columns without extra padding.
     current_x += place_vertical_column(
         &mut global_ids,
         effect_chain_order,
@@ -884,6 +917,24 @@ pub fn calculate_layout_with_chain_order(
         &sizes,
         &mut result.positions,
     );
+    // Mod Matrix lives in its own zone — pad both sides so the surrounding
+    // zone rectangle has clear room next to the Effect zone (and next to
+    // anything that may follow on the right).
+    let has_mod_matrix = !mod_matrix_ids.is_empty();
+    if has_mod_matrix {
+        current_x += ZONE_PADDING;
+    }
+    current_x += place_vertical_column(
+        &mut mod_matrix_ids,
+        &[],
+        current_x,
+        start_y,
+        &sizes,
+        &mut result.positions,
+    );
+    if has_mod_matrix {
+        current_x += ZONE_PADDING;
+    }
     let _ = place_vertical_column(
         &mut disconnected_ids,
         &[],
@@ -2021,5 +2072,44 @@ mod tests {
             .fold(f32::INFINITY, f32::min);
         assert_eq!(leftmost_x, GRID, "leftmost x must equal GRID");
         assert_eq!(topmost_y, GRID, "topmost y must equal GRID");
+    }
+
+    /// Mod Matrix sits in its own padded column so the Mod Matrix and Effect
+    /// zone background rectangles can each have their `GRID`-wide padding
+    /// without overlapping. Verifies the horizontal distance between the
+    /// Effect/Global column's right edge and the Mod Matrix column's left
+    /// edge is at least `GAP + ZONE_PADDING` (= 2*GRID).
+    #[test]
+    fn test_mod_matrix_column_padded_from_effect_zone() {
+        let osc = make_id(ModuleType::Oscillator, 1);
+        let out = make_id(ModuleType::StereoOutput, 1);
+        let delay = make_id(ModuleType::Delay, 1);
+        let scope = make_id(ModuleType::Oscilloscope, 1);
+        let matrix = make_id(ModuleType::ModMatrix, 1);
+
+        let modules = vec![
+            make_module(osc, ModuleCategory::Oscillator),
+            make_module(out, ModuleCategory::Output),
+            make_module(delay, ModuleCategory::Effect),
+            make_module(scope, ModuleCategory::Visualizer),
+            make_module(matrix, ModuleCategory::Utility),
+        ];
+        let connections = vec![LayoutConnection {
+            from_module: osc,
+            to_module: out,
+        }];
+
+        let result = calculate_layout(&modules, &connections);
+
+        let delay_pos = *result.positions.get(&delay).unwrap();
+        let scope_pos = *result.positions.get(&scope).unwrap();
+        let matrix_pos = *result.positions.get(&matrix).unwrap();
+
+        let effect_zone_right = (delay_pos.x + TEST_SIZE.x).max(scope_pos.x + TEST_SIZE.x);
+        assert!(
+            matrix_pos.x - effect_zone_right >= GAP + ZONE_PADDING - 0.5,
+            "Mod Matrix column must clear the Effect zone by at least GAP+ZONE_PADDING (got {})",
+            matrix_pos.x - effect_zone_right
+        );
     }
 }

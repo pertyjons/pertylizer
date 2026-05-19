@@ -285,6 +285,12 @@ struct SynthApp {
     #[cfg(feature = "mcp")]
     last_seen_gui_revision: u64,
 
+    /// Last `SharedGraphState::version()` seen by `reconcile_with_session`.
+    /// Lets the per-frame reconcile skip cloning every module snapshot
+    /// when no engine-side mutation has happened since the previous frame.
+    #[cfg(feature = "mcp")]
+    last_seen_graph_version: u64,
+
     // OSC shared state
     #[cfg(feature = "osc")]
     osc_shared: Option<synth_osc::OscSharedState>,
@@ -421,6 +427,8 @@ impl SynthApp {
             last_seen_project_revision: 0,
             #[cfg(feature = "mcp")]
             last_seen_gui_revision: 0,
+            #[cfg(feature = "mcp")]
+            last_seen_graph_version: 0,
             #[cfg(feature = "osc")]
             osc_shared: config.osc_shared,
             settings,
@@ -1903,64 +1911,45 @@ impl eframe::App for SynthApp {
                         );
                         let had_mutations = result.has_mutations();
 
-                        // Handle parameter changes - send Param directly (carries its own value)
+                        // Route on the engine-side distinction between effect-chain
+                        // modules (separate ordered chain) and voice-graph modules
+                        // (everything else). This mirrors `session.set_parameter`,
+                        // so utility modules like Mod Matrix — which previously fell
+                        // through a category whitelist and had their edits silently
+                        // dropped — now reach shared state like every other module.
                         for (module_id, param) in result.param_changes {
-                            // Check module category
-                            let category = patch_editor
-                                .module_descriptor(module_id)
-                                .map(|d| d.category);
+                            if module_id.module_type.is_effect() {
+                                self.handle.send(EngineCommand::SetEffectParameter {
+                                    instrument_id: Some(active_id),
+                                    module_id,
+                                    param,
+                                });
+                            } else {
+                                self.handle.send(EngineCommand::SetModuleParameter {
+                                    instrument_id: Some(active_id),
+                                    module_id,
+                                    param,
+                                });
 
-                            match category {
-                                Some(ModuleCategory::Effect) => {
-                                    // Effect module - use SetEffectParameter (targets active instrument).
-                                    // Routing is by ModuleId so duplicate effects of the same type
-                                    // can be tuned independently.
-                                    self.handle.send(EngineCommand::SetEffectParameter {
-                                        instrument_id: Some(active_id),
+                                if let synth_core::Param::Sampler(
+                                    synth_core::SamplerParam::SampleSelect(sample_id),
+                                ) = param
+                                    && let Ok(lib) = self.sample_library.read()
+                                    && let Some(sample) =
+                                        lib.get(synth_sampler::SampleId::new(sample_id.0))
+                                {
+                                    self.handle.send(EngineCommand::LoadSampleData {
+                                        instrument_id: active_id,
                                         module_id,
-                                        param,
+                                        data: std::sync::Arc::clone(&sample.data),
+                                        channels: sample.meta.channels,
+                                        frame_count: sample.meta.frame_count.as_usize(),
+                                        root_note: sample
+                                            .meta
+                                            .root_note
+                                            .unwrap_or(synth_core::MidiNote(60)),
                                     });
                                 }
-                                Some(
-                                    ModuleCategory::Oscillator
-                                    | ModuleCategory::Filter
-                                    | ModuleCategory::Envelope
-                                    | ModuleCategory::LFO
-                                    | ModuleCategory::Amplifier
-                                    | ModuleCategory::Mixer
-                                    | ModuleCategory::Output
-                                    | ModuleCategory::Sampler,
-                                ) => {
-                                    // Voice/modular module - send to active instrument's voice graph
-                                    // SetModuleParameter updates both the template AND all active voices
-                                    self.handle.send(EngineCommand::SetModuleParameter {
-                                        instrument_id: Some(active_id),
-                                        module_id,
-                                        param,
-                                    });
-
-                                    // If a SampleSelect param was changed, also load the sample data
-                                    if let synth_core::Param::Sampler(
-                                        synth_core::SamplerParam::SampleSelect(sample_id),
-                                    ) = param
-                                        && let Ok(lib) = self.sample_library.read()
-                                        && let Some(sample) =
-                                            lib.get(synth_sampler::SampleId::new(sample_id.0))
-                                    {
-                                        self.handle.send(EngineCommand::LoadSampleData {
-                                            instrument_id: active_id,
-                                            module_id,
-                                            data: std::sync::Arc::clone(&sample.data),
-                                            channels: sample.meta.channels,
-                                            frame_count: sample.meta.frame_count.as_usize(),
-                                            root_note: sample
-                                                .meta
-                                                .root_note
-                                                .unwrap_or(synth_core::MidiNote(60)),
-                                        });
-                                    }
-                                }
-                                _ => {}
                             }
                         }
 
@@ -4894,11 +4883,18 @@ impl SynthApp {
     /// when the user switches to that instrument.
     #[cfg(feature = "mcp")]
     fn reconcile_with_session(&mut self) {
-        // --- Instrument-level reconciliation ---
-        // Detect instruments added/removed/changed by MCP.
         self.reconcile_instruments();
 
-        // --- Module-level reconciliation (all instruments) ---
+        // Engine-side graph version bumps on any mutation (module add/remove,
+        // connection add/remove, parameter set). If it hasn't moved since last
+        // frame, nothing observable has changed — skip the clone-every-module
+        // sync.
+        let graph_version = self.session.state().shared_graph.version();
+        if graph_version == self.last_seen_graph_version {
+            return;
+        }
+        self.last_seen_graph_version = graph_version;
+
         let instrument_ids: Vec<InstrumentId> = self.instruments.iter().map(|i| i.id).collect();
 
         for inst_id in instrument_ids {
@@ -4960,19 +4956,23 @@ impl SynthApp {
                 })
                 .collect();
 
-            if to_add.is_empty() && to_remove.is_empty() && new_connections.is_empty() {
-                continue;
-            }
-
-            // Fetch live module state so newly-added modules can have their
-            // current parameter values copied into the GUI's patch_editor —
-            // without this, MCP-applied patches would render with descriptor
-            // defaults regardless of what the engine actually runs.
             let module_snapshots = self
                 .session
                 .state()
                 .shared_graph
                 .get_modules_for_instrument(inst_id);
+
+            // Mirror engine parameters into existing panels so MCP-driven
+            // `set_parameter` reaches GUI dropdowns/knobs.
+            for snap in &module_snapshots {
+                if editor_ids.contains(&snap.id) {
+                    patch_editor.sync_module_params(snap.id, &snap.parameters);
+                }
+            }
+
+            if to_add.is_empty() && to_remove.is_empty() && new_connections.is_empty() {
+                continue;
+            }
 
             for (module_id, descriptor) in to_add {
                 let position = eframe::egui::Pos2::new(100.0, 100.0);

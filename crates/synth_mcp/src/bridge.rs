@@ -19,9 +19,9 @@ use crate::types::{
     ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo, AwePresetInfo,
     AweStateInfo, BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo,
     DetailedSampleInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo,
-    InputStateInfo, InstrumentInfo, InstrumentProfileResult, ModuleInfo, ModuleTypeInfo, NoteInfo,
-    OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, SampleInfo,
-    SamplerStateInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    InputStateInfo, InstrumentInfo, InstrumentProfileResult, MatrixRoutingInfo, ModuleInfo,
+    ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo,
+    PlacementInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -177,6 +177,15 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Get all connections in the voice graph.
     fn get_connections(&self, instrument_id: u64) -> Result<Vec<ConnectionInfo>, McpBridgeError>;
+
+    /// Get all active Mod Matrix routings across every Mod Matrix module in
+    /// the instrument. Returns slot rows with semantic source/destination
+    /// IDs so callers don't have to decode the `Slot N Source` choice index
+    /// by hand.
+    fn get_mod_matrix_routings(
+        &self,
+        instrument_id: u64,
+    ) -> Result<Vec<MatrixRoutingInfo>, McpBridgeError>;
 
     /// Get a single parameter value.
     fn get_parameter(
