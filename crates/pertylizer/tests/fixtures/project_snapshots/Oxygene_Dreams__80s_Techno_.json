@@ -233,7 +233,7 @@
       "patch_name": "Unison Supersaw",
       "patch_description_present": false,
       "module_count": 5,
-      "connection_count": 7,
+      "connection_count": 6,
       "effect_chain_order_len": 0,
       "group_count": 0
     },
@@ -521,7 +521,7 @@
     "awe_description_present": false
   },
   "samples": {
-    "count": 9,
-    "total_frames": 207535
+    "count": 0,
+    "total_frames": 0
   }
 }

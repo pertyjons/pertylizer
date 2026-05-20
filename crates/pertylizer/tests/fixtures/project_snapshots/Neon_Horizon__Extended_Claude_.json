@@ -320,7 +320,7 @@
       "patch_name": "Sweep",
       "patch_description_present": false,
       "module_count": 6,
-      "connection_count": 8,
+      "connection_count": 4,
       "effect_chain_order_len": 1,
       "group_count": 0
     },
@@ -405,7 +405,7 @@
     "awe_description_present": false
   },
   "samples": {
-    "count": 9,
-    "total_frames": 207535
+    "count": 0,
+    "total_frames": 0
   }
 }

@@ -5348,17 +5348,15 @@ impl SynthApp {
 
     /// Load a ZIP bundle project file with embedded samples.
     fn load_bundle_file(&mut self, path: &std::path::Path) -> Result<String, String> {
-        let library_clone = std::sync::Arc::clone(&self.sample_library);
         let (project, sample_count) = {
-            let mut lib = library_clone
+            let mut lib = self
+                .sample_library
                 .write()
                 .map_err(|_| "Failed to acquire sample library lock".to_string())?;
             let project = crate::bundle::load_bundle(path, &mut lib).map_err(|e| format!("{e}"))?;
-            let count = lib.len();
-            (project, count)
+            (project, lib.len())
         };
-        self.load_project_data(project);
-        self.sample_view_state.invalidate_peaks();
+        self.apply_and_refresh_project(&project);
         Ok(format!(
             "Bundle loaded: {} ({sample_count} samples)",
             path.display()
@@ -5502,19 +5500,30 @@ impl SynthApp {
         self.refresh_ui_from_project(&empty);
     }
 
-    /// Load a project file, replacing all current state.
+    /// Load a project file, replacing all current state. Wipes the
+    /// sample library first — plain-JSON projects carry no embedded
+    /// samples, and leaving stale data behind silently switches the
+    /// next save to bundle format and re-embeds it.
     fn load_project_data(&mut self, project: ProjectFile) {
         crate::project_apply::clear_sample_library(&self.sample_library);
+        self.apply_and_refresh_project(&project);
+    }
+
+    /// Push `project` to the engine and rebuild GUI mirrors. Caller is
+    /// responsible for the sample library — `load_project_data` clears
+    /// it (plain-JSON path), `load_bundle_file` leaves it populated
+    /// from `bundle::load_bundle`.
+    fn apply_and_refresh_project(&mut self, project: &ProjectFile) {
         self.sample_view_state.invalidate_peaks();
         if let Err(e) = crate::project_apply::apply_project(
-            &project,
+            project,
             &self.session,
             &self.song,
             &self.sample_library,
         ) {
             eprintln!("apply_project failed during GUI load: {e}");
         }
-        self.refresh_ui_from_project(&project);
+        self.refresh_ui_from_project(project);
     }
 
     /// Reset to a new empty project, clearing all instruments and song data.

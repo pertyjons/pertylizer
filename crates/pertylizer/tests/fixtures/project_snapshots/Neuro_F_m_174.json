@@ -2,7 +2,7 @@
   "file_type": "project",
   "version": "1.0",
   "instrument_count": 12,
-  "active_instrument_id": 11,
+  "active_instrument_id": 12,
   "author_present": true,
   "instruments": [
     {
@@ -31,7 +31,7 @@
       "patch_description_present": false,
       "module_count": 18,
       "connection_count": 20,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 3,
       "group_count": 0
     },
     {
@@ -58,9 +58,9 @@
       "sidechain_source_id": null,
       "patch_name": "Kick",
       "patch_description_present": false,
-      "module_count": 11,
+      "module_count": 10,
       "connection_count": 8,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 1,
       "group_count": 0
     },
     {
@@ -89,7 +89,7 @@
       "patch_description_present": false,
       "module_count": 11,
       "connection_count": 9,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 3,
       "group_count": 0
     },
     {
@@ -118,7 +118,7 @@
       "patch_description_present": false,
       "module_count": 6,
       "connection_count": 4,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 1,
       "group_count": 0
     },
     {
@@ -147,7 +147,7 @@
       "patch_description_present": false,
       "module_count": 8,
       "connection_count": 6,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 3,
       "group_count": 0
     },
     {
@@ -176,7 +176,7 @@
       "patch_description_present": false,
       "module_count": 8,
       "connection_count": 8,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 1,
       "group_count": 0
     },
     {
@@ -205,7 +205,7 @@
       "patch_description_present": false,
       "module_count": 14,
       "connection_count": 14,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 2,
       "group_count": 0
     },
     {
@@ -234,7 +234,7 @@
       "patch_description_present": false,
       "module_count": 14,
       "connection_count": 14,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 3,
       "group_count": 0
     },
     {
@@ -263,7 +263,7 @@
       "patch_description_present": false,
       "module_count": 13,
       "connection_count": 14,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 2,
       "group_count": 0
     },
     {
@@ -292,7 +292,7 @@
       "patch_description_present": false,
       "module_count": 13,
       "connection_count": 12,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 3,
       "group_count": 0
     },
     {
@@ -321,7 +321,7 @@
       "patch_description_present": false,
       "module_count": 6,
       "connection_count": 3,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 2,
       "group_count": 0
     },
     {
@@ -350,7 +350,7 @@
       "patch_description_present": false,
       "module_count": 11,
       "connection_count": 10,
-      "effect_chain_order_len": 0,
+      "effect_chain_order_len": 3,
       "group_count": 0
     }
   ],

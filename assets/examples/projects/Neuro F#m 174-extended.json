@@ -112,7 +112,7 @@
             "type": "filter",
             "position": {
               "x": 800.0,
-              "y": 288.0
+              "y": 320.0
             },
             "parameters": {
               "cutoff": 338.0,
@@ -130,7 +130,7 @@
             "id": "env-5",
             "type": "envelope",
             "position": {
-              "x": 1152.0,
+              "x": 1216.0,
               "y": 736.0
             },
             "parameters": {
@@ -180,7 +180,7 @@
             "id": "amp-3",
             "type": "amplifier",
             "position": {
-              "x": 1504.0,
+              "x": 1568.0,
               "y": 32.0
             },
             "parameters": {
@@ -193,7 +193,7 @@
             "id": "amp-4",
             "type": "amplifier",
             "position": {
-              "x": 1504.0,
+              "x": 1568.0,
               "y": 288.0
             },
             "parameters": {
@@ -244,7 +244,7 @@
             "id": "mix-8",
             "type": "mixer",
             "position": {
-              "x": 1152.0,
+              "x": 1216.0,
               "y": 32.0
             },
             "parameters": {
@@ -263,7 +263,7 @@
             "id": "mix-9",
             "type": "mixer",
             "position": {
-              "x": 1152.0,
+              "x": 1216.0,
               "y": 384.0
             },
             "parameters": {
@@ -282,7 +282,7 @@
             "id": "out-3",
             "type": "stereo_output",
             "position": {
-              "x": 1824.0,
+              "x": 1920.0,
               "y": 32.0
             },
             "parameters": {
@@ -297,7 +297,7 @@
             "id": "dst-3",
             "type": "distortion",
             "position": {
-              "x": 1472.0,
+              "x": 2272.0,
               "y": 32.0
             },
             "parameters": {
@@ -312,8 +312,8 @@
             "id": "cmp-1",
             "type": "compressor",
             "position": {
-              "x": 1504.0,
-              "y": 512.0
+              "x": 2272.0,
+              "y": 288.0
             },
             "parameters": {
               "attack": 3.0,
@@ -330,8 +330,8 @@
             "id": "enc-3",
             "type": "ensemble_chorus",
             "position": {
-              "x": 1472.0,
-              "y": 256.0
+              "x": 2272.0,
+              "y": 576.0
             },
             "parameters": {
               "base_delay": 12.0,
@@ -553,7 +553,7 @@
           "octave_offset": 0,
           "glide_time": 0.0,
           "canvas_size": {
-            "width": 2274.0,
+            "width": 2722.0,
             "height": 1524.0
           },
           "effect_chain_order": [
@@ -3233,7 +3233,7 @@
             "type": "envelope",
             "position": {
               "x": 32.0,
-              "y": 416.0
+              "y": 224.0
             },
             "parameters": {
               "atk_curve": 0.6,
@@ -3251,7 +3251,7 @@
             "type": "lfo",
             "position": {
               "x": 32.0,
-              "y": 224.0
+              "y": 512.0
             },
             "parameters": {
               "depth": 0.3,
@@ -4493,7 +4493,7 @@
       }
     }
   ],
-  "active_instrument_id": 2,
+  "active_instrument_id": 13,
   "author": {
     "name": "Per Jonsson",
     "email": "pertyjons@gmail.com"

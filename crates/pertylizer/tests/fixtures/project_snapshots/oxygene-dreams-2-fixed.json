@@ -2,7 +2,7 @@
   "file_type": "project",
   "version": "1.0",
   "instrument_count": 20,
-  "active_instrument_id": 26,
+  "active_instrument_id": 0,
   "author_present": true,
   "instruments": [
     {
@@ -608,7 +608,7 @@
     "awe_description_present": false
   },
   "samples": {
-    "count": 9,
-    "total_frames": 207535
+    "count": 0,
+    "total_frames": 0
   }
 }
