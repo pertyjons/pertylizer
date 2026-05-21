@@ -26,31 +26,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .join("assets/examples");
 
     let mut touched = 0usize;
-    for entry in walkdir(&root)? {
-        let path = entry;
-        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-            continue;
-        };
-        match ext {
-            "json" => {
-                if path.parent().is_some_and(|p| p.ends_with("projects")) {
-                    let mut proj = ProjectFile::load(&path)?;
-                    normalise_project(&mut proj);
-                    proj.save(&path)?;
-                } else if path.parent().is_some_and(|p| p.ends_with("patches")) {
-                    let mut patch = Patch::load(&path)?;
-                    normalise_patch(&mut patch);
-                    patch.save(&path)?;
-                } else if path.parent().is_some_and(|p| p.ends_with("awe")) {
-                    let awe = AwePresetFile::load(&path)?;
-                    awe.save(&path)?;
-                } else {
-                    continue;
-                }
+    for path in list_dir(&root.join("projects"))? {
+        match path.extension().and_then(|e| e.to_str()) {
+            Some("json") => {
+                let mut proj = ProjectFile::load(&path)?;
+                normalise_project(&mut proj);
+                proj.save(&path)?;
                 println!("resaved {}", path.display());
                 touched += 1;
             }
-            "zip" => {
+            Some("zip") => {
                 let mut lib = SampleLibrary::default();
                 let mut proj = load_bundle(&path, &mut lib)?;
                 normalise_project(&mut proj);
@@ -59,6 +44,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 touched += 1;
             }
             _ => {}
+        }
+    }
+    for path in list_dir(&root.join("patches"))? {
+        if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            let mut patch = Patch::load(&path)?;
+            normalise_patch(&mut patch);
+            patch.save(&path)?;
+            println!("resaved {}", path.display());
+            touched += 1;
+        }
+    }
+    for path in list_dir(&root.join("awe"))? {
+        if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            let awe = AwePresetFile::load(&path)?;
+            awe.save(&path)?;
+            println!("resaved {}", path.display());
+            touched += 1;
         }
     }
     println!("resaved {touched} file(s)");
@@ -82,36 +84,27 @@ fn normalise_module(module: &mut ModuleState) {
         return;
     };
     for param_desc in &desc.parameters {
-        let Some(choices) = param_desc.choices.as_ref() else {
-            continue;
-        };
         let Some(value) = module.parameters.get_mut(&param_desc.type_id) else {
             continue;
         };
-        if let ParamValue::Float(f) = value {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let idx = f.round().max(0.0) as usize;
-            if let Some(choice) = choices.get(idx) {
-                *value = ParamValue::Choice(choice.id.clone());
-            }
+        if let ParamValue::Float(f) = value
+            && let Some(choice) = param_desc.choice_for_value(*f)
+        {
+            *value = ParamValue::Choice(choice.id.clone());
         }
     }
 }
 
-fn walkdir(root: &Path) -> std::io::Result<Vec<PathBuf>> {
-    let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let entry = entry?;
-            let p = entry.path();
-            if p.is_dir() {
-                stack.push(p);
-            } else {
-                out.push(p);
-            }
-        }
+/// Return the file entries directly inside `dir`, sorted. Skips files
+/// silently if `dir` doesn't exist.
+fn list_dir(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    if !dir.exists() {
+        return Ok(Vec::new());
     }
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|p| p.is_file())
+        .collect();
     out.sort();
     Ok(out)
 }

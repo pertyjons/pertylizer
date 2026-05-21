@@ -464,6 +464,12 @@ impl PolyModule for Oscillator {
         let voice_count = self.unison_voice_count.as_usize();
         let base_freq = self.actual_frequency();
 
+        // Hoist the unmodulated form so the audio loop's else-branch is a
+        // straight copy rather than re-clamping per sample. `PulseWidth`'s
+        // range [0.01, 0.99] is already a subset of NormalizedValue's
+        // [0, 1], so `new_unchecked` is sound here.
+        let pulse_width_unmodulated = NormalizedValue::new_unchecked(self.pulse_width.as_f32());
+
         for i in 0..n_samples {
             let fm = fm_reader[i] * self.fm_amount.as_f32();
 
@@ -484,7 +490,7 @@ impl PolyModule for Oscillator {
                     (self.pulse_width.as_f32() + pwm_reader[i] * 0.49).clamp(0.01, 0.99),
                 )
             } else {
-                NormalizedValue::new(self.pulse_width.as_f32())
+                pulse_width_unmodulated
             };
 
             if sync_reader.is_connected() {

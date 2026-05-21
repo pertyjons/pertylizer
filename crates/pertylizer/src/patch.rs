@@ -445,12 +445,8 @@ impl ParamValue {
         if let Param::Sampler(synth_core::params::SamplerParam::SampleSelect(sid)) = p {
             return Self::SampleId { sample_id: sid.0 };
         }
-        if let Some(choices) = desc.choices.as_ref() {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let idx = p.as_f32().round().max(0.0) as usize;
-            if let Some(choice) = choices.get(idx) {
-                return Self::Choice(choice.id.clone());
-            }
+        if let Some(choice) = desc.choice_for_value(p.as_f32()) {
+            return Self::Choice(choice.id.clone());
         }
         Self::Float(p.as_f32())
     }

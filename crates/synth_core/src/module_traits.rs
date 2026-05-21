@@ -717,14 +717,21 @@ impl ParameterDescriptor {
     /// Format a value for display.
     #[must_use]
     pub fn format(&self, value: f32) -> String {
-        if let Some(ref choices) = self.choices {
-            let idx = value.round() as usize;
-            if let Some(choice) = choices.get(idx) {
-                return choice.name.clone();
-            }
+        if let Some(choice) = self.choice_for_value(value) {
+            return choice.name.clone();
         }
-
         self.unit.format(value)
+    }
+
+    /// Look up the `ChoiceOption` corresponding to a numeric parameter
+    /// value. Returns `None` for non-choice params, out-of-range indices,
+    /// or non-finite inputs.
+    #[must_use]
+    pub fn choice_for_value(&self, value: f32) -> Option<&ChoiceOption> {
+        let choices = self.choices.as_ref()?;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let idx = value.round().max(0.0) as usize;
+        choices.get(idx)
     }
 
     // Convenience accessors for backwards compatibility
