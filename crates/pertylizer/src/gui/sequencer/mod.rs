@@ -3003,6 +3003,72 @@ pub(crate) fn draw_piano_roll(
         }
         ui.separator();
 
+        ui.label(
+            RichText::new(format!("{} notes", data.notes.len())).color(t.colors.text_secondary),
+        );
+
+        if !view_state.selected_notes.is_empty() {
+            ui.label(
+                RichText::new(format!("{} selected", view_state.selected_notes.len()))
+                    .color(t.colors.accent_yellow),
+            );
+        }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .button(RichText::new(egui_remixicon::icons::CLOSE_LINE).color(t.colors.accent_red))
+                .on_hover_text("Close piano roll")
+                .clicked()
+            {
+                keep_open = false;
+            }
+
+            let help_btn = ui
+                .button(
+                    RichText::new(egui_remixicon::icons::QUESTION_LINE).color(t.colors.text_dim),
+                )
+                .on_hover_text("Keyboard shortcuts");
+            egui::Popup::from_toggle_button_response(&help_btn).show(|ui| {
+                ui.set_min_width(320.0);
+                ui.label(RichText::new("Piano-roll keyboard shortcuts").strong());
+                ui.add_space(4.0);
+                egui::Grid::new("pr_shortcuts_grid")
+                    .num_columns(2)
+                    .spacing([16.0, 4.0])
+                    .show(ui, |ui| {
+                        let rows: &[(&str, &str)] = &[
+                            ("Space", "Play / Pause"),
+                            ("Delete · Backspace", "Delete selected notes"),
+                            ("Escape", "Clear selection · exit step entry"),
+                            ("Ctrl+A", "Select all notes"),
+                            ("Ctrl+C", "Copy selection"),
+                            ("Ctrl+X", "Cut selection"),
+                            ("Ctrl+V", "Paste at playhead"),
+                            ("Ctrl+D", "Duplicate selection after"),
+                            ("↑ · ↓", "Transpose ±1 semitone"),
+                            ("Shift+↑ · Shift+↓", "Transpose ±1 octave"),
+                            ("Ctrl+scroll", "Horizontal zoom"),
+                            ("Ctrl+Shift+scroll", "Vertical zoom"),
+                            (
+                                "STEP key letters",
+                                concat!("A·W·S·E·D·F·T·G·Y·H·U·J ", "\u{ea6e}", " C..B"),
+                            ),
+                        ];
+                        for (k, d) in rows {
+                            ui.label(RichText::new(*k).monospace().color(t.colors.accent_cyan));
+                            ui.label(*d);
+                            ui.end_row();
+                        }
+                    });
+            });
+        });
+    });
+
+    ui.add_space(2.0);
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+
         // Tool selector
         let select_label = if view_state.edit_tool == EditTool::Select {
             RichText::new("Select").color(t.colors.accent_primary)
@@ -3324,88 +3390,24 @@ pub(crate) fn draw_piano_roll(
             }
         }
 
-        ui.separator();
-
-        // ── Zoom controls ──
-        ui.label(RichText::new("Zoom").color(t.colors.text_dim).size(10.0));
-        if ui
-            .small_button("-")
-            .on_hover_text("Zoom out (Ctrl+scroll = horizontal, Ctrl+Shift+scroll = vertical)")
-            .clicked()
-        {
-            view_state.pr_zoom_x = (view_state.pr_zoom_x * 0.8).max(0.25);
-            view_state.pr_zoom_y = (view_state.pr_zoom_y * 0.8).max(0.5);
-        }
-        if ui.small_button("1x").on_hover_text("Reset zoom").clicked() {
-            view_state.pr_zoom_x = 1.0;
-            view_state.pr_zoom_y = 1.0;
-        }
-        if ui.small_button("+").on_hover_text("Zoom in").clicked() {
-            view_state.pr_zoom_x = (view_state.pr_zoom_x * 1.25).min(4.0);
-            view_state.pr_zoom_y = (view_state.pr_zoom_y * 1.25).min(3.0);
-        }
-
-        ui.separator();
-
-        ui.label(
-            RichText::new(format!("{} notes", data.notes.len())).color(t.colors.text_secondary),
-        );
-
-        if !view_state.selected_notes.is_empty() {
-            ui.label(
-                RichText::new(format!("{} selected", view_state.selected_notes.len()))
-                    .color(t.colors.accent_yellow),
-            );
-        }
-
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("+").on_hover_text("Zoom in").clicked() {
+                view_state.pr_zoom_x = (view_state.pr_zoom_x * 1.25).min(4.0);
+                view_state.pr_zoom_y = (view_state.pr_zoom_y * 1.25).min(3.0);
+            }
+            if ui.small_button("1x").on_hover_text("Reset zoom").clicked() {
+                view_state.pr_zoom_x = 1.0;
+                view_state.pr_zoom_y = 1.0;
+            }
             if ui
-                .button(RichText::new(egui_remixicon::icons::CLOSE_LINE).color(t.colors.accent_red))
-                .on_hover_text("Close piano roll")
+                .small_button("-")
+                .on_hover_text("Zoom out (Ctrl+scroll = horizontal, Ctrl+Shift+scroll = vertical)")
                 .clicked()
             {
-                keep_open = false;
+                view_state.pr_zoom_x = (view_state.pr_zoom_x * 0.8).max(0.25);
+                view_state.pr_zoom_y = (view_state.pr_zoom_y * 0.8).max(0.5);
             }
-
-            // Keyboard-shortcut help popup
-            let help_btn = ui
-                .button(
-                    RichText::new(egui_remixicon::icons::QUESTION_LINE).color(t.colors.text_dim),
-                )
-                .on_hover_text("Keyboard shortcuts");
-            egui::Popup::from_toggle_button_response(&help_btn).show(|ui| {
-                ui.set_min_width(320.0);
-                ui.label(RichText::new("Piano-roll keyboard shortcuts").strong());
-                ui.add_space(4.0);
-                egui::Grid::new("pr_shortcuts_grid")
-                    .num_columns(2)
-                    .spacing([16.0, 4.0])
-                    .show(ui, |ui| {
-                        let rows: &[(&str, &str)] = &[
-                            ("Space", "Play / Pause"),
-                            ("Delete · Backspace", "Delete selected notes"),
-                            ("Escape", "Clear selection · exit step entry"),
-                            ("Ctrl+A", "Select all notes"),
-                            ("Ctrl+C", "Copy selection"),
-                            ("Ctrl+X", "Cut selection"),
-                            ("Ctrl+V", "Paste at playhead"),
-                            ("Ctrl+D", "Duplicate selection after"),
-                            ("↑ · ↓", "Transpose ±1 semitone"),
-                            ("Shift+↑ · Shift+↓", "Transpose ±1 octave"),
-                            ("Ctrl+scroll", "Horizontal zoom"),
-                            ("Ctrl+Shift+scroll", "Vertical zoom"),
-                            (
-                                "STEP key letters",
-                                concat!("A·W·S·E·D·F·T·G·Y·H·U·J ", "\u{ea6e}", " C..B"),
-                            ),
-                        ];
-                        for (k, d) in rows {
-                            ui.label(RichText::new(*k).monospace().color(t.colors.accent_cyan));
-                            ui.label(*d);
-                            ui.end_row();
-                        }
-                    });
-            });
+            ui.label(RichText::new("Zoom").color(t.colors.text_dim).size(10.0));
         });
     });
 
@@ -3427,7 +3429,7 @@ pub(crate) fn draw_piano_roll(
                     );
                     ui.label(
                         RichText::new(
-                            "Press keys to insert notes  (A·W·S·E·D·F·T·G·Y·H·U·J = C·C♯·D·D♯·E·F·F♯·G·G♯·A·A♯·B)",
+                            "Press keys to insert notes  (A·W·S·E·D·F·T·G·Y·H·U·J = C·C#·D·D#·E·F·F#·G·G#·A·A#·B)",
                         )
                         .size(11.0)
                         .color(t.colors.text_secondary),
