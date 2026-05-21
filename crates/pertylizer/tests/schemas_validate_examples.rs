@@ -46,29 +46,8 @@ fn checked_in_schemas_match_generated() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let bin = env!("CARGO_BIN_EXE_gen_schemas");
 
-    // The binary writes into `<workspace>/schemas`. We point it at the temp
-    // dir by setting CARGO_MANIFEST_DIR-style override via a wrapper. Since
-    // the binary derives its output path from its own CARGO_MANIFEST_DIR
-    // (resolved at compile time), we instead let it write to the real
-    // location and copy from there — but that would clobber the working
-    // tree. Easier: invoke it pointing the working directory inside the
-    // tempdir, but it derives path at compile time so cwd doesn't matter.
-    //
-    // Solution: read the checked-in schemas and the freshly-generated ones
-    // from the real `schemas/` dir, after backing the real ones up to
-    // tempdir first.
-    let schemas_dir = workspace_root().join("schemas");
-
-    // Snapshot current contents.
-    let mut snapshots = Vec::new();
-    for name in SCHEMA_FILES {
-        let path = schemas_dir.join(name);
-        let body = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-        snapshots.push((name, body));
-    }
-
-    // Regenerate in-place.
     let output = Command::new(bin)
+        .arg(tmp.path())
         .output()
         .expect("invoke gen_schemas binary");
     assert!(
@@ -78,21 +57,17 @@ fn checked_in_schemas_match_generated() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Compare and restore if drift detected.
+    let schemas_dir = workspace_root().join("schemas");
     let mut drift: Vec<&str> = Vec::new();
-    for (name, original) in &snapshots {
-        let path = schemas_dir.join(name);
-        let regenerated = std::fs::read(&path).unwrap_or_default();
-        if regenerated != *original {
+    for name in SCHEMA_FILES {
+        let checked_in = std::fs::read(schemas_dir.join(name))
+            .unwrap_or_else(|e| panic!("read checked-in {name}: {e}"));
+        let regenerated = std::fs::read(tmp.path().join(name))
+            .unwrap_or_else(|e| panic!("read regenerated {name}: {e}"));
+        if checked_in != regenerated {
             drift.push(name);
         }
-        // Always restore so the test is idempotent and doesn't leave the
-        // working tree modified if a different schema drifts later.
-        std::fs::write(&path, original).expect("restore original");
     }
-
-    // Save tempdir until end so the dir guard outlives the test body.
-    drop(tmp);
 
     assert!(
         drift.is_empty(),
@@ -147,12 +122,12 @@ fn assert_example_validates(path: &Path, validator: &Validator, label: &str) {
     let body = std::fs::read(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
     let doc: Value =
         serde_json::from_slice(&body).unwrap_or_else(|e| panic!("parse {path:?}: {e}"));
-    let mut errors: Vec<String> = validator
+    let errors: Vec<String> = validator
         .iter_errors(&doc)
+        .take(5)
         .map(|e| format!("at /{}: {}", e.instance_path, e))
         .collect();
     if !errors.is_empty() {
-        errors.truncate(5);
         panic!(
             "{label} example {} fails schema validation:\n  {}",
             path.display(),

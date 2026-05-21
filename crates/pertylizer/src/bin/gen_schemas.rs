@@ -17,7 +17,9 @@
 //! schema can be used to pick a format. Nested `Song` and `AweState` are
 //! fully derived via `JsonSchema`.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use pertylizer::bundle::BundleMetadata;
 use pertylizer::module_factory::{ALL_MODULE_TYPES, get_descriptor};
@@ -30,11 +32,14 @@ use synth_core::params::{Param, SamplerParam};
 use synth_core::{ModuleDescriptor, ModuleType, ParameterDescriptor};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .ok_or("cannot locate workspace root")?
-        .join("schemas");
+    let out_dir = match std::env::args().nth(1) {
+        Some(arg) => PathBuf::from(arg),
+        None => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .ok_or("cannot locate workspace root")?
+            .join("schemas"),
+    };
     std::fs::create_dir_all(&out_dir)?;
 
     write_schema::<ProjectFile>(&out_dir, "project.schema.json", true, Some("project"))?;
@@ -235,83 +240,85 @@ fn tighten_file_type(root: &mut Value, value: &str) {
     field.insert("type".to_string(), json!("string"));
 }
 
-/// Replace the generic `$defs.ModuleState` with a `oneOf` over every entry in
-/// `ALL_MODULE_TYPES`. Each branch constrains `type` to one snake-case string
-/// and lists the module's parameters with their range / choice enum.
-fn tighten_module_state(root: &mut Value) {
-    let defs = root
-        .get_mut("$defs")
-        .and_then(Value::as_object_mut)
-        .expect("schema should have $defs");
+/// Shared definitions injected into any schema that references `ModuleState`.
+struct ModuleStateDefs {
+    module_state: Value,
+    shared_enums: BTreeMap<String, Value>,
+}
 
-    let mut branches = Vec::new();
-    for &mt in ALL_MODULE_TYPES {
-        let Some(desc) = get_descriptor(mt) else {
-            continue;
-        };
-        branches.push(module_branch(mt, &desc));
+/// Cache the (ModuleState, shared-enum) defs since they're identical across
+/// project and patch schemas and building them instantiates every module.
+fn module_state_defs() -> &'static ModuleStateDefs {
+    static CELL: OnceLock<ModuleStateDefs> = OnceLock::new();
+    CELL.get_or_init(build_module_state_defs)
+}
+
+fn build_module_state_defs() -> ModuleStateDefs {
+    let mut branches: Vec<Value> = ALL_MODULE_TYPES
+        .iter()
+        .filter_map(|&mt| get_descriptor(mt).map(|desc| module_branch(mt, &desc)))
+        .collect();
+
+    let mut counts: BTreeMap<Vec<String>, usize> = BTreeMap::new();
+    for branch in &branches {
+        walk_enums(branch, &mut |arr| {
+            *counts.entry(arr.to_vec()).or_insert(0) += 1;
+        });
     }
+
+    let promoted: BTreeMap<Vec<String>, String> = counts
+        .iter()
+        .filter(|(_, c)| **c >= 3)
+        .enumerate()
+        .map(|(idx, (key, _))| (key.clone(), format!("SharedEnum{}", idx + 1)))
+        .collect();
+
+    for branch in &mut branches {
+        rewrite_enums(branch, &promoted);
+    }
+
+    let shared_enums: BTreeMap<String, Value> = promoted
+        .into_iter()
+        .map(|(enum_arr, name)| {
+            let hint = enum_arr
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let suffix = if enum_arr.len() > 3 { ", …" } else { "" };
+            let def = json!({
+                "description": format!("Shared enum ({} entries): {hint}{suffix}", enum_arr.len()),
+                "type": "string",
+                "enum": enum_arr,
+            });
+            (name, def)
+        })
+        .collect();
 
     let module_state = json!({
         "description": "State of a single module. The `type` discriminator selects which parameter set is valid.",
         "oneOf": branches
     });
 
-    defs.insert("ModuleState".to_string(), module_state);
-
-    // Hoist any choice-enum used 3+ times into `$defs` and replace inline
-    // occurrences with `$ref`. The mod_matrix module alone uses each of its
-    // 16-/19-entry source/destination enums sixteen times.
-    hoist_repeated_enums(defs);
+    ModuleStateDefs {
+        module_state,
+        shared_enums,
+    }
 }
 
-/// Walk every `{"type": "string", "enum": [...]}` fragment inside the schema,
-/// count distinct enum tuples, and extract any that appear 3+ times into
-/// shared `$defs.SharedEnum<N>` entries. Inline copies become `$ref`s.
-fn hoist_repeated_enums(defs: &mut serde_json::Map<String, Value>) {
-    use std::collections::BTreeMap;
-
-    // Pass 1: collect every string-enum tuple and count occurrences.
-    let mut counts: BTreeMap<Vec<String>, usize> = BTreeMap::new();
-    if let Some(ms) = defs.get("ModuleState") {
-        walk_enums(ms, &mut |arr| {
-            *counts.entry(arr.to_vec()).or_insert(0) += 1;
-        });
-    }
-
-    // Promote those used 3+ times to stable names.
-    let mut promoted: BTreeMap<Vec<String>, String> = BTreeMap::new();
-    for (idx, (key, _)) in counts.iter().filter(|(_, c)| **c >= 3).enumerate() {
-        let name = format!("SharedEnum{}", idx + 1);
-        promoted.insert(key.clone(), name);
-    }
-
-    if promoted.is_empty() {
+/// Replace the generic `$defs.ModuleState` with a `oneOf` over every entry in
+/// `ALL_MODULE_TYPES`, and inject the shared choice-enum defs that branches
+/// reference via `$ref`.
+fn tighten_module_state(root: &mut Value) {
+    let Some(defs) = root.get_mut("$defs").and_then(Value::as_object_mut) else {
         return;
-    }
+    };
 
-    // Insert the promoted enums into $defs.
-    for (enum_arr, name) in &promoted {
-        let hint = enum_arr
-            .iter()
-            .take(3)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
-        let suffix = if enum_arr.len() > 3 { ", …" } else { "" };
-        defs.insert(
-            name.clone(),
-            json!({
-                "description": format!("Shared enum ({} entries): {hint}{suffix}", enum_arr.len()),
-                "type": "string",
-                "enum": enum_arr,
-            }),
-        );
-    }
-
-    // Pass 2: rewrite ModuleState in place, swapping inline matches for $refs.
-    if let Some(ms) = defs.get_mut("ModuleState") {
-        rewrite_enums(ms, &promoted);
+    let cached = module_state_defs();
+    defs.insert("ModuleState".to_string(), cached.module_state.clone());
+    for (name, def) in &cached.shared_enums {
+        defs.insert(name.clone(), def.clone());
     }
 }
 
@@ -374,7 +381,7 @@ fn rewrite_enums(value: &mut Value, promoted: &std::collections::BTreeMap<Vec<St
 /// Build the `oneOf` branch schema for a single module type.
 fn module_branch(mt: ModuleType, desc: &ModuleDescriptor) -> Value {
     let type_id = serde_plain_snake_case(mt);
-    let id_pattern = format!("^{}-\\d+$", regex_escape(mt.prefix()));
+    let id_pattern = format!("^{}-\\d+$", mt.prefix());
 
     let mut param_props = serde_json::Map::new();
     for param in &desc.parameters {
@@ -478,26 +485,14 @@ fn parameter_schema(param: &ParameterDescriptor) -> Value {
     schema
 }
 
-/// Match the serde `rename_all = "snake_case"` output for `ModuleType`.
+/// Match the serde `rename_all = "snake_case"` output for `ModuleType`. This
+/// is the string saved files use in their `type` discriminator; the
+/// descriptor's `type_id` is a separate UI-facing label and does not always
+/// match (e.g. `SubOscillator` → `sub_oscillator` here vs `sub_osc` in the
+/// descriptor).
 fn serde_plain_snake_case(mt: ModuleType) -> String {
-    // `mt` already serializes as a snake_case string under serde; round-trip
-    // through serde_json to avoid duplicating the mapping.
     serde_json::to_value(mt)
         .ok()
         .and_then(|v| v.as_str().map(String::from))
         .unwrap_or_else(|| format!("{:?}", mt))
-}
-
-/// Escape regex special characters in a prefix. Prefixes are short ASCII
-/// strings (e.g. `osc`, `flt`); the escape is defensive against future
-/// prefixes that include special characters.
-fn regex_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if "\\.^$|?*+()[]{}".contains(c) {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
 }
