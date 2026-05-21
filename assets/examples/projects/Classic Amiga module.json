@@ -2116,7 +2116,7 @@
         "name": "Kick",
         "instrument": 13,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -2131,7 +2131,7 @@
         "name": "Snare",
         "instrument": 14,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -2146,7 +2146,7 @@
         "name": "Bass",
         "instrument": 15,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -2161,7 +2161,7 @@
         "name": "Lead",
         "instrument": 16,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -2176,7 +2176,7 @@
         "name": "Hi-Hat",
         "instrument": 17,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {

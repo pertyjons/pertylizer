@@ -9560,7 +9560,7 @@
         "name": "Neuro Bass",
         "instrument": 1,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9575,7 +9575,7 @@
         "name": "Pad",
         "instrument": 7,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9590,7 +9590,7 @@
         "name": "Kick",
         "instrument": 2,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9605,7 +9605,7 @@
         "name": "Snare",
         "instrument": 3,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9620,7 +9620,7 @@
         "name": "HiHat",
         "instrument": 4,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9635,7 +9635,7 @@
         "name": "Clap",
         "instrument": 5,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9650,7 +9650,7 @@
         "name": "Rim",
         "instrument": 6,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9665,7 +9665,7 @@
         "name": "Arp Lead",
         "instrument": 8,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9680,7 +9680,7 @@
         "name": "Arp Echo",
         "instrument": 9,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9695,7 +9695,7 @@
         "name": "Riser",
         "instrument": 10,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9710,7 +9710,7 @@
         "name": "Impact",
         "instrument": 11,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9725,7 +9725,7 @@
         "name": "Sweep FX",
         "instrument": 12,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {

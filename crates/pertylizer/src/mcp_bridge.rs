@@ -1340,7 +1340,7 @@ impl SynthBridge for AppSynthBridge {
                 instrument_id: t.instrument.map(|i| i.0),
                 volume: t.volume.as_f32(),
                 // Convert normalized (0.0..1.0) to bipolar (-1.0..1.0) for MCP API
-                pan: t.pan.as_f32() * 2.0 - 1.0,
+                pan: t.pan.as_f32(),
                 mute: t.mute,
                 solo: t.solo,
             })
@@ -2279,7 +2279,7 @@ impl SynthBridge for AppSynthBridge {
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
         // Convert bipolar (-1.0..1.0) to normalized (0.0..1.0) for internal storage
-        track.pan = synth_core::NormalizedValue::new((pan + 1.0) * 0.5);
+        track.pan = synth_core::BipolarValue::new(pan);
         Ok(())
     }
 

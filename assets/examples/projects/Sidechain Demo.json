@@ -797,7 +797,7 @@
         "name": "Pad",
         "instrument": 2,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -812,7 +812,7 @@
         "name": "Kick",
         "instrument": 1,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -827,7 +827,7 @@
         "name": "Bass",
         "instrument": 3,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {

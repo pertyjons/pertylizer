@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::ids::{SeqInstrumentId, TrackId};
-use synth_core::NormalizedValue;
+use synth_core::{BipolarValue, NormalizedValue};
 
 /// Track playback mode - determines how notes are allocated to voices.
 #[derive(
@@ -28,8 +28,8 @@ pub struct SequencerTrack {
     pub instrument: Option<SeqInstrumentId>,
     /// Volume (type-safe normalized 0.0-1.0).
     pub volume: NormalizedValue,
-    /// Panning (type-safe: 0.0 = left, 0.5 = center, 1.0 = right).
-    pub pan: NormalizedValue,
+    /// Panning (type-safe: -1.0 = left, 0.0 = center, 1.0 = right).
+    pub pan: BipolarValue,
     /// Muted state.
     pub mute: bool,
     /// Solo state.
@@ -49,7 +49,7 @@ impl SequencerTrack {
             name: name.into(),
             instrument: None,
             volume: NormalizedValue::MAX,
-            pan: NormalizedValue::CENTER,
+            pan: BipolarValue::CENTER,
             mute: false,
             solo: false,
             color: TrackColor::default(),
@@ -73,7 +73,7 @@ impl SequencerTrack {
 
     /// Set the panning (builder pattern).
     #[must_use]
-    pub fn with_pan(mut self, pan: NormalizedValue) -> Self {
+    pub fn with_pan(mut self, pan: BipolarValue) -> Self {
         self.pan = pan;
         self
     }
@@ -209,7 +209,7 @@ mod tests {
         let track = SequencerTrack::new(TrackId(0), "Lead");
         assert_eq!(track.name, "Lead");
         assert_eq!(track.volume, NormalizedValue::MAX);
-        assert_eq!(track.pan, NormalizedValue::CENTER);
+        assert_eq!(track.pan, BipolarValue::CENTER);
         assert!(!track.mute);
         assert!(!track.solo);
     }
@@ -219,11 +219,11 @@ mod tests {
         let track = SequencerTrack::new(TrackId(0), "Bass")
             .with_instrument(SeqInstrumentId(1))
             .with_volume(NormalizedValue::new(0.8))
-            .with_pan(NormalizedValue::new(0.3));
+            .with_pan(BipolarValue::new(0.3));
 
         assert_eq!(track.instrument, Some(SeqInstrumentId(1)));
         assert_eq!(track.volume, NormalizedValue::new(0.8));
-        assert_eq!(track.pan, NormalizedValue::new(0.3));
+        assert_eq!(track.pan, BipolarValue::new(0.3));
     }
 
     #[test]

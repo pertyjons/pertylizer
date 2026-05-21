@@ -5532,7 +5532,7 @@
         "name": "Kick",
         "instrument": 1,
         "volume": 0.65,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5547,7 +5547,7 @@
         "name": "Snare",
         "instrument": 2,
         "volume": 0.75,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5562,7 +5562,7 @@
         "name": "Hat",
         "instrument": 3,
         "volume": 0.75,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5577,7 +5577,7 @@
         "name": "Aggro Bass",
         "instrument": 4,
         "volume": 0.6,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5592,7 +5592,7 @@
         "name": "Sub Bass",
         "instrument": 5,
         "volume": 0.5,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5607,7 +5607,7 @@
         "name": "Pad",
         "instrument": 6,
         "volume": 0.85,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5622,7 +5622,7 @@
         "name": "Stab",
         "instrument": 7,
         "volume": 0.55,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5637,7 +5637,7 @@
         "name": "Lead",
         "instrument": 8,
         "volume": 0.95,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5652,7 +5652,7 @@
         "name": "Arp A",
         "instrument": 9,
         "volume": 0.85,
-        "pan": 0.35,
+        "pan": -0.3,
         "mute": false,
         "solo": false,
         "color": {
@@ -5667,7 +5667,7 @@
         "name": "Arp B",
         "instrument": 10,
         "volume": 0.8,
-        "pan": 0.65,
+        "pan": 0.3,
         "mute": false,
         "solo": false,
         "color": {
@@ -5682,7 +5682,7 @@
         "name": "Strings",
         "instrument": 11,
         "volume": 0.8,
-        "pan": 0.55,
+        "pan": 0.1,
         "mute": false,
         "solo": false,
         "color": {
@@ -5697,7 +5697,7 @@
         "name": "Perc Sync",
         "instrument": 12,
         "volume": 0.85,
-        "pan": 0.45,
+        "pan": -0.1,
         "mute": false,
         "solo": false,
         "color": {
@@ -5712,7 +5712,7 @@
         "name": "Lead Harmony",
         "instrument": 8,
         "volume": 0.6,
-        "pan": 0.4,
+        "pan": -0.2,
         "mute": false,
         "solo": false,
         "color": {

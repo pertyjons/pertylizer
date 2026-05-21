@@ -2,6 +2,18 @@
 
 ## [unreleased]
 
+### Schemas TODO — B7 done
+
+- **`SequencerTrack.pan` migrated `NormalizedValue` → `BipolarValue`** —
+  Pan now stores its semantic form (-1 = left, 0 = center, +1 = right)
+  rather than the 0..1 normalised form with 0.5 = center. The GUI
+  slider and the MCP `set_track_pan` / `list_tracks` tools were already
+  bipolar at the API boundary; their inline conversions are gone.
+  Note: the audio engine doesn't yet *apply* track pan to output —
+  this commit only fixes the type, behavior preserved. Example
+  project files migrated via jq + resave_examples (formula `2x − 1`).
+  Schemas regenerated.
+
 ### Sub Oscillator waveform selector showed wrong button set
 
 The patch-editor waveform selector hardcoded the main Oscillator's

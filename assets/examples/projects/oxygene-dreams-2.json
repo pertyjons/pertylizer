@@ -9892,7 +9892,7 @@
         "name": "Fractal Pad",
         "instrument": 0,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9907,7 +9907,7 @@
         "name": "Arpeggio",
         "instrument": 1,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9922,7 +9922,7 @@
         "name": "Bass",
         "instrument": 2,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9937,7 +9937,7 @@
         "name": "Lead",
         "instrument": 3,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9952,7 +9952,7 @@
         "name": "Kick",
         "instrument": 5,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9967,7 +9967,7 @@
         "name": "Hi-Hat",
         "instrument": 6,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9982,7 +9982,7 @@
         "name": "Bells",
         "instrument": 7,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9997,7 +9997,7 @@
         "name": "Vocal Pad",
         "instrument": 8,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10012,7 +10012,7 @@
         "name": "Harmony Arp",
         "instrument": 9,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10027,7 +10027,7 @@
         "name": "Shimmer Strings",
         "instrument": 4,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10042,7 +10042,7 @@
         "name": "Snare",
         "instrument": 11,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10057,7 +10057,7 @@
         "name": "Moog Harmony",
         "instrument": 10,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10072,7 +10072,7 @@
         "name": "Celestial Lead",
         "instrument": 23,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10087,7 +10087,7 @@
         "name": "Unison Harmony Pad",
         "instrument": 24,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10102,7 +10102,7 @@
         "name": "Sparkling Echo Bells",
         "instrument": 25,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10117,7 +10117,7 @@
         "name": "Rhythmic Glitch FX",
         "instrument": 26,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10132,7 +10132,7 @@
         "name": "Orchestral Strings Layer",
         "instrument": 27,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10147,7 +10147,7 @@
         "name": "Counter-Arp",
         "instrument": 28,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10162,7 +10162,7 @@
         "name": "Power Supersaw Layer",
         "instrument": 29,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -10177,7 +10177,7 @@
         "name": "Buildup FX Sweep",
         "instrument": 30,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {

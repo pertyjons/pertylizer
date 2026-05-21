@@ -10,7 +10,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, Vec2};
-use synth_core::{Bpm, MidiNote, NormalizedValue, Semitones};
+use synth_core::{BipolarValue, Bpm, MidiNote, NormalizedValue, Semitones};
 use synth_engine::{EngineCommand, EngineHandle, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
@@ -784,7 +784,7 @@ struct TrackInfo {
     color: Color32,
     track_color: synth_sequencer::TrackColor,
     volume: NormalizedValue,
-    pan: NormalizedValue,
+    pan: BipolarValue,
     mute: bool,
     solo: bool,
     instrument_id: Option<SeqInstrumentId>,
@@ -1414,8 +1414,7 @@ fn draw_arrangement(
                                                     }
                                                 });
 
-                                                // Pan (-1..1 displayed, stored 0..1 with 0.5 = centre)
-                                                let mut pan_bi = track.pan.as_f32() * 2.0 - 1.0;
+                                                let mut pan_bi = track.pan.as_f32();
                                                 ui.horizontal(|ui| {
                                                     ui.label(
                                                         RichText::new("Pan")
@@ -1435,9 +1434,7 @@ fn draw_arrangement(
                                                         && let Some(trk) =
                                                             song_w.track_mut(track.id)
                                                     {
-                                                        trk.pan = NormalizedValue::new(
-                                                            (pan_bi + 1.0) * 0.5,
-                                                        );
+                                                        trk.pan = BipolarValue::new(pan_bi);
                                                     }
                                                 });
 

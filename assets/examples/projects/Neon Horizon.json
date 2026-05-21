@@ -6527,7 +6527,7 @@
         "name": "Kick",
         "instrument": 1,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6542,7 +6542,7 @@
         "name": "Snare",
         "instrument": 2,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6557,7 +6557,7 @@
         "name": "Hihat",
         "instrument": 3,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6572,7 +6572,7 @@
         "name": "Bass",
         "instrument": 4,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6587,7 +6587,7 @@
         "name": "Pad",
         "instrument": 5,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6602,7 +6602,7 @@
         "name": "Lead",
         "instrument": 6,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6617,7 +6617,7 @@
         "name": "Arp",
         "instrument": 7,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6632,7 +6632,7 @@
         "name": "SubBass",
         "instrument": 8,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6647,7 +6647,7 @@
         "name": "Clap",
         "instrument": 9,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6662,7 +6662,7 @@
         "name": "Crash",
         "instrument": 10,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6677,7 +6677,7 @@
         "name": "FXSweep",
         "instrument": 11,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6692,7 +6692,7 @@
         "name": "Bell",
         "instrument": 12,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6707,7 +6707,7 @@
         "name": "Strings",
         "instrument": 13,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6722,7 +6722,7 @@
         "name": "OpenHH",
         "instrument": 14,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {

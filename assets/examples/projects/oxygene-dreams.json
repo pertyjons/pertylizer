@@ -5449,7 +5449,7 @@
         "name": "Fractal Pad",
         "instrument": 0,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5464,7 +5464,7 @@
         "name": "Arpeggio",
         "instrument": 1,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5479,7 +5479,7 @@
         "name": "Bass",
         "instrument": 2,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5494,7 +5494,7 @@
         "name": "Lead",
         "instrument": 3,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5509,7 +5509,7 @@
         "name": "Shimmer Strings",
         "instrument": 4,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5524,7 +5524,7 @@
         "name": "Kick",
         "instrument": 5,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5539,7 +5539,7 @@
         "name": "Hi-Hat",
         "instrument": 6,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5554,7 +5554,7 @@
         "name": "Bells",
         "instrument": 7,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -5569,7 +5569,7 @@
         "name": "Vocal Pad",
         "instrument": 8,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {

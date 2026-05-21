@@ -214,7 +214,15 @@ hint that the field is conventionally ignored.
 **Recommendation:** Do the doc-comment fix now (S); evaluate the
 `Option`-ification later if it keeps causing confusion.
 
-### B7. Pan unit inconsistency between `Track.pan` and module `pan` parameters [M, medium impact] *(consumer feedback)*
+### ✅ B7. Pan unit inconsistency between `Track.pan` and module `pan` parameters [M, medium impact] — done 2026-05-21 *(consumer feedback)*
+
+`SequencerTrack.pan` is now `BipolarValue` (matching module-level pan).
+GUI slider and MCP `set_track_pan` / `list_tracks` were already bipolar
+at the boundary; their inline `* 2 - 1` and `(x + 1) * 0.5` conversions
+are gone. Example project files migrated via `jq` + the
+`resave_examples` binary. Schemas regenerated. No version bump (the
+type change is internal; saved JSON's numeric form was always
+ambiguous without a wider format break).
 
 **Issue:** `SequencerTrack.pan` uses `NormalizedValue` (0.0=left,
 0.5=center, 1.0=right). Module-level pan parameters (e.g. amplifier) use

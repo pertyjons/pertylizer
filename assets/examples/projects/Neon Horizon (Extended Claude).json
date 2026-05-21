@@ -9689,7 +9689,7 @@
         "name": "Kick",
         "instrument": 1,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9704,7 +9704,7 @@
         "name": "Snare",
         "instrument": 2,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9719,7 +9719,7 @@
         "name": "Hihat",
         "instrument": 3,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9734,7 +9734,7 @@
         "name": "Bass",
         "instrument": 4,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9749,7 +9749,7 @@
         "name": "Pad",
         "instrument": 5,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9764,7 +9764,7 @@
         "name": "Lead",
         "instrument": 6,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9779,7 +9779,7 @@
         "name": "Arp",
         "instrument": 7,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9794,7 +9794,7 @@
         "name": "Sub Bass",
         "instrument": 8,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9809,7 +9809,7 @@
         "name": "Brass",
         "instrument": 9,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9824,7 +9824,7 @@
         "name": "Pluck",
         "instrument": 10,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9839,7 +9839,7 @@
         "name": "Sweep",
         "instrument": 11,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9854,7 +9854,7 @@
         "name": "Tom",
         "instrument": 12,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -9869,7 +9869,7 @@
         "name": "Arp High",
         "instrument": 13,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {

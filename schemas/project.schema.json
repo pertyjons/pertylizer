@@ -7122,8 +7122,8 @@
           "type": "string"
         },
         "pan": {
-          "$ref": "#/$defs/NormalizedValue",
-          "description": "Panning (type-safe: 0.0 = left, 0.5 = center, 1.0 = right)."
+          "$ref": "#/$defs/BipolarValue",
+          "description": "Panning (type-safe: -1.0 = left, 0.0 = center, 1.0 = right)."
         },
         "solo": {
           "description": "Solo state.",

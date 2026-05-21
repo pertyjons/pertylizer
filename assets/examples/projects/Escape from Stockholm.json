@@ -6041,7 +6041,7 @@
         "name": "Bass",
         "instrument": 10,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6056,7 +6056,7 @@
         "name": "Kick",
         "instrument": 11,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6071,7 +6071,7 @@
         "name": "Snare",
         "instrument": 12,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6086,7 +6086,7 @@
         "name": "Hat",
         "instrument": 13,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6101,7 +6101,7 @@
         "name": "Lead",
         "instrument": 14,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6116,7 +6116,7 @@
         "name": "Strings",
         "instrument": 15,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6131,7 +6131,7 @@
         "name": "Atmosphere",
         "instrument": 16,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6146,7 +6146,7 @@
         "name": "Sub Echo",
         "instrument": 17,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {

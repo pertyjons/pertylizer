@@ -6068,7 +6068,7 @@
         "name": "Kick",
         "instrument": 7,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6083,7 +6083,7 @@
         "name": "Snare",
         "instrument": 8,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6098,7 +6098,7 @@
         "name": "Hats",
         "instrument": 9,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6113,7 +6113,7 @@
         "name": "Bass",
         "instrument": 10,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6128,7 +6128,7 @@
         "name": "Lead",
         "instrument": 11,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6143,7 +6143,7 @@
         "name": "Pad",
         "instrument": 12,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6158,7 +6158,7 @@
         "name": "Sub Bass (Harmony)",
         "instrument": 13,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6173,7 +6173,7 @@
         "name": "Unison Supersaw (Lead Var)",
         "instrument": 14,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6188,7 +6188,7 @@
         "name": "Noise Sweep (SFX)",
         "instrument": 15,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6203,7 +6203,7 @@
         "name": "Shepard Riser (SFX)",
         "instrument": 16,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6218,7 +6218,7 @@
         "name": "Syncopated Kick",
         "instrument": 7,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6233,7 +6233,7 @@
         "name": "Percussion/Sticks",
         "instrument": 9,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6248,7 +6248,7 @@
         "name": "Arpeggio",
         "instrument": 17,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6263,7 +6263,7 @@
         "name": "Impact FX",
         "instrument": 18,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6278,7 +6278,7 @@
         "name": "Intro Textures",
         "instrument": 19,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6293,7 +6293,7 @@
         "name": "Screamer Power Lead",
         "instrument": 20,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6308,7 +6308,7 @@
         "name": "Wavefolder Pressure Bass",
         "instrument": 21,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
@@ -6323,7 +6323,7 @@
         "name": "Harmonic Echo Resonator",
         "instrument": 22,
         "volume": 1.0,
-        "pan": 0.5,
+        "pan": 0.0,
         "mute": false,
         "solo": false,
         "color": {
