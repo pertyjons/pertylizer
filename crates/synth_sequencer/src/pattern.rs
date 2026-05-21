@@ -111,8 +111,6 @@ pub struct Pattern {
     notes: Vec<Note>,
     /// Automation lanes.
     pub automation: Vec<AutomationLane>,
-    /// Row resolution for grid view.
-    pub row_resolution: RowResolution,
     /// Next note ID counter.
     next_note_id: u64,
 }
@@ -127,7 +125,6 @@ impl Pattern {
             length,
             notes: Vec::new(),
             automation: Vec::new(),
-            row_resolution: RowResolution::standard_64(),
             next_note_id: 0,
         }
     }
@@ -136,14 +133,6 @@ impl Pattern {
     #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
-        self
-    }
-
-    /// Set the row resolution and update length accordingly.
-    #[must_use]
-    pub fn with_row_resolution(mut self, resolution: RowResolution) -> Self {
-        self.length = resolution.total_ticks();
-        self.row_resolution = resolution;
         self
     }
 
@@ -218,15 +207,6 @@ impl Pattern {
             .filter(move |n| n.start < end && n.end().is_none_or(|e| e > start))
     }
 
-    /// Get notes starting at a specific row.
-    pub fn notes_at_row(&self, row: RowIndex) -> impl Iterator<Item = &Note> {
-        let tick = self.row_resolution.row_to_tick(row);
-        let next_tick = self.row_resolution.row_to_tick(row.next());
-        self.notes
-            .iter()
-            .filter(move |n| n.start >= tick && n.start < next_tick)
-    }
-
     /// Get notes at a specific pitch.
     pub fn notes_at_pitch(&self, pitch: Pitch) -> impl Iterator<Item = &Note> {
         self.notes.iter().filter(move |n| n.pitch == pitch)
@@ -268,20 +248,22 @@ impl Pattern {
     }
 
     /// Quantize all notes to the row grid.
-    pub fn quantize_notes(&mut self) {
+    pub fn quantize_notes(&mut self, resolution: RowResolution) {
         for note in &mut self.notes {
-            note.start = self.row_resolution.quantize(note.start);
+            note.start = resolution.quantize(note.start);
         }
         // Re-sort after quantization
         self.notes.sort_by_key(|n| n.start);
     }
 
     /// Quantize with strength (0.0 = no change, 1.0 = full).
-    pub fn quantize_notes_with_strength(&mut self, strength: NormalizedValue) {
+    pub fn quantize_notes_with_strength(
+        &mut self,
+        resolution: RowResolution,
+        strength: NormalizedValue,
+    ) {
         for note in &mut self.notes {
-            note.start = self
-                .row_resolution
-                .quantize_with_strength(note.start, strength);
+            note.start = resolution.quantize_with_strength(note.start, strength);
         }
         self.notes.sort_by_key(|n| n.start);
     }
@@ -606,7 +588,8 @@ mod tests {
 
     #[test]
     fn test_quantize_notes() {
-        let mut pattern = test_pattern().with_row_resolution(RowResolution::standard_64());
+        let resolution = RowResolution::standard_64();
+        let mut pattern = test_pattern();
 
         let id = pattern.add_note(
             PatternTick(120),
@@ -615,7 +598,7 @@ mod tests {
             SeqInstrumentId(0),
         );
 
-        pattern.quantize_notes();
+        pattern.quantize_notes(resolution);
 
         let note = pattern.note(id).unwrap();
         assert_eq!(note.start.0, 240);
@@ -623,7 +606,8 @@ mod tests {
 
     #[test]
     fn test_quantize_with_strength() {
-        let mut pattern = test_pattern().with_row_resolution(RowResolution::standard_64());
+        let resolution = RowResolution::standard_64();
+        let mut pattern = test_pattern();
 
         let id = pattern.add_note(
             PatternTick(120),
@@ -633,7 +617,7 @@ mod tests {
         );
 
         // 50% quantization toward 240
-        pattern.quantize_notes_with_strength(NormalizedValue::CENTER);
+        pattern.quantize_notes_with_strength(resolution, NormalizedValue::CENTER);
 
         let note = pattern.note(id).unwrap();
         // 120 + 0.5 * (240 - 120) = 120 + 60 = 180

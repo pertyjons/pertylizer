@@ -1234,9 +1234,8 @@ fn draw_arrangement(
                                                 {
                                                     let mut song_w = song.write();
                                                     let idx = song_w
-                                                        .track_order()
-                                                        .iter()
-                                                        .position(|t| *t == track.id)
+                                                        .tracks()
+                                                        .position(|t| t.id == track.id)
                                                         .unwrap_or(0);
                                                     let placements: Vec<_> = song_w
                                                         .arrangement()
@@ -2645,7 +2644,7 @@ pub(crate) fn collect_piano_roll_data(
         },
         pattern_id,
         length_ticks: pattern.length,
-        ticks_per_row: pattern.row_resolution.ticks_per_row.as_u16(),
+        ticks_per_row: song.row_resolution.ticks_per_row.as_u16(),
         notes,
         pitch_min,
         pitch_max,

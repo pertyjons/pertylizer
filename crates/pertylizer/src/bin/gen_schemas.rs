@@ -114,7 +114,6 @@ fn embed_examples(root: &mut Value) {
                     {"id": 1, "start": 960, "duration": 960, "pitch": 64, "velocity": 0.8, "instrument": 0}
                 ],
                 "automation": [],
-                "row_resolution": {"rows": 64, "ticks_per_row": 60},
                 "next_note_id": 2
             }]),
         ),
@@ -309,7 +308,9 @@ fn build_module_state_defs() -> ModuleStateDefs {
 
 /// Replace the generic `$defs.ModuleState` with a `oneOf` over every entry in
 /// `ALL_MODULE_TYPES`, and inject the shared choice-enum defs that branches
-/// reference via `$ref`.
+/// reference via `$ref`. Also strips the auto-derived `ParamValue` def: it
+/// becomes orphan once the strict `additionalProperties: false` is in place
+/// on module `parameters`.
 fn tighten_module_state(root: &mut Value) {
     let Some(defs) = root.get_mut("$defs").and_then(Value::as_object_mut) else {
         return;
@@ -320,6 +321,7 @@ fn tighten_module_state(root: &mut Value) {
     for (name, def) in &cached.shared_enums {
         defs.insert(name.clone(), def.clone());
     }
+    defs.remove("ParamValue");
 }
 
 /// Extract the string-enum tuple from a schema fragment, if any.
@@ -413,7 +415,7 @@ fn module_branch(mt: ModuleType, desc: &ModuleDescriptor) -> Value {
                 "description": "Parameter values for this module.",
                 "type": "object",
                 "properties": param_props,
-                "additionalProperties": { "$ref": "#/$defs/ParamValue" },
+                "additionalProperties": false,
                 "default": {}
             }
         },
@@ -423,17 +425,13 @@ fn module_branch(mt: ModuleType, desc: &ModuleDescriptor) -> Value {
 
 /// Build a JSON Schema fragment for a single parameter.
 ///
-/// Numeric ranges are intentionally **not** taken from the descriptor: many
-/// parameters (e.g. distortion `bit_depth`, reverb mix levels) are persisted
-/// as engine-internal normalized 0..1 floats while the descriptor reports
-/// the semantic display range (1..16 bits etc.). The two don't line up,
-/// so the schema constrains only the JSON shape: number-vs-string-vs-object.
-/// The descriptor's `default` is kept as informational metadata.
-///
 /// - Choice parameters accept either the choice ID string (canonical) or a
 ///   number — legacy patches sometimes store the index.
 /// - The sample-id object form (`{"sample_id": N}`) is only valid on
-///   `Sampler::SampleSelect`. Other numeric params get a plain number.
+///   `Sampler::SampleSelect`. Other numeric params get a plain number with
+///   the descriptor's `min`/`max`/`default` applied (the four formerly
+///   normalized-then-remapped params now wrap dedicated semantic newtypes,
+///   so on-disk values match the descriptor range directly).
 fn parameter_schema(param: &ParameterDescriptor) -> Value {
     let mut description = param.description.clone();
     let unit_suffix = param.unit.suffix();
@@ -477,6 +475,8 @@ fn parameter_schema(param: &ParameterDescriptor) -> Value {
     let mut schema = json!({
         "title": param.name,
         "type": "number",
+        "minimum": param.range.min,
+        "maximum": param.range.max,
         "default": param.range.default,
     });
     if !description.is_empty() {

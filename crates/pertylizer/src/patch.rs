@@ -64,64 +64,13 @@ impl Author {
     }
 }
 
-/// Deserialize author from either a string (legacy) or an object (new format).
-fn deserialize_author<'de, D>(deserializer: D) -> Result<Option<Author>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de;
-
-    struct AuthorVisitor;
-
-    impl<'de> de::Visitor<'de> for AuthorVisitor {
-        type Value = Option<Author>;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a string or an author object")
-        }
-
-        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-
-        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-
-        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            Ok(Some(Author {
-                name: v.to_string(),
-                ..Author::default()
-            }))
-        }
-
-        fn visit_string<E: de::Error>(self, v: String) -> Result<Self::Value, E> {
-            Ok(Some(Author {
-                name: v,
-                ..Author::default()
-            }))
-        }
-
-        fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
-            let author = Author::deserialize(de::value::MapAccessDeserializer::new(map))?;
-            Ok(Some(author))
-        }
-    }
-
-    deserializer.deserialize_any(AuthorVisitor)
-}
-
 /// A complete synthesizer patch.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Patch {
     /// Patch name.
     pub name: String,
     /// Author information.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_author"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<Author>,
     /// Patch version.
     #[serde(default = "default_version")]
@@ -152,9 +101,7 @@ fn default_version() -> String {
 }
 
 /// 2D position in the rack view, serialized as `{"x": ..., "y": ...}`.
-///
-/// Deserializes from both `{"x": ..., "y": ...}` (new) and `[x, y]` (legacy).
-#[derive(Debug, Clone, Copy, Default, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Position {
     pub x: f32,
     pub y: f32,
@@ -170,47 +117,6 @@ impl Position {
 impl From<(f32, f32)> for Position {
     fn from((x, y): (f32, f32)) -> Self {
         Self { x, y }
-    }
-}
-
-impl<'de> Deserialize<'de> for Position {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de;
-
-        struct PositionVisitor;
-
-        impl<'de> de::Visitor<'de> for PositionVisitor {
-            type Value = Position;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("{\"x\": ..., \"y\": ...} or [x, y]")
-            }
-
-            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                let x = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(0, &"[x, y]"))?;
-                let y = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(1, &"[x, y]"))?;
-                Ok(Position { x, y })
-            }
-
-            fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
-                #[derive(Deserialize)]
-                struct XY {
-                    x: f32,
-                    y: f32,
-                }
-                let xy = XY::deserialize(de::value::MapAccessDeserializer::new(map))?;
-                Ok(Position { x: xy.x, y: xy.y })
-            }
-        }
-
-        deserializer.deserialize_any(PositionVisitor)
     }
 }
 
@@ -483,8 +389,7 @@ impl ConnectionState {
 /// Canvas size hint for the rack view.
 ///
 /// Serializes as `{"width": ..., "height": ...}`.
-/// Deserializes from both `{"width": ..., "height": ...}` (new) and `[w, h]` (legacy).
-#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 pub struct CanvasSize {
     pub width: f32,
     pub height: f32,
@@ -494,50 +399,6 @@ impl CanvasSize {
     #[must_use]
     pub fn new(width: f32, height: f32) -> Self {
         Self { width, height }
-    }
-}
-
-impl<'de> Deserialize<'de> for CanvasSize {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de;
-
-        struct CanvasSizeVisitor;
-
-        impl<'de> de::Visitor<'de> for CanvasSizeVisitor {
-            type Value = CanvasSize;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str(r#"{"width": ..., "height": ...} or [w, h]"#)
-            }
-
-            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                let width = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(0, &"[width, height]"))?;
-                let height = seq
-                    .next_element()?
-                    .ok_or_else(|| de::Error::invalid_length(1, &"[width, height]"))?;
-                Ok(CanvasSize { width, height })
-            }
-
-            fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
-                #[derive(Deserialize)]
-                struct WH {
-                    width: f32,
-                    height: f32,
-                }
-                let wh = WH::deserialize(de::value::MapAccessDeserializer::new(map))?;
-                Ok(CanvasSize {
-                    width: wh.width,
-                    height: wh.height,
-                })
-            }
-        }
-
-        deserializer.deserialize_any(CanvasSizeVisitor)
     }
 }
 

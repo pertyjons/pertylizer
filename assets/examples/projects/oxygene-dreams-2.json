@@ -5188,8 +5188,8 @@
   "song": {
     "name": "Oxygène Dreams",
     "author": "Pertylizer AI",
-    "patterns": {
-      "0": {
+    "patterns": [
+      {
         "id": 0,
         "name": "Arp Em-C",
         "length": 15360,
@@ -5813,13 +5813,9 @@
             ]
           }
         ],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 64
       },
-      "1": {
+      {
         "id": 1,
         "name": "Arp G-D",
         "length": 15360,
@@ -6443,13 +6439,9 @@
             ]
           }
         ],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 64
       },
-      "2": {
+      {
         "id": 2,
         "name": "Pad Em-C",
         "length": 15360,
@@ -6541,13 +6533,9 @@
             ]
           }
         ],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 6
       },
-      "3": {
+      {
         "id": 3,
         "name": "Pad G-D",
         "length": 15360,
@@ -6639,13 +6627,9 @@
             ]
           }
         ],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 6
       },
-      "4": {
+      {
         "id": 4,
         "name": "Bass Em-C",
         "length": 15360,
@@ -6796,13 +6780,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 16
       },
-      "5": {
+      {
         "id": 5,
         "name": "Bass G-D",
         "length": 15360,
@@ -6953,13 +6933,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 16
       },
-      "6": {
+      {
         "id": 6,
         "name": "Lead Melody A",
         "length": 30720,
@@ -7092,13 +7068,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 14
       },
-      "7": {
+      {
         "id": 7,
         "name": "Lead Melody B",
         "length": 30720,
@@ -7294,13 +7266,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 21
       },
-      "8": {
+      {
         "id": 8,
         "name": "Strings Swell",
         "length": 30720,
@@ -7482,13 +7450,9 @@
             ]
           }
         ],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 16
       },
-      "9": {
+      {
         "id": 9,
         "name": "Kick Steady",
         "length": 15360,
@@ -7531,13 +7495,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 8
       },
-      "10": {
+      {
         "id": 10,
         "name": "Kick Pulse",
         "length": 15360,
@@ -7598,13 +7558,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 12
       },
-      "11": {
+      {
         "id": 11,
         "name": "HiHat 8ths",
         "length": 15360,
@@ -7899,13 +7855,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 32
       },
-      "12": {
+      {
         "id": 12,
         "name": "Bells Em-C",
         "length": 15360,
@@ -7984,13 +7936,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 8
       },
-      "13": {
+      {
         "id": 13,
         "name": "Bells G-D",
         "length": 15360,
@@ -8060,13 +8008,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 7
       },
-      "14": {
+      {
         "id": 14,
         "name": "Bells Cascade",
         "length": 30720,
@@ -8226,13 +8170,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 17
       },
-      "15": {
+      {
         "id": 15,
         "name": "Vocal Em-C",
         "length": 15360,
@@ -8257,13 +8197,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 6
       },
-      "16": {
+      {
         "id": 16,
         "name": "Vocal G-D",
         "length": 15360,
@@ -8288,13 +8224,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 6
       },
-      "17": {
+      {
         "id": 17,
         "name": "Harmony Arp Em-C",
         "length": 15360,
@@ -8589,13 +8521,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 32
       },
-      "18": {
+      {
         "id": 18,
         "name": "Harmony Arp G-D",
         "length": 15360,
@@ -8890,13 +8818,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 32
       },
-      "19": {
+      {
         "id": 19,
         "name": "Kick Driving",
         "length": 15360,
@@ -9083,13 +9007,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 20
       },
-      "20": {
+      {
         "id": 20,
         "name": "Snare Backbeat",
         "length": 15360,
@@ -9168,13 +9088,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 8
       },
-      "21": {
+      {
         "id": 21,
         "name": "Snare Build",
         "length": 15360,
@@ -9316,13 +9232,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 15
       },
-      "22": {
+      {
         "id": 22,
         "name": "Moog Harm Em-C",
         "length": 15360,
@@ -9401,13 +9313,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 8
       },
-      "23": {
+      {
         "id": 23,
         "name": "Moog Harm G-D",
         "length": 15360,
@@ -9486,13 +9394,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 8
       },
-      "24": {
+      {
         "id": 24,
         "name": "Celestial Counter-Melody",
         "length": 30720,
@@ -9553,13 +9457,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 6
       },
-      "25": {
+      {
         "id": 25,
         "name": "Lush Harmony Pad Em-C",
         "length": 15360,
@@ -9584,13 +9484,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 2
       },
-      "26": {
+      {
         "id": 26,
         "name": "Sparkling Bell Echoes G-D",
         "length": 30720,
@@ -9633,13 +9529,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 4
       },
-      "27": {
+      {
         "id": 27,
         "name": "Rhythmic Glitch FX Intro",
         "length": 15360,
@@ -9682,13 +9574,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 4
       },
-      "28": {
+      {
         "id": 28,
         "name": "Orchestral Strings Build",
         "length": 30720,
@@ -9722,13 +9610,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 3
       },
-      "29": {
+      {
         "id": 29,
         "name": "Digital Counter-Arp Em-C/G-D",
         "length": 30720,
@@ -9807,13 +9691,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 8
       },
-      "30": {
+      {
         "id": 30,
         "name": "Power Supersaw Layer C-moll/G-dur",
         "length": 30720,
@@ -9856,13 +9736,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 4
       },
-      "31": {
+      {
         "id": 31,
         "name": "Noise Build-up Sweep Intro/Mid",
         "length": 30720,
@@ -9878,16 +9754,12 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 1
       }
-    },
+    ],
     "next_pattern_id": 32,
-    "tracks": {
-      "0": {
+    "tracks": [
+      {
         "id": 0,
         "name": "Fractal Pad",
         "instrument": 0,
@@ -9902,7 +9774,7 @@
         },
         "mode": "Polyphonic"
       },
-      "1": {
+      {
         "id": 1,
         "name": "Arpeggio",
         "instrument": 1,
@@ -9917,7 +9789,7 @@
         },
         "mode": "Polyphonic"
       },
-      "2": {
+      {
         "id": 2,
         "name": "Bass",
         "instrument": 2,
@@ -9932,7 +9804,7 @@
         },
         "mode": "Polyphonic"
       },
-      "3": {
+      {
         "id": 3,
         "name": "Lead",
         "instrument": 3,
@@ -9947,7 +9819,7 @@
         },
         "mode": "Polyphonic"
       },
-      "5": {
+      {
         "id": 5,
         "name": "Kick",
         "instrument": 5,
@@ -9962,7 +9834,7 @@
         },
         "mode": "Polyphonic"
       },
-      "6": {
+      {
         "id": 6,
         "name": "Hi-Hat",
         "instrument": 6,
@@ -9977,7 +9849,7 @@
         },
         "mode": "Polyphonic"
       },
-      "7": {
+      {
         "id": 7,
         "name": "Bells",
         "instrument": 7,
@@ -9992,7 +9864,7 @@
         },
         "mode": "Polyphonic"
       },
-      "8": {
+      {
         "id": 8,
         "name": "Vocal Pad",
         "instrument": 8,
@@ -10007,7 +9879,7 @@
         },
         "mode": "Polyphonic"
       },
-      "9": {
+      {
         "id": 9,
         "name": "Harmony Arp",
         "instrument": 9,
@@ -10022,7 +9894,7 @@
         },
         "mode": "Polyphonic"
       },
-      "11": {
+      {
         "id": 11,
         "name": "Shimmer Strings",
         "instrument": 4,
@@ -10037,7 +9909,7 @@
         },
         "mode": "Polyphonic"
       },
-      "12": {
+      {
         "id": 12,
         "name": "Snare",
         "instrument": 11,
@@ -10052,7 +9924,7 @@
         },
         "mode": "Polyphonic"
       },
-      "13": {
+      {
         "id": 13,
         "name": "Moog Harmony",
         "instrument": 10,
@@ -10067,7 +9939,7 @@
         },
         "mode": "Polyphonic"
       },
-      "14": {
+      {
         "id": 14,
         "name": "Celestial Lead",
         "instrument": 23,
@@ -10082,7 +9954,7 @@
         },
         "mode": "Polyphonic"
       },
-      "15": {
+      {
         "id": 15,
         "name": "Unison Harmony Pad",
         "instrument": 24,
@@ -10097,7 +9969,7 @@
         },
         "mode": "Polyphonic"
       },
-      "16": {
+      {
         "id": 16,
         "name": "Sparkling Echo Bells",
         "instrument": 25,
@@ -10112,7 +9984,7 @@
         },
         "mode": "Polyphonic"
       },
-      "17": {
+      {
         "id": 17,
         "name": "Rhythmic Glitch FX",
         "instrument": 26,
@@ -10127,7 +9999,7 @@
         },
         "mode": "Polyphonic"
       },
-      "18": {
+      {
         "id": 18,
         "name": "Orchestral Strings Layer",
         "instrument": 27,
@@ -10142,7 +10014,7 @@
         },
         "mode": "Polyphonic"
       },
-      "19": {
+      {
         "id": 19,
         "name": "Counter-Arp",
         "instrument": 28,
@@ -10157,7 +10029,7 @@
         },
         "mode": "Polyphonic"
       },
-      "20": {
+      {
         "id": 20,
         "name": "Power Supersaw Layer",
         "instrument": 29,
@@ -10172,7 +10044,7 @@
         },
         "mode": "Polyphonic"
       },
-      "21": {
+      {
         "id": 21,
         "name": "Buildup FX Sweep",
         "instrument": 30,
@@ -10187,9 +10059,8 @@
         },
         "mode": "Polyphonic"
       }
-    },
+    ],
     "next_track_id": 22,
-    "track_order": [],
     "arrangement": [
       {
         "pattern_id": 2,
@@ -11430,6 +11301,10 @@
     "default_time_signature": {
       "numerator": 4,
       "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 64,
+      "ticks_per_row": 240
     }
   },
   "global": {

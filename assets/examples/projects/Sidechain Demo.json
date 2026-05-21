@@ -668,8 +668,8 @@
   "song": {
     "name": "Sidechain Demo",
     "author": "Pertylizer",
-    "patterns": {
-      "0": {
+    "patterns": [
+      {
         "id": 0,
         "name": "Pad Cm7 (full)",
         "length": 76800,
@@ -712,13 +712,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 4
       },
-      "1": {
+      {
         "id": 1,
         "name": "Kick 4-floor",
         "length": 3840,
@@ -761,13 +757,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 4
       },
-      "2": {
+      {
         "id": 2,
         "name": "Bass sustain (full)",
         "length": 46080,
@@ -783,16 +775,12 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 1
       }
-    },
+    ],
     "next_pattern_id": 3,
-    "tracks": {
-      "0": {
+    "tracks": [
+      {
         "id": 0,
         "name": "Pad",
         "instrument": 2,
@@ -807,7 +795,7 @@
         },
         "mode": "Polyphonic"
       },
-      "1": {
+      {
         "id": 1,
         "name": "Kick",
         "instrument": 1,
@@ -822,7 +810,7 @@
         },
         "mode": "Polyphonic"
       },
-      "2": {
+      {
         "id": 2,
         "name": "Bass",
         "instrument": 3,
@@ -837,13 +825,8 @@
         },
         "mode": "Polyphonic"
       }
-    },
-    "next_track_id": 3,
-    "track_order": [
-      0,
-      1,
-      2
     ],
+    "next_track_id": 3,
     "arrangement": [
       {
         "pattern_id": 0,
@@ -964,6 +947,10 @@
     "default_time_signature": {
       "numerator": 4,
       "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 64,
+      "ticks_per_row": 240
     }
   },
   "global": {

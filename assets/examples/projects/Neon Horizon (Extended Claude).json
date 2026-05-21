@@ -2850,8 +2850,8 @@
   "song": {
     "name": "Neon Horizon (Extended)",
     "author": "",
-    "patterns": {
-      "0": {
+    "patterns": [
+      {
         "id": 0,
         "name": "Kick_Basic",
         "length": 15360,
@@ -3002,13 +3002,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 16
       },
-      "1": {
+      {
         "id": 1,
         "name": "Kick_Build",
         "length": 15360,
@@ -3303,13 +3299,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 32
       },
-      "2": {
+      {
         "id": 2,
         "name": "Snare_Basic",
         "length": 15360,
@@ -3388,13 +3380,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 8
       },
-      "3": {
+      {
         "id": 3,
         "name": "Snare_Build",
         "length": 15360,
@@ -3545,13 +3533,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 16
       },
-      "4": {
+      {
         "id": 4,
         "name": "Hihat_8",
         "length": 15360,
@@ -3846,13 +3830,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 32
       },
-      "5": {
+      {
         "id": 5,
         "name": "Tom_Fill",
         "length": 15360,
@@ -4003,13 +3983,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 16
       },
-      "6": {
+      {
         "id": 6,
         "name": "Sweep_In",
         "length": 15360,
@@ -4025,13 +4001,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 1
       },
-      "7": {
+      {
         "id": 7,
         "name": "Bass_A",
         "length": 15360,
@@ -4326,13 +4298,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 32
       },
-      "8": {
+      {
         "id": 8,
         "name": "Bass_B",
         "length": 15360,
@@ -4627,13 +4595,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 32
       },
-      "9": {
+      {
         "id": 9,
         "name": "Bass_C",
         "length": 15360,
@@ -4928,13 +4892,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 32
       },
-      "10": {
+      {
         "id": 10,
         "name": "Sub_A",
         "length": 15360,
@@ -4977,13 +4937,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 4
       },
-      "11": {
+      {
         "id": 11,
         "name": "Sub_B",
         "length": 15360,
@@ -5026,13 +4982,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 4
       },
-      "12": {
+      {
         "id": 12,
         "name": "Sub_C",
         "length": 15360,
@@ -5075,13 +5027,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 4
       },
-      "13": {
+      {
         "id": 13,
         "name": "Pad_A",
         "length": 15360,
@@ -5196,13 +5144,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 12
       },
-      "14": {
+      {
         "id": 14,
         "name": "Pad_B",
         "length": 15360,
@@ -5317,13 +5261,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 12
       },
-      "15": {
+      {
         "id": 15,
         "name": "Pad_C",
         "length": 15360,
@@ -5438,13 +5378,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 12
       },
-      "16": {
+      {
         "id": 16,
         "name": "Arp_A",
         "length": 15360,
@@ -6027,13 +5963,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 64
       },
-      "17": {
+      {
         "id": 17,
         "name": "Arp_B",
         "length": 15360,
@@ -6616,13 +6548,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 64
       },
-      "18": {
+      {
         "id": 18,
         "name": "Arp_C",
         "length": 15360,
@@ -7205,13 +7133,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 64
       },
-      "19": {
+      {
         "id": 19,
         "name": "Pluck_A",
         "length": 15360,
@@ -7506,13 +7430,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 52
       },
-      "20": {
+      {
         "id": 20,
         "name": "Pluck_B",
         "length": 15360,
@@ -7699,13 +7619,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 20
       },
-      "21": {
+      {
         "id": 21,
         "name": "Pluck_C",
         "length": 15360,
@@ -7892,13 +7808,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 20
       },
-      "22": {
+      {
         "id": 22,
         "name": "Brass_A",
         "length": 15360,
@@ -8175,13 +8087,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 54
       },
-      "23": {
+      {
         "id": 23,
         "name": "Brass_C",
         "length": 15360,
@@ -8404,13 +8312,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 24
       },
-      "24": {
+      {
         "id": 24,
         "name": "Lead_Chorus",
         "length": 15360,
@@ -8597,13 +8501,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 40
       },
-      "25": {
+      {
         "id": 25,
         "name": "Lead_Solo",
         "length": 15360,
@@ -8772,13 +8672,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 33
       },
-      "27": {
+      {
         "id": 27,
         "name": "High Arp A",
         "length": 15360,
@@ -9073,13 +8969,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 32
       },
-      "28": {
+      {
         "id": 28,
         "name": "High Arp B",
         "length": 15360,
@@ -9374,13 +9266,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 32
       },
-      "29": {
+      {
         "id": 29,
         "name": "High Arp C",
         "length": 15360,
@@ -9675,16 +9563,12 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 64,
-          "ticks_per_row": 240
-        },
         "next_note_id": 32
       }
-    },
+    ],
     "next_pattern_id": 30,
-    "tracks": {
-      "0": {
+    "tracks": [
+      {
         "id": 0,
         "name": "Kick",
         "instrument": 1,
@@ -9699,7 +9583,7 @@
         },
         "mode": "Polyphonic"
       },
-      "1": {
+      {
         "id": 1,
         "name": "Snare",
         "instrument": 2,
@@ -9714,7 +9598,7 @@
         },
         "mode": "Polyphonic"
       },
-      "2": {
+      {
         "id": 2,
         "name": "Hihat",
         "instrument": 3,
@@ -9729,7 +9613,7 @@
         },
         "mode": "Polyphonic"
       },
-      "3": {
+      {
         "id": 3,
         "name": "Bass",
         "instrument": 4,
@@ -9744,7 +9628,7 @@
         },
         "mode": "Polyphonic"
       },
-      "4": {
+      {
         "id": 4,
         "name": "Pad",
         "instrument": 5,
@@ -9759,7 +9643,7 @@
         },
         "mode": "Polyphonic"
       },
-      "5": {
+      {
         "id": 5,
         "name": "Lead",
         "instrument": 6,
@@ -9774,7 +9658,7 @@
         },
         "mode": "Polyphonic"
       },
-      "6": {
+      {
         "id": 6,
         "name": "Arp",
         "instrument": 7,
@@ -9789,7 +9673,7 @@
         },
         "mode": "Polyphonic"
       },
-      "7": {
+      {
         "id": 7,
         "name": "Sub Bass",
         "instrument": 8,
@@ -9804,7 +9688,7 @@
         },
         "mode": "Polyphonic"
       },
-      "8": {
+      {
         "id": 8,
         "name": "Brass",
         "instrument": 9,
@@ -9819,7 +9703,7 @@
         },
         "mode": "Polyphonic"
       },
-      "9": {
+      {
         "id": 9,
         "name": "Pluck",
         "instrument": 10,
@@ -9834,7 +9718,7 @@
         },
         "mode": "Polyphonic"
       },
-      "10": {
+      {
         "id": 10,
         "name": "Sweep",
         "instrument": 11,
@@ -9849,7 +9733,7 @@
         },
         "mode": "Polyphonic"
       },
-      "11": {
+      {
         "id": 11,
         "name": "Tom",
         "instrument": 12,
@@ -9864,7 +9748,7 @@
         },
         "mode": "Polyphonic"
       },
-      "12": {
+      {
         "id": 12,
         "name": "Arp High",
         "instrument": 13,
@@ -9879,9 +9763,8 @@
         },
         "mode": "Polyphonic"
       }
-    },
+    ],
     "next_track_id": 13,
-    "track_order": [],
     "arrangement": [
       {
         "pattern_id": 10,
@@ -10706,6 +10589,10 @@
     "default_time_signature": {
       "numerator": 4,
       "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 64,
+      "ticks_per_row": 240
     }
   },
   "global": {

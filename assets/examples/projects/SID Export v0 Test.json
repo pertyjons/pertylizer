@@ -291,8 +291,8 @@
   "song": {
     "name": "SID Export v0 Test",
     "author": "sid-analyzer",
-    "patterns": {
-      "0": {
+    "patterns": [
+      {
         "id": 0,
         "name": "Lead arp C major",
         "length": 3840,
@@ -371,13 +371,9 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 16,
-          "ticks_per_row": 240
-        },
         "next_note_id": 8
       },
-      "1": {
+      {
         "id": 1,
         "name": "Bass C3 sustained",
         "length": 3840,
@@ -393,16 +389,12 @@
           }
         ],
         "automation": [],
-        "row_resolution": {
-          "rows": 16,
-          "ticks_per_row": 240
-        },
         "next_note_id": 1
       }
-    },
+    ],
     "next_pattern_id": 2,
-    "tracks": {
-      "0": {
+    "tracks": [
+      {
         "id": 0,
         "name": "Lead",
         "instrument": 1,
@@ -417,7 +409,7 @@
         },
         "mode": "Polyphonic"
       },
-      "1": {
+      {
         "id": 1,
         "name": "Bass",
         "instrument": 2,
@@ -432,12 +424,8 @@
         },
         "mode": "Polyphonic"
       }
-    },
-    "next_track_id": 2,
-    "track_order": [
-      0,
-      1
     ],
+    "next_track_id": 2,
     "arrangement": [
       {
         "pattern_id": 0,
@@ -462,6 +450,10 @@
     "default_time_signature": {
       "numerator": 4,
       "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 16,
+      "ticks_per_row": 240
     }
   },
   "global": {

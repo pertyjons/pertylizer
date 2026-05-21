@@ -354,9 +354,10 @@ impl SequencerEngine {
                 }
 
                 // Skip muted/non-soloed tracks
-                if let Some(track) = song.track(placement.track_id)
-                    && !track.is_audible(any_solo)
-                {
+                let Some(track) = song.track(placement.track_id) else {
+                    continue;
+                };
+                if !track.is_audible(any_solo) {
                     continue;
                 }
 
@@ -376,7 +377,7 @@ impl SequencerEngine {
                 let pattern_tick = (self.current_tick.0 - placement.start.0) as u32;
 
                 // Resolve effective instrument: track instrument overrides note instrument
-                let track_instrument = song.track(placement.track_id).and_then(|t| t.instrument);
+                let track_instrument = track.instrument;
 
                 // Collect notes that start at this pattern tick
                 for note in pattern.notes() {

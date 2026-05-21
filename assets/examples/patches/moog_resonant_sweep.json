@@ -201,7 +201,7 @@
       },
       "parameters": {
         "damping": 0.6,
-        "decay": 2.0,
+        "decay": 1.0,
         "diffusion": 0.5,
         "low_cut": 80.0,
         "mix": 0.15,

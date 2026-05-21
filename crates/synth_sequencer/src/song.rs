@@ -1,11 +1,9 @@
 //! Song structure and arrangement.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
 use super::ids::{PatternId, SeqInstrumentId, TrackId};
-use super::pattern::Pattern;
+use super::pattern::{Pattern, RowResolution};
 use super::time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 use super::track::SequencerTrack;
 use synth_core::{Bpm, Gain, Semitones};
@@ -96,19 +94,12 @@ pub struct Song {
     /// Song author.
     pub author: String,
 
-    // Pattern storage
-    patterns: BTreeMap<PatternId, Pattern>,
+    patterns: Vec<Pattern>,
     next_pattern_id: u32,
 
-    // Track storage
-    tracks: BTreeMap<TrackId, SequencerTrack>,
+    /// Tracks in display order (top → bottom).
+    tracks: Vec<SequencerTrack>,
     next_track_id: u16,
-    /// Display order for tracks (top → bottom). Maintained alongside
-    /// `tracks`: created tracks append to the end, deleted ones are
-    /// removed, and `reorder_track` mutates the order without touching
-    /// the underlying map. `tracks()` iterates in this order.
-    #[serde(default)]
-    track_order: Vec<TrackId>,
 
     // Arrangement
     arrangement: Vec<PatternPlacement>,
@@ -120,6 +111,9 @@ pub struct Song {
     pub default_tempo: Bpm,
     /// Default time signature.
     pub default_time_signature: TimeSignature,
+    /// Row resolution for pattern grid display and quantization.
+    #[serde(default)]
+    pub row_resolution: RowResolution,
 }
 
 impl Song {
@@ -129,16 +123,16 @@ impl Song {
         Self {
             name: name.into(),
             author: String::new(),
-            patterns: BTreeMap::new(),
+            patterns: Vec::new(),
             next_pattern_id: 0,
-            tracks: BTreeMap::new(),
+            tracks: Vec::new(),
             next_track_id: 0,
-            track_order: Vec::new(),
             arrangement: Vec::new(),
             tempo_changes: Vec::new(),
             time_signature_changes: Vec::new(),
             default_tempo: Bpm::new(120.0),
             default_time_signature: TimeSignature::COMMON,
+            row_resolution: RowResolution::default(),
         }
     }
 
@@ -169,24 +163,24 @@ impl Song {
     pub fn create_pattern(&mut self, length: Duration) -> PatternId {
         let id = PatternId(self.next_pattern_id);
         self.next_pattern_id = self.next_pattern_id.saturating_add(1);
-        self.patterns.insert(id, Pattern::new(id, length));
+        self.patterns.push(Pattern::new(id, length));
         id
     }
 
     /// Get a pattern by ID.
     #[must_use]
     pub fn pattern(&self, id: PatternId) -> Option<&Pattern> {
-        self.patterns.get(&id)
+        self.patterns.iter().find(|p| p.id == id)
     }
 
     /// Get a mutable pattern by ID.
     pub fn pattern_mut(&mut self, id: PatternId) -> Option<&mut Pattern> {
-        self.patterns.get_mut(&id)
+        self.patterns.iter_mut().find(|p| p.id == id)
     }
 
     /// Get all patterns.
     pub fn patterns(&self) -> impl Iterator<Item = &Pattern> {
-        self.patterns.values()
+        self.patterns.iter()
     }
 
     /// Get the number of patterns.
@@ -199,7 +193,8 @@ impl Song {
     pub fn delete_pattern(&mut self, id: PatternId) -> Option<Pattern> {
         // Also remove from arrangement
         self.arrangement.retain(|p| p.pattern_id != id);
-        self.patterns.remove(&id)
+        let pos = self.patterns.iter().position(|p| p.id == id)?;
+        Some(self.patterns.remove(pos))
     }
 
     /// Insert a pre-built pattern under its existing id. Used by undo to
@@ -207,7 +202,7 @@ impl Song {
     /// Returns true if inserted, false if a pattern with that id already
     /// exists.
     pub fn insert_pattern(&mut self, pattern: Pattern) -> bool {
-        if self.patterns.contains_key(&pattern.id) {
+        if self.patterns.iter().any(|p| p.id == pattern.id) {
             return false;
         }
         // Keep `next_pattern_id` ahead of any restored id so later
@@ -215,29 +210,28 @@ impl Song {
         if pattern.id.0 >= self.next_pattern_id {
             self.next_pattern_id = pattern.id.0.saturating_add(1);
         }
-        self.patterns.insert(pattern.id, pattern);
+        self.patterns.push(pattern);
         true
     }
 
     /// Duplicate a pattern.
     pub fn duplicate_pattern(&mut self, id: PatternId) -> Option<PatternId> {
-        let pattern = self.patterns.get(&id)?.clone();
+        let source = self.pattern(id)?.clone();
         let new_id = PatternId(self.next_pattern_id);
         self.next_pattern_id = self.next_pattern_id.saturating_add(1);
 
-        let mut new_pattern = Pattern::new(new_id, pattern.length);
-        new_pattern.name = format!("{} (copy)", pattern.name);
-        new_pattern.row_resolution = pattern.row_resolution;
+        let mut new_pattern = Pattern::new(new_id, source.length);
+        new_pattern.name = format!("{} (copy)", source.name);
 
         // Copy notes
-        for note in pattern.notes() {
+        for note in source.notes() {
             let _ = new_pattern.insert_note(note.clone());
         }
 
         // Copy automation lanes
-        new_pattern.automation = pattern.automation.clone();
+        new_pattern.automation = source.automation.clone();
 
-        self.patterns.insert(new_id, new_pattern);
+        self.patterns.push(new_pattern);
         Some(new_id)
     }
 
@@ -247,8 +241,7 @@ impl Song {
     pub fn create_track(&mut self, name: impl Into<String>) -> TrackId {
         let id = TrackId(self.next_track_id);
         self.next_track_id = self.next_track_id.saturating_add(1);
-        self.tracks.insert(id, SequencerTrack::new(id, name));
-        self.track_order.push(id);
+        self.tracks.push(SequencerTrack::new(id, name));
         id
     }
 
@@ -257,17 +250,14 @@ impl Song {
     /// (or its old position if provided via `at_index`). Returns true if
     /// inserted, false if the id already exists.
     pub fn insert_track(&mut self, track: SequencerTrack, at_index: Option<usize>) -> bool {
-        if self.tracks.contains_key(&track.id) {
+        if self.tracks.iter().any(|t| t.id == track.id) {
             return false;
         }
         if track.id.0 >= self.next_track_id {
             self.next_track_id = track.id.0.saturating_add(1);
         }
-        let id = track.id;
-        self.tracks.insert(id, track);
-        let pos =
-            at_index.map_or_else(|| self.track_order.len(), |i| i.min(self.track_order.len()));
-        self.track_order.insert(pos, id);
+        let pos = at_index.map_or(self.tracks.len(), |i| i.min(self.tracks.len()));
+        self.tracks.insert(pos, track);
         true
     }
 
@@ -275,8 +265,8 @@ impl Song {
     /// removed placement with its transpose/gain/etc. preserved. Returns
     /// true if inserted, false if the pattern or track is missing.
     pub fn insert_placement(&mut self, placement: PatternPlacement) -> bool {
-        if !self.patterns.contains_key(&placement.pattern_id)
-            || !self.tracks.contains_key(&placement.track_id)
+        if !self.patterns.iter().any(|p| p.id == placement.pattern_id)
+            || !self.tracks.iter().any(|t| t.id == placement.track_id)
         {
             return false;
         }
@@ -287,74 +277,30 @@ impl Song {
     }
 
     /// Move a track from one index to another in the display order.
-    /// Returns true if the move happened. Repairs `track_order` first if
-    /// it has drifted from `tracks` (e.g. an older serialized song).
+    /// Returns true if the move happened.
     pub fn reorder_track(&mut self, from: usize, to: usize) -> bool {
-        self.repair_track_order();
-        if from >= self.track_order.len() || to >= self.track_order.len() || from == to {
+        if from >= self.tracks.len() || to >= self.tracks.len() || from == to {
             return false;
         }
-        let id = self.track_order.remove(from);
-        self.track_order.insert(to, id);
+        let track = self.tracks.remove(from);
+        self.tracks.insert(to, track);
         true
-    }
-
-    /// Sync `track_order` with `tracks`: drop unknown ids, append missing
-    /// ones in map order. Idempotent; no-op when already in sync.
-    pub fn repair_track_order(&mut self) {
-        self.track_order.retain(|id| self.tracks.contains_key(id));
-        let missing: Vec<TrackId> = self
-            .tracks
-            .keys()
-            .filter(|id| !self.track_order.contains(id))
-            .copied()
-            .collect();
-        self.track_order.extend(missing);
-    }
-
-    /// Get the display-ordered list of track IDs.
-    pub fn track_order(&self) -> &[TrackId] {
-        &self.track_order
     }
 
     /// Get a track by ID.
     #[must_use]
     pub fn track(&self, id: TrackId) -> Option<&SequencerTrack> {
-        self.tracks.get(&id)
+        self.tracks.iter().find(|t| t.id == id)
     }
 
     /// Get a mutable track by ID.
     pub fn track_mut(&mut self, id: TrackId) -> Option<&mut SequencerTrack> {
-        self.tracks.get_mut(&id)
+        self.tracks.iter_mut().find(|t| t.id == id)
     }
 
     /// Get all tracks in display order.
-    ///
-    /// Fast path (no allocation) when `track_order` is in sync with
-    /// `tracks` — the case after every supported mutation. For older
-    /// serialized songs with an empty/partial `track_order`, falls back
-    /// to a one-shot `HashSet` to chain any missing tracks in map order.
     pub fn tracks(&self) -> impl Iterator<Item = &SequencerTrack> {
-        use std::collections::HashSet;
-        let in_sync = self.track_order.len() == self.tracks.len();
-        let missing: HashSet<TrackId> = if in_sync {
-            HashSet::new()
-        } else {
-            // Tracks present in the map but absent from track_order.
-            self.tracks
-                .keys()
-                .filter(|id| !self.track_order.contains(id))
-                .copied()
-                .collect()
-        };
-        self.track_order
-            .iter()
-            .filter_map(|id| self.tracks.get(id))
-            .chain(
-                self.tracks
-                    .iter()
-                    .filter_map(move |(id, t)| missing.contains(id).then_some(t)),
-            )
+        self.tracks.iter()
     }
 
     /// Get the number of tracks.
@@ -363,28 +309,23 @@ impl Song {
         self.tracks.len()
     }
 
-    /// Mutable iterator over all tracks, in `TrackId` order.
-    ///
-    /// Order is the underlying `BTreeMap`'s key order rather than display
-    /// order; the borrow checker prevents borrowing `track_order` while
-    /// holding a mutable reference to `tracks`. For order-sensitive mutation,
-    /// iterate `track_order()` and call `track_mut(id)` per ID.
+    /// Mutable iterator over all tracks, in display order.
     pub fn tracks_mut(&mut self) -> impl Iterator<Item = &mut SequencerTrack> {
-        self.tracks.values_mut()
+        self.tracks.iter_mut()
     }
 
     /// Delete a track.
     pub fn delete_track(&mut self, id: TrackId) -> Option<SequencerTrack> {
         // Also remove placements on this track
         self.arrangement.retain(|p| p.track_id != id);
-        self.track_order.retain(|t| *t != id);
-        self.tracks.remove(&id)
+        let pos = self.tracks.iter().position(|t| t.id == id)?;
+        Some(self.tracks.remove(pos))
     }
 
     /// Check if any track is soloed.
     #[must_use]
     pub fn any_solo(&self) -> bool {
-        self.tracks.values().any(|t| t.solo)
+        self.tracks.iter().any(|t| t.solo)
     }
 
     /// Set `solo = true` on `target` and `solo = false` on every other track.
@@ -392,8 +333,8 @@ impl Song {
     /// No-op for `target` if it does not exist; other tracks are still
     /// cleared.
     pub fn set_solo_only(&mut self, target: TrackId) {
-        for (id, track) in self.tracks.iter_mut() {
-            track.solo = *id == target;
+        for track in &mut self.tracks {
+            track.solo = track.id == target;
         }
     }
 
@@ -403,7 +344,9 @@ impl Song {
     ///
     /// Returns `false` if the pattern or track does not exist.
     pub fn place_pattern(&mut self, pattern_id: PatternId, track_id: TrackId, start: Tick) -> bool {
-        if !self.patterns.contains_key(&pattern_id) || !self.tracks.contains_key(&track_id) {
+        if !self.patterns.iter().any(|p| p.id == pattern_id)
+            || !self.tracks.iter().any(|t| t.id == track_id)
+        {
             return false;
         }
 
@@ -522,8 +465,7 @@ impl Song {
     ) -> impl Iterator<Item = &PatternPlacement> {
         self.arrangement.iter().filter(move |p| {
             let pattern_end = self
-                .patterns
-                .get(&p.pattern_id)
+                .pattern(p.pattern_id)
                 .map(|pat| p.end(pat.length))
                 .unwrap_or(p.start);
             p.start < end && pattern_end > start
@@ -538,25 +480,6 @@ impl Song {
         self.arrangement
             .iter()
             .filter(move |p| p.track_id == track_id)
-    }
-
-    /// Find the pattern playing at a given tick.
-    /// Returns the pattern ID and the tick offset within that pattern.
-    ///
-    /// **Known limitation:** If multiple patterns overlap at the same tick,
-    /// only the first match (by arrangement order) is returned.
-    #[must_use]
-    pub fn pattern_at_tick(&self, tick: Tick) -> Option<(PatternId, Tick)> {
-        for placement in &self.arrangement {
-            if let Some(pattern) = self.patterns.get(&placement.pattern_id) {
-                let pattern_end = placement.end(pattern.length);
-                if tick >= placement.start && tick < pattern_end {
-                    let offset = Tick(tick.0.saturating_sub(placement.start.0));
-                    return Some((placement.pattern_id, offset));
-                }
-            }
-        }
-        None
     }
 
     // === Tempo ===
@@ -715,44 +638,31 @@ impl Song {
         }
 
         // Remove unused patterns
-        let unused_pids: Vec<_> = self
+        let removed_patterns: Vec<String> = self
             .patterns
-            .keys()
-            .filter(|id| !used_patterns.contains(id))
-            .copied()
-            .collect();
-        let removed_patterns: Vec<String> = unused_pids
             .iter()
-            .filter_map(|id| self.patterns.get(id).map(|p| p.name.clone()))
+            .filter(|p| !used_patterns.contains(&p.id))
+            .map(|p| p.name.clone())
             .collect();
-        for pid in unused_pids {
-            self.patterns.remove(&pid);
-        }
+        self.patterns.retain(|p| used_patterns.contains(&p.id));
 
         // Remove unused tracks
-        let unused_tids: Vec<_> = self
+        let removed_tracks: Vec<String> = self
             .tracks
-            .keys()
-            .filter(|id| !used_tracks.contains(id))
-            .copied()
-            .collect();
-        let removed_tracks: Vec<String> = unused_tids
             .iter()
-            .filter_map(|id| self.tracks.get(id).map(|t| t.name.clone()))
+            .filter(|t| !used_tracks.contains(&t.id))
+            .map(|t| t.name.clone())
             .collect();
-        for tid in unused_tids {
-            self.tracks.remove(&tid);
-            self.track_order.retain(|t| *t != tid);
-        }
+        self.tracks.retain(|t| used_tracks.contains(&t.id));
 
         // Collect instrument IDs still in use (from tracks and notes)
         let mut used_instruments = HashSet::new();
-        for track in self.tracks.values() {
+        for track in &self.tracks {
             if let Some(inst) = track.instrument {
                 used_instruments.insert(inst);
             }
         }
-        for pattern in self.patterns.values() {
+        for pattern in &self.patterns {
             for note in pattern.notes() {
                 used_instruments.insert(note.instrument);
             }
@@ -765,11 +675,7 @@ impl Song {
     pub fn calculate_length(&self) -> Tick {
         self.arrangement
             .iter()
-            .filter_map(|p| {
-                self.patterns
-                    .get(&p.pattern_id)
-                    .map(|pat| p.end(pat.length))
-            })
+            .filter_map(|p| self.pattern(p.pattern_id).map(|pat| p.end(pat.length)))
             .max()
             .unwrap_or(Tick(0))
     }
