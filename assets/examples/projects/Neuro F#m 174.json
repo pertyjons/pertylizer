@@ -299,7 +299,7 @@
               "y": 32.0
             },
             "parameters": {
-              "bit_depth": 0.46666667,
+              "bit_depth": 8.0,
               "drive": 0.4,
               "mix": 0.75,
               "tone": 0.5,
@@ -744,7 +744,7 @@
               "y": 32.0
             },
             "parameters": {
-              "bit_depth": 0.46666667,
+              "bit_depth": 8.0,
               "drive": 0.5,
               "mix": 0.55,
               "tone": 0.55,
@@ -1036,7 +1036,7 @@
               "y": 576.0
             },
             "parameters": {
-              "bit_depth": 0.46666667,
+              "bit_depth": 8.0,
               "drive": 0.45,
               "mix": 0.5,
               "tone": 0.65,
@@ -3321,7 +3321,7 @@
               "y": 576.0
             },
             "parameters": {
-              "bit_depth": 0.46666667,
+              "bit_depth": 8.0,
               "drive": 0.5,
               "mix": 0.55,
               "tone": 0.55,
@@ -3605,7 +3605,7 @@
               "y": 320.0
             },
             "parameters": {
-              "bit_depth": 0.46666667,
+              "bit_depth": 8.0,
               "drive": 0.45,
               "mix": 0.55,
               "tone": 0.4,
@@ -3838,7 +3838,7 @@
               "y": 32.0
             },
             "parameters": {
-              "bit_depth": 0.46666667,
+              "bit_depth": 8.0,
               "drive": 0.4,
               "mix": 0.5,
               "tone": 0.6,

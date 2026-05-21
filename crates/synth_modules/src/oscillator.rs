@@ -16,8 +16,8 @@ use synth_core::{
     ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{
-    BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate,
-    Semitones, Velocity, VoiceCount, Waveform,
+    BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName,
+    PulseWidth as PulseWidthParam, SampleRate, Semitones, Velocity, VoiceCount, Waveform,
 };
 use synth_dsp::oscillators::{poly_blamp, poly_blep};
 
@@ -38,7 +38,7 @@ pub struct Oscillator {
     frequency: Hertz,
     detune: Cents,
     octave: Semitones,
-    pulse_width: NormalizedValue,
+    pulse_width: PulseWidthParam,
     level: Gain,
     phase_offset: Phase,
     fm_mode: FmMode,
@@ -88,7 +88,7 @@ impl Oscillator {
             frequency: Hertz::A4,
             detune: Cents::ZERO,
             octave: Semitones::ZERO,
-            pulse_width: NormalizedValue::CENTER,
+            pulse_width: PulseWidthParam::SQUARE,
             level: Gain::UNITY,
             phase_offset: Phase::ZERO,
             fm_mode: FmMode::Exponential,
@@ -313,7 +313,7 @@ impl Describable for Oscillator {
             .parameter(
                 ParameterDescriptor::float(
                     "pulse_width",
-                    Param::Oscillator(OscillatorParam::PulseWidth(NormalizedValue::CENTER)),
+                    Param::Oscillator(OscillatorParam::PulseWidth(PulseWidthParam::SQUARE)),
                     "Pulse Width",
                 )
                 .description("Pulse width for pulse waveform")
@@ -484,7 +484,7 @@ impl PolyModule for Oscillator {
                     (self.pulse_width.as_f32() + pwm_reader[i] * 0.49).clamp(0.01, 0.99),
                 )
             } else {
-                self.pulse_width
+                NormalizedValue::new(self.pulse_width.as_f32())
             };
 
             if sync_reader.is_connected() {
@@ -556,7 +556,7 @@ impl PolyModule for Oscillator {
                 OscillatorParam::Detune(d) => self.detune = d.clamp_detune(),
                 OscillatorParam::Octave(o) => self.octave = o,
                 OscillatorParam::PulseWidth(pw) => {
-                    self.pulse_width = NormalizedValue::new(pw.as_f32().clamp(0.01, 0.99));
+                    self.pulse_width = pw;
                 }
                 OscillatorParam::Level(l) => self.level = l,
                 OscillatorParam::Phase(p) => self.phase_offset = p,
@@ -703,7 +703,7 @@ mod tests {
         osc.frequency = Hertz::new(1000.0);
         osc.sample_rate = SampleRate::DVD_QUALITY;
 
-        let effective_pulse_width = osc.pulse_width;
+        let effective_pulse_width = NormalizedValue::new(osc.pulse_width.as_f32());
         let freq = osc.actual_frequency();
         for _ in 0..100 {
             let phase = osc.unison_phases[0];
@@ -788,7 +788,12 @@ mod tests {
         for j in 0..5 {
             let voice_freq = Hertz::new(freq.as_f32() * osc.unison_detune_ratios[j]);
             let phase = osc.unison_phases[j];
-            let (sample, _) = osc.generate_single_sample(voice_freq, phase, 0.0, osc.pulse_width);
+            let (sample, _) = osc.generate_single_sample(
+                voice_freq,
+                phase,
+                0.0,
+                NormalizedValue::new(osc.pulse_width.as_f32()),
+            );
             assert!(
                 sample.abs() <= 1.5,
                 "voice {j} sample {sample} out of reasonable range"

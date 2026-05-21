@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    BeatDivision, BipolarValue, Decibels, Hertz, MidiNote, Milliseconds, NormalizedValue, Ratio,
-    Seconds, Semitones, VoiceCount,
+    BeatDivision, BipolarValue, BitDepth, Decibels, Hertz, MidiNote, Milliseconds, NormalizedValue,
+    Ratio, Seconds, Semitones, VoiceCount,
 };
 
 use super::FftSizeOption;
@@ -276,7 +276,7 @@ pub enum DistortionParam {
     Tone(NormalizedValue),
     Mix(NormalizedValue),
     /// Bit depth for bitcrush mode (1-16 bits).
-    BitDepth(NormalizedValue),
+    BitDepth(BitDepth),
 }
 
 impl DistortionParam {
@@ -297,7 +297,8 @@ impl DistortionParam {
     pub fn as_f32(&self) -> f32 {
         match self {
             Self::Mode(m) => m.index() as f32,
-            Self::Drive(v) | Self::Tone(v) | Self::Mix(v) | Self::BitDepth(v) => v.as_f32(),
+            Self::Drive(v) | Self::Tone(v) | Self::Mix(v) => v.as_f32(),
+            Self::BitDepth(b) => b.as_f32(),
         }
     }
 
@@ -309,7 +310,7 @@ impl DistortionParam {
             Self::Drive(_) => Self::Drive(NormalizedValue::new(value)),
             Self::Tone(_) => Self::Tone(NormalizedValue::new(value)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
-            Self::BitDepth(_) => Self::BitDepth(NormalizedValue::new(value)),
+            Self::BitDepth(_) => Self::BitDepth(BitDepth::new(value)),
         }
     }
 }

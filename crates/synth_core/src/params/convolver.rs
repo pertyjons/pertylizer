@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Milliseconds, NormalizedValue};
+use crate::types::{DecayTrim, Milliseconds, NormalizedValue};
 
 /// Impulse response type (mathematically generated).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -58,7 +58,7 @@ pub enum ConvolverParam {
     /// Pre-delay time.
     PreDelay(Milliseconds),
     /// Decay trim (shortens the IR tail).
-    DecayTrim(NormalizedValue),
+    DecayTrim(DecayTrim),
     /// Brightness (one-pole LP on wet signal).
     Brightness(NormalizedValue),
     /// Enable dynamic convolution (amplitude-dependent IR crossfade).
@@ -85,9 +85,8 @@ impl ConvolverParam {
     pub fn as_f32(&self) -> f32 {
         match self {
             Self::Ir(ir) => ir.index() as f32,
-            Self::Mix(v) | Self::DecayTrim(v) | Self::Brightness(v) | Self::DynamicMode(v) => {
-                v.as_f32()
-            }
+            Self::Mix(v) | Self::Brightness(v) | Self::DynamicMode(v) => v.as_f32(),
+            Self::DecayTrim(d) => d.as_f32(),
             Self::PreDelay(ms) => ms.as_f32(),
         }
     }
@@ -98,7 +97,7 @@ impl ConvolverParam {
             Self::Ir(_) => Self::Ir(ImpulseResponse::from_index(value as usize)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
             Self::PreDelay(_) => Self::PreDelay(Milliseconds::new(value)),
-            Self::DecayTrim(_) => Self::DecayTrim(NormalizedValue::new(value)),
+            Self::DecayTrim(_) => Self::DecayTrim(DecayTrim::new(value)),
             Self::Brightness(_) => Self::Brightness(NormalizedValue::new(value)),
             Self::DynamicMode(_) => Self::DynamicMode(NormalizedValue::new(value)),
         }

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{BipolarValue, NormalizedValue, Seconds};
+use crate::types::{BipolarValue, NormalizedValue, Seconds, TimeScale};
 
 /// MSEG parameter with typed value.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -18,7 +18,7 @@ pub enum MsegParam {
     /// Whether looping is enabled.
     LoopEnabled(bool),
     /// Global time scale multiplier.
-    TimeScale(NormalizedValue),
+    TimeScale(TimeScale),
     /// Segment time for a specific segment (index encoded in value).
     SegmentTime(u8, Seconds),
     /// Segment level for a specific segment (index encoded in value).
@@ -82,7 +82,7 @@ impl MsegParam {
             Self::LoopStart(_) => Self::LoopStart((value as u8).min(15)),
             Self::LoopEnd(_) => Self::LoopEnd((value as u8).min(15)),
             Self::LoopEnabled(_) => Self::LoopEnabled(value > 0.5),
-            Self::TimeScale(_) => Self::TimeScale(NormalizedValue::new(value)),
+            Self::TimeScale(_) => Self::TimeScale(TimeScale::new(value)),
             Self::SegmentTime(idx, _) => Self::SegmentTime(*idx, Seconds::new(value)),
             Self::SegmentLevel(idx, _) => Self::SegmentLevel(*idx, NormalizedValue::new(value)),
             Self::SegmentCurve(idx, _) => Self::SegmentCurve(*idx, BipolarValue::new(value)),

@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{BipolarValue, Cents, Gain, Hertz, NormalizedValue, Phase, Semitones};
+use crate::types::{
+    BipolarValue, Cents, Gain, Hertz, NormalizedValue, Phase, PulseWidth, Semitones,
+};
 
 // ============================================================================
 // WAVEFORM ENUMS
@@ -341,7 +343,7 @@ pub enum OscillatorParam {
     /// Coarse tuning in semitones
     Octave(Semitones),
     /// Pulse width for pulse wave (0.01 to 0.99)
-    PulseWidth(NormalizedValue),
+    PulseWidth(PulseWidth),
     /// Output level (0.0 to 1.0)
     Level(Gain),
     /// Initial phase (0.0 to 1.0)
@@ -422,7 +424,7 @@ impl OscillatorParam {
             Self::Frequency(_) => Self::Frequency(Hertz::new(value)),
             Self::Detune(_) => Self::Detune(Cents::new(value)),
             Self::Octave(_) => Self::Octave(Semitones::new(value)),
-            Self::PulseWidth(_) => Self::PulseWidth(NormalizedValue::new(value)),
+            Self::PulseWidth(_) => Self::PulseWidth(PulseWidth::new(value)),
             Self::Level(_) => Self::Level(Gain::new(value)),
             Self::Phase(_) => Self::Phase(Phase::new(value)),
             Self::FmMode(_) => Self::FmMode(FmMode::from_index(value as usize).unwrap_or_default()),
@@ -452,7 +454,7 @@ impl OscillatorParam {
         Self::Octave(Semitones::ZERO)
     }
     pub fn pulse_width_default() -> Self {
-        Self::PulseWidth(NormalizedValue::CENTER)
+        Self::PulseWidth(PulseWidth::SQUARE)
     }
     pub fn level_default() -> Self {
         Self::Level(Gain::UNITY)

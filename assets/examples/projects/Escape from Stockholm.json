@@ -383,7 +383,7 @@
               "y": 32.0
             },
             "parameters": {
-              "bit_depth": 0.46666667,
+              "bit_depth": 8.0,
               "drive": 0.4,
               "mix": 0.5,
               "tone": 0.8,

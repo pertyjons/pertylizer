@@ -67,7 +67,15 @@ comments aren't visible in most validation tooling.
 
 ## B. Module / parameter validation tightening
 
-### B1. Parameter ranges (semantic vs normalized storage) [L, high impact]
+### ✅ B1. Parameter ranges (semantic vs normalized storage) [L, high impact] — done 2026-05-21
+
+Resolved by introducing dedicated semantic newtypes (`BitDepth`,
+`TimeScale`, `PulseWidth`, `DecayTrim`) in `synth_core::types` and
+wrapping the four misused Param variants in them instead of
+`NormalizedValue`. Each newtype's `as_f32()` returns the semantic
+value directly, so the descriptor range matches what's saved. The
+remaining open items in the migration block (B3, B7, plus optional
+C2/E1/E2) carry on as their own work.
 
 **Issue:** `ParameterDescriptor.range` reports semantic ranges (e.g.
 `bit_depth: 1–16`), but some parameters are persisted as engine-internal
@@ -412,66 +420,178 @@ Polish batch α:
 - E1: `Map<u64, T>` → `Vec<T>` for patterns/tracks
 - E2: `row_resolution` scope
 
-**Polish:**
+---
 
-- A2: Bundle ZIP layout doc
-- B4: `sample_id` only on Sampler params
-- D2: Factor shared sub-schemas into `$defs`
+## Handover — start the save-format migration here (next session)
+
+The next planned chunk is **option β**: the save-format migration that
+bundles **B1 + B3 + B7** (and optionally **C2**, **E1**, **E2**) into a
+single `"version": "1.0"` → `"1.1"` bump. This section is written so
+the next session can pick up cold.
+
+### What's already in place
+
+- Generator + four schemas under `schemas/`, regenerated via
+  `cargo run -p pertylizer --bin gen_schemas`.
+- Drift + correctness tests in
+  `crates/pertylizer/tests/schemas_validate_examples.rs` — these will
+  catch any schema/format mismatch automatically.
+- `project_load_snapshot` test (`crates/pertylizer/tests/`) snapshots
+  the parsed structure of every example project; **expect this to
+  fail after the migration and need regenerated fixtures.**
+- `project_io_round_trip` test verifies serde round-trip — must keep
+  passing for **both** v1.0 (legacy) and v1.1 (new) files after the
+  migration.
+
+### Start here
+
+1. Read this file's sections **B1, B3, B7** plus the optional **C2,
+   E1, E2**.
+2. Scan `crates/synth_core/src/params/mod.rs` for the full `Param`
+   enum — note which variants wrap `NormalizedValue` /
+   `BipolarValue` (those need denormalization on save) vs which wrap
+   semantic newtypes like `Hertz` / `Gain` / `Bpm` (already match
+   descriptor range, identity transform).
+3. Inspect `ParameterDescriptor.range` and `.response_curve` in
+   `crates/synth_core/src/module_traits.rs` — the curve matters for
+   non-linear params; a linear remap won't faithfully round-trip
+   logarithmic frequency.
+4. Pick one of the two migration shapes (see "Architecture choice"
+   below) and confirm with the user before writing code.
+
+### Architecture choice — confirm before coding
+
+Two approaches; both work, tradeoffs differ:
+
+**Option β1 — per-Param semantic methods.** Add
+`Param::to_display_f32(&self, desc: &ParameterDescriptor) -> f32` and
+`Param::from_display_f32(desc: &ParameterDescriptor, v: f32) -> Self`.
+The descriptor's `range` + `response_curve` drives the mapping. Default
+impl handles linear cases; per-variant overrides handle non-linear.
+Pro: localized changes. Con: needs a giant match over Param.
+
+**Option β2 — value-mapped at the `ParamValue` boundary.** Keep
+`Param` as-is internally; do the denormalization in
+`ParamValue::from_param` / `to_param` only. The descriptor is the
+sole source of truth for the mapping. Pro: no Param changes; only one
+serialization layer touched. Con: descriptor must be threaded through
+every `from_param` / `to_param` call site.
+
+Recommendation: **β1**. The descriptor's `range` and `response_curve`
+are already metadata describing the semantic form; making
+`Param::to_display_f32` consult them keeps the contract clean. β2's
+threading is intrusive across the codebase.
+
+### Implementation order
+
+1. **Scaffolding.** Add `to_display_f32` / `from_display_f32` on
+   `Param` with default linear implementations using
+   `ParameterDescriptor::range` + `response_curve`. Keep
+   `Param::as_f32` / `with_f32` unchanged — those are the engine's
+   internal-form accessors and must stay normalized.
+2. **Round-trip test.** Before flipping the save format: write a
+   property test that loops over `ALL_MODULE_TYPES`, creates each
+   module, sets every parameter to a known semantic value, calls
+   `to_display_f32` → `from_display_f32`, asserts the engine's
+   internal representation is preserved to within `f32::EPSILON *
+   100`. Catches non-linear-curve bugs before they hit real files.
+3. **Version constant.** Bump `default_version()` in
+   `crates/pertylizer/src/patch.rs` from `"1.0"` to `"1.1"`. Add a
+   `const FORMAT_VERSION: &str = "1.1"` somewhere accessible.
+4. **Flip saves.** Change `ParamValue::from_param` to call
+   `to_display_f32` and pass the descriptor. Change
+   `ParamValue::to_param` to call `from_display_f32`.
+5. **B3 — choice strings only.** In `from_param`, when the param has
+   choices, emit `Choice(<id>)` (string) instead of `Float(<index>)`.
+   Loaders already accept both.
+6. **B7 — Track.pan to BipolarValue.** Migrate
+   `SequencerTrack.pan: NormalizedValue` to `BipolarValue` in
+   `synth_sequencer/src/track.rs`. On load, detect v1.0 files and
+   remap `0..1` → `-1..1`.
+7. **Load-side version gate.** In
+   `crates/pertylizer/src/project.rs::ProjectFile::load` (and the
+   patch equivalent), branch on the parsed `version` field. For
+   `"1.0"`, run a migration step that:
+   - Reads numeric params as normalized 0..1, looks up the
+     descriptor, denormalizes to semantic.
+   - Maps `Track.pan` from `[0, 1]` to `[-1, 1]`.
+   - Tags the in-memory representation with `"1.1"` so a re-save
+     emits the new form.
+   For `"1.1"`, treat values as already semantic.
+8. **Regenerate fixtures.** Run the `project_load_snapshot` tests
+   with `INSTA_UPDATE=always` (or whatever your snapshot tooling
+   uses) and review the diff. Every numeric value will change. Spot-
+   check a handful for sanity.
+9. **Regen schemas.** Now that descriptor range = JSON range,
+   re-enable `minimum` / `maximum` in `gen_schemas.rs::parameter_schema`
+   (currently dropped — see the comment block on that function).
+10. **Update schemas-todo.md.** Mark B1, B3, B7 done; document any
+    surprises.
+
+### Tests to run as you go
+
+```bash
+# Per-step sanity:
+cargo build
+cargo clippy --all-targets
+
+# Round-trip and format integrity:
+cargo test -p pertylizer round_trip
+cargo test -p pertylizer snapshot
+
+# Schema consistency:
+cargo test -p pertylizer --test schemas_validate_examples
+
+# Full suite at the end:
+cargo fmt --check && cargo test
+```
+
+### Optional satellite work — gate on time
+
+- **C2** (legacy `Deserialize` policy) — since we're already bumping
+  the version, this is the cheapest time to drop the legacy accept
+  paths on `Position`, `CanvasSize`, `Author`. Eliminates the "schema
+  describes serialize, not deserialize" gap. Worth doing if time
+  allows.
+- **E1** (`Map<u64, T>` → `Vec<T>` for patterns/tracks) — bigger
+  format change but free under an already-versioned migration.
+  Improves tooling interop. Discuss with the user before grabbing
+  this — they may want it as its own beat.
+- **E2** (`row_resolution` per-song, not per-pattern) — minor JSON
+  cleanup. Defer unless the user explicitly asks for it.
+
+### Known gotchas
+
+- **Non-linear curves.** `ResponseCurve::Logarithmic`, `Exponential`,
+  `SCurve`, `Squared` need their own mapping. A logarithmic
+  frequency param maps internal 0..1 to a frequency range via
+  something like `min * (max/min)^t`, not `min + (max-min)*t`. The
+  round-trip test in step 2 will catch these — fix per-variant.
+- **MCP tools** (`crates/synth_mcp/`) currently emit and accept
+  values in whatever form `Param::as_f32` produces. Decide whether
+  MCP should also flip to semantic values (recommended, for
+  consistency with the new JSON) or stay normalized (less coupling).
+  Coordinate with whatever MCP-facing docs exist.
+- **`InstrumentState`'s manual `Deserialize`** in
+  `crates/pertylizer/src/patch.rs` accepts default values for many
+  fields. The migration shouldn't break this — but check.
+- **Bundle ZIPs** carry an internal `project.json` that's just a
+  ProjectFile, so they migrate transparently as long as the
+  ProjectFile loader handles version gating.
 
 ---
 
-## Next iteration
+## Priority summary (active)
 
-Two reasonable directions; pick one.
+**Save-format migration ("1.0" → "1.1") — next session:**
 
-### Option α — Polish batch (recommended for a short iteration)
+- B1: Semantic numeric ranges (the bit_depth issue)
+- B3: Choice values always string in JSON
+- B7: `Track.pan` to `BipolarValue`
+- *(Optional in same migration: C2, E1, E2.)*
 
-**Scope:** A2, B4, D2. All small, no design decisions, can ship in one PR.
+**Discuss before doing:**
 
-- **A2** writes a `schemas/bundle.md` describing the ZIP archive layout
-  next to the schema files.
-- **B4** narrows the `sample_id` object alternative in `gen_schemas.rs`
-  to fire only for `Param::Sampler(SamplerParam::SampleSelect(..))`
-  variants. Cosmetic but makes the schema honest.
-- **D2** factors repeated module-branch sub-schemas (id-pattern wrapper,
-  sample-id branch, position $ref) into `$defs` references. Should cut
-  the patch/project schemas roughly in half.
-
-**Effort:** ~2–4 hours of focused work. No format changes, no migrations.
-Test coverage already in place via the `schemas_validate_examples` tests.
-
-### Option β — Save-format migration ("1.0" → "1.1") (recommended for biggest impact)
-
-**Scope:** B1 + B3 + B7 bundled. Real format change with a version bump
-and on-load migration of legacy files.
-
-- **B1** adds `Param::to_display_f32` / `from_display_f32` and routes
-  saves through the display form so numeric values match the
-  descriptor range. JSON becomes human-readable (`"bit_depth": 8` not
-  `0.466`) and the schema can emit real `minimum`/`maximum` constraints.
-- **B3** rides on the same migration: choice parameters always
-  serialize as their string ID, never as a numeric index.
-- **B7** migrates `SequencerTrack.pan` from `NormalizedValue` (0..1) to
-  `BipolarValue` (-1..1) so it matches the module-level pan convention.
-- All three are gated on `version` in the file header. Legacy files
-  with `"version": "1.0"` get converted at load time; new saves emit
-  `"1.1"`.
-
-**Effort:** 1–3 days. The big risks are non-linear parameter responses
-(logarithmic frequency etc.) where round-trip conversion can introduce
-small drift; snapshot tests will catch any audible regressions.
-
-**Recommendation:** Start with **α** if we want a quick win and want to
-commit the current state first. **β** if we're in for a longer session
-and want to unlock real range validation as the next deliverable.
-
-### Optional satellite work
-
-- C2 (legacy `Deserialize` policy) — flag for the migration: if we're
-  already bumping the format, we can also drop the legacy accept
-  paths on `Position`, `CanvasSize`, `Author`. Eliminates the
-  "schema describes serialize, not deserialize" gap.
-- E1 / E2 — if we're already breaking the format for β, this is the
-  cheapest time to also flip patterns/tracks to `Vec<T>` and lift
-  `row_resolution` to song level. Each is a separate decision —
-  ping me if you want a deeper write-up on either.
+- B2: Strict `additionalProperties: false` on `parameters`
+- E1: `Map<u64, T>` → `Vec<T>` for patterns/tracks
+- E2: `row_resolution` scope

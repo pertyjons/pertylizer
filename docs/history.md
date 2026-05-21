@@ -2,6 +2,16 @@
 
 ## [unreleased]
 
+### Schemas TODO — B1 done
+
+- **Semantic newtypes for misused params** — `DistortionParam::BitDepth`,
+  `MsegParam::TimeScale`, `OscillatorParam::PulseWidth`, and
+  `ConvolverParam::DecayTrim` now wrap dedicated semantic newtypes
+  (`BitDepth`, `TimeScale`, `PulseWidth`, `DecayTrim`) instead of
+  `NormalizedValue`. JSON saves now contain the actual semantic values
+  (e.g. `bit_depth: 8.0`, not `0.466`); the per-module engine-side
+  remap math is gone. Affected example files patched to match.
+
 ## [0.289.0] - 2026-05-19
 ### §4.4 Mod Matrix routing visibility + cleanup
 

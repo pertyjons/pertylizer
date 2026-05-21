@@ -9,9 +9,9 @@
 use crate::math::{buffer_rms, dynamic_convolution_weights};
 use synth_core::module_traits::ChoiceOption;
 use synth_core::{
-    AudioEffect, ConvolverParam, Describable, Gain, ImpulseResponse, Milliseconds, ModuleCategory,
-    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
-    ProcessContext, SampleCount, SampleRate, StereoSample, WidgetHint,
+    AudioEffect, ConvolverParam, DecayTrim, Describable, Gain, ImpulseResponse, Milliseconds,
+    ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor,
+    ParameterUnit, ProcessContext, SampleCount, SampleRate, StereoSample, WidgetHint,
 };
 use synth_dsp::PartitionedConvolver;
 
@@ -31,7 +31,7 @@ pub struct Convolver {
     ir_type: ImpulseResponse,
     mix: NormalizedValue,
     pre_delay_ms: Milliseconds,
-    decay_trim: NormalizedValue,
+    decay_trim: DecayTrim,
     brightness: NormalizedValue,
     dynamic_mode: NormalizedValue,
 
@@ -89,7 +89,7 @@ impl Convolver {
             ir_type,
             mix: NormalizedValue::new(0.3),
             pre_delay_ms: Milliseconds::new(0.0),
-            decay_trim: NormalizedValue::MAX,
+            decay_trim: DecayTrim::FULL,
             brightness: NormalizedValue::new(0.8),
             dynamic_mode: NormalizedValue::MIN,
 
@@ -285,7 +285,7 @@ impl Describable for Convolver {
             .parameter(
                 ParameterDescriptor::float(
                     "decay",
-                    Param::Convolver(ConvolverParam::DecayTrim(NormalizedValue::MAX)),
+                    Param::Convolver(ConvolverParam::DecayTrim(DecayTrim::FULL)),
                     "Decay",
                 )
                 .description("IR tail length trim")

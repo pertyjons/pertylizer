@@ -121,7 +121,7 @@
               "y": 32.0
             },
             "parameters": {
-              "bit_depth": 1.0,
+              "bit_depth": 16.0,
               "drive": 0.5,
               "mix": 1.0,
               "tone": 0.8,
@@ -769,7 +769,7 @@
               "y": 32.0
             },
             "parameters": {
-              "bit_depth": 1.0,
+              "bit_depth": 16.0,
               "drive": 0.5,
               "mix": 1.0,
               "tone": 0.8,
@@ -1015,7 +1015,7 @@
               "y": 32.0
             },
             "parameters": {
-              "bit_depth": 1.0,
+              "bit_depth": 16.0,
               "drive": 0.5,
               "mix": 1.0,
               "tone": 0.8,
@@ -1622,7 +1622,7 @@
               "y": 32.0
             },
             "parameters": {
-              "bit_depth": 1.0,
+              "bit_depth": 16.0,
               "drive": 0.5,
               "mix": 1.0,
               "tone": 0.8,

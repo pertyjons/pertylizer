@@ -16,7 +16,8 @@ use synth_core::{
     ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{
-    BipolarValue, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Seconds, Velocity,
+    BipolarValue, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Seconds, TimeScale,
+    Velocity,
 };
 use synth_core::{ModuleType, MsegParam, Param};
 
@@ -67,7 +68,7 @@ pub struct Mseg {
     loop_start: u8,
     loop_end: u8,
     loop_enabled: bool,
-    time_scale: NormalizedValue,
+    time_scale: TimeScale,
 
     // State
     state: MsegState,
@@ -121,7 +122,7 @@ impl Mseg {
             loop_start: 0,
             loop_end: 1,
             loop_enabled: false,
-            time_scale: NormalizedValue::MAX,
+            time_scale: TimeScale::UNITY,
             state: MsegState::Idle,
             phase: Phase::ZERO,
             start_level: NormalizedValue::MIN,
@@ -270,22 +271,11 @@ impl Mseg {
 
     /// Get the effective segment time, scaled by the time_scale parameter.
     ///
-    /// Maps `NormalizedValue` (0.0..1.0) to a musically useful range:
-    /// - 0.0 → 0.01x (100x slower)
-    /// - 0.5 → 1.0x  (normal speed)
-    /// - 1.0 → 10.0x (10x faster)
+    /// `time_scale` is stored as the direct multiplier (0.01..10.0).
     #[inline]
     fn effective_time(&self, seg_idx: u8) -> f32 {
         let raw_time = self.segments[seg_idx as usize].time.as_f32();
-        let t = self.time_scale.as_f32();
-        let scale = if t < 0.5 {
-            // 0.0..0.5 maps to 0.01..1.0
-            0.01 + (1.0 - 0.01) * (t * 2.0)
-        } else {
-            // 0.5..1.0 maps to 1.0..10.0
-            1.0 + (10.0 - 1.0) * ((t - 0.5) * 2.0)
-        };
-        raw_time * scale
+        raw_time * self.time_scale.as_f32()
     }
 
     /// Advance to the next segment, handling sustain and looping.
@@ -437,7 +427,7 @@ impl Describable for Mseg {
             .parameter(
                 ParameterDescriptor::float(
                     "time_scale",
-                    Param::Mseg(MsegParam::TimeScale(NormalizedValue::MAX)),
+                    Param::Mseg(MsegParam::TimeScale(TimeScale::UNITY)),
                     "Time Scale",
                 )
                 .description("Global time scale multiplier (0.01-10.0)")

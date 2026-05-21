@@ -1337,7 +1337,7 @@
               "loop": 1.0,
               "segments": 6.0,
               "sustain_seg": 4.0,
-              "time_scale": 1.0
+              "time_scale": 10.0
             }
           }
         ],
@@ -3306,7 +3306,7 @@
               "y": 32.0
             },
             "parameters": {
-              "bit_depth": 1.0,
+              "bit_depth": 16.0,
               "drive": 0.5,
               "mix": 1.0,
               "tone": 0.8,
