@@ -319,10 +319,16 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
   `impl From<SeqInstrumentId> for InstrumentId` + `TryFrom<InstrumentId> for SeqInstrumentId`, or add a
   single `find_instrument_by_seq_id(&[InstrumentUiState], SeqInstrumentId) -> Option<&InstrumentUiState>`
   helper. (A `build_instrument_colour_cache` helper already exists for the hot-path lookups.)
-- [ ] **Convert `Song::insert_pattern` / `Song::insert_track` double-lookup to `Entry` API.**
-  Both currently do `if self.patterns.contains_key(...) { return false; } self.patterns.insert(...)` —
-  two map lookups per call. Switch to `self.patterns.entry(id).or_insert_with(...)` (or `Entry::Vacant`
-  for the explicit "already exists" branch). Low priority — only runs on undo/restore.
+- [ ] **Cache `Song::calculate_length()` instead of recomputing per tick on the audio
+  thread.** `SequencerEngine::update_cached_state` (`crates/synth_engine/src/sequencer_engine.rs`
+  around line 306/328) calls `song.calculate_length()` once per tick during playback. After
+  the E1 migration (`Song.patterns: Vec<Pattern>`) that cost is `O(arrangement × patterns)`
+  per tick — ~50 placements × 22 patterns × 1920 ticks/s ≈ 2.1M linear-find ops/s.
+  Still well within audio-thread budget at the current scale (no allocs, no locks, no panics),
+  but it's recomputing a value that only changes on structural mutation. Recommended fix:
+  cache `cached_song_length: Tick` on `SequencerEngine`, refresh on `play()` / `seek()` and
+  the structural-change command set; drop the per-tick recompute. Pre-existing with BTreeMap
+  too — surfaced as a code-review finding during the E1 commit (2026-05-21).
 
 ### 1.6 Workflow quality of life
 
