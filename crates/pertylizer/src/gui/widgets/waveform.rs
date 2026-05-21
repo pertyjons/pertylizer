@@ -41,6 +41,20 @@ impl WaveformType {
         }
     }
 
+    /// Map a `ChoiceOption.id` string to a waveform variant for visual
+    /// rendering. `"pulse25"` shares the 25%-duty `Pulse` visualisation.
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "sine" => Some(Self::Sine),
+            "triangle" => Some(Self::Triangle),
+            "sawtooth" => Some(Self::Sawtooth),
+            "square" => Some(Self::Square),
+            "pulse" | "pulse25" => Some(Self::Pulse),
+            "dsf_saw" => Some(Self::DsfSaw),
+            _ => None,
+        }
+    }
+
     /// Generate sample points for visualization (0 to 1 normalized x, -1 to 1 y)
     pub fn sample(&self, x: f32) -> f32 {
         match self {

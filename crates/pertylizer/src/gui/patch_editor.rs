@@ -5118,12 +5118,24 @@ fn draw_module_panel_params(
     // Draw waveform selectors first (most prominent)
     for param in &waveform_params {
         if let Some(ref choices) = param.choices {
+            // Map the descriptor's choices to renderable WaveformType
+            // variants so modules with smaller waveform sets (e.g. SubOsc:
+            // Sine/Square/Pulse25) only show the buttons they actually
+            // support, instead of falling through to the default 6.
+            let waveforms: Vec<super::widgets::WaveformType> = choices
+                .iter()
+                .filter_map(|c| super::widgets::WaveformType::from_id(&c.id))
+                .collect();
+            if waveforms.is_empty() {
+                continue;
+            }
+
             let current = state
                 .param_values
                 .get(&param.name)
                 .copied()
                 .unwrap_or(param.range.default);
-            let mut selected = current.round() as usize;
+            let mut selected = (current.round() as usize).min(waveforms.len() - 1);
 
             ui.label(
                 egui::RichText::new(&param.name)
@@ -5132,6 +5144,7 @@ fn draw_module_panel_params(
             );
 
             if WaveformSelector::new(&mut selected)
+                .waveforms(waveforms)
                 .accent_color(accent_color)
                 .show(ui)
             {

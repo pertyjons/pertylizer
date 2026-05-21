@@ -2,6 +2,15 @@
 
 ## [unreleased]
 
+### Sub Oscillator waveform selector showed wrong button set
+
+The patch-editor waveform selector hardcoded the main Oscillator's
+6 waveforms (Sine/Triangle/Saw/Square/Pulse/DSF Saw) even for
+modules with smaller choice sets. Sub Oscillator has only 3
+(Sine/Square/Pulse25), so the last 3 buttons silently fell through
+to Sine and the middle two had mislabelled previews. Selector now
+filters by the descriptor's `choices` list via `WaveformType::from_id`.
+
 ### Schemas TODO — B3 done
 
 - **Choice params serialize as string ids** —
