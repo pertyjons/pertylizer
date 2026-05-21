@@ -1,0 +1,92 @@
+{
+  "file_type": "project",
+  "version": "1.0",
+  "instrument_count": 2,
+  "active_instrument_id": 1,
+  "author_present": true,
+  "instruments": [
+    {
+      "id": 1,
+      "name": "Lead (SID pulse)",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose_semitones": 0.0,
+      "oversampling": 1,
+      "category": 4,
+      "description_len": 163,
+      "color_present": false,
+      "allocation_mode": "Polyphonic",
+      "max_voices": 4,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.0,
+      "sidechain_source_id": null,
+      "patch_name": "Lead (SID pulse)",
+      "patch_description_present": true,
+      "module_count": 4,
+      "connection_count": 3,
+      "effect_chain_order_len": 0,
+      "group_count": 0
+    },
+    {
+      "id": 2,
+      "name": "Bass (SID triangle)",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose_semitones": 0.0,
+      "oversampling": 1,
+      "category": 2,
+      "description_len": 146,
+      "color_present": false,
+      "allocation_mode": "Polyphonic",
+      "max_voices": 2,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.0,
+      "sidechain_source_id": null,
+      "patch_name": "Bass (SID triangle)",
+      "patch_description_present": true,
+      "module_count": 4,
+      "connection_count": 3,
+      "effect_chain_order_len": 0,
+      "group_count": 0
+    }
+  ],
+  "song": {
+    "name": "SID Export v0 Test",
+    "author": "sid-analyzer",
+    "default_tempo_bpm": 125.0,
+    "time_signature_numerator": 4,
+    "time_signature_denominator": 4,
+    "pattern_count": 2,
+    "track_count": 2,
+    "placement_count": 2,
+    "total_notes": 9,
+    "tempo_change_count": 0
+  },
+  "global": {
+    "master_volume": 1.0,
+    "octave_offset": 0,
+    "glide_time_seconds": 0.0,
+    "awe_state_present": false,
+    "awe_enabled": null,
+    "awe_preset_name": null,
+    "awe_description_present": false
+  },
+  "samples": {
+    "count": 0,
+    "total_frames": 0
+  }
+}
