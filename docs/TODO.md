@@ -4,6 +4,34 @@
 
 ### 0.1 Misc findings
 
+- [ ] **★ HIGH: `SequencerTrack.pan` and `.volume` are stored but never
+  applied to audio output.** Discovered while migrating `track.pan` to
+  `BipolarValue` (commit `61e46e1`). The audio thread (`sequencer_engine.rs`)
+  only reads `track.is_audible(any_solo)` for mute/solo gating and routes
+  notes via `track.instrument`. Pan and volume per *track* are then ignored
+  — the only pan/volume that actually reaches the bus is at the *instrument*
+  level (`InstrumentState.pan`/`.volume` → `Gain::from_pan` in
+  `instrument.rs:1295`). The GUI slider, MCP `set_track_pan`/`set_track_volume`,
+  and the `track.volume`/`.pan` storage round-trip cleanly through save/load,
+  but the values do nothing audibly. Likely fix: in `sequencer_engine.rs`
+  around line ~358, multiply the dispatched note's velocity by
+  `track.volume.as_f32()` and apply `Gain::from_pan(track.pan)` either by
+  attenuating the routed note's velocity asymmetrically or — cleaner — by
+  applying a per-track stereo gain on the instrument's output bus before
+  summing. Worth deciding whether track-pan should override or compose with
+  instrument-pan (probably compose: `final_pan = clamp(inst_pan + track_pan, -1, 1)`).
+  Also: **`SequencerTrack.mode: TrackMode` is dead** — the enum has a single
+  `Polyphonic` variant and is never read anywhere; either remove it or land
+  the planned `Mono` / `Legato` / `Unison` variants and wire them into voice
+  allocation per track (analogous to `Instrument`'s `AllocationMode`).
+  **Audit follow-up:** sweep every other domain struct for the same pattern.
+  Candidates worth checking: `Pattern.*` (row_resolution, automation lanes —
+  do they all reach the engine?), `Instrument.*` (some fields like
+  `velocity_amp_sensitivity` / `velocity_filter_sensitivity` were added but
+  may still be unwired), `PatternPlacement.length_override` (added in v0.281,
+  confirmed used), AWE-side material/room fields. A small `cargo run --bin
+  audit_dormant_fields` style check — or just a grep for every `pub` field on
+  a domain struct and a hand-trace into the audio path — would surface these.
 - [ ] **★ HIGH: expand Sub Oscillator waveform set from 3 to 6.** `SubOscWaveform`
   (`crates/synth_core/src/params/sub_osc.rs:13`) currently exposes only
   `Sine / Square / Pulse25`, while the main `Oscillator` exposes 6
