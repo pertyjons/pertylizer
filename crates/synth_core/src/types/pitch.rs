@@ -531,13 +531,6 @@ impl Velocity {
     /// Fortississimo (MIDI 127, alias for MAX).
     pub const FFF: Self = Self(1.0);
 
-    // Legacy aliases
-    /// Piano (soft, MIDI 64) - legacy alias for MP.
-    pub const PIANO: Self = Self::MP;
-
-    /// Forte (loud, MIDI 112) - legacy alias for FF.
-    pub const FORTE: Self = Self::FF;
-
     /// Get the normalized value (0.0-1.0).
     #[inline]
     pub const fn as_f32(self) -> f32 {

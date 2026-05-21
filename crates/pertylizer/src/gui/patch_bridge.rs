@@ -110,24 +110,13 @@ pub fn load_patch(
         .iter()
         .filter_map(|s| s.parse::<ModuleId>().ok())
         .collect();
-    let baseline_order = if !saved_order.is_empty() {
+    if !saved_order.is_empty() {
         handle.send_blocking(EngineCommand::SetEffectChainOrder {
             instrument_id: Some(instrument_id),
             order: saved_order.clone(),
         });
-        saved_order
-    } else {
-        // Fallback must match the engine's implicit chain order (modules
-        // added in `patch.modules` iteration order) so the first render's
-        // change-detection sees an empty diff.
-        patch
-            .modules
-            .iter()
-            .filter_map(|m| m.id.parse::<ModuleId>().ok())
-            .filter(|id| id.module_type.is_effect())
-            .collect()
-    };
-    patch_editor.mark_effect_chain_aligned(baseline_order);
+    }
+    patch_editor.mark_effect_chain_aligned(saved_order);
 
     // Apply per-instrument settings (always)
     keyboard.set_octave_offset(patch.settings.octave_offset);

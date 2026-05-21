@@ -47,25 +47,6 @@ impl ModuleId {
         }
     }
 
-    /// Create from legacy u32 format (for backwards compatibility).
-    /// Maps old numeric IDs to typed IDs based on ranges:
-    /// - 0: Master (mix-0)
-    /// - 1-99: Oscillators
-    /// - 100-199: Effects
-    /// - 200-299: Visualizers
-    /// - 300+: Outputs
-    #[deprecated(note = "Use ModuleId::new(type, instance) instead")]
-    pub fn from_legacy(id: u32) -> Self {
-        match id {
-            0 => Self::MASTER,
-            1..=99 => Self::new(ModuleType::Oscillator, id as u16),
-            100..=199 => Self::new(ModuleType::Delay, (id - 100) as u16),
-            200..=299 => Self::new(ModuleType::Oscilloscope, (id - 200) as u16),
-            300..=399 => Self::new(ModuleType::StereoOutput, (id - 300) as u16),
-            _ => Self::new(ModuleType::Mixer, id as u16),
-        }
-    }
-
     /// Get the type prefix (e.g., "osc", "flt").
     pub fn prefix(&self) -> &'static str {
         self.module_type.prefix()
@@ -116,19 +97,7 @@ impl<'de> Deserialize<'de> for ModuleId {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-
-        // Try new format first "osc-1"
-        if let Ok(id) = s.parse::<Self>() {
-            return Ok(id);
-        }
-
-        // Fall back to legacy u32 format for old patches
-        if let Ok(num) = s.parse::<u32>() {
-            #[allow(deprecated)]
-            return Ok(Self::from_legacy(num));
-        }
-
-        Err(serde::de::Error::custom(format!("Invalid ModuleId: {}", s)))
+        s.parse::<Self>().map_err(serde::de::Error::custom)
     }
 }
 

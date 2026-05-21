@@ -6,10 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{Decibels, Gain, Seconds};
 
-/// Deprecated: Use Bpm instead.
-#[deprecated(since = "0.33.0", note = "Use Bpm instead")]
-pub type Tempo = super::Bpm;
-
 /// Buffer index for delay lines and circular buffers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
@@ -241,18 +237,6 @@ impl FilterState {
     pub fn one_pole(&mut self, input: f32, coeff: f32) -> f32 {
         self.0 = input + (self.0 - input) * coeff;
         self.0
-    }
-
-    /// Process through first-order allpass filter.
-    ///
-    /// **Deprecated:** This was actually a one-pole lowpass. Use `AllpassState::process` instead.
-    #[inline]
-    #[deprecated(note = "Use AllpassState::process instead — this was a lowpass, not allpass")]
-    pub fn process_allpass(&mut self, input: f32, coeff: f32) -> f32 {
-        let prev_output = self.0;
-        let output = coeff * (input - prev_output) + prev_output;
-        self.0 = output;
-        output
     }
 
     /// High-pass one-pole filter.

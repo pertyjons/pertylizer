@@ -1118,20 +1118,13 @@
               "description": "Parameter values for this module.",
               "properties": {
                 "anti_alias": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "polyblep",
-                        "minblep"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Anti-aliasing algorithm",
-                  "title": "Anti-Alias"
+                  "enum": [
+                    "polyblep",
+                    "minblep"
+                  ],
+                  "title": "Anti-Alias",
+                  "type": "string"
                 },
                 "detune": {
                   "default": 0.0,
@@ -1150,20 +1143,13 @@
                   "type": "number"
                 },
                 "fm_mode": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "exponential",
-                        "linear"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "FM input mode: Exponential (1V/oct) or Linear (Hz)",
-                  "title": "FM Mode"
+                  "enum": [
+                    "exponential",
+                    "linear"
+                  ],
+                  "title": "FM Mode",
+                  "type": "string"
                 },
                 "frequency": {
                   "default": 440.0,
@@ -1222,24 +1208,17 @@
                   "type": "number"
                 },
                 "waveform": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "sine",
-                        "triangle",
-                        "sawtooth",
-                        "square",
-                        "pulse",
-                        "dsf_saw"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Oscillator waveform",
-                  "title": "Waveform"
+                  "enum": [
+                    "sine",
+                    "triangle",
+                    "sawtooth",
+                    "square",
+                    "pulse",
+                    "dsf_saw"
+                  ],
+                  "title": "Waveform",
+                  "type": "string"
                 },
                 "x_mod": {
                   "default": 0.0,
@@ -1282,37 +1261,30 @@
               "description": "Parameter values for this module.",
               "properties": {
                 "algorithm": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "sine_fm",
-                        "tan_chaos",
-                        "super_saw",
-                        "bitwise",
-                        "wave_folder",
-                        "formant",
-                        "phase_dist",
-                        "metallic",
-                        "fractal",
-                        "chebyshev",
-                        "bytebeat",
-                        "lorenz",
-                        "karplus_strong",
-                        "walsh",
-                        "logistic",
-                        "pulsar",
-                        "shepard",
-                        "feedback_fm",
-                        "vosim"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Synthesis algorithm",
-                  "title": "Algorithm"
+                  "enum": [
+                    "sine_fm",
+                    "tan_chaos",
+                    "super_saw",
+                    "bitwise",
+                    "wave_folder",
+                    "formant",
+                    "phase_dist",
+                    "metallic",
+                    "fractal",
+                    "chebyshev",
+                    "bytebeat",
+                    "lorenz",
+                    "karplus_strong",
+                    "walsh",
+                    "logistic",
+                    "pulsar",
+                    "shepard",
+                    "feedback_fm",
+                    "vosim"
+                  ],
+                  "title": "Algorithm",
+                  "type": "string"
                 },
                 "frequency": {
                   "default": 440.0,
@@ -1395,37 +1367,23 @@
                   "type": "number"
                 },
                 "octave": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "minus1",
-                        "minus2"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Octave transposition",
-                  "title": "Octave"
+                  "enum": [
+                    "minus1",
+                    "minus2"
+                  ],
+                  "title": "Octave",
+                  "type": "string"
                 },
                 "waveform": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "sine",
-                        "square",
-                        "pulse25"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Sub-oscillator waveform",
-                  "title": "Waveform"
+                  "enum": [
+                    "sine",
+                    "square",
+                    "pulse25"
+                  ],
+                  "title": "Waveform",
+                  "type": "string"
                 }
               },
               "type": "object"
@@ -1468,23 +1426,16 @@
                   "type": "number"
                 },
                 "type": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "white",
-                        "pink",
-                        "brown",
-                        "blue",
-                        "violet"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Noise color/spectrum",
-                  "title": "Type"
+                  "enum": [
+                    "white",
+                    "pink",
+                    "brown",
+                    "blue",
+                    "violet"
+                  ],
+                  "title": "Type",
+                  "type": "string"
                 }
               },
               "type": "object"
@@ -1574,23 +1525,16 @@
                   "type": "number"
                 },
                 "model": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "standard",
-                        "fluid",
-                        "screamer",
-                        "acid",
-                        "karlsen"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Filter character model",
-                  "title": "Model"
+                  "enum": [
+                    "standard",
+                    "fluid",
+                    "screamer",
+                    "acid",
+                    "karlsen"
+                  ],
+                  "title": "Model",
+                  "type": "string"
                 },
                 "morph": {
                   "default": 0.0,
@@ -1609,25 +1553,18 @@
                   "type": "number"
                 },
                 "type": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "lowpass",
-                        "highpass",
-                        "bandpass",
-                        "notch",
-                        "peak",
-                        "low_shelf",
-                        "high_shelf"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Filter type",
-                  "title": "Type"
+                  "enum": [
+                    "lowpass",
+                    "highpass",
+                    "bandpass",
+                    "notch",
+                    "peak",
+                    "low_shelf",
+                    "high_shelf"
+                  ],
+                  "title": "Type",
+                  "type": "string"
                 }
               },
               "type": "object"
@@ -1782,24 +1719,17 @@
                   "type": "number"
                 },
                 "waveform": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "sine",
-                        "triangle",
-                        "sawtooth",
-                        "square",
-                        "sample_and_hold",
-                        "smooth_random"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "LFO waveform",
-                  "title": "Waveform"
+                  "enum": [
+                    "sine",
+                    "triangle",
+                    "sawtooth",
+                    "square",
+                    "sample_and_hold",
+                    "smooth_random"
+                  ],
+                  "title": "Waveform",
+                  "type": "string"
                 }
               },
               "type": "object"
@@ -2066,22 +1996,15 @@
               "description": "Parameter values for this module.",
               "properties": {
                 "grid_size": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "1x1",
-                        "2x2",
-                        "3x3",
-                        "4x4"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Number of modulation slots (grid dimensions)",
-                  "title": "Grid Size"
+                  "enum": [
+                    "1x1",
+                    "2x2",
+                    "3x3",
+                    "4x4"
+                  ],
+                  "title": "Grid Size",
+                  "type": "string"
                 },
                 "slot_10_amount": {
                   "default": 0.0,
@@ -2092,16 +2015,7 @@
                   "type": "number"
                 },
                 "slot_10_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 10",
-                  "title": "Slot 10 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_10_enabled": {
                   "default": 1.0,
@@ -2112,16 +2026,7 @@
                   "type": "number"
                 },
                 "slot_10_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 10",
-                  "title": "Slot 10 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_11_amount": {
                   "default": 0.0,
@@ -2132,16 +2037,7 @@
                   "type": "number"
                 },
                 "slot_11_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 11",
-                  "title": "Slot 11 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_11_enabled": {
                   "default": 1.0,
@@ -2152,16 +2048,7 @@
                   "type": "number"
                 },
                 "slot_11_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 11",
-                  "title": "Slot 11 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_12_amount": {
                   "default": 0.0,
@@ -2172,16 +2059,7 @@
                   "type": "number"
                 },
                 "slot_12_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 12",
-                  "title": "Slot 12 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_12_enabled": {
                   "default": 1.0,
@@ -2192,16 +2070,7 @@
                   "type": "number"
                 },
                 "slot_12_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 12",
-                  "title": "Slot 12 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_13_amount": {
                   "default": 0.0,
@@ -2212,16 +2081,7 @@
                   "type": "number"
                 },
                 "slot_13_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 13",
-                  "title": "Slot 13 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_13_enabled": {
                   "default": 1.0,
@@ -2232,16 +2092,7 @@
                   "type": "number"
                 },
                 "slot_13_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 13",
-                  "title": "Slot 13 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_14_amount": {
                   "default": 0.0,
@@ -2252,16 +2103,7 @@
                   "type": "number"
                 },
                 "slot_14_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 14",
-                  "title": "Slot 14 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_14_enabled": {
                   "default": 1.0,
@@ -2272,16 +2114,7 @@
                   "type": "number"
                 },
                 "slot_14_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 14",
-                  "title": "Slot 14 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_15_amount": {
                   "default": 0.0,
@@ -2292,16 +2125,7 @@
                   "type": "number"
                 },
                 "slot_15_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 15",
-                  "title": "Slot 15 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_15_enabled": {
                   "default": 1.0,
@@ -2312,16 +2136,7 @@
                   "type": "number"
                 },
                 "slot_15_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 15",
-                  "title": "Slot 15 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_16_amount": {
                   "default": 0.0,
@@ -2332,16 +2147,7 @@
                   "type": "number"
                 },
                 "slot_16_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 16",
-                  "title": "Slot 16 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_16_enabled": {
                   "default": 1.0,
@@ -2352,16 +2158,7 @@
                   "type": "number"
                 },
                 "slot_16_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 16",
-                  "title": "Slot 16 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_1_amount": {
                   "default": 0.0,
@@ -2372,16 +2169,7 @@
                   "type": "number"
                 },
                 "slot_1_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 1",
-                  "title": "Slot 1 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_1_enabled": {
                   "default": 1.0,
@@ -2392,16 +2180,7 @@
                   "type": "number"
                 },
                 "slot_1_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 1",
-                  "title": "Slot 1 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_2_amount": {
                   "default": 0.0,
@@ -2412,16 +2191,7 @@
                   "type": "number"
                 },
                 "slot_2_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 2",
-                  "title": "Slot 2 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_2_enabled": {
                   "default": 1.0,
@@ -2432,16 +2202,7 @@
                   "type": "number"
                 },
                 "slot_2_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 2",
-                  "title": "Slot 2 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_3_amount": {
                   "default": 0.0,
@@ -2452,16 +2213,7 @@
                   "type": "number"
                 },
                 "slot_3_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 3",
-                  "title": "Slot 3 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_3_enabled": {
                   "default": 1.0,
@@ -2472,16 +2224,7 @@
                   "type": "number"
                 },
                 "slot_3_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 3",
-                  "title": "Slot 3 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_4_amount": {
                   "default": 0.0,
@@ -2492,16 +2235,7 @@
                   "type": "number"
                 },
                 "slot_4_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 4",
-                  "title": "Slot 4 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_4_enabled": {
                   "default": 1.0,
@@ -2512,16 +2246,7 @@
                   "type": "number"
                 },
                 "slot_4_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 4",
-                  "title": "Slot 4 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_5_amount": {
                   "default": 0.0,
@@ -2532,16 +2257,7 @@
                   "type": "number"
                 },
                 "slot_5_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 5",
-                  "title": "Slot 5 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_5_enabled": {
                   "default": 1.0,
@@ -2552,16 +2268,7 @@
                   "type": "number"
                 },
                 "slot_5_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 5",
-                  "title": "Slot 5 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_6_amount": {
                   "default": 0.0,
@@ -2572,16 +2279,7 @@
                   "type": "number"
                 },
                 "slot_6_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 6",
-                  "title": "Slot 6 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_6_enabled": {
                   "default": 1.0,
@@ -2592,16 +2290,7 @@
                   "type": "number"
                 },
                 "slot_6_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 6",
-                  "title": "Slot 6 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_7_amount": {
                   "default": 0.0,
@@ -2612,16 +2301,7 @@
                   "type": "number"
                 },
                 "slot_7_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 7",
-                  "title": "Slot 7 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_7_enabled": {
                   "default": 1.0,
@@ -2632,16 +2312,7 @@
                   "type": "number"
                 },
                 "slot_7_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 7",
-                  "title": "Slot 7 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_8_amount": {
                   "default": 0.0,
@@ -2652,16 +2323,7 @@
                   "type": "number"
                 },
                 "slot_8_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 8",
-                  "title": "Slot 8 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_8_enabled": {
                   "default": 1.0,
@@ -2672,16 +2334,7 @@
                   "type": "number"
                 },
                 "slot_8_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 8",
-                  "title": "Slot 8 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 },
                 "slot_9_amount": {
                   "default": 0.0,
@@ -2692,16 +2345,7 @@
                   "type": "number"
                 },
                 "slot_9_dest": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum2"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation destination for slot 9",
-                  "title": "Slot 9 Dest"
+                  "$ref": "#/$defs/SharedEnum2"
                 },
                 "slot_9_enabled": {
                   "default": 1.0,
@@ -2712,16 +2356,7 @@
                   "type": "number"
                 },
                 "slot_9_source": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/SharedEnum1"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
-                  "description": "Modulation source for slot 9",
-                  "title": "Slot 9 Source"
+                  "$ref": "#/$defs/SharedEnum1"
                 }
               },
               "type": "object"
@@ -2764,24 +2399,17 @@
                   "type": "number"
                 },
                 "carrier_wave": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "sine",
-                        "triangle",
-                        "sawtooth",
-                        "square",
-                        "pulse",
-                        "dsf_saw"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Carrier oscillator waveform",
-                  "title": "Carrier Wave"
+                  "enum": [
+                    "sine",
+                    "triangle",
+                    "sawtooth",
+                    "square",
+                    "pulse",
+                    "dsf_saw"
+                  ],
+                  "title": "Carrier Wave",
+                  "type": "string"
                 },
                 "freq_ratio": {
                   "default": 0.5,
@@ -2928,24 +2556,17 @@
                   "type": "number"
                 },
                 "table": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "basic",
-                        "harmonics",
-                        "pwm",
-                        "formant",
-                        "digital",
-                        "warm"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Wavetable bank selection",
-                  "title": "Table"
+                  "enum": [
+                    "basic",
+                    "harmonics",
+                    "pwm",
+                    "formant",
+                    "digital",
+                    "warm"
+                  ],
+                  "title": "Table",
+                  "type": "string"
                 }
               },
               "type": "object"
@@ -3212,22 +2833,15 @@
                   "type": "number"
                 },
                 "scale": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "chromatic",
-                        "major",
-                        "minor",
-                        "pentatonic"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Scale quantization",
-                  "title": "Scale"
+                  "enum": [
+                    "chromatic",
+                    "major",
+                    "minor",
+                    "pentatonic"
+                  ],
+                  "title": "Scale",
+                  "type": "string"
                 }
               },
               "type": "object"
@@ -3486,22 +3100,15 @@
                   "type": "number"
                 },
                 "type": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "key_down",
-                        "key_up",
-                        "pedal",
-                        "hammer"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Type of mechanical noise",
-                  "title": "Type"
+                  "enum": [
+                    "key_down",
+                    "key_up",
+                    "pedal",
+                    "hammer"
+                  ],
+                  "title": "Type",
+                  "type": "string"
                 },
                 "vel_sens": {
                   "default": 0.5,
@@ -3608,40 +3215,26 @@
                   "type": "number"
                 },
                 "source": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "saw",
-                        "sine",
-                        "square",
-                        "triangle",
-                        "noise"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Source waveform used to fill the grain buffer",
-                  "title": "Source"
+                  "enum": [
+                    "saw",
+                    "sine",
+                    "square",
+                    "triangle",
+                    "noise"
+                  ],
+                  "title": "Source",
+                  "type": "string"
                 },
                 "window": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "hann",
-                        "gaussian",
-                        "trapezoid"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Grain envelope shape",
-                  "title": "Window"
+                  "enum": [
+                    "hann",
+                    "gaussian",
+                    "trapezoid"
+                  ],
+                  "title": "Window",
+                  "type": "string"
                 }
               },
               "type": "object"
@@ -3684,28 +3277,21 @@
                   "type": "number"
                 },
                 "curve": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "linear",
-                        "quad_out",
-                        "cubic_out",
-                        "quart_out",
-                        "quint_out",
-                        "expo_out",
-                        "circ_out",
-                        "back_out",
-                        "elastic_out",
-                        "bounce_out"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Easing curve shape",
-                  "title": "Curve"
+                  "enum": [
+                    "linear",
+                    "quad_out",
+                    "cubic_out",
+                    "quart_out",
+                    "quint_out",
+                    "expo_out",
+                    "circ_out",
+                    "back_out",
+                    "elastic_out",
+                    "bounce_out"
+                  ],
+                  "title": "Curve",
+                  "type": "string"
                 },
                 "duration": {
                   "default": 0.5,
@@ -3716,21 +3302,14 @@
                   "type": "number"
                 },
                 "loop_mode": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "one_shot",
-                        "loop",
-                        "ping_pong"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Loop behaviour (one-shot, loop, ping-pong)",
-                  "title": "Loop Mode"
+                  "enum": [
+                    "one_shot",
+                    "loop",
+                    "ping_pong"
+                  ],
+                  "title": "Loop Mode",
+                  "type": "string"
                 },
                 "overshoot": {
                   "default": 0.5,
@@ -4093,21 +3672,14 @@
               "description": "Parameter values for this module.",
               "properties": {
                 "direction": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "forward",
-                        "reverse",
-                        "ping_pong"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Playback direction",
-                  "title": "Direction"
+                  "enum": [
+                    "forward",
+                    "reverse",
+                    "ping_pong"
+                  ],
+                  "title": "Direction",
+                  "type": "string"
                 },
                 "fine_tune": {
                   "default": 0.0,
@@ -4134,21 +3706,14 @@
                   "type": "number"
                 },
                 "play_mode": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "one_shot",
-                        "sustain",
-                        "loop"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "How the sample responds to note-on/off",
-                  "title": "Play Mode"
+                  "enum": [
+                    "one_shot",
+                    "sustain",
+                    "loop"
+                  ],
+                  "title": "Play Mode",
+                  "type": "string"
                 },
                 "sample_select": {
                   "description": "Assigned sample (selected via the sample picker)",
@@ -4389,20 +3954,13 @@
                   "type": "number"
                 },
                 "system": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "rossler",
-                        "lorenz"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Chaotic dynamical system",
-                  "title": "System"
+                  "enum": [
+                    "rossler",
+                    "lorenz"
+                  ],
+                  "title": "System",
+                  "type": "string"
                 }
               },
               "type": "object"
@@ -4781,21 +4339,14 @@
                   "type": "number"
                 },
                 "mode": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "mono",
-                        "stereo",
-                        "ping_pong"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Delay mode",
-                  "title": "Mode"
+                  "enum": [
+                    "mono",
+                    "stereo",
+                    "ping_pong"
+                  ],
+                  "title": "Mode",
+                  "type": "string"
                 },
                 "time": {
                   "default": 0.375,
@@ -4989,24 +4540,17 @@
                   "type": "number"
                 },
                 "type": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "soft_clip",
-                        "hard_clip",
-                        "tube",
-                        "foldback",
-                        "bitcrush",
-                        "variable_clip"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Distortion algorithm",
-                  "title": "Type"
+                  "enum": [
+                    "soft_clip",
+                    "hard_clip",
+                    "tube",
+                    "foldback",
+                    "bitcrush",
+                    "variable_clip"
+                  ],
+                  "title": "Type",
+                  "type": "string"
                 }
               },
               "type": "object"
@@ -5449,24 +4993,17 @@
                   "type": "number"
                 },
                 "curve": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "soft_clip",
-                        "asymmetric",
-                        "fold",
-                        "chebyshev",
-                        "sine_fold",
-                        "quantize"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Waveshaping algorithm",
-                  "title": "Curve"
+                  "enum": [
+                    "soft_clip",
+                    "asymmetric",
+                    "fold",
+                    "chebyshev",
+                    "sine_fold",
+                    "quantize"
+                  ],
+                  "title": "Curve",
+                  "type": "string"
                 },
                 "drive": {
                   "default": 0.30000001192092896,
@@ -5765,22 +5302,15 @@
                   "type": "number"
                 },
                 "ir_type": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "plate",
-                        "room",
-                        "spring",
-                        "hall"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Impulse response type (Plate, Room, Spring, Hall)",
-                  "title": "IR Type"
+                  "enum": [
+                    "plate",
+                    "room",
+                    "spring",
+                    "hall"
+                  ],
+                  "title": "IR Type",
+                  "type": "string"
                 },
                 "mix": {
                   "default": 0.30000001192092896,
@@ -5831,22 +5361,15 @@
               "description": "Parameter values for this module.",
               "properties": {
                 "fft_size": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "512",
-                        "1024",
-                        "2048",
-                        "4096"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "FFT window size (larger = better frequency resolution)",
-                  "title": "FFT Size"
+                  "enum": [
+                    "512",
+                    "1024",
+                    "2048",
+                    "4096"
+                  ],
+                  "title": "FFT Size",
+                  "type": "string"
                 },
                 "freeze": {
                   "default": 0.0,
@@ -6417,21 +5940,14 @@
                   "type": "number"
                 },
                 "mode": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "reverse",
-                        "gate",
-                        "stutter"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Playback mode",
-                  "title": "Mode"
+                  "enum": [
+                    "reverse",
+                    "gate",
+                    "stutter"
+                  ],
+                  "title": "Mode",
+                  "type": "string"
                 },
                 "threshold": {
                   "default": -24.0,
@@ -6442,20 +5958,13 @@
                   "type": "number"
                 },
                 "trigger": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "periodic",
-                        "threshold"
-                      ],
-                      "type": "string"
-                    },
-                    {
-                      "type": "number"
-                    }
-                  ],
                   "description": "Trigger mode",
-                  "title": "Trigger"
+                  "enum": [
+                    "periodic",
+                    "threshold"
+                  ],
+                  "title": "Trigger",
+                  "type": "string"
                 },
                 "window": {
                   "default": 600.0,
@@ -7153,7 +6662,7 @@
           "description": "Canvas size hint for the rack view.\nUsed to restore the scroll area size when loading a patch."
         },
         "effect_chain_order": {
-          "description": "Effect chain processing order (module IDs as strings, in chain order).\n\nWhen present, the engine restores the effect chain to match this order\non load. Empty means \"use legacy behavior\" — chain order is then\nreconstructed from `patch.modules` order.",
+          "description": "Effect chain processing order (module IDs as strings, in chain order).\n\nThe engine restores the effect chain to match this order on load.\nAn empty list means the patch has no effect-chain modules.",
           "items": {
             "type": "string"
           },

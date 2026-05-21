@@ -425,8 +425,7 @@ fn module_branch(mt: ModuleType, desc: &ModuleDescriptor) -> Value {
 
 /// Build a JSON Schema fragment for a single parameter.
 ///
-/// - Choice parameters accept either the choice ID string (canonical) or a
-///   number — legacy patches sometimes store the index.
+/// - Choice parameters accept the choice ID string (canonical).
 /// - The sample-id object form (`{"sample_id": N}`) is only valid on
 ///   `Sampler::SampleSelect`. Other numeric params get a plain number with
 ///   the descriptor's `min`/`max`/`default` applied (the four formerly
@@ -446,10 +445,8 @@ fn parameter_schema(param: &ParameterDescriptor) -> Value {
         let ids: Vec<Value> = choices.iter().map(|c| json!(c.id)).collect();
         let mut schema = json!({
             "title": param.name,
-            "anyOf": [
-                { "type": "string", "enum": ids },
-                { "type": "number" }
-            ]
+            "type": "string",
+            "enum": ids,
         });
         if !description.is_empty() {
             schema["description"] = json!(description);

@@ -429,9 +429,8 @@ pub struct PatchSettings {
     pub canvas_size: Option<CanvasSize>,
     /// Effect chain processing order (module IDs as strings, in chain order).
     ///
-    /// When present, the engine restores the effect chain to match this order
-    /// on load. Empty means "use legacy behavior" — chain order is then
-    /// reconstructed from `patch.modules` order.
+    /// The engine restores the effect chain to match this order on load.
+    /// An empty list means the patch has no effect-chain modules.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effect_chain_order: Vec<String>,
 }
@@ -933,27 +932,7 @@ mod tests {
             "empty chain order should be skipped from JSON"
         );
 
-        // Legacy patches without the field still load.
         let parsed: Patch = serde_json::from_str(&json).expect("deserialize");
-        assert!(parsed.settings.effect_chain_order.is_empty());
-    }
-
-    #[test]
-    fn test_patch_settings_legacy_load_without_field() {
-        // Simulate an older patch JSON missing the effect_chain_order field.
-        let legacy = r#"{
-            "name": "Legacy",
-            "version": "1.0",
-            "modules": [],
-            "connections": [],
-            "groups": [],
-            "settings": {
-                "master_volume": 0.8,
-                "octave_offset": 0,
-                "glide_time": 0.0
-            }
-        }"#;
-        let parsed: Patch = serde_json::from_str(legacy).expect("deserialize legacy");
         assert!(parsed.settings.effect_chain_order.is_empty());
     }
 

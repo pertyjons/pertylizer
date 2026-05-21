@@ -230,8 +230,8 @@ mod tests {
     }
 
     #[test]
-    fn test_recent_projects_backward_compat() {
-        // Old JSON without recent_projects should deserialize fine
+    fn test_recent_projects_missing_field_uses_default() {
+        // JSON without recent_projects should deserialize via #[serde(default)]
         let json = r#"{"window": {"width": 800, "height": 600}}"#;
         let parsed: AppSettings = serde_json::from_str(json).expect("deserialize");
         assert!(parsed.recent_projects.is_empty());

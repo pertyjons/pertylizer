@@ -312,61 +312,6 @@ impl PortName {
             ""
         }
     }
-
-    // ========================================================================
-    // DEPRECATED METHODS - use constants instead
-    // ========================================================================
-
-    /// Standard input port.
-    #[deprecated(since = "0.34.3", note = "Use PortName::IN constant instead")]
-    pub fn input() -> Self {
-        Self::IN
-    }
-    /// Standard output port.
-    #[deprecated(since = "0.34.3", note = "Use PortName::OUT constant instead")]
-    pub fn output() -> Self {
-        Self::OUT
-    }
-    /// Left input port.
-    #[deprecated(since = "0.34.3", note = "Use PortName::IN_L constant instead")]
-    pub fn input_left() -> Self {
-        Self::IN_L
-    }
-    /// Right input port.
-    #[deprecated(since = "0.34.3", note = "Use PortName::IN_R constant instead")]
-    pub fn input_right() -> Self {
-        Self::IN_R
-    }
-    /// Left output port.
-    #[deprecated(since = "0.34.3", note = "Use PortName::OUT_L constant instead")]
-    pub fn output_left() -> Self {
-        Self::OUT_L
-    }
-    /// Right output port.
-    #[deprecated(since = "0.34.3", note = "Use PortName::OUT_R constant instead")]
-    pub fn output_right() -> Self {
-        Self::OUT_R
-    }
-    /// Frequency port.
-    #[deprecated(since = "0.34.3", note = "Use PortName::FREQ constant instead")]
-    pub fn freq() -> Self {
-        Self::FREQ
-    }
-    /// Frequency CV port.
-    #[deprecated(since = "0.34.3", note = "Use PortName::FREQ_CV constant instead")]
-    pub fn freq_cv() -> Self {
-        Self::FREQ_CV
-    }
-    /// Gate port.
-    #[deprecated(since = "0.34.3", note = "Use PortName::GATE constant instead")]
-    pub fn gate() -> Self {
-        Self::GATE
-    }
-    /// Cutoff CV port.
-    #[deprecated(since = "0.34.3", note = "Use PortName::CUTOFF_CV constant instead")]
-    pub fn cutoff_cv() -> Self {
-        Self::CUTOFF_CV
-    }
 }
 
 impl PartialEq<&str> for PortName {
@@ -484,13 +429,5 @@ mod tests {
         assert_eq!(PortName::IN, PortName::intern("in"));
         assert_eq!(PortName::OUT, PortName::intern("out"));
         assert_eq!(PortName::GATE, PortName::intern("gate"));
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_deprecated_methods_still_work() {
-        assert_eq!(PortName::input(), PortName::IN);
-        assert_eq!(PortName::output(), PortName::OUT);
-        assert_eq!(PortName::input_left(), PortName::IN_L);
     }
 }

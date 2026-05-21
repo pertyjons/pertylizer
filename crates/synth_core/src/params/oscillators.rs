@@ -63,8 +63,6 @@ impl Waveform {
             "square" => Some(Self::Square),
             "pulse" => Some(Self::Pulse),
             "dsf_saw" => Some(Self::DsfSaw),
-            // Legacy support: map noise to sine (use NoiseGenerator module instead)
-            "noise" | "pink_noise" => Some(Self::Sine),
             _ => None,
         }
     }

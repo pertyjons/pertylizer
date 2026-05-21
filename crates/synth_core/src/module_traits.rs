@@ -1085,9 +1085,6 @@ pub use crate::params::{
     Waveform,
 };
 
-// Type alias for backward compatibility
-pub type FilterType = FilterMode;
-
 // Helper to create ChoiceOption lists from enums
 impl Waveform {
     pub fn to_choices() -> Vec<ChoiceOption> {
