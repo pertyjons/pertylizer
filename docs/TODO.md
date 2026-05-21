@@ -4,6 +4,24 @@
 
 ### 0.1 Misc findings
 
+- [ ] **★ HIGH: expand Sub Oscillator waveform set from 3 to 6.** `SubOscWaveform`
+  (`crates/synth_core/src/params/sub_osc.rs:13`) currently exposes only
+  `Sine / Square / Pulse25`, while the main `Oscillator` exposes 6
+  (`Sine / Triangle / Sawtooth / Square / Pulse / DsfSaw`). Add the three
+  missing shapes: `Triangle`, `Sawtooth`, `DsfSaw`. Keep `Pulse25` distinct
+  from `Pulse` (Pulse25 = fixed 25 % duty, dedicated bass shape — Pulse
+  needs a PulseWidth param that the lean Sub Osc workflow deliberately
+  skips). The waveform-selector widget already filters by descriptor
+  choices (`gui/widgets/waveform.rs::WaveformType::from_id`, landed in
+  commit `177cb0e`) so the GUI picks up the new buttons automatically as
+  long as `WaveformType::from_id` covers the new ids. Touch points:
+  `sub_osc.rs:23-55` (variants + `ALL` + `name` + `id` + `to_choices` +
+  rendering branch in `generate_sample`), `WaveformType::from_id`
+  (mappings for `triangle`/`sawtooth`/`dsf_saw` — already exist), and any
+  example projects that pin Sub Osc waveform via numeric index (resaved
+  to string form in `f7a6121` so the migration is free). No save-format
+  bump required; existing `"sine"` / `"square"` / `"pulse25"` keep
+  loading.
 - [ ] **Follow-up: remove dead modules inside patch graphs.** Original §0.1 entry included this as
   a stretch goal — modules not reverse-reachable from `StereoOutput` (and any sidechain source)
   through `connections` should also go in `optimize_project`. Bigger scope (needs graph traversal
