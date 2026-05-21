@@ -26,7 +26,6 @@
 
 #![cfg(feature = "mcp")]
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use parking_lot::RwLock as PlRwLock;
@@ -109,20 +108,19 @@ impl Rig {
     }
 }
 
-fn example_project(filename: &str) -> (ProjectFile, SampleLibrary) {
-    let path: PathBuf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("crates/")
-        .parent()
-        .expect("workspace root")
-        .join("assets/examples/projects")
-        .join(filename);
+mod common;
+use common::{examples_dir, list_example_projects};
 
+fn example_project(filename: &str) -> (ProjectFile, SampleLibrary) {
+    load_project_at(&examples_dir().join(filename))
+}
+
+fn load_project_at(path: &std::path::Path) -> (ProjectFile, SampleLibrary) {
     let mut lib = SampleLibrary::default();
-    let project = if is_zip_file(&path) {
-        load_bundle(&path, &mut lib).expect("load bundle")
+    let project = if is_zip_file(path) {
+        load_bundle(path, &mut lib).expect("load bundle")
     } else {
-        ProjectFile::load(&path).expect("load json project")
+        ProjectFile::load(path).expect("load json project")
     };
     (project, lib)
 }
@@ -319,5 +317,49 @@ fn apply_new_project_clears_engine() {
         rig.song.read().name,
         "Untitled",
         "song should be reset to Untitled"
+    );
+}
+
+/// Every bundled example project must round-trip through `apply_project`
+/// into a coherent engine snapshot. Catches regressions where a save-format
+/// change (Vec migrations, field renames, …) loads in serde but breaks the
+/// file → engine pipeline for a specific example.
+#[test]
+fn every_example_project_applies_to_engine() {
+    let files = list_example_projects();
+    assert!(
+        !files.is_empty(),
+        "no example projects under {}",
+        examples_dir().display()
+    );
+
+    let mut failures: Vec<String> = Vec::new();
+    for path in files {
+        let display = path.display().to_string();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut rig = Rig::new();
+            let (project, _lib) = load_project_at(&path);
+            project_apply::apply_project(&project, &rig.session, &rig.song, &rig.sample_library)
+                .expect("apply_project");
+            rig.pump(32);
+
+            assert_snapshot_matches(&project, &rig);
+            assert_focused_instrument_matches(&project, &rig);
+        }));
+        if let Err(panic) = result {
+            let msg = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                .unwrap_or_else(|| "<non-string panic>".to_owned());
+            failures.push(format!("{display}: {msg}"));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "apply_project regressions on {} example(s):\n  - {}",
+        failures.len(),
+        failures.join("\n  - "),
     );
 }

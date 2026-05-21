@@ -16,36 +16,14 @@
 //! GUI thread. After the refactor they must still pass — the file format
 //! is unchanged; only the execution thread shifts.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use pertylizer::bundle::{is_zip_file, load_bundle, save_bundle};
 use pertylizer::project::{LoadedFile, ProjectFile, load_file};
 use synth_sampler::SampleLibrary;
 
-fn examples_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("crates/")
-        .parent()
-        .expect("workspace root")
-        .join("assets/examples/projects")
-}
-
-fn list_example_files() -> Vec<PathBuf> {
-    let dir = examples_dir();
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()))
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.is_file()
-                && p.extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e == "json" || e == "zip")
-        })
-        .collect();
-    files.sort();
-    files
-}
+mod common;
+use common::{examples_dir, list_example_projects};
 
 /// Round-trip a plain-JSON project file: load → save → load → compare.
 fn round_trip_project(path: &Path) {
@@ -135,7 +113,7 @@ fn round_trip_bundle(path: &Path) {
 
 #[test]
 fn every_example_project_round_trips() {
-    let files = list_example_files();
+    let files = list_example_projects();
     assert!(
         !files.is_empty(),
         "no example projects found under {}",

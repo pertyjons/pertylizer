@@ -1,4 +1,4 @@
-//! Shared fixtures for `arrangement_render_*` integration tests.
+//! Shared fixtures for integration tests.
 //!
 //! Each integration test is its own binary, so common setup needs to live in
 //! a `mod common;` submodule rather than a regular crate. Cargo treats files
@@ -7,6 +7,7 @@
 
 #![allow(dead_code)] // not every consumer uses every helper
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -208,4 +209,32 @@ pub fn assert_bit_exact(label: &str, a: &[f32], b: &[f32], sample_rate: u32) {
             y.to_bits()
         );
     }
+}
+
+/// Workspace-relative path to the bundled example project directory.
+pub fn examples_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crates/")
+        .parent()
+        .expect("workspace root")
+        .join("assets/examples/projects")
+}
+
+/// Every bundled example project, sorted by path. Accepts both
+/// plain-JSON and `.zip` bundles.
+pub fn list_example_projects() -> Vec<PathBuf> {
+    let dir = examples_dir();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()))
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.is_file()
+                && p.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e == "json" || e == "zip")
+        })
+        .collect();
+    files.sort();
+    files
 }

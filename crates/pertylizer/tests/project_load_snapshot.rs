@@ -26,14 +26,8 @@ use pertylizer::project::{LoadedFile, ProjectFile, load_file};
 use serde::Serialize;
 use synth_sampler::SampleLibrary;
 
-fn examples_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("crates/")
-        .parent()
-        .expect("workspace root")
-        .join("assets/examples/projects")
-}
+mod common;
+use common::{examples_dir, list_example_projects};
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/project_snapshots")
@@ -285,22 +279,11 @@ fn compare_snapshot(name: &str, snapshot: &ProjectSnapshot) {
 
 #[test]
 fn every_example_project_matches_snapshot() {
-    let dir = examples_dir();
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()))
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.is_file()
-                && p.extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| e == "json" || e == "zip")
-        })
-        .collect();
-    entries.sort();
+    let entries = list_example_projects();
     assert!(
         !entries.is_empty(),
         "no example projects found under {}",
-        dir.display()
+        examples_dir().display()
     );
 
     let mut failures: Vec<String> = Vec::new();
