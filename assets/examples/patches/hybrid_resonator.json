@@ -16,7 +16,7 @@
       },
       "parameters": {
         "carrier_freq": 440.0,
-        "carrier_wave": 0.0,
+        "carrier_wave": "sine",
         "freq_ratio": 0.5,
         "key_track": 0.0,
         "mix": 0.45
@@ -30,7 +30,7 @@
         "y": 352.0
       },
       "parameters": {
-        "algorithm": 3.0,
+        "algorithm": "bitwise",
         "frequency": 440.0,
         "level": 0.6,
         "param_a": 0.5,
@@ -49,7 +49,7 @@
         "depth": 0.35,
         "phase": 0.0,
         "rate": 4.0,
-        "waveform": 1.0
+        "waveform": "triangle"
       }
     },
     {
@@ -64,10 +64,10 @@
         "cv_amt": 1.0,
         "drive": 1.2,
         "key_track": 0.0,
-        "model": 0.0,
+        "model": "standard",
         "morph": 0.0,
         "resonance": 0.35,
-        "type": 0.0
+        "type": "lowpass"
       }
     },
     {
@@ -79,8 +79,8 @@
       },
       "parameters": {
         "level": 0.4,
-        "octave": 0.0,
-        "waveform": 1.0
+        "octave": "minus1",
+        "waveform": "square"
       }
     },
     {
@@ -124,7 +124,7 @@
       "parameters": {
         "detune": 0.0,
         "fm_amt": 1.0,
-        "fm_mode": 0.0,
+        "fm_mode": "exponential",
         "frequency": 440.0,
         "level": 0.8,
         "pulse_width": 0.5,
@@ -132,7 +132,7 @@
         "uni_phase": 1.0,
         "uni_spread": 0.7,
         "unison": 4.0,
-        "waveform": 4.0,
+        "waveform": "pulse",
         "x_mod": 0.0
       }
     },
@@ -164,7 +164,7 @@
       },
       "parameters": {
         "level": 0.2,
-        "type": 4.0
+        "type": "violet"
       }
     },
     {
@@ -227,7 +227,7 @@
         "level": 0.7,
         "octave": 0.0,
         "position": 0.25,
-        "table": 2.0
+        "table": "pwm"
       }
     },
     {

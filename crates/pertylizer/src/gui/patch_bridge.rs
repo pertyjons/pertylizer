@@ -669,7 +669,7 @@ pub fn create_patch_from_editor(
                 // param by kind, ensuring we always use the stable type_id.
                 for desc in &descriptor.parameters {
                     if let Some(ep) = engine_param_list.iter().find(|p| p.same_kind(&desc.id)) {
-                        param_map.insert(desc.type_id.clone(), ParamValue::from_param(ep));
+                        param_map.insert(desc.type_id.clone(), ParamValue::from_param(ep, desc));
                     }
                 }
             } else {

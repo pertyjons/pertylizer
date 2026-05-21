@@ -2,6 +2,15 @@
 
 ## [unreleased]
 
+### Schemas TODO — B3 done
+
+- **Choice params serialize as string ids** —
+  `ParamValue::from_param` now takes a `&ParameterDescriptor`; for
+  choice params it emits `Choice(id_string)` instead of the numeric
+  index. Engine-internal `Param::as_f32` stays index-based; only the
+  on-disk JSON form changes. All example files re-saved via a new
+  `resave_examples` binary so checked-in fixtures match.
+
 ### Schemas TODO — B1 done
 
 - **Semantic newtypes for misused params** — `DistortionParam::BitDepth`,

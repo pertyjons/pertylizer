@@ -336,7 +336,7 @@ fn build_patch_from_engine(
                 {
                     param_map.insert(
                         desc_param.type_id.clone(),
-                        ParamValue::from_param(engine_param),
+                        ParamValue::from_param(engine_param, desc_param),
                     );
                 }
             }

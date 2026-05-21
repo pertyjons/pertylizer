@@ -116,7 +116,26 @@ patches that silently ignore parameters.
 compat is handled by re-generating the schema with new module versions.
 Authors who hit a stricter schema can run `gen_schemas` to update.
 
-### B3. Numeric enums accept both string and number [M, medium impact] *(consumer feedback)*
+### ✅ B3. Numeric enums accept both string and number [M, medium impact] — done 2026-05-21 *(consumer feedback)*
+
+`ParamValue::from_param(p, desc)` now consults the descriptor's
+`choices` list and emits `ParamValue::Choice(id_string)` for choice
+params instead of the numeric index. Engine-internal `Param::as_f32`
+stays index-based; only on-disk JSON changes. All example files
+re-saved via a new `resave_examples` binary so checked-in fixtures
+use the string form. Load path still accepts both forms via
+`to_param`'s existing lookup, so legacy files continue to work
+without a version bump.
+
+**Follow-up not done in this commit:** the proposed cleanup of
+`#[serde(rename_all = "snake_case")]` on each choice enum plus
+deletion of `id()`/`from_id()` boilerplate hit a gotcha — variants
+like `AntiAliasMode::PolyBlep` emit `"polyblep"` from `id()` (no
+underscore) but `rename_all = "snake_case"` would produce
+`"poly_blep"`. Achieving "serde form = id() string" requires
+per-variant `#[serde(rename = "...")]` attributes for the
+mismatched ones, plus `#[serde(alias = ...)]` for the 6 enums with
+legacy aliases in `from_id`. Tractable but worth its own pass.
 
 **Issue:** Choice parameters (e.g. `oscillator.waveform`, `filter.type`,
 `distortion.type`) are stored sometimes as strings (`"sawtooth"`) and

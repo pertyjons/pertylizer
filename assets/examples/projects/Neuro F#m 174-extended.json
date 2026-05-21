@@ -37,10 +37,10 @@
               "y": 32.0
             },
             "parameters": {
-              "anti_alias": 1.0,
+              "anti_alias": "minblep",
               "detune": -10.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 0.5,
               "pulse_width": 0.5,
@@ -48,7 +48,7 @@
               "uni_phase": 1.0,
               "uni_spread": 1.0,
               "unison": 5.0,
-              "waveform": 2.0,
+              "waveform": "sawtooth",
               "x_mod": 0.0
             }
           },
@@ -60,10 +60,10 @@
               "y": 384.0
             },
             "parameters": {
-              "anti_alias": 1.0,
+              "anti_alias": "minblep",
               "detune": 12.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 0.45,
               "pulse_width": 0.5,
@@ -71,7 +71,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.85,
               "unison": 5.0,
-              "waveform": 2.0,
+              "waveform": "sawtooth",
               "x_mod": 0.0
             }
           },
@@ -84,8 +84,8 @@
             },
             "parameters": {
               "level": 0.88,
-              "octave": 0.0,
-              "waveform": 0.0
+              "octave": "minus1",
+              "waveform": "sine"
             }
           },
           {
@@ -101,10 +101,10 @@
               "drive": 2.5,
               "env_amt": 0.5,
               "key_track": 0.25,
-              "model": 4.0,
+              "model": "karlsen",
               "morph": 0.0,
               "resonance": 0.55,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -120,10 +120,10 @@
               "drive": 2.5,
               "env_amt": 0.5,
               "key_track": 0.25,
-              "model": 4.0,
+              "model": "karlsen",
               "morph": 0.0,
               "resonance": 0.5,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -173,7 +173,7 @@
               "depth": 0.25,
               "phase": 0.0,
               "rate": 0.18,
-              "waveform": 1.0
+              "waveform": "triangle"
             }
           },
           {
@@ -305,7 +305,7 @@
               "drive": 0.4,
               "mix": 0.75,
               "tone": 0.5,
-              "type": 2.0
+              "type": "tube"
             }
           },
           {
@@ -598,10 +598,10 @@
               "y": 32.0
             },
             "parameters": {
-              "anti_alias": 0.0,
+              "anti_alias": "polyblep",
               "detune": 0.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 1.0,
               "pulse_width": 0.5,
@@ -609,7 +609,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.5,
               "unison": 1.0,
-              "waveform": 0.0,
+              "waveform": "sine",
               "x_mod": 0.0
             }
           },
@@ -622,7 +622,7 @@
             },
             "parameters": {
               "level": 0.5,
-              "type": 3.0
+              "type": "blue"
             }
           },
           {
@@ -638,10 +638,10 @@
               "drive": 1.0,
               "env_amt": 0.25,
               "key_track": 0.0,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.1,
-              "type": 1.0
+              "type": "highpass"
             }
           },
           {
@@ -752,7 +752,7 @@
               "drive": 0.5,
               "mix": 0.55,
               "tone": 0.55,
-              "type": 2.0
+              "type": "tube"
             }
           }
         ],
@@ -887,10 +887,10 @@
               "y": 32.0
             },
             "parameters": {
-              "anti_alias": 0.0,
+              "anti_alias": "polyblep",
               "detune": 0.0,
               "fm_amt": 0.18,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 195.0,
               "level": 0.55,
               "pulse_width": 0.5,
@@ -898,7 +898,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.5,
               "unison": 1.0,
-              "waveform": 1.0,
+              "waveform": "triangle",
               "x_mod": 0.0
             }
           },
@@ -911,7 +911,7 @@
             },
             "parameters": {
               "level": 0.85,
-              "type": 0.0
+              "type": "white"
             }
           },
           {
@@ -927,10 +927,10 @@
               "drive": 1.0,
               "env_amt": 0.25,
               "key_track": 0.0,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.55,
-              "type": 2.0
+              "type": "bandpass"
             }
           },
           {
@@ -1046,7 +1046,7 @@
               "drive": 0.45,
               "mix": 0.5,
               "tone": 0.65,
-              "type": 0.0
+              "type": "soft_clip"
             }
           },
           {
@@ -1212,7 +1212,7 @@
             },
             "parameters": {
               "level": 0.85,
-              "type": 0.0
+              "type": "white"
             }
           },
           {
@@ -1228,10 +1228,10 @@
               "drive": 1.0,
               "env_amt": 0.25,
               "key_track": 0.0,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.3,
-              "type": 1.0
+              "type": "highpass"
             }
           },
           {
@@ -1391,7 +1391,7 @@
             },
             "parameters": {
               "level": 0.9,
-              "type": 0.0
+              "type": "white"
             }
           },
           {
@@ -1407,10 +1407,10 @@
               "drive": 1.0,
               "env_amt": 0.25,
               "key_track": 0.0,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.55,
-              "type": 2.0
+              "type": "bandpass"
             }
           },
           {
@@ -1469,7 +1469,7 @@
             "parameters": {
               "feedback": 0.35,
               "mix": 0.25,
-              "mode": 2.0,
+              "mode": "ping_pong",
               "time": 0.086,
               "tone": 0.5
             }
@@ -1624,10 +1624,10 @@
               "y": 32.0
             },
             "parameters": {
-              "anti_alias": 0.0,
+              "anti_alias": "polyblep",
               "detune": 0.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 880.0,
               "level": 0.3,
               "pulse_width": 0.5,
@@ -1635,7 +1635,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.5,
               "unison": 1.0,
-              "waveform": 1.0,
+              "waveform": "triangle",
               "x_mod": 0.0
             }
           },
@@ -1648,7 +1648,7 @@
             },
             "parameters": {
               "level": 0.95,
-              "type": 0.0
+              "type": "white"
             }
           },
           {
@@ -1664,10 +1664,10 @@
               "drive": 1.0,
               "env_amt": 0.25,
               "key_track": 0.0,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.72,
-              "type": 2.0
+              "type": "bandpass"
             }
           },
           {
@@ -1745,7 +1745,7 @@
             "parameters": {
               "feedback": 0.25,
               "mix": 0.2,
-              "mode": 2.0,
+              "mode": "ping_pong",
               "time": 0.172,
               "tone": 0.6
             }
@@ -1882,10 +1882,10 @@
               "y": 32.0
             },
             "parameters": {
-              "anti_alias": 1.0,
+              "anti_alias": "minblep",
               "detune": -10.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 0.55,
               "pulse_width": 0.5,
@@ -1893,7 +1893,7 @@
               "uni_phase": 1.0,
               "uni_spread": 1.0,
               "unison": 3.0,
-              "waveform": 2.0,
+              "waveform": "sawtooth",
               "x_mod": 0.0
             }
           },
@@ -1905,10 +1905,10 @@
               "y": 384.0
             },
             "parameters": {
-              "anti_alias": 1.0,
+              "anti_alias": "minblep",
               "detune": 10.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 0.5,
               "pulse_width": 0.5,
@@ -1916,7 +1916,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.85,
               "unison": 3.0,
-              "waveform": 2.0,
+              "waveform": "sawtooth",
               "x_mod": 0.0
             }
           },
@@ -1933,10 +1933,10 @@
               "drive": 1.2,
               "env_amt": 0.05,
               "key_track": 0.15,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.18,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -1952,10 +1952,10 @@
               "drive": 1.2,
               "env_amt": 0.05,
               "key_track": 0.15,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.22,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -1987,7 +1987,7 @@
               "depth": 0.45,
               "phase": 0.0,
               "rate": 0.13,
-              "waveform": 0.0
+              "waveform": "sine"
             }
           },
           {
@@ -2001,7 +2001,7 @@
               "depth": 0.35,
               "phase": 0.5,
               "rate": 0.09,
-              "waveform": 1.0
+              "waveform": "triangle"
             }
           },
           {
@@ -2312,10 +2312,10 @@
               "y": 32.0
             },
             "parameters": {
-              "anti_alias": 1.0,
+              "anti_alias": "minblep",
               "detune": -5.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 0.55,
               "pulse_width": 0.5,
@@ -2323,7 +2323,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.75,
               "unison": 3.0,
-              "waveform": 2.0,
+              "waveform": "sawtooth",
               "x_mod": 0.0
             }
           },
@@ -2335,10 +2335,10 @@
               "y": 384.0
             },
             "parameters": {
-              "anti_alias": 1.0,
+              "anti_alias": "minblep",
               "detune": 5.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 0.5,
               "pulse_width": 0.5,
@@ -2346,7 +2346,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.55,
               "unison": 3.0,
-              "waveform": 2.0,
+              "waveform": "sawtooth",
               "x_mod": 0.0
             }
           },
@@ -2363,10 +2363,10 @@
               "drive": 1.3,
               "env_amt": 0.32,
               "key_track": 0.4,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.35,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -2382,10 +2382,10 @@
               "drive": 1.3,
               "env_amt": 0.32,
               "key_track": 0.4,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.32,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -2513,7 +2513,7 @@
             "parameters": {
               "feedback": 0.42,
               "mix": 0.28,
-              "mode": 2.0,
+              "mode": "ping_pong",
               "time": 0.258,
               "tone": 0.5
             }
@@ -2748,10 +2748,10 @@
               "y": 32.0
             },
             "parameters": {
-              "anti_alias": 1.0,
+              "anti_alias": "minblep",
               "detune": -8.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 0.55,
               "pulse_width": 0.5,
@@ -2759,7 +2759,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.85,
               "unison": 3.0,
-              "waveform": 1.0,
+              "waveform": "triangle",
               "x_mod": 0.0
             }
           },
@@ -2771,10 +2771,10 @@
               "y": 384.0
             },
             "parameters": {
-              "anti_alias": 1.0,
+              "anti_alias": "minblep",
               "detune": 8.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 0.25,
               "pulse_width": 0.5,
@@ -2782,7 +2782,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.65,
               "unison": 3.0,
-              "waveform": 2.0,
+              "waveform": "sawtooth",
               "x_mod": 0.0
             }
           },
@@ -2799,10 +2799,10 @@
               "drive": 1.1,
               "env_amt": 0.18,
               "key_track": 0.45,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.22,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -2818,10 +2818,10 @@
               "drive": 1.1,
               "env_amt": 0.18,
               "key_track": 0.45,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.18,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -3169,7 +3169,7 @@
             },
             "parameters": {
               "level": 1.0,
-              "type": 1.0
+              "type": "pink"
             }
           },
           {
@@ -3185,10 +3185,10 @@
               "drive": 1.7,
               "env_amt": 1.0,
               "key_track": 0.1,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.35,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -3204,10 +3204,10 @@
               "drive": 1.7,
               "env_amt": 1.0,
               "key_track": 0.1,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.35,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -3257,7 +3257,7 @@
               "depth": 0.3,
               "phase": 0.0,
               "rate": 0.18,
-              "waveform": 0.0
+              "waveform": "sine"
             }
           },
           {
@@ -3271,7 +3271,7 @@
               "depth": 0.25,
               "phase": 0.5,
               "rate": 0.14,
-              "waveform": 1.0
+              "waveform": "triangle"
             }
           },
           {
@@ -3345,7 +3345,7 @@
               "drive": 0.5,
               "mix": 0.55,
               "tone": 0.55,
-              "type": 2.0
+              "type": "tube"
             }
           },
           {
@@ -3540,10 +3540,10 @@
               "y": 32.0
             },
             "parameters": {
-              "anti_alias": 0.0,
+              "anti_alias": "polyblep",
               "detune": 0.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 1.0,
               "pulse_width": 0.5,
@@ -3551,7 +3551,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.5,
               "unison": 1.0,
-              "waveform": 0.0,
+              "waveform": "sine",
               "x_mod": 0.0
             }
           },
@@ -3631,7 +3631,7 @@
               "drive": 0.45,
               "mix": 0.55,
               "tone": 0.4,
-              "type": 2.0
+              "type": "tube"
             }
           }
         ],
@@ -3718,7 +3718,7 @@
             },
             "parameters": {
               "level": 0.9,
-              "type": 1.0
+              "type": "pink"
             }
           },
           {
@@ -3734,10 +3734,10 @@
               "drive": 1.5,
               "env_amt": 1.0,
               "key_track": 0.0,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.45,
-              "type": 1.0
+              "type": "highpass"
             }
           },
           {
@@ -3753,10 +3753,10 @@
               "drive": 1.5,
               "env_amt": 1.0,
               "key_track": 0.0,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.42,
-              "type": 1.0
+              "type": "highpass"
             }
           },
           {
@@ -3866,7 +3866,7 @@
               "drive": 0.4,
               "mix": 0.5,
               "tone": 0.6,
-              "type": 2.0
+              "type": "tube"
             }
           },
           {
@@ -4041,10 +4041,10 @@
               "y": 32.0
             },
             "parameters": {
-              "anti_alias": 1.0,
+              "anti_alias": "minblep",
               "detune": -7.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 0.6,
               "pulse_width": 0.5,
@@ -4052,7 +4052,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.7,
               "unison": 2.0,
-              "waveform": 2.0,
+              "waveform": "sawtooth",
               "x_mod": 0.0
             }
           },
@@ -4064,10 +4064,10 @@
               "y": 384.0
             },
             "parameters": {
-              "anti_alias": 1.0,
+              "anti_alias": "minblep",
               "detune": 7.0,
               "fm_amt": 1.0,
-              "fm_mode": 0.0,
+              "fm_mode": "exponential",
               "frequency": 440.0,
               "level": 0.55,
               "pulse_width": 0.5,
@@ -4075,7 +4075,7 @@
               "uni_phase": 1.0,
               "uni_spread": 0.6,
               "unison": 2.0,
-              "waveform": 2.0,
+              "waveform": "sawtooth",
               "x_mod": 0.0
             }
           },
@@ -4088,8 +4088,8 @@
             },
             "parameters": {
               "level": 0.25,
-              "octave": 0.0,
-              "waveform": 0.0
+              "octave": "minus1",
+              "waveform": "sine"
             }
           },
           {
@@ -4105,10 +4105,10 @@
               "drive": 1.3,
               "env_amt": 0.25,
               "key_track": 0.5,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.32,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -4124,10 +4124,10 @@
               "drive": 1.3,
               "env_amt": 0.25,
               "key_track": 0.5,
-              "model": 0.0,
+              "model": "standard",
               "morph": 0.0,
               "resonance": 0.3,
-              "type": 0.0
+              "type": "lowpass"
             }
           },
           {
@@ -4255,7 +4255,7 @@
             "parameters": {
               "feedback": 0.38,
               "mix": 0.28,
-              "mode": 2.0,
+              "mode": "ping_pong",
               "time": 0.258,
               "tone": 0.5
             }
@@ -4290,7 +4290,7 @@
               "drive": 0.12,
               "mix": 0.3,
               "tone": 0.55,
-              "type": 2.0
+              "type": "tube"
             }
           },
           {
