@@ -259,6 +259,7 @@ impl Describable for GranularOsc {
                     Param::GranularOsc(GranularParam::GrainSize(Milliseconds::new(50.0))),
                     "Grain Size",
                 )
+                .description("Length of each grain in milliseconds")
                 .range(5.0, 500.0)
                 .default(50.0)
                 .unit(ParameterUnit::Milliseconds)
@@ -270,6 +271,7 @@ impl Describable for GranularOsc {
                     Param::GranularOsc(GranularParam::Density(NormalizedValue::new(0.5))),
                     "Density",
                 )
+                .description("Grain trigger rate (0 = sparse, 1 = dense)")
                 .range(0.0, 1.0)
                 .default(0.5)
                 .widget(WidgetHint::Knob),
@@ -280,6 +282,7 @@ impl Describable for GranularOsc {
                     Param::GranularOsc(GranularParam::Position(NormalizedValue::MIN)),
                     "Position",
                 )
+                .description("Read position within the source buffer (0 = start, 1 = end)")
                 .range(0.0, 1.0)
                 .default(0.0)
                 .widget(WidgetHint::Knob),
@@ -290,6 +293,7 @@ impl Describable for GranularOsc {
                     Param::GranularOsc(GranularParam::PositionSpread(NormalizedValue::new(0.1))),
                     "Pos Spread",
                 )
+                .description("Random offset around the read position per grain")
                 .range(0.0, 1.0)
                 .default(0.1)
                 .widget(WidgetHint::Knob),
@@ -300,6 +304,7 @@ impl Describable for GranularOsc {
                     Param::GranularOsc(GranularParam::PitchSpread(NormalizedValue::MIN)),
                     "Pitch Spread",
                 )
+                .description("Random pitch variation per grain")
                 .range(0.0, 1.0)
                 .default(0.0)
                 .widget(WidgetHint::Knob),
@@ -310,6 +315,7 @@ impl Describable for GranularOsc {
                     Param::GranularOsc(GranularParam::PanSpread(NormalizedValue::MIN)),
                     "Pan Spread",
                 )
+                .description("Random stereo pan per grain (0 = mono, 1 = full)")
                 .range(0.0, 1.0)
                 .default(0.0)
                 .widget(WidgetHint::Knob),
@@ -320,34 +326,42 @@ impl Describable for GranularOsc {
                     Param::GranularOsc(GranularParam::Freeze(false)),
                     "Freeze",
                 )
+                .description("Freeze source buffer playback (0 = off, 1 = on)")
                 .range(0.0, 1.0)
                 .default(0.0)
                 .widget(WidgetHint::Toggle),
             )
-            .parameter(ParameterDescriptor::choice(
-                "window",
-                Param::GranularOsc(GranularParam::Window(GrainWindow::Hann)),
-                "Window",
-                GrainWindow::ALL
-                    .iter()
-                    .map(|w| ChoiceOption::new(w.id(), w.name()))
-                    .collect(),
-            ))
-            .parameter(ParameterDescriptor::choice(
-                "source",
-                Param::GranularOsc(GranularParam::Source(GrainSource::Saw)),
-                "Source",
-                GrainSource::ALL
-                    .iter()
-                    .map(|s| ChoiceOption::new(s.id(), s.name()))
-                    .collect(),
-            ))
+            .parameter(
+                ParameterDescriptor::choice(
+                    "window",
+                    Param::GranularOsc(GranularParam::Window(GrainWindow::Hann)),
+                    "Window",
+                    GrainWindow::ALL
+                        .iter()
+                        .map(|w| ChoiceOption::new(w.id(), w.name()))
+                        .collect(),
+                )
+                .description("Grain envelope shape"),
+            )
+            .parameter(
+                ParameterDescriptor::choice(
+                    "source",
+                    Param::GranularOsc(GranularParam::Source(GrainSource::Saw)),
+                    "Source",
+                    GrainSource::ALL
+                        .iter()
+                        .map(|s| ChoiceOption::new(s.id(), s.name()))
+                        .collect(),
+                )
+                .description("Source waveform used to fill the grain buffer"),
+            )
             .parameter(
                 ParameterDescriptor::float(
                     "level",
                     Param::GranularOsc(GranularParam::Level(Gain::UNITY)),
                     "Level",
                 )
+                .description("Output level")
                 .range(0.0, 1.0)
                 .default(1.0)
                 .unit(ParameterUnit::Percent)

@@ -6,7 +6,9 @@ use super::ids::{SeqInstrumentId, TrackId};
 use synth_core::NormalizedValue;
 
 /// Track playback mode - determines how notes are allocated to voices.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub enum TrackMode {
     /// Polyphonic mode - notes are allocated from the voice pool dynamically.
     /// Standard keyboard/MIDI behavior.
@@ -16,7 +18,7 @@ pub enum TrackMode {
 
 /// A sequencer track in the song.
 /// Named SequencerTrack to distinguish from future AudioTrack.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SequencerTrack {
     /// Unique identifier.
     pub id: TrackId,
@@ -108,7 +110,7 @@ impl SequencerTrack {
 
 /// Track color for UI display.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrackColor {
     pub r: u8,
     pub g: u8,

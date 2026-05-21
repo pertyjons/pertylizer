@@ -129,7 +129,9 @@ impl std::fmt::Display for Cents {
 ///
 /// 1 semitone = 100 cents
 /// 12 semitones = 1 octave
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct Semitones(pub f32);
@@ -465,7 +467,9 @@ impl std::fmt::Display for MidiNote {
 ///
 /// Represents how hard a note was played.
 /// Stored internally as normalized f32 for smooth processing.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct Velocity(pub f32);

@@ -22,6 +22,7 @@ thiserror = { workspace = true }
 parking_lot = { workspace = true }
 ringbuf = { workspace = true }
 fastrand = { workspace = true }
+schemars = { workspace = true }
 
 [[bench]]
 name = "audio_profile"

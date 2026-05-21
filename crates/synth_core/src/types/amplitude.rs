@@ -11,7 +11,9 @@ use super::{BipolarValue, Clampable};
 ///
 /// A value of 1.0 means unity gain (no change).
 /// Values > 1.0 amplify, values < 1.0 attenuate.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct Gain(pub f32);

@@ -14,6 +14,7 @@ workspace = true
 synth_core = { path = "../synth_core" }
 synth_dsp = { path = "../synth_dsp" }
 serde = { workspace = true }
+schemars = { workspace = true }
 
 [dev-dependencies]
 serde_json.workspace = true

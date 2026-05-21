@@ -13,7 +13,9 @@ use super::{BipolarValue, Cents, Clampable, Interpolate, Seconds, Semitones};
 /// # Valid Range
 /// Typically 0.0 to Nyquist (sample_rate / 2), but audio frequencies
 /// are usually 20 Hz to 20,000 Hz.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct Hertz(pub f32);
@@ -340,7 +342,9 @@ impl std::fmt::Display for Hertz {
 /// which matches hardware API conventions.
 ///
 /// Conversions between the two types are provided via `From` impls in `audio::types`.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct SampleRate(pub f32);

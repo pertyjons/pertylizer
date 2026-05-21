@@ -115,8 +115,21 @@ pub use wavetable::{WavetableParam, WavetableSelect};
 /// changes the processing order for any voice graph that mixes the
 /// affected types, which silently changes audio output for existing
 /// patches. Append new variants at the end.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename_all = "snake_case")]
 pub enum ModuleType {
     Oscillator,
     MathOscillator,

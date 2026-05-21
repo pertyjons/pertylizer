@@ -80,6 +80,7 @@ impl Describable for Amplifier {
                     Param::Amplifier(AmplifierParam::Level(Gain::UNITY)),
                     "Level",
                 )
+                .description("Output gain (0 = silent, 1 = unity, 2 = +6 dB)")
                 .range(0.0, 2.0)
                 .default(1.0)
                 .widget(WidgetHint::Slider),
@@ -90,6 +91,7 @@ impl Describable for Amplifier {
                     Param::Amplifier(AmplifierParam::Pan(BipolarValue::CENTER)),
                     "Pan",
                 )
+                .description("Stereo pan (-1 = left, 0 = center, +1 = right)")
                 .range(-1.0, 1.0)
                 .default(0.0)
                 .widget(WidgetHint::PanKnob),
@@ -308,6 +310,7 @@ impl Describable for Mixer {
                 Param::Mixer(MixerParam::Master(Gain::UNITY)),
                 "Master",
             )
+            .description("Master output gain")
             .range(0.0, 2.0)
             .default(1.0)
             .widget(WidgetHint::Slider),
@@ -338,6 +341,7 @@ impl Describable for Mixer {
                         Param::Mixer(param),
                         format!("Input {n}"),
                     )
+                    .description(format!("Gain for input {n}"))
                     .range(0.0, 2.0)
                     .default(1.0)
                     .widget(WidgetHint::Slider),

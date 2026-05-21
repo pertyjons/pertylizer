@@ -12,7 +12,18 @@ pub const TICKS_PER_QUARTER: u32 = 960;
 /// Absolute position on the song timeline.
 #[must_use]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 pub struct Tick(pub u64);
 
@@ -93,7 +104,18 @@ impl Add<Duration> for Tick {
 /// Relative position within a pattern (0 = pattern start).
 #[must_use]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 pub struct PatternTick(pub u32);
 
@@ -137,7 +159,18 @@ impl Add<Duration> for PatternTick {
 /// Duration in ticks.
 #[must_use]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 pub struct Duration(pub u32);
 
@@ -211,7 +244,7 @@ impl SubAssign for Duration {
 
 /// Time signature (e.g., 4/4, 3/4, 6/8).
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TimeSignature {
     pub numerator: u8,
     pub denominator: u8,

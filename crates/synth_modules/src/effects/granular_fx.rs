@@ -183,6 +183,7 @@ impl Describable for GranularFx {
                     Param::GranularFx(GranularFxParam::GrainSize(Milliseconds::new(40.0))),
                     "Grain Size",
                 )
+                .description("Length of each grain in milliseconds")
                 .range(10.0, 120.0)
                 .default(40.0)
                 .unit(ParameterUnit::Milliseconds)
@@ -194,6 +195,7 @@ impl Describable for GranularFx {
                     Param::GranularFx(GranularFxParam::Density(NormalizedValue::new(0.6))),
                     "Density",
                 )
+                .description("Grain trigger rate (0 = sparse, 1 = dense)")
                 .range(0.0, 1.0)
                 .default(0.6)
                 .widget(WidgetHint::Knob),
@@ -204,6 +206,7 @@ impl Describable for GranularFx {
                     Param::GranularFx(GranularFxParam::Position(NormalizedValue::CENTER)),
                     "Position",
                 )
+                .description("Read offset into the capture buffer (0 = newest, 1 = oldest)")
                 .range(0.0, 1.0)
                 .default(0.5)
                 .widget(WidgetHint::Knob),
@@ -214,6 +217,7 @@ impl Describable for GranularFx {
                     Param::GranularFx(GranularFxParam::PositionSpread(NormalizedValue::new(0.3))),
                     "Pos Spread",
                 )
+                .description("Random offset around the read position per grain")
                 .range(0.0, 1.0)
                 .default(0.3)
                 .widget(WidgetHint::Knob),
@@ -224,6 +228,7 @@ impl Describable for GranularFx {
                     Param::GranularFx(GranularFxParam::PitchSpread(NormalizedValue::new(0.2))),
                     "Pitch Spread",
                 )
+                .description("Random pitch variation per grain")
                 .range(0.0, 1.0)
                 .default(0.2)
                 .widget(WidgetHint::Knob),
@@ -234,6 +239,7 @@ impl Describable for GranularFx {
                     Param::GranularFx(GranularFxParam::PanSpread(NormalizedValue::CENTER)),
                     "Pan Spread",
                 )
+                .description("Random stereo pan per grain (0 = mono, 1 = full)")
                 .range(0.0, 1.0)
                 .default(0.5)
                 .widget(WidgetHint::Knob),
@@ -255,6 +261,7 @@ impl Describable for GranularFx {
                     Param::GranularFx(GranularFxParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )
+                .description("Dry/wet mix")
                 .range(0.0, 1.0)
                 .default(1.0)
                 .widget(WidgetHint::Knob),

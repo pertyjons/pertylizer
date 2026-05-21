@@ -17,7 +17,7 @@ use synth_core::{NormalizedValue, Semitones};
 
 /// Row resolution configuration for pattern view.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RowResolution {
     /// Number of rows in this pattern.
     pub rows: RowCount,
@@ -99,7 +99,7 @@ impl Default for RowResolution {
 }
 
 /// A pattern containing notes and automation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Pattern {
     /// Unique identifier.
     pub id: PatternId,

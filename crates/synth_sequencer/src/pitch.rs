@@ -6,7 +6,19 @@ use synth_core::{Hertz, Semitones};
 
 /// MIDI-compatible pitch (0-127).
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct Pitch(u8);
 
 impl Pitch {
@@ -88,7 +100,7 @@ impl Default for Pitch {
 }
 
 /// Note names within an octave.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[repr(u8)]
 pub enum NoteName {
     C = 0,

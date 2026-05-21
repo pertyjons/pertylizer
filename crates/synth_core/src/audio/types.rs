@@ -11,7 +11,7 @@ use thiserror::Error;
 /// provides methods like `nyquist()`, `period()`, and `samples_for()`.
 ///
 /// Conversions between the two types are provided via `From` impls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SampleRate(pub u32);
 
 impl SampleRate {

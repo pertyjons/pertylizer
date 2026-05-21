@@ -9,7 +9,7 @@ use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
 
 /// A note in a pattern.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Note {
     /// Unique ID for this note (for editing/selection).
     pub id: NoteId,
@@ -21,7 +21,9 @@ pub struct Note {
     pub pitch: Pitch,
     /// Velocity/attack strength.
     pub velocity: Velocity,
-    /// Instrument that plays this note.
+    /// Sequencer instrument ID. Conventionally `0` when the note's `track`
+    /// binds the instrument — the track-level binding wins at playback. Set
+    /// to a non-zero value only when bypassing the track's instrument (rare).
     pub instrument: SeqInstrumentId,
     /// Track/channel for mono-per-track behavior.
     pub track: Option<TrackId>,

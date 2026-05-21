@@ -89,40 +89,49 @@ impl Describable for KineticModulator {
                     Param::Kinetic(KineticParam::Duration(Seconds::new(0.5))),
                     "Duration",
                 )
+                .description("Length of one modulation sweep")
                 .range(0.01, 10.0)
                 .default(0.5)
                 .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::TimeSlider)
                 .curve(ResponseCurve::Logarithmic),
             )
-            .parameter(ParameterDescriptor::choice(
-                "curve",
-                Param::Kinetic(KineticParam::CurveType(EasingCurve::CubicOut)),
-                "Curve",
-                EasingCurve::to_choices(),
-            ))
+            .parameter(
+                ParameterDescriptor::choice(
+                    "curve",
+                    Param::Kinetic(KineticParam::CurveType(EasingCurve::CubicOut)),
+                    "Curve",
+                    EasingCurve::to_choices(),
+                )
+                .description("Easing curve shape"),
+            )
             .parameter(
                 ParameterDescriptor::float(
                     "overshoot",
                     Param::Kinetic(KineticParam::Overshoot(NormalizedValue::new(0.5))),
                     "Overshoot",
                 )
+                .description("Overshoot amount for back/elastic curves")
                 .range(0.0, 1.0)
                 .default(0.5)
                 .widget(WidgetHint::Knob),
             )
-            .parameter(ParameterDescriptor::choice(
-                "loop_mode",
-                Param::Kinetic(KineticParam::LoopMode(KineticLoopMode::OneShot)),
-                "Loop Mode",
-                KineticLoopMode::to_choices(),
-            ))
+            .parameter(
+                ParameterDescriptor::choice(
+                    "loop_mode",
+                    Param::Kinetic(KineticParam::LoopMode(KineticLoopMode::OneShot)),
+                    "Loop Mode",
+                    KineticLoopMode::to_choices(),
+                )
+                .description("Loop behaviour (one-shot, loop, ping-pong)"),
+            )
             .parameter(
                 ParameterDescriptor::float(
                     "bipolar",
                     Param::Kinetic(KineticParam::Bipolar(false)),
                     "Bipolar",
                 )
+                .description("Output range (0 = 0..1, 1 = -1..+1)")
                 .range(0.0, 1.0)
                 .default(0.0)
                 .widget(WidgetHint::Toggle),
@@ -133,6 +142,7 @@ impl Describable for KineticModulator {
                     Param::Kinetic(KineticParam::Retrigger(true)),
                     "Retrigger",
                 )
+                .description("Restart on gate (0 = off, 1 = on)")
                 .range(0.0, 1.0)
                 .default(1.0)
                 .widget(WidgetHint::Toggle),

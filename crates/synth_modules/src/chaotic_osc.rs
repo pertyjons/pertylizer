@@ -106,12 +106,15 @@ impl Describable for ChaoticOsc {
             .tag("chaos")
             .tag("modulation")
             .tag("random")
-            .parameter(ParameterDescriptor::choice(
-                "system",
-                Param::ChaoticOsc(ChaoticOscParam::System(ChaoticSystem::Rossler)),
-                "System",
-                ChaoticSystem::to_choices(),
-            ))
+            .parameter(
+                ParameterDescriptor::choice(
+                    "system",
+                    Param::ChaoticOsc(ChaoticOscParam::System(ChaoticSystem::Rossler)),
+                    "System",
+                    ChaoticSystem::to_choices(),
+                )
+                .description("Chaotic dynamical system"),
+            )
             .parameter(
                 ParameterDescriptor::float(
                     "rate",

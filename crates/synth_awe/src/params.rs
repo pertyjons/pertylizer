@@ -28,7 +28,9 @@ fn default_low_cut() -> Hertz {
 }
 
 /// Target for an AWE-internal LFO modulation.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub enum AweLfoTarget {
     /// Modulate room length.
     RoomLength,
@@ -76,7 +78,7 @@ pub enum AweLfoTarget {
 }
 
 /// State of one AWE-internal LFO for persistence.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AweLfoState {
     /// LFO rate in Hz (0.01 – 20.0).
     pub rate: Hertz,
@@ -170,7 +172,7 @@ pub enum AweParam {
 }
 
 /// Snapshot of all numeric AWE parameters for batch-updating.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AweSnapshot {
     /// Dry/wet mix.
     pub dry_wet: NormalizedValue,
@@ -275,7 +277,7 @@ impl Default for AweSnapshot {
 }
 
 /// Serializable AWE state for persistence in patches.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AweState {
     /// Whether AWE is enabled.
     pub enabled: bool,

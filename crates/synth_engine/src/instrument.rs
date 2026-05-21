@@ -130,7 +130,7 @@ pub enum LearnState {
 ///
 /// Each instrument in the synth engine has a unique ID that persists for
 /// its lifetime. IDs are never reused within a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[repr(transparent)]
 pub struct InstrumentId(pub u64);
 

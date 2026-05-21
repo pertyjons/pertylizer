@@ -11,7 +11,7 @@ use super::track::SequencerTrack;
 use synth_core::{Bpm, Gain, Semitones};
 
 /// Tempo change event.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TempoChange {
     /// Position of the tempo change.
     pub tick: Tick,
@@ -20,7 +20,7 @@ pub struct TempoChange {
 }
 
 /// Time signature change event.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TimeSignatureChange {
     /// Position of the time signature change.
     pub tick: Tick,
@@ -30,7 +30,7 @@ pub struct TimeSignatureChange {
 
 /// A pattern placement in the arrangement.
 #[must_use]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PatternPlacement {
     /// Which pattern to play.
     pub pattern_id: PatternId,
@@ -89,7 +89,7 @@ impl PatternPlacement {
 }
 
 /// A complete song with patterns, tracks, and arrangement.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Song {
     /// Song name.
     pub name: String,

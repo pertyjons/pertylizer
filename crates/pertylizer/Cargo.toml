@@ -53,6 +53,7 @@ rayon = { workspace = true }
 # Serialization for save/load
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }
 
 # ZIP archive (bundle project format)
 zip = { workspace = true }
@@ -89,6 +90,7 @@ winit = { workspace = true, features = ["wayland-csd-adwaita"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+jsonschema = "0.30"
 
 [[bin]]
 name = "pertylizer"

@@ -21,7 +21,9 @@ const VOICE_BUFFER_SIZE: SampleCount = SampleCount::new(4096);
 const PER_VOICE_MAX_DELAY: SampleCount = SampleCount::new(16_384);
 
 /// How MIDI notes map to positions in the room.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub enum NotePositionMapping {
     /// All voices use the global source position (spatial off per voice).
     #[default]

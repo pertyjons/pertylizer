@@ -5,7 +5,9 @@ use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use serde::{Deserialize, Serialize};
 
 /// Length in meters.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 #[must_use]
@@ -172,7 +174,9 @@ impl CubicMeters {
 pub struct MetersPerSecond(pub f32);
 
 /// Temperature in degrees Celsius.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 #[must_use]
@@ -240,7 +244,9 @@ impl SampleOffset {
 }
 
 /// Tail stretch factor for late reverb (dimensionless).
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 #[must_use]
@@ -284,7 +290,7 @@ impl Default for StretchFactor {
 }
 
 /// 3D position in meters.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 #[repr(transparent)]
 #[must_use]

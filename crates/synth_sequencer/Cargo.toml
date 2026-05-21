@@ -14,3 +14,4 @@ workspace = true
 synth_core = { path = "../synth_core" }
 serde = { workspace = true }
 fastrand = { workspace = true }
+schemars = { workspace = true }

@@ -16,6 +16,7 @@ use std::io::{Cursor, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::patch::PatchError;
@@ -28,14 +29,14 @@ use synth_sampler::{Sample, SampleLibrary, SampleMeta, SampleSource};
 const ZIP_MAGIC: [u8; 4] = [0x50, 0x4B, 0x03, 0x04];
 
 /// Metadata for all samples in the bundle.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BundleMetadata {
     /// Sample metadata entries, keyed by filename (e.g., "1.wav").
     pub samples: Vec<BundleSampleEntry>,
 }
 
 /// Metadata for a single sample in the bundle.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BundleSampleEntry {
     /// Sample ID (matches the SampleLibrary ID).
     pub id: u64,
@@ -56,7 +57,7 @@ pub struct BundleSampleEntry {
 }
 
 /// Serializable loop region.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 pub struct BundleLoopRegion {
     pub start: usize,
     pub end: usize,
@@ -64,7 +65,7 @@ pub struct BundleLoopRegion {
 }
 
 /// Serializable crop region.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 pub struct BundleCropRegion {
     pub start: usize,
     pub end: usize,

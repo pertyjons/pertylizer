@@ -189,6 +189,7 @@ impl Describable for PhaseVocoder {
                     Param::PhaseVocoder(PhaseVocoderParam::PitchShift(Semitones(0.0))),
                     "Pitch Shift",
                 )
+                .description("Pitch shift in semitones")
                 .range(-24.0, 24.0)
                 .default(0.0)
                 .unit(ParameterUnit::Semitones)
@@ -200,25 +201,30 @@ impl Describable for PhaseVocoder {
                     Param::PhaseVocoder(PhaseVocoderParam::Freeze(false)),
                     "Freeze",
                 )
+                .description("Freeze current spectrum (0 = off, 1 = on)")
                 .range(0.0, 1.0)
                 .default(0.0)
                 .widget(WidgetHint::Toggle),
             )
-            .parameter(ParameterDescriptor::choice(
-                "fft_size",
-                Param::PhaseVocoder(PhaseVocoderParam::FftSize(FftSizeOption::Fft1024)),
-                "FFT Size",
-                FftSizeOption::ALL
-                    .iter()
-                    .map(|f| ChoiceOption::new(f.id(), f.name()))
-                    .collect(),
-            ))
+            .parameter(
+                ParameterDescriptor::choice(
+                    "fft_size",
+                    Param::PhaseVocoder(PhaseVocoderParam::FftSize(FftSizeOption::Fft1024)),
+                    "FFT Size",
+                    FftSizeOption::ALL
+                        .iter()
+                        .map(|f| ChoiceOption::new(f.id(), f.name()))
+                        .collect(),
+                )
+                .description("FFT window size (larger = better frequency resolution)"),
+            )
             .parameter(
                 ParameterDescriptor::float(
                     "mix",
                     Param::PhaseVocoder(PhaseVocoderParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )
+                .description("Dry/wet mix")
                 .range(0.0, 1.0)
                 .default(1.0)
                 .unit(ParameterUnit::Percent)

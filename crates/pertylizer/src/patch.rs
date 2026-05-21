@@ -14,6 +14,7 @@
 //! - Delay Modes: `"mono"`, `"stereo"`, `"ping_pong"`
 //! - Distortion Modes: `"soft_clip"`, `"hard_clip"`, `"tube"`, `"foldback"`, `"bitcrush"`
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -28,7 +29,7 @@ use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 
 /// Author information embedded in patch, project, and preset files.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Author {
     /// Full name.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -111,7 +112,7 @@ where
 }
 
 /// A complete synthesizer patch.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Patch {
     /// Patch name.
     pub name: String,
@@ -153,7 +154,7 @@ fn default_version() -> String {
 /// 2D position in the rack view, serialized as `{"x": ..., "y": ...}`.
 ///
 /// Deserializes from both `{"x": ..., "y": ...}` (new) and `[x, y]` (legacy).
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, JsonSchema)]
 pub struct Position {
     pub x: f32,
     pub y: f32,
@@ -214,7 +215,7 @@ impl<'de> Deserialize<'de> for Position {
 }
 
 /// State of a single module.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ModuleState {
     /// Module ID (e.g., "osc-1", "flt-2").
     pub id: String,
@@ -229,15 +230,16 @@ pub struct ModuleState {
 }
 
 /// Unique ID for a group within a patch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
+#[schemars(transparent)]
 pub struct GroupId(pub u32);
 
 /// Hex color string for UI (e.g., "#RRGGBB" or "#RRGGBBAA").
 pub type HexColor = String;
 
 /// A port exposed on a group boundary.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExposedPortState {
     pub label: String,
     /// Module ID string (e.g., "osc-1").
@@ -247,7 +249,7 @@ pub struct ExposedPortState {
 }
 
 /// Group of modules in the patch editor (UI-level metadata).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ModuleGroupState {
     pub id: GroupId,
     pub name: String,
@@ -266,8 +268,9 @@ pub struct ModuleGroupState {
 }
 
 /// Template category for grouping common building blocks.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(rename_all = "snake_case")]
 pub enum GroupCategory {
     Voice,
     Effect,
@@ -295,7 +298,7 @@ impl GroupCategory {
 }
 
 /// Reusable group template stored on disk.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GroupTemplate {
     /// Template name.
     pub name: String,
@@ -386,7 +389,7 @@ impl GroupTemplate {
 /// distinguishable from plain numbers/strings under `untagged`. Plain `f32`
 /// can't represent a `u64` `SampleId` losslessly, so sampler assignments need
 /// their own variant.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ParamValue {
     Bool(bool),
@@ -447,7 +450,7 @@ impl ParamValue {
 }
 
 /// Connection between two modules.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ConnectionState {
     /// Source (module_id string like "osc-1", port_name).
     pub from: (String, String),
@@ -478,7 +481,7 @@ impl ConnectionState {
 ///
 /// Serializes as `{"width": ..., "height": ...}`.
 /// Deserializes from both `{"width": ..., "height": ...}` (new) and `[w, h]` (legacy).
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
 pub struct CanvasSize {
     pub width: f32,
     pub height: f32,
@@ -536,19 +539,22 @@ impl<'de> Deserialize<'de> for CanvasSize {
 }
 
 /// Global patch settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PatchSettings {
     /// Master volume (0.0 - 1.0).
     #[serde(default = "default_master_volume")]
+    #[schemars(with = "f32")]
     pub master_volume: Gain,
     /// Tempo in BPM.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<f32>")]
     pub bpm: Option<Bpm>,
     /// Octave offset for keyboard.
     #[serde(default)]
     pub octave_offset: i32,
     /// Glide/portamento time in seconds (0.0 = off).
     #[serde(default)]
+    #[schemars(with = "f32")]
     pub glide_time: Seconds,
     /// AWE (Acoustic World Engine) state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -671,7 +677,7 @@ impl Patch {
 /// BipolarValue, Semitones, InstrumentId). Fields that would change
 /// serialization format (channel, key_range) or lack serde (oversampling)
 /// remain as primitives.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct InstrumentState {
     /// Engine instrument ID.
     pub id: InstrumentId,
@@ -680,8 +686,10 @@ pub struct InstrumentState {
     /// MIDI channel (1-indexed, 1–16, clamped on deserialization).
     pub channel: u8,
     /// Volume (0.0 = silent, 1.0 = unity).
+    #[schemars(with = "f32")]
     pub volume: Gain,
     /// Stereo pan (-1.0 = left, 0.0 = center, +1.0 = right).
+    #[schemars(with = "f32")]
     pub pan: BipolarValue,
     /// Whether the instrument is muted.
     pub muted: bool,
@@ -692,6 +700,7 @@ pub struct InstrumentState {
     pub key_range: (u8, u8),
     /// Transpose offset in semitones.
     #[serde(default)]
+    #[schemars(with = "f32")]
     pub transpose: Semitones,
     /// Oversampling factor (1, 2, or 4).
     #[serde(default = "default_oversampling")]
@@ -714,12 +723,15 @@ pub struct InstrumentState {
     pub stealing_strategy: synth_engine::voice_allocator::StealingStrategy,
     /// Maximum polyphony for this instrument (1–128, default 8).
     #[serde(default = "default_max_voices")]
+    #[schemars(with = "u8")]
     pub max_voices: synth_core::VoiceCount,
     /// Velocity → amplitude sensitivity (0 = constant volume, 1 = full dynamic).
     #[serde(default = "default_vel_amp_sens")]
+    #[schemars(with = "f32")]
     pub velocity_amp_sensitivity: synth_core::NormalizedValue,
     /// Velocity → filter cutoff sensitivity (0 = none, 1 = full).
     #[serde(default)]
+    #[schemars(with = "f32")]
     pub velocity_filter_sensitivity: synth_core::NormalizedValue,
     /// Sidechain source — when set, this instrument's compressors
     /// receive audio from the source instrument's output.
@@ -832,7 +844,7 @@ pub enum PatchError {
 ///
 /// Contains full AWE state plus metadata (name, author, license, tags).
 /// Serialized as JSON with `"file_type": "awe_preset"` discriminator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AwePresetFile {
     /// Always `"awe_preset"` — distinguishes from patch and project files.
     pub file_type: String,

@@ -12,7 +12,7 @@ use crate::types::{CubicMeters, Meters, MetersPerSecond, SquareMeters};
 const DEFAULT_SPEED_OF_SOUND: MetersPerSecond = MetersPerSecond::new(343.0);
 
 /// Shape of the simulated room.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum RoomShape {
     /// Rectangular room with dimensions in meters.
     Box {
@@ -284,7 +284,7 @@ impl Default for RoomShape {
 }
 
 /// Surface material with frequency-dependent absorption.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Material {
     /// Low-frequency absorption coefficient (0.0 = fully reflective, 1.0 = fully absorptive).
     pub absorption_low: NormalizedValue,

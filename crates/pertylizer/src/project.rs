@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::patch::{Author, AwePresetFile, InstrumentState, Patch, PatchError};
@@ -14,7 +15,7 @@ use synth_engine::instrument::InstrumentId;
 use synth_sequencer::Song;
 
 /// Top-level project file container.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectFile {
     /// Always `"project"` — distinguishes from patch files.
     pub file_type: String,
@@ -35,16 +36,18 @@ pub struct ProjectFile {
 }
 
 /// Global project state that isn't per-instrument.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GlobalProjectState {
     /// Master volume (0.0–1.0).
     #[serde(default = "default_master_volume")]
+    #[schemars(with = "f32")]
     pub master_volume: Gain,
     /// Keyboard octave offset.
     #[serde(default)]
     pub octave_offset: i32,
     /// Glide/portamento time in seconds.
     #[serde(default)]
+    #[schemars(with = "f32")]
     pub glide_time: Seconds,
     /// AWE (Acoustic World Engine) state.
     #[serde(default, skip_serializing_if = "Option::is_none")]

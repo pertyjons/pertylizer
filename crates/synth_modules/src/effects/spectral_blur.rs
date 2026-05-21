@@ -171,6 +171,7 @@ impl Describable for SpectralBlur {
                     Param::SpectralBlur(SpectralBlurParam::Mix(NormalizedValue::MAX)),
                     "Mix",
                 )
+                .description("Dry/wet mix")
                 .range(0.0, 1.0)
                 .default(1.0)
                 .widget(WidgetHint::Knob),

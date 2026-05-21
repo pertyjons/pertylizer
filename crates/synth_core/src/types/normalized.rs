@@ -14,7 +14,9 @@ use super::Clampable;
 /// - Mix amounts
 /// - Pulse width
 /// - Any parameter where 0 = min and 1 = max
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct NormalizedValue(pub f32);
@@ -264,7 +266,9 @@ impl std::fmt::Display for NormalizedValue {
 /// - Modulation amounts
 /// - Pan position
 /// - Any bipolar signal
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct BipolarValue(pub f32);

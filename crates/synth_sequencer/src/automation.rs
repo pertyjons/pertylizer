@@ -8,7 +8,7 @@ use super::time::PatternTick;
 
 /// A single automation point.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AutomationPoint {
     /// Position within the pattern.
     pub tick: PatternTick,
@@ -36,7 +36,9 @@ impl AutomationPoint {
 }
 
 /// Interpolation curve type between automation points.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema,
+)]
 pub enum CurveType {
     /// Linear interpolation to next point.
     #[default]
@@ -84,7 +86,7 @@ impl CurveType {
 }
 
 /// An automation lane controlling a specific parameter.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AutomationLane {
     /// The parameter being automated.
     pub target: AutomationTarget,
@@ -185,7 +187,7 @@ impl AutomationLane {
 }
 
 /// Target for automation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum AutomationTarget {
     /// Instrument parameter.
     Instrument {
@@ -218,7 +220,7 @@ impl AutomationTarget {
 ///
 /// These are parameter identifiers (no values) used in automation.
 /// For engine commands with values, see `engine::commands::InstrumentParam`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum AutoInstrumentParam {
     Volume,
     Pan,
@@ -261,7 +263,7 @@ impl AutoInstrumentParam {
 }
 
 /// Automatable track parameters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum TrackParam {
     Volume,
     Pan,
@@ -270,7 +272,7 @@ pub enum TrackParam {
 }
 
 /// Automatable global parameters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum GlobalParam {
     Tempo,
     MasterVolume,

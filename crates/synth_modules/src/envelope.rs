@@ -313,6 +313,7 @@ impl Describable for Envelope {
                     Param::Envelope(EnvelopeParam::Attack(Seconds::new(0.01))),
                     "Attack",
                 )
+                .description("Attack time (silence to peak)")
                 .range(0.0, 10.0)
                 .default(0.01)
                 .unit(ParameterUnit::Seconds)
@@ -325,6 +326,7 @@ impl Describable for Envelope {
                     Param::Envelope(EnvelopeParam::Decay(Seconds::new(0.1))),
                     "Decay",
                 )
+                .description("Decay time (peak to sustain)")
                 .range(0.0, 10.0)
                 .default(0.1)
                 .unit(ParameterUnit::Seconds)
@@ -337,6 +339,7 @@ impl Describable for Envelope {
                     Param::Envelope(EnvelopeParam::Sustain(NormalizedValue::new(0.7))),
                     "Sustain",
                 )
+                .description("Sustain level while gate is held")
                 .range(0.0, 1.0)
                 .default(0.7)
                 .unit(ParameterUnit::Percent)
@@ -348,6 +351,7 @@ impl Describable for Envelope {
                     Param::Envelope(EnvelopeParam::Release(Seconds::new(0.3))),
                     "Release",
                 )
+                .description("Release time (gate-off to silence)")
                 .range(0.0, 10.0)
                 .default(0.3)
                 .unit(ParameterUnit::Seconds)
@@ -360,6 +364,7 @@ impl Describable for Envelope {
                     Param::Envelope(EnvelopeParam::VelocitySensitivity(NormalizedValue::MAX)),
                     "Vel Sens",
                 )
+                .description("How much note velocity scales the envelope (0 = ignore, 1 = full)")
                 .range(0.0, 1.0)
                 .default(1.0)
                 .widget(WidgetHint::Knob),
@@ -370,6 +375,7 @@ impl Describable for Envelope {
                     Param::Envelope(EnvelopeParam::AttackCurve(BipolarValue::CENTER)),
                     "Atk Curve",
                 )
+                .description("Attack curve shape (-1 = logarithmic, 0 = linear, +1 = exponential)")
                 .range(-1.0, 1.0)
                 .default(0.0)
                 .widget(WidgetHint::Knob),
@@ -380,6 +386,7 @@ impl Describable for Envelope {
                     Param::Envelope(EnvelopeParam::DecayCurve(BipolarValue::CENTER)),
                     "Dec Curve",
                 )
+                .description("Decay curve shape (-1 = logarithmic, 0 = linear, +1 = exponential)")
                 .range(-1.0, 1.0)
                 .default(0.0)
                 .widget(WidgetHint::Knob),
@@ -390,6 +397,7 @@ impl Describable for Envelope {
                     Param::Envelope(EnvelopeParam::ReleaseCurve(BipolarValue::CENTER)),
                     "Rel Curve",
                 )
+                .description("Release curve shape (-1 = logarithmic, 0 = linear, +1 = exponential)")
                 .range(-1.0, 1.0)
                 .default(0.0)
                 .widget(WidgetHint::Knob),

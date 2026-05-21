@@ -202,6 +202,7 @@ impl Describable for ShimmerReverb {
                     Param::ShimmerReverb(ShimmerReverbParam::RoomSize(NormalizedValue::new(0.6))),
                     "Room Size",
                 )
+                .description("Size of the virtual room (scales delay times)")
                 .range(0.0, 1.0)
                 .default(0.6)
                 .widget(WidgetHint::Knob),
@@ -212,6 +213,7 @@ impl Describable for ShimmerReverb {
                     Param::ShimmerReverb(ShimmerReverbParam::Decay(NormalizedValue::new(0.7))),
                     "Decay",
                 )
+                .description("Reverb tail length (feedback gain)")
                 .range(0.0, 1.0)
                 .default(0.7)
                 .widget(WidgetHint::Knob),
@@ -222,6 +224,7 @@ impl Describable for ShimmerReverb {
                     Param::ShimmerReverb(ShimmerReverbParam::Damping(NormalizedValue::new(0.4))),
                     "Damping",
                 )
+                .description("High-frequency absorption in feedback path")
                 .range(0.0, 1.0)
                 .default(0.4)
                 .widget(WidgetHint::Knob),
@@ -232,6 +235,7 @@ impl Describable for ShimmerReverb {
                     Param::ShimmerReverb(ShimmerReverbParam::PreDelay(Seconds::ZERO)),
                     "Pre-Delay",
                 )
+                .description("Initial delay before reverb onset")
                 .range(0.0, 0.5)
                 .default(0.0)
                 .unit(ParameterUnit::Seconds)
@@ -268,6 +272,7 @@ impl Describable for ShimmerReverb {
                     Param::ShimmerReverb(ShimmerReverbParam::Mix(NormalizedValue::new(0.4))),
                     "Mix",
                 )
+                .description("Dry/wet mix")
                 .range(0.0, 1.0)
                 .default(0.4)
                 .widget(WidgetHint::Knob),

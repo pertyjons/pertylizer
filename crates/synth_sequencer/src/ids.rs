@@ -4,7 +4,19 @@ use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a pattern.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct PatternId(pub u32);
 
 impl PatternId {
@@ -22,7 +34,18 @@ impl PatternId {
 /// Index for track within a pattern (0-255).
 #[must_use]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 pub struct TrackIndex(u8);
 
@@ -72,7 +95,18 @@ impl std::fmt::Display for TrackIndex {
 /// Index for row within a pattern (0-65535).
 #[must_use]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 pub struct RowIndex(u16);
 
@@ -154,7 +188,19 @@ impl std::fmt::Display for RowIndex {
 ///
 /// Clamped to a minimum of 1 — a pattern always has at least one track.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct TrackCount(u8);
 
 impl TrackCount {
@@ -224,7 +270,19 @@ impl std::fmt::Display for TrackCount {
 ///
 /// Clamped to a minimum of 1 — a pattern always has at least one row.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct RowCount(u16);
 
 impl RowCount {
@@ -292,7 +350,19 @@ impl std::fmt::Display for RowCount {
 /// Controls how many song ticks pass before advancing to the next row.
 /// Default: 240 song ticks/row = 4 rows per quarter note (16th note resolution).
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct TicksPerRow(u16);
 
 impl TicksPerRow {
@@ -346,7 +416,19 @@ impl From<u16> for TicksPerRow {
 
 /// Unique identifier for a track.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 pub struct TrackId(pub u16);
 
 impl TrackId {
@@ -361,7 +443,7 @@ impl TrackId {
 /// This is a compact u16 ID used for pattern data storage.
 /// For engine-level instrument identification, see `engine::instrument::InstrumentId`.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SeqInstrumentId(pub u16);
 
 impl SeqInstrumentId {
@@ -374,7 +456,7 @@ impl SeqInstrumentId {
 /// Unique identifier for a note within a pattern.
 /// Used for selection, undo/redo, and editing operations.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteId(pub u64);
 
 impl NoteId {
