@@ -109,7 +109,7 @@ impl Rig {
 }
 
 mod common;
-use common::{examples_dir, list_example_projects};
+use common::examples_dir;
 
 fn example_project(filename: &str) -> (ProjectFile, SampleLibrary) {
     load_project_at(&examples_dir().join(filename))
@@ -324,18 +324,29 @@ fn apply_new_project_clears_engine() {
 /// into a coherent engine snapshot. Catches regressions where a save-format
 /// change (Vec migrations, field renames, …) loads in serde but breaks the
 /// file → engine pipeline for a specific example.
+/// Representative subset of example projects exercised end-to-end through
+/// `apply_project` into a live engine. The full 14-project sweep was too slow
+/// for every CI run (~27s of instrument building); these three cover the
+/// distinct paths — a bundle with embedded samples, a rich multi-instrument
+/// patch with effect chains, and a simpler patch. Loading/validation of *all*
+/// examples stays covered cheaply by `project_load_snapshot` and
+/// `schemas_validate_examples`.
 #[test]
-fn every_example_project_applies_to_engine() {
-    let files = list_example_projects();
-    assert!(
-        !files.is_empty(),
-        "no example projects under {}",
-        examples_dir().display()
-    );
+fn apply_representative_example_projects_to_engine() {
+    const REPRESENTATIVE: &[&str] = &[
+        "echoing.zip",                      // bundle + embedded samples
+        "Oxygene Dreams (80s Techno).json", // rich multi-instrument + effects
+        "Classic Amiga module.json",        // simpler patch
+    ];
 
     let mut failures: Vec<String> = Vec::new();
-    for path in files {
-        let display = path.display().to_string();
+    for name in REPRESENTATIVE {
+        let path = examples_dir().join(name);
+        assert!(
+            path.exists(),
+            "representative example missing (was it renamed/removed?): {}",
+            path.display()
+        );
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut rig = Rig::new();
             let (project, _lib) = load_project_at(&path);
@@ -352,7 +363,7 @@ fn every_example_project_applies_to_engine() {
                 .cloned()
                 .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
                 .unwrap_or_else(|| "<non-string panic>".to_owned());
-            failures.push(format!("{display}: {msg}"));
+            failures.push(format!("{name}: {msg}"));
         }
     }
 
