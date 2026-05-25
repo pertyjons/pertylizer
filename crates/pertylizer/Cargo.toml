@@ -90,7 +90,7 @@ winit = { workspace = true, features = ["wayland-csd-adwaita"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-jsonschema = "0.30"
+jsonschema = { workspace = true }
 
 [[bin]]
 name = "pertylizer"

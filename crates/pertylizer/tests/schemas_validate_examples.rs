@@ -125,7 +125,7 @@ fn assert_example_validates(path: &Path, validator: &Validator, label: &str) {
     let errors: Vec<String> = validator
         .iter_errors(&doc)
         .take(5)
-        .map(|e| format!("at /{}: {}", e.instance_path, e))
+        .map(|e| format!("at {}: {}", e.instance_path(), e))
         .collect();
     if !errors.is_empty() {
         panic!(
