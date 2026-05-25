@@ -1,6 +1,27 @@
 # Version History
 
-## [unreleased]
+## [0.290.0] - 2026-05-25
+
+### Record into unplaced ("orphan") patterns
+
+Arming REC or pressing Play on a pattern with no arrangement placement now
+loops that single pattern via a new preview-mode (`SetPreviewPattern`)
+instead of falling back to whole-arrangement playback, so notes can be
+recorded into it.
+
+### Recorded notes outside the visible octave were invisible until the next loop
+
+The piano-roll's vertical pitch range was derived only from committed notes,
+so a note played outside the visible octaves was clipped from the live
+preview and only appeared after the loop wrap flushed it into the pattern.
+Live-preview pitches now fold into the visible range.
+
+### Preview-mode lifecycle hardening
+
+`preview_pattern` is now cleared consistently via a `clear_preview()` helper
+(DisarmRecord, SetSong, Reset), Stop disarms recording even when only armed,
+solo and preview are mutually exclusive, and the orphan PlayPattern path
+guards zero-length patterns and transient lock misses.
 
 ### Schemas TODO — B7 done
 

@@ -480,6 +480,7 @@ impl EngineCommand {
                 pattern_id: *pattern_id,
             },
             Self::SetSoloPattern(p) => Self::SetSoloPattern(*p),
+            Self::SetPreviewPattern(p) => Self::SetPreviewPattern(*p),
             Self::SetLoop {
                 start,
                 end,

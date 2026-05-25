@@ -17,7 +17,7 @@ use egui_remixicon::icons as ri;
 use parking_lot::RwLock;
 
 use synth_engine::{EngineCommand, EngineHandle};
-use synth_sequencer::{Duration as SeqDuration, PatternId, Song, Tick};
+use synth_sequencer::{Duration as SeqDuration, PatternId, PatternTick, Song, Tick};
 
 use crate::gui::instrument_rack::InstrumentUiState;
 use crate::gui::sequencer::{
@@ -144,14 +144,25 @@ pub(crate) fn draw_pattern_view(
                 ui.label(egui::RichText::new("Pattern not found").color(theme().colors.text_dim));
                 seq_view_state.close_piano_roll();
                 handle.send(EngineCommand::SetSoloPattern(None));
+                handle.send(EngineCommand::SetPreviewPattern(None));
                 return;
             };
 
             let is_playing = handle.state.transport.is_playing();
             let current_tick = Tick(handle.state.transport.get_ticks());
-            let pattern_playhead_tick = song
-                .try_read()
-                .and_then(|s| s.pattern_playhead_for(pattern_id, current_tick));
+            let preview_pid = handle.state.transport.preview_pattern();
+            let pattern_playhead_tick = if preview_pid == Some(pattern_id) {
+                song.try_read()
+                    .and_then(|s| s.pattern(pattern_id).map(|p| p.length))
+                    .map(|len| {
+                        let length = u64::from(len.0.max(1));
+                        #[allow(clippy::cast_possible_truncation)]
+                        PatternTick((current_tick.0 % length) as u32)
+                    })
+            } else {
+                song.try_read()
+                    .and_then(|s| s.pattern_playhead_for(pattern_id, current_tick))
+            };
 
             if !draw_piano_roll(
                 ui,
@@ -166,6 +177,7 @@ pub(crate) fn draw_pattern_view(
             ) {
                 seq_view_state.close_piano_roll();
                 handle.send(EngineCommand::SetSoloPattern(None));
+                handle.send(EngineCommand::SetPreviewPattern(None));
             }
         });
 }

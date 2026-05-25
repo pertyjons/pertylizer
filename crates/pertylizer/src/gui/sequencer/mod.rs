@@ -205,6 +205,10 @@ pub struct SequencerViewState {
     pub selected_instrument: SeqInstrumentId,
     /// Instrument captured at recording arm time (used when flushing recorded notes).
     pub recording_instrument: SeqInstrumentId,
+    /// Pattern captured at recording arm time, and whether it was an orphan
+    /// (no arrangement placement). Used to keep the armed-Play branch and the
+    /// live-preview pitch fold tied to the pattern actually being recorded.
+    pub(crate) recording_pattern: Option<PatternId>,
     /// Piano roll horizontal zoom (1.0 = default).
     pr_zoom_x: f32,
     /// Piano roll vertical zoom (1.0 = default).
@@ -262,6 +266,7 @@ impl SequencerViewState {
             recording_preview_pattern_length: SeqDuration(0),
             selected_instrument: SeqInstrumentId::new(0),
             recording_instrument: SeqInstrumentId::new(0),
+            recording_pattern: None,
             pr_zoom_x: 1.0,
             pr_zoom_y: 1.0,
             pattern_length_drag_start: None,
@@ -292,6 +297,7 @@ impl SequencerViewState {
         self.opened_pattern = None;
         self.selected_notes.clear();
         self.drag = None;
+        self.recording_pattern = None;
     }
 }
 
@@ -2901,15 +2907,30 @@ pub(crate) fn draw_piano_roll(
                     .on_hover_text(play_tooltip)
                     .clicked()
                 {
-                    let solo_target = if view_state.pattern_solo {
-                        Some(data.pattern_id)
+                    // Only take the armed-Play path when recording is armed for
+                    // THIS pattern. Routing through `Play` runs the engine's
+                    // Armed → CountIn → Capturing flow (`PlayPattern` skips that
+                    // transition). If armed for a *different* pattern, fall
+                    // through and just audition the one on screen. Solo is not
+                    // applied while recording: the engine is either in orphan-
+                    // preview mode (solo ignored there) or the user wants to
+                    // hear surrounding context while overdubbing.
+                    let armed_for_this = handle.state.transport.recording_state()
+                        == RecordingState::Armed
+                        && view_state.recording_pattern == Some(data.pattern_id);
+                    if armed_for_this {
+                        handle.send(EngineCommand::Play);
                     } else {
-                        None
-                    };
-                    handle.send(EngineCommand::SetSoloPattern(solo_target));
-                    handle.send(EngineCommand::PlayPattern {
-                        pattern_id: data.pattern_id,
-                    });
+                        let solo_target = if view_state.pattern_solo {
+                            Some(data.pattern_id)
+                        } else {
+                            None
+                        };
+                        handle.send(EngineCommand::SetSoloPattern(solo_target));
+                        handle.send(EngineCommand::PlayPattern {
+                            pattern_id: data.pattern_id,
+                        });
+                    }
                 }
             }
 
@@ -3566,9 +3587,36 @@ pub(crate) fn draw_piano_roll(
     }
 
     // ── Pitch range with margin ──
+    // Fold live recording-preview pitches into the range so notes recorded
+    // outside the committed range are visible immediately, not only after the
+    // next loop wrap flushes them into the pattern. Only do this when the
+    // preview belongs to the pattern on screen — the preview buffers are
+    // global, so without this guard a recording into another pattern would
+    // widen this one's vertical range to an empty band.
+    let mut pitch_min = data.pitch_min;
+    let mut pitch_max = data.pitch_max;
+    if view_state.recording_pattern == Some(data.pattern_id) {
+        for note in &view_state.recording_preview_completed {
+            if note.pitch < pitch_min {
+                pitch_min = note.pitch;
+            }
+            if note.pitch > pitch_max {
+                pitch_max = note.pitch;
+            }
+        }
+        for (pitch, _) in &view_state.recording_preview_held {
+            if *pitch < pitch_min {
+                pitch_min = *pitch;
+            }
+            if *pitch > pitch_max {
+                pitch_max = *pitch;
+            }
+        }
+    }
+
     let margin = 6;
-    let view_pitch_min = data.pitch_min.saturating_sub(margin);
-    let view_pitch_max = data.pitch_max.saturating_add(margin);
+    let view_pitch_min = pitch_min.saturating_sub(margin);
+    let view_pitch_max = pitch_max.saturating_add(margin);
     let pitch_range = view_pitch_max.as_midi() - view_pitch_min.as_midi() + 1;
 
     // Zoom-scaled grid units (1.0 zoom = default constants).
@@ -5353,7 +5401,11 @@ fn arm_recording_for_pattern(
     view_state: &mut SequencerViewState,
     pattern_id: PatternId,
 ) -> bool {
-    let bounds = song.try_read().and_then(|s| {
+    // Look up either a real placement (placed pattern) or synthesize one
+    // against pattern-tick 0 (orphan pattern). For orphans we also need to
+    // tell the engine to enter preview-mode so playback loops the pattern
+    // instead of the arrangement.
+    let target = song.try_read().and_then(|s| {
         let mut best: Option<(Tick, SeqDuration, SeqDuration, TrackId)> = None;
         for p in s.arrangement() {
             if p.pattern_id == pattern_id {
@@ -5368,23 +5420,34 @@ fn arm_recording_for_pattern(
                 }
             }
         }
-        best
+        if let Some(placed) = best {
+            return Some((placed, false));
+        }
+        // Orphan: synthesize bounds against pattern-local tick 0.
+        let pat = s.pattern(pattern_id)?;
+        let tpb = SeqDuration(s.time_signature_at(Tick::ZERO).ticks_per_bar());
+        Some(((Tick::ZERO, pat.length, tpb, TrackId(0)), true))
     });
-    if let Some((region_start, pattern_length, ticks_per_bar, track_id)) = bounds {
-        view_state.recording_instrument = view_state.selected_instrument;
-        handle.send(EngineCommand::ArmRecord {
-            pattern_id,
-            track_id,
-            region_start,
-            pattern_length,
-            ticks_per_bar,
-            quantize_grid: SeqDuration(view_state.record_quantize),
-            overdub: view_state.overdub,
-        });
-        true
+    let Some(((region_start, pattern_length, ticks_per_bar, track_id), is_orphan)) = target else {
+        return false;
+    };
+    view_state.recording_instrument = view_state.selected_instrument;
+    view_state.recording_pattern = Some(pattern_id);
+    if is_orphan {
+        handle.send(EngineCommand::SetPreviewPattern(Some(pattern_id)));
     } else {
-        false
+        handle.send(EngineCommand::SetPreviewPattern(None));
     }
+    handle.send(EngineCommand::ArmRecord {
+        pattern_id,
+        track_id,
+        region_start,
+        pattern_length,
+        ticks_per_bar,
+        quantize_grid: SeqDuration(view_state.record_quantize),
+        overdub: view_state.overdub,
+    });
+    true
 }
 
 /// Apply a closure that mutates a set of notes in a pattern, capturing
@@ -5658,21 +5721,33 @@ pub(crate) fn draw_sequencer_view(
     if let Some(pattern_id) = view_state.opened_pattern {
         let piano_roll_data = collect_piano_roll_data(song, pattern_id);
 
-        // Calculate pattern-relative playhead tick (only if this pattern is
-        // actually playing right now in the arrangement).
-        let pattern_playhead_tick: Option<PatternTick> = arrangement_data.as_ref().and_then(|ad| {
-            ad.placements.iter().find_map(|p| {
-                if p.pattern_id == pattern_id
-                    && current_tick >= p.start_tick
-                    && current_tick < p.end_tick
-                {
+        // Calculate pattern-relative playhead tick. Preview-mode wins:
+        // current_tick % pattern.length. Otherwise look for an active
+        // placement in the arrangement snapshot.
+        let preview_pid = handle.state.transport.preview_pattern();
+        let pattern_playhead_tick: Option<PatternTick> = if preview_pid == Some(pattern_id) {
+            song.try_read()
+                .and_then(|s| s.pattern(pattern_id).map(|p| p.length))
+                .map(|len| {
+                    let length = u64::from(len.0.max(1));
                     #[allow(clippy::cast_possible_truncation)]
-                    Some(PatternTick((current_tick - p.start_tick) as u32))
-                } else {
-                    None
-                }
+                    PatternTick((current_tick % length) as u32)
+                })
+        } else {
+            arrangement_data.as_ref().and_then(|ad| {
+                ad.placements.iter().find_map(|p| {
+                    if p.pattern_id == pattern_id
+                        && current_tick >= p.start_tick
+                        && current_tick < p.end_tick
+                    {
+                        #[allow(clippy::cast_possible_truncation)]
+                        Some(PatternTick((current_tick - p.start_tick) as u32))
+                    } else {
+                        None
+                    }
+                })
             })
-        });
+        };
 
         // Use ~50% of available height for piano roll, with generous max
         let available_height = ctx.content_rect().height();
@@ -5699,11 +5774,24 @@ pub(crate) fn draw_sequencer_view(
                         view_state.close_piano_roll();
                         // Closing the piano roll resumes normal multi-pattern playback.
                         handle.send(EngineCommand::SetSoloPattern(None));
+                        handle.send(EngineCommand::SetPreviewPattern(None));
                     }
                 } else {
-                    ui.label(RichText::new("Pattern not found").color(theme().colors.text_dim));
-                    view_state.close_piano_roll();
-                    handle.send(EngineCommand::SetSoloPattern(None));
+                    // No snapshot this frame: either the pattern was deleted or
+                    // the Song lock was momentarily unavailable. Only tear down
+                    // the roll (and exit preview/solo) when the pattern is truly
+                    // gone — a transient lock miss must not kill an in-progress
+                    // recording. If even this read fails, keep the roll open and
+                    // skip the frame.
+                    let truly_gone = song
+                        .try_read()
+                        .is_some_and(|s| s.pattern(pattern_id).is_none());
+                    if truly_gone {
+                        ui.label(RichText::new("Pattern not found").color(theme().colors.text_dim));
+                        view_state.close_piano_roll();
+                        handle.send(EngineCommand::SetSoloPattern(None));
+                        handle.send(EngineCommand::SetPreviewPattern(None));
+                    }
                 }
             });
     }

@@ -454,6 +454,14 @@ pub enum EngineCommand {
     /// engine also clears this state automatically on global `Play`/`Stop`.
     SetSoloPattern(Option<PatternId>),
 
+    /// Enable preview-mode for an orphan pattern (no arrangement placement).
+    /// When `Some(id)` the engine bypasses arrangement playback entirely and
+    /// schedules notes from this pattern using `pattern_tick = current_tick
+    /// % pattern.length`. Mute/solo and track-instrument routing do not
+    /// apply (no track is involved). Pass `None` to clear. Cleared
+    /// automatically by global `Play` (unarmed) and `Stop`.
+    SetPreviewPattern(Option<PatternId>),
+
     // === Engine control ===
     /// Reset the engine state.
     Reset,
@@ -1109,6 +1117,7 @@ impl std::fmt::Debug for EngineCommand {
             Self::PlayPattern { pattern_id } => write!(f, "PlayPattern({pattern_id:?})"),
             Self::PlayFromPattern { pattern_id } => write!(f, "PlayFromPattern({pattern_id:?})"),
             Self::SetSoloPattern(p) => write!(f, "SetSoloPattern({p:?})"),
+            Self::SetPreviewPattern(p) => write!(f, "SetPreviewPattern({p:?})"),
             Self::Reset => write!(f, "Reset"),
             Self::ClearAllModules => write!(f, "ClearAllModules"),
             Self::SetMasterVolume(v) => write!(f, "SetMasterVolume({v})"),

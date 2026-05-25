@@ -210,6 +210,10 @@ pub struct TransportState {
     pub loop_start_ticks: AtomicU64,
     /// Transport loop end in sequencer ticks (exclusive).
     pub loop_end_ticks: AtomicU64,
+    /// Orphan-preview pattern id + 1, or 0 = none. Mirrors
+    /// `SequencerEngine.preview_pattern` so the GUI can render a playhead
+    /// in the piano roll even when the pattern has no arrangement placement.
+    pub preview_pattern: AtomicU64,
 }
 
 impl TransportState {
@@ -225,6 +229,24 @@ impl TransportState {
             loop_enabled: std::sync::atomic::AtomicBool::new(false),
             loop_start_ticks: AtomicU64::new(0),
             loop_end_ticks: AtomicU64::new(0),
+            preview_pattern: AtomicU64::new(0),
+        }
+    }
+
+    /// Set the orphan-preview pattern id (or clear with `None`).
+    pub fn set_preview_pattern(&self, pattern: Option<synth_sequencer::PatternId>) {
+        let raw = pattern.map_or(0, |p| u64::from(p.0).saturating_add(1));
+        self.preview_pattern.store(raw, Ordering::Relaxed);
+    }
+
+    /// Get the orphan-preview pattern id, if any.
+    pub fn preview_pattern(&self) -> Option<synth_sequencer::PatternId> {
+        let raw = self.preview_pattern.load(Ordering::Relaxed);
+        if raw == 0 {
+            None
+        } else {
+            #[allow(clippy::cast_possible_truncation)]
+            Some(synth_sequencer::PatternId((raw - 1) as u32))
         }
     }
 

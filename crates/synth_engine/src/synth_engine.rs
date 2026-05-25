@@ -960,15 +960,16 @@ impl SynthEngine {
                     }
                 } else {
                     self.sequencer.set_solo_pattern(None);
+                    self.clear_preview();
                     self.sequencer.play();
                     self.state.transport.set_playing(true);
                 }
             }
             EngineCommand::Stop => {
-                // Flush recording if capturing
-                if self.recording.state() == crate::recording::RecordingState::Capturing
-                    || self.recording.state() == crate::recording::RecordingState::CountIn
-                {
+                // Disarm/flush any active recording. Covers Armed too (not just
+                // Capturing/CountIn): a Stop pressed while only armed must clear
+                // the armed state instead of leaving recording stuck Armed.
+                if self.recording.state() != crate::recording::RecordingState::Idle {
                     let pattern_id = self.recording.target_pattern();
                     let overdub = self.recording.is_overdub();
                     let notes = self.recording.disarm();
@@ -988,6 +989,7 @@ impl SynthEngine {
                 }
 
                 self.sequencer.set_solo_pattern(None);
+                self.clear_preview();
                 let _ = self.sequencer.stop();
                 self.state.transport.set_playing(false);
                 self.state.transport.set_ticks(0);
@@ -1030,7 +1032,8 @@ impl SynthEngine {
                     .and_then(|song| Self::find_pattern_bounds(&song, pattern_id));
 
                 if let Some((start, end)) = bounds {
-                    // Important: play() first to avoid it resetting current_tick to 0
+                    // Placed pattern — play through the arrangement at this region.
+                    self.clear_preview();
                     self.sequencer.play();
                     let _ = self.sequencer.seek(start);
                     self.sequencer.set_loop(start, end, true);
@@ -1038,9 +1041,34 @@ impl SynthEngine {
                     self.state.transport.set_playing(true);
                     self.state.transport.set_ticks(start.0);
                 } else {
-                    // Fallback: pattern not in arrangement, just play from beginning
-                    self.sequencer.play();
-                    self.state.transport.set_playing(true);
+                    // Orphan pattern — enter preview-mode and loop at pattern.length.
+                    let length = self
+                        .sequencer
+                        .song()
+                        .try_read()
+                        .and_then(|song| song.pattern(pattern_id).map(|p| p.length));
+                    if let Some(length) = length {
+                        // max(1): a zero-length pattern would otherwise make the
+                        // loop [0,0) wrap every tick and pin the playhead at 0.
+                        let loop_end = synth_sequencer::Tick(u64::from(length.0.max(1)));
+                        self.sequencer.set_preview_pattern(Some(pattern_id));
+                        self.state.transport.set_preview_pattern(Some(pattern_id));
+                        self.sequencer.play();
+                        let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
+                        self.sequencer
+                            .set_loop(synth_sequencer::Tick::ZERO, loop_end, true);
+                        self.sync_loop_to_transport();
+                        self.state.transport.set_playing(true);
+                        self.state.transport.set_ticks(0);
+                    } else {
+                        // Pattern not found or the song lock was momentarily
+                        // unavailable. Fall back to plain playback (matching the
+                        // pre-orphan behavior) instead of a silent no-op, and
+                        // make sure we don't leave a stale preview target set.
+                        self.clear_preview();
+                        self.sequencer.play();
+                        self.state.transport.set_playing(true);
+                    }
                 }
             }
             EngineCommand::PlayFromPattern { pattern_id } => {
@@ -1070,10 +1098,27 @@ impl SynthEngine {
                 }
             }
             EngineCommand::SetSoloPattern(pattern) => {
+                // Solo and orphan-preview are mutually exclusive playback modes
+                // (the preview branch in collect_events_at_tick ignores solo).
+                // Entering solo must leave preview so the solo toggle isn't a
+                // dead control. Clearing solo (None) leaves preview untouched.
+                if pattern.is_some() {
+                    self.clear_preview();
+                }
                 self.sequencer.set_solo_pattern(pattern);
+            }
+            EngineCommand::SetPreviewPattern(pattern) => {
+                if pattern.is_some() {
+                    self.sequencer.set_solo_pattern(None);
+                }
+                self.sequencer.set_preview_pattern(pattern);
+                self.state.transport.set_preview_pattern(pattern);
             }
             EngineCommand::SetSong { song } => {
                 self.sequencer.set_song(song);
+                // The new song's pattern ids are unrelated to the old one's;
+                // a stale orphan-preview target must not survive the swap.
+                self.clear_preview();
             }
 
             // Recording commands
@@ -1113,6 +1158,10 @@ impl SynthEngine {
                     .set_recording_state(RecordingState::Idle);
                 // Restore loop state from before recording
                 self.restore_pre_record_loop();
+                // Disarming an orphan recording must also leave preview-mode;
+                // otherwise the engine keeps bypassing the arrangement and
+                // looping the single pattern after recording has ended.
+                self.clear_preview();
             }
             EngineCommand::SetMetronome(enabled) => {
                 self.click_generator.set_enabled(enabled);
@@ -1674,12 +1723,22 @@ impl SynthEngine {
     // Reset/clear handlers
     // ========================================================================
 
+    /// Clear orphan-preview mode on both the sequencer and the shared transport
+    /// state, keeping the two in sync. Safe to call when preview is already off.
+    fn clear_preview(&mut self) {
+        self.sequencer.set_preview_pattern(None);
+        self.state.transport.set_preview_pattern(None);
+    }
+
     fn handle_reset(&mut self) {
         for instrument in &mut self.instruments {
             instrument.panic();
             instrument.effect_chain_mut().reset();
         }
         self.master_effects.reset();
+        // Reset must not leave the engine stuck in orphan-preview mode with a
+        // pattern id that may no longer be valid.
+        self.clear_preview();
     }
 
     fn handle_clear_all_modules(&mut self) {

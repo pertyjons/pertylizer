@@ -79,6 +79,13 @@ pub struct SequencerEngine {
     /// Used by the piano-roll preview to audition a single pattern in isolation.
     /// Cleared by global `Play`/`Stop` and by the GUI when the piano roll closes.
     solo_pattern: Option<PatternId>,
+    /// When set, the engine bypasses arrangement playback entirely and loops
+    /// this single pattern (orphan-preview mode). Notes are scheduled at
+    /// `current_tick % pattern.length`. Mute/solo and track-instrument routing
+    /// do not apply (no track is involved). Used by REC arm on orphan patterns
+    /// and by `PlayPattern` when no placement exists. Cleared by global `Play`
+    /// (unarmed) and `Stop`.
+    preview_pattern: Option<PatternId>,
 }
 
 impl SequencerEngine {
@@ -101,6 +108,7 @@ impl SequencerEngine {
             scratch_notes: Vec::with_capacity(64),
             scratch_automation: Vec::with_capacity(16),
             solo_pattern: None,
+            preview_pattern: None,
         }
     }
 
@@ -127,6 +135,7 @@ impl SequencerEngine {
             scratch_notes: Vec::with_capacity(64),
             scratch_automation: Vec::with_capacity(16),
             solo_pattern: None,
+            preview_pattern: None,
         }
     }
 
@@ -140,6 +149,16 @@ impl SequencerEngine {
     /// Get the current solo-pattern filter.
     pub fn solo_pattern(&self) -> Option<PatternId> {
         self.solo_pattern
+    }
+
+    /// Enable or disable orphan-preview mode for a single pattern.
+    pub fn set_preview_pattern(&mut self, pattern: Option<PatternId>) {
+        self.preview_pattern = pattern;
+    }
+
+    /// Get the current preview-pattern target, if any.
+    pub fn preview_pattern(&self) -> Option<PatternId> {
+        self.preview_pattern
     }
 
     /// Set the sample rate.
@@ -335,8 +354,35 @@ impl SequencerEngine {
         self.scratch_notes.clear();
         self.scratch_automation.clear();
 
-        // Collect note and automation data while holding the lock
-        {
+        // Collect note and automation data while holding the lock.
+        //
+        // Preview-mode (orphan pattern) bypasses the arrangement entirely
+        // and loops a single pattern at `current_tick % pattern.length`.
+        if let Some(preview_id) = self.preview_pattern {
+            let Some(song) = self.song.try_read() else {
+                return;
+            };
+            if let Some(pattern) = song.pattern(preview_id) {
+                let length_ticks = u64::from(pattern.length.0.max(1));
+                #[allow(clippy::cast_possible_truncation)]
+                let pattern_tick = (self.current_tick.0 % length_ticks) as u32;
+                for note in pattern.notes() {
+                    if note.start.0 != pattern_tick {
+                        continue;
+                    }
+                    let end_tick = note
+                        .duration
+                        .map(|d| Tick(self.current_tick.0 + u64::from(d.0)));
+                    self.scratch_notes
+                        .push((note.pitch, note.velocity, note.instrument, end_tick));
+                }
+                for lane in &pattern.automation {
+                    if let Some(value) = lane.value_at(PatternTick(pattern_tick)) {
+                        self.scratch_automation.push((lane.target.clone(), value));
+                    }
+                }
+            }
+        } else {
             let Some(song) = self.song.try_read() else {
                 return;
             };
