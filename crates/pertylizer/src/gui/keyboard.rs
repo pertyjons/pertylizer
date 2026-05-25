@@ -13,6 +13,51 @@ use synth_core::{MidiNote, Velocity};
 const WHITE_KEY_WIDTH: f32 = 24.0;
 /// Number of white keys per octave (C D E F G A B).
 const WHITE_KEYS_PER_OCTAVE: u32 = 7;
+/// Bottom-corner radius for keys (top stays square, like a real key).
+const WHITE_KEY_RADIUS: u8 = 3;
+const BLACK_KEY_RADIUS: u8 = 2;
+
+/// Paint a key as a vertical `top` → `bottom` gradient with rounded bottom
+/// corners and a square top — the profile of a real key. The rounded bottom
+/// band is filled solid in `bottom` first so the corners render cleanly
+/// beneath the rectangular gradient mesh.
+fn fill_key_gradient(
+    painter: &egui::Painter,
+    clip: Rect,
+    rect: Rect,
+    top: Color32,
+    bottom: Color32,
+    radius: u8,
+) {
+    let p = painter.with_clip_rect(clip);
+    let corner = egui::CornerRadius {
+        nw: 0,
+        ne: 0,
+        sw: radius,
+        se: radius,
+    };
+    p.rect_filled(rect, corner, bottom);
+
+    // Gradient over everything above the rounded bottom band; its lower edge
+    // is `bottom`, matching the solid fill below for a seamless transition.
+    let grad_bottom = (rect.bottom() - f32::from(radius)).max(rect.top());
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(Pos2::new(rect.left(), rect.top()), top);
+    mesh.colored_vertex(Pos2::new(rect.right(), rect.top()), top);
+    mesh.colored_vertex(Pos2::new(rect.right(), grad_bottom), bottom);
+    mesh.colored_vertex(Pos2::new(rect.left(), grad_bottom), bottom);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    p.add(egui::Shape::mesh(mesh));
+}
+
+/// Linear blend between two opaque colors in sRGB space (`t` = 0 → `a`,
+/// `t` = 1 → `b`). Good enough for UI tinting.
+fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let lerp = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
+    Color32::from_rgb(lerp(a.r(), b.r()), lerp(a.g(), b.g()), lerp(a.b(), b.b()))
+}
 
 /// Result of keyboard interaction
 #[derive(Debug, Clone, Default)]
@@ -227,37 +272,86 @@ impl PianoKeyboard {
                 .map(|p| key_rect.contains(p) && hovered_black_key.is_none())
                 .unwrap_or(false);
 
-            let fill = if let Some(vel) = velocity {
-                let intensity = 0.4 + (0.6 * vel);
-                theme().colors.accent_orange.gamma_multiply(intensity)
+            // Vertical shading: a soft shadow at the top (where the key meets
+            // the fallboard) brightening toward the lit front edge.
+            let normal_top = Color32::from_rgb(221, 223, 230);
+            let normal_bottom = Color32::from_rgb(252, 252, 254);
+            let (top_color, bottom_color) = if let Some(vel) = velocity {
+                // Played note: wash the key toward the theme accent (never a
+                // hardcoded colour), more saturated with velocity. The floor is
+                // high enough that even a soft press is clearly visible.
+                let t = 0.45 + 0.40 * vel;
+                let accent = theme().colors.accent_cyan;
+                (
+                    mix(normal_top, accent, (t + 0.12).min(1.0)),
+                    mix(normal_bottom, accent, t),
+                )
             } else if is_hovered {
-                Color32::from_rgb(230, 230, 235)
-            } else if is_in_highlight {
-                Color32::from_rgb(255, 245, 230)
+                (
+                    Color32::from_rgb(228, 230, 236),
+                    Color32::from_rgb(255, 255, 255),
+                )
             } else {
-                Color32::from_rgb(250, 250, 252)
+                (normal_top, normal_bottom)
             };
 
-            painter
-                .with_clip_rect(inner_rect)
-                .rect_filled(key_rect, 2.0, fill);
+            fill_key_gradient(
+                painter,
+                inner_rect,
+                key_rect,
+                top_color,
+                bottom_color,
+                WHITE_KEY_RADIUS,
+            );
 
-            if is_in_highlight {
+            // Crisp drop-shadow line right at the top edge for depth.
+            painter.with_clip_rect(inner_rect).rect_filled(
+                Rect::from_min_size(key_rect.min, Vec2::new(key_rect.width(), 2.0)),
+                0.0,
+                Color32::from_rgba_unmultiplied(0, 0, 0, 28),
+            );
+
+            // Active computer-keyboard octave range: a translucent theme-accent
+            // wash plus a solid accent bar at the front edge. Follows the theme.
+            // Skipped while the key is played so the velocity colour stays the
+            // single, canonical pressed-state appearance (no double-tint).
+            if is_in_highlight && velocity.is_none() {
+                let accent = theme().colors.accent_cyan;
+                painter.with_clip_rect(inner_rect).rect_filled(
+                    key_rect,
+                    egui::CornerRadius {
+                        nw: 0,
+                        ne: 0,
+                        sw: WHITE_KEY_RADIUS,
+                        se: WHITE_KEY_RADIUS,
+                    },
+                    Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 34),
+                );
                 let indicator_rect = Rect::from_min_size(
-                    Pos2::new(kx, inner_rect.top() + white_key_height - 4.0),
+                    Pos2::new(kx, key_rect.bottom() - 4.0),
                     Vec2::new(white_key_width - 1.0, 4.0),
                 );
                 painter.with_clip_rect(inner_rect).rect_filled(
                     indicator_rect,
-                    0.0,
-                    theme().colors.accent_orange.gamma_multiply(0.7),
+                    egui::CornerRadius {
+                        nw: 0,
+                        ne: 0,
+                        sw: WHITE_KEY_RADIUS,
+                        se: WHITE_KEY_RADIUS,
+                    },
+                    accent,
                 );
             }
 
             painter.with_clip_rect(inner_rect).rect_stroke(
                 key_rect,
-                2.0,
-                Stroke::new(1.0, Color32::from_rgb(150, 150, 155)),
+                egui::CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: WHITE_KEY_RADIUS,
+                    se: WHITE_KEY_RADIUS,
+                },
+                Stroke::new(1.0, Color32::from_rgb(176, 179, 188)),
                 egui::StrokeKind::Inside,
             );
 
@@ -296,32 +390,109 @@ impl PianoKeyboard {
             let is_in_highlight = note >= highlight_start && note < highlight_end;
             let is_hovered = hover_pos.map(|p| key_rect.contains(p)).unwrap_or(false);
 
-            let fill = if let Some(vel) = velocity {
-                let intensity = 0.4 + (0.6 * vel);
-                theme().colors.accent_orange.gamma_multiply(intensity)
+            // Glossy profile: darkest at the top, easing to a lit front face
+            // (`lip`) along the bottom chamfer.
+            let rest = (
+                Color32::from_rgb(14, 15, 19),
+                Color32::from_rgb(50, 52, 60),
+                Color32::from_rgb(82, 85, 96),
+            );
+            let (top_color, bottom_color, lip_color) = if let Some(vel) = velocity {
+                // Played note lights up toward the theme accent, brighter with
+                // velocity. `mix` keeps the colour opaque (unlike gamma_multiply,
+                // which would scale the alpha and leave the key translucent).
+                let i = 0.50 + 0.45 * vel;
+                let accent = theme().colors.accent_cyan;
+                (
+                    mix(rest.0, accent, (i * 0.85).min(1.0)),
+                    mix(rest.1, accent, i),
+                    mix(rest.2, accent, (i + 0.08).min(1.0)),
+                )
             } else if is_hovered {
-                Color32::from_rgb(60, 60, 65)
-            } else if is_in_highlight {
-                Color32::from_rgb(50, 45, 40)
+                (
+                    Color32::from_rgb(30, 31, 38),
+                    Color32::from_rgb(70, 72, 82),
+                    Color32::from_rgb(100, 103, 116),
+                )
             } else {
-                Color32::from_rgb(30, 32, 38)
+                rest
             };
 
-            painter
-                .with_clip_rect(inner_rect)
-                .rect_filled(key_rect, 2.0, fill);
+            fill_key_gradient(
+                painter,
+                inner_rect,
+                key_rect,
+                top_color,
+                bottom_color,
+                BLACK_KEY_RADIUS,
+            );
 
-            if is_in_highlight {
+            // Lit front face (chamfer) along the bottom.
+            let lip_h = (black_key_height * 0.16).max(3.0);
+            let lip_rect = Rect::from_min_max(
+                Pos2::new(key_rect.left(), key_rect.bottom() - lip_h),
+                key_rect.max,
+            );
+            painter.with_clip_rect(inner_rect).rect_filled(
+                lip_rect,
+                egui::CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: BLACK_KEY_RADIUS,
+                    se: BLACK_KEY_RADIUS,
+                },
+                lip_color,
+            );
+
+            // Thin gloss highlight on the top edge.
+            painter.with_clip_rect(inner_rect).rect_filled(
+                Rect::from_min_size(key_rect.min, Vec2::new(black_key_width, 1.5)),
+                0.0,
+                Color32::from_rgba_unmultiplied(255, 255, 255, 18),
+            );
+
+            // Active octave range: theme-accent wash + front-edge bar. Skipped
+            // while played so the velocity colour stays the single pressed look.
+            if is_in_highlight && velocity.is_none() {
+                let accent = theme().colors.accent_cyan;
+                painter.with_clip_rect(inner_rect).rect_filled(
+                    key_rect,
+                    egui::CornerRadius {
+                        nw: 0,
+                        ne: 0,
+                        sw: BLACK_KEY_RADIUS,
+                        se: BLACK_KEY_RADIUS,
+                    },
+                    Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 50),
+                );
                 let indicator_rect = Rect::from_min_size(
-                    Pos2::new(kx, inner_rect.top() + black_key_height - 3.0),
+                    Pos2::new(kx, key_rect.bottom() - 3.0),
                     Vec2::new(black_key_width, 3.0),
                 );
                 painter.with_clip_rect(inner_rect).rect_filled(
                     indicator_rect,
-                    0.0,
-                    theme().colors.accent_orange.gamma_multiply(0.7),
+                    egui::CornerRadius {
+                        nw: 0,
+                        ne: 0,
+                        sw: BLACK_KEY_RADIUS,
+                        se: BLACK_KEY_RADIUS,
+                    },
+                    accent,
                 );
             }
+
+            // Crisp dark outline so the key reads against the white keys.
+            painter.with_clip_rect(inner_rect).rect_stroke(
+                key_rect,
+                egui::CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: BLACK_KEY_RADIUS,
+                    se: BLACK_KEY_RADIUS,
+                },
+                Stroke::new(1.0, Color32::from_rgb(8, 8, 11)),
+                egui::StrokeKind::Inside,
+            );
 
             if is_hovered && inner_response.is_pointer_button_down_on() {
                 clicked_note = Some(note);
