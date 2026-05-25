@@ -1,6 +1,6 @@
 [package]
 name = "pertylizer"
-version = "0.290.0"
+version = "0.291.0"
 edition.workspace = true
 rust-version.workspace = true
 description = "Pertylizer — a modular synthesizer"

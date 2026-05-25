@@ -1,5 +1,21 @@
 # Version History
 
+## [0.291.0] - 2026-05-25
+
+### README restructure and expansion
+
+Reorganized the README so each part of the synth (synthesis, AWE, sequencer,
+sampling/audio input, MCP, architecture) gets its own section with a short
+description, removed the duplicate "Highlights" heading, and consolidated the
+scattered keyboard-shortcut tables into one section.
+
+### Documented previously unlisted features
+
+Added README coverage for WAV export (bit depth / sample rate options), live
+audio input & recording, and the bundled example projects, patches, and AWE
+presets under `assets/examples/`, plus a personal "How This Came About"
+background note.
+
 ## [0.290.0] - 2026-05-25
 
 ### Record into unplaced ("orphan") patterns
