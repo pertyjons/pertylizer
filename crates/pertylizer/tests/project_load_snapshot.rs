@@ -246,6 +246,12 @@ fn write_fixture(path: &Path, json: &str) {
     std::fs::write(path, json).unwrap_or_else(|e| panic!("write fixture {}: {e}", path.display()));
 }
 
+/// Strip `\r` and trim so snapshot comparison is insensitive to the line
+/// endings a fixture happens to be checked out with (CRLF on Windows).
+fn normalize_eol(s: &str) -> String {
+    s.replace('\r', "").trim().to_string()
+}
+
 fn compare_snapshot(name: &str, snapshot: &ProjectSnapshot) {
     let actual = serde_json::to_string_pretty(snapshot).expect("serialize snapshot");
     let fixture_path = fixtures_dir().join(format!("{name}.json"));
@@ -266,7 +272,11 @@ fn compare_snapshot(name: &str, snapshot: &ProjectSnapshot) {
 
     let expected = std::fs::read_to_string(&fixture_path)
         .unwrap_or_else(|e| panic!("read fixture {}: {e}", fixture_path.display()));
-    if expected.trim() != actual.trim() {
+    // Compare line-ending-agnostically. `serde_json` always emits `\n`, but a
+    // fixture checked out on Windows can carry `\r\n` regardless of
+    // `.gitattributes`, depending on the runner's autocrlf config. Without this
+    // every multi-line fixture would spuriously mismatch on the Windows CI.
+    if normalize_eol(&expected) != normalize_eol(&actual) {
         let actual_path = fixture_path.with_extension("actual.json");
         std::fs::write(&actual_path, &actual).ok();
         panic!(
