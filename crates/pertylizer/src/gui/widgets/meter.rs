@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, Color32, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2};
 
-use crate::gui::theme::theme;
+use crate::gui::theme::{Colors, theme};
 
 /// A vertical meter widget for audio levels.
 pub struct Meter {
@@ -104,7 +104,7 @@ pub fn draw_level_meter(
             Rect::from_min_size(inner_rect.min, Vec2::new(rms_width, inner_rect.height()));
 
         // Gradient from green to yellow to red
-        let rms_color = level_color(rms_norm);
+        let rms_color = level_color(rms_norm, &t.colors);
         painter.rect_filled(rms_rect, t.style.border_width, rms_color);
 
         // Peak indicator line
@@ -125,7 +125,7 @@ pub fn draw_level_meter(
             inner_rect.max,
         );
 
-        let rms_color = level_color(rms_norm);
+        let rms_color = level_color(rms_norm, &t.colors);
         painter.rect_filled(rms_rect, t.style.border_width, rms_color);
 
         // Peak indicator line
@@ -257,7 +257,7 @@ fn draw_meter_bar(
         );
 
         let color = if level <= rms_norm {
-            level_color(level)
+            level_color(level, &t.colors)
         } else {
             // Inactive segment - use the widget background from the theme
             t.colors.bg_widget
@@ -285,8 +285,9 @@ fn draw_meter_bar(
 }
 
 /// Get color for level value (green -> yellow -> red) from the theme palette.
-pub fn level_color(level: f32) -> Color32 {
-    let colors = theme().colors;
+/// Takes `&Colors` so callers that already hold the theme don't re-acquire the
+/// global theme lock per meter segment.
+pub fn level_color(level: f32, colors: &Colors) -> Color32 {
     if level < 0.6 {
         colors.meter_green
     } else if level < 0.85 {
