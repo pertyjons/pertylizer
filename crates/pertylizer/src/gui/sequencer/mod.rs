@@ -20,6 +20,7 @@ use synth_sequencer::{
 
 use crate::gui::input::KEY_MAP;
 use crate::gui::theme::theme;
+use crate::gui::widgets::toggle_button;
 
 // ============================================================================
 // EDIT TYPES
@@ -524,13 +525,7 @@ fn draw_transport_bar(
         }
 
         // Metronome toggle
-        let metro_color = if metro_on {
-            t.colors.accent_primary
-        } else {
-            t.colors.text_dim
-        };
-        if ui
-            .button(RichText::new("M").strong().color(metro_color))
+        if toggle_button(ui, "M", metro_on)
             .on_hover_text(if metro_on {
                 "Metronome off"
             } else {
@@ -549,13 +544,7 @@ fn draw_transport_bar(
             120 => "Q:1/32",
             _ => "Q",
         };
-        let q_color = if view_state.record_quantize > 0 {
-            t.colors.accent_primary
-        } else {
-            t.colors.text_dim
-        };
-        if ui
-            .button(RichText::new(q_label).strong().color(q_color))
+        if toggle_button(ui, q_label, view_state.record_quantize > 0)
             .on_hover_text(match view_state.record_quantize {
                 960 => "Quantize: 1/4 note (click to cycle)",
                 480 => "Quantize: 1/8 note (click to cycle)",
@@ -575,13 +564,7 @@ fn draw_transport_bar(
         }
 
         // Overdub toggle
-        let ovr_color = if view_state.overdub {
-            t.colors.accent_primary
-        } else {
-            t.colors.text_dim
-        };
-        if ui
-            .button(RichText::new("OVR").strong().color(ovr_color))
+        if toggle_button(ui, "OVR", view_state.overdub)
             .on_hover_text(if view_state.overdub {
                 "Overdub on (click for replace)"
             } else {
@@ -946,65 +929,15 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
     })
 }
 
-/// Draw the arrangement view with track headers and timeline.
-/// Returns `Some(PatternId)` if a placement was double-clicked.
-#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
-fn draw_arrangement(
+/// Arrangement view toolbar: zoom controls (out / 1x / in / fit), the snap
+/// selector, and the follow-playhead toggle.
+fn draw_arrangement_toolbar(
     ui: &mut egui::Ui,
     data: &ArrangementData,
-    current_tick: u64,
-    is_playing: bool,
-    handle: &mut EngineHandle,
-    song: &Arc<RwLock<Song>>,
     view_state: &mut SequencerViewState,
-    instruments: &[crate::gui::instrument_rack::InstrumentUiState],
-    undo_manager: &mut crate::undo::UndoManager,
-) -> Option<PatternId> {
-    use egui_remixicon::icons as ri;
+) {
     let t = theme();
-    let track_count = data.tracks.len();
-
-    // Mirror the engine's loop region into view_state so MCP-set and
-    // song-repeat loops surface as ruler markers without having to be
-    // re-set via the right-click menu first.
-    let (engine_loop_enabled, engine_loop_start, engine_loop_end) =
-        handle.state.transport.loop_state();
-    if engine_loop_enabled && engine_loop_end.0 > engine_loop_start.0 {
-        view_state.loop_start_tick = Some(engine_loop_start);
-        view_state.loop_end_tick = Some(engine_loop_end);
-    }
-
-    // ── Empty state: show "Add Track" button ──
-    if track_count == 0 {
-        ui.add_space(40.0);
-        ui.vertical_centered(|ui| {
-            ui.label(
-                RichText::new("Empty song")
-                    .size(16.0)
-                    .color(t.colors.text_dim),
-            );
-            ui.add_space(8.0);
-            if ui
-                .button(
-                    RichText::new(format!("{} Add Track", ri::ADD_LINE))
-                        .color(t.colors.accent_green),
-                )
-                .clicked()
-            {
-                let _ = song.write().create_track("Track 1");
-            }
-        });
-        return None;
-    }
-
-    // Calculate timeline extent
-    let ticks_per_bar = data.time_sig.ticks_per_bar() as u64;
-    let ticks_per_beat = data.time_sig.ticks_per_beat() as u64;
     let beats_per_bar = data.time_sig.numerator as u64;
-
-    let pixels_per_beat = PIXELS_PER_BEAT * view_state.zoom_level;
-
-    // ── Arrangement toolbar (above the timeline) ──
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(RichText::new("Zoom").color(t.colors.text_dim).size(10.0));
@@ -1080,6 +1013,67 @@ fn draw_arrangement(
         }
     });
     ui.separator();
+}
+
+/// Draw the arrangement view with track headers and timeline.
+/// Returns `Some(PatternId)` if a placement was double-clicked.
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+fn draw_arrangement(
+    ui: &mut egui::Ui,
+    data: &ArrangementData,
+    current_tick: u64,
+    is_playing: bool,
+    handle: &mut EngineHandle,
+    song: &Arc<RwLock<Song>>,
+    view_state: &mut SequencerViewState,
+    instruments: &[crate::gui::instrument_rack::InstrumentUiState],
+    undo_manager: &mut crate::undo::UndoManager,
+) -> Option<PatternId> {
+    use egui_remixicon::icons as ri;
+    let t = theme();
+    let track_count = data.tracks.len();
+
+    // Mirror the engine's loop region into view_state so MCP-set and
+    // song-repeat loops surface as ruler markers without having to be
+    // re-set via the right-click menu first.
+    let (engine_loop_enabled, engine_loop_start, engine_loop_end) =
+        handle.state.transport.loop_state();
+    if engine_loop_enabled && engine_loop_end.0 > engine_loop_start.0 {
+        view_state.loop_start_tick = Some(engine_loop_start);
+        view_state.loop_end_tick = Some(engine_loop_end);
+    }
+
+    // ── Empty state: show "Add Track" button ──
+    if track_count == 0 {
+        ui.add_space(40.0);
+        ui.vertical_centered(|ui| {
+            ui.label(
+                RichText::new("Empty song")
+                    .size(16.0)
+                    .color(t.colors.text_dim),
+            );
+            ui.add_space(8.0);
+            if ui
+                .button(
+                    RichText::new(format!("{} Add Track", ri::ADD_LINE))
+                        .color(t.colors.accent_green),
+                )
+                .clicked()
+            {
+                let _ = song.write().create_track("Track 1");
+            }
+        });
+        return None;
+    }
+
+    // Calculate timeline extent
+    let ticks_per_bar = data.time_sig.ticks_per_bar() as u64;
+    let ticks_per_beat = data.time_sig.ticks_per_beat() as u64;
+    let beats_per_bar = data.time_sig.numerator as u64;
+
+    let pixels_per_beat = PIXELS_PER_BEAT * view_state.zoom_level;
+
+    draw_arrangement_toolbar(ui, data, view_state);
 
     let song_bars = if ticks_per_bar > 0 {
         data.song_end_tick.div_ceil(ticks_per_bar) as u32
@@ -2731,6 +2725,140 @@ fn quantize_tick(tick: PatternTick, ticks_per_row: u16) -> PatternTick {
     PatternTick(snap_to_step(tick.0 as u64, ticks_per_row as u64) as u32)
 }
 
+/// Selection inspector row: shows pitch / start / length of the selected notes
+/// (or "—" when they differ) and an editable velocity DragValue that batches an
+/// undo entry on drag/focus release.
+fn draw_piano_roll_selection_inspector(
+    ui: &mut egui::Ui,
+    data: &PianoRollData,
+    view_state: &mut SequencerViewState,
+    song: &Arc<RwLock<Song>>,
+    undo_manager: &mut crate::undo::UndoManager,
+) {
+    let t = theme();
+    if !view_state.selected_notes.is_empty() {
+        let selected: Vec<&PianoRollNote> = data
+            .notes
+            .iter()
+            .filter(|n| view_state.selected_notes.contains(&n.note_id))
+            .collect();
+        if !selected.is_empty() {
+            let first = selected[0];
+            let pitches_equal = selected.iter().all(|n| n.pitch == first.pitch);
+            let starts_equal = selected.iter().all(|n| n.start_tick == first.start_tick);
+            let durations: Vec<Option<u32>> = selected
+                .iter()
+                .map(|n| n.end_tick.map(|e| e.0 - n.start_tick.0))
+                .collect();
+            let lengths_equal = durations.iter().all(|d| *d == durations[0]);
+            let velocities_equal = selected
+                .iter()
+                .all(|n| (n.velocity.as_f32() - first.velocity.as_f32()).abs() < f32::EPSILON);
+
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                ui.label(
+                    RichText::new(format!("Selection ({})", selected.len()))
+                        .color(t.colors.accent_yellow)
+                        .strong(),
+                );
+                ui.separator();
+
+                // Pitch
+                ui.label(RichText::new("Pitch").color(t.colors.text_dim).size(10.0));
+                let pitch_text = if pitches_equal {
+                    let midi = first.pitch.as_midi();
+                    let name = NoteName::from_midi(midi % 12);
+                    let octave = (midi / 12) as i8 - 1;
+                    format!("{name:?}{octave}")
+                } else {
+                    "—".to_owned()
+                };
+                ui.label(RichText::new(pitch_text).color(t.colors.text_primary));
+
+                // Start
+                ui.label(RichText::new("Start").color(t.colors.text_dim).size(10.0));
+                let start_text = if starts_equal {
+                    let beats =
+                        first.start_tick.0 as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
+                    format!("{beats:.2} beats")
+                } else {
+                    "—".to_owned()
+                };
+                ui.label(RichText::new(start_text).color(t.colors.text_primary));
+
+                // Length
+                ui.label(RichText::new("Len").color(t.colors.text_dim).size(10.0));
+                let length_text = if lengths_equal {
+                    match durations[0] {
+                        Some(d) => {
+                            let beats = d as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
+                            format!("{beats:.2} beats")
+                        }
+                        None => "open".to_owned(),
+                    }
+                } else {
+                    "—".to_owned()
+                };
+                ui.label(RichText::new(length_text).color(t.colors.text_primary));
+
+                ui.label(RichText::new("Vel").color(t.colors.text_dim).size(10.0));
+                let mut vel_pct = if velocities_equal {
+                    (first.velocity.as_f32() * 100.0).round()
+                } else {
+                    50.0
+                };
+                let vel_resp = ui
+                    .add(
+                        egui::DragValue::new(&mut vel_pct)
+                            .range(1.0..=100.0)
+                            .speed(1.0)
+                            .suffix(" %"),
+                    )
+                    .on_hover_text(if velocities_equal {
+                        "Velocity of selected notes"
+                    } else {
+                        "Velocities differ — drag to set all to the same value"
+                    });
+                if vel_resp.drag_started() || vel_resp.gained_focus() {
+                    view_state.inspector_vel_drag_start = Some((
+                        data.pattern_id,
+                        selected.iter().map(|n| (n.note_id, n.velocity)).collect(),
+                    ));
+                }
+                if vel_resp.changed() {
+                    let new_vel = Velocity::new((vel_pct / 100.0).clamp(0.01, 1.0));
+                    let pid = data.pattern_id;
+                    let ids: Vec<NoteId> = selected.iter().map(|n| n.note_id).collect();
+                    let mut song_w = song.write();
+                    if let Some(pattern) = song_w.pattern_mut(pid) {
+                        for nid in ids {
+                            pattern.set_note_velocity(nid, new_vel);
+                        }
+                    }
+                }
+                if (vel_resp.drag_stopped() || vel_resp.lost_focus())
+                    && let Some((pid, before)) = view_state.inspector_vel_drag_start.take()
+                    && pid == data.pattern_id
+                {
+                    let new_vel = Velocity::new((vel_pct / 100.0).clamp(0.01, 1.0));
+                    let changes: Vec<(NoteId, Velocity, Velocity)> = before
+                        .into_iter()
+                        .filter_map(|(id, old)| (old != new_vel).then_some((id, old, new_vel)))
+                        .collect();
+                    if !changes.is_empty() {
+                        undo_manager.push(crate::undo::UndoAction::SetVelocitiesBatch {
+                            pattern_id: data.pattern_id,
+                            changes,
+                        });
+                    }
+                }
+            });
+            ui.separator();
+        }
+    }
+}
+
 /// Draw the piano roll in a bottom panel.
 /// Returns false if the close button was clicked.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -3463,128 +3591,7 @@ pub(crate) fn draw_piano_roll(
         ui.separator();
     }
 
-    // ── Selection inspector ──
-    if !view_state.selected_notes.is_empty() {
-        let selected: Vec<&PianoRollNote> = data
-            .notes
-            .iter()
-            .filter(|n| view_state.selected_notes.contains(&n.note_id))
-            .collect();
-        if !selected.is_empty() {
-            let first = selected[0];
-            let pitches_equal = selected.iter().all(|n| n.pitch == first.pitch);
-            let starts_equal = selected.iter().all(|n| n.start_tick == first.start_tick);
-            let durations: Vec<Option<u32>> = selected
-                .iter()
-                .map(|n| n.end_tick.map(|e| e.0 - n.start_tick.0))
-                .collect();
-            let lengths_equal = durations.iter().all(|d| *d == durations[0]);
-            let velocities_equal = selected
-                .iter()
-                .all(|n| (n.velocity.as_f32() - first.velocity.as_f32()).abs() < f32::EPSILON);
-
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 8.0;
-                ui.label(
-                    RichText::new(format!("Selection ({})", selected.len()))
-                        .color(t.colors.accent_yellow)
-                        .strong(),
-                );
-                ui.separator();
-
-                // Pitch
-                ui.label(RichText::new("Pitch").color(t.colors.text_dim).size(10.0));
-                let pitch_text = if pitches_equal {
-                    let midi = first.pitch.as_midi();
-                    let name = NoteName::from_midi(midi % 12);
-                    let octave = (midi / 12) as i8 - 1;
-                    format!("{name:?}{octave}")
-                } else {
-                    "—".to_owned()
-                };
-                ui.label(RichText::new(pitch_text).color(t.colors.text_primary));
-
-                // Start
-                ui.label(RichText::new("Start").color(t.colors.text_dim).size(10.0));
-                let start_text = if starts_equal {
-                    let beats =
-                        first.start_tick.0 as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
-                    format!("{beats:.2} beats")
-                } else {
-                    "—".to_owned()
-                };
-                ui.label(RichText::new(start_text).color(t.colors.text_primary));
-
-                // Length
-                ui.label(RichText::new("Len").color(t.colors.text_dim).size(10.0));
-                let length_text = if lengths_equal {
-                    match durations[0] {
-                        Some(d) => {
-                            let beats = d as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
-                            format!("{beats:.2} beats")
-                        }
-                        None => "open".to_owned(),
-                    }
-                } else {
-                    "—".to_owned()
-                };
-                ui.label(RichText::new(length_text).color(t.colors.text_primary));
-
-                ui.label(RichText::new("Vel").color(t.colors.text_dim).size(10.0));
-                let mut vel_pct = if velocities_equal {
-                    (first.velocity.as_f32() * 100.0).round()
-                } else {
-                    50.0
-                };
-                let vel_resp = ui
-                    .add(
-                        egui::DragValue::new(&mut vel_pct)
-                            .range(1.0..=100.0)
-                            .speed(1.0)
-                            .suffix(" %"),
-                    )
-                    .on_hover_text(if velocities_equal {
-                        "Velocity of selected notes"
-                    } else {
-                        "Velocities differ — drag to set all to the same value"
-                    });
-                if vel_resp.drag_started() || vel_resp.gained_focus() {
-                    view_state.inspector_vel_drag_start = Some((
-                        data.pattern_id,
-                        selected.iter().map(|n| (n.note_id, n.velocity)).collect(),
-                    ));
-                }
-                if vel_resp.changed() {
-                    let new_vel = Velocity::new((vel_pct / 100.0).clamp(0.01, 1.0));
-                    let pid = data.pattern_id;
-                    let ids: Vec<NoteId> = selected.iter().map(|n| n.note_id).collect();
-                    let mut song_w = song.write();
-                    if let Some(pattern) = song_w.pattern_mut(pid) {
-                        for nid in ids {
-                            pattern.set_note_velocity(nid, new_vel);
-                        }
-                    }
-                }
-                if (vel_resp.drag_stopped() || vel_resp.lost_focus())
-                    && let Some((pid, before)) = view_state.inspector_vel_drag_start.take()
-                    && pid == data.pattern_id
-                {
-                    let new_vel = Velocity::new((vel_pct / 100.0).clamp(0.01, 1.0));
-                    let changes: Vec<(NoteId, Velocity, Velocity)> = before
-                        .into_iter()
-                        .filter_map(|(id, old)| (old != new_vel).then_some((id, old, new_vel)))
-                        .collect();
-                    if !changes.is_empty() {
-                        undo_manager.push(crate::undo::UndoAction::SetVelocitiesBatch {
-                            pattern_id: data.pattern_id,
-                            changes,
-                        });
-                    }
-                }
-            });
-            ui.separator();
-        }
-    }
+    draw_piano_roll_selection_inspector(ui, data, view_state, song, undo_manager);
 
     // ── Pitch range with margin ──
     // Fold live recording-preview pitches into the range so notes recorded

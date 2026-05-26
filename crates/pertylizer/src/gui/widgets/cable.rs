@@ -209,6 +209,7 @@ pub fn draw_cable(
     spread: f32,
 ) {
     let points = calculate_route(from, to, spread);
+    let thickness = theme().sizes.cable_thickness;
 
     // Shadow
     let shadow_offset = Vec2::new(1.0, 2.0);
@@ -217,20 +218,25 @@ pub fn draw_cable(
     draw_segments(
         painter,
         &shadow_points,
-        Stroke::new(3.5, shadow_color),
+        Stroke::new(thickness + 1.0, shadow_color),
         false,
     );
 
     // Main cable
     let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 160);
-    draw_segments(painter, &points, Stroke::new(2.5, cable_color), true);
+    draw_segments(painter, &points, Stroke::new(thickness, cable_color), true);
 }
 
 /// Draw a cable being dragged (simpler, no shadow).
 pub fn draw_cable_dragging(painter: &eframe::egui::Painter, from: Pos2, to: Pos2, color: Color32) {
     let points = calculate_route(from, to, 0.0);
     let cable_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 160);
-    draw_segments(painter, &points, Stroke::new(2.5, cable_color), true);
+    draw_segments(
+        painter,
+        &points,
+        Stroke::new(theme().sizes.cable_thickness, cable_color),
+        true,
+    );
 }
 
 /// Draw a highlighted cable (hovered) with glow effect using the cable's own color.
@@ -242,18 +248,29 @@ pub fn draw_cable_highlighted(
     spread: f32,
 ) {
     let points = calculate_route(from, to, spread);
+    let thickness = theme().sizes.cable_thickness;
 
     // Outer glow
     let glow_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60);
-    draw_segments(painter, &points, Stroke::new(8.0, glow_color), false);
+    draw_segments(
+        painter,
+        &points,
+        Stroke::new(thickness * 3.2, glow_color),
+        false,
+    );
 
     // Inner glow
     let inner_glow = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 120);
-    draw_segments(painter, &points, Stroke::new(5.0, inner_glow), false);
+    draw_segments(
+        painter,
+        &points,
+        Stroke::new(thickness * 2.0, inner_glow),
+        false,
+    );
 
     // Core cable (full brightness)
     let core = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 220);
-    draw_segments(painter, &points, Stroke::new(2.5, core), true);
+    draw_segments(painter, &points, Stroke::new(thickness, core), true);
 }
 
 /// Draw animated flow particles along a cable.

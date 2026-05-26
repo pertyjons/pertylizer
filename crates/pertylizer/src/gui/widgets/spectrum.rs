@@ -21,14 +21,15 @@ pub fn draw_spectrum_analyzer(
     sample_rate: f32,
 ) {
     let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let t = theme();
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 4.0, theme().colors.bg_dark);
+    painter.rect_filled(rect, t.style.corner_radius, t.colors.bg_dark);
 
     // Draw grid lines
-    let grid_color = Color32::from_rgba_premultiplied(60, 65, 75, 100);
-    let text_color = Color32::from_rgba_premultiplied(80, 85, 95, 180);
+    let grid_color = t.colors.border;
+    let text_color = t.colors.text_dim;
 
     // Horizontal grid lines at -20dB intervals (mapped to 0.0-1.0: 0.8, 0.6, 0.4, 0.2)
     for i in 1..5 {
@@ -136,8 +137,8 @@ pub fn draw_spectrum_analyzer(
     // Border
     painter.rect_stroke(
         rect,
-        4.0,
-        Stroke::new(1.0, theme().colors.border),
+        t.style.corner_radius,
+        Stroke::new(t.style.border_width, t.colors.border),
         eframe::egui::StrokeKind::Outside,
     );
 }

@@ -10,6 +10,7 @@ use egui_file_dialog::{FileDialog, Filter};
 
 use super::egui_backend::setup_custom_style;
 use super::theme::{ThemePreset, theme};
+use super::widgets::{DialogButton, dialog_button_row, modal_window};
 use crate::io::settings::{AppSettings, settings_path};
 use crate::io::{GroupTemplateInfo, GroupTemplateManager, GroupTemplateSource, PatchManager};
 use crate::patch::{GroupCategory, GroupId, Patch, categorized_patches};
@@ -930,45 +931,37 @@ pub fn show_save_group_template_dialog(
 
     let mut result = SaveGroupTemplateResult::None;
 
-    egui::Window::new("Save Group Template")
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| {
-            ui.label("Template name");
-            ui.text_edit_singleline(name);
+    modal_window(ctx, "Save Group Template", |ui| {
+        ui.label("Template name");
+        ui.text_edit_singleline(name);
 
-            ui.add_space(6.0);
-            ui.label("Category");
-            egui::ComboBox::from_id_salt("group_template_category")
-                .selected_text(category.label())
-                .show_ui(ui, |ui| {
-                    for cat in GroupCategory::ALL {
-                        ui.selectable_value(category, cat, cat.label());
-                    }
-                });
-
-            ui.add_space(6.0);
-            ui.label("Description");
-            ui.text_edit_multiline(description);
-
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    result = SaveGroupTemplateResult::Cancelled;
-                    *open = false;
-                }
-
-                let can_save = !name.trim().is_empty();
-                if ui
-                    .add_enabled(can_save, egui::Button::new("Save"))
-                    .clicked()
-                {
-                    result = SaveGroupTemplateResult::Save;
-                    *open = false;
+        ui.add_space(6.0);
+        ui.label("Category");
+        egui::ComboBox::from_id_salt("group_template_category")
+            .selected_text(category.label())
+            .show_ui(ui, |ui| {
+                for cat in GroupCategory::ALL {
+                    ui.selectable_value(category, cat, cat.label());
                 }
             });
-        });
+
+        ui.add_space(6.0);
+        ui.label("Description");
+        ui.text_edit_multiline(description);
+
+        ui.add_space(12.0);
+        match dialog_button_row(ui, "Save", !name.trim().is_empty()) {
+            DialogButton::Cancel => {
+                result = SaveGroupTemplateResult::Cancelled;
+                *open = false;
+            }
+            DialogButton::Confirm => {
+                result = SaveGroupTemplateResult::Save;
+                *open = false;
+            }
+            DialogButton::None => {}
+        }
+    });
 
     result
 }
@@ -998,60 +991,52 @@ pub fn show_save_awe_preset_dialog(
 
     let mut result = SaveAwePresetResult::None;
 
-    egui::Window::new("Save AWE Preset")
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| {
-            ui.label("Preset name");
-            ui.text_edit_singleline(name);
+    modal_window(ctx, "Save AWE Preset", |ui| {
+        ui.label("Preset name");
+        ui.text_edit_singleline(name);
 
-            ui.add_space(6.0);
-            ui.label("Description");
-            ui.text_edit_multiline(description);
+        ui.add_space(6.0);
+        ui.label("Description");
+        ui.text_edit_multiline(description);
 
-            ui.add_space(6.0);
-            ui.label("Tags (comma-separated)");
-            ui.text_edit_singleline(tags);
+        ui.add_space(6.0);
+        ui.label("Tags (comma-separated)");
+        ui.text_edit_singleline(tags);
 
-            ui.add_space(6.0);
-            ui.separator();
+        ui.add_space(6.0);
+        ui.separator();
+        ui.label(
+            RichText::new("Author")
+                .color(theme().colors.text_dim)
+                .small(),
+        );
+        if !author.name.is_empty() {
+            ui.label(format!("Name: {}", author.name));
+        }
+        if !author.license.is_empty() {
+            ui.label(format!("License: {}", author.license));
+        }
+        if author.name.is_empty() && author.license.is_empty() {
             ui.label(
-                RichText::new("Author")
+                RichText::new("(set in Settings)")
                     .color(theme().colors.text_dim)
                     .small(),
             );
-            if !author.name.is_empty() {
-                ui.label(format!("Name: {}", author.name));
-            }
-            if !author.license.is_empty() {
-                ui.label(format!("License: {}", author.license));
-            }
-            if author.name.is_empty() && author.license.is_empty() {
-                ui.label(
-                    RichText::new("(set in Settings)")
-                        .color(theme().colors.text_dim)
-                        .small(),
-                );
-            }
+        }
 
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if ui.button("Cancel").clicked() {
-                    result = SaveAwePresetResult::Cancelled;
-                    *open = false;
-                }
-
-                let can_save = !name.trim().is_empty();
-                if ui
-                    .add_enabled(can_save, egui::Button::new("Save"))
-                    .clicked()
-                {
-                    result = SaveAwePresetResult::Save;
-                    *open = false;
-                }
-            });
-        });
+        ui.add_space(12.0);
+        match dialog_button_row(ui, "Save", !name.trim().is_empty()) {
+            DialogButton::Cancel => {
+                result = SaveAwePresetResult::Cancelled;
+                *open = false;
+            }
+            DialogButton::Confirm => {
+                result = SaveAwePresetResult::Save;
+                *open = false;
+            }
+            DialogButton::None => {}
+        }
+    });
 
     result
 }
@@ -1085,24 +1070,20 @@ pub fn show_confirm_dialog(
 ) -> Option<bool> {
     let mut result = None;
 
-    egui::Window::new(title)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-        .show(ctx, |ui| {
-            ui.label(message);
-            ui.add_space(16.0);
-            ui.horizontal(|ui| {
-                if ui.button("OK").clicked() {
-                    result = Some(true);
-                    *open = false;
-                }
-                if ui.button("Cancel").clicked() {
-                    result = Some(false);
-                    *open = false;
-                }
-            });
+    modal_window(ctx, title, |ui| {
+        ui.label(message);
+        ui.add_space(16.0);
+        ui.horizontal(|ui| {
+            if ui.button("OK").clicked() {
+                result = Some(true);
+                *open = false;
+            }
+            if ui.button("Cancel").clicked() {
+                result = Some(false);
+                *open = false;
+            }
         });
+    });
 
     result
 }

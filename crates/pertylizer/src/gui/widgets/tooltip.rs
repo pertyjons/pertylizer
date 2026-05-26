@@ -53,20 +53,21 @@ fn render_tooltip(ui: &Ui, pos: Pos2, text: &str, accent_color: Color32) {
         .ctx()
         .layer_painter(LayerId::new(Order::Tooltip, egui::Id::new("value_tooltip")));
 
-    let tooltip_bg = Color32::from_rgba_unmultiplied(30, 30, 35, 240);
+    let bg = t.colors.bg_dark;
+    let tooltip_bg = Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), 240);
 
     let galley = painter.layout_no_wrap(text.to_string(), t.fonts.small(), t.colors.text_primary);
     let padding = Vec2::new(6.0, 3.0);
     let text_rect = egui::Rect::from_min_size(pos, galley.size() + padding * 2.0);
 
     // Background
-    painter.rect_filled(text_rect, 3.0, tooltip_bg);
+    painter.rect_filled(text_rect, t.style.corner_radius_small, tooltip_bg);
 
     // Border with accent color
     painter.rect_stroke(
         text_rect,
-        3.0,
-        Stroke::new(1.0, accent_color.gamma_multiply(0.6)),
+        t.style.corner_radius_small,
+        Stroke::new(t.style.border_width, accent_color.gamma_multiply(0.6)),
         egui::StrokeKind::Inside,
     );
 

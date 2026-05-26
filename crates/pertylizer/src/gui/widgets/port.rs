@@ -151,22 +151,13 @@ impl PortWidget {
                     egui::Id::new("port_label"),
                 ));
 
-                let galley = top_painter.layout_no_wrap(
-                    label_text.clone(),
-                    egui::FontId::proportional(10.0),
-                    color,
-                );
+                let font = theme().fonts.small();
+                let galley = top_painter.layout_no_wrap(label_text.clone(), font.clone(), color);
                 let text_rect = anchor.anchor_size(label_pos, galley.size());
                 let bg_rect = text_rect.expand(3.0);
                 top_painter.rect_filled(bg_rect, 3.0, Color32::from_black_alpha(200));
 
-                top_painter.text(
-                    label_pos,
-                    anchor,
-                    label_text,
-                    egui::FontId::proportional(10.0),
-                    color,
-                );
+                top_painter.text(label_pos, anchor, label_text, font, color);
             }
         }
 

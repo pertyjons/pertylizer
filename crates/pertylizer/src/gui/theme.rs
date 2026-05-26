@@ -578,8 +578,10 @@ impl Colors {
 /// Font settings.
 #[derive(Debug, Clone, Copy)]
 pub struct Fonts {
-    /// Large font size (titles, headings).
+    /// Large font size (titles).
     pub size_large: f32,
+    /// Heading font size (section headers).
+    pub size_heading: f32,
     /// Normal font size (labels, parameters).
     pub size_normal: f32,
     /// Small font size (values, hints, port labels).
@@ -590,14 +592,20 @@ impl Fonts {
     pub const fn default_fonts() -> Self {
         Self {
             size_large: 24.0,
+            size_heading: 16.0,
             size_normal: 14.0,
             size_small: 10.0,
         }
     }
 
-    /// Get a FontId for large text (titles, headings).
+    /// Get a FontId for large text (titles).
     pub fn large(&self) -> FontId {
         FontId::proportional(self.size_large)
+    }
+
+    /// Get a FontId for section headings.
+    pub fn heading(&self) -> FontId {
+        FontId::proportional(self.size_heading)
     }
 
     /// Get a FontId for normal text (labels, parameters).

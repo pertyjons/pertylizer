@@ -15,13 +15,14 @@ pub fn draw_oscilloscope(
     color: Color32,
 ) {
     let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let t = theme();
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 4.0, theme().colors.bg_dark);
+    painter.rect_filled(rect, t.style.corner_radius, t.colors.bg_dark);
 
     // Draw grid
-    let grid_color = Color32::from_rgba_premultiplied(60, 65, 75, 100);
+    let grid_color = t.colors.border;
 
     // Horizontal center line
     let center_y = rect.center().y;
@@ -30,7 +31,7 @@ pub fn draw_oscilloscope(
             Pos2::new(rect.left(), center_y),
             Pos2::new(rect.right(), center_y),
         ],
-        Stroke::new(1.0, grid_color),
+        Stroke::new(t.style.border_width, grid_color),
     );
 
     // Vertical grid lines
@@ -38,7 +39,7 @@ pub fn draw_oscilloscope(
         let x = rect.left() + rect.width() * (i as f32 / 4.0);
         painter.line_segment(
             [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
-            Stroke::new(1.0, grid_color),
+            Stroke::new(t.style.border_width, grid_color),
         );
     }
 
@@ -47,8 +48,8 @@ pub fn draw_oscilloscope(
     // Border
     painter.rect_stroke(
         rect,
-        4.0,
-        Stroke::new(1.0, theme().colors.border),
+        t.style.corner_radius,
+        Stroke::new(t.style.border_width, t.colors.border),
         eframe::egui::StrokeKind::Outside,
     );
 }
@@ -67,13 +68,14 @@ pub fn draw_oscilloscope_with_trigger(
     trigger_level: Option<f32>,
 ) {
     let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let t = theme();
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 4.0, theme().colors.bg_dark);
+    painter.rect_filled(rect, t.style.corner_radius, t.colors.bg_dark);
 
     // Draw grid
-    let grid_color = Color32::from_rgba_premultiplied(60, 65, 75, 100);
+    let grid_color = t.colors.border;
 
     // Horizontal center line
     let center_y = rect.center().y;
@@ -82,7 +84,7 @@ pub fn draw_oscilloscope_with_trigger(
             Pos2::new(rect.left(), center_y),
             Pos2::new(rect.right(), center_y),
         ],
-        Stroke::new(1.0, grid_color),
+        Stroke::new(t.style.border_width, grid_color),
     );
 
     // Vertical grid lines
@@ -90,7 +92,7 @@ pub fn draw_oscilloscope_with_trigger(
         let x = rect.left() + rect.width() * (i as f32 / 4.0);
         painter.line_segment(
             [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
-            Stroke::new(1.0, grid_color),
+            Stroke::new(t.style.border_width, grid_color),
         );
     }
 
@@ -100,13 +102,14 @@ pub fn draw_oscilloscope_with_trigger(
         let bipolar = level * 2.0 - 1.0;
         let half_height = (height - 8.0) / 2.0;
         let trigger_y = center_y - bipolar.clamp(-1.0, 1.0) * half_height;
-        let trigger_color = Color32::from_rgba_premultiplied(255, 200, 50, 120);
+        let ay = t.colors.accent_yellow;
+        let trigger_color = Color32::from_rgba_premultiplied(ay.r(), ay.g(), ay.b(), 120);
         painter.line_segment(
             [
                 Pos2::new(rect.left(), trigger_y),
                 Pos2::new(rect.right(), trigger_y),
             ],
-            Stroke::new(1.0, trigger_color),
+            Stroke::new(t.style.border_width, trigger_color),
         );
     }
 
@@ -115,8 +118,8 @@ pub fn draw_oscilloscope_with_trigger(
     // Border
     painter.rect_stroke(
         rect,
-        4.0,
-        Stroke::new(1.0, theme().colors.border),
+        t.style.corner_radius,
+        Stroke::new(t.style.border_width, t.colors.border),
         eframe::egui::StrokeKind::Outside,
     );
 }

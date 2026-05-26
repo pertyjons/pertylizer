@@ -600,86 +600,7 @@ impl eframe::App for SynthApp {
         // Poll for engine events (note feedback, etc.)
         // This ensures the GUI keyboard reflects what the engine is actually playing,
         // regardless of whether notes came from MIDI, sequencer, or GUI.
-        while let Some(event) = self.handle.poll_event() {
-            match event {
-                EngineEvent::NoteTriggered { note, velocity, .. } => {
-                    self.keyboard.set_note_on(note, velocity);
-                }
-                EngineEvent::NoteReleased { note, .. } => {
-                    self.keyboard.set_note_off(note);
-                    self.pressed_keys.remove(&note.as_u8());
-                }
-                EngineEvent::AllNotesReleased => {
-                    self.keyboard.clear_pressed();
-                    self.pressed_keys.clear();
-                }
-                EngineEvent::KeyRangeLearned {
-                    instrument_id,
-                    key_range,
-                    learn_state,
-                } => {
-                    // Update the instrument's UI state with the learned key range
-                    if let Some(inst) = self.instruments.iter_mut().find(|i| i.id == instrument_id)
-                    {
-                        inst.key_range = key_range;
-                        inst.learn_state = learn_state;
-                    }
-                }
-                EngineEvent::RecordingPreview {
-                    completed,
-                    held,
-                    pattern_length,
-                } => {
-                    self.sequencer_view_state.recording_preview_completed = completed;
-                    self.sequencer_view_state.recording_preview_held = held;
-                    self.sequencer_view_state.recording_preview_pattern_length = pattern_length;
-                }
-                EngineEvent::RecordedNotesFlushed {
-                    pattern_id,
-                    notes,
-                    overdub,
-                } => {
-                    // Write recorded notes into the pattern (on UI thread, safe to lock).
-                    // Known limitation: if the song lock is poisoned, recorded notes are
-                    // silently dropped. Buffering for retry adds complexity for a scenario
-                    // that is extremely unlikely since only the UI thread writes.
-                    {
-                        let mut song = self.song.write();
-                        if let Some(pattern) = song.pattern_mut(pattern_id) {
-                            if !overdub {
-                                pattern.clear_notes();
-                            }
-                            let instrument = self.sequencer_view_state.recording_instrument;
-                            for note in &notes {
-                                let nid = pattern.add_note(
-                                    note.start,
-                                    note.pitch,
-                                    note.velocity,
-                                    instrument,
-                                );
-                                if let Some(n) = pattern.note_mut(nid) {
-                                    n.duration = Some(note.duration);
-                                }
-                            }
-                        } else {
-                            eprintln!(
-                                "RecordedNotesFlushed: pattern {pattern_id:?} not found, {} notes dropped",
-                                notes.len()
-                            );
-                        }
-                    }
-                    self.mark_dirty();
-
-                    // Clear preview — notes are now committed
-                    self.sequencer_view_state
-                        .recording_preview_completed
-                        .clear();
-                    self.sequencer_view_state.recording_preview_held.clear();
-                }
-                // Other events (meters, etc.) are handled elsewhere
-                _ => {}
-            }
-        }
+        self.poll_engine_events();
 
         // Poll MCP pending auto-layout.
         //
@@ -696,125 +617,13 @@ impl eframe::App for SynthApp {
         #[cfg(not(feature = "mcp"))]
         let mcp_auto_layout = false;
 
-        // Single revision-gated drain for everything MCP project I/O
-        // pushes back to the GUI: the refresh queue, source path, and
-        // status line. `project_revision` is the lock-free fast path —
-        // when nothing has happened we don't touch any mutex.
+        // Drain MCP project I/O, GUI mirror payloads, and AWE-state sync, then
+        // reconcile module add/removes the MCP side performed.
         #[cfg(feature = "mcp")]
-        if let Some(shared) = self.mcp_shared.as_ref().map(std::sync::Arc::clone) {
-            let current_rev = shared
-                .project_revision
-                .load(std::sync::atomic::Ordering::Acquire);
-            if current_rev != self.last_seen_project_revision {
-                use crate::mcp_shared::ProjectRefresh;
-
-                // Load / new stash a refresh; save leaves it empty.
-                let refresh = shared
-                    .pending_project_refresh
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .take();
-                if let Some(refresh) = refresh {
-                    match refresh {
-                        ProjectRefresh::Loaded(project) => {
-                            self.current_project_path = shared
-                                .last_loaded_project_path
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .clone();
-                            self.refresh_ui_from_project(&project);
-                            self.dirty = false;
-                        }
-                        ProjectRefresh::Reset => {
-                            self.refresh_ui_after_reset();
-                            self.current_project_path = None;
-                            self.current_patch_name = "Init".to_string();
-                            self.current_patch_path = None;
-                            self.dirty = false;
-                        }
-                    }
-                }
-
-                // Surface the most recent I/O outcome (success or error)
-                // in the status line.
-                let status = shared
-                    .last_project_io_status
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone();
-                if let Some(status) = status {
-                    let msg = match status {
-                        Ok(m) => m,
-                        Err(e) => format!("Error: {e}"),
-                    };
-                    self.dialog_state.set_status(msg);
-                }
-
-                self.last_seen_project_revision = current_rev;
-            }
+        {
+            self.drain_mcp_state();
+            self.reconcile_with_session();
         }
-
-        // Revision-gated drain of MCP→GUI one-shot mirror payloads
-        // (`pending_patch`, `pending_awe_state`). Same shape as the
-        // `project_revision` drain just above.
-        #[cfg(feature = "mcp")]
-        if let Some(shared) = self.mcp_shared.as_ref().map(std::sync::Arc::clone) {
-            let current_rev = shared
-                .gui_revision
-                .load(std::sync::atomic::Ordering::Acquire);
-            if current_rev != self.last_seen_gui_revision {
-                let pending_patch = shared
-                    .pending_patch
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .take();
-                if let Some((patch, name)) = pending_patch {
-                    self.current_patch_name = name;
-                    self.current_patch_path = None;
-                    self.load_patch_data(&patch);
-                }
-
-                let pending_awe = shared
-                    .pending_awe_state
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .take();
-                if let Some(awe_state) = pending_awe {
-                    self.awe_enabled = awe_state.enabled;
-                    self.awe_ui.restore_from(&awe_state);
-                    crate::project_apply::apply_awe_state(
-                        &self.handle.command_sender(),
-                        &awe_state,
-                    );
-                }
-
-                self.last_seen_gui_revision = current_rev;
-            }
-        }
-
-        // Sync AWE state to MCP shared state
-        #[cfg(feature = "mcp")]
-        if let Some(shared) = &self.mcp_shared {
-            if let Ok(mut awe_state) = shared.awe_state.lock() {
-                *awe_state = self.awe_ui.to_awe_state(self.awe_enabled);
-            }
-            // The edit-in-progress flag (set last frame in draw_controls) decides
-            // direction: while editing, GUI is source of truth; otherwise let MCP
-            // writes flow back.
-            if let Ok(mut desc) = shared.awe_description.lock()
-                && *desc != self.awe_ui.description
-            {
-                if self.awe_ui.description_edit_in_progress {
-                    desc.clone_from(&self.awe_ui.description);
-                } else {
-                    self.awe_ui.description.clone_from(&desc);
-                }
-            }
-        }
-
-        // Reconcile with session: detect modules added/removed by MCP
-        #[cfg(feature = "mcp")]
-        self.reconcile_with_session();
 
         // Handle keyboard input
         self.process_keyboard_input(ctx);
@@ -845,378 +654,14 @@ impl eframe::App for SynthApp {
         // Top menu bar
         egui::Panel::top("menu_bar").show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    // --- Project ---
-                    if ui
-                        .button(format!("{} New Project", ri::FILE_ADD_LINE))
-                        .clicked()
-                    {
-                        if self.dirty {
-                            self.unsaved_dialog.pending_action = Some(PendingAction::NewProject);
-                            self.unsaved_dialog.open = true;
-                        } else {
-                            self.reset_to_new_project();
-                            self.dirty = false;
-                            self.dialog_state
-                                .set_status("New project created".to_string());
-                        }
-                        ui.close();
-                    }
-                    if ui
-                        .button(format!("{} Open Project...", ri::FOLDER_OPEN_LINE))
-                        .clicked()
-                    {
-                        if self.dirty {
-                            self.unsaved_dialog.pending_action = Some(PendingAction::OpenProject);
-                            self.unsaved_dialog.open = true;
-                        } else {
-                            let initial_dir = self.resolve_project_dir();
-                            self.dialog_state
-                                .open_open_project_dialog(initial_dir.as_deref());
-                        }
-                        ui.close();
-                    }
-                    if ui
-                        .button(format!("{} Save Project", ri::SAVE_LINE))
-                        .clicked()
-                    {
-                        self.save_current_project();
-                        ui.close();
-                    }
-                    if ui
-                        .button(format!("{} Save Project As...", ri::SAVE_LINE))
-                        .clicked()
-                    {
-                        let has_samples =
-                            self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
-                        let fallback =
-                            format!("project.{}", crate::project::project_extension(has_samples));
-                        let default_name = self
-                            .current_project_path
-                            .as_ref()
-                            .and_then(|p| p.file_name())
-                            .and_then(|n| n.to_str())
-                            .map_or(fallback, ToString::to_string);
-                        let initial_dir = self.resolve_project_dir();
-                        self.dialog_state
-                            .open_save_project_dialog(&default_name, initial_dir.as_deref());
-                        ui.close();
-                    }
-                    // --- Recent Projects ---
-                    ui.menu_button(format!("{} Recent Projects", ri::HISTORY_LINE), |ui| {
-                        let projects = self.settings.recent_projects.clone();
-                        if projects.is_empty() {
-                            ui.label("(none)");
-                        } else {
-                            for path in &projects {
-                                let label =
-                                    path.file_name().and_then(|n| n.to_str()).unwrap_or("???");
-                                let btn =
-                                    ui.button(label).on_hover_text(path.display().to_string());
-                                if btn.clicked() {
-                                    if self.dirty {
-                                        self.unsaved_dialog.pending_action =
-                                            Some(PendingAction::LoadProject(path.clone()));
-                                        self.unsaved_dialog.open = true;
-                                    } else {
-                                        self.load_recent_project(path.clone());
-                                    }
-                                    ui.close();
-                                }
-                            }
-                            ui.separator();
-                            if ui.button("Clear Recent").clicked() {
-                                self.settings.clear_recent_projects();
-                                self.settings.save();
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.separator();
+                self.menu_file(ui, ctx);
 
-                    // --- Patch ---
-                    if ui
-                        .button(format!("{} New Patch", ri::FILE_ADD_LINE))
-                        .clicked()
-                    {
-                        self.reset_to_new_patch();
-                        self.dialog_state
-                            .set_status("New patch created".to_string());
-                        ui.close();
-                    }
-                    if ui
-                        .button(format!("{} Open Patch...", ri::FOLDER_OPEN_LINE))
-                        .clicked()
-                    {
-                        let initial_dir = self.resolve_open_dir();
-                        self.dialog_state
-                            .open_open_patch_dialog(initial_dir.as_deref());
-                        ui.close();
-                    }
-                    if ui
-                        .button(format!("{} Load Built-in...", ri::FOLDER_OPEN_LINE))
-                        .clicked()
-                    {
-                        self.dialog_state.show_load_patch = true;
-                        ui.close();
-                    }
-                    if ui
-                        .button(format!("{} Save Patch...", ri::SAVE_LINE))
-                        .clicked()
-                    {
-                        let default_name = format!(
-                            "{}.json",
-                            self.current_patch_name.to_lowercase().replace(' ', "_")
-                        );
-                        let initial_dir = self.resolve_save_dir();
-                        self.dialog_state
-                            .open_save_patch_dialog(&default_name, initial_dir.as_deref());
-                        ui.close();
-                    }
-                    ui.separator();
-                    ui.menu_button(format!("{} Example Patches", ri::FILE_LIST_LINE), |ui| {
-                        for (category, patches) in categorized_patches() {
-                            ui.menu_button(category, |ui| {
-                                for patch in patches {
-                                    if ui.button(&patch.name).clicked() {
-                                        self.load_patch_data(&patch);
-                                        self.current_patch_name = patch.name.clone();
-                                        self.dialog_state
-                                            .set_status(format!("Loaded: {}", patch.name));
-                                        ui.close();
-                                    }
-                                }
-                            });
-                        }
-                    });
-                    ui.separator();
-                    if ui
-                        .button(format!("{} Export WAV...", ri::DOWNLOAD_LINE))
-                        .clicked()
-                    {
-                        // Pre-fill duration from song length
-                        let song_secs = self.song.read().length_seconds();
-                        self.dialog_state
-                            .export_state
-                            .set_duration_from_song(song_secs);
-                        // Open file dialog to choose WAV path
-                        let default_name = "export.wav".to_string();
-                        let initial_dir = self.resolve_project_dir();
-                        self.dialog_state
-                            .open_export_wav_dialog(&default_name, initial_dir.as_deref());
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .button(format!("{} Settings...", ri::SETTINGS_LINE))
-                        .clicked()
-                    {
-                        // Reload settings from disk to pick up changes
-                        // made outside the dialog (e.g. last_open_dir)
-                        self.settings = AppSettings::load();
-                        self.dialog_state.show_settings = true;
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button(format!("{} Quit", ri::SHUT_DOWN_LINE)).clicked() {
-                        if self.dirty {
-                            self.unsaved_dialog.pending_action = Some(PendingAction::Quit);
-                            self.unsaved_dialog.open = true;
-                        } else {
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                        ui.close();
-                    }
-                });
-
-                ui.menu_button("Edit", |ui| {
-                    let undo_label = format!("{} Undo", ri::ARROW_GO_BACK_LINE);
-                    let redo_label = format!("{} Redo", ri::ARROW_GO_FORWARD_LINE);
-                    if ui
-                        .add_enabled(
-                            self.undo_manager.can_undo(),
-                            egui::Button::new(&undo_label).shortcut_text("Ctrl+Z"),
-                        )
-                        .clicked()
-                    {
-                        self.execute_undo();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            self.undo_manager.can_redo(),
-                            egui::Button::new(&redo_label).shortcut_text("Ctrl+Shift+Z"),
-                        )
-                        .clicked()
-                    {
-                        self.execute_redo();
-                        ui.close();
-                    }
-                    ui.separator();
-                    let has_selection = self
-                        .active_patch_editor_ref()
-                        .is_some_and(|e| !e.effective_selection().is_empty());
-                    if ui
-                        .add_enabled(
-                            has_selection,
-                            egui::Button::new(format!("{} Copy", ri::FILE_COPY_LINE))
-                                .shortcut_text("Ctrl+C"),
-                        )
-                        .clicked()
-                    {
-                        self.copy_selected_modules();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            !self.clipboard.is_empty(),
-                            egui::Button::new(format!("{} Paste", ri::CLIPBOARD_LINE))
-                                .shortcut_text("Ctrl+V"),
-                        )
-                        .clicked()
-                    {
-                        self.paste_modules_at_offset();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            has_selection,
-                            egui::Button::new(format!("{} Duplicate", ri::FILE_COPY_2_LINE))
-                                .shortcut_text("Ctrl+D"),
-                        )
-                        .clicked()
-                    {
-                        self.duplicate_selected_modules();
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .button(format!("{} Optimize Project", ri::DELETE_BIN_LINE))
-                        .on_hover_text("Remove unused patterns, tracks, and instruments")
-                        .clicked()
-                    {
-                        self.optimize_project();
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .add(
-                            egui::Button::new(format!("{} Analyze Patch…", ri::FILE_SEARCH_LINE))
-                                .shortcut_text("Ctrl+Shift+A"),
-                        )
-                        .on_hover_text("Open the offline analyze view for the active instrument")
-                        .clicked()
-                    {
-                        self.analyze_window.open();
-                        ui.close();
-                    }
-                });
-
-                ui.menu_button("Help", |ui| {
-                    if ui.button("About").clicked() {
-                        self.dialog_state.show_about = true;
-                        ui.close();
-                    }
-                });
+                self.menu_edit(ui);
+                self.menu_help(ui);
 
                 // View selector — segmented control (right after Help menu)
                 ui.separator();
-                {
-                    let t = theme();
-                    let views: [(AppView, &str); 5] = [
-                        (AppView::Rack, &format!("{} Rack", ri::LAYOUT_GRID_FILL)),
-                        (
-                            AppView::AcousticWorld,
-                            &format!("{} AWE", ri::SURROUND_SOUND_FILL),
-                        ),
-                        (AppView::Pattern, &format!("{} Pattern", ri::PIANO_FILL)),
-                        (AppView::Sequencer, &format!("{} Seq", ri::PLAY_LIST_FILL)),
-                        (AppView::Sample, &format!("{} Sample", ri::MUSIC_FILL)),
-                    ];
-                    let seg_w = 80.0_f32;
-                    let seg_h = 22.0_f32;
-                    let rounding: u8 = 5;
-                    let total_w = seg_w * views.len() as f32;
-                    let (outer_rect, _) =
-                        ui.allocate_exact_size(egui::vec2(total_w, seg_h), egui::Sense::hover());
-                    let painter = ui.painter_at(outer_rect);
-
-                    painter.rect_stroke(
-                        outer_rect,
-                        egui::CornerRadius::same(rounding),
-                        egui::Stroke::new(1.0, t.colors.border),
-                        egui::StrokeKind::Inside,
-                    );
-
-                    for (i, (view, label)) in views.iter().enumerate() {
-                        let is_active = self.active_view == *view;
-                        let x = outer_rect.left() + seg_w * i as f32;
-                        let seg_rect = egui::Rect::from_min_size(
-                            egui::pos2(x, outer_rect.top()),
-                            egui::vec2(seg_w, seg_h),
-                        );
-
-                        let seg_rounding = if i == 0 {
-                            egui::CornerRadius {
-                                nw: rounding,
-                                sw: rounding,
-                                ne: 0,
-                                se: 0,
-                            }
-                        } else if i == views.len() - 1 {
-                            egui::CornerRadius {
-                                nw: 0,
-                                sw: 0,
-                                ne: rounding,
-                                se: rounding,
-                            }
-                        } else {
-                            egui::CornerRadius::ZERO
-                        };
-
-                        if is_active {
-                            painter.rect_filled(
-                                seg_rect,
-                                seg_rounding,
-                                t.colors.accent_primary.gamma_multiply(0.55),
-                            );
-                        }
-
-                        if i > 0 {
-                            let prev_active = self.active_view == views[i - 1].0;
-                            if !is_active && !prev_active {
-                                let top = seg_rect.top() + 4.0;
-                                let bot = seg_rect.bottom() - 4.0;
-                                painter.line_segment(
-                                    [egui::pos2(x, top), egui::pos2(x, bot)],
-                                    egui::Stroke::new(1.0, t.colors.border),
-                                );
-                            }
-                        }
-
-                        let text_color = if is_active {
-                            t.colors.text_primary
-                        } else {
-                            t.colors.text_dim
-                        };
-                        painter.text(
-                            seg_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            label,
-                            egui::FontId::proportional(13.0),
-                            text_color,
-                        );
-
-                        let resp = ui.interact(
-                            seg_rect,
-                            ui.id().with(("view_seg", i)),
-                            egui::Sense::click(),
-                        );
-                        if resp.clicked() {
-                            self.active_view = *view;
-                        }
-                    }
-                }
+                self.render_view_selector(ui);
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
@@ -1253,369 +698,17 @@ impl eframe::App for SynthApp {
                     }
                     ui.separator();
                     // MIDI status indicator (with port selector on click)
-                    {
-                        let (icon, color, hover_text) = if self.midi_handler.is_connected() {
-                            let port_name = self
-                                .midi_handler
-                                .port_name()
-                                .unwrap_or("Unknown")
-                                .to_owned();
-                            (
-                                ri::PIANO_FILL,
-                                theme().colors.meter_green,
-                                format!("MIDI: connected to {port_name}"),
-                            )
-                        } else {
-                            (
-                                ri::PIANO_LINE,
-                                theme().colors.text_dim,
-                                "MIDI: not connected".to_owned(),
-                            )
-                        };
-                        let arrow = ri::ARROW_DOWN_S_FILL;
-                        let midi_label = RichText::new(format!("{icon} MIDI {arrow}")).color(color);
-                        let resp = ui.menu_button(midi_label, |ui| {
-                            ui.set_min_width(250.0);
-                            let ports = MidiHandler::list_ports();
-                            if ports.is_empty() {
-                                ui.label(
-                                    RichText::new("No MIDI ports available")
-                                        .color(theme().colors.text_dim),
-                                );
-                            } else {
-                                for port in &ports {
-                                    let is_current =
-                                        self.midi_handler.port_name() == Some(port.as_str());
-                                    let label = if is_current {
-                                        RichText::new(format!(
-                                            "{} {}",
-                                            ri::CHECKBOX_BLANK_CIRCLE_FILL,
-                                            port
-                                        ))
-                                        .color(theme().colors.meter_green)
-                                    } else {
-                                        RichText::new(format!("  {port}"))
-                                    };
-                                    if ui.button(label).clicked() {
-                                        if let Err(e) = self.midi_handler.connect_to(port) {
-                                            eprintln!("MIDI connection error: {e}");
-                                        }
-                                        ui.close();
-                                    }
-                                }
-                            }
-                        });
-                        resp.response.on_hover_text(hover_text);
-                    }
+                    self.render_midi_status(ui);
                     ui.separator();
                     // MCP connection status indicator
                     #[cfg(feature = "mcp")]
-                    if let Some(ref mcp) = self.mcp_shared {
-                        let listening = mcp.is_listening();
-                        let sessions = mcp.active_sessions();
-                        let (icon, label, color) = if sessions > 0 {
-                            (
-                                ri::ROBOT_2_FILL,
-                                format!("MCP ({})", sessions),
-                                theme().colors.meter_green,
-                            )
-                        } else if listening {
-                            (ri::ROBOT_2_LINE, "MCP".to_owned(), theme().colors.text_dim)
-                        } else {
-                            (
-                                ri::ROBOT_2_LINE,
-                                "MCP".to_owned(),
-                                theme().colors.accent_red,
-                            )
-                        };
-                        let resp = ui.label(RichText::new(format!("{icon} {label}")).color(color));
-                        if resp.hovered() {
-                            let tooltip = if sessions > 0 {
-                                let session_list = mcp.mcp_sessions.sessions();
-                                if session_list.is_empty() {
-                                    format!("MCP: {sessions} active session(s)")
-                                } else {
-                                    let mut text =
-                                        format!("MCP: {} active session(s)\n", session_list.len());
-                                    for s in &session_list {
-                                        text.push_str(&format!(
-                                            "\n  {} v{} (MCP {})",
-                                            s.client_name, s.client_version, s.protocol_version
-                                        ));
-                                    }
-                                    text
-                                }
-                            } else if listening {
-                                "MCP: listening (no active sessions)".to_owned()
-                            } else {
-                                "MCP: not running".to_owned()
-                            };
-                            resp.on_hover_text(tooltip);
-                        }
-                        ui.separator();
-                    }
+                    self.render_mcp_status(ui);
                     // OSC telemetry status indicator
                     #[cfg(feature = "osc")]
-                    {
-                        let osc_status = self
-                            .osc_shared
-                            .as_ref()
-                            .map_or(synth_osc::OscStatus::Off, |s| s.status());
-                        let (icon, label, color) = match osc_status {
-                            synth_osc::OscStatus::Connected => {
-                                (ri::BROADCAST_FILL, "OSC", theme().colors.meter_green)
-                            }
-                            synth_osc::OscStatus::Idle => {
-                                (ri::BROADCAST_LINE, "OSC", theme().colors.text_dim)
-                            }
-                            synth_osc::OscStatus::Off => {
-                                (ri::BROADCAST_LINE, "OSC", theme().colors.accent_red)
-                            }
-                        };
-                        let resp = ui.label(RichText::new(format!("{icon} {label}")).color(color));
-                        if resp.hovered() {
-                            resp.on_hover_text(match osc_status {
-                                synth_osc::OscStatus::Connected => "OSC: visualizer connected",
-                                synth_osc::OscStatus::Idle => "OSC: sending beacon (no visualizer)",
-                                synth_osc::OscStatus::Off => "OSC: disabled",
-                            });
-                        }
-                        ui.separator();
-                    }
+                    self.render_osc_status(ui);
                     // AWE (Acoustic World Engine) status indicator with preset menu
-                    {
-                        let presets = synth_awe::presets::awe_presets();
-                        let preset_name = self
-                            .awe_ui
-                            .selected_preset
-                            .and_then(|i| presets.get(i).map(|p| p.name.to_owned()));
-                        let (icon, color, hover_text) = if self.awe_enabled {
-                            let name = preset_name.as_deref().unwrap_or("Custom");
-                            (
-                                ri::SURROUND_SOUND_FILL,
-                                theme().colors.meter_green,
-                                format!("AWE: {name}"),
-                            )
-                        } else {
-                            (
-                                ri::SURROUND_SOUND_LINE,
-                                theme().colors.text_dim,
-                                "AWE: off".to_owned(),
-                            )
-                        };
-                        let arrow = ri::ARROW_DOWN_S_FILL;
-                        let awe_label = RichText::new(format!("{icon} AWE {arrow}")).color(color);
-                        let resp = ui.menu_button(awe_label, |ui| {
-                            ui.set_min_width(250.0);
-                            // Off option
-                            let is_off = !self.awe_enabled;
-                            let off_label = if is_off {
-                                RichText::new(format!("{} Off", ri::CHECKBOX_BLANK_CIRCLE_FILL))
-                                    .color(theme().colors.text_dim)
-                            } else {
-                                RichText::new("  Off")
-                            };
-                            if ui.button(off_label).clicked() {
-                                self.awe_enabled = false;
-                                self.awe_ui.selected_preset = None;
-                                self.handle
-                                    .send(EngineCommand::SetAweEnabled { enabled: false });
-                                self.mark_dirty();
-                                ui.close();
-                            }
-                            ui.separator();
-                            // Standard presets
-                            let standard: Vec<usize> = presets
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, p)| !p.name.starts_with("EXT:"))
-                                .map(|(i, _)| i)
-                                .collect();
-                            let extreme: Vec<usize> = presets
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, p)| p.name.starts_with("EXT:"))
-                                .map(|(i, _)| i)
-                                .collect();
-                            if !standard.is_empty() {
-                                for i in &standard {
-                                    let preset = &presets[*i];
-                                    let is_current =
-                                        self.awe_enabled && self.awe_ui.selected_preset == Some(*i);
-                                    let label = if is_current {
-                                        RichText::new(format!(
-                                            "{} {}",
-                                            ri::CHECKBOX_BLANK_CIRCLE_FILL,
-                                            preset.name
-                                        ))
-                                        .color(theme().colors.meter_green)
-                                    } else {
-                                        RichText::new(format!("  {}", preset.name))
-                                    };
-                                    if ui.button(label).on_hover_text(preset.description).clicked()
-                                    {
-                                        crate::gui::awe_view::apply_awe_preset(
-                                            *i,
-                                            preset,
-                                            &mut self.handle,
-                                            &mut self.awe_enabled,
-                                            &mut self.awe_ui,
-                                        );
-                                        self.mark_dirty();
-                                        ui.close();
-                                    }
-                                }
-                            }
-                            if !extreme.is_empty() {
-                                ui.separator();
-                                ui.label(RichText::new("Extreme").color(theme().colors.text_dim));
-                                for i in &extreme {
-                                    let preset = &presets[*i];
-                                    let is_current =
-                                        self.awe_enabled && self.awe_ui.selected_preset == Some(*i);
-                                    let label = if is_current {
-                                        RichText::new(format!(
-                                            "{} {}",
-                                            ri::CHECKBOX_BLANK_CIRCLE_FILL,
-                                            preset.name.trim_start_matches("EXT: ")
-                                        ))
-                                        .color(theme().colors.meter_green)
-                                    } else {
-                                        RichText::new(format!(
-                                            "  {}",
-                                            preset.name.trim_start_matches("EXT: ")
-                                        ))
-                                    };
-                                    if ui.button(label).on_hover_text(preset.description).clicked()
-                                    {
-                                        crate::gui::awe_view::apply_awe_preset(
-                                            *i,
-                                            preset,
-                                            &mut self.handle,
-                                            &mut self.awe_enabled,
-                                            &mut self.awe_ui,
-                                        );
-                                        self.mark_dirty();
-                                        ui.close();
-                                    }
-                                }
-                            }
-                        });
-                        resp.response.on_hover_text(hover_text);
-                        ui.separator();
-                    }
-                    // Instrument edit pencil — sits visually to the right of
-                    // the dropdown (right-to-left layout). Opens the active
-                    // instrument's edit window from any view; disabled when
-                    // no instrument is selected.
-                    let edit_btn = ui
-                        .add_enabled(
-                            self.active_instrument_id.is_some(),
-                            egui::Button::new(
-                                RichText::new(ri::EDIT_LINE).color(theme().colors.text_dim),
-                            )
-                            .frame(false)
-                            .small(),
-                        )
-                        .on_hover_text("Edit active instrument…");
-                    if edit_btn.clicked() {
-                        self.instrument_edit_target = self.active_instrument_id;
-                    }
-
-                    // Instrument selector dropdown (lives in the toolbar so
-                    // the active instrument can be switched independently of
-                    // the keyboard strip).
-                    let active_name = self
-                        .active_instrument_id
-                        .and_then(|id| self.instruments.iter().find(|i| i.id == id))
-                        .map(|i| i.name.as_str())
-                        .unwrap_or("(none)");
-                    let menu_label = RichText::new(format!(
-                        "{} {active_name} {}",
-                        ri::MUSIC_2_FILL,
-                        ri::ARROW_DOWN_S_FILL
-                    ))
-                    .color(theme().colors.accent_cyan);
-                    ui.menu_button(menu_label, |ui| {
-                        if ui
-                            .button(
-                                RichText::new(format!("{} New Instrument", ri::ADD_LINE))
-                                    .color(theme().colors.accent_green),
-                            )
-                            .clicked()
-                        {
-                            self.add_new_instrument();
-                            ui.close();
-                        }
-                        ui.separator();
-                        if self.instruments.is_empty() {
-                            ui.label(
-                                RichText::new("No instruments").color(theme().colors.text_dim),
-                            );
-                        } else {
-                            // Capture id/name pairs first so we can mutate
-                            // state inside the menu without borrowing
-                            // `self.instruments` immutably.
-                            let rows: Vec<(InstrumentId, String, bool)> = self
-                                .instruments
-                                .iter()
-                                .map(|inst| {
-                                    (
-                                        inst.id,
-                                        inst.name.clone(),
-                                        Some(inst.id) == self.active_instrument_id,
-                                    )
-                                })
-                                .collect();
-                            for (id, name, is_active) in rows {
-                                ui.horizontal(|ui| {
-                                    let label = if is_active {
-                                        RichText::new(format!(
-                                            "{} {}",
-                                            ri::CHECKBOX_BLANK_CIRCLE_FILL,
-                                            name
-                                        ))
-                                        .color(theme().colors.accent_cyan)
-                                    } else {
-                                        RichText::new(format!("  {}", name))
-                                    };
-                                    if ui.button(label).clicked() {
-                                        self.active_instrument_id = Some(id);
-                                        self.handle.set_focused_instrument(Some(id));
-                                        ui.close();
-                                    }
-                                    // Per-row actions menu.
-                                    ui.menu_button(
-                                        RichText::new(ri::MORE_FILL).color(theme().colors.text_dim),
-                                        |ui| {
-                                            if ui
-                                                .button(format!("{} Rename / edit…", ri::EDIT_LINE))
-                                                .clicked()
-                                            {
-                                                self.instrument_edit_target = Some(id);
-                                                ui.close();
-                                            }
-                                            ui.separator();
-                                            if ui
-                                                .button(
-                                                    RichText::new(format!(
-                                                        "{} Delete…",
-                                                        ri::DELETE_BIN_LINE
-                                                    ))
-                                                    .color(theme().colors.accent_red),
-                                                )
-                                                .clicked()
-                                            {
-                                                self.pending_instrument_delete = Some(id);
-                                                ui.close();
-                                            }
-                                        },
-                                    );
-                                });
-                            }
-                        }
-                    });
-                    ui.separator();
+                    self.render_awe_status(ui);
+                    self.render_instrument_selector(ui);
 
                     // Pencil edit icon (sits visually to the right of the title
                     // because right-to-left layout places later widgets further
@@ -1665,93 +758,9 @@ impl eframe::App for SynthApp {
         // Status bar at the very bottom: Glide + Octave on the left,
         // Latency / Voices / CPU on the right.
         // Declared before keyboard_panel so it ends up below the keyboard.
-        egui::Panel::bottom("status_bar")
-            .min_size(22.0)
-            .show_inside(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let t = theme();
+        self.render_status_bar(ui);
 
-                    // ── Left side: Octave +/- and Glide slider ──
-                    ui.label(
-                        RichText::new(format!("Octave: {:+}", self.keyboard.octave_offset()))
-                            .color(t.colors.text_secondary)
-                            .small(),
-                    );
-                    if ui.small_button("-").clicked() {
-                        let new_offset = self.keyboard.octave_offset() - 1;
-                        self.keyboard.set_octave_offset(new_offset);
-                    }
-                    if ui.small_button("+").clicked() {
-                        let new_offset = self.keyboard.octave_offset() + 1;
-                        self.keyboard.set_octave_offset(new_offset);
-                    }
-                    ui.separator();
-
-                    ui.label(RichText::new("Glide:").color(t.colors.text_dim).small());
-                    let mut glide_val = self.glide_time.as_f32();
-                    let glide_response = ui
-                        .add(
-                            egui::Slider::new(&mut glide_val, 0.0..=2.0)
-                                .suffix(" s")
-                                .fixed_decimals(2)
-                                .custom_formatter(|v, _| {
-                                    if v < 0.001 {
-                                        "Off".to_string()
-                                    } else {
-                                        format!("{v:.2}s")
-                                    }
-                                }),
-                        )
-                        .on_hover_text("Portamento glide time between notes");
-                    if glide_response.changed() {
-                        self.glide_time = synth_core::Seconds::new(glide_val);
-                        self.handle
-                            .send(EngineCommand::SetGlideTime(self.glide_time));
-                    }
-
-                    // ── Right side: CPU / Voices / Latency ──
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let cpu = self.handle.cpu_usage();
-                        let cpu_color = if cpu > 0.8 {
-                            t.colors.meter_red
-                        } else if cpu > 0.5 {
-                            t.colors.meter_yellow
-                        } else {
-                            t.colors.meter_green
-                        };
-                        ui.label(
-                            RichText::new(format!("CPU: {:>3.0}%", cpu * 100.0)).color(cpu_color),
-                        );
-                        ui.separator();
-                        ui.label(
-                            RichText::new(format!("Voices: {:>3}", self.handle.voice_count()))
-                                .color(t.colors.text_secondary)
-                                .family(egui::FontFamily::Monospace),
-                        );
-                        ui.separator();
-                        ui.label(
-                            RichText::new(format!(
-                                "Latency: {:.1}ms",
-                                self.latency.as_secs_f64() * 1000.0
-                            ))
-                            .color(t.colors.text_dim),
-                        );
-                    });
-                });
-            });
-
-        // Bottom panel with keyboard (always visible)
-        // Render keyboard content in Order::Middle so it has input priority over
-        // module Areas (Order::Background) that may extend into the panel area.
-        egui::Panel::bottom("keyboard_panel")
-            .min_size(100.0)
-            .show_inside(ui, |ui| {
-                let layer_id =
-                    egui::LayerId::new(egui::Order::Middle, egui::Id::new("keyboard_layer"));
-                ui.scope_builder(egui::UiBuilder::new().layer_id(layer_id), |ui| {
-                    self.draw_keyboard(ui);
-                });
-            });
+        self.render_keyboard_panel(ui);
 
         // Main content - CentralPanel rendered LAST (normal egui order)
         // Module Areas are clipped to visible_rect in patch_editor.rs
@@ -1781,490 +790,9 @@ impl eframe::App for SynthApp {
                     // Left side panel: instrument list (mirrors sample_view layout).
                     // Acts as a primary picker; the dropdown above the keyboard
                     // stays as a backup.
-                    egui::Panel::left("instruments_panel")
-                        .default_size(180.0)
-                        .min_size(140.0)
-                        .show_inside(ui, |ui| {
-                            use egui_remixicon::icons as ri;
-                            let t = theme();
+                    self.render_instruments_panel(ui, active_id);
 
-                            ui.heading(
-                                RichText::new(format!("{} Instruments", ri::MUSIC_2_FILL))
-                                    .color(t.colors.text_primary),
-                            );
-                            ui.separator();
-
-                            let mut clicked: Option<InstrumentId> = None;
-                            let mut edit_requested: Option<InstrumentId> = None;
-                            egui::ScrollArea::vertical()
-                                .content_margin(egui::Margin::same(6))
-                                .show(ui, |ui| {
-                                    for inst in &self.instruments {
-                                        let is_active = inst.id == active_id;
-                                        let text_color = if is_active {
-                                            t.colors.text_primary
-                                        } else {
-                                            t.colors.text_secondary
-                                        };
-                                        ui.horizontal(|ui| {
-                                            let resp = ui.selectable_label(
-                                                is_active,
-                                                RichText::new(&inst.name).color(text_color),
-                                            );
-                                            if resp.clicked() && !is_active {
-                                                clicked = Some(inst.id);
-                                            }
-                                            if resp.double_clicked() {
-                                                edit_requested = Some(inst.id);
-                                            }
-                                            // Pencil icon on the right opens the
-                                            // edit window without changing the
-                                            // active instrument.
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                |ui| {
-                                                    let btn = ui.add(
-                                                        egui::Button::new(
-                                                            RichText::new(ri::EDIT_LINE)
-                                                                .color(t.colors.text_dim),
-                                                        )
-                                                        .frame(false)
-                                                        .small(),
-                                                    );
-                                                    if btn
-                                                        .on_hover_text("Edit instrument…")
-                                                        .clicked()
-                                                    {
-                                                        edit_requested = Some(inst.id);
-                                                    }
-                                                },
-                                            );
-                                        });
-                                    }
-                                });
-
-                            if let Some(id) = clicked {
-                                self.active_instrument_id = Some(id);
-                                self.handle.set_focused_instrument(Some(id));
-                            }
-                            if let Some(id) = edit_requested {
-                                self.instrument_edit_target = Some(id);
-                            }
-
-                            ui.add_space(8.0);
-                            if ui
-                                .button(
-                                    RichText::new(format!("{} New Instrument", ri::ADD_LINE))
-                                        .color(t.colors.accent_green),
-                                )
-                                .clicked()
-                            {
-                                self.add_new_instrument();
-                            }
-                        });
-
-                    egui::CentralPanel::default().show_inside(ui, |ui| {
-                        // Get the active instrument's patch editor
-                        let Some(patch_editor) = self
-                            .instruments
-                            .iter_mut()
-                            .find(|i| i.id == active_id)
-                            .map(|i| &mut i.patch_editor)
-                        else {
-                            // No active instrument - show error message
-                            ui.centered_and_justified(|ui| {
-                                ui.label("No active instrument selected");
-                            });
-                            return;
-                        };
-
-                        // Update sample list for sampler module dropdowns
-                        if let Ok(lib) = self.sample_library.read() {
-                            let list: Vec<(u64, String)> = lib
-                                .list()
-                                .iter()
-                                .map(|m| (m.id.0, m.name.clone()))
-                                .collect();
-                            patch_editor.set_sample_list(list);
-                        }
-
-                        // Get effect chain order from shared state
-                        let effect_chain_order: Vec<synth_engine::ModuleId> = self
-                            .session
-                            .list_instruments()
-                            .iter()
-                            .find(|s| s.id == active_id)
-                            .map(|s| s.effect_chain_order.clone())
-                            .unwrap_or_default();
-
-                        let audio_input_snapshot = crate::gui::patch_editor::AudioInputSnapshot {
-                            state: self.audio_input.state(),
-                            peak_level: self.audio_input.peak_level(),
-                            recorded_seconds: self.audio_input.recorded_seconds(),
-                        };
-                        let result = patch_editor.show(
-                            ui,
-                            &self.handle,
-                            active_id.as_u64(),
-                            &effect_chain_order,
-                            &audio_input_snapshot,
-                        );
-                        let had_mutations = result.has_mutations();
-
-                        // Route on the engine-side distinction between effect-chain
-                        // modules (separate ordered chain) and voice-graph modules
-                        // (everything else). This mirrors `session.set_parameter`,
-                        // so utility modules like Mod Matrix — which previously fell
-                        // through a category whitelist and had their edits silently
-                        // dropped — now reach shared state like every other module.
-                        for (module_id, param) in result.param_changes {
-                            if module_id.module_type.is_effect() {
-                                self.handle.send(EngineCommand::SetEffectParameter {
-                                    instrument_id: Some(active_id),
-                                    module_id,
-                                    param,
-                                });
-                            } else {
-                                self.handle.send(EngineCommand::SetModuleParameter {
-                                    instrument_id: Some(active_id),
-                                    module_id,
-                                    param,
-                                });
-
-                                if let synth_core::Param::Sampler(
-                                    synth_core::SamplerParam::SampleSelect(sample_id),
-                                ) = param
-                                    && let Ok(lib) = self.sample_library.read()
-                                    && let Some(sample) =
-                                        lib.get(synth_sampler::SampleId::new(sample_id.0))
-                                {
-                                    self.handle.send(EngineCommand::LoadSampleData {
-                                        instrument_id: active_id,
-                                        module_id,
-                                        data: std::sync::Arc::clone(&sample.data),
-                                        channels: sample.meta.channels,
-                                        frame_count: sample.meta.frame_count.as_usize(),
-                                        root_note: sample
-                                            .meta
-                                            .root_note
-                                            .unwrap_or(synth_core::MidiNote(60)),
-                                    });
-                                }
-                            }
-                        }
-
-                        // Handle module removal
-                        for module_id in result.modules_to_remove {
-                            // Check if this module has a visualization buffer to clean up
-                            let has_vis_buffer =
-                                patch_editor.module_descriptor(module_id).is_some_and(|d| {
-                                    d.category == ModuleCategory::Visualizer
-                                        || d.type_id.0 == "signal_monitor"
-                                        || d.type_id.0 == "inline_signal_monitor"
-                                });
-
-                            // Remove from session (registry + engine command)
-                            if let Err(e) = self.session.remove_module(active_id, module_id) {
-                                eprintln!("Failed to remove module {module_id:?}: {e}");
-                                continue;
-                            }
-
-                            patch_editor.remove_module(module_id);
-
-                            // Clean up visualization buffer if needed
-                            if has_vis_buffer {
-                                self.handle.remove_visualization_buffer(module_id);
-                            }
-                        }
-
-                        // Handle new connections - now synced with engine
-                        for connection in result.connections_to_add {
-                            patch_editor.add_connection(connection);
-
-                            self.undo_manager
-                                .push(crate::undo::UndoAction::AddConnection {
-                                    instrument_id: active_id,
-                                    connection,
-                                });
-
-                            // Send Connect command to engine (active instrument's voice graph)
-                            self.handle.send(EngineCommand::Connect {
-                                instrument_id: Some(active_id),
-                                from: PortId::new(connection.from_module, connection.from_port),
-                                to: PortId::new(connection.to_module, connection.to_port),
-                            });
-                        }
-
-                        // Handle removed connections - send Disconnect commands to engine
-                        for connection in result.connections_to_remove {
-                            self.undo_manager
-                                .push(crate::undo::UndoAction::RemoveConnection {
-                                    instrument_id: active_id,
-                                    connection,
-                                });
-
-                            self.handle.send(EngineCommand::Disconnect {
-                                instrument_id: Some(active_id),
-                                from: PortId::new(connection.from_module, connection.from_port),
-                                to: PortId::new(connection.to_module, connection.to_port),
-                            });
-                        }
-
-                        // Handle bypass toggles - send SetBypass commands to engine
-                        for (module_id, new_bypass_state) in result.bypass_toggles {
-                            self.handle.send(EngineCommand::SetBypass {
-                                instrument_id: Some(active_id),
-                                module: module_id,
-                                bypass: new_bypass_state,
-                            });
-                        }
-
-                        // Handle effect chain reorder requests
-                        for (module_id, direction) in result.reorder_effects {
-                            self.handle.send(EngineCommand::ReorderEffect {
-                                instrument_id: Some(active_id),
-                                module_id,
-                                direction,
-                            });
-                        }
-
-                        // Handle audio input actions from patch module
-                        if let Some(action) = result.audio_input_action {
-                            use crate::gui::patch_editor::AudioInputAction;
-                            match action {
-                                AudioInputAction::StartMonitoring => {
-                                    if let Some(host) = &self.host {
-                                        let device =
-                                            self.sample_view_state.selected_input_device.as_deref();
-                                        let config = synth_core::StreamConfig {
-                                            sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
-                                            buffer_size: synth_core::BufferSize::MEDIUM,
-                                            channels: synth_core::ChannelCount::Stereo,
-                                        };
-                                        match self.audio_input.start_monitoring(
-                                            host.as_ref(),
-                                            device,
-                                            &config,
-                                        ) {
-                                            Ok(()) => {
-                                                if let Some(consumer) =
-                                                    self.audio_input.take_engine_consumer()
-                                                {
-                                                    self.handle.send(
-                                                        EngineCommand::SetAudioInputConsumer {
-                                                            consumer,
-                                                        },
-                                                    );
-                                                }
-                                            }
-                                            Err(e) => {
-                                                self.dialog_state
-                                                    .set_status(format!("Input error: {e}"));
-                                            }
-                                        }
-                                    }
-                                }
-                                AudioInputAction::StopMonitoring => {
-                                    self.handle.send(EngineCommand::ClearAudioInputConsumer);
-                                    self.audio_input.stop_monitoring();
-                                }
-                                AudioInputAction::StartRecording => {
-                                    self.audio_input.start_recording();
-                                }
-                                AudioInputAction::StopRecording => {
-                                    if let Some(data) = self.audio_input.stop_recording() {
-                                        let channels = self.audio_input.channels();
-                                        let sample_rate = self.audio_input.sample_rate();
-                                        let frame_count = if channels > 0 {
-                                            data.len() / channels as usize
-                                        } else {
-                                            0
-                                        };
-                                        let sample = synth_sampler::Sample::new(
-                                            synth_sampler::SampleMeta {
-                                                id: synth_sampler::SampleId::new(0),
-                                                name: format!(
-                                                    "Recording {:.1}s",
-                                                    frame_count as f64 / f64::from(sample_rate.0)
-                                                ),
-                                                sample_rate,
-                                                channels: synth_core::ChannelCount::from(channels),
-                                                frame_count: synth_core::SampleCount::new(
-                                                    frame_count,
-                                                ),
-                                                root_note: None,
-                                                loop_region: None,
-                                                crop: None,
-                                                source: synth_sampler::SampleSource::Recorded,
-                                            },
-                                            data.into(),
-                                        );
-                                        if let Ok(mut lib) = self.sample_library.write() {
-                                            let id = lib.add(sample);
-                                            self.sample_view_state.selected_sample = Some(id);
-                                            self.sample_view_state.invalidate_peaks();
-                                        }
-                                        self.dialog_state.set_status("Recording saved");
-                                    }
-                                }
-                            }
-                        }
-
-                        // Handle signal monitor insertions — create inline monitor and rewire
-                        for connection in result.insert_signal_monitor_at {
-                            // Create signal monitor module (same DSP, different GUI descriptor)
-                            let mut m = synth_modules::SignalMonitor::new();
-
-                            // Build an inline descriptor: compact type_id, no parameters, just ports
-                            let inline_descriptor =
-                                synth_core::ModuleDescriptor::new("inline_signal_monitor", "Mon")
-                                    .description("Inline signal monitor (compact pass-through)")
-                                    .category(synth_core::ModuleCategory::Utility)
-                                    .port(synth_core::PortDescriptor::audio_input("in", "In"))
-                                    .port(synth_core::PortDescriptor::audio_output("out", "Out"));
-
-                            let monitor_id = {
-                                let mut counters = self.session.counters_lock();
-                                let counter = counters
-                                    .entry((active_id, synth_core::ModuleType::SignalMonitor))
-                                    .or_insert(0);
-                                *counter += 1;
-                                ModuleId::new(TypedModuleType::SignalMonitor, *counter)
-                            };
-
-                            // Position between the two connected modules
-                            let from_pos = patch_editor
-                                .get_module_data(connection.from_module)
-                                .map(|(_, pos, _)| pos);
-                            let to_pos = patch_editor
-                                .get_module_data(connection.to_module)
-                                .map(|(_, pos, _)| pos);
-                            let mid_pos = match (from_pos, to_pos) {
-                                (Some(a), Some(b)) => {
-                                    egui::Pos2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)
-                                }
-                                (Some(a), None) => egui::Pos2::new(a.x + 200.0, a.y),
-                                _ => egui::Pos2::new(100.0, 100.0),
-                            };
-
-                            patch_editor.add_module_at(
-                                monitor_id,
-                                inline_descriptor.clone(),
-                                mid_pos,
-                            );
-
-                            // Register in session so reconciliation doesn't remove it
-                            self.session.register_descriptor(
-                                active_id,
-                                monitor_id,
-                                inline_descriptor,
-                            );
-
-                            // Create shared vis buffer and inject into module
-                            let buffer = std::sync::Arc::new(
-                                synth_engine::visualizers::VisualizationBuffer::new(4096),
-                            );
-                            self.handle
-                                .add_visualization_buffer(monitor_id, buffer.clone());
-                            m.set_vis_sink(buffer);
-
-                            let module: Box<dyn synth_core::PolyModule> = Box::new(m);
-                            self.handle.send(EngineCommand::AddModuleInstance {
-                                instrument_id: Some(active_id),
-                                id: monitor_id,
-                                module,
-                            });
-
-                            // Wire: original_from → monitor "in", monitor "out" → original_to
-                            let conn_in = synth_engine::graph::Connection::new(
-                                connection.from_module,
-                                connection.from_port,
-                                monitor_id,
-                                "in",
-                            );
-                            let conn_out = synth_engine::graph::Connection::new(
-                                monitor_id,
-                                "out",
-                                connection.to_module,
-                                connection.to_port,
-                            );
-
-                            for c in [conn_in, conn_out] {
-                                patch_editor.add_connection(c);
-                                self.handle.send(EngineCommand::Connect {
-                                    instrument_id: Some(active_id),
-                                    from: PortId::new(c.from_module, c.from_port),
-                                    to: PortId::new(c.to_module, c.to_port),
-                                });
-                            }
-                        }
-
-                        // Handle quick-add requests (right-click on port → add module)
-                        for request in result.quick_add_requests {
-                            Self::handle_quick_add(
-                                &self.session,
-                                &mut self.handle,
-                                active_id,
-                                patch_editor,
-                                request,
-                            );
-                        }
-
-                        // Handle background context menu add (right-click on empty space or cable)
-                        if let Some((selection, world_pos, inline_cable)) = result.context_add {
-                            Self::handle_context_add(
-                                &self.session,
-                                &mut self.handle,
-                                active_id,
-                                patch_editor,
-                                selection,
-                                world_pos,
-                                inline_cable,
-                            );
-                        }
-
-                        // Handle group template actions (open browser / save template)
-                        if let Some(action) = result.group_template_action {
-                            match action {
-                                GroupTemplateAction::OpenBrowser { drop_pos } => {
-                                    self.dialog_state.show_group_templates = true;
-                                    self.dialog_state.group_template_drop_pos = Some(drop_pos);
-                                    self.dialog_state.group_template_selected = None;
-                                }
-                                GroupTemplateAction::SaveGroup { group_id } => {
-                                    self.dialog_state.show_save_group_template = true;
-                                    self.dialog_state.group_template_save_group = Some(group_id);
-                                    if let Some(name) = patch_editor.group_name(group_id) {
-                                        self.dialog_state.group_template_save_name = name;
-                                    }
-                                    self.dialog_state.group_template_save_description.clear();
-                                    self.dialog_state.group_template_save_category =
-                                        GroupCategory::default();
-                                }
-                            }
-                        }
-
-                        // Handle auto-layout request (from GUI menu or MCP).
-                        //
-                        // Only here do we clear the MCP pending flag —
-                        // a request issued while another view was
-                        // active waits until the next Rack frame.
-                        if result.request_auto_layout || mcp_auto_layout {
-                            patch_editor.apply_auto_layout(&effect_chain_order);
-                            self.mark_dirty();
-                            #[cfg(feature = "mcp")]
-                            if mcp_auto_layout && let Some(shared) = self.mcp_shared.as_ref() {
-                                shared
-                                    .pending_auto_layout
-                                    .store(false, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
-
-                        // Mark dirty if any mutations occurred
-                        if had_mutations {
-                            self.mark_dirty();
-                        }
-                    });
+                    self.render_rack_central(ui, active_id, mcp_auto_layout);
                 }
                 AppView::AcousticWorld => {
                     // Scan user presets on first view
@@ -2401,38 +929,12 @@ impl eframe::App for SynthApp {
                             self.audio_input.start_recording();
                         }
                         crate::gui::sample_view::SampleViewAction::StopRecording => {
-                            if let Some(data) = self.audio_input.stop_recording() {
-                                let channels = self.audio_input.channels();
-                                let sample_rate = self.audio_input.sample_rate();
-                                let frame_count = if channels > 0 {
-                                    data.len() / channels as usize
-                                } else {
-                                    0
-                                };
-                                let sample = synth_sampler::Sample::new(
-                                    synth_sampler::SampleMeta {
-                                        id: synth_sampler::SampleId::new(0),
-                                        name: format!(
-                                            "Recording {:.1}s",
-                                            frame_count as f64 / f64::from(sample_rate.0)
-                                        ),
-                                        sample_rate,
-                                        channels: synth_core::ChannelCount::from(channels),
-                                        frame_count: synth_core::SampleCount::new(frame_count),
-                                        root_note: None,
-                                        loop_region: None,
-                                        crop: None,
-                                        source: synth_sampler::SampleSource::Recorded,
-                                    },
-                                    data.into(),
-                                );
-                                if let Ok(mut lib) = self.sample_library.write() {
-                                    let id = lib.add(sample);
-                                    self.sample_view_state.selected_sample = Some(id);
-                                    self.sample_view_state.invalidate_peaks();
-                                }
-                                self.dialog_state.set_status("Recording saved");
-                            }
+                            Self::commit_recording_as_sample(
+                                &mut self.audio_input,
+                                &self.sample_library,
+                                &mut self.sample_view_state,
+                                &mut self.dialog_state,
+                            );
                         }
                     }
                 }
@@ -2497,6 +999,48 @@ impl eframe::App for SynthApp {
     }
 }
 
+/// Map a palette module category to its default `TypedModuleType`.
+/// Shared by quick-add and context-add; `None` for categories without a default.
+fn category_to_module_type(category: ModuleCategory) -> Option<TypedModuleType> {
+    match category {
+        ModuleCategory::Oscillator => Some(TypedModuleType::Oscillator),
+        ModuleCategory::Filter => Some(TypedModuleType::Filter),
+        ModuleCategory::Envelope => Some(TypedModuleType::Envelope),
+        ModuleCategory::LFO => Some(TypedModuleType::Lfo),
+        ModuleCategory::Amplifier => Some(TypedModuleType::Amplifier),
+        ModuleCategory::Mixer => Some(TypedModuleType::Mixer),
+        _ => None,
+    }
+}
+
+/// Map a palette effect type to its `TypedModuleType`.
+/// Shared by quick-add and context-add.
+fn effect_to_module_type(effect: EffectType) -> TypedModuleType {
+    match effect {
+        EffectType::Delay => TypedModuleType::Delay,
+        EffectType::Reverb => TypedModuleType::Reverb,
+        EffectType::Distortion => TypedModuleType::Distortion,
+        EffectType::Chorus => TypedModuleType::Chorus,
+        EffectType::Phaser => TypedModuleType::Phaser,
+        EffectType::Flanger => TypedModuleType::Flanger,
+        EffectType::Compressor => TypedModuleType::Compressor,
+        EffectType::Eq => TypedModuleType::Eq,
+        EffectType::Waveshaper => TypedModuleType::Waveshaper,
+        EffectType::MidSide => TypedModuleType::MidSide,
+        EffectType::BbdDelay => TypedModuleType::BbdDelay,
+        EffectType::Limiter => TypedModuleType::Limiter,
+        EffectType::Convolver => TypedModuleType::Convolver,
+        EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
+        EffectType::FrequencyShifter => TypedModuleType::FrequencyShifter,
+        EffectType::EnsembleChorus => TypedModuleType::EnsembleChorus,
+        EffectType::ShimmerReverb => TypedModuleType::ShimmerReverb,
+        EffectType::GranularFx => TypedModuleType::GranularFx,
+        EffectType::SpectralBlur => TypedModuleType::SpectralBlur,
+        EffectType::ModalResonator => TypedModuleType::ModalResonator,
+        EffectType::ReverseGateReverb => TypedModuleType::ReverseGateReverb,
+    }
+}
+
 impl SynthApp {
     /// Handle a quick-add request: create module via session, place it, and auto-connect.
     fn handle_quick_add(
@@ -2508,15 +1052,7 @@ impl SynthApp {
     ) {
         // Determine module type from selection
         let module_type: Option<TypedModuleType> = match request.selection {
-            PaletteSelection::Category(category) => match category {
-                ModuleCategory::Oscillator => Some(TypedModuleType::Oscillator),
-                ModuleCategory::Filter => Some(TypedModuleType::Filter),
-                ModuleCategory::Envelope => Some(TypedModuleType::Envelope),
-                ModuleCategory::LFO => Some(TypedModuleType::Lfo),
-                ModuleCategory::Amplifier => Some(TypedModuleType::Amplifier),
-                ModuleCategory::Mixer => Some(TypedModuleType::Mixer),
-                _ => None,
-            },
+            PaletteSelection::Category(category) => category_to_module_type(category),
             PaletteSelection::MathOscillator => Some(TypedModuleType::MathOscillator),
             PaletteSelection::SubOscillator => Some(TypedModuleType::SubOscillator),
             PaletteSelection::Noise => Some(TypedModuleType::Noise),
@@ -2533,29 +1069,7 @@ impl SynthApp {
             PaletteSelection::Euclidean => Some(TypedModuleType::Euclidean),
             PaletteSelection::TuringMachine => Some(TypedModuleType::TuringMachine),
             PaletteSelection::RandomGates => Some(TypedModuleType::RandomGates),
-            PaletteSelection::Effect(effect_type) => Some(match effect_type {
-                EffectType::Delay => TypedModuleType::Delay,
-                EffectType::Reverb => TypedModuleType::Reverb,
-                EffectType::Distortion => TypedModuleType::Distortion,
-                EffectType::Chorus => TypedModuleType::Chorus,
-                EffectType::Phaser => TypedModuleType::Phaser,
-                EffectType::Flanger => TypedModuleType::Flanger,
-                EffectType::Compressor => TypedModuleType::Compressor,
-                EffectType::Eq => TypedModuleType::Eq,
-                EffectType::Waveshaper => TypedModuleType::Waveshaper,
-                EffectType::MidSide => TypedModuleType::MidSide,
-                EffectType::BbdDelay => TypedModuleType::BbdDelay,
-                EffectType::Limiter => TypedModuleType::Limiter,
-                EffectType::Convolver => TypedModuleType::Convolver,
-                EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
-                EffectType::FrequencyShifter => TypedModuleType::FrequencyShifter,
-                EffectType::EnsembleChorus => TypedModuleType::EnsembleChorus,
-                EffectType::ShimmerReverb => TypedModuleType::ShimmerReverb,
-                EffectType::GranularFx => TypedModuleType::GranularFx,
-                EffectType::SpectralBlur => TypedModuleType::SpectralBlur,
-                EffectType::ModalResonator => TypedModuleType::ModalResonator,
-                EffectType::ReverseGateReverb => TypedModuleType::ReverseGateReverb,
-            }),
+            PaletteSelection::Effect(effect_type) => Some(effect_to_module_type(effect_type)),
             PaletteSelection::SignalMonitor => {
                 // SignalMonitor needs GUI-specific VisualizationBuffer
                 let mut m = synth_modules::SignalMonitor::new();
@@ -2801,15 +1315,7 @@ impl SynthApp {
             }
             _ => {
                 let module_type = match selection {
-                    PaletteSelection::Category(category) => match category {
-                        ModuleCategory::Oscillator => Some(TypedModuleType::Oscillator),
-                        ModuleCategory::Filter => Some(TypedModuleType::Filter),
-                        ModuleCategory::Envelope => Some(TypedModuleType::Envelope),
-                        ModuleCategory::LFO => Some(TypedModuleType::Lfo),
-                        ModuleCategory::Amplifier => Some(TypedModuleType::Amplifier),
-                        ModuleCategory::Mixer => Some(TypedModuleType::Mixer),
-                        _ => None,
-                    },
+                    PaletteSelection::Category(category) => category_to_module_type(category),
                     PaletteSelection::MathOscillator => Some(TypedModuleType::MathOscillator),
                     PaletteSelection::SubOscillator => Some(TypedModuleType::SubOscillator),
                     PaletteSelection::Noise => Some(TypedModuleType::Noise),
@@ -2831,29 +1337,9 @@ impl SynthApp {
                     PaletteSelection::KeyboardPanner => Some(TypedModuleType::KeyboardPanner),
                     PaletteSelection::BodyResonance => Some(TypedModuleType::BodyResonance),
                     PaletteSelection::MechanicalNoise => Some(TypedModuleType::MechanicalNoise),
-                    PaletteSelection::Effect(effect_type) => Some(match effect_type {
-                        EffectType::Delay => TypedModuleType::Delay,
-                        EffectType::Reverb => TypedModuleType::Reverb,
-                        EffectType::Distortion => TypedModuleType::Distortion,
-                        EffectType::Chorus => TypedModuleType::Chorus,
-                        EffectType::Phaser => TypedModuleType::Phaser,
-                        EffectType::Flanger => TypedModuleType::Flanger,
-                        EffectType::Compressor => TypedModuleType::Compressor,
-                        EffectType::Eq => TypedModuleType::Eq,
-                        EffectType::Waveshaper => TypedModuleType::Waveshaper,
-                        EffectType::MidSide => TypedModuleType::MidSide,
-                        EffectType::BbdDelay => TypedModuleType::BbdDelay,
-                        EffectType::Limiter => TypedModuleType::Limiter,
-                        EffectType::Convolver => TypedModuleType::Convolver,
-                        EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
-                        EffectType::FrequencyShifter => TypedModuleType::FrequencyShifter,
-                        EffectType::EnsembleChorus => TypedModuleType::EnsembleChorus,
-                        EffectType::ShimmerReverb => TypedModuleType::ShimmerReverb,
-                        EffectType::GranularFx => TypedModuleType::GranularFx,
-                        EffectType::SpectralBlur => TypedModuleType::SpectralBlur,
-                        EffectType::ModalResonator => TypedModuleType::ModalResonator,
-                        EffectType::ReverseGateReverb => TypedModuleType::ReverseGateReverb,
-                    }),
+                    PaletteSelection::Effect(effect_type) => {
+                        Some(effect_to_module_type(effect_type))
+                    }
                     _ => None,
                 };
 
@@ -2869,6 +1355,52 @@ impl SynthApp {
                     }
                 }
             }
+        }
+    }
+
+    /// Finalize the current audio-input recording into a new library sample.
+    /// Shared by the Rack audio-input view and the Sample view.
+    ///
+    /// Takes the individual fields rather than `&mut self` so it can be called
+    /// from the Rack view while a `patch_editor` borrow of `self.instruments`
+    /// is still live (disjoint-field borrows).
+    fn commit_recording_as_sample(
+        audio_input: &mut crate::audio::input::AudioInputManager,
+        sample_library: &std::sync::RwLock<SampleLibrary>,
+        sample_view_state: &mut crate::gui::sample_view::SampleViewState,
+        dialog_state: &mut DialogState,
+    ) {
+        if let Some(data) = audio_input.stop_recording() {
+            let channels = audio_input.channels();
+            let sample_rate = audio_input.sample_rate();
+            let frame_count = if channels > 0 {
+                data.len() / channels as usize
+            } else {
+                0
+            };
+            let sample = synth_sampler::Sample::new(
+                synth_sampler::SampleMeta {
+                    id: synth_sampler::SampleId::new(0),
+                    name: format!(
+                        "Recording {:.1}s",
+                        frame_count as f64 / f64::from(sample_rate.0)
+                    ),
+                    sample_rate,
+                    channels: synth_core::ChannelCount::from(channels),
+                    frame_count: synth_core::SampleCount::new(frame_count),
+                    root_note: None,
+                    loop_region: None,
+                    crop: None,
+                    source: synth_sampler::SampleSource::Recorded,
+                },
+                data.into(),
+            );
+            if let Ok(mut lib) = sample_library.write() {
+                let id = lib.add(sample);
+                sample_view_state.selected_sample = Some(id);
+                sample_view_state.invalidate_peaks();
+            }
+            dialog_state.set_status("Recording saved");
         }
     }
 
@@ -3011,6 +1543,1481 @@ impl SynthApp {
     /// Re-target the analyze window to the active instrument, then render it.
     /// Always runs (even when closed) so the worker-thread poll can drain a
     /// finished render if the user closed the window mid-flight.
+    /// The "File" menu (projects, patches, examples, export, settings, quit).
+    fn menu_file(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        use egui_remixicon::icons as ri;
+        ui.menu_button("File", |ui| {
+            // --- Project ---
+            if ui
+                .button(format!("{} New Project", ri::FILE_ADD_LINE))
+                .clicked()
+            {
+                if self.dirty {
+                    self.unsaved_dialog.pending_action = Some(PendingAction::NewProject);
+                    self.unsaved_dialog.open = true;
+                } else {
+                    self.reset_to_new_project();
+                    self.dirty = false;
+                    self.dialog_state
+                        .set_status("New project created".to_string());
+                }
+                ui.close();
+            }
+            if ui
+                .button(format!("{} Open Project...", ri::FOLDER_OPEN_LINE))
+                .clicked()
+            {
+                if self.dirty {
+                    self.unsaved_dialog.pending_action = Some(PendingAction::OpenProject);
+                    self.unsaved_dialog.open = true;
+                } else {
+                    let initial_dir = self.resolve_project_dir();
+                    self.dialog_state
+                        .open_open_project_dialog(initial_dir.as_deref());
+                }
+                ui.close();
+            }
+            if ui
+                .button(format!("{} Save Project", ri::SAVE_LINE))
+                .clicked()
+            {
+                self.save_current_project();
+                ui.close();
+            }
+            if ui
+                .button(format!("{} Save Project As...", ri::SAVE_LINE))
+                .clicked()
+            {
+                let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+                let fallback =
+                    format!("project.{}", crate::project::project_extension(has_samples));
+                let default_name = self
+                    .current_project_path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .map_or(fallback, ToString::to_string);
+                let initial_dir = self.resolve_project_dir();
+                self.dialog_state
+                    .open_save_project_dialog(&default_name, initial_dir.as_deref());
+                ui.close();
+            }
+            // --- Recent Projects ---
+            ui.menu_button(format!("{} Recent Projects", ri::HISTORY_LINE), |ui| {
+                let projects = self.settings.recent_projects.clone();
+                if projects.is_empty() {
+                    ui.label("(none)");
+                } else {
+                    for path in &projects {
+                        let label = path.file_name().and_then(|n| n.to_str()).unwrap_or("???");
+                        let btn = ui.button(label).on_hover_text(path.display().to_string());
+                        if btn.clicked() {
+                            if self.dirty {
+                                self.unsaved_dialog.pending_action =
+                                    Some(PendingAction::LoadProject(path.clone()));
+                                self.unsaved_dialog.open = true;
+                            } else {
+                                self.load_recent_project(path.clone());
+                            }
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Clear Recent").clicked() {
+                        self.settings.clear_recent_projects();
+                        self.settings.save();
+                        ui.close();
+                    }
+                }
+            });
+            ui.separator();
+
+            // --- Patch ---
+            if ui
+                .button(format!("{} New Patch", ri::FILE_ADD_LINE))
+                .clicked()
+            {
+                self.reset_to_new_patch();
+                self.dialog_state
+                    .set_status("New patch created".to_string());
+                ui.close();
+            }
+            if ui
+                .button(format!("{} Open Patch...", ri::FOLDER_OPEN_LINE))
+                .clicked()
+            {
+                let initial_dir = self.resolve_open_dir();
+                self.dialog_state
+                    .open_open_patch_dialog(initial_dir.as_deref());
+                ui.close();
+            }
+            if ui
+                .button(format!("{} Load Built-in...", ri::FOLDER_OPEN_LINE))
+                .clicked()
+            {
+                self.dialog_state.show_load_patch = true;
+                ui.close();
+            }
+            if ui
+                .button(format!("{} Save Patch...", ri::SAVE_LINE))
+                .clicked()
+            {
+                let default_name = format!(
+                    "{}.json",
+                    self.current_patch_name.to_lowercase().replace(' ', "_")
+                );
+                let initial_dir = self.resolve_save_dir();
+                self.dialog_state
+                    .open_save_patch_dialog(&default_name, initial_dir.as_deref());
+                ui.close();
+            }
+            ui.separator();
+            ui.menu_button(format!("{} Example Patches", ri::FILE_LIST_LINE), |ui| {
+                for (category, patches) in categorized_patches() {
+                    ui.menu_button(category, |ui| {
+                        for patch in patches {
+                            if ui.button(&patch.name).clicked() {
+                                self.load_patch_data(&patch);
+                                self.current_patch_name = patch.name.clone();
+                                self.dialog_state
+                                    .set_status(format!("Loaded: {}", patch.name));
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+            });
+            ui.separator();
+            if ui
+                .button(format!("{} Export WAV...", ri::DOWNLOAD_LINE))
+                .clicked()
+            {
+                // Pre-fill duration from song length
+                let song_secs = self.song.read().length_seconds();
+                self.dialog_state
+                    .export_state
+                    .set_duration_from_song(song_secs);
+                // Open file dialog to choose WAV path
+                let default_name = "export.wav".to_string();
+                let initial_dir = self.resolve_project_dir();
+                self.dialog_state
+                    .open_export_wav_dialog(&default_name, initial_dir.as_deref());
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .button(format!("{} Settings...", ri::SETTINGS_LINE))
+                .clicked()
+            {
+                // Reload settings from disk to pick up changes
+                // made outside the dialog (e.g. last_open_dir)
+                self.settings = AppSettings::load();
+                self.dialog_state.show_settings = true;
+                ui.close();
+            }
+            ui.separator();
+            if ui.button(format!("{} Quit", ri::SHUT_DOWN_LINE)).clicked() {
+                if self.dirty {
+                    self.unsaved_dialog.pending_action = Some(PendingAction::Quit);
+                    self.unsaved_dialog.open = true;
+                } else {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                ui.close();
+            }
+        });
+    }
+
+    /// The "Edit" menu (undo/redo, clipboard, optimize, analyze).
+    fn menu_edit(&mut self, ui: &mut egui::Ui) {
+        use egui_remixicon::icons as ri;
+        ui.menu_button("Edit", |ui| {
+            let undo_label = format!("{} Undo", ri::ARROW_GO_BACK_LINE);
+            let redo_label = format!("{} Redo", ri::ARROW_GO_FORWARD_LINE);
+            if ui
+                .add_enabled(
+                    self.undo_manager.can_undo(),
+                    egui::Button::new(&undo_label).shortcut_text("Ctrl+Z"),
+                )
+                .clicked()
+            {
+                self.execute_undo();
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    self.undo_manager.can_redo(),
+                    egui::Button::new(&redo_label).shortcut_text("Ctrl+Shift+Z"),
+                )
+                .clicked()
+            {
+                self.execute_redo();
+                ui.close();
+            }
+            ui.separator();
+            let has_selection = self
+                .active_patch_editor_ref()
+                .is_some_and(|e| !e.effective_selection().is_empty());
+            if ui
+                .add_enabled(
+                    has_selection,
+                    egui::Button::new(format!("{} Copy", ri::FILE_COPY_LINE))
+                        .shortcut_text("Ctrl+C"),
+                )
+                .clicked()
+            {
+                self.copy_selected_modules();
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    !self.clipboard.is_empty(),
+                    egui::Button::new(format!("{} Paste", ri::CLIPBOARD_LINE))
+                        .shortcut_text("Ctrl+V"),
+                )
+                .clicked()
+            {
+                self.paste_modules_at_offset();
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    has_selection,
+                    egui::Button::new(format!("{} Duplicate", ri::FILE_COPY_2_LINE))
+                        .shortcut_text("Ctrl+D"),
+                )
+                .clicked()
+            {
+                self.duplicate_selected_modules();
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .button(format!("{} Optimize Project", ri::DELETE_BIN_LINE))
+                .on_hover_text("Remove unused patterns, tracks, and instruments")
+                .clicked()
+            {
+                self.optimize_project();
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add(
+                    egui::Button::new(format!("{} Analyze Patch…", ri::FILE_SEARCH_LINE))
+                        .shortcut_text("Ctrl+Shift+A"),
+                )
+                .on_hover_text("Open the offline analyze view for the active instrument")
+                .clicked()
+            {
+                self.analyze_window.open();
+                ui.close();
+            }
+        });
+    }
+
+    /// The "Help" menu (About).
+    fn menu_help(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Help", |ui| {
+            if ui.button("About").clicked() {
+                self.dialog_state.show_about = true;
+                ui.close();
+            }
+        });
+    }
+
+    /// Drain MCP→GUI shared state once per frame: project I/O refresh/status,
+    /// one-shot patch/AWE mirror payloads, and the live AWE-state sync. Each
+    /// section is revision-gated so an idle frame touches no mutex.
+    #[cfg(feature = "mcp")]
+    fn drain_mcp_state(&mut self) {
+        // Single revision-gated drain for everything MCP project I/O
+        // pushes back to the GUI: the refresh queue, source path, and
+        // status line. `project_revision` is the lock-free fast path —
+        // when nothing has happened we don't touch any mutex.
+        if let Some(shared) = self.mcp_shared.as_ref().map(std::sync::Arc::clone) {
+            let current_rev = shared
+                .project_revision
+                .load(std::sync::atomic::Ordering::Acquire);
+            if current_rev != self.last_seen_project_revision {
+                use crate::mcp_shared::ProjectRefresh;
+
+                // Load / new stash a refresh; save leaves it empty.
+                let refresh = shared
+                    .pending_project_refresh
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                if let Some(refresh) = refresh {
+                    match refresh {
+                        ProjectRefresh::Loaded(project) => {
+                            self.current_project_path = shared
+                                .last_loaded_project_path
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .clone();
+                            self.refresh_ui_from_project(&project);
+                            self.dirty = false;
+                        }
+                        ProjectRefresh::Reset => {
+                            self.refresh_ui_after_reset();
+                            self.current_project_path = None;
+                            self.current_patch_name = "Init".to_string();
+                            self.current_patch_path = None;
+                            self.dirty = false;
+                        }
+                    }
+                }
+
+                // Surface the most recent I/O outcome (success or error)
+                // in the status line.
+                let status = shared
+                    .last_project_io_status
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                if let Some(status) = status {
+                    let msg = match status {
+                        Ok(m) => m,
+                        Err(e) => format!("Error: {e}"),
+                    };
+                    self.dialog_state.set_status(msg);
+                }
+
+                self.last_seen_project_revision = current_rev;
+            }
+        }
+
+        // Revision-gated drain of MCP→GUI one-shot mirror payloads
+        // (`pending_patch`, `pending_awe_state`). Same shape as the
+        // `project_revision` drain just above.
+        if let Some(shared) = self.mcp_shared.as_ref().map(std::sync::Arc::clone) {
+            let current_rev = shared
+                .gui_revision
+                .load(std::sync::atomic::Ordering::Acquire);
+            if current_rev != self.last_seen_gui_revision {
+                let pending_patch = shared
+                    .pending_patch
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                if let Some((patch, name)) = pending_patch {
+                    self.current_patch_name = name;
+                    self.current_patch_path = None;
+                    self.load_patch_data(&patch);
+                }
+
+                let pending_awe = shared
+                    .pending_awe_state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                if let Some(awe_state) = pending_awe {
+                    self.awe_enabled = awe_state.enabled;
+                    self.awe_ui.restore_from(&awe_state);
+                    crate::project_apply::apply_awe_state(
+                        &self.handle.command_sender(),
+                        &awe_state,
+                    );
+                }
+
+                self.last_seen_gui_revision = current_rev;
+            }
+        }
+
+        // Sync AWE state to MCP shared state
+        if let Some(shared) = &self.mcp_shared {
+            if let Ok(mut awe_state) = shared.awe_state.lock() {
+                *awe_state = self.awe_ui.to_awe_state(self.awe_enabled);
+            }
+            // The edit-in-progress flag (set last frame in draw_controls) decides
+            // direction: while editing, GUI is source of truth; otherwise let MCP
+            // writes flow back.
+            if let Ok(mut desc) = shared.awe_description.lock()
+                && *desc != self.awe_ui.description
+            {
+                if self.awe_ui.description_edit_in_progress {
+                    desc.clone_from(&self.awe_ui.description);
+                } else {
+                    self.awe_ui.description.clone_from(&desc);
+                }
+            }
+        }
+    }
+
+    /// Drain engine→GUI events: mirror note on/off to the on-screen keyboard,
+    /// apply learned key ranges, update the recording preview, and write flushed
+    /// recorded notes into their pattern.
+    fn poll_engine_events(&mut self) {
+        while let Some(event) = self.handle.poll_event() {
+            match event {
+                EngineEvent::NoteTriggered { note, velocity, .. } => {
+                    self.keyboard.set_note_on(note, velocity);
+                }
+                EngineEvent::NoteReleased { note, .. } => {
+                    self.keyboard.set_note_off(note);
+                    self.pressed_keys.remove(&note.as_u8());
+                }
+                EngineEvent::AllNotesReleased => {
+                    self.keyboard.clear_pressed();
+                    self.pressed_keys.clear();
+                }
+                EngineEvent::KeyRangeLearned {
+                    instrument_id,
+                    key_range,
+                    learn_state,
+                } => {
+                    // Update the instrument's UI state with the learned key range
+                    if let Some(inst) = self.instruments.iter_mut().find(|i| i.id == instrument_id)
+                    {
+                        inst.key_range = key_range;
+                        inst.learn_state = learn_state;
+                    }
+                }
+                EngineEvent::RecordingPreview {
+                    completed,
+                    held,
+                    pattern_length,
+                } => {
+                    self.sequencer_view_state.recording_preview_completed = completed;
+                    self.sequencer_view_state.recording_preview_held = held;
+                    self.sequencer_view_state.recording_preview_pattern_length = pattern_length;
+                }
+                EngineEvent::RecordedNotesFlushed {
+                    pattern_id,
+                    notes,
+                    overdub,
+                } => {
+                    // Write recorded notes into the pattern (on UI thread, safe to lock).
+                    // Known limitation: if the song lock is poisoned, recorded notes are
+                    // silently dropped. Buffering for retry adds complexity for a scenario
+                    // that is extremely unlikely since only the UI thread writes.
+                    {
+                        let mut song = self.song.write();
+                        if let Some(pattern) = song.pattern_mut(pattern_id) {
+                            if !overdub {
+                                pattern.clear_notes();
+                            }
+                            let instrument = self.sequencer_view_state.recording_instrument;
+                            for note in &notes {
+                                let nid = pattern.add_note(
+                                    note.start,
+                                    note.pitch,
+                                    note.velocity,
+                                    instrument,
+                                );
+                                if let Some(n) = pattern.note_mut(nid) {
+                                    n.duration = Some(note.duration);
+                                }
+                            }
+                        } else {
+                            eprintln!(
+                                "RecordedNotesFlushed: pattern {pattern_id:?} not found, {} notes dropped",
+                                notes.len()
+                            );
+                        }
+                    }
+                    self.mark_dirty();
+
+                    // Clear preview — notes are now committed
+                    self.sequencer_view_state
+                        .recording_preview_completed
+                        .clear();
+                    self.sequencer_view_state.recording_preview_held.clear();
+                }
+                // Other events (meters, etc.) are handled elsewhere
+                _ => {}
+            }
+        }
+    }
+
+    /// Rack-view central panel: render the active instrument's patch editor and
+    /// apply every result it returns (parameter/connection/bypass/reorder edits,
+    /// module removal, audio-input actions, inline signal monitors, quick-add and
+    /// context-add, group-template actions, and auto-layout).
+    fn render_rack_central(
+        &mut self,
+        ui: &mut egui::Ui,
+        active_id: InstrumentId,
+        mcp_auto_layout: bool,
+    ) {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            // Get the active instrument's patch editor
+            let Some(patch_editor) = self
+                .instruments
+                .iter_mut()
+                .find(|i| i.id == active_id)
+                .map(|i| &mut i.patch_editor)
+            else {
+                // No active instrument - show error message
+                ui.centered_and_justified(|ui| {
+                    ui.label("No active instrument selected");
+                });
+                return;
+            };
+
+            // Update sample list for sampler module dropdowns
+            if let Ok(lib) = self.sample_library.read() {
+                let list: Vec<(u64, String)> = lib
+                    .list()
+                    .iter()
+                    .map(|m| (m.id.0, m.name.clone()))
+                    .collect();
+                patch_editor.set_sample_list(list);
+            }
+
+            // Get effect chain order from shared state
+            let effect_chain_order: Vec<synth_engine::ModuleId> = self
+                .session
+                .list_instruments()
+                .iter()
+                .find(|s| s.id == active_id)
+                .map(|s| s.effect_chain_order.clone())
+                .unwrap_or_default();
+
+            let audio_input_snapshot = crate::gui::patch_editor::AudioInputSnapshot {
+                state: self.audio_input.state(),
+                peak_level: self.audio_input.peak_level(),
+                recorded_seconds: self.audio_input.recorded_seconds(),
+            };
+            let result = patch_editor.show(
+                ui,
+                &self.handle,
+                active_id.as_u64(),
+                &effect_chain_order,
+                &audio_input_snapshot,
+            );
+            let had_mutations = result.has_mutations();
+
+            // Route on the engine-side distinction between effect-chain
+            // modules (separate ordered chain) and voice-graph modules
+            // (everything else). This mirrors `session.set_parameter`,
+            // so utility modules like Mod Matrix — which previously fell
+            // through a category whitelist and had their edits silently
+            // dropped — now reach shared state like every other module.
+            for (module_id, param) in result.param_changes {
+                if module_id.module_type.is_effect() {
+                    self.handle.send(EngineCommand::SetEffectParameter {
+                        instrument_id: Some(active_id),
+                        module_id,
+                        param,
+                    });
+                } else {
+                    self.handle.send(EngineCommand::SetModuleParameter {
+                        instrument_id: Some(active_id),
+                        module_id,
+                        param,
+                    });
+
+                    if let synth_core::Param::Sampler(synth_core::SamplerParam::SampleSelect(
+                        sample_id,
+                    )) = param
+                        && let Ok(lib) = self.sample_library.read()
+                        && let Some(sample) = lib.get(synth_sampler::SampleId::new(sample_id.0))
+                    {
+                        self.handle.send(EngineCommand::LoadSampleData {
+                            instrument_id: active_id,
+                            module_id,
+                            data: std::sync::Arc::clone(&sample.data),
+                            channels: sample.meta.channels,
+                            frame_count: sample.meta.frame_count.as_usize(),
+                            root_note: sample.meta.root_note.unwrap_or(synth_core::MidiNote(60)),
+                        });
+                    }
+                }
+            }
+
+            // Handle module removal
+            for module_id in result.modules_to_remove {
+                // Check if this module has a visualization buffer to clean up
+                let has_vis_buffer = patch_editor.module_descriptor(module_id).is_some_and(|d| {
+                    d.category == ModuleCategory::Visualizer
+                        || d.type_id.0 == "signal_monitor"
+                        || d.type_id.0 == "inline_signal_monitor"
+                });
+
+                // Remove from session (registry + engine command)
+                if let Err(e) = self.session.remove_module(active_id, module_id) {
+                    eprintln!("Failed to remove module {module_id:?}: {e}");
+                    continue;
+                }
+
+                patch_editor.remove_module(module_id);
+
+                // Clean up visualization buffer if needed
+                if has_vis_buffer {
+                    self.handle.remove_visualization_buffer(module_id);
+                }
+            }
+
+            // Handle new connections - now synced with engine
+            for connection in result.connections_to_add {
+                patch_editor.add_connection(connection);
+
+                self.undo_manager
+                    .push(crate::undo::UndoAction::AddConnection {
+                        instrument_id: active_id,
+                        connection,
+                    });
+
+                // Send Connect command to engine (active instrument's voice graph)
+                self.handle.send(EngineCommand::Connect {
+                    instrument_id: Some(active_id),
+                    from: PortId::new(connection.from_module, connection.from_port),
+                    to: PortId::new(connection.to_module, connection.to_port),
+                });
+            }
+
+            // Handle removed connections - send Disconnect commands to engine
+            for connection in result.connections_to_remove {
+                self.undo_manager
+                    .push(crate::undo::UndoAction::RemoveConnection {
+                        instrument_id: active_id,
+                        connection,
+                    });
+
+                self.handle.send(EngineCommand::Disconnect {
+                    instrument_id: Some(active_id),
+                    from: PortId::new(connection.from_module, connection.from_port),
+                    to: PortId::new(connection.to_module, connection.to_port),
+                });
+            }
+
+            // Handle bypass toggles - send SetBypass commands to engine
+            for (module_id, new_bypass_state) in result.bypass_toggles {
+                self.handle.send(EngineCommand::SetBypass {
+                    instrument_id: Some(active_id),
+                    module: module_id,
+                    bypass: new_bypass_state,
+                });
+            }
+
+            // Handle effect chain reorder requests
+            for (module_id, direction) in result.reorder_effects {
+                self.handle.send(EngineCommand::ReorderEffect {
+                    instrument_id: Some(active_id),
+                    module_id,
+                    direction,
+                });
+            }
+
+            // Handle audio input actions from patch module
+            if let Some(action) = result.audio_input_action {
+                use crate::gui::patch_editor::AudioInputAction;
+                match action {
+                    AudioInputAction::StartMonitoring => {
+                        if let Some(host) = &self.host {
+                            let device = self.sample_view_state.selected_input_device.as_deref();
+                            let config = synth_core::StreamConfig {
+                                sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
+                                buffer_size: synth_core::BufferSize::MEDIUM,
+                                channels: synth_core::ChannelCount::Stereo,
+                            };
+                            match self
+                                .audio_input
+                                .start_monitoring(host.as_ref(), device, &config)
+                            {
+                                Ok(()) => {
+                                    if let Some(consumer) = self.audio_input.take_engine_consumer()
+                                    {
+                                        self.handle.send(EngineCommand::SetAudioInputConsumer {
+                                            consumer,
+                                        });
+                                    }
+                                }
+                                Err(e) => {
+                                    self.dialog_state.set_status(format!("Input error: {e}"));
+                                }
+                            }
+                        }
+                    }
+                    AudioInputAction::StopMonitoring => {
+                        self.handle.send(EngineCommand::ClearAudioInputConsumer);
+                        self.audio_input.stop_monitoring();
+                    }
+                    AudioInputAction::StartRecording => {
+                        self.audio_input.start_recording();
+                    }
+                    AudioInputAction::StopRecording => {
+                        Self::commit_recording_as_sample(
+                            &mut self.audio_input,
+                            &self.sample_library,
+                            &mut self.sample_view_state,
+                            &mut self.dialog_state,
+                        );
+                    }
+                }
+            }
+
+            // Handle signal monitor insertions — create inline monitor and rewire
+            for connection in result.insert_signal_monitor_at {
+                // Create signal monitor module (same DSP, different GUI descriptor)
+                let mut m = synth_modules::SignalMonitor::new();
+
+                // Build an inline descriptor: compact type_id, no parameters, just ports
+                let inline_descriptor =
+                    synth_core::ModuleDescriptor::new("inline_signal_monitor", "Mon")
+                        .description("Inline signal monitor (compact pass-through)")
+                        .category(synth_core::ModuleCategory::Utility)
+                        .port(synth_core::PortDescriptor::audio_input("in", "In"))
+                        .port(synth_core::PortDescriptor::audio_output("out", "Out"));
+
+                let monitor_id = {
+                    let mut counters = self.session.counters_lock();
+                    let counter = counters
+                        .entry((active_id, synth_core::ModuleType::SignalMonitor))
+                        .or_insert(0);
+                    *counter += 1;
+                    ModuleId::new(TypedModuleType::SignalMonitor, *counter)
+                };
+
+                // Position between the two connected modules
+                let from_pos = patch_editor
+                    .get_module_data(connection.from_module)
+                    .map(|(_, pos, _)| pos);
+                let to_pos = patch_editor
+                    .get_module_data(connection.to_module)
+                    .map(|(_, pos, _)| pos);
+                let mid_pos = match (from_pos, to_pos) {
+                    (Some(a), Some(b)) => egui::Pos2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0),
+                    (Some(a), None) => egui::Pos2::new(a.x + 200.0, a.y),
+                    _ => egui::Pos2::new(100.0, 100.0),
+                };
+
+                patch_editor.add_module_at(monitor_id, inline_descriptor.clone(), mid_pos);
+
+                // Register in session so reconciliation doesn't remove it
+                self.session
+                    .register_descriptor(active_id, monitor_id, inline_descriptor);
+
+                // Create shared vis buffer and inject into module
+                let buffer =
+                    std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+                self.handle
+                    .add_visualization_buffer(monitor_id, buffer.clone());
+                m.set_vis_sink(buffer);
+
+                let module: Box<dyn synth_core::PolyModule> = Box::new(m);
+                self.handle.send(EngineCommand::AddModuleInstance {
+                    instrument_id: Some(active_id),
+                    id: monitor_id,
+                    module,
+                });
+
+                // Wire: original_from → monitor "in", monitor "out" → original_to
+                let conn_in = synth_engine::graph::Connection::new(
+                    connection.from_module,
+                    connection.from_port,
+                    monitor_id,
+                    "in",
+                );
+                let conn_out = synth_engine::graph::Connection::new(
+                    monitor_id,
+                    "out",
+                    connection.to_module,
+                    connection.to_port,
+                );
+
+                for c in [conn_in, conn_out] {
+                    patch_editor.add_connection(c);
+                    self.handle.send(EngineCommand::Connect {
+                        instrument_id: Some(active_id),
+                        from: PortId::new(c.from_module, c.from_port),
+                        to: PortId::new(c.to_module, c.to_port),
+                    });
+                }
+            }
+
+            // Handle quick-add requests (right-click on port → add module)
+            for request in result.quick_add_requests {
+                Self::handle_quick_add(
+                    &self.session,
+                    &mut self.handle,
+                    active_id,
+                    patch_editor,
+                    request,
+                );
+            }
+
+            // Handle background context menu add (right-click on empty space or cable)
+            if let Some((selection, world_pos, inline_cable)) = result.context_add {
+                Self::handle_context_add(
+                    &self.session,
+                    &mut self.handle,
+                    active_id,
+                    patch_editor,
+                    selection,
+                    world_pos,
+                    inline_cable,
+                );
+            }
+
+            // Handle group template actions (open browser / save template)
+            if let Some(action) = result.group_template_action {
+                match action {
+                    GroupTemplateAction::OpenBrowser { drop_pos } => {
+                        self.dialog_state.show_group_templates = true;
+                        self.dialog_state.group_template_drop_pos = Some(drop_pos);
+                        self.dialog_state.group_template_selected = None;
+                    }
+                    GroupTemplateAction::SaveGroup { group_id } => {
+                        self.dialog_state.show_save_group_template = true;
+                        self.dialog_state.group_template_save_group = Some(group_id);
+                        if let Some(name) = patch_editor.group_name(group_id) {
+                            self.dialog_state.group_template_save_name = name;
+                        }
+                        self.dialog_state.group_template_save_description.clear();
+                        self.dialog_state.group_template_save_category = GroupCategory::default();
+                    }
+                }
+            }
+
+            // Handle auto-layout request (from GUI menu or MCP).
+            //
+            // Only here do we clear the MCP pending flag —
+            // a request issued while another view was
+            // active waits until the next Rack frame.
+            if result.request_auto_layout || mcp_auto_layout {
+                patch_editor.apply_auto_layout(&effect_chain_order);
+                self.mark_dirty();
+                #[cfg(feature = "mcp")]
+                if mcp_auto_layout && let Some(shared) = self.mcp_shared.as_ref() {
+                    shared
+                        .pending_auto_layout
+                        .store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+
+            // Mark dirty if any mutations occurred
+            if had_mutations {
+                self.mark_dirty();
+            }
+        });
+    }
+
+    /// Rack-view left panel: the instrument list (click to activate, pencil or
+    /// double-click to edit, button to add a new instrument).
+    fn render_instruments_panel(&mut self, ui: &mut egui::Ui, active_id: InstrumentId) {
+        egui::Panel::left("instruments_panel")
+            .default_size(180.0)
+            .min_size(140.0)
+            .show_inside(ui, |ui| {
+                use egui_remixicon::icons as ri;
+                let t = theme();
+
+                ui.heading(
+                    RichText::new(format!("{} Instruments", ri::MUSIC_2_FILL))
+                        .color(t.colors.text_primary),
+                );
+                ui.separator();
+
+                let mut clicked: Option<InstrumentId> = None;
+                let mut edit_requested: Option<InstrumentId> = None;
+                egui::ScrollArea::vertical()
+                    .content_margin(egui::Margin::same(6))
+                    .show(ui, |ui| {
+                        for inst in &self.instruments {
+                            let is_active = inst.id == active_id;
+                            let text_color = if is_active {
+                                t.colors.text_primary
+                            } else {
+                                t.colors.text_secondary
+                            };
+                            ui.horizontal(|ui| {
+                                let resp = ui.selectable_label(
+                                    is_active,
+                                    RichText::new(&inst.name).color(text_color),
+                                );
+                                if resp.clicked() && !is_active {
+                                    clicked = Some(inst.id);
+                                }
+                                if resp.double_clicked() {
+                                    edit_requested = Some(inst.id);
+                                }
+                                // Pencil icon on the right opens the
+                                // edit window without changing the
+                                // active instrument.
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let btn = ui.add(
+                                            egui::Button::new(
+                                                RichText::new(ri::EDIT_LINE)
+                                                    .color(t.colors.text_dim),
+                                            )
+                                            .frame(false)
+                                            .small(),
+                                        );
+                                        if btn.on_hover_text("Edit instrument…").clicked() {
+                                            edit_requested = Some(inst.id);
+                                        }
+                                    },
+                                );
+                            });
+                        }
+                    });
+
+                if let Some(id) = clicked {
+                    self.active_instrument_id = Some(id);
+                    self.handle.set_focused_instrument(Some(id));
+                }
+                if let Some(id) = edit_requested {
+                    self.instrument_edit_target = Some(id);
+                }
+
+                ui.add_space(8.0);
+                if ui
+                    .button(
+                        RichText::new(format!("{} New Instrument", ri::ADD_LINE))
+                            .color(t.colors.accent_green),
+                    )
+                    .clicked()
+                {
+                    self.add_new_instrument();
+                }
+            });
+    }
+
+    /// Top-bar MIDI status indicator with a click-to-select port menu.
+    fn render_midi_status(&mut self, ui: &mut egui::Ui) {
+        use egui_remixicon::icons as ri;
+        let (icon, color, hover_text) = if self.midi_handler.is_connected() {
+            let port_name = self
+                .midi_handler
+                .port_name()
+                .unwrap_or("Unknown")
+                .to_owned();
+            (
+                ri::PIANO_FILL,
+                theme().colors.meter_green,
+                format!("MIDI: connected to {port_name}"),
+            )
+        } else {
+            (
+                ri::PIANO_LINE,
+                theme().colors.text_dim,
+                "MIDI: not connected".to_owned(),
+            )
+        };
+        let arrow = ri::ARROW_DOWN_S_FILL;
+        let midi_label = RichText::new(format!("{icon} MIDI {arrow}")).color(color);
+        let resp = ui.menu_button(midi_label, |ui| {
+            ui.set_min_width(250.0);
+            let ports = MidiHandler::list_ports();
+            if ports.is_empty() {
+                ui.label(RichText::new("No MIDI ports available").color(theme().colors.text_dim));
+            } else {
+                for port in &ports {
+                    let is_current = self.midi_handler.port_name() == Some(port.as_str());
+                    let label = if is_current {
+                        RichText::new(format!("{} {}", ri::CHECKBOX_BLANK_CIRCLE_FILL, port))
+                            .color(theme().colors.meter_green)
+                    } else {
+                        RichText::new(format!("  {port}"))
+                    };
+                    if ui.button(label).clicked() {
+                        if let Err(e) = self.midi_handler.connect_to(port) {
+                            eprintln!("MIDI connection error: {e}");
+                        }
+                        ui.close();
+                    }
+                }
+            }
+        });
+        resp.response.on_hover_text(hover_text);
+    }
+
+    /// Top-bar MCP connection status indicator (icon + session-count tooltip).
+    #[cfg(feature = "mcp")]
+    fn render_mcp_status(&self, ui: &mut egui::Ui) {
+        use egui_remixicon::icons as ri;
+        if let Some(ref mcp) = self.mcp_shared {
+            let listening = mcp.is_listening();
+            let sessions = mcp.active_sessions();
+            let (icon, label, color) = if sessions > 0 {
+                (
+                    ri::ROBOT_2_FILL,
+                    format!("MCP ({})", sessions),
+                    theme().colors.meter_green,
+                )
+            } else if listening {
+                (ri::ROBOT_2_LINE, "MCP".to_owned(), theme().colors.text_dim)
+            } else {
+                (
+                    ri::ROBOT_2_LINE,
+                    "MCP".to_owned(),
+                    theme().colors.accent_red,
+                )
+            };
+            let resp = ui.label(RichText::new(format!("{icon} {label}")).color(color));
+            if resp.hovered() {
+                let tooltip = if sessions > 0 {
+                    let session_list = mcp.mcp_sessions.sessions();
+                    if session_list.is_empty() {
+                        format!("MCP: {sessions} active session(s)")
+                    } else {
+                        let mut text = format!("MCP: {} active session(s)\n", session_list.len());
+                        for s in &session_list {
+                            text.push_str(&format!(
+                                "\n  {} v{} (MCP {})",
+                                s.client_name, s.client_version, s.protocol_version
+                            ));
+                        }
+                        text
+                    }
+                } else if listening {
+                    "MCP: listening (no active sessions)".to_owned()
+                } else {
+                    "MCP: not running".to_owned()
+                };
+                resp.on_hover_text(tooltip);
+            }
+            ui.separator();
+        }
+    }
+
+    /// Top-bar OSC telemetry status indicator.
+    #[cfg(feature = "osc")]
+    fn render_osc_status(&self, ui: &mut egui::Ui) {
+        use egui_remixicon::icons as ri;
+        let osc_status = self
+            .osc_shared
+            .as_ref()
+            .map_or(synth_osc::OscStatus::Off, |s| s.status());
+        let (icon, label, color) = match osc_status {
+            synth_osc::OscStatus::Connected => {
+                (ri::BROADCAST_FILL, "OSC", theme().colors.meter_green)
+            }
+            synth_osc::OscStatus::Idle => (ri::BROADCAST_LINE, "OSC", theme().colors.text_dim),
+            synth_osc::OscStatus::Off => (ri::BROADCAST_LINE, "OSC", theme().colors.accent_red),
+        };
+        let resp = ui.label(RichText::new(format!("{icon} {label}")).color(color));
+        if resp.hovered() {
+            resp.on_hover_text(match osc_status {
+                synth_osc::OscStatus::Connected => "OSC: visualizer connected",
+                synth_osc::OscStatus::Idle => "OSC: sending beacon (no visualizer)",
+                synth_osc::OscStatus::Off => "OSC: disabled",
+            });
+        }
+        ui.separator();
+    }
+
+    /// Top-bar instrument edit pencil + instrument selector dropdown
+    /// (switch active instrument, add/rename/delete from the per-row menu).
+    fn render_instrument_selector(&mut self, ui: &mut egui::Ui) {
+        use egui_remixicon::icons as ri;
+        // Instrument edit pencil — sits visually to the right of
+        // the dropdown (right-to-left layout). Opens the active
+        // instrument's edit window from any view; disabled when
+        // no instrument is selected.
+        let edit_btn = ui
+            .add_enabled(
+                self.active_instrument_id.is_some(),
+                egui::Button::new(RichText::new(ri::EDIT_LINE).color(theme().colors.text_dim))
+                    .frame(false)
+                    .small(),
+            )
+            .on_hover_text("Edit active instrument…");
+        if edit_btn.clicked() {
+            self.instrument_edit_target = self.active_instrument_id;
+        }
+
+        // Instrument selector dropdown (lives in the toolbar so
+        // the active instrument can be switched independently of
+        // the keyboard strip).
+        let active_name = self
+            .active_instrument_id
+            .and_then(|id| self.instruments.iter().find(|i| i.id == id))
+            .map(|i| i.name.as_str())
+            .unwrap_or("(none)");
+        let menu_label = RichText::new(format!(
+            "{} {active_name} {}",
+            ri::MUSIC_2_FILL,
+            ri::ARROW_DOWN_S_FILL
+        ))
+        .color(theme().colors.accent_cyan);
+        ui.menu_button(menu_label, |ui| {
+            if ui
+                .button(
+                    RichText::new(format!("{} New Instrument", ri::ADD_LINE))
+                        .color(theme().colors.accent_green),
+                )
+                .clicked()
+            {
+                self.add_new_instrument();
+                ui.close();
+            }
+            ui.separator();
+            if self.instruments.is_empty() {
+                ui.label(RichText::new("No instruments").color(theme().colors.text_dim));
+            } else {
+                // Capture id/name pairs first so we can mutate
+                // state inside the menu without borrowing
+                // `self.instruments` immutably.
+                let rows: Vec<(InstrumentId, String, bool)> = self
+                    .instruments
+                    .iter()
+                    .map(|inst| {
+                        (
+                            inst.id,
+                            inst.name.clone(),
+                            Some(inst.id) == self.active_instrument_id,
+                        )
+                    })
+                    .collect();
+                for (id, name, is_active) in rows {
+                    ui.horizontal(|ui| {
+                        let label = if is_active {
+                            RichText::new(format!("{} {}", ri::CHECKBOX_BLANK_CIRCLE_FILL, name))
+                                .color(theme().colors.accent_cyan)
+                        } else {
+                            RichText::new(format!("  {}", name))
+                        };
+                        if ui.button(label).clicked() {
+                            self.active_instrument_id = Some(id);
+                            self.handle.set_focused_instrument(Some(id));
+                            ui.close();
+                        }
+                        // Per-row actions menu.
+                        ui.menu_button(
+                            RichText::new(ri::MORE_FILL).color(theme().colors.text_dim),
+                            |ui| {
+                                if ui
+                                    .button(format!("{} Rename / edit…", ri::EDIT_LINE))
+                                    .clicked()
+                                {
+                                    self.instrument_edit_target = Some(id);
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui
+                                    .button(
+                                        RichText::new(format!("{} Delete…", ri::DELETE_BIN_LINE))
+                                            .color(theme().colors.accent_red),
+                                    )
+                                    .clicked()
+                                {
+                                    self.pending_instrument_delete = Some(id);
+                                    ui.close();
+                                }
+                            },
+                        );
+                    });
+                }
+            }
+        });
+        ui.separator();
+    }
+
+    /// Top-bar AWE status indicator with its preset dropdown menu.
+    fn render_awe_status(&mut self, ui: &mut egui::Ui) {
+        use egui_remixicon::icons as ri;
+        let presets = synth_awe::presets::awe_presets();
+        let preset_name = self
+            .awe_ui
+            .selected_preset
+            .and_then(|i| presets.get(i).map(|p| p.name.to_owned()));
+        let (icon, color, hover_text) = if self.awe_enabled {
+            let name = preset_name.as_deref().unwrap_or("Custom");
+            (
+                ri::SURROUND_SOUND_FILL,
+                theme().colors.meter_green,
+                format!("AWE: {name}"),
+            )
+        } else {
+            (
+                ri::SURROUND_SOUND_LINE,
+                theme().colors.text_dim,
+                "AWE: off".to_owned(),
+            )
+        };
+        let arrow = ri::ARROW_DOWN_S_FILL;
+        let awe_label = RichText::new(format!("{icon} AWE {arrow}")).color(color);
+        let resp = ui.menu_button(awe_label, |ui| {
+            ui.set_min_width(250.0);
+            // Off option
+            let is_off = !self.awe_enabled;
+            let off_label = if is_off {
+                RichText::new(format!("{} Off", ri::CHECKBOX_BLANK_CIRCLE_FILL))
+                    .color(theme().colors.text_dim)
+            } else {
+                RichText::new("  Off")
+            };
+            if ui.button(off_label).clicked() {
+                self.awe_enabled = false;
+                self.awe_ui.selected_preset = None;
+                self.handle
+                    .send(EngineCommand::SetAweEnabled { enabled: false });
+                self.mark_dirty();
+                ui.close();
+            }
+            ui.separator();
+            // Standard presets
+            let standard: Vec<usize> = presets
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| !p.name.starts_with("EXT:"))
+                .map(|(i, _)| i)
+                .collect();
+            let extreme: Vec<usize> = presets
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.name.starts_with("EXT:"))
+                .map(|(i, _)| i)
+                .collect();
+            if !standard.is_empty() {
+                for i in &standard {
+                    let preset = &presets[*i];
+                    let is_current = self.awe_enabled && self.awe_ui.selected_preset == Some(*i);
+                    let label = if is_current {
+                        RichText::new(format!(
+                            "{} {}",
+                            ri::CHECKBOX_BLANK_CIRCLE_FILL,
+                            preset.name
+                        ))
+                        .color(theme().colors.meter_green)
+                    } else {
+                        RichText::new(format!("  {}", preset.name))
+                    };
+                    if ui.button(label).on_hover_text(preset.description).clicked() {
+                        crate::gui::awe_view::apply_awe_preset(
+                            *i,
+                            preset,
+                            &mut self.handle,
+                            &mut self.awe_enabled,
+                            &mut self.awe_ui,
+                        );
+                        self.mark_dirty();
+                        ui.close();
+                    }
+                }
+            }
+            if !extreme.is_empty() {
+                ui.separator();
+                ui.label(RichText::new("Extreme").color(theme().colors.text_dim));
+                for i in &extreme {
+                    let preset = &presets[*i];
+                    let is_current = self.awe_enabled && self.awe_ui.selected_preset == Some(*i);
+                    let label = if is_current {
+                        RichText::new(format!(
+                            "{} {}",
+                            ri::CHECKBOX_BLANK_CIRCLE_FILL,
+                            preset.name.trim_start_matches("EXT: ")
+                        ))
+                        .color(theme().colors.meter_green)
+                    } else {
+                        RichText::new(format!("  {}", preset.name.trim_start_matches("EXT: ")))
+                    };
+                    if ui.button(label).on_hover_text(preset.description).clicked() {
+                        crate::gui::awe_view::apply_awe_preset(
+                            *i,
+                            preset,
+                            &mut self.handle,
+                            &mut self.awe_enabled,
+                            &mut self.awe_ui,
+                        );
+                        self.mark_dirty();
+                        ui.close();
+                    }
+                }
+            }
+        });
+        resp.response.on_hover_text(hover_text);
+        ui.separator();
+    }
+
+    /// The top-bar segmented view selector (Rack / AWE / Pattern / Seq / Sample).
+    fn render_view_selector(&mut self, ui: &mut egui::Ui) {
+        use egui_remixicon::icons as ri;
+        let t = theme();
+        let views: [(AppView, &str); 5] = [
+            (AppView::Rack, &format!("{} Rack", ri::LAYOUT_GRID_FILL)),
+            (
+                AppView::AcousticWorld,
+                &format!("{} AWE", ri::SURROUND_SOUND_FILL),
+            ),
+            (AppView::Pattern, &format!("{} Pattern", ri::PIANO_FILL)),
+            (AppView::Sequencer, &format!("{} Seq", ri::PLAY_LIST_FILL)),
+            (AppView::Sample, &format!("{} Sample", ri::MUSIC_FILL)),
+        ];
+        let seg_w = 80.0_f32;
+        let seg_h = 22.0_f32;
+        let rounding: u8 = 5;
+        let total_w = seg_w * views.len() as f32;
+        let (outer_rect, _) =
+            ui.allocate_exact_size(egui::vec2(total_w, seg_h), egui::Sense::hover());
+        let painter = ui.painter_at(outer_rect);
+
+        painter.rect_stroke(
+            outer_rect,
+            egui::CornerRadius::same(rounding),
+            egui::Stroke::new(1.0, t.colors.border),
+            egui::StrokeKind::Inside,
+        );
+
+        for (i, (view, label)) in views.iter().enumerate() {
+            let is_active = self.active_view == *view;
+            let x = outer_rect.left() + seg_w * i as f32;
+            let seg_rect = egui::Rect::from_min_size(
+                egui::pos2(x, outer_rect.top()),
+                egui::vec2(seg_w, seg_h),
+            );
+
+            let seg_rounding = if i == 0 {
+                egui::CornerRadius {
+                    nw: rounding,
+                    sw: rounding,
+                    ne: 0,
+                    se: 0,
+                }
+            } else if i == views.len() - 1 {
+                egui::CornerRadius {
+                    nw: 0,
+                    sw: 0,
+                    ne: rounding,
+                    se: rounding,
+                }
+            } else {
+                egui::CornerRadius::ZERO
+            };
+
+            if is_active {
+                painter.rect_filled(
+                    seg_rect,
+                    seg_rounding,
+                    t.colors.accent_primary.gamma_multiply(0.55),
+                );
+            }
+
+            if i > 0 {
+                let prev_active = self.active_view == views[i - 1].0;
+                if !is_active && !prev_active {
+                    let top = seg_rect.top() + 4.0;
+                    let bot = seg_rect.bottom() - 4.0;
+                    painter.line_segment(
+                        [egui::pos2(x, top), egui::pos2(x, bot)],
+                        egui::Stroke::new(1.0, t.colors.border),
+                    );
+                }
+            }
+
+            let text_color = if is_active {
+                t.colors.text_primary
+            } else {
+                t.colors.text_dim
+            };
+            painter.text(
+                seg_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                label,
+                egui::FontId::proportional(13.0),
+                text_color,
+            );
+
+            let resp = ui.interact(
+                seg_rect,
+                ui.id().with(("view_seg", i)),
+                egui::Sense::click(),
+            );
+            if resp.clicked() {
+                self.active_view = *view;
+            }
+        }
+    }
+
+    /// Bottom keyboard panel (always visible). Renders the keyboard content in
+    /// `Order::Middle` so it takes input priority over module Areas
+    /// (`Order::Background`) that may extend into the panel area.
+    fn render_keyboard_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::bottom("keyboard_panel")
+            .min_size(100.0)
+            .show_inside(ui, |ui| {
+                let layer_id =
+                    egui::LayerId::new(egui::Order::Middle, egui::Id::new("keyboard_layer"));
+                ui.scope_builder(egui::UiBuilder::new().layer_id(layer_id), |ui| {
+                    self.draw_keyboard(ui);
+                });
+            });
+    }
+
+    /// Bottom status bar: octave +/- and glide on the left, CPU / voices /
+    /// latency on the right.
+    fn render_status_bar(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::bottom("status_bar")
+            .min_size(22.0)
+            .show_inside(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let t = theme();
+
+                    // ── Left side: Octave +/- and Glide slider ──
+                    ui.label(
+                        RichText::new(format!("Octave: {:+}", self.keyboard.octave_offset()))
+                            .color(t.colors.text_secondary)
+                            .small(),
+                    );
+                    if ui.small_button("-").clicked() {
+                        let new_offset = self.keyboard.octave_offset() - 1;
+                        self.keyboard.set_octave_offset(new_offset);
+                    }
+                    if ui.small_button("+").clicked() {
+                        let new_offset = self.keyboard.octave_offset() + 1;
+                        self.keyboard.set_octave_offset(new_offset);
+                    }
+                    ui.separator();
+
+                    ui.label(RichText::new("Glide:").color(t.colors.text_dim).small());
+                    let mut glide_val = self.glide_time.as_f32();
+                    let glide_response = ui
+                        .add(
+                            egui::Slider::new(&mut glide_val, 0.0..=2.0)
+                                .suffix(" s")
+                                .fixed_decimals(2)
+                                .custom_formatter(|v, _| {
+                                    if v < 0.001 {
+                                        "Off".to_string()
+                                    } else {
+                                        format!("{v:.2}s")
+                                    }
+                                }),
+                        )
+                        .on_hover_text("Portamento glide time between notes");
+                    if glide_response.changed() {
+                        self.glide_time = synth_core::Seconds::new(glide_val);
+                        self.handle
+                            .send(EngineCommand::SetGlideTime(self.glide_time));
+                    }
+
+                    // ── Right side: CPU / Voices / Latency ──
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let cpu = self.handle.cpu_usage();
+                        let cpu_color = if cpu > 0.8 {
+                            t.colors.meter_red
+                        } else if cpu > 0.5 {
+                            t.colors.meter_yellow
+                        } else {
+                            t.colors.meter_green
+                        };
+                        ui.label(
+                            RichText::new(format!("CPU: {:>3.0}%", cpu * 100.0)).color(cpu_color),
+                        );
+                        ui.separator();
+                        ui.label(
+                            RichText::new(format!("Voices: {:>3}", self.handle.voice_count()))
+                                .color(t.colors.text_secondary)
+                                .family(egui::FontFamily::Monospace),
+                        );
+                        ui.separator();
+                        ui.label(
+                            RichText::new(format!(
+                                "Latency: {:.1}ms",
+                                self.latency.as_secs_f64() * 1000.0
+                            ))
+                            .color(t.colors.text_dim),
+                        );
+                    });
+                });
+            });
+    }
+
     fn render_analyze_window(&mut self, ctx: &egui::Context) {
         if let Some(active_id) = self.active_instrument_id
             && let Some(name) = self
@@ -3050,18 +3057,32 @@ impl SynthApp {
             .default_size([420.0, 520.0])
             .show(ctx, |ui| {
                 // Song-level fields ----------------------------------------------------
+                // Snapshot under a short read lock, render against locals, then write
+                // back only on change under a short write lock. Never hold the Song
+                // lock across widget rendering — the audio thread polls it with
+                // try_read(), and a held write lock (esp. across the ComboBox popup)
+                // would starve it.
                 {
-                    let mut song = self.song.write();
+                    let (mut name, mut song_author, mut bpm, mut ts_num, mut ts_den) = {
+                        let song = self.song.read();
+                        (
+                            song.name.clone(),
+                            song.author.clone(),
+                            song.default_tempo.as_f32(),
+                            i32::from(song.default_time_signature.numerator),
+                            song.default_time_signature.denominator,
+                        )
+                    };
 
                     ui.label(RichText::new("Song name").color(t.colors.text_dim));
-                    if ui.text_edit_singleline(&mut song.name).changed() {
+                    if ui.text_edit_singleline(&mut name).changed() {
                         song_changed = true;
                     }
 
                     ui.add_space(8.0);
 
                     ui.label(RichText::new("Song author").color(t.colors.text_dim));
-                    if ui.text_edit_singleline(&mut song.author).changed() {
+                    if ui.text_edit_singleline(&mut song_author).changed() {
                         song_changed = true;
                     }
 
@@ -3069,7 +3090,6 @@ impl SynthApp {
 
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Tempo (BPM)").color(t.colors.text_dim));
-                        let mut bpm = song.default_tempo.as_f32();
                         if ui
                             .add(
                                 egui::DragValue::new(&mut bpm)
@@ -3079,10 +3099,8 @@ impl SynthApp {
                             )
                             .changed()
                         {
-                            let clamped = bpm.clamp(20.0, 300.0);
-                            let new_bpm = synth_core::Bpm::new(clamped);
-                            song.default_tempo = new_bpm;
-                            send_tempo = Some(new_bpm);
+                            bpm = bpm.clamp(20.0, 300.0);
+                            send_tempo = Some(synth_core::Bpm::new(bpm));
                             song_changed = true;
                         }
                     });
@@ -3091,33 +3109,38 @@ impl SynthApp {
 
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Time signature").color(t.colors.text_dim));
-                        let mut num = song.default_time_signature.numerator as i32;
                         if ui
-                            .add(egui::DragValue::new(&mut num).range(1..=32).speed(0.1))
+                            .add(egui::DragValue::new(&mut ts_num).range(1..=32).speed(0.1))
                             .changed()
                         {
-                            song.default_time_signature.numerator = num.clamp(1, 32) as u8;
+                            ts_num = ts_num.clamp(1, 32);
                             song_changed = true;
                         }
                         ui.label("/");
-                        let current_den = song.default_time_signature.denominator;
                         egui::ComboBox::from_id_salt("project_edit_time_sig_den")
-                            .selected_text(current_den.to_string())
+                            .selected_text(ts_den.to_string())
                             .width(60.0)
                             .show_ui(ui, |ui| {
                                 for d in [1u8, 2, 4, 8, 16, 32] {
-                                    if ui
-                                        .selectable_label(current_den == d, d.to_string())
-                                        .clicked()
-                                        && song.default_time_signature.denominator != d
+                                    if ui.selectable_label(ts_den == d, d.to_string()).clicked()
+                                        && ts_den != d
                                     {
-                                        song.default_time_signature.denominator = d;
+                                        ts_den = d;
                                         song_changed = true;
                                     }
                                 }
                             });
                     });
-                } // <- release song write lock before touching other self fields
+
+                    if song_changed {
+                        let mut song = self.song.write();
+                        song.name = name;
+                        song.author = song_author;
+                        song.default_tempo = synth_core::Bpm::new(bpm.clamp(20.0, 300.0));
+                        song.default_time_signature.numerator = ts_num.clamp(1, 32) as u8;
+                        song.default_time_signature.denominator = ts_den;
+                    }
+                }
 
                 ui.add_space(10.0);
                 ui.separator();

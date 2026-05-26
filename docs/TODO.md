@@ -309,6 +309,26 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
   `view_pitch_min`/`view_pitch_max`/`note_row_height` are one coherent concept — a piano-roll coordinate
   transform. Extracting a struct collapses 7 args → 1 and removes the need to thread `note_row_height`
   through `note_at_pos` separately.
+- [ ] **Context-struct refactor to finish decomposing `draw_piano_roll` / `draw_arrangement`.**
+  The GUI cleanup branch (`cleanup/gui-dead-duplicate-code`) fully decomposed `App::ui`
+  (~1900 → ~400 lines, ~16 methods) and extracted the *low-parameter* sub-sections of the two
+  sequencer god-functions: `draw_arrangement_toolbar` (3 params) and
+  `draw_piano_roll_selection_inspector` (5 params). The remaining sections —
+  `draw_piano_roll`'s two toolbar rows + note-grid painter, and `draw_arrangement`'s track-header
+  panel + timeline painter + ~330-line context menu — each touch 6–8 of the *same* locals
+  (`data`, `song`, `view_state`, `handle`, `undo_manager`, `instruments`). Mechanical extraction
+  there trips `clippy::too_many_arguments` and would force `#[allow]` on every helper, trading one
+  long function for many parameter-heavy ones — not a clear win. The clean path is to bundle the
+  shared state into context structs, e.g.
+  `struct PianoRollCtx<'a> { data: &'a PianoRollData, song: &'a Arc<RwLock<Song>>,
+  view_state: &'a mut SequencerViewState, handle: &'a mut EngineHandle,
+  undo_manager: &'a mut UndoManager, instruments: &'a [InstrumentUiState] }` (and an analogous
+  `ArrangementCtx<'a>`), thread one `&mut ctx` into each extracted sub-function, then split the
+  bodies. This is a design-level change (borrow-splitting the `&mut` fields across sub-calls needs
+  care) and has no GUI behaviour tests to catch regressions, so it warrants its own focused
+  session rather than being rushed. Once the ctx structs exist, the toolbar rows / grid / header /
+  timeline / context-menu sections drop out as 1–2-arg methods. Relatedly subsumes the
+  `PianoRollCoords` item above (coords can live on `PianoRollCtx`).
 - [ ] **Deduplicate "Set Length" write+undo in the arrangement context menu.**
   `gui/sequencer/mod.rs` "Set Length…" submenu has the same ~22-line "read old length → write new → push
   `SetPatternLength` undo" block in two places: the free-input `DragValue` + Apply branch and the preset

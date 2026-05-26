@@ -149,7 +149,7 @@ pub fn draw_level_meter(
         } else {
             Rect::from_min_size(rect.min, Vec2::new(rect.width(), 4.0))
         };
-        painter.rect_filled(clip_rect, t.style.border_width, Color32::RED);
+        painter.rect_filled(clip_rect, t.style.border_width, t.colors.meter_red);
     }
 
     // Border
@@ -259,8 +259,8 @@ fn draw_meter_bar(
         let color = if level <= rms_norm {
             level_color(level)
         } else {
-            // Inactive segment - use darker bg
-            Color32::from_rgb(35, 38, 45)
+            // Inactive segment - use the widget background from the theme
+            t.colors.bg_widget
         };
 
         painter.rect_filled(segment_rect, 0.0, color);
@@ -284,16 +284,14 @@ fn draw_meter_bar(
     }
 }
 
-/// Get color for level value (green -> yellow -> red).
+/// Get color for level value (green -> yellow -> red) from the theme palette.
 pub fn level_color(level: f32) -> Color32 {
+    let colors = theme().colors;
     if level < 0.6 {
-        // Green
-        Color32::from_rgb(80, 200, 120)
+        colors.meter_green
     } else if level < 0.85 {
-        // Yellow
-        Color32::from_rgb(220, 180, 50)
+        colors.meter_yellow
     } else {
-        // Red
-        Color32::from_rgb(220, 80, 80)
+        colors.meter_red
     }
 }

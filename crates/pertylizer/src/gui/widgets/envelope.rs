@@ -17,10 +17,11 @@ pub fn draw_adsr_curve(
     height: f32,
 ) {
     let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let t = theme();
     let painter = ui.painter();
 
     // Background
-    painter.rect_filled(rect, 4.0, theme().colors.bg_dark);
+    painter.rect_filled(rect, t.style.corner_radius, t.colors.bg_dark);
 
     // Normalize times
     let total_time = attack + decay + release + 0.5; // 0.5 for sustain display
@@ -45,12 +46,12 @@ pub fn draw_adsr_curve(
     // Draw envelope as single optimized line shape
     painter.add(Shape::line(
         points.to_vec(),
-        Stroke::new(2.0, theme().colors.accent_cyan),
+        Stroke::new(t.style.border_width_thick, t.colors.accent_cyan),
     ));
 
     // Draw dots at key points
     for point in &points[1..4] {
-        painter.circle_filled(*point, 3.0, theme().colors.accent_cyan);
+        painter.circle_filled(*point, 3.0, t.colors.accent_cyan);
     }
 }
 
@@ -186,11 +187,11 @@ impl<'a> EnvelopeEditor<'a> {
         let t = theme();
 
         // Background
-        painter.rect_filled(rect, 4.0, t.colors.bg_widget);
+        painter.rect_filled(rect, t.style.corner_radius, t.colors.bg_widget);
         painter.rect_stroke(
             rect,
-            4.0,
-            Stroke::new(1.0, t.colors.text_dim.gamma_multiply(0.5)),
+            t.style.corner_radius,
+            Stroke::new(t.style.border_width, t.colors.text_dim.gamma_multiply(0.5)),
             egui::StrokeKind::Inside,
         );
 
@@ -316,7 +317,7 @@ impl<'a> EnvelopeEditor<'a> {
             };
 
             if let Some(x) = playhead_x {
-                let playhead_color = Color32::from_rgb(255, 200, 50);
+                let playhead_color = theme().colors.accent_yellow;
                 // Vertical line from top to bottom
                 painter.line_segment(
                     [Pos2::new(x, top), Pos2::new(x, bottom)],
