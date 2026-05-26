@@ -32,6 +32,28 @@
   confirmed used), AWE-side material/room fields. A small `cargo run --bin
   audit_dormant_fields` style check — or just a grep for every `pub` field on
   a domain struct and a hand-trace into the audio path — would surface these.
+- [ ] **★ HIGH: most pattern automation targets are GUI-editable but silently no-op.**
+  Resolves the audit follow-up above ("automation lanes — do they all reach the engine?").
+  The automation system (`synth_sequencer/src/automation.rs`) defines
+  `AutomationTarget::{Instrument, Track, Global}` covering 8 instrument params
+  (`AutoInstrumentParam::ALL` — Volume, Pan, FilterCutoff, FilterResonance, Attack, Decay,
+  Sustain, Release), 4 track params (Volume, Pan, Mute, Solo) and 3 global params (Tempo,
+  MasterVolume, Swing). The sequencer reads every lane per tick
+  (`sequencer_engine.rs:379` / `:454` via `lane.value_at`), deduplicates, and emits
+  `SequencerEvent::Parameter` (`sequencer_engine.rs:504`). But the engine handler
+  (`synth_engine.rs:2469`) only matches `AutomationTarget::Instrument`, and within it only
+  `Volume` (`set_volume`) and `Pan` (`set_pan`) — every other instrument param hits
+  `_ => {}` (comment: "requires module routing (future)"), and `Track` / `Global` targets
+  are not matched at all. Net effect: the automation-lane ComboBox
+  (`gui/sequencer/mod.rs:3309`) offers all 8 instrument params for the selected instrument,
+  so a user can draw a Filter Cutoff / Resonance / ADSR curve and hear nothing. Two fixes:
+  (a) route the non-Volume/Pan instrument params through the same per-module parameter path
+  `set_parameter` uses (map `AutoInstrumentParam::FilterCutoff` → the instrument's filter
+  module cutoff param, etc.) — this needs the module routing the comment defers;
+  (b) add match arms for `Global(Tempo)` → `transport.set_tempo`, `Global(MasterVolume)`,
+  `Global(Swing)`, and `Track { .. }` — though track automation shares the same missing
+  per-track output bus as the static `track.pan`/`.volume` item above, so land that
+  plumbing first. See §2.1 (tempo) — that entry assumed tempo automation was already applied.
 - [ ] **★ HIGH: expand Sub Oscillator waveform set from 3 to 6.** `SubOscWaveform`
   (`crates/synth_core/src/params/sub_osc.rs:13`) currently exposes only
   `Sine / Square / Pulse25`, while the main `Oscillator` exposes 6
@@ -362,8 +384,12 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
 
 ### 2.1 Tempo automation
 
-- [ ] Tempo curve interpolation (currently step changes only — accelerando ramps would smooth between
-  two adjacent points)
+- [ ] **Wire `Global(Tempo)` automation into the engine at all** (see the §0.1 HIGH item on
+  unwired automation targets). A tempo lane currently emits an unhandled
+  `SequencerEvent::Parameter` and does nothing — the "step changes only" note below assumed
+  it was already applied. Drive `transport.set_tempo` from the lane value first.
+- [ ] Tempo curve interpolation (once wired, currently would be step changes only — accelerando
+  ramps would smooth between two adjacent points)
 
 ### 2.2 Section markers
 
