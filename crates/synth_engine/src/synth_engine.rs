@@ -3282,4 +3282,64 @@ mod tests {
             }
         }
     }
+
+    // --- Orphan-preview lifecycle (channel-strip plan §5) ------------------
+    //
+    // The preview target must be cleared on every transport reset; stale
+    // preview surviving Stop/SetSong/solo was the v0.290.0 bug class. These
+    // pin the command-handler teardown (previously untested).
+
+    fn enter_preview(engine: &mut SynthEngine, handle: &mut EngineHandle) {
+        handle.send(EngineCommand::SetPreviewPattern(Some((
+            synth_sequencer::PatternId(0),
+            synth_sequencer::SeqInstrumentId(0),
+        ))));
+        engine.process_commands();
+        assert_eq!(
+            engine.sequencer.preview_pattern(),
+            Some(synth_sequencer::PatternId(0)),
+            "precondition: preview should be active"
+        );
+    }
+
+    #[test]
+    fn stop_clears_orphan_preview() {
+        let (mut engine, mut handle) = SynthEngine::new();
+        enter_preview(&mut engine, &mut handle);
+        handle.send(EngineCommand::Stop);
+        engine.process_commands();
+        assert_eq!(engine.sequencer.preview_pattern(), None);
+    }
+
+    #[test]
+    fn set_song_clears_orphan_preview() {
+        let (mut engine, mut handle) = SynthEngine::new();
+        enter_preview(&mut engine, &mut handle);
+        handle.send(EngineCommand::SetSong {
+            song: std::sync::Arc::new(parking_lot::RwLock::new(synth_sequencer::Song::default())),
+        });
+        engine.process_commands();
+        assert_eq!(engine.sequencer.preview_pattern(), None);
+    }
+
+    #[test]
+    fn solo_pattern_and_preview_are_mutually_exclusive() {
+        let (mut engine, mut handle) = SynthEngine::new();
+        enter_preview(&mut engine, &mut handle);
+
+        // Entering solo clears preview.
+        handle.send(EngineCommand::SetSoloPattern(Some(
+            synth_sequencer::PatternId(1),
+        )));
+        engine.process_commands();
+        assert_eq!(engine.sequencer.preview_pattern(), None);
+        assert_eq!(
+            engine.sequencer.solo_pattern(),
+            Some(synth_sequencer::PatternId(1))
+        );
+
+        // Entering preview clears solo.
+        enter_preview(&mut engine, &mut handle);
+        assert_eq!(engine.sequencer.solo_pattern(), None);
+    }
 }

@@ -650,7 +650,19 @@ impl Default for SequencerEngine {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use synth_sequencer::{Duration, PatternTick, Velocity};
+    use synth_sequencer::{Duration, PatternTick, SeqInstrumentId, Velocity};
+
+    /// A song with one note in a pattern that is NOT placed in the arrangement
+    /// (an "orphan" pattern). Returns the song + the orphan pattern id.
+    fn create_orphan_song() -> (Song, PatternId) {
+        let mut song = Song::new("Orphan").with_tempo(Bpm::new(120.0));
+        let pattern_id = song.create_pattern(Duration::WHOLE);
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            let _ = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+        }
+        // Deliberately no create_track / place_pattern — the pattern is orphan.
+        (song, pattern_id)
+    }
 
     fn create_test_song() -> Song {
         let mut song = Song::new("Test").with_tempo(Bpm::new(120.0));
@@ -807,5 +819,98 @@ mod tests {
         }
 
         assert!(seq.current_tick().0 < 100);
+    }
+
+    // --- Orphan-preview mode (channel-strip plan §5) -----------------------
+    //
+    // These pin the orphan-preview branch (auditioning an unplaced pattern),
+    // which had a history of lifecycle bugs (v0.290.0) and no test coverage.
+    // The scratch-track rework was assessed and closed as not-worth-it; this
+    // hardens the mechanism that was kept.
+
+    #[test]
+    fn orphan_preview_emits_notes_through_preview_instrument() {
+        let (song, pattern_id) = create_orphan_song();
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+
+        let preview_inst = SeqInstrumentId(7);
+        seq.set_preview_pattern(Some((pattern_id, preview_inst)));
+        seq.play();
+
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
+
+        let note_ons: Vec<_> = events.iter().filter(|e| e.is_note_on()).collect();
+        assert!(
+            !note_ons.is_empty(),
+            "orphan preview should emit NoteOn for the pattern's notes: {events:?}"
+        );
+        // No track context exists in preview — notes must route through the
+        // explicitly supplied preview instrument.
+        assert!(
+            note_ons
+                .iter()
+                .all(|e| e.instrument() == Some(preview_inst)),
+            "preview NoteOns must use the preview instrument {preview_inst:?}: {events:?}"
+        );
+    }
+
+    #[test]
+    fn orphan_pattern_is_silent_without_preview() {
+        // Same orphan pattern, but preview not enabled: with no arrangement
+        // placement the normal loop emits nothing.
+        let (song, _pattern_id) = create_orphan_song();
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+        seq.play();
+
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
+
+        assert!(
+            events.iter().all(|e| !e.is_note_on()),
+            "an unplaced pattern must be silent unless previewed: {events:?}"
+        );
+    }
+
+    #[test]
+    fn clearing_preview_silences_the_orphan_pattern() {
+        let (song, pattern_id) = create_orphan_song();
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+
+        seq.set_preview_pattern(Some((pattern_id, SeqInstrumentId(3))));
+        assert_eq!(seq.preview_pattern(), Some(pattern_id));
+
+        seq.set_preview_pattern(None);
+        assert_eq!(seq.preview_pattern(), None);
+
+        seq.play();
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
+        assert!(
+            events.iter().all(|e| !e.is_note_on()),
+            "after clearing preview the orphan pattern must be silent: {events:?}"
+        );
+    }
+
+    #[test]
+    fn zero_length_preview_pattern_does_not_panic() {
+        // Regression guard for the zero-length orphan (v0.290.0): the modulo in
+        // the preview branch must not divide by zero.
+        let mut song = Song::new("ZeroLen").with_tempo(Bpm::new(120.0));
+        let pattern_id = song.create_pattern(Duration(0));
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            let _ = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+        }
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+        seq.set_preview_pattern(Some((pattern_id, SeqInstrumentId(0))));
+        seq.play();
+
+        let mut events = Vec::new();
+        // Must return without panicking (div-by-zero / out-of-range modulo).
+        seq.process(SampleCount::new(480), &mut events);
     }
 }

@@ -15,7 +15,7 @@ phase layers onto it.
 - [x] **Phase 2** — Track vol/pan/mute/solo into the bus fader + Track/Global automation arms (Tempo→§2.1, Swing/Solo deferred)
 - [x] **Phase 3** — Make `track.instrument` mandatory; **sharing allowed** (no strict 1:1); remove "— None — (per-note)"
 - [x] **Phase 4** — Remove `note.instrument` (route only via `track.instrument`; preview via threaded instrument)
-- [ ] **Phase 5** — Orphan-preview via scratch channel (removes the special branch)
+- [x] **Phase 5** — Orphan-preview: **kept** the engine-side branch; scratch-track rework closed as not-worth-it; added the missing preview/lifecycle tests
 - [ ] **Phase 6** — Save/load + MCP cleanup
 - [ ] **Phase 7** — Sends/returns + mixer view (§1.4 payoff, now just taps off the bus)
 - [ ] **Phase 8** — (future) Independent faders for *shared* instruments — per-voice-tagged per-track bus
@@ -201,19 +201,44 @@ projects (Oxygene 80s, Synth Pop) are left as-is.
 - Fader unification (track drives instrument vol/pan directly) deferred to the
   struct-merge follow-up.
 
-### Phase 5 — Orphan-preview via scratch channel
-**Status:** ☐ Not started
+### Phase 5 — Orphan-preview: kept the mechanism, added tests
+**Status:** ☑ Done — scratch-track rework **closed as not-worth-it**
 
-Deprecating `note.instrument` removes orphan-preview's trackless routing, so this
-phase pays that cost — and *removes* a whole code path in return.
+Phase 4a already solved the original motivation (orphan preview had no instrument)
+by threading `preview_instrument`, so the only remaining rationale was "remove the
+special branch." Three exploration agents independently concluded the scratch-track
+rework is a **net-complexity increase, not a simplification**:
 
-- [ ] Represent preview as a temporary placement on a hidden scratch track bound to
-  the chosen instrument, so the normal arrangement loop (and its bus) handle it.
-- [ ] Delete the special `preview_pattern` branch (`sequencer_engine.rs:361`) and its
-  field/setter (`:88`, `set_preview_pattern` at `:155`).
-- [ ] Re-test the REC-arm flow on unplaced patterns (cf. `e674f39`, v0.290.0).
-- [ ] Determinism test à la `tests/arrangement_render_determinism.rs` on
-  preview-via-scratch-track.
+- The current orphan-preview is a self-contained, RT-safe, audio-thread-only ~30-line
+  branch that touches **nothing** in the shared `Song` — zero save/load and zero
+  display surface.
+- A scratch track must live in the `Song` (the audio thread can only `try_read`), so
+  entry is UI-thread and teardown spans ~9 sites — several on the audio thread, which
+  **cannot write-lock**. A missed teardown leaves a **phantom track/placement that
+  gets saved to disk** — a worse, *persisted* failure class than today's runtime-only
+  state.
+- The `Song` serializes tracks+arrangement unconditionally, and **16 `song.tracks()`
+  sites across 6 crates** assume all tracks are real/visible (plus new invariants in
+  `calculate_length`, `any_solo`, the bus-fader loop) — each needs a scratch-exclusion.
+- The "engine-local synthetic placement" alternative is just the special branch in a
+  different shape — no net deletion.
+
+**Decision:** keep the engine-side `preview_pattern` branch; do not build the scratch
+track. Instead the real gap (the preview/REC path had a history of lifecycle bugs —
+`e674f39`, v0.290.0 — and **zero test coverage**) was filled:
+
+- [x] Sequencer tests (`sequencer_engine.rs`): orphan preview emits NoteOn through the
+  supplied `preview_instrument`; an unplaced pattern is silent without preview;
+  clearing preview re-silences it; zero-length preview pattern doesn't panic.
+- [x] Command-handler lifecycle tests (`synth_engine.rs`): `Stop` and `SetSong` clear
+  preview; solo and preview are mutually exclusive — guarding the v0.290.0 bug class.
+- Also fixed a regression the prior phase's grep-based check masked: `synth_engine`
+  tests didn't compile after the `add_note` signature change (commit `a5cd8be`).
+  Verification now checks `cargo test`'s exit code, not just result-line greps.
+
+If routing preview through the channel bus ever becomes a hard requirement, the
+lowest-risk option is the engine-local synthetic placement — but it must be justified
+by bus-routing need, not sold as a simplification.
 
 ### Phase 6 — Save/load + MCP cleanup
 **Status:** ☐ Not started
