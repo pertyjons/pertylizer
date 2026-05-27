@@ -522,6 +522,14 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
 
 ### 3.3 Expression & articulation
 
+**Roadmap:** `docs/note-expression-roadmap.md` — staged plan toward per-note
+expression that also retires the `sid-analyzer` export gaps. Covers generic
+sequencer→module automation (Phase A1 bugfix: the 6 GUI-exposed but dead
+FilterCutoff/ADSR instrument macros; A2: `AutomationTarget::Module`), per-note
+legato/glide (B), per-note vibrato (C), shared/bus filter (D, rides on
+channel-strip Phase 7), and the full Note Expression + MPE system (E). The two
+bullets below are **Phase E** of that roadmap.
+
 - [ ] MPE support — MIDI Polyphonic Expression for per-note pitch bend, pressure, slide
 - [ ] Polyphonic aftertouch routing to module parameters
 
