@@ -932,6 +932,7 @@ mod tests {
                 SampleMeta {
                     id: synth_sampler::SampleId::new(0),
                     name: name.to_string(),
+                    description: String::new(),
                     sample_rate: HwSampleRate(44_100),
                     channels: synth_core::ChannelCount::Mono,
                     frame_count: synth_core::SampleCount::new(100),

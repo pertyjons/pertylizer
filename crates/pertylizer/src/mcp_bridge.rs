@@ -1093,6 +1093,7 @@ impl SynthBridge for AppSynthBridge {
         Ok(SongInfo {
             name: song.name.clone(),
             author: song.author.clone(),
+            description: song.description.clone(),
             tempo: song.default_tempo.0,
             time_signature: format!("{}/{}", ts.numerator, ts.denominator),
             length_seconds: song.length_seconds(),
@@ -1165,6 +1166,7 @@ impl SynthBridge for AppSynthBridge {
             .map(|p| PatternInfo {
                 id: p.id.0,
                 name: p.name.clone(),
+                description: p.description.clone(),
                 length_beats: ticks_to_beats(p.length.0),
                 note_count: p.note_count(),
             })
@@ -1214,7 +1216,6 @@ impl SynthBridge for AppSynthBridge {
         start_beat: f32,
         duration_beats: f32,
         velocity: u8,
-        instrument_id: Option<u16>,
     ) -> Result<NoteInfo, McpBridgeError> {
         if start_beat < 0.0 {
             return Err(McpBridgeError::Other(format!(
@@ -1237,9 +1238,6 @@ impl SynthBridge for AppSynthBridge {
         })?;
         let start = synth_sequencer::PatternTick(beats_to_ticks(start_beat));
         let vel = synth_core::Velocity::from_midi(velocity);
-        // Per-note instrument removed; notes route via their track. `instrument_id`
-        // remains on the MCP API but is ignored (API tightening is Phase 6).
-        let _ = instrument_id;
 
         let note = synth_sequencer::Note::new(
             synth_sequencer::NoteId(0), // will be reassigned by insert_note
@@ -1338,6 +1336,8 @@ impl SynthBridge for AppSynthBridge {
             .map(|t| TrackInfo {
                 id: t.id.0,
                 name: t.name.clone(),
+                description: t.description.clone(),
+                color: t.color.to_hex(),
                 instrument_id: Some(t.instrument.0),
                 volume: t.volume.as_f32(),
                 // Convert normalized (0.0..1.0) to bipolar (-1.0..1.0) for MCP API
@@ -2332,6 +2332,35 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
+    fn set_track_description(
+        &self,
+        track_id: u16,
+        description: &str,
+    ) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let tid = synth_sequencer::TrackId(track_id);
+        let track = song
+            .track_mut(tid)
+            .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        track.description = description.to_string();
+        Ok(())
+    }
+
+    fn set_track_color(&self, track_id: u16, color: &str) -> Result<(), McpBridgeError> {
+        let parsed = synth_sequencer::TrackColor::from_hex(color).ok_or_else(|| {
+            McpBridgeError::Other(format!(
+                "invalid color {color:?}; expected \"#RRGGBB\" or \"#RRGGBBAA\""
+            ))
+        })?;
+        let mut song = self.shared.song.write();
+        let tid = synth_sequencer::TrackId(track_id);
+        let track = song
+            .track_mut(tid)
+            .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        track.color = parsed;
+        Ok(())
+    }
+
     fn delete_track(&self, track_id: u16) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         let tid = synth_sequencer::TrackId(track_id);
@@ -2349,6 +2378,20 @@ impl SynthBridge for AppSynthBridge {
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
         pattern.name = name.to_string();
+        Ok(())
+    }
+
+    fn set_pattern_description(
+        &self,
+        pattern_id: u32,
+        description: &str,
+    ) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+        pattern.description = description.to_string();
         Ok(())
     }
 
@@ -2375,6 +2418,12 @@ impl SynthBridge for AppSynthBridge {
     fn set_song_author(&self, author: &str) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         song.author = author.to_string();
+        Ok(())
+    }
+
+    fn set_song_description(&self, description: &str) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        song.description = description.to_string();
         Ok(())
     }
 
@@ -3433,6 +3482,21 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
+    fn set_sample_description(&self, id: u64, description: &str) -> Result<(), McpBridgeError> {
+        let mut lib = self
+            .sample_library
+            .write()
+            .map_err(|_| McpBridgeError::Other("Sample library lock poisoned".to_string()))?;
+        let sample_id = synth_sampler::SampleId::new(id);
+        let mut updated = lib
+            .get_meta(sample_id)
+            .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?
+            .clone();
+        updated.description = description.to_string();
+        lib.update_meta(sample_id, updated);
+        Ok(())
+    }
+
     fn set_sample_root_note(&self, id: u64, note: u8) -> Result<(), McpBridgeError> {
         let mut lib = self
             .sample_library
@@ -4421,6 +4485,7 @@ fn meta_to_sample_info(meta: &synth_sampler::SampleMeta) -> synth_mcp::types::Sa
     synth_mcp::types::SampleInfo {
         id: meta.id.0,
         name: meta.name.clone(),
+        description: meta.description.clone(),
         duration_seconds: meta.duration_seconds(),
         sample_rate: meta.sample_rate.0,
         channels: meta.channels.count(),
@@ -5111,9 +5176,6 @@ fn try_insert_note_into_pattern(
         .ok_or_else(|| format!("invalid pitch: {} (must be 0..=127)", n.pitch))?;
     let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));
     let vel = synth_core::Velocity::from_midi(n.velocity);
-    // Per-note instrument removed; notes route via their track. `instrument_id`
-    // remains on the MCP input but is ignored (API tightening is Phase 6).
-    let _ = n.instrument_id;
 
     let note = synth_sequencer::Note::new(
         synth_sequencer::NoteId(0), // reassigned by insert_note
@@ -5133,9 +5195,6 @@ fn insert_note_into_pattern(pattern: &mut synth_sequencer::Pattern, n: &BridgeNo
     let pitch = synth_sequencer::Pitch::new(n.pitch).unwrap_or(synth_sequencer::Pitch::MIDDLE_C);
     let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));
     let vel = synth_core::Velocity::from_midi(n.velocity);
-    // Per-note instrument removed; notes route via their track. `instrument_id`
-    // remains on the MCP input but is ignored (API tightening is Phase 6).
-    let _ = n.instrument_id;
 
     let note = synth_sequencer::Note::new(
         synth_sequencer::NoteId(0), // reassigned by insert_note

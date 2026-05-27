@@ -330,6 +330,7 @@ fn load_wav_from_bytes(
     let meta = SampleMeta {
         id: synth_sampler::SampleId::new(0),
         name: "imported".to_string(),
+        description: String::new(),
         sample_rate: SampleRate(spec.sample_rate),
         channels,
         frame_count: SampleCount::new(frame_count),

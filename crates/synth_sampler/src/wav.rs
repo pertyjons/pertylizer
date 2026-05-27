@@ -55,6 +55,7 @@ pub fn load_wav(path: &Path, target_rate: SampleRate) -> Result<Sample, SampleEr
     let meta = SampleMeta {
         id: SampleId::new(0), // Assigned by library
         name,
+        description: String::new(),
         sample_rate: final_rate,
         channels,
         frame_count: SampleCount::new(final_frame_count),
@@ -228,6 +229,7 @@ mod tests {
             SampleMeta {
                 id: SampleId::new(0),
                 name: "test".to_string(),
+                description: String::new(),
                 sample_rate: SampleRate(sample_rate),
                 channels: ChannelCount::from(channels),
                 frame_count: SampleCount::new(frames),

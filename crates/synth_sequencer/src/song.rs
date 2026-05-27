@@ -93,6 +93,10 @@ pub struct Song {
     pub name: String,
     /// Song author.
     pub author: String,
+    /// Free-text description capturing intent (what the song is for, its mood
+    /// or production notes). Empty by default; readable/writable via MCP and GUI.
+    #[serde(default)]
+    pub description: String,
 
     patterns: Vec<Pattern>,
     next_pattern_id: u32,
@@ -123,6 +127,7 @@ impl Song {
         Self {
             name: name.into(),
             author: String::new(),
+            description: String::new(),
             patterns: Vec::new(),
             next_pattern_id: 0,
             tracks: Vec::new(),

@@ -1103,6 +1103,59 @@ pub struct SetPatchDescriptionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetSongDescriptionParam {
+    #[schemars(
+        description = "Free-text description of the song's intent / mood / production notes. \
+        Pass \"\" to clear. Surfaces in get_song_info."
+    )]
+    pub description: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetPatternDescriptionParam {
+    #[schemars(description = "Pattern ID to annotate")]
+    pub pattern_id: u32,
+    #[schemars(
+        description = "Free-text description of the pattern's intent (e.g. \"chorus drop, \
+        half-time feel\"). Pass \"\" to clear. Surfaces in list_patterns."
+    )]
+    pub description: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTrackDescriptionParam {
+    #[schemars(description = "Track ID to annotate")]
+    pub track_id: u16,
+    #[schemars(
+        description = "Free-text description of the track's role (e.g. \"kick layer\", \
+        \"sidechain source\"). Pass \"\" to clear. Surfaces in list_tracks."
+    )]
+    pub description: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTrackColorParam {
+    #[schemars(description = "Track ID to recolor")]
+    pub track_id: u16,
+    #[schemars(
+        description = "Display color as \"#RRGGBB\" or \"#RRGGBBAA\" (alpha ignored). \
+        Lets you paint the arrangement so it is visually scannable. Surfaces in list_tracks."
+    )]
+    pub color: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetSampleDescriptionParam {
+    #[schemars(description = "Sample ID to annotate")]
+    pub sample_id: u64,
+    #[schemars(
+        description = "Free-text description of the sample's intent / source. \
+        Pass \"\" to clear. Surfaces in list_samples / get_sample_info."
+    )]
+    pub description: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetSidechainSourceParam {
     #[schemars(description = "Instrument ID whose sidechain input to configure")]
     pub instrument_id: u64,
@@ -1220,10 +1273,6 @@ pub struct AddNoteParam {
     pub duration_beats: f32,
     #[schemars(description = "Velocity (0-127, where 127 = maximum)")]
     pub velocity: u8,
-    #[schemars(
-        description = "Ignored: notes route through their track's instrument. Retained for compatibility."
-    )]
-    pub instrument_id: Option<u16>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1287,10 +1336,6 @@ pub struct NoteInput {
     pub duration_beats: f32,
     #[schemars(description = "Velocity (0-127). Default 100 if omitted.")]
     pub velocity: Option<u8>,
-    #[schemars(
-        description = "Ignored: notes route through their track's instrument. Retained for compatibility."
-    )]
-    pub instrument_id: Option<u16>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3400,6 +3445,97 @@ impl SynthMcpServer {
     }
 
     #[tool(
+        description = "Set or clear the song's free-text description (intent / mood / production \
+        notes). Pass \"\" to clear. Surfaces in get_song_info."
+    )]
+    async fn set_song_description(&self, params: Parameters<SetSongDescriptionParam>) -> String {
+        match self.bridge.set_song_description(&params.0.description) {
+            Ok(()) => format!(
+                "OK: set song description ({} chars)",
+                params.0.description.chars().count()
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set or clear a pattern's free-text description (its musical intent, e.g. \
+        \"chorus drop, half-time feel\"). Pass \"\" to clear. Surfaces in list_patterns."
+    )]
+    async fn set_pattern_description(
+        &self,
+        params: Parameters<SetPatternDescriptionParam>,
+    ) -> String {
+        match self
+            .bridge
+            .set_pattern_description(params.0.pattern_id, &params.0.description)
+        {
+            Ok(()) => format!(
+                "OK: set pattern {} description ({} chars)",
+                params.0.pattern_id,
+                params.0.description.chars().count()
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set or clear a track's free-text description (its role, e.g. \"kick layer\", \
+        \"sidechain source\"). Pass \"\" to clear. Surfaces in list_tracks."
+    )]
+    async fn set_track_description(&self, params: Parameters<SetTrackDescriptionParam>) -> String {
+        match self
+            .bridge
+            .set_track_description(params.0.track_id, &params.0.description)
+        {
+            Ok(()) => format!(
+                "OK: set track {} description ({} chars)",
+                params.0.track_id,
+                params.0.description.chars().count()
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set a track's display color from a \"#RRGGBB\" / \"#RRGGBBAA\" hex string \
+        (alpha ignored). Paints the arrangement so it is visually scannable. Surfaces in list_tracks."
+    )]
+    async fn set_track_color(&self, params: Parameters<SetTrackColorParam>) -> String {
+        match self
+            .bridge
+            .set_track_color(params.0.track_id, &params.0.color)
+        {
+            Ok(()) => format!(
+                "OK: set track {} color to {}",
+                params.0.track_id, params.0.color
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set or clear a sample's free-text description (its intent / source). \
+        Pass \"\" to clear. Surfaces in list_samples / get_sample_info."
+    )]
+    async fn set_sample_description(
+        &self,
+        params: Parameters<SetSampleDescriptionParam>,
+    ) -> String {
+        match self
+            .bridge
+            .set_sample_description(params.0.sample_id, &params.0.description)
+        {
+            Ok(()) => format!(
+                "OK: set sample {} description ({} chars)",
+                params.0.sample_id,
+                params.0.description.chars().count()
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
         description = "Set or clear the free-text description on the current AWE state \
         (the acoustic character of the loaded room / preset). Mirrors \
         `AwePresetFile.description` when an AWE preset is loaded; can also be set directly. \
@@ -3742,7 +3878,6 @@ impl SynthMcpServer {
             params.0.start_beat,
             params.0.duration_beats,
             params.0.velocity,
-            params.0.instrument_id,
         ) {
             Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
@@ -3884,7 +4019,6 @@ impl SynthMcpServer {
                 start_beat: n.start_beat,
                 duration_beats: n.duration_beats,
                 velocity: n.velocity.unwrap_or(100),
-                instrument_id: n.instrument_id,
             })
             .collect();
         match self.bridge.add_notes(params.0.pattern_id, &notes) {
@@ -3940,7 +4074,6 @@ impl SynthMcpServer {
                 start_beat: n.start_beat,
                 duration_beats: n.duration_beats,
                 velocity: n.velocity.unwrap_or(100),
-                instrument_id: n.instrument_id,
             })
             .collect();
         match self.bridge.replace_notes(params.0.pattern_id, &notes) {
@@ -4306,7 +4439,6 @@ impl SynthMcpServer {
                         start_beat: n.start_beat,
                         duration_beats: n.duration_beats,
                         velocity: n.velocity.unwrap_or(100),
-                        instrument_id: n.instrument_id,
                     })
                     .collect(),
                 automation: convert_automation_points(p.automation),
@@ -4438,7 +4570,6 @@ impl SynthMcpServer {
                         start_beat: n.start_beat,
                         duration_beats: n.duration_beats,
                         velocity: n.velocity.unwrap_or(100),
-                        instrument_id: n.instrument_id,
                     })
                     .collect(),
                 automation: convert_automation_points(pat.automation),

@@ -324,6 +324,58 @@ fn load_project_works_without_gui() {
 }
 
 #[test]
+fn description_and_color_setters_round_trip_via_bridge() {
+    // Phase 6: song/pattern/track descriptions + track color are pure Song
+    // writes, so they reach the shared Song immediately (no engine pump) and
+    // surface on the getters.
+    let rig = build_headless_rig();
+
+    rig.bridge
+        .set_song_description("moody synthwave")
+        .expect("set song description");
+
+    let pid = rig
+        .bridge
+        .create_pattern("Verse", 4.0)
+        .expect("create pattern");
+    rig.bridge
+        .set_pattern_description(pid, "half-time feel")
+        .expect("set pattern description");
+
+    let tid = rig
+        .bridge
+        .create_track("Bass", Some(2))
+        .expect("create track");
+    rig.bridge
+        .set_track_description(tid, "sidechain source")
+        .expect("set track description");
+    rig.bridge
+        .set_track_color(tid, "#123456")
+        .expect("set track color");
+
+    let song_info = rig.bridge.get_song_info().expect("get_song_info");
+    assert_eq!(song_info.description, "moody synthwave");
+
+    let patterns = rig.bridge.list_patterns().expect("list_patterns");
+    let p = patterns
+        .iter()
+        .find(|p| p.id == pid)
+        .expect("pattern listed");
+    assert_eq!(p.description, "half-time feel");
+
+    let tracks = rig.bridge.list_tracks().expect("list_tracks");
+    let t = tracks.iter().find(|t| t.id == tid).expect("track listed");
+    assert_eq!(t.description, "sidechain source");
+    assert_eq!(t.color, "#123456");
+
+    // Invalid hex is rejected rather than silently applied.
+    assert!(
+        rig.bridge.set_track_color(tid, "not-a-color").is_err(),
+        "malformed color should be rejected"
+    );
+}
+
+#[test]
 fn save_project_works_without_gui() {
     let mut rig = build_headless_rig();
 

@@ -183,6 +183,10 @@ pub enum BitDepth {
 pub struct SampleMeta {
     pub id: SampleId,
     pub name: String,
+    /// Free-text description capturing intent (what the sample is for). Empty
+    /// by default; readable/writable via MCP and GUI.
+    #[serde(default)]
+    pub description: String,
     pub sample_rate: SampleRate,
     pub channels: ChannelCount,
     pub frame_count: SampleCount,

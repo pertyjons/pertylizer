@@ -133,6 +133,7 @@ mod tests {
             SampleMeta {
                 id: SampleId::new(0),
                 name: name.to_string(),
+                description: String::new(),
                 sample_rate: SampleRate(44100),
                 channels: ChannelCount::Mono,
                 frame_count: SampleCount::new(100),

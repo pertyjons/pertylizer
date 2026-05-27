@@ -105,6 +105,10 @@ pub struct Pattern {
     pub id: PatternId,
     /// Pattern name.
     pub name: String,
+    /// Free-text description capturing intent (e.g. "chorus drop, half-time
+    /// feel"). Empty by default; readable/writable via MCP and GUI.
+    #[serde(default)]
+    pub description: String,
     /// Length in ticks.
     pub length: Duration,
     /// All notes, sorted by start tick.
@@ -122,6 +126,7 @@ impl Pattern {
         Self {
             id,
             name: String::new(),
+            description: String::new(),
             length,
             notes: Vec::new(),
             automation: Vec::new(),

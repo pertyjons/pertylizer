@@ -36,9 +36,6 @@ pub struct BridgeNoteData {
     pub duration_beats: f32,
     /// Velocity (0-127).
     pub velocity: u8,
-    /// Deprecated/ignored: notes route through their track's instrument.
-    /// Retained for API compatibility; removed in a later MCP cleanup.
-    pub instrument_id: Option<u16>,
 }
 
 /// Note update for batch update operations.
@@ -382,8 +379,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn list_notes(&self, pattern_id: u32) -> Result<Vec<NoteInfo>, McpBridgeError>;
 
     /// Add a note to a pattern. Returns the created note info.
-    /// `instrument_id` is ignored (notes route via their track's instrument);
-    /// retained for API compatibility.
+    /// The note routes through its track's instrument at arrangement time.
     fn add_note(
         &self,
         pattern_id: u32,
@@ -391,7 +387,6 @@ pub trait SynthBridge: Send + Sync + 'static {
         start_beat: f32,
         duration_beats: f32,
         velocity: u8,
-        instrument_id: Option<u16>,
     ) -> Result<NoteInfo, McpBridgeError>;
 
     /// Remove a note from a pattern.
@@ -586,6 +581,13 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Rename a track.
     fn rename_track(&self, track_id: u16, name: &str) -> Result<(), McpBridgeError>;
 
+    /// Set a track's free-text description / intent (`""` clears it).
+    fn set_track_description(&self, track_id: u16, description: &str)
+    -> Result<(), McpBridgeError>;
+
+    /// Set a track's display color from a `"#RRGGBB"` / `"#RRGGBBAA"` hex string.
+    fn set_track_color(&self, track_id: u16, color: &str) -> Result<(), McpBridgeError>;
+
     /// Delete a track and its placements.
     fn delete_track(&self, track_id: u16) -> Result<(), McpBridgeError>;
 
@@ -593,6 +595,13 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Rename a pattern.
     fn rename_pattern(&self, pattern_id: u32, name: &str) -> Result<(), McpBridgeError>;
+
+    /// Set a pattern's free-text description / intent (`""` clears it).
+    fn set_pattern_description(
+        &self,
+        pattern_id: u32,
+        description: &str,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set pattern length in beats.
     fn set_pattern_length(&self, pattern_id: u32, length_beats: f32) -> Result<(), McpBridgeError>;
@@ -604,6 +613,9 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Set the song author.
     fn set_song_author(&self, author: &str) -> Result<(), McpBridgeError>;
+
+    /// Set the song's free-text description / intent (`""` clears it).
+    fn set_song_description(&self, description: &str) -> Result<(), McpBridgeError>;
 
     /// Set the song time signature.
     fn set_song_time_signature(&self, numerator: u8, denominator: u8)
@@ -1088,6 +1100,9 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Rename a sample.
     fn rename_sample(&self, id: u64, name: &str) -> Result<(), McpBridgeError>;
+
+    /// Set a sample's free-text description / intent (`""` clears it).
+    fn set_sample_description(&self, id: u64, description: &str) -> Result<(), McpBridgeError>;
 
     /// Set the root note for a sample.
     fn set_sample_root_note(&self, id: u64, note: u8) -> Result<(), McpBridgeError>;

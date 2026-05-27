@@ -24,6 +24,10 @@ pub struct SequencerTrack {
     pub id: TrackId,
     /// Track name.
     pub name: String,
+    /// Free-text description capturing intent (e.g. "kick layer",
+    /// "sidechain source"). Empty by default; readable/writable via MCP and GUI.
+    #[serde(default)]
+    pub description: String,
     /// Instrument this track routes its notes to. Every track has one;
     /// instruments may be shared across tracks (intentional layering). Defaults
     /// to `SeqInstrumentId(0)` for a freshly created track until reassigned.
@@ -50,6 +54,7 @@ impl SequencerTrack {
         Self {
             id,
             name: name.into(),
+            description: String::new(),
             instrument: SeqInstrumentId::default(),
             volume: NormalizedValue::MAX,
             pan: BipolarValue::CENTER,
@@ -182,6 +187,26 @@ impl TrackColor {
         )
     }
 
+    /// Format as a `"#RRGGBB"` hex string.
+    #[must_use]
+    pub fn to_hex(&self) -> String {
+        format!("#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
+    }
+
+    /// Parse from `"#RRGGBB"` or `"#RRGGBBAA"` (alpha ignored), with or without
+    /// the leading `#`. Returns `None` for malformed input.
+    #[must_use]
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        let s = hex.strip_prefix('#').unwrap_or(hex);
+        if (s.len() != 6 && s.len() != 8) || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+        Some(Self { r, g, b })
+    }
+
     /// Preset colors for cycling.
     pub fn presets() -> &'static [Self] {
         &[
@@ -245,6 +270,21 @@ mod tests {
         let b =
             SequencerTrack::new(TrackId(1), "Syncopated Kick").with_instrument(SeqInstrumentId(7));
         assert_eq!(a.instrument, b.instrument);
+    }
+
+    #[test]
+    fn track_color_hex_round_trips() {
+        let c = TrackColor::new(0x12, 0x34, 0x56);
+        assert_eq!(c.to_hex(), "#123456");
+        assert_eq!(TrackColor::from_hex("#123456"), Some(c));
+        // Without leading '#', lowercase, and 8-digit (alpha ignored) all parse.
+        assert_eq!(TrackColor::from_hex("123456"), Some(c));
+        assert_eq!(TrackColor::from_hex("#123456ff"), Some(c));
+        // Malformed input is rejected, not panicked on.
+        assert_eq!(TrackColor::from_hex(""), None);
+        assert_eq!(TrackColor::from_hex("#12345"), None);
+        assert_eq!(TrackColor::from_hex("#nothex"), None);
+        assert_eq!(TrackColor::from_hex("#1234😀"), None);
     }
 
     #[test]

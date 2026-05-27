@@ -250,15 +250,15 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 
 ### Phase 2 — add new description fields + MCP read/write tools
 
-- [ ] Add `description: String` to `Song` (`synth_sequencer/src/song.rs:79`); surface in `get_song_info`;
+- [x] Add `description: String` to `Song` (`synth_sequencer/src/song.rs`); surface in `get_song_info`;
   add `set_song_description` MCP tool
-- [ ] Add `description: String` to `Pattern`; surface in `list_patterns` / pattern resource;
+- [x] Add `description: String` to `Pattern`; surface in `list_patterns` / pattern resource;
   add `set_pattern_description` MCP tool (e.g. `"chorus drop, half-time feel"`)
-- [ ] Add `description: String` to `SequencerTrack`; surface in `list_tracks`;
+- [x] Add `description: String` to `SequencerTrack`; surface in `list_tracks`;
   add `set_track_description` MCP tool
-- [ ] Add `description: String` to sample registry entries; surface in `list_samples` / `get_sample_info`;
-  add `set_sample_description` MCP tool
-- [ ] Editable from GUI (song properties, pattern properties dialog, track header context menu, sample library)
+- [x] Add `description: String` to sample registry entries (`SampleMeta`); surface in `list_samples` /
+  `get_sample_info`; add `set_sample_description` MCP tool
+- [x] Editable from GUI (song properties, pattern properties dialog, track header context menu, sample library)
 
 ### Phase 3 — per-module-instance notes (different concept from type docs)
 
@@ -319,12 +319,19 @@ existing getter response, write via a dedicated setter routed through
 
 - [ ] Surface color on `get_instrument_info` / `list_instruments` (MCP read); add
   `set_instrument_color(instrument_id, color)` MCP tool. Accept `"#RRGGBB"` / `"#RRGGBBAA"` and
-  `""`/`null` to clear back to "auto" / default.
+  `""`/`null` to clear back to "auto" / default. **Blocked: needs engine-ownership refactor** —
+  instrument color is GUI-only (`InstrumentUiState.color`) and never transits the engine snapshot
+  (`project_apply.rs` hardcodes `color: None`). Make it engine-owned like `description` (new
+  `EngineCommand` + `Instrument` runtime field + snapshot + save/load mirror). Own PR.
 - [ ] Surface patch color on the same getters as a separate `patch_color` field, mirroring how
   `patch_description` is exposed alongside `description`. Add `set_patch_color` MCP tool.
-- [ ] Surface track color on `list_tracks`; add `set_track_color(track_id, color)` MCP tool.
+  **Blocked: `Patch.color` does not exist yet** — add the field first, then mirror the description flow.
+- [x] Surface track color on `list_tracks`; add `set_track_color(track_id, color)` MCP tool.
+  Accepts `"#RRGGBB"`/`"#RRGGBBAA"`; backed by `TrackColor::to_hex`/`from_hex`. Track color is a
+  pure `Song` write, so it round-trips for free and was already GUI-editable.
 - [ ] Surface group color on `get_instrument_info` (or wherever groups are listed); add
-  `set_group_color` MCP tool.
+  `set_group_color` MCP tool. **Group color is GUI-only** (no engine path) — needs MCP to mutate
+  the `PatchEditor` group state directly. Own PR.
 - [ ] Decide whether AI-friendly named palettes are useful (`"warm-orange"`, `"cool-blue"`) on top of
   raw hex — same pattern as `set_awe_preset` vs `set_awe_parameter`. Out of scope for v1; raw hex
   is enough.

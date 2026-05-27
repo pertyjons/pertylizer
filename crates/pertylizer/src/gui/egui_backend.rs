@@ -1385,6 +1385,7 @@ impl SynthApp {
                         "Recording {:.1}s",
                         frame_count as f64 / f64::from(sample_rate.0)
                     ),
+                    description: String::new(),
                     sample_rate,
                     channels: synth_core::ChannelCount::from(channels),
                     frame_count: synth_core::SampleCount::new(frame_count),
@@ -3057,11 +3058,19 @@ impl SynthApp {
                 // try_read(), and a held write lock (esp. across the ComboBox popup)
                 // would starve it.
                 {
-                    let (mut name, mut song_author, mut bpm, mut ts_num, mut ts_den) = {
+                    let (
+                        mut name,
+                        mut song_author,
+                        mut description,
+                        mut bpm,
+                        mut ts_num,
+                        mut ts_den,
+                    ) = {
                         let song = self.song.read();
                         (
                             song.name.clone(),
                             song.author.clone(),
+                            song.description.clone(),
                             song.default_tempo.as_f32(),
                             i32::from(song.default_time_signature.numerator),
                             song.default_time_signature.denominator,
@@ -3077,6 +3086,20 @@ impl SynthApp {
 
                     ui.label(RichText::new("Song author").color(t.colors.text_dim));
                     if ui.text_edit_singleline(&mut song_author).changed() {
+                        song_changed = true;
+                    }
+
+                    ui.add_space(8.0);
+
+                    ui.label(RichText::new("Description").color(t.colors.text_dim));
+                    if ui
+                        .add(
+                            egui::TextEdit::multiline(&mut description)
+                                .desired_rows(2)
+                                .desired_width(f32::INFINITY),
+                        )
+                        .changed()
+                    {
                         song_changed = true;
                     }
 
@@ -3130,6 +3153,7 @@ impl SynthApp {
                         let mut song = self.song.write();
                         song.name = name;
                         song.author = song_author;
+                        song.description = description;
                         song.default_tempo = synth_core::Bpm::new(bpm.clamp(20.0, 300.0));
                         song.default_time_signature.numerator = ts_num.clamp(1, 32) as u8;
                         song.default_time_signature.denominator = ts_den;

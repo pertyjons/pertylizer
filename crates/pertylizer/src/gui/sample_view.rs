@@ -87,6 +87,10 @@ pub struct SampleViewState {
     editing_name: bool,
     /// Temporary name buffer for editing.
     name_buffer: String,
+    /// Editing the sample description.
+    editing_description: bool,
+    /// Temporary description buffer for editing.
+    description_buffer: String,
     /// Selected input device name.
     pub selected_input_device: Option<String>,
     /// Cached input device list (refreshed on demand, not every frame).
@@ -105,6 +109,8 @@ impl Default for SampleViewState {
             peaks_dirty: true,
             editing_name: false,
             name_buffer: String::new(),
+            editing_description: false,
+            description_buffer: String::new(),
             selected_input_device: None,
             cached_input_devices: Vec::new(),
             devices_dirty: true,
@@ -808,6 +814,38 @@ fn draw_properties(
                 if resp.double_clicked() {
                     state.editing_name = true;
                     state.name_buffer = meta.name.clone();
+                }
+            }
+            ui.end_row();
+
+            // Description
+            ui.label(egui::RichText::new("Description:").color(t.colors.text_secondary));
+            if state.editing_description {
+                let resp = ui.add(
+                    egui::TextEdit::multiline(&mut state.description_buffer)
+                        .desired_rows(2)
+                        .desired_width(f32::INFINITY),
+                );
+                if resp.lost_focus() {
+                    if let Ok(mut lib) = library.write()
+                        && let Some(m) = lib.get_meta(id)
+                    {
+                        let mut updated = m.clone();
+                        updated.description = state.description_buffer.clone();
+                        lib.update_meta(id, updated);
+                    }
+                    state.editing_description = false;
+                }
+            } else {
+                let text = if meta.description.is_empty() {
+                    egui::RichText::new("(double-click to add)").color(t.colors.text_dim)
+                } else {
+                    egui::RichText::new(&meta.description).color(t.colors.text_primary)
+                };
+                let resp = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
+                if resp.double_clicked() {
+                    state.editing_description = true;
+                    state.description_buffer = meta.description.clone();
                 }
             }
             ui.end_row();

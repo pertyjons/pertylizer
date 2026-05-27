@@ -172,6 +172,12 @@ pub struct SequencerViewState {
     /// Pattern currently being renamed (inline text edit). Shared between
     /// the Seq view's piano-roll toolbar and the Pattern tab browser.
     pub(crate) editing_pattern_name: Option<(PatternId, String)>,
+    /// Pattern whose description is being edited (inline text edit) in the
+    /// piano-roll toolbar.
+    pub(crate) editing_pattern_description: Option<(PatternId, String)>,
+    /// Track whose description is being edited (inline text edit) in the
+    /// track-properties popup.
+    editing_track_description: Option<(TrackId, String)>,
     /// Repeat song (loop entire song).
     repeat_enabled: bool,
     /// Pattern solo: when true (default), mini-transport play isolates the
@@ -249,6 +255,8 @@ impl SequencerViewState {
             selected_automation: None,
             editing_track_name: None,
             editing_pattern_name: None,
+            editing_pattern_description: None,
+            editing_track_description: None,
             repeat_enabled: false,
             pattern_solo: true,
             context_menu_pos: None,
@@ -329,6 +337,22 @@ pub(crate) fn commit_pattern_rename(
             old_name: old,
             new_name,
         });
+    }
+}
+
+/// Apply a description edit to a pattern under a short write-lock. No-op if the
+/// description is unchanged or the pattern no longer exists. Description is a
+/// utility metadata field and is not tracked by the undo system.
+pub(crate) fn commit_pattern_description(
+    song: &Arc<RwLock<Song>>,
+    pattern_id: PatternId,
+    new_description: String,
+) {
+    let mut song_w = song.write();
+    if let Some(pat) = song_w.pattern_mut(pattern_id)
+        && pat.description != new_description
+    {
+        pat.description = new_description;
     }
 }
 
@@ -766,6 +790,7 @@ fn draw_transport_bar(
 struct TrackInfo {
     id: TrackId,
     name: String,
+    description: String,
     color: Color32,
     track_color: synth_sequencer::TrackColor,
     volume: NormalizedValue,
@@ -829,6 +854,7 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
         .map(|t| TrackInfo {
             id: t.id,
             name: t.name.clone(),
+            description: t.description.clone(),
             color: track_color_to_egui(t.color),
             track_color: t.color,
             volume: t.volume,
@@ -1418,6 +1444,68 @@ fn draw_arrangement(
                                                         trk.pan = BipolarValue::new(pan_bi);
                                                     }
                                                 });
+
+                                                // Description (utility metadata, no undo).
+                                                // Buffered so edits survive the per-frame
+                                                // snapshot rebuild; committed on lost focus.
+                                                ui.add_space(4.0);
+                                                ui.label(
+                                                    RichText::new("Description")
+                                                        .color(t.colors.text_dim),
+                                                );
+                                                let editing_this = view_state
+                                                    .editing_track_description
+                                                    .as_ref()
+                                                    .map(|(id, _)| *id)
+                                                    == Some(track.id);
+                                                if editing_this {
+                                                    if let Some((_, ref mut desc_buf)) =
+                                                        view_state.editing_track_description
+                                                    {
+                                                        let resp = ui.add(
+                                                            egui::TextEdit::multiline(desc_buf)
+                                                                .desired_rows(2)
+                                                                .desired_width(f32::INFINITY)
+                                                                .hint_text("Description"),
+                                                        );
+                                                        if resp.lost_focus() {
+                                                            let new_desc = desc_buf.clone();
+                                                            let mut song_w = song.write();
+                                                            if let Some(trk) =
+                                                                song_w.track_mut(track.id)
+                                                                && trk.description != new_desc
+                                                            {
+                                                                trk.description = new_desc;
+                                                            }
+                                                            drop(song_w);
+                                                            view_state.editing_track_description =
+                                                                None;
+                                                        } else if !resp.has_focus() {
+                                                            resp.request_focus();
+                                                        }
+                                                    }
+                                                } else {
+                                                    let desc_text = if track.description.is_empty()
+                                                    {
+                                                        RichText::new("(click to add)")
+                                                            .italics()
+                                                            .color(t.colors.text_dim)
+                                                    } else {
+                                                        RichText::new(&track.description)
+                                                            .color(t.colors.text_secondary)
+                                                    };
+                                                    if ui
+                                                        .add(
+                                                            egui::Label::new(desc_text)
+                                                                .sense(Sense::click()),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        view_state.editing_track_description = Some(
+                                                            (track.id, track.description.clone()),
+                                                        );
+                                                    }
+                                                }
 
                                                 ui.add_space(4.0);
                                                 ui.label(
@@ -2533,6 +2621,7 @@ struct AutomationLaneSnapshot {
 /// Collected data for piano roll rendering.
 pub(crate) struct PianoRollData {
     pattern_name: String,
+    pattern_description: String,
     pattern_id: PatternId,
     length_ticks: SeqDuration,
     ticks_per_row: u16,
@@ -2623,6 +2712,7 @@ pub(crate) fn collect_piano_roll_data(
         } else {
             pattern.name.clone()
         },
+        pattern_description: pattern.description.clone(),
         pattern_id,
         length_ticks: pattern.length,
         ticks_per_row: song.row_resolution.ticks_per_row.as_u16(),
@@ -2888,6 +2978,47 @@ pub(crate) fn draw_piano_roll(
             if name_resp.double_clicked() {
                 view_state.editing_pattern_name =
                     Some((data.pattern_id, data.pattern_name.clone()));
+            }
+        }
+
+        // Pattern description (editable inline; utility metadata, no undo)
+        if view_state
+            .editing_pattern_description
+            .as_ref()
+            .map(|(id, _)| *id)
+            == Some(data.pattern_id)
+        {
+            if let Some((_, ref mut desc_buf)) = view_state.editing_pattern_description {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(desc_buf)
+                        .desired_width(180.0)
+                        .hint_text("Description")
+                        .font(egui::FontId::proportional(12.0)),
+                );
+                if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    commit_pattern_description(song, data.pattern_id, desc_buf.clone());
+                    view_state.editing_pattern_description = None;
+                } else if !resp.has_focus() {
+                    resp.request_focus();
+                }
+            }
+        } else {
+            let desc_text = if data.pattern_description.is_empty() {
+                RichText::new("+ description")
+                    .size(12.0)
+                    .italics()
+                    .color(t.colors.text_dim)
+            } else {
+                RichText::new(&data.pattern_description)
+                    .size(12.0)
+                    .color(t.colors.text_secondary)
+            };
+            let desc_resp = ui
+                .add(egui::Label::new(desc_text).sense(Sense::click()))
+                .on_hover_text("Double-click to edit pattern description");
+            if desc_resp.double_clicked() {
+                view_state.editing_pattern_description =
+                    Some((data.pattern_id, data.pattern_description.clone()));
             }
         }
 

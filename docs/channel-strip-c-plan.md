@@ -16,7 +16,7 @@ phase layers onto it.
 - [x] **Phase 3** — Make `track.instrument` mandatory; **sharing allowed** (no strict 1:1); remove "— None — (per-note)"
 - [x] **Phase 4** — Remove `note.instrument` (route only via `track.instrument`; preview via threaded instrument)
 - [x] **Phase 5** — Orphan-preview: **kept** the engine-side branch; scratch-track rework closed as not-worth-it; added the missing preview/lifecycle tests
-- [ ] **Phase 6** — Save/load + MCP cleanup
+- [x] **Phase 6** — Save/load + MCP cleanup (per-note `instrument_id` removed; descriptions + track color via MCP/GUI; instrument/patch/group color split to its own PR — engine refactor)
 - [ ] **Phase 7** — Sends/returns + mixer view (§1.4 payoff, now just taps off the bus)
 - [ ] **Phase 8** — (future) Independent faders for *shared* instruments — per-voice-tagged per-track bus
 
@@ -241,13 +241,32 @@ lowest-risk option is the engine-local synthetic placement — but it must be ju
 by bus-routing need, not sold as a simplification.
 
 ### Phase 6 — Save/load + MCP cleanup
-**Status:** ☐ Not started
+**Status:** ☑ Done — instrument/patch/group **color** carved out to its own PR
 
-- [ ] Confirm save/load round-trips without `note.instrument`; track↔instrument
-  binding persists.
-- [ ] MCP: deprecate per-note instrument in `add_notes`; align track/instrument
-  color + description setters (pending §"Color fields" / §"Description fields" TODO
-  items) with the unified model.
+- [x] **Per-note `instrument_id` removed from MCP.** Dropped the kept-but-ignored
+  `instrument_id` from `AddNoteParam`/`NoteInput`/`BridgeNoteData`, the `add_note`
+  trait param, and the five handler mappings (`add_note`, `add_notes`,
+  `replace_notes`, `create_patterns`, `set_song`).
+- [x] **Save/load round-trips** confirmed without `note.instrument`; no
+  `deny_unknown_fields`, `track.instrument` is `#[serde(default)]`. Added a focused
+  round-trip test for descriptions + track color + the track↔instrument binding,
+  plus a legacy-load (missing `description` keys) default test.
+- [x] **Description setters for all sequencer/sample entities.** Added
+  `description: String` (`#[serde(default)]`) to `Song`, `Pattern`,
+  `SequencerTrack`, and `SampleMeta`; surfaced on `get_song_info` / `list_patterns`
+  / `list_tracks` / `list_samples`; added `set_song_description`,
+  `set_pattern_description`, `set_track_description`, `set_sample_description`
+  (instrument/patch description setters already existed). GUI editing wired too.
+- [x] **Track color via MCP.** `set_track_color` (accepts `"#RRGGBB"` /
+  `"#RRGGBBAA"`) + color surfaced on `list_tracks`, backed by new
+  `TrackColor::to_hex`/`from_hex`. Track color was already GUI-editable.
+- [ ] **Deferred — instrument/patch/group color (own PR).** Tracing showed
+  instrument color lives GUI-side only (`InstrumentUiState.color`) and never
+  transits the engine snapshot (`project_apply.rs` hardcodes `color: None`); MCP
+  control needs it engine-owned like description (new `EngineCommand` +
+  `Instrument` runtime field + snapshot + save/load mirror). `Patch.color` doesn't
+  exist yet and group color is GUI-only. That's an engine-ownership refactor, not a
+  setter add — split out to keep this PR free of `synth_engine` changes.
 
 ### Phase 7 — Sends/returns + mixer view (§1.4)
 **Status:** ☐ Not started

@@ -6718,6 +6718,11 @@
           },
           "type": "array"
         },
+        "description": {
+          "default": "",
+          "description": "Free-text description capturing intent (e.g. \"chorus drop, half-time\nfeel\"). Empty by default; readable/writable via MCP and GUI.",
+          "type": "string"
+        },
         "id": {
           "$ref": "#/$defs/PatternId",
           "description": "Unique identifier."
@@ -7080,6 +7085,11 @@
           "$ref": "#/$defs/TrackColor",
           "description": "Track color for UI."
         },
+        "description": {
+          "default": "",
+          "description": "Free-text description capturing intent (e.g. \"kick layer\",\n\"sidechain source\"). Empty by default; readable/writable via MCP and GUI.",
+          "type": "string"
+        },
         "id": {
           "$ref": "#/$defs/TrackId",
           "description": "Unique identifier."
@@ -7193,6 +7203,11 @@
         "default_time_signature": {
           "$ref": "#/$defs/TimeSignature",
           "description": "Default time signature."
+        },
+        "description": {
+          "default": "",
+          "description": "Free-text description capturing intent (what the song is for, its mood\nor production notes). Empty by default; readable/writable via MCP and GUI.",
+          "type": "string"
         },
         "name": {
           "description": "Song name.",

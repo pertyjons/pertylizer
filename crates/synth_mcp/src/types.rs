@@ -397,6 +397,10 @@ pub struct SongInfo {
     pub name: String,
     /// Song author.
     pub author: String,
+    /// Free-text description / intent — `""` when not set. Skipped from JSON
+    /// when empty. Set via `set_song_description`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// Default tempo in BPM.
     pub tempo: f32,
     /// Time signature as "numerator/denominator".
@@ -425,6 +429,10 @@ pub struct PatternInfo {
     pub id: u32,
     /// Pattern name.
     pub name: String,
+    /// Free-text description / intent — `""` when not set. Skipped from JSON
+    /// when empty. Set via `set_pattern_description`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// Length in beats.
     pub length_beats: f32,
     /// Number of notes.
@@ -455,6 +463,12 @@ pub struct TrackInfo {
     pub id: u16,
     /// Track name.
     pub name: String,
+    /// Free-text description / intent (e.g. "kick layer") — `""` when not set.
+    /// Skipped from JSON when empty. Set via `set_track_description`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Track color as "#RRGGBB". Set via `set_track_color`.
+    pub color: String,
     /// Instrument ID (if assigned).
     pub instrument_id: Option<u16>,
     /// Volume (0.0-1.0).
@@ -964,6 +978,10 @@ pub struct SampleInfo {
     pub id: u64,
     /// Display name.
     pub name: String,
+    /// Free-text description / intent — `""` when not set. Skipped from JSON
+    /// when empty. Set via `set_sample_description`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// Duration in seconds.
     pub duration_seconds: f64,
     /// Sample rate in Hz.
