@@ -109,6 +109,9 @@ pub struct SequencerEngine {
     /// and by `PlayPattern` when no placement exists. Cleared by global `Play`
     /// (unarmed) and `Stop`.
     preview_pattern: Option<PatternId>,
+    /// Instrument that orphan-preview notes play through (no track context
+    /// exists in preview mode). Set together with `preview_pattern`.
+    preview_instrument: SeqInstrumentId,
 }
 
 impl SequencerEngine {
@@ -133,6 +136,7 @@ impl SequencerEngine {
             scratch_automation: Vec::with_capacity(16),
             solo_pattern: None,
             preview_pattern: None,
+            preview_instrument: SeqInstrumentId(0),
         }
     }
 
@@ -161,6 +165,7 @@ impl SequencerEngine {
             scratch_automation: Vec::with_capacity(16),
             solo_pattern: None,
             preview_pattern: None,
+            preview_instrument: SeqInstrumentId(0),
         }
     }
 
@@ -176,9 +181,17 @@ impl SequencerEngine {
         self.solo_pattern
     }
 
-    /// Enable or disable orphan-preview mode for a single pattern.
-    pub fn set_preview_pattern(&mut self, pattern: Option<PatternId>) {
-        self.preview_pattern = pattern;
+    /// Enable or disable orphan-preview mode for a single pattern. `Some((id,
+    /// instrument))` previews the pattern through `instrument` (preview has no
+    /// track context); `None` clears preview mode.
+    pub fn set_preview_pattern(&mut self, preview: Option<(PatternId, SeqInstrumentId)>) {
+        match preview {
+            Some((pattern, instrument)) => {
+                self.preview_pattern = Some(pattern);
+                self.preview_instrument = instrument;
+            }
+            None => self.preview_pattern = None,
+        }
     }
 
     /// Get the current preview-pattern target, if any.
@@ -402,8 +415,12 @@ impl SequencerEngine {
                     let end_tick = note
                         .duration
                         .map(|d| Tick(self.current_tick.0 + u64::from(d.0)));
-                    self.scratch_notes
-                        .push((note.pitch, note.velocity, note.instrument, end_tick));
+                    self.scratch_notes.push((
+                        note.pitch,
+                        note.velocity,
+                        self.preview_instrument,
+                        end_tick,
+                    ));
                 }
                 for lane in &pattern.automation {
                     if let Some(value) = lane.value_at(PatternTick(pattern_tick)) {

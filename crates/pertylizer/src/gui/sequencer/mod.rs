@@ -3042,6 +3042,7 @@ pub(crate) fn draw_piano_roll(
                         handle.send(EngineCommand::SetSoloPattern(solo_target));
                         handle.send(EngineCommand::PlayPattern {
                             pattern_id: data.pattern_id,
+                            instrument: view_state.selected_instrument,
                         });
                     }
                 }
@@ -5426,7 +5427,10 @@ fn arm_recording_for_pattern(
     view_state.recording_instrument = view_state.selected_instrument;
     view_state.recording_pattern = Some(pattern_id);
     if is_orphan {
-        handle.send(EngineCommand::SetPreviewPattern(Some(pattern_id)));
+        handle.send(EngineCommand::SetPreviewPattern(Some((
+            pattern_id,
+            view_state.selected_instrument,
+        ))));
     } else {
         handle.send(EngineCommand::SetPreviewPattern(None));
     }

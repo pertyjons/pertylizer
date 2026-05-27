@@ -1031,7 +1031,10 @@ impl SynthEngine {
                 self.sequencer.set_repeat_song(enabled);
                 self.sync_loop_to_transport();
             }
-            EngineCommand::PlayPattern { pattern_id } => {
+            EngineCommand::PlayPattern {
+                pattern_id,
+                instrument,
+            } => {
                 // Find pattern in arrangement and get boundaries
                 let bounds = self
                     .sequencer
@@ -1059,7 +1062,8 @@ impl SynthEngine {
                         // max(1): a zero-length pattern would otherwise make the
                         // loop [0,0) wrap every tick and pin the playhead at 0.
                         let loop_end = synth_sequencer::Tick(u64::from(length.0.max(1)));
-                        self.sequencer.set_preview_pattern(Some(pattern_id));
+                        self.sequencer
+                            .set_preview_pattern(Some((pattern_id, instrument)));
                         self.state.transport.set_preview_pattern(Some(pattern_id));
                         self.sequencer.play();
                         let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
@@ -1115,12 +1119,15 @@ impl SynthEngine {
                 }
                 self.sequencer.set_solo_pattern(pattern);
             }
-            EngineCommand::SetPreviewPattern(pattern) => {
-                if pattern.is_some() {
+            EngineCommand::SetPreviewPattern(preview) => {
+                if preview.is_some() {
                     self.sequencer.set_solo_pattern(None);
                 }
-                self.sequencer.set_preview_pattern(pattern);
-                self.state.transport.set_preview_pattern(pattern);
+                self.sequencer.set_preview_pattern(preview);
+                // Transport mirror is playhead-only — pattern id without instrument.
+                self.state
+                    .transport
+                    .set_preview_pattern(preview.map(|(pattern_id, _)| pattern_id));
             }
             EngineCommand::SetSong { song } => {
                 self.sequencer.set_song(song);

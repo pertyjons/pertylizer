@@ -18,7 +18,7 @@ use synth_core::{
     Seconds, Semitones, Velocity,
 };
 use synth_core::{ModuleType, Param};
-use synth_sequencer::{PatternId, Tick, TrackId};
+use synth_sequencer::{PatternId, SeqInstrumentId, Tick, TrackId};
 
 /// Unique identifier for a module instance.
 ///
@@ -442,7 +442,12 @@ pub enum EngineCommand {
 
     /// Play only the specified pattern in a loop.
     /// Finds pattern in arrangement, sets loop boundaries, and starts playing.
-    PlayPattern { pattern_id: PatternId },
+    /// `instrument` is used only when the pattern has no placement (orphan
+    /// preview); placed patterns route through their track's instrument.
+    PlayPattern {
+        pattern_id: PatternId,
+        instrument: SeqInstrumentId,
+    },
 
     /// Start playback from the beginning of a specific pattern.
     /// Does not loop - plays through the entire song from that position.
@@ -458,9 +463,10 @@ pub enum EngineCommand {
     /// When `Some(id)` the engine bypasses arrangement playback entirely and
     /// schedules notes from this pattern using `pattern_tick = current_tick
     /// % pattern.length`. Mute/solo and track-instrument routing do not
-    /// apply (no track is involved). Pass `None` to clear. Cleared
-    /// automatically by global `Play` (unarmed) and `Stop`.
-    SetPreviewPattern(Option<PatternId>),
+    /// apply (no track is involved); notes play through the supplied
+    /// `instrument`. Pass `None` to clear. Cleared automatically by global
+    /// `Play` (unarmed) and `Stop`.
+    SetPreviewPattern(Option<(PatternId, SeqInstrumentId)>),
 
     // === Engine control ===
     /// Reset the engine state.
@@ -1114,7 +1120,7 @@ impl std::fmt::Debug for EngineCommand {
                 .field("enabled", enabled)
                 .finish(),
             Self::SetRepeat { enabled } => write!(f, "SetRepeat({enabled})"),
-            Self::PlayPattern { pattern_id } => write!(f, "PlayPattern({pattern_id:?})"),
+            Self::PlayPattern { pattern_id, .. } => write!(f, "PlayPattern({pattern_id:?})"),
             Self::PlayFromPattern { pattern_id } => write!(f, "PlayFromPattern({pattern_id:?})"),
             Self::SetSoloPattern(p) => write!(f, "SetSoloPattern({p:?})"),
             Self::SetPreviewPattern(p) => write!(f, "SetPreviewPattern({p:?})"),

@@ -473,8 +473,12 @@ impl EngineCommand {
             Self::Pause => Self::Pause,
             Self::Rewind => Self::Rewind,
             Self::Seek { tick } => Self::Seek { tick: *tick },
-            Self::PlayPattern { pattern_id } => Self::PlayPattern {
+            Self::PlayPattern {
+                pattern_id,
+                instrument,
+            } => Self::PlayPattern {
                 pattern_id: *pattern_id,
+                instrument: *instrument,
             },
             Self::PlayFromPattern { pattern_id } => Self::PlayFromPattern {
                 pattern_id: *pattern_id,
