@@ -29,7 +29,7 @@ use synth_core::{
     MidiNote, NormalizedValue, Param, PolyModule as PolyModuleTrait, ProcessContext, SampleCount,
     SampleRate, Seconds, StreamInfo, Velocity,
 };
-use synth_sequencer::{AutoInstrumentParam, AutomationTarget, SequencerEvent};
+use synth_sequencer::{AutoInstrumentParam, AutomationTarget, GlobalParam, SequencerEvent};
 
 /// Size of the command ring buffer.
 /// Large enough to handle patch loading (100+ modules with params/connections).
@@ -2277,6 +2277,7 @@ impl SynthEngine {
             *control = TrackControl::NEUTRAL;
         }
         let any_solo = song.any_solo();
+        let track_auto = self.sequencer.track_auto();
         for track in song.tracks() {
             let Some(seq_id) = track.instrument else {
                 continue;
@@ -2285,11 +2286,43 @@ impl SynthEngine {
                 continue;
             };
             if let Some(control) = self.track_controls.get_mut(&engine_id) {
+                // Live automation overrides the stored fader; absent → static.
+                let auto = track_auto.get(&track.id).copied().unwrap_or_default();
                 *control = TrackControl {
-                    volume: track.volume,
-                    pan: track.pan,
-                    audible: track.is_audible(any_solo),
+                    volume: auto.volume.unwrap_or(track.volume),
+                    pan: auto.pan.unwrap_or(track.pan),
+                    audible: track.is_audible(any_solo) && !auto.muted.unwrap_or(false),
                 };
+            }
+        }
+    }
+
+    /// Apply `Global(..)` automation events for this block.
+    ///
+    /// `MasterVolume` writes the engine master gain (mirroring
+    /// `handle_set_master_volume`: local field + shared atomic). `Tempo` is
+    /// deferred to §2.1 — playback rate is driven by the sequencer's
+    /// `cached_tempo` (from `Song::tempo_at`), not the transport atomic, so
+    /// `set_tempo` alone would change the readout but not the render. `Swing`
+    /// has no engine implementation. Track automation is handled in the
+    /// sequencer (see `SequencerEngine::track_auto`); instrument automation in
+    /// `route_sequencer_events`.
+    fn apply_global_automation(&mut self) {
+        for event in &self.sequencer_event_buffer {
+            if let SequencerEvent::Parameter {
+                target: AutomationTarget::Global(param),
+                value,
+                ..
+            } = event
+            {
+                match param {
+                    GlobalParam::MasterVolume => {
+                        let gain = value.as_f32().clamp(0.0, 2.0);
+                        self.master_volume = gain;
+                        self.state.master_volume.store(gain);
+                    }
+                    GlobalParam::Tempo | GlobalParam::Swing => {}
+                }
             }
         }
     }
@@ -2769,8 +2802,12 @@ impl AudioProcessor for SynthEngine {
             &self.state.event_drops,
         );
 
+        // Apply global automation (master volume) for this block.
+        self.apply_global_automation();
+
         // Refresh per-instrument track controls from the Song before the
-        // channel-bus stage (inside process_voices) reads them.
+        // channel-bus stage (inside process_voices) reads them. Track-fader
+        // automation is folded in here via SequencerEngine::track_auto.
         self.update_track_controls();
 
         self.process_voices(&process_context);

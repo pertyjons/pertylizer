@@ -8,15 +8,35 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use synth_core::{Bpm, NormalizedValue, SampleCount, SampleRate};
+use synth_core::{BipolarValue, Bpm, NormalizedValue, SampleCount, SampleRate};
 use synth_sequencer::{
     AutomationTarget, PatternId, PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song,
-    TICKS_PER_QUARTER, Tick, Velocity,
+    TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity,
 };
 
 /// Minimum change threshold for automation value deduplication.
 /// Values changing less than this are considered unchanged and won't emit events.
 const AUTOMATION_DEDUP_THRESHOLD: f32 = 0.001;
+
+/// Live automation overrides for one track's fader, applied *over* the track's
+/// stored (static) volume/pan/mute. A `None` field means "no automation —
+/// use the static Song value". Maintained by the sequencer as it collects
+/// automation and consumed by `SynthEngine::update_track_controls`.
+///
+/// Track automation is handled here (not via emitted `SequencerEvent`s)
+/// because the override map must be cleared in lock-step with
+/// `last_automation_values` at every transport reset — including the
+/// loop-wrap / auto-stop branches that run on the audio thread and are
+/// invisible to the engine's command layer.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TrackAutoOverride {
+    /// Automated track volume (normalized 0.0–1.0).
+    pub volume: Option<NormalizedValue>,
+    /// Automated track pan (bipolar -1.0..1.0).
+    pub pan: Option<BipolarValue>,
+    /// Automated track mute (`true` = silenced).
+    pub muted: Option<bool>,
+}
 
 /// Playback state of the sequencer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -71,6 +91,9 @@ pub struct SequencerEngine {
     loop_end: Tick,
     /// Last emitted automation values (for deduplication).
     last_automation_values: HashMap<AutomationTarget, NormalizedValue>,
+    /// Live per-track automation overrides, consumed by the channel-bus stage.
+    /// Cleared alongside `last_automation_values` at every transport reset.
+    track_auto: HashMap<TrackId, TrackAutoOverride>,
     /// Pre-allocated scratch buffer for note collection (avoids per-tick allocation).
     scratch_notes: Vec<(Pitch, Velocity, SeqInstrumentId, Option<Tick>)>,
     /// Pre-allocated scratch buffer for automation collection (avoids per-tick allocation).
@@ -105,6 +128,7 @@ impl SequencerEngine {
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
             last_automation_values: HashMap::with_capacity(32),
+            track_auto: HashMap::with_capacity(32),
             scratch_notes: Vec::with_capacity(64),
             scratch_automation: Vec::with_capacity(16),
             solo_pattern: None,
@@ -132,6 +156,7 @@ impl SequencerEngine {
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
             last_automation_values: HashMap::with_capacity(32),
+            track_auto: HashMap::with_capacity(32),
             scratch_notes: Vec::with_capacity(64),
             scratch_automation: Vec::with_capacity(16),
             solo_pattern: None,
@@ -206,6 +231,7 @@ impl SequencerEngine {
         let events = self.release_all_notes();
         self.active_notes.clear();
         self.last_automation_values.clear();
+        self.track_auto.clear();
 
         events
     }
@@ -215,6 +241,7 @@ impl SequencerEngine {
         let events = self.release_all_notes();
         self.active_notes.clear();
         self.last_automation_values.clear();
+        self.track_auto.clear();
         self.current_tick = tick;
         self.tick_accumulator = 0.0;
         self.update_cached_state();
@@ -303,6 +330,7 @@ impl SequencerEngine {
                 self.release_all_notes_into(events);
                 self.active_notes.clear();
                 self.last_automation_values.clear();
+                self.track_auto.clear();
                 self.current_tick = self.loop_start;
             } else if !self.looping
                 && self.cached_song_length > Tick::ZERO
@@ -316,6 +344,7 @@ impl SequencerEngine {
                 self.release_all_notes_into(events);
                 self.active_notes.clear();
                 self.last_automation_values.clear();
+                self.track_auto.clear();
                 self.play_state = PlayState::Stopped;
                 self.current_tick = Tick::ZERO;
                 self.tick_accumulator = 0.0;
@@ -501,11 +530,26 @@ impl SequencerEngine {
 
             if changed {
                 self.last_automation_values.insert(target.clone(), value);
-                events.push(SequencerEvent::Parameter {
-                    tick: self.current_tick,
-                    target: target.clone(),
-                    value,
-                });
+                if let AutomationTarget::Track { track, param } = target {
+                    // Track automation updates the override map directly rather
+                    // than emitting an event — the channel-bus stage reads it.
+                    let entry = self.track_auto.entry(*track).or_default();
+                    match param {
+                        TrackParam::Volume => entry.volume = Some(value),
+                        TrackParam::Pan => {
+                            // Map normalized 0.0-1.0 to bipolar -1.0..1.0.
+                            entry.pan = Some(BipolarValue::new(value.as_f32() * 2.0 - 1.0));
+                        }
+                        TrackParam::Mute => entry.muted = Some(value.as_f32() >= 0.5),
+                        TrackParam::Solo => {} // cross-track concept — deferred
+                    }
+                } else {
+                    events.push(SequencerEvent::Parameter {
+                        tick: self.current_tick,
+                        target: target.clone(),
+                        value,
+                    });
+                }
             }
         }
     }
@@ -560,6 +604,14 @@ impl SequencerEngine {
     /// Get the shared song reference.
     pub fn song(&self) -> &Arc<RwLock<Song>> {
         &self.song
+    }
+
+    /// Live per-track automation overrides (volume/pan/mute), to be composed
+    /// over the static track fader by the channel-bus stage. Entries are
+    /// cleared on every transport reset, so an absent entry means "no live
+    /// automation — use the stored track value".
+    pub fn track_auto(&self) -> &HashMap<TrackId, TrackAutoOverride> {
+        &self.track_auto
     }
 
     /// Set a new song.

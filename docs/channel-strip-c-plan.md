@@ -12,7 +12,7 @@ phase layers onto it.
 ## Status at a glance
 
 - [x] **Phase 1** — Per-channel bus node (the Model-C core; audio unchanged)
-- [~] **Phase 2** — Wire track vol/pan/mute/solo into the bus fader (static fader ✅ landed; automation arms pending)
+- [x] **Phase 2** — Track vol/pan/mute/solo into the bus fader + Track/Global automation arms (Tempo→§2.1, Swing/Solo deferred)
 - [ ] **Phase 3** — Establish & enforce the 1-track-↔-1-instrument invariant
 - [ ] **Phase 4** — Deprecate `note.instrument` (route only via `track.instrument`)
 - [ ] **Phase 5** — Orphan-preview via scratch channel (removes the special branch)
@@ -101,7 +101,7 @@ structural refactor, gated by tests.
   stage. `fmt`/`build`/`clippy --all-targets`/`test` all clean.
 
 ### Phase 2 — Wire track vol/pan/mute/solo into the bus fader
-**Status:** ◐ In progress — static track fader landed; automation arms pending
+**Status:** ☑ Done — static fader + automation arms (Tempo deferred to §2.1)
 
 The bus stage now exists; route the track controls into it. First user-visible win
 (the dead-fader fix, §0.1 first HIGH item).
@@ -120,11 +120,20 @@ The bus stage now exists; route the track controls into it. First user-visible w
 - [x] Tests: `track_pan_biases_output`, `track_volume_scales_output` (prove track
   fader reaches audio); existing bit-exact determinism suite still green. Independent
   RT-safety + equivalence review passed.
-- [ ] **Pending (separate step):** wire the `Track { Volume, Pan, Mute, Solo }` and
-  `Global(Tempo)` → `transport.set_tempo` (+ `Global(MasterVolume)`) automation arms.
-  Resolves the §0.1 *second* HIGH item and §2.1. Track automation needs a persistent
-  override layer to compose with the static track values; `Global(Swing)` and
-  `Track(Solo)` automation are deferred (no swing impl; solo is a cross-track concept).
+- [x] Automation arms (resolves the §0.1 *second* HIGH item):
+  - `Track { Volume, Pan, Mute }` → sequencer-owned `TrackAutoOverride` map
+    (`SequencerEngine::track_auto`), composed over the static track fader in
+    `update_track_controls`. Sequencer-owned so its `clear()` mirrors
+    `last_automation_values` at all four transport-reset sites (incl. the
+    audio-thread loop-wrap/auto-stop the engine can't see).
+  - `Global(MasterVolume)` → `apply_global_automation` (mirrors
+    `handle_set_master_volume`: field + shared atomic).
+  - Tests: `track_volume_automation_ramps_down`, `global_master_volume_automation_ramps_down`.
+- [ ] **Deferred:** `Global(Tempo)` → **§2.1**. Playback rate is driven by the
+  sequencer's `cached_tempo` (from `Song::tempo_at`), *not* `state.transport`, so
+  `transport.set_tempo` alone changes only the readout, not the render — wiring it
+  properly is the §2.1 tempo-curve work. `Global(Swing)` (no engine impl) and
+  `Track(Solo)` automation (cross-track concept) also deferred.
 
 ### Phase 3 — Establish & enforce the 1:1 invariant
 **Status:** ☐ Not started

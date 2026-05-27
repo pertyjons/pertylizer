@@ -17,7 +17,8 @@ use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
 use synth_engine::SynthEngine;
 use synth_engine::instrument::InstrumentId;
 use synth_sequencer::{
-    Duration as SeqDuration, PatternTick, Pitch, SeqInstrumentId, Song, Tick, Velocity,
+    AutomationPoint, AutomationTarget, Duration as SeqDuration, PatternId, PatternTick, Pitch,
+    SeqInstrumentId, Song, Tick, TrackId, Velocity,
 };
 
 use pertylizer::patch::{ModuleBuilder, Patch};
@@ -187,6 +188,62 @@ pub fn right_rms(stereo: &[f32]) -> f32 {
     }
     let sq: f32 = rights.iter().map(|s| s * s).sum();
     (sq / rights.len() as f32).sqrt()
+}
+
+/// Build a song with one note sustained across the whole pattern on track 0,
+/// returning the song plus its `PatternId` and `TrackId` so tests can attach
+/// automation lanes. Steady amplitude (absent automation) makes RMS-over-time
+/// comparisons meaningful.
+pub fn build_sustained_note_song(name: &str) -> (Arc<RwLock<Song>>, PatternId, TrackId) {
+    let mut song = Song::new(name);
+    let pattern_id = song.create_pattern(SeqDuration::WHOLE);
+    {
+        let pattern = song
+            .pattern_mut(pattern_id)
+            .expect("pattern just created should exist");
+        let nid = pattern.add_note(
+            PatternTick(0),
+            Pitch::new(60).expect("valid MIDI note"),
+            Velocity::MF,
+            SeqInstrumentId(0),
+        );
+        if let Some(note) = pattern.note_mut(nid) {
+            note.duration = Some(SeqDuration::WHOLE);
+        }
+    }
+    let track_id = song.create_track("T1");
+    if let Some(track) = song.track_mut(track_id) {
+        track.instrument = Some(SeqInstrumentId(0));
+    }
+    assert!(
+        song.place_pattern(pattern_id, track_id, Tick(0)),
+        "place_pattern should succeed"
+    );
+    (Arc::new(RwLock::new(song)), pattern_id, track_id)
+}
+
+/// Attach a two-point linear ramp (`from` → `to` across the 3840-tick pattern)
+/// for `target` to the pattern's automation lanes.
+pub fn add_ramp_automation(
+    song: &Arc<RwLock<Song>>,
+    pattern_id: PatternId,
+    target: AutomationTarget,
+    from: f32,
+    to: f32,
+) {
+    let mut song_w = song.write();
+    let lane = song_w
+        .pattern_mut(pattern_id)
+        .expect("pattern should exist")
+        .get_or_create_automation(target);
+    lane.add_point(AutomationPoint::new(
+        PatternTick(0),
+        synth_core::NormalizedValue::new(from),
+    ));
+    lane.add_point(AutomationPoint::new(
+        PatternTick(3840),
+        synth_core::NormalizedValue::new(to),
+    ));
 }
 
 /// Set the first track's volume and pan on a shared song (test-side write
