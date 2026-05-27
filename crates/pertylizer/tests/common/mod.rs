@@ -189,6 +189,18 @@ pub fn right_rms(stereo: &[f32]) -> f32 {
     (sq / rights.len() as f32).sqrt()
 }
 
+/// Set the first track's volume and pan on a shared song (test-side write
+/// lock). Track faders are read live from the `Song` during render, so no
+/// engine drain is needed after calling this.
+pub fn set_first_track_fader(song: &Arc<RwLock<Song>>, volume: f32, pan: f32) {
+    let track_id = song.read().tracks().next().expect("song has a track").id;
+    let mut song_w = song.write();
+    if let Some(track) = song_w.track_mut(track_id) {
+        track.volume = synth_core::NormalizedValue::new(volume);
+        track.pan = synth_core::BipolarValue::new(pan);
+    }
+}
+
 /// Drive `engine` for `blocks` callbacks of 256 stereo frames each. Used to
 /// flush queued `EngineCommand`s and refresh the shared `instrument_snapshots`
 /// (volume/pan/etc.) that an offline render reads at construction time.

@@ -381,6 +381,13 @@ pub struct SynthEngine {
     /// audio-thread allocation. Introduces ~1 buffer of sidechain
     /// detection latency — acceptable for compressor envelope follow.
     prev_instrument_outputs: std::collections::HashMap<InstrumentId, AudioBuffer>,
+    /// Per-instrument owning-track controls (volume/pan/audibility), refreshed
+    /// each block from the sequencer `Song` and consumed by the channel-bus
+    /// stage (`mix_channel_busses`). Pre-allocated on instrument add/remove
+    /// (mirrors `prev_instrument_outputs`) so the audio thread never grows it.
+    /// Instruments with no owning track keep a `NEUTRAL` entry, which composes
+    /// to the instrument's own fader unchanged.
+    track_controls: std::collections::HashMap<InstrumentId, TrackControl>,
 
     // === Metering ===
     metering: MeteringSystem,
@@ -465,6 +472,7 @@ impl SynthEngine {
             mix_buffer: AudioBuffer::new(512),
             graph_output: AudioBuffer::new(1024),
             prev_instrument_outputs: std::collections::HashMap::new(),
+            track_controls: std::collections::HashMap::new(),
             metering: MeteringSystem::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
@@ -1280,6 +1288,9 @@ impl SynthEngine {
         // audio thread never grows the map. 4096 × 2 = max interleaved frame.
         self.prev_instrument_outputs
             .insert(instrument.id(), AudioBuffer::new(4096 * 2));
+        // Pre-allocate the track-control entry (neutral until a track claims it).
+        self.track_controls
+            .insert(instrument.id(), TrackControl::NEUTRAL);
         self.instruments.push(instrument);
         self.update_shared_instruments();
     }
@@ -1302,8 +1313,9 @@ impl SynthEngine {
             self.instrument_mapping.remove_by_engine_id(instrument_id);
 
             let instrument = self.instruments.swap_remove(idx);
-            // Drop this instrument's sidechain cache.
+            // Drop this instrument's sidechain cache and track-control entry.
             self.prev_instrument_outputs.remove(&instrument_id);
+            self.track_controls.remove(&instrument_id);
             // Clear any sidechain references that pointed at this id.
             for inst in &mut self.instruments {
                 if inst.sidechain_source_id() == Some(instrument_id) {
@@ -2248,6 +2260,40 @@ impl SynthEngine {
     /// ## Solo Logic
     /// If any instrument is soloed, only soloed instruments produce sound.
     /// Non-soloed instruments are skipped entirely (not just muted).
+    /// Refresh the per-instrument [`TrackControl`] map from the sequencer
+    /// `Song`, ready for the channel-bus stage.
+    ///
+    /// Real-time safe: `try_read()` only (on contention, last block's controls
+    /// are kept); no allocation — every key is pre-allocated on instrument add,
+    /// so this only resets and overwrites existing `Copy` values. Track →
+    /// instrument resolution goes through `InstrumentMapping`. When two tracks
+    /// drive the same instrument the last one in `tracks()` order wins for that
+    /// block (removed once Phase 3 enforces 1 track ↔ 1 instrument).
+    fn update_track_controls(&mut self) {
+        let Some(song) = self.sequencer.song().try_read() else {
+            return;
+        };
+        for control in self.track_controls.values_mut() {
+            *control = TrackControl::NEUTRAL;
+        }
+        let any_solo = song.any_solo();
+        for track in song.tracks() {
+            let Some(seq_id) = track.instrument else {
+                continue;
+            };
+            let Some(engine_id) = self.instrument_mapping.engine_id(seq_id) else {
+                continue;
+            };
+            if let Some(control) = self.track_controls.get_mut(&engine_id) {
+                *control = TrackControl {
+                    volume: track.volume,
+                    pan: track.pan,
+                    audible: track.is_audible(any_solo),
+                };
+            }
+        }
+    }
+
     fn process_voices(&mut self, context: &ProcessContext<'_>) {
         let num_channels = 2;
         let buffer_size = context.samples.as_usize() * num_channels;
@@ -2308,10 +2354,15 @@ impl SynthEngine {
                 instrument.process(context, spatial_ctx.as_ref(), &mut self.spatial_voice_bank);
         }
 
-        // Channel-bus stage: apply each channel's fader/pan and sum into the
-        // master mix. Single insertion point for track controls (Phase 2) and
-        // sends/returns (Phase 7).
-        mix_channel_busses(&self.instruments, any_soloed, &mut self.mix_buffer);
+        // Channel-bus stage: compose each channel's instrument fader with its
+        // owning-track fader and sum into the master mix. Single insertion point
+        // for track controls and sends/returns (Phase 7).
+        mix_channel_busses(
+            &self.instruments,
+            any_soloed,
+            &self.track_controls,
+            &mut self.mix_buffer,
+        );
 
         // Capture each instrument's post-effect-chain output for the
         // next callback. Pure copy into pre-allocated buffers — no allocs.
@@ -2380,26 +2431,50 @@ impl Default for SynthEngine {
     }
 }
 
+/// Owning-track fader state for one channel, snapshotted from the sequencer
+/// `Song` each block. `NEUTRAL` (unity volume, centre pan, audible) composes to
+/// the instrument's own fader unchanged, so an instrument with no owning track
+/// behaves exactly as it did before Phase 2.
+#[derive(Clone, Copy)]
+struct TrackControl {
+    volume: NormalizedValue,
+    pan: BipolarValue,
+    audible: bool,
+}
+
+impl TrackControl {
+    const NEUTRAL: Self = Self {
+        volume: NormalizedValue::MAX,
+        pan: BipolarValue::CENTER,
+        audible: true,
+    };
+}
+
 /// Channel-bus stage: mix every instrument's channel into the master buffer.
 ///
 /// Channel-strip model: each instrument is a channel whose post-effect,
 /// **pre-fader** signal lives in its `effect_buffer` (read via
-/// [`Instrument::last_output_interleaved`]). This stage applies the channel
-/// fader/pan ([`Instrument::stereo_gain`]) plus per-channel soft clipping and
-/// sums the result into `mix_buffer`.
+/// [`Instrument::last_output_interleaved`]). This stage composes the channel's
+/// instrument fader with its owning-track fader, applies per-channel soft
+/// clipping, and sums the result into `mix_buffer`:
+/// - gain = `inst.volume × track.volume`
+/// - pan  = `inst.pan + track.pan` (clamped to [-1, 1] by `BipolarValue::new`),
+///   fed once through the constant-power pan law — additive, *not* two cascaded
+///   pan stages (which would mis-handle hard-panned channels).
 ///
 /// Moving the fader here (out of `Instrument::process`) makes the instrument a
-/// pure sound source and gives a single insertion point for track controls
-/// (Phase 2) and sends/returns (Phase 7). The sidechain tap stays pre-fader:
-/// this stage never writes gain back into `effect_buffer`.
+/// pure sound source and gives a single insertion point for track controls and
+/// sends/returns (Phase 7). The sidechain tap stays pre-fader: this stage never
+/// writes gain back into `effect_buffer`.
 ///
-/// Skips muted channels and — when any channel is soloed — non-soloed channels,
-/// reproducing exactly the gating that previously lived in `Instrument::process`
-/// (the mute early-return) and the instrument process loop (the solo skip), so
-/// the master mix is bit-identical to the pre-bus-stage behaviour.
+/// Skips muted/non-soloed instruments (as in Phase 1) and, additionally,
+/// channels whose owning track is inaudible (track mute / track-solo exclusion
+/// via `SequencerTrack::is_audible`). Instruments with no track entry, or a
+/// `NEUTRAL` entry, compose to their instrument-only fader unchanged.
 fn mix_channel_busses(
     instruments: &[Box<Instrument>],
     any_soloed: bool,
+    track_controls: &std::collections::HashMap<InstrumentId, TrackControl>,
     mix_buffer: &mut AudioBuffer,
 ) {
     let dst = mix_buffer.as_mut_slice();
@@ -2411,9 +2486,21 @@ fn mix_channel_busses(
             continue;
         }
 
-        let (left_gain, right_gain) = instrument.stereo_gain();
-        let left_gain = left_gain.as_f32();
-        let right_gain = right_gain.as_f32();
+        let track = track_controls
+            .get(&instrument.id())
+            .copied()
+            .unwrap_or(TrackControl::NEUTRAL);
+        if !track.audible {
+            continue;
+        }
+
+        // Compose instrument fader with track fader. Additive pan through one
+        // constant-power law; multiplicative volume.
+        let pan = BipolarValue::new(instrument.pan().as_f32() + track.pan.as_f32());
+        let (pan_left, pan_right) = Gain::from_pan(pan);
+        let volume = instrument.volume().as_f32() * track.volume.as_f32();
+        let left_gain = pan_left.as_f32() * volume;
+        let right_gain = pan_right.as_f32() * volume;
 
         let src = instrument.last_output_interleaved();
         let frames = src.len().min(dst.len());
@@ -2681,6 +2768,10 @@ impl AudioProcessor for SynthEngine {
             &mut self.note_event_producer,
             &self.state.event_drops,
         );
+
+        // Refresh per-instrument track controls from the Song before the
+        // channel-bus stage (inside process_voices) reads them.
+        self.update_track_controls();
 
         self.process_voices(&process_context);
 

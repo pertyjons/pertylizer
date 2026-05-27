@@ -12,7 +12,7 @@ phase layers onto it.
 ## Status at a glance
 
 - [x] **Phase 1** — Per-channel bus node (the Model-C core; audio unchanged)
-- [ ] **Phase 2** — Wire track vol/pan/mute/solo into the bus fader (dead-fader fix)
+- [~] **Phase 2** — Wire track vol/pan/mute/solo into the bus fader (static fader ✅ landed; automation arms pending)
 - [ ] **Phase 3** — Establish & enforce the 1-track-↔-1-instrument invariant
 - [ ] **Phase 4** — Deprecate `note.instrument` (route only via `track.instrument`)
 - [ ] **Phase 5** — Orphan-preview via scratch channel (removes the special branch)
@@ -101,22 +101,30 @@ structural refactor, gated by tests.
   stage. `fmt`/`build`/`clippy --all-targets`/`test` all clean.
 
 ### Phase 2 — Wire track vol/pan/mute/solo into the bus fader
-**Status:** ☐ Not started
+**Status:** ◐ In progress — static track fader landed; automation arms pending
 
 The bus stage now exists; route the track controls into it. First user-visible win
-(the dead-fader fix). Resolves the second §0.1 HIGH item and §2.1.
+(the dead-fader fix, §0.1 first HIGH item).
 
-- [ ] Carry a per-channel track-control snapshot (vol, pan, mute, solo) into the bus
-  stage; resolve via `InstrumentMapping` / `track.instrument`.
-- [ ] Bus fader composes: `gain = inst.vol × track.vol`,
-  `pan = clamp(inst.pan + track.pan, -1, 1)`, `audible = inst_audible & track_audible`
-  (until Phase 4 optionally unifies them).
-- [ ] Wire the `Track { Volume, Pan, Mute, Solo }` and `Global(Tempo)` →
-  `transport.set_tempo` automation arms at `synth_engine.rs:2469` — they write to the
-  same bus stage.
-- [ ] Document shared-instrument behaviour as "last routed track wins per block"
-  (removed in Phase 3).
-- [ ] Engine test: bus-fader composition (track×inst, pan clamp, mute/solo gating).
+- [x] Carry a per-channel track-control snapshot (vol, pan, audible) into the bus
+  stage. `TrackControl` map on `SynthEngine`, pre-allocated per instrument (mirrors
+  `prev_instrument_outputs`), rebuilt each block in `update_track_controls` from the
+  Song via `try_read`, resolved through `InstrumentMapping`. A `NEUTRAL` entry composes
+  bit-identically to the instrument-only fader (verified).
+- [x] Bus fader composes: `volume = inst.vol × track.vol`, `pan = inst.pan + track.pan`
+  (clamped by `BipolarValue::new`, one constant-power law — additive, not cascaded),
+  track `audible` (mute / solo-exclusion via `SequencerTrack::is_audible`) gates the
+  channel. (Fader unification deferred to Phase 4.)
+- [x] Documented shared-instrument behaviour as "last routed track wins per block"
+  (in `update_track_controls` doc; removed in Phase 3).
+- [x] Tests: `track_pan_biases_output`, `track_volume_scales_output` (prove track
+  fader reaches audio); existing bit-exact determinism suite still green. Independent
+  RT-safety + equivalence review passed.
+- [ ] **Pending (separate step):** wire the `Track { Volume, Pan, Mute, Solo }` and
+  `Global(Tempo)` → `transport.set_tempo` (+ `Global(MasterVolume)`) automation arms.
+  Resolves the §0.1 *second* HIGH item and §2.1. Track automation needs a persistent
+  override layer to compose with the static track values; `Global(Swing)` and
+  `Track(Solo)` automation are deferred (no swing impl; solo is a cross-track concept).
 
 ### Phase 3 — Establish & enforce the 1:1 invariant
 **Status:** ☐ Not started

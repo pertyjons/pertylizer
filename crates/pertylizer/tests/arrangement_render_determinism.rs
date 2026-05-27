@@ -18,7 +18,7 @@ use pertylizer::patch::{ModuleBuilder, Patch};
 
 use common::{
     add_env_amp_out_tail, assert_bit_exact, build_arpeggio_song, left_rms, process_block,
-    right_rms, setup_with_patch, sustain_patch,
+    right_rms, set_first_track_fader, setup_with_patch, sustain_patch,
 };
 
 #[test]
@@ -358,5 +358,59 @@ fn channel_bus_volume_scales_level() {
     assert!(
         (0.4..=0.6).contains(&ratio),
         "half volume should roughly halve the level (ratio={ratio}, unity={unity_rms}, half={half_rms})"
+    );
+}
+
+// --- Track fader (Phase 2) regression guards -------------------------------
+//
+// docs/TODO.md §0.1: SequencerTrack volume/pan were stored but never reached
+// audio. These pin that the OWNING TRACK's fader now composes into the channel
+// bus. The instrument's own pan/volume stay neutral, so any effect here comes
+// purely from the track fader (read live from the Song during render).
+
+#[test]
+fn track_pan_biases_output() {
+    let rig = setup_with_patch(&sustain_patch());
+    let shared = McpSharedState::with_song(build_arpeggio_song());
+
+    // Instrument pan/volume left at default (centre/unity); pan the TRACK left.
+    set_first_track_fader(&shared.song, 1.0, -0.7);
+
+    let out = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("render");
+
+    let l = left_rms(&out.samples);
+    let r = right_rms(&out.samples);
+    assert!(
+        l > 0.0 && r > 0.0,
+        "both channels non-silent (L={l}, R={r})"
+    );
+    assert!(
+        l > r * 1.3,
+        "track pan-left should bias energy to the left (L={l}, R={r})"
+    );
+}
+
+#[test]
+fn track_volume_scales_output() {
+    let rig = setup_with_patch(&sustain_patch());
+    let shared = McpSharedState::with_song(build_arpeggio_song());
+
+    // Centre pan throughout; only the TRACK volume fader differs.
+    set_first_track_fader(&shared.song, 1.0, 0.0);
+    let unity = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("render unity");
+
+    set_first_track_fader(&shared.song, 0.5, 0.0);
+    let half = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("render half");
+
+    let unity_rms = left_rms(&unity.samples);
+    let half_rms = left_rms(&half.samples);
+    assert!(unity_rms > 0.0, "unity-track render should be audible");
+    let ratio = half_rms / unity_rms;
+    assert!(
+        (0.4..=0.6).contains(&ratio),
+        "half track volume should roughly halve the level (ratio={ratio})"
     );
 }
