@@ -655,15 +655,11 @@ impl Song {
             .collect();
         self.tracks.retain(|t| used_tracks.contains(&t.id));
 
-        // Collect instrument IDs still in use (from tracks and notes)
+        // Collect instrument IDs still in use. Notes route through their
+        // track's instrument, so retained tracks cover every played instrument.
         let mut used_instruments = HashSet::new();
         for track in &self.tracks {
             used_instruments.insert(track.instrument);
-        }
-        for pattern in &self.patterns {
-            for note in pattern.notes() {
-                used_instruments.insert(note.instrument);
-            }
         }
 
         (removed_patterns, removed_tracks, used_instruments)

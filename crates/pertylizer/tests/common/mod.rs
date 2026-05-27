@@ -139,7 +139,6 @@ pub fn build_single_pattern_song(
                 *start,
                 Pitch::new(*midi).expect("valid MIDI note"),
                 Velocity::MF,
-                SeqInstrumentId(0),
             );
             if let Some(note) = pattern.note_mut(nid) {
                 note.duration = Some(*duration);
@@ -205,7 +204,6 @@ pub fn build_sustained_note_song(name: &str) -> (Arc<RwLock<Song>>, PatternId, T
             PatternTick(0),
             Pitch::new(60).expect("valid MIDI note"),
             Velocity::MF,
-            SeqInstrumentId(0),
         );
         if let Some(note) = pattern.note_mut(nid) {
             note.duration = Some(SeqDuration::WHOLE);

@@ -15,7 +15,7 @@ use pertylizer::mcp_bridge::{
 };
 use pertylizer::mcp_shared::McpSharedState;
 use synth_sequencer::{
-    Duration as SeqDuration, NoteId, PatternId, PatternTick, Pitch, SeqInstrumentId, Song, Velocity,
+    Duration as SeqDuration, NoteId, PatternId, PatternTick, Pitch, Song, Velocity,
 };
 
 fn shared_with_pattern(notes: &[(u8, u32)]) -> (Arc<McpSharedState>, u32) {
@@ -29,7 +29,6 @@ fn shared_with_pattern(notes: &[(u8, u32)]) -> (Arc<McpSharedState>, u32) {
                 PatternTick(*start),
                 Pitch::new(*pitch).expect("valid pitch"),
                 Velocity::MF,
-                SeqInstrumentId(0),
             );
             n = n.with_duration(SeqDuration(240));
             let _ = pattern.insert_note(n);

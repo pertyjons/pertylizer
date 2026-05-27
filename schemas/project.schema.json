@@ -6455,7 +6455,6 @@
         {
           "duration": 480,
           "id": 0,
-          "instrument": 0,
           "pitch": 60,
           "start": 0,
           "velocity": 0.8
@@ -6476,10 +6475,6 @@
         "id": {
           "$ref": "#/$defs/NoteId",
           "description": "Unique ID for this note (for editing/selection)."
-        },
-        "instrument": {
-          "$ref": "#/$defs/SeqInstrumentId",
-          "description": "Sequencer instrument ID. Conventionally `0` when the note's `track`\nbinds the instrument — the track-level binding wins at playback. Set\nto a non-zero value only when bypassing the track's instrument (rare)."
         },
         "pitch": {
           "$ref": "#/$defs/Pitch",
@@ -6509,8 +6504,7 @@
         "id",
         "start",
         "pitch",
-        "velocity",
-        "instrument"
+        "velocity"
       ],
       "type": "object"
     },
@@ -6702,7 +6696,6 @@
             {
               "duration": 960,
               "id": 0,
-              "instrument": 0,
               "pitch": 60,
               "start": 0,
               "velocity": 0.8
@@ -6710,7 +6703,6 @@
             {
               "duration": 960,
               "id": 1,
-              "instrument": 0,
               "pitch": 64,
               "start": 960,
               "velocity": 0.8

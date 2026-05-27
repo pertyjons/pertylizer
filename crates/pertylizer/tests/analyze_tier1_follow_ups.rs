@@ -317,12 +317,7 @@ fn build_drum_pollution_song() -> Arc<RwLock<Song>> {
         let pat = song.pattern_mut(pad_pattern_id).expect("pad pattern");
         for midi in [57u8, 60, 64] {
             // A3, C4, E4
-            let nid = pat.add_note(
-                PatternTick(0),
-                Pitch::new(midi).unwrap(),
-                Velocity::MF,
-                SeqInstrumentId(0),
-            );
+            let nid = pat.add_note(PatternTick(0), Pitch::new(midi).unwrap(), Velocity::MF);
             if let Some(n) = pat.note_mut(nid) {
                 n.duration = Some(SeqDuration(bar - 60));
             }
@@ -343,7 +338,6 @@ fn build_drum_pollution_song() -> Arc<RwLock<Song>> {
             PatternTick(0),
             Pitch::new(42).unwrap(), // F#2 — classic GM hi-hat
             Velocity::MF,
-            SeqInstrumentId(0),
         );
         if let Some(n) = pat.note_mut(nid) {
             n.duration = Some(SeqDuration(bar - 60));
@@ -585,12 +579,7 @@ fn build_two_track_song() -> Arc<RwLock<Song>> {
         let pat = song.pattern_mut(pad_pattern_id).expect("pad pattern");
         for midi in [60u8, 64, 67] {
             // C major triad
-            let nid = pat.add_note(
-                PatternTick(0),
-                Pitch::new(midi).unwrap(),
-                Velocity::MF,
-                SeqInstrumentId(0),
-            );
+            let nid = pat.add_note(PatternTick(0), Pitch::new(midi).unwrap(), Velocity::MF);
             if let Some(n) = pat.note_mut(nid) {
                 n.duration = Some(SeqDuration(bar - 60));
             }
@@ -604,7 +593,6 @@ fn build_two_track_song() -> Arc<RwLock<Song>> {
             PatternTick(0),
             Pitch::new(36).unwrap(), // C2 — strong sub
             Velocity::MF,
-            SeqInstrumentId(1),
         );
         if let Some(n) = pat.note_mut(nid) {
             n.duration = Some(SeqDuration(bar - 60));
@@ -969,12 +957,7 @@ fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
     let pad_pattern_id = song.create_pattern(SeqDuration(bar));
     {
         let pat = song.pattern_mut(pad_pattern_id).expect("pad pattern");
-        let nid = pat.add_note(
-            PatternTick(0),
-            Pitch::new(60).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
+        let nid = pat.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
         if let Some(n) = pat.note_mut(nid) {
             n.duration = Some(SeqDuration(bar - 60));
         }

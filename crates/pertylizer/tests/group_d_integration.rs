@@ -11,9 +11,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use synth_engine::SynthEngine;
-use synth_sequencer::{
-    Duration as SeqDuration, NoteId, PatternTick, Pitch, SeqInstrumentId, Song, Velocity,
-};
+use synth_sequencer::{Duration as SeqDuration, NoteId, PatternTick, Pitch, Song, Velocity};
 
 use pertylizer::mcp_bridge::{analyze_tension_curve_impl, suggest_music_fixes_impl};
 use pertylizer::mcp_shared::McpSharedState;
@@ -43,7 +41,6 @@ fn rig_with_pattern(notes: &[(u8, u32, u32, u8)]) -> Rig {
                 PatternTick(*start),
                 Pitch::new(*pitch).expect("valid pitch"),
                 velocity,
-                SeqInstrumentId(0),
             );
             n = n.with_duration(SeqDuration(*dur));
             let _ = pattern.insert_note(n);

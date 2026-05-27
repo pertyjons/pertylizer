@@ -1997,14 +1997,8 @@ impl SynthApp {
                             if !overdub {
                                 pattern.clear_notes();
                             }
-                            let instrument = self.sequencer_view_state.recording_instrument;
                             for note in &notes {
-                                let nid = pattern.add_note(
-                                    note.start,
-                                    note.pitch,
-                                    note.velocity,
-                                    instrument,
-                                );
+                                let nid = pattern.add_note(note.start, note.pitch, note.velocity);
                                 if let Some(n) = pattern.note_mut(nid) {
                                     n.duration = Some(note.duration);
                                 }
@@ -3985,8 +3979,7 @@ impl SynthApp {
                 // Re-add the note to the pattern.
                 let mut song_w = self.song.write();
                 if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
-                    let nid =
-                        pattern.add_note(note.start, note.pitch, note.velocity, note.instrument);
+                    let nid = pattern.add_note(note.start, note.pitch, note.velocity);
                     if let Some(n) = pattern.note_mut(nid) {
                         n.duration = note.duration;
                         n.track = note.track;

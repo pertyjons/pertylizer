@@ -238,7 +238,6 @@ pub(crate) struct NoteSnapshot {
     pub(crate) duration: Option<SeqDuration>,
     pub(crate) pitch: Pitch,
     pub(crate) velocity: Velocity,
-    pub(crate) instrument: synth_sequencer::SeqInstrumentId,
     pub(crate) track: Option<synth_sequencer::TrackId>,
 }
 
@@ -250,7 +249,6 @@ impl From<&synth_sequencer::Note> for NoteSnapshot {
             duration: note.duration,
             pitch: note.pitch,
             velocity: note.velocity,
-            instrument: note.instrument,
             track: note.track,
         }
     }
@@ -614,7 +612,6 @@ mod tests {
             duration: Some(SeqDuration(960)),
             pitch: Pitch::MIDDLE_C,
             velocity: Velocity::MF,
-            instrument: synth_sequencer::SeqInstrumentId::new(0),
             track: None,
         }
     }

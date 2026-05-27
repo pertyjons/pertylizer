@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ids::{NoteId, SeqInstrumentId, TrackId};
+use super::ids::{NoteId, TrackId};
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
 
@@ -21,10 +21,6 @@ pub struct Note {
     pub pitch: Pitch,
     /// Velocity/attack strength.
     pub velocity: Velocity,
-    /// Sequencer instrument ID. Conventionally `0` when the note's `track`
-    /// binds the instrument — the track-level binding wins at playback. Set
-    /// to a non-zero value only when bypassing the track's instrument (rare).
-    pub instrument: SeqInstrumentId,
     /// Track/channel for mono-per-track behavior.
     pub track: Option<TrackId>,
 }
@@ -32,20 +28,13 @@ pub struct Note {
 impl Note {
     /// Create a new note with default duration.
     #[must_use]
-    pub fn new(
-        id: NoteId,
-        start: PatternTick,
-        pitch: Pitch,
-        velocity: Velocity,
-        instrument: SeqInstrumentId,
-    ) -> Self {
+    pub fn new(id: NoteId, start: PatternTick, pitch: Pitch, velocity: Velocity) -> Self {
         Self {
             id,
             start,
             duration: None,
             pitch,
             velocity,
-            instrument,
             track: None,
         }
     }
@@ -100,7 +89,6 @@ mod tests {
             PatternTick(0),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            SeqInstrumentId(0),
         )
     }
 
@@ -134,7 +122,6 @@ mod tests {
             PatternTick(100),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            SeqInstrumentId(0),
         )
         .with_duration(Duration(200));
 
@@ -151,7 +138,6 @@ mod tests {
             PatternTick(100),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            SeqInstrumentId(0),
         )
         .with_duration(Duration(200));
 

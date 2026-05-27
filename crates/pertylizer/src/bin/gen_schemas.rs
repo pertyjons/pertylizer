@@ -99,8 +99,7 @@ fn embed_examples(root: &mut Value) {
                 "start": 0,
                 "duration": 480,
                 "pitch": 60,
-                "velocity": 0.8,
-                "instrument": 0
+                "velocity": 0.8
             }]),
         ),
         (
@@ -110,8 +109,8 @@ fn embed_examples(root: &mut Value) {
                 "name": "Verse",
                 "length": 3840,
                 "notes": [
-                    {"id": 0, "start": 0, "duration": 960, "pitch": 60, "velocity": 0.8, "instrument": 0},
-                    {"id": 1, "start": 960, "duration": 960, "pitch": 64, "velocity": 0.8, "instrument": 0}
+                    {"id": 0, "start": 0, "duration": 960, "pitch": 60, "velocity": 0.8},
+                    {"id": 1, "start": 960, "duration": 960, "pitch": 64, "velocity": 0.8}
                 ],
                 "automation": [],
                 "next_note_id": 2

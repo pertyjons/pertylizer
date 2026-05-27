@@ -14,7 +14,7 @@ phase layers onto it.
 - [x] **Phase 1** — Per-channel bus node (the Model-C core; audio unchanged)
 - [x] **Phase 2** — Track vol/pan/mute/solo into the bus fader + Track/Global automation arms (Tempo→§2.1, Swing/Solo deferred)
 - [x] **Phase 3** — Make `track.instrument` mandatory; **sharing allowed** (no strict 1:1); remove "— None — (per-note)"
-- [ ] **Phase 4** — Deprecate `note.instrument` (route only via `track.instrument`)
+- [x] **Phase 4** — Remove `note.instrument` (route only via `track.instrument`; preview via threaded instrument)
 - [ ] **Phase 5** — Orphan-preview via scratch channel (removes the special branch)
 - [ ] **Phase 6** — Save/load + MCP cleanup
 - [ ] **Phase 7** — Sends/returns + mixer view (§1.4 payoff, now just taps off the bus)
@@ -176,17 +176,30 @@ projects (Oxygene 80s, Synth Pop) are left as-is.
   introduces a second source of truth for alloc mode under sharing — revisit with the
   struct merge.
 
-### Phase 4 — Deprecate `note.instrument`
-**Status:** ☐ Not started
+### Phase 4 — Remove `note.instrument`
+**Status:** ☑ Done — landed in two commits (4a preview plumbing, 4b removal)
 
-- [ ] Route only via `track.instrument`: replace
-  `effective_instrument = track_instrument.unwrap_or(note.instrument)`
-  (`sequencer_engine.rs:443`) with `track.instrument`.
-- [ ] Remove the `note.instrument` field (no backward compatibility required per
-  CLAUDE.md). Update `pattern.rs` (`instrument_override.unwrap_or(...)`),
-  the GUI per-note instrument selector → per-track, and MCP `add_notes`.
-- [ ] (Recommended) Unify the faders: the track drives the bus fader directly (one
-  fader, the purest channel strip), removing the "which fader?" ambiguity.
+- [x] **4a — preview instrument:** the orphan-preview path had no track context and
+  routed via `note.instrument`. `SetPreviewPattern`/`PlayPattern` now carry an
+  instrument; the sequencer stores `preview_instrument` and plays through it; GUI
+  passes `selected_instrument`. (Prerequisite so removing the field doesn't break
+  orphan preview/REC.)
+- [x] **4b — field removal:** dropped `Note.instrument` + the `Note::new`/`add_note`
+  params; deleted dead `Pattern::generate_events`; `Song::remove_unused` collects
+  instruments from tracks only. Arrangement playback was already track-only (Phase 3).
+- [x] GUI: notes have no instrument — colour/tooltip derive from the pattern's track
+  instrument (`track_overrides`, else working instrument); arrangement miniatures
+  colour by the placement's track instrument; dropped `instrument` from
+  `NoteMiniature`/`PianoRollNote`/`ClipboardNote`; removed the now-vestigial
+  `recording_instrument`; fixed the stale override-badge hover text.
+- [x] MCP: `instrument_id` inputs are kept but **ignored** (descriptions updated);
+  full API removal deferred to Phase 6. undo `NoteSnapshot.instrument` removed.
+- [x] Serialization: no `deny_unknown_fields`, so old saves load (extra `instrument`
+  key ignored); `project.schema.json` + gen_schemas examples regenerated.
+- [x] Tests green (447); independent review passed.
+- Note: `Note.track` (also vestigial) intentionally left for a later cleanup.
+- Fader unification (track drives instrument vol/pan directly) deferred to the
+  struct-merge follow-up.
 
 ### Phase 5 — Orphan-preview via scratch channel
 **Status:** ☐ Not started

@@ -1237,14 +1237,15 @@ impl SynthBridge for AppSynthBridge {
         })?;
         let start = synth_sequencer::PatternTick(beats_to_ticks(start_beat));
         let vel = synth_core::Velocity::from_midi(velocity);
-        let instrument = synth_sequencer::SeqInstrumentId(instrument_id.unwrap_or(0));
+        // Per-note instrument removed; notes route via their track. `instrument_id`
+        // remains on the MCP API but is ignored (API tightening is Phase 6).
+        let _ = instrument_id;
 
         let note = synth_sequencer::Note::new(
             synth_sequencer::NoteId(0), // will be reassigned by insert_note
             start,
             p,
             vel,
-            instrument,
         )
         .with_duration(synth_sequencer::Duration(beats_to_ticks(duration_beats)));
 
@@ -5110,14 +5111,15 @@ fn try_insert_note_into_pattern(
         .ok_or_else(|| format!("invalid pitch: {} (must be 0..=127)", n.pitch))?;
     let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));
     let vel = synth_core::Velocity::from_midi(n.velocity);
-    let instrument = synth_sequencer::SeqInstrumentId(n.instrument_id.unwrap_or(0));
+    // Per-note instrument removed; notes route via their track. `instrument_id`
+    // remains on the MCP input but is ignored (API tightening is Phase 6).
+    let _ = n.instrument_id;
 
     let note = synth_sequencer::Note::new(
         synth_sequencer::NoteId(0), // reassigned by insert_note
         start,
         pitch,
         vel,
-        instrument,
     )
     .with_duration(synth_sequencer::Duration(beats_to_ticks(n.duration_beats)));
 
@@ -5131,14 +5133,15 @@ fn insert_note_into_pattern(pattern: &mut synth_sequencer::Pattern, n: &BridgeNo
     let pitch = synth_sequencer::Pitch::new(n.pitch).unwrap_or(synth_sequencer::Pitch::MIDDLE_C);
     let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));
     let vel = synth_core::Velocity::from_midi(n.velocity);
-    let instrument = synth_sequencer::SeqInstrumentId(n.instrument_id.unwrap_or(0));
+    // Per-note instrument removed; notes route via their track. `instrument_id`
+    // remains on the MCP input but is ignored (API tightening is Phase 6).
+    let _ = n.instrument_id;
 
     let note = synth_sequencer::Note::new(
         synth_sequencer::NoteId(0), // reassigned by insert_note
         start,
         pitch,
         vel,
-        instrument,
     )
     .with_duration(synth_sequencer::Duration(beats_to_ticks(n.duration_beats)));
 

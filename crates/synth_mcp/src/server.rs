@@ -1221,7 +1221,7 @@ pub struct AddNoteParam {
     #[schemars(description = "Velocity (0-127, where 127 = maximum)")]
     pub velocity: u8,
     #[schemars(
-        description = "Instrument index (default 0). During playback, the track's instrument overrides this when set."
+        description = "Ignored: notes route through their track's instrument. Retained for compatibility."
     )]
     pub instrument_id: Option<u16>,
 }
@@ -1288,7 +1288,7 @@ pub struct NoteInput {
     #[schemars(description = "Velocity (0-127). Default 100 if omitted.")]
     pub velocity: Option<u8>,
     #[schemars(
-        description = "Instrument index (default 0). During playback, the track's instrument overrides this when set."
+        description = "Ignored: notes route through their track's instrument. Retained for compatibility."
     )]
     pub instrument_id: Option<u16>,
 }
@@ -1434,7 +1434,7 @@ pub struct SetTrackInstrumentParam {
     #[schemars(description = "Track ID")]
     pub track_id: u16,
     #[schemars(
-        description = "Instrument ID to assign to this track. Omit or set to null to unassign."
+        description = "Instrument ID for this track. Every track has an instrument; omitting leaves it unchanged."
     )]
     pub instrument_id: Option<u16>,
 }

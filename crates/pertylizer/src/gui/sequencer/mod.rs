@@ -121,7 +121,6 @@ struct ClipboardNote {
     pitch: Pitch,
     velocity: Velocity,
     duration: Option<SeqDuration>,
-    instrument: SeqInstrumentId,
 }
 
 /// Piano roll clipboard for copy/paste operations.
@@ -204,8 +203,6 @@ pub struct SequencerViewState {
     pub recording_preview_pattern_length: SeqDuration,
     /// Selected instrument for new notes in the piano roll.
     pub selected_instrument: SeqInstrumentId,
-    /// Instrument captured at recording arm time (used when flushing recorded notes).
-    pub recording_instrument: SeqInstrumentId,
     /// Pattern captured at recording arm time, and whether it was an orphan
     /// (no arrangement placement). Used to keep the armed-Play branch and the
     /// live-preview pitch fold tied to the pattern actually being recorded.
@@ -266,7 +263,6 @@ impl SequencerViewState {
             recording_preview_held: Vec::new(),
             recording_preview_pattern_length: SeqDuration(0),
             selected_instrument: SeqInstrumentId::new(0),
-            recording_instrument: SeqInstrumentId::new(0),
             recording_pattern: None,
             pr_zoom_x: 1.0,
             pr_zoom_y: 1.0,
@@ -794,8 +790,6 @@ struct NoteMiniature {
     duration_frac: f32,
     /// Vertical position as fraction of pitch range (0.0 = lowest, 1.0 = highest).
     pitch_frac: f32,
-    /// Note's instrument id — drives the miniature's colour.
-    instrument: SeqInstrumentId,
 }
 
 /// Snapshot of a pattern placement for rendering.
@@ -807,6 +801,8 @@ struct PlacementInfo {
     pattern_name: String,
     note_count: usize,
     color: Color32,
+    /// Instrument of this placement's track — drives miniature colour.
+    instrument: SeqInstrumentId,
     /// Length in beats (for tooltip).
     length_beats: f32,
     /// Note miniatures for preview drawing.
@@ -862,11 +858,12 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
             if end.0 > song_end_tick {
                 song_end_tick = end.0;
             }
-            // Color from the track this placement belongs to
-            let color = song
-                .track(p.track_id)
+            // Color and instrument from the track this placement belongs to.
+            let track = song.track(p.track_id);
+            let color = track
                 .map(|t| track_color_to_egui(t.color))
                 .unwrap_or(Color32::GRAY);
+            let instrument = track.map(|t| t.instrument).unwrap_or_default();
 
             let length_beats = pattern.length.0 as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
 
@@ -892,7 +889,6 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
                             start_frac: n.start.0 as f32 / len,
                             duration_frac: dur / len,
                             pitch_frac: (n.pitch.as_midi() - min_pitch) as f32 / pitch_range,
-                            instrument: n.instrument,
                         }
                     })
                     .collect()
@@ -906,6 +902,7 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
                 pattern_name: pattern.name.clone(),
                 note_count: pattern.notes().len(),
                 color,
+                instrument,
                 length_beats,
                 note_miniatures,
             })
@@ -1699,12 +1696,13 @@ fn draw_arrangement(
                         let mini_width = rect.width() - 4.0;
                         let fallback = Color32::from_rgb(180, 200, 230);
                         let clipped = painter.with_clip_rect(rect);
+                        // All notes in a placement play the placement's track instrument.
+                        let inst_color = cached_instrument_color(
+                            &inst_color_cache,
+                            placement.instrument,
+                            fallback,
+                        );
                         for mini in &placement.note_miniatures {
-                            let inst_color = cached_instrument_color(
-                                &inst_color_cache,
-                                mini.instrument,
-                                fallback,
-                            );
                             let note_color = Color32::from_rgba_unmultiplied(
                                 inst_color.r(),
                                 inst_color.g(),
@@ -2517,7 +2515,6 @@ struct PianoRollNote {
     start_tick: PatternTick,
     end_tick: Option<PatternTick>,
     velocity: Velocity,
-    instrument: SeqInstrumentId,
 }
 
 /// Snapshot of a single automation point for rendering.
@@ -2578,7 +2575,6 @@ pub(crate) fn collect_piano_roll_data(
                 start_tick: n.start,
                 end_tick: n.end(),
                 velocity: n.velocity,
-                instrument: n.instrument,
             }
         })
         .collect();
@@ -2951,8 +2947,9 @@ pub(crate) fn draw_piano_roll(
                     }
                 });
 
-            // Override badge: pattern is on a track that pins its own instrument.
-            // In that case the per-note value is replaced at playback.
+            // Badge: which instrument(s) the pattern's placements actually play
+            // through. The selector above is only the working instrument (note
+            // colour + preview); playback always routes via the track.
             if !data.track_overrides.is_empty() {
                 let names: Vec<String> = data
                     .track_overrides
@@ -2976,9 +2973,9 @@ pub(crate) fn draw_piano_roll(
                         .color(t.colors.accent_yellow),
                 )
                 .on_hover_text(
-                    "This pattern is placed on a track that has its own instrument set. \
-                    The per-note instrument above is overridden at playback. \
-                    Clear the track instrument (set to '— None —') to use per-note routing.",
+                    "Instrument(s) this pattern plays through where it is placed \
+                    (set per track). The selector above is the working instrument \
+                    for note colour and preview only.",
                 );
             }
         }
@@ -3914,10 +3911,16 @@ pub(crate) fn draw_piano_roll(
                 let note_width = (x_end - x_start).max(3.0);
                 let alpha = (note.velocity.as_f32() * 200.0 + 55.0).min(255.0) as u8;
 
-                // Selected notes keep the instrument fill so colour
-                // identity is preserved; the outline carries the highlight.
+                // Notes have no per-note instrument; colour by the instrument
+                // the pattern plays through (its placement's track), falling
+                // back to the working instrument for an unplaced pattern.
+                let note_instrument = data
+                    .track_overrides
+                    .first()
+                    .copied()
+                    .unwrap_or(view_state.selected_instrument);
                 let inst_color =
-                    cached_instrument_color(&note_color_cache, note.instrument, default_note_color);
+                    cached_instrument_color(&note_color_cache, note_instrument, default_note_color);
 
                 let is_selected = view_state.selected_notes.contains(&note.note_id);
 
@@ -4347,11 +4350,14 @@ pub(crate) fn draw_piano_roll(
                                     None => "open".to_owned(),
                                 };
                                 let vel_pct = (note.velocity.as_f32() * 100.0).round();
+                                // Notes route through their placement's track instrument.
+                                let note_instrument =
+                                    data.track_overrides.first().copied().unwrap_or_default();
                                 let inst_name = instruments
                                     .iter()
-                                    .find(|inst| inst.id.0 == note.instrument.0 as u64)
+                                    .find(|inst| inst.id.0 == note_instrument.0 as u64)
                                     .map_or_else(
-                                        || format!("#{}", note.instrument.0),
+                                        || format!("#{}", note_instrument.0),
                                         |inst| inst.name.clone(),
                                     );
                                 let tooltip_id = ui.id().with(("note_tip", note_id.0));
@@ -4569,7 +4575,6 @@ pub(crate) fn draw_piano_roll(
                 view_state.step_cursor_tick,
                 pitch,
                 view_state.default_velocity,
-                view_state.selected_instrument,
             );
             pattern.resize_note(note_id, step_size);
             if let Some(note) = pattern.note(note_id) {
@@ -4735,12 +4740,8 @@ fn handle_piano_roll_interaction(
                         } else {
                             SeqDuration((data.ticks_per_row as u32).max(1))
                         };
-                        let note_id = pattern.add_note(
-                            tick,
-                            pitch_val,
-                            view_state.default_velocity,
-                            view_state.selected_instrument,
-                        );
+                        let note_id =
+                            pattern.add_note(tick, pitch_val, view_state.default_velocity);
                         pattern.resize_note(note_id, duration);
                         if let Some(note) = pattern.note(note_id) {
                             undo_manager.push(crate::undo::UndoAction::AddNote {
@@ -5070,12 +5071,7 @@ fn handle_piano_roll_interaction(
                     && let mut song_w = song.write()
                     && let Some(pattern) = song_w.pattern_mut(data.pattern_id)
                 {
-                    let note_id = pattern.add_note(
-                        start_tick,
-                        pitch,
-                        view_state.default_velocity,
-                        view_state.selected_instrument,
-                    );
+                    let note_id = pattern.add_note(start_tick, pitch, view_state.default_velocity);
                     pattern.resize_note(note_id, duration);
                     if let Some(added_note) = pattern.note(note_id) {
                         undo_manager.push(crate::undo::UndoAction::AddNote {
@@ -5424,7 +5420,6 @@ fn arm_recording_for_pattern(
     let Some(((region_start, pattern_length, ticks_per_bar, track_id), is_orphan)) = target else {
         return false;
     };
-    view_state.recording_instrument = view_state.selected_instrument;
     view_state.recording_pattern = Some(pattern_id);
     if is_orphan {
         handle.send(EngineCommand::SetPreviewPattern(Some((
@@ -5582,7 +5577,6 @@ fn copy_selected_notes(
             pitch: note.pitch,
             velocity: note.velocity,
             duration: note.end_tick.map(|e| e - note.start_tick),
-            instrument: note.instrument,
         });
     }
 }
@@ -5608,7 +5602,7 @@ fn paste_clipboard_notes(
             let mut composite = Vec::new();
             for cn in &clipboard.notes {
                 let tick = paste_tick + cn.tick_offset;
-                let note_id = pattern.add_note(tick, cn.pitch, cn.velocity, cn.instrument);
+                let note_id = pattern.add_note(tick, cn.pitch, cn.velocity);
                 if let Some(dur) = cn.duration {
                     pattern.resize_note(note_id, dur);
                 }

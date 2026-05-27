@@ -368,7 +368,7 @@ pub fn analyze(notes: &[Note], length_ticks: u32, time_sig: TimeSignature) -> Pa
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use synth_sequencer::{Duration, NoteId, PatternTick, Pitch, SeqInstrumentId, Velocity};
+    use synth_sequencer::{Duration, NoteId, PatternTick, Pitch, Velocity};
 
     fn note_at(tick: u32, midi: u8, dur: Option<u32>, vel: f32) -> Note {
         let mut n = Note::new(
@@ -376,7 +376,6 @@ mod tests {
             PatternTick(tick),
             Pitch::new(midi).unwrap(),
             Velocity::new(vel),
-            SeqInstrumentId(0),
         );
         if let Some(d) = dur {
             n = n.with_duration(Duration(d));

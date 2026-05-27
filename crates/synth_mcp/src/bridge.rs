@@ -36,8 +36,8 @@ pub struct BridgeNoteData {
     pub duration_beats: f32,
     /// Velocity (0-127).
     pub velocity: u8,
-    /// Optional instrument ID (SeqInstrumentId). Default 0 = first instrument.
-    /// During playback, the track's instrument overrides this when set.
+    /// Deprecated/ignored: notes route through their track's instrument.
+    /// Retained for API compatibility; removed in a later MCP cleanup.
     pub instrument_id: Option<u16>,
 }
 
@@ -382,7 +382,8 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn list_notes(&self, pattern_id: u32) -> Result<Vec<NoteInfo>, McpBridgeError>;
 
     /// Add a note to a pattern. Returns the created note info.
-    /// `instrument_id` defaults to 0 if None. Track instrument overrides during playback.
+    /// `instrument_id` is ignored (notes route via their track's instrument);
+    /// retained for API compatibility.
     fn add_note(
         &self,
         pattern_id: u32,

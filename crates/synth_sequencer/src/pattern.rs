@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use super::automation::AutomationLane;
-use super::ids::{NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow};
+use super::ids::{NoteId, PatternId, RowCount, RowIndex, TicksPerRow};
 use super::note::Note;
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
@@ -147,16 +147,11 @@ impl Pattern {
 
     // === Note manipulation ===
 
-    /// Add a note (returns assigned ID).
-    pub fn add_note(
-        &mut self,
-        start: PatternTick,
-        pitch: Pitch,
-        velocity: Velocity,
-        instrument: SeqInstrumentId,
-    ) -> NoteId {
+    /// Add a note (returns assigned ID). The note's instrument is determined
+    /// by the track it plays on at arrangement time, not the note itself.
+    pub fn add_note(&mut self, start: PatternTick, pitch: Pitch, velocity: Velocity) -> NoteId {
         let id = self.next_id();
-        let note = Note::new(id, start, pitch, velocity, instrument);
+        let note = Note::new(id, start, pitch, velocity);
 
         // Insert sorted by start tick
         let pos = self.notes.partition_point(|n| n.start <= start);
@@ -431,72 +426,6 @@ impl Pattern {
     ) -> Option<&AutomationLane> {
         self.automation.iter().find(|l| &l.target == target)
     }
-
-    // === Event generation ===
-
-    /// Generate runtime events for playback within a tick range.
-    pub fn generate_events(
-        &self,
-        pattern_start: super::time::Tick,
-        range_start: super::time::Tick,
-        range_end: super::time::Tick,
-        transpose: Semitones,
-        instrument_override: Option<SeqInstrumentId>,
-    ) -> Vec<super::events::SequencerEvent> {
-        use super::events::SequencerEvent;
-        use super::time::Tick;
-
-        let mut events = Vec::new();
-
-        // Convert song-ticks to pattern-local ticks
-        // Tick.0 is u64 but PatternTick.0 is u32; values are bounded by pattern length
-        // which fits in u32, so truncation is safe.
-        #[allow(clippy::cast_possible_truncation)]
-        let local_start = if range_start.0 > pattern_start.0 {
-            PatternTick((range_start.0 - pattern_start.0) as u32)
-        } else {
-            PatternTick(0)
-        };
-        #[allow(clippy::cast_possible_truncation)]
-        let local_end = PatternTick(
-            (range_end.0.saturating_sub(pattern_start.0)).min(self.length.0 as u64) as u32,
-        );
-
-        for note in &self.notes {
-            let instrument = instrument_override.unwrap_or(note.instrument);
-
-            // Transpose pitch (keep original if out of range)
-            let transposed_pitch = note.pitch.transpose(transpose).unwrap_or(note.pitch);
-
-            // NoteOn
-            if note.start >= local_start && note.start < local_end {
-                let absolute_tick = Tick(pattern_start.0 + note.start.0 as u64);
-                events.push(SequencerEvent::NoteOn {
-                    tick: absolute_tick,
-                    pitch: transposed_pitch,
-                    velocity: note.velocity,
-                    instrument,
-                });
-            }
-
-            // NoteOff
-            if let Some(end) = note.end()
-                && end > local_start
-                && end <= local_end
-            {
-                let absolute_tick = Tick(pattern_start.0 + end.0 as u64);
-                events.push(SequencerEvent::NoteOff {
-                    tick: absolute_tick,
-                    pitch: transposed_pitch,
-                    instrument,
-                });
-            }
-        }
-
-        // Sort events by tick
-        events.sort_by_key(|e| e.tick());
-        events
-    }
 }
 
 #[cfg(test)]
@@ -520,12 +449,7 @@ mod tests {
     #[test]
     fn test_add_and_retrieve_note() {
         let mut pattern = test_pattern();
-        let id = pattern.add_note(
-            PatternTick(0),
-            Pitch::new(60).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
+        let id = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
 
         assert!(pattern.note(id).is_some());
         assert_eq!(pattern.note(id).unwrap().pitch.as_midi(), 60);
@@ -535,24 +459,9 @@ mod tests {
     fn test_notes_stay_sorted() {
         let mut pattern = test_pattern();
 
-        let _ = pattern.add_note(
-            PatternTick(480),
-            Pitch::new(60).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
-        let _ = pattern.add_note(
-            PatternTick(0),
-            Pitch::new(62).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
-        let _ = pattern.add_note(
-            PatternTick(240),
-            Pitch::new(64).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
+        let _ = pattern.add_note(PatternTick(480), Pitch::new(60).unwrap(), Velocity::MF);
+        let _ = pattern.add_note(PatternTick(0), Pitch::new(62).unwrap(), Velocity::MF);
+        let _ = pattern.add_note(PatternTick(240), Pitch::new(64).unwrap(), Velocity::MF);
 
         let ticks: Vec<_> = pattern.notes().iter().map(|n| n.start.0).collect();
         assert_eq!(ticks, vec![0, 240, 480]);
@@ -561,12 +470,7 @@ mod tests {
     #[test]
     fn test_remove_note() {
         let mut pattern = test_pattern();
-        let id = pattern.add_note(
-            PatternTick(0),
-            Pitch::new(60).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
+        let id = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
 
         assert!(pattern.remove_note(id).is_some());
         assert!(pattern.note(id).is_none());
@@ -575,12 +479,7 @@ mod tests {
     #[test]
     fn test_move_note() {
         let mut pattern = test_pattern();
-        let id = pattern.add_note(
-            PatternTick(0),
-            Pitch::new(60).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
+        let id = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
 
         assert!(pattern.move_note(id, PatternTick(480)));
         assert_eq!(pattern.note(id).unwrap().start.0, 480);
@@ -591,12 +490,7 @@ mod tests {
         let resolution = RowResolution::standard_64();
         let mut pattern = test_pattern();
 
-        let id = pattern.add_note(
-            PatternTick(120),
-            Pitch::new(60).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
+        let id = pattern.add_note(PatternTick(120), Pitch::new(60).unwrap(), Velocity::MF);
 
         pattern.quantize_notes(resolution);
 
@@ -609,12 +503,7 @@ mod tests {
         let resolution = RowResolution::standard_64();
         let mut pattern = test_pattern();
 
-        let id = pattern.add_note(
-            PatternTick(120),
-            Pitch::new(60).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
+        let id = pattern.add_note(PatternTick(120), Pitch::new(60).unwrap(), Velocity::MF);
 
         // 50% quantization toward 240
         pattern.quantize_notes_with_strength(resolution, NormalizedValue::CENTER);
@@ -634,7 +523,6 @@ mod tests {
             PatternTick(100),
             Pitch::new(60).unwrap(),
             Velocity::MF,
-            SeqInstrumentId(0),
         )
         .with_duration(Duration(40));
         let note2 = Note::new(
@@ -642,7 +530,6 @@ mod tests {
             PatternTick(200),
             Pitch::new(62).unwrap(),
             Velocity::MF,
-            SeqInstrumentId(0),
         )
         .with_duration(Duration(40));
         let note3 = Note::new(
@@ -650,7 +537,6 @@ mod tests {
             PatternTick(300),
             Pitch::new(64).unwrap(),
             Velocity::MF,
-            SeqInstrumentId(0),
         )
         .with_duration(Duration(40));
 
@@ -666,18 +552,8 @@ mod tests {
 
         // Test notes without duration
         let mut pattern2 = test_pattern();
-        let _ = pattern2.add_note(
-            PatternTick(100),
-            Pitch::new(60).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
-        let _ = pattern2.add_note(
-            PatternTick(200),
-            Pitch::new(62).unwrap(),
-            Velocity::MF,
-            SeqInstrumentId(0),
-        );
+        let _ = pattern2.add_note(PatternTick(100), Pitch::new(60).unwrap(), Velocity::MF);
+        let _ = pattern2.add_note(PatternTick(200), Pitch::new(62).unwrap(), Velocity::MF);
 
         let notes: Vec<_> = pattern2
             .notes_in_range(PatternTick(150), PatternTick(250))
