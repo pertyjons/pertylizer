@@ -70,6 +70,117 @@ the *generic addressing*, not the DSP.
 
 ---
 
+## Cross-cutting — module references (visibility + integrity)
+**Applies to:** A2, D, E (everything that holds a `(module_id, param)` reference)
+· **Schema:** none (derived state)
+
+The moment an automation lane points at a module param, that lane becomes a
+*dependant* of the module. Two things must follow from a single "who references
+this module?" query, reused everywhere:
+
+- [ ] **Visibility in the Rack view.** A module whose param is automated must show
+  it on its panel (`instrument_rack.rs`, `module_panel.rs`) — an *automated* badge
+  on the module and ideally on the specific param control, the same way a mod-matrix
+  destination reads as "wired". Silent automation that doesn't sound (A1) is one
+  trap; automation that sounds but is invisible is the next one.
+- [ ] **Deletion / rename guard.** `PatchEditorState::remove_module`
+  (`patch_editor.rs:624`) currently tears a module out unconditionally. A module
+  referenced by ≥1 automation lane must not vanish silently — either block the
+  delete with a warning that lists the referencing lanes, or allow it and convert
+  those lanes to a flagged *orphan* state (warn, keep, no-op) so nothing is lost.
+  Decide which; the orphan path is also the fallback for projects edited outside
+  the GUI.
+- [ ] **One reference index.** Both of the above need the same lookup
+  (`module_id → [lanes]`). Build it once (sequencer-side, from the automation
+  lanes) so the Rack badge and the delete guard can't disagree. Phase D's bus
+  filter and Phase E's per-note curves register through the same index.
+
+This is *derived* state — no on-disk schema change — but it is the difference
+between "generic automation exists" and "generic automation is safe to live in".
+
+---
+
+## Cross-cutting — automation value model (base vs. override)
+**Applies to:** A1, A2, D, E (everything that drives a module param from a lane)
+· **Schema:** none (runtime layering)
+
+The base param value — set when a patch is created or loaded, or edited by hand on
+the knob — must survive automation **untouched**. Automation is a *transient
+override*, not a write to the stored value. The engine already proves this split
+exists; the danger is that the phase tasks above currently point at the wrong half
+of it.
+
+- **Destructive path — do NOT reuse for automation.** `handle_set_module_param`
+  → `Graph::set_param` (`graph.rs:332`, `synth_engine.rs:1729`) overwrites the
+  module's stored param in both the voice-graph template *and* every live voice.
+  If A1/A2 dispatch through this (as their tasks literally say today), the value
+  **latches** at the last automation sample when playback stops — there is no
+  snapshot/restore anywhere — and a later save persists that latched value *over
+  the patch base*, corrupting the patch permanently.
+- **Non-destructive path — the model to follow.** The mod matrix never writes the
+  base: it computes an offset and `Graph::apply_mod_offset` → `set_mod_offset`
+  (`graph.rs:454`, `voice.rs:728`) adds it on top per block, reset each cycle, base
+  untouched. But it only covers a **fixed** destination set (OscPitch/FilterCutoff/…),
+  the same fixed set noted in Context.
+- [ ] **Generalize the base+override split to any `(module_id, param)`.** A2 needs
+  the mod-matrix mechanism widened from the fixed destination enum to a generic
+  transient override slot the lane writes, applied over the base at process time and
+  cleared on stop → param reverts to base. New work; not free in `set_param`.
+- [ ] **Define the combine rule per target.** Automation is typically *absolute*
+  (the lane value replaces the base while active) whereas mod-matrix is an
+  *additive offset*. Decide which each target uses, and what holds before the first
+  point / in gaps between lanes (→ base).
+- [ ] **Save semantics.** Saving writes the base (knob) value, never the momentary
+  automated value — even mid-playback. Ties into the Rack badge: in read mode the
+  knob shows the live automated value but still *stores* the base.
+
+---
+
+## Cross-cutting — pitfalls & open design questions
+**Applies to:** A1, A2, D, E · these are decisions that must be made *before* the
+generic param path ships, not after. Each is verified against current code.
+
+- [ ] **`ModuleId` is positional, not a stable identity.** It is `{ module_type,
+  instance: u16 }` (`commands.rs:43`); `apply_mod_offset` even resolves "the Nth
+  instance of a type" (`graph.rs:454`). A lane that stores a `ModuleId` silently
+  **re-points to a different module** if a same-type module is added/removed/
+  reordered — and A1's "first filter in the graph" convention has the identical
+  fragility. The reference index (other cross-cutting section) is *not enough*;
+  automation needs a stable per-module identity, or a documented, deterministic
+  re-resolution rule that survives graph edits.
+- [ ] **Discrete / enum params can't be smoothly automated.** `Param` carries
+  `choice` params — `FilterMode`, `FilterModel` (`filters.rs:159-173`, decoded via
+  `from_index`), oscillator `Waveform`, etc. A continuous normalized lane
+  interpolating *through* them is nonsense (halfway between saw and square = ?).
+  The descriptor already distinguishes `choice` from continuous — the lane engine
+  must read that: continuous → interpolate/smooth, discrete → stepped/quantized.
+- [ ] **Not every param is RT-safe to automate.** `grid_size` on the mod matrix
+  (`mod_matrix.rs:137`, "Number of modulation slots") *resizes the grid* —
+  automating it would heap-allocate on the audio thread. The picker (A2 GUI/MCP)
+  must offer only an **allowlist**: continuous *and* RT-safe params. Structural /
+  sizing params are not automatable. Decide the flag's home (descriptor).
+- [ ] **Control-rate stepping = zipper noise.** The apply path is a hard set —
+  `set_volume` (`instrument.rs:749`), `Graph::set_param` (`graph.rs:332`) — with no
+  ramp. Per-block automation of cutoff/volume/etc. clicks without smoothing. Decide
+  where smoothing lives (per-param ramp in the override layer vs. per-module).
+- [ ] **Per-voice fan-out + mid-note seeding.** A lane is *one* per-instrument
+  timeline value, but params live per-voice (`handle_set_module_param` writes the
+  template *and every live voice*, `synth_engine.rs:1729`). The override must fan
+  out to all voices each block, and a voice triggered **mid-sweep** must start at
+  the current automated value, not the base — the mod matrix dodges this with a
+  per-voice LFO, an instrument lane cannot.
+- [ ] **Two controllers, one param.** A filter cutoff can be driven by a mod-matrix
+  LFO (additive offset) *and* an automation lane *simultaneously* — the mod matrix
+  already targets `FilterCutoff`. Define the order: base → automation (absolute) →
+  mod-matrix offset on top? Undefined today; collisions are silent.
+- [ ] **Offline render must apply the override identically.** The `analyze_*` tools
+  render offline; if the override layer only runs in the live `process()`, analysis
+  reads base values, not automated ones — a fresh instance of the known
+  "offline reader sees state the live engine never wrote" bug class. Evaluate
+  automation in the offline path too, on the same clock.
+
+---
+
 ## Phase A1 — Wire the 6 GUI-exposed instrument macros (bugfix)
 **Status:** ☐ Not started · **Effort:** S · **Axis:** broken → fix · **Schema:** none
 
@@ -78,7 +189,9 @@ dispatch is missing. This is a bugfix of a silent no-op, not a feature.
 
 - [ ] In the `Parameter` dispatch (`synth_engine.rs:2660`), replace the `_ => {}`
   for FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release with resolution to
-  the instrument's filter/envelope module + `handle_set_module_param`.
+  the instrument's filter/envelope module. **Apply via the override layer, not the
+  destructive `set_param`** — see Cross-cutting "automation value model"; otherwise
+  the macro latches and a save corrupts the patch base.
 - [ ] Define the resolution convention for instruments with **multiple** filters
   (e.g. "first filter module in the graph"). Document it next to the dispatch.
 - [ ] Denormalize `NormalizedValue 0..1` → param range via the existing descriptor
@@ -96,13 +209,16 @@ midpoint / fixed-rate LFO guess.
 
 - [ ] Add `AutomationTarget::Module { instrument: SeqInstrumentId, module_id:
   ModuleId, param: Param }` (additive enum variant) in `automation.rs`.
-- [ ] Dispatch it through the same apply path as A1 / `SetModuleParameter`.
+- [ ] Dispatch it through the **override** layer, not `Graph::set_param` — see
+  Cross-cutting "automation value model". Reusing the destructive `SetModuleParameter`
+  path would latch/corrupt the patch base.
 - [ ] GUI: extend the lane target picker (`sequencer/mod.rs:3375`) to browse
   modules + params for the selected instrument.
 - [ ] MCP: accept module targets in `build_automation_target`
   (`mcp_bridge.rs:5302`) and surface them in `automation_target_info`.
-- [ ] Stability: define behavior when a targeted module is removed/renamed
-  mid-arrangement (orphan lane → warn, keep, no-op).
+- [ ] Referential integrity + visibility — see the **Cross-cutting** section
+  below. A targeted module must show as *automated* in the Rack view, and it can
+  no longer be silently deleted/renamed out from under a live lane.
 
 ## Phase B — Per-note legato/tie + glide
 **Status:** ☐ Not started · **Effort:** S–M · **Axis:** broken → fix (arpeggio, portamento) · **Schema:** additive
@@ -196,9 +312,12 @@ before start.
 |---|---|
 | Automation enum + lanes | `crates/synth_sequencer/src/automation.rs` |
 | Note model | `crates/synth_sequencer/src/note.rs` |
-| Param dispatch / apply | `crates/synth_engine/src/synth_engine.rs` (~2647 route, ~1407 set_module_param) |
+| Param dispatch / apply | `crates/synth_engine/src/synth_engine.rs` (~2647 route, ~1720 set_module_param) |
+| Base vs. override (value model) | `crates/synth_engine/src/graph.rs:332` (`set_param`, destructive) vs. `graph.rs:454` (`apply_mod_offset`) + `voice.rs:728` (`set_mod_offset`) |
 | Voice allocation / glide / legato | `crates/synth_engine/src/voice_allocator.rs`, `voice.rs` |
 | Mod matrix (pitch destination) | `crates/synth_modules/src/mod_matrix.rs`, `crates/synth_core/src/params/mod_matrix.rs` |
 | Bus stage (Phase D) | `crates/synth_engine/src/synth_engine.rs:2515-2555`, `docs/channel-strip-c-plan.md` |
 | GUI automation picker | `crates/pertylizer/src/gui/sequencer/mod.rs:3375` |
 | MCP automation bridge | `crates/pertylizer/src/mcp_bridge.rs:5269-5327` |
+| Rack view + module panels (automation badge) | `crates/pertylizer/src/gui/instrument_rack.rs`, `gui/module_panel.rs` |
+| Module delete guard | `crates/pertylizer/src/gui/patch_editor.rs:624` (`remove_module`) |
