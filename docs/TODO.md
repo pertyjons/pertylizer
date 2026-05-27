@@ -32,6 +32,69 @@
   confirmed used), AWE-side material/room fields. A small `cargo run --bin
   audit_dormant_fields` style check — or just a grep for every `pub` field on
   a domain struct and a hand-trace into the audio path — would surface these.
+
+  **Design findings (2026-05-27, pre-implementation — deferred pending decision).**
+  Traced the full path before touching code. Notes route to *instruments* by
+  `SeqInstrumentId`; the instrument is the audio-producing/mixing entity, and its
+  `volume`/`pan` are applied **post-effect-chain** at the output mix
+  (`Instrument::stereo_gain`, `instrument.rs:1294`; consumed in the mix loop
+  `instrument.rs:1280`). Track vol/pan never enter this path. Routing happens in
+  `route_sequencer_events` (`synth_engine.rs:2415`); the `Parameter` arm
+  (`:2469`) already sets instrument vol/pan via `set_volume`/`set_pan`, so that
+  is the natural write point. Per-voice panning already exists in the voice-sum
+  loop (`instrument.rs:1219`, used by the spatial bank), so a per-voice path is
+  *technically* available too.
+
+  - **How real DAWs do it (the consistent model).** Channel strip = instrument →
+    insert FX → **volume fader (post-FX)** → pan → sends → master. Crucially:
+    (1) track *is* the channel — there is no separate track-volume vs
+    instrument-volume, it's one fader; (2) the fader is post-FX (pulling it down
+    dims the reverb tail); (3) **volume ≠ velocity** — velocity is per-note (sets
+    timbre/attack at note-on, already correct here), the fader is a continuous
+    *post-synth* channel control. Automation is not a separate math layer: it
+    writes to the *same control, at the same point in the signal path*, that the
+    user would turn by hand. This gives one rule covering all automation targets.
+  - **Implication: TODO suggestion (a) above is the wrong model.** Multiplying the
+    dispatched note's velocity by `track.volume` would alter timbre via velocity
+    sensitivity. Track volume is a fader, not a velocity scaler.
+  - **The real ambiguity is N tracks → 1 instrument**, not "one pattern on two
+    tracks". The latter (two placements of pattern P on tracks A/B with different
+    instruments) is legitimate *layering* and already works — each placement
+    routes through its own track's instrument. The hard case is two tracks
+    pointing at the *same* instrument: doubled notes + undefined "which fader".
+    The DAW channel-strip convention (1 track ↔ 1 instrument) *removes* this case
+    by construction — layering uses two instruments, not a shared one.
+  - **Three candidate models.**
+    - **A — per-instrument post-FX gain (recommended).** Compose track vol/pan
+      with instrument vol/pan in `stereo_gain()`:
+      `gain = inst.vol × track.vol`, `pan = clamp(inst.pan + track.pan, -1, 1)`.
+      All Volume/Pan automation (track *and* instrument) writes to this same
+      post-FX stage → trivially consistent, sets up §0.1 automation item and §2.1
+      tempo. DAW-correct. Imperfect only when tracks share one instrument
+      (define as "last routed track wins per block").
+    - **B — per-voice gain/pan.** Carry track vol/pan in `SequencerEvent::NoteOn`,
+      apply per voice (like the spatial pan). Correct under instrument-sharing,
+      *but* lands **pre-effect-chain** (track volume changes reverb send level)
+      and won't affect already-ringing voices on a live fader move — i.e. *not*
+      how a DAW fader behaves. Rejected as inconsistent with the fader model.
+    - **C — full per-track output bus.** A real channel bus per track. Correct in
+      all cases but needs per-voice track-tagging to split a shared instrument's
+      output across buses, plus duplicated effect chains. Large rework, not
+      justified now.
+  - **Open decision (why this is deferred).** Whether to also do the deeper
+    *struct merge* — collapse `SequencerTrack` + `Instrument` into one channel
+    strip (1 instrument per track). That would make per-not `note.instrument`
+    redundant (track instrument already overrides it via
+    `effective_instrument = track.instrument.unwrap_or(note.instrument)`,
+    `sequencer_engine.rs:443`) and remove the "track has no instrument →
+    per-note multitimbral routing" mode entirely. Bigger refactor: deprecate
+    per-note instrument, guarantee track→instrument, migrate save/load + MCP.
+  - **Recommended split (when picked up).** (1) *Now:* implement model A — compose
+    track vol/pan post-FX in `stereo_gain`, route via the existing
+    `route_sequencer_events` path; assume channel-strip semantics (1 track ↔ 1
+    instrument) as idiomatic, document shared-instrument as last-wins. This fixes
+    the bug and gives the automation hook. (2) *Later, separate session:* the full
+    struct merge above. The two are independent — A does not require the merge.
 - [ ] **★ HIGH: most pattern automation targets are GUI-editable but silently no-op.**
   Resolves the audit follow-up above ("automation lanes — do they all reach the engine?").
   The automation system (`synth_sequencer/src/automation.rs`) defines

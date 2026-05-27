@@ -179,6 +179,35 @@ pub fn left_rms(stereo: &[f32]) -> f32 {
     (sq / lefts.len() as f32).sqrt()
 }
 
+/// RMS of a stereo-interleaved buffer's right channel.
+pub fn right_rms(stereo: &[f32]) -> f32 {
+    let rights: Vec<f32> = stereo.chunks_exact(2).map(|f| f[1]).collect();
+    if rights.is_empty() {
+        return 0.0;
+    }
+    let sq: f32 = rights.iter().map(|s| s * s).sum();
+    (sq / rights.len() as f32).sqrt()
+}
+
+/// Drive `engine` for `blocks` callbacks of 256 stereo frames each. Used to
+/// flush queued `EngineCommand`s and refresh the shared `instrument_snapshots`
+/// (volume/pan/etc.) that an offline render reads at construction time.
+pub fn process_block(engine: &mut SynthEngine, blocks: usize) {
+    let mut block = vec![0.0f32; 256 * 2];
+    let context = AudioCallbackContext {
+        sample_rate: HwSampleRate(TEST_SR),
+        frames: 256,
+        channels: 2,
+        stream_time: 0.0,
+        sample_position: 0,
+        output_latency: synth_core::Seconds::ZERO,
+    };
+    for _ in 0..blocks {
+        block.fill(0.0);
+        engine.process(&mut block, &context);
+    }
+}
+
 /// First sample index at which two equal-length stereo buffers diverge
 /// bit-exactly. Panics if the lengths differ — equal-length is part of the
 /// determinism contract.

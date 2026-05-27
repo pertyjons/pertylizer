@@ -8,7 +8,8 @@
 
 mod common;
 
-use synth_core::ModuleType;
+use synth_core::{BipolarValue, Gain, ModuleType};
+use synth_engine::instrument::InstrumentId;
 
 use pertylizer::audio::arrangement_render::{OfflineEngineSession, render_arrangement_to_buffer};
 use pertylizer::audio::mix_analysis::analyze_mix_buffer;
@@ -16,7 +17,8 @@ use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
 
 use common::{
-    add_env_amp_out_tail, assert_bit_exact, build_arpeggio_song, setup_with_patch, sustain_patch,
+    add_env_amp_out_tail, assert_bit_exact, build_arpeggio_song, left_rms, process_block,
+    right_rms, setup_with_patch, sustain_patch,
 };
 
 #[test]
@@ -269,5 +271,92 @@ fn analyze_mix_metrics_are_stable_across_calls() {
     assert!(
         clipped.windows(2).all(|w| w[0] == w[1]),
         "clipped-sample count must be exact across calls: {clipped:?}"
+    );
+}
+
+// --- Channel-bus stage (Phase 1) regression guards -------------------------
+//
+// The per-instrument fader/pan (`Instrument::stereo_gain`) moved out of
+// `Instrument::process` into the engine's channel-bus stage
+// (`mix_channel_busses`). These tests pin that the fader/pan are still applied
+// — to the correct channel — and that the move did not introduce any
+// non-determinism.
+
+#[test]
+fn channel_bus_pan_biases_left_channel() {
+    let mut rig = setup_with_patch(&sustain_patch());
+
+    // Hard-ish pan left at unity volume. With the source panned left, the bus
+    // stage's stereo_gain must bias energy to L; if the fader/pan were dropped
+    // when moved to the bus stage, a centered source would give L == R.
+    rig.session
+        .set_instrument_volume(InstrumentId::FIRST, Gain::new(1.0))
+        .expect("set volume");
+    rig.session
+        .set_instrument_pan(InstrumentId::FIRST, BipolarValue::new(-0.7))
+        .expect("set pan");
+    process_block(&mut rig._engine, 8); // flush commands -> refresh snapshot
+
+    let shared = McpSharedState::with_song(build_arpeggio_song());
+
+    let a = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("render a");
+    let b = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("render b");
+
+    // The move must not have introduced non-determinism.
+    assert_bit_exact(
+        "pan/vol bus render-1 vs render-2",
+        &a.samples,
+        &b.samples,
+        a.sample_rate,
+    );
+
+    let l = left_rms(&a.samples);
+    let r = right_rms(&a.samples);
+    assert!(l > 0.0, "left channel should be non-silent");
+    assert!(
+        r > 0.0,
+        "right channel should still be non-silent for pan -0.7"
+    );
+    assert!(
+        l > r * 1.3,
+        "pan-left should bias energy to the left (L={l}, R={r})"
+    );
+}
+
+#[test]
+fn channel_bus_volume_scales_level() {
+    let mut rig = setup_with_patch(&sustain_patch());
+    let shared = McpSharedState::with_song(build_arpeggio_song());
+
+    // Center pan throughout so only the volume fader differs between renders.
+    rig.session
+        .set_instrument_pan(InstrumentId::FIRST, BipolarValue::CENTER)
+        .expect("set pan");
+
+    rig.session
+        .set_instrument_volume(InstrumentId::FIRST, Gain::new(1.0))
+        .expect("set unity volume");
+    process_block(&mut rig._engine, 8);
+    let unity = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("render unity");
+
+    rig.session
+        .set_instrument_volume(InstrumentId::FIRST, Gain::new(0.5))
+        .expect("set half volume");
+    process_block(&mut rig._engine, 8);
+    let half = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("render half");
+
+    // The test signal sits well below the soft-clip threshold, so halving the
+    // channel fader halves the level (roughly) rather than being reshaped.
+    let unity_rms = left_rms(&unity.samples);
+    let half_rms = left_rms(&half.samples);
+    assert!(unity_rms > 0.0, "unity render should be audible");
+    let ratio = half_rms / unity_rms;
+    assert!(
+        (0.4..=0.6).contains(&ratio),
+        "half volume should roughly halve the level (ratio={ratio}, unity={unity_rms}, half={half_rms})"
     );
 }

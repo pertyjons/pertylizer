@@ -15,7 +15,7 @@ use std::time::Instant;
 use crate::commands::{EngineCommand, EngineEvent, ModuleId, NoteEvent, PortId, ReorderDirection};
 use crate::effect_chain::{EffectChain, EffectSlot};
 use crate::graph::ModuleGraph;
-use crate::instrument::{Instrument, InstrumentId, MidiChannel};
+use crate::instrument::{Instrument, InstrumentId, MidiChannel, soft_clip};
 use crate::instrument_mapping::InstrumentMapping;
 use crate::metering::MeteringSystem;
 use crate::recording::RecordingState;
@@ -2279,7 +2279,10 @@ impl SynthEngine {
         // Check if any instrument is soloed
         let any_soloed = self.instruments.iter().any(|i| i.is_solo());
 
-        // Process each instrument - delegate to Instrument::process.
+        // Process each instrument into its channel bus (post-effect, pre-fader
+        // signal left in the instrument's `effect_buffer`). The instrument no
+        // longer writes the master mix; the bus stage below applies the channel
+        // fader/pan and sums to `mix_buffer`.
         //
         // Sidechain routing uses *previous-callback* outputs from
         // `self.prev_instrument_outputs`. This introduces ~1 buffer of
@@ -2301,13 +2304,14 @@ impl SynthEngine {
                 instrument.feed_sidechain_inputs(prev.as_slice());
             }
 
-            active_count += instrument.process(
-                &mut self.mix_buffer,
-                context,
-                spatial_ctx.as_ref(),
-                &mut self.spatial_voice_bank,
-            );
+            active_count +=
+                instrument.process(context, spatial_ctx.as_ref(), &mut self.spatial_voice_bank);
         }
+
+        // Channel-bus stage: apply each channel's fader/pan and sum into the
+        // master mix. Single insertion point for track controls (Phase 2) and
+        // sends/returns (Phase 7).
+        mix_channel_busses(&self.instruments, any_soloed, &mut self.mix_buffer);
 
         // Capture each instrument's post-effect-chain output for the
         // next callback. Pure copy into pre-allocated buffers — no allocs.
@@ -2373,6 +2377,52 @@ impl SynthEngine {
 impl Default for SynthEngine {
     fn default() -> Self {
         Self::new().0
+    }
+}
+
+/// Channel-bus stage: mix every instrument's channel into the master buffer.
+///
+/// Channel-strip model: each instrument is a channel whose post-effect,
+/// **pre-fader** signal lives in its `effect_buffer` (read via
+/// [`Instrument::last_output_interleaved`]). This stage applies the channel
+/// fader/pan ([`Instrument::stereo_gain`]) plus per-channel soft clipping and
+/// sums the result into `mix_buffer`.
+///
+/// Moving the fader here (out of `Instrument::process`) makes the instrument a
+/// pure sound source and gives a single insertion point for track controls
+/// (Phase 2) and sends/returns (Phase 7). The sidechain tap stays pre-fader:
+/// this stage never writes gain back into `effect_buffer`.
+///
+/// Skips muted channels and — when any channel is soloed — non-soloed channels,
+/// reproducing exactly the gating that previously lived in `Instrument::process`
+/// (the mute early-return) and the instrument process loop (the solo skip), so
+/// the master mix is bit-identical to the pre-bus-stage behaviour.
+fn mix_channel_busses(
+    instruments: &[Box<Instrument>],
+    any_soloed: bool,
+    mix_buffer: &mut AudioBuffer,
+) {
+    let dst = mix_buffer.as_mut_slice();
+    for instrument in instruments {
+        if any_soloed && !instrument.is_solo() {
+            continue;
+        }
+        if instrument.mute_state().is_muted() {
+            continue;
+        }
+
+        let (left_gain, right_gain) = instrument.stereo_gain();
+        let left_gain = left_gain.as_f32();
+        let right_gain = right_gain.as_f32();
+
+        let src = instrument.last_output_interleaved();
+        let frames = src.len().min(dst.len());
+        let mut i = 0;
+        while i + 1 < frames {
+            dst[i] += soft_clip(src[i] * left_gain);
+            dst[i + 1] += soft_clip(src[i + 1] * right_gain);
+            i += 2;
+        }
     }
 }
 

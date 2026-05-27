@@ -333,7 +333,7 @@ const SOFT_CLIP_THRESHOLD: f32 = 0.8;
 /// - Below threshold: signal passes through unchanged
 /// - Above threshold: smoothly compressed towards ±1.0
 #[inline]
-fn soft_clip(sample: f32) -> f32 {
+pub(crate) fn soft_clip(sample: f32) -> f32 {
     if sample.abs() <= SOFT_CLIP_THRESHOLD {
         sample
     } else {
@@ -916,17 +916,21 @@ impl Instrument {
         self.allocator.panic();
     }
 
-    /// Process all active voices in this instrument and mix into the output buffer.
+    /// Process all active voices in this instrument into its channel bus.
     ///
     /// This method:
     /// 1. Processes each active voice through its signal chain
     /// 2. Sums voice output into stereo buffers
-    /// 3. Interleaves into effect_buffer and processes through effect_chain
-    /// 4. Applies instrument volume and pan
-    /// 5. Mixes the result into the stereo output buffer
+    /// 3. Interleaves into `effect_buffer` and processes through `effect_chain`
+    ///
+    /// The result is left in `effect_buffer` (the channel's post-effect,
+    /// **pre-fader** signal, exposed via [`Self::last_output_interleaved`]).
+    /// The channel fader/pan ([`Self::stereo_gain`]) and the mix into the
+    /// master buffer are applied later by the engine's bus stage
+    /// (`SynthEngine::mix_channel_busses`) — the instrument is a pure sound
+    /// source and never touches the master mix directly.
     ///
     /// # Arguments
-    /// * `output` - Stereo interleaved output buffer to mix into (samples * 2)
     /// * `context` - Processing context with sample rate, buffer size, etc.
     ///
     /// # Returns
@@ -934,7 +938,6 @@ impl Instrument {
     #[allow(clippy::too_many_lines)]
     pub fn process(
         &mut self,
-        output: &mut AudioBuffer,
         context: &ProcessContext,
         spatial_ctx: Option<&SpatialContext>,
         spatial_bank: &mut SpatialVoiceBank,
@@ -1269,21 +1272,9 @@ impl Instrument {
         // Feed post-effect signal to per-instrument visualizers
         self.effect_chain.process_visualizers(&self.effect_buffer);
 
-        // Get instrument's stereo gain (includes volume and pan)
-        let (left_gain, right_gain) = self.stereo_gain();
-        let left_gain = left_gain.as_f32();
-        let right_gain = right_gain.as_f32();
-
-        // Mix processed effect_buffer into main output with volume/pan and soft clipping
-        // Soft clipping is applied per-instrument to prevent individual instruments
-        // from causing harsh clipping when mixed together
-        for i in 0..sample_count {
-            let left = soft_clip(self.effect_buffer[i * 2] * left_gain);
-            let right = soft_clip(self.effect_buffer[i * 2 + 1] * right_gain);
-            output[i * 2] += left;
-            output[i * 2 + 1] += right;
-        }
-
+        // The channel fader/pan and the mix into the master buffer are applied
+        // by the engine's bus stage; `effect_buffer` now holds the finished
+        // post-effect, pre-fader channel signal.
         active_count
     }
 
