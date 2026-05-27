@@ -650,7 +650,7 @@ impl Default for SequencerEngine {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use synth_sequencer::{Duration, PatternTick, SeqInstrumentId, Velocity};
+    use synth_sequencer::{Duration, PatternTick, Velocity};
 
     fn create_test_song() -> Song {
         let mut song = Song::new("Test").with_tempo(Bpm::new(120.0));
@@ -658,12 +658,7 @@ mod tests {
         // Create a pattern with one note
         let pattern_id = song.create_pattern(Duration::WHOLE);
         if let Some(pattern) = song.pattern_mut(pattern_id) {
-            let _ = pattern.add_note(
-                PatternTick(0),
-                Pitch::new(60).unwrap(),
-                Velocity::MF,
-                SeqInstrumentId(0),
-            );
+            let _ = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
         }
 
         // Create a track and place the pattern
@@ -761,12 +756,7 @@ mod tests {
         let pattern_len = Duration::WHOLE;
         let pattern_id = song.create_pattern(pattern_len);
         if let Some(pattern) = song.pattern_mut(pattern_id) {
-            let nid = pattern.add_note(
-                PatternTick(0),
-                Pitch::new(60).unwrap(),
-                Velocity::MF,
-                SeqInstrumentId(0),
-            );
+            let nid = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
             if let Some(note) = pattern.note_mut(nid) {
                 note.duration = Some(pattern_len);
             }
