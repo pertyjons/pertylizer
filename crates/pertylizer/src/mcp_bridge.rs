@@ -1337,7 +1337,7 @@ impl SynthBridge for AppSynthBridge {
             .map(|t| TrackInfo {
                 id: t.id.0,
                 name: t.name.clone(),
-                instrument_id: t.instrument.map(|i| i.0),
+                instrument_id: Some(t.instrument.0),
                 volume: t.volume.as_f32(),
                 // Convert normalized (0.0..1.0) to bipolar (-1.0..1.0) for MCP API
                 pan: t.pan.as_f32(),
@@ -1355,7 +1355,7 @@ impl SynthBridge for AppSynthBridge {
         if let Some(inst_id) = instrument_id
             && let Some(track) = song.track_mut(id)
         {
-            track.instrument = Some(synth_sequencer::SeqInstrumentId(inst_id));
+            track.instrument = synth_sequencer::SeqInstrumentId(inst_id);
         }
         Ok(id.0)
     }
@@ -1630,7 +1630,7 @@ impl SynthBridge for AppSynthBridge {
             if let Some(inst_id) = t.instrument_id
                 && let Some(track) = song.track_mut(id)
             {
-                track.instrument = Some(synth_sequencer::SeqInstrumentId(inst_id));
+                track.instrument = synth_sequencer::SeqInstrumentId(inst_id);
             }
             items.push(BatchItemResult {
                 index: i,
@@ -1754,7 +1754,7 @@ impl SynthBridge for AppSynthBridge {
             if let Some(inst_id) = t.instrument_id
                 && let Some(track) = song.track_mut(id)
             {
-                track.instrument = Some(synth_sequencer::SeqInstrumentId(inst_id));
+                track.instrument = synth_sequencer::SeqInstrumentId(inst_id);
             }
             track_ids.push(id.0);
         }
@@ -2313,7 +2313,11 @@ impl SynthBridge for AppSynthBridge {
         let track = song
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
-        track.instrument = instrument_id.map(synth_sequencer::SeqInstrumentId);
+        // Every track has an instrument now; `None` is a no-op (can no longer
+        // clear to "no instrument"). Signature tightening is Phase 6 MCP cleanup.
+        if let Some(inst_id) = instrument_id {
+            track.instrument = synth_sequencer::SeqInstrumentId(inst_id);
+        }
         Ok(())
     }
 
@@ -5713,7 +5717,7 @@ pub fn analyze_song_harmony(
             let auto_excluded_tracks: std::collections::HashSet<TrackId> = song
                 .tracks()
                 .filter_map(|t| {
-                    let seq = t.instrument?;
+                    let seq = t.instrument;
                     drum_profiles.contains_key(&seq).then_some(t.id)
                 })
                 .collect();
@@ -5730,9 +5734,8 @@ pub fn analyze_song_harmony(
                         let base = format!("{}({})", t.name, t.id.0);
                         // Signal trail only for drum-auto-excludes — explicit
                         // excludes have no inference behind them.
-                        if let Some(seq) = t.instrument
-                            && let Some(profile) = drum_profiles.get(&seq)
-                        {
+                        let seq = t.instrument;
+                        if let Some(profile) = drum_profiles.get(&seq) {
                             let sigs = profile
                                 .role
                                 .signals
@@ -6072,7 +6075,7 @@ fn analyze_drum_groove_impl(
             let mut drum_track_infos: Vec<DrumTrackInfo> = song
                 .tracks()
                 .filter_map(|t| {
-                    let seq = t.instrument?;
+                    let seq = t.instrument;
                     let profile = drum_profiles.get(&seq)?;
                     Some(DrumTrackInfo {
                         track_id: t.id.0,
@@ -6301,7 +6304,7 @@ fn analyze_bass_drum_lock_impl(
             let mut drum_track_infos: Vec<DrumTrackInfo> = song
                 .tracks()
                 .filter_map(|t| {
-                    let seq = t.instrument?;
+                    let seq = t.instrument;
                     let profile = drum_profiles.get(&seq)?;
                     Some(DrumTrackInfo {
                         track_id: t.id.0,
@@ -6316,7 +6319,7 @@ fn analyze_bass_drum_lock_impl(
             let mut bass_track_infos: Vec<BassTrackInfo> = song
                 .tracks()
                 .filter_map(|t| {
-                    let seq = t.instrument?;
+                    let seq = t.instrument;
                     let profile = bass_profiles.get(&seq)?;
                     Some(BassTrackInfo {
                         track_id: t.id.0,
@@ -6650,9 +6653,7 @@ fn collect_form_scope(
                         .map(|p| SeqInstrumentId(p.instrument_id))
                         .collect();
                 for t in song.tracks() {
-                    if let Some(seq) = t.instrument
-                        && drum_instrument_ids.contains(&seq)
-                    {
+                    if drum_instrument_ids.contains(&t.instrument) {
                         excluded.insert(t.id);
                     }
                 }
@@ -7866,7 +7867,7 @@ fn render_per_track_contributions(
                 t.is_audible(any_solo).then_some(TargetMeta {
                     track_id: tid,
                     name: t.name.clone(),
-                    instrument_id: t.instrument.map(|s| s.0),
+                    instrument_id: Some(t.instrument.0),
                 })
             })
             .collect();

@@ -451,7 +451,8 @@ impl SequencerEngine {
                 #[allow(clippy::cast_possible_truncation)]
                 let pattern_tick = (self.current_tick.0 - placement.start.0) as u32;
 
-                // Resolve effective instrument: track instrument overrides note instrument
+                // Every track routes to an instrument; the track is the sole
+                // source (per-note `note.instrument` is vestigial — Phase 4).
                 let track_instrument = track.instrument;
 
                 // Collect notes that start at this pattern tick
@@ -469,7 +470,7 @@ impl SequencerEngine {
                         .duration
                         .map(|d| Tick(placement.start.0 + note.start.0 as u64 + d.0 as u64));
 
-                    let effective_instrument = track_instrument.unwrap_or(note.instrument);
+                    let effective_instrument = track_instrument;
 
                     self.scratch_notes.push((
                         transposed_pitch,

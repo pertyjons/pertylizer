@@ -13,11 +13,21 @@ phase layers onto it.
 
 - [x] **Phase 1** — Per-channel bus node (the Model-C core; audio unchanged)
 - [x] **Phase 2** — Track vol/pan/mute/solo into the bus fader + Track/Global automation arms (Tempo→§2.1, Swing/Solo deferred)
-- [ ] **Phase 3** — Establish & enforce the 1-track-↔-1-instrument invariant
+- [x] **Phase 3** — Make `track.instrument` mandatory; **sharing allowed** (no strict 1:1); remove "— None — (per-note)"
 - [ ] **Phase 4** — Deprecate `note.instrument` (route only via `track.instrument`)
 - [ ] **Phase 5** — Orphan-preview via scratch channel (removes the special branch)
 - [ ] **Phase 6** — Save/load + MCP cleanup
 - [ ] **Phase 7** — Sends/returns + mixer view (§1.4 payoff, now just taps off the bus)
+- [ ] **Phase 8** — (future) Independent faders for *shared* instruments — per-voice-tagged per-track bus
+
+**Revised direction (2026-05-27, user decision):** strict 1 track ↔ 1 instrument is
+*not* enforced. Multiple tracks may share an instrument (intentional layering, e.g.
+Kick + Syncopated Kick). The rule is weaker: **every track has an instrument, and
+instruments may be shared.** With the channel-bus we built (keyed by `InstrumentId`),
+a shared instrument means a **shared fader** ("last routed track wins per block") —
+the notes still layer correctly. Independent faders per track on a *shared* instrument
+need per-voice track-tagging (lands pre-FX) — captured as **Phase 8**, deliberately
+*not* built now.
 
 Mark each `- [ ]` as `- [x]` and flip the per-phase **Status** line when a phase
 lands. Keep `docs/history.md` updated against the ship date for each phase.
@@ -45,18 +55,21 @@ per-instrument buffer (today as a one-buffer-delayed copy for sidechain). Phase 
 instrument into a real bus stage — that is the per-track bus, with a fraction of the
 work a from-scratch bus engine would take.
 
-### Why channel-strip (and not full per-voice-tagging C)
-The expensive parts of a general per-track-bus design (per-voice track tagging,
-duplicated effect chains for a *shared* instrument) exist only to preserve
-N-tracks → 1-instrument multitimbral sharing. Channel-strip drops that case by
-construction (layering = multiple instruments/tracks), so those costs never appear.
-CPU steady-state is essentially flat vs today in the 1:1 case — one extra buffer copy
-and sum per channel.
+### Why channel-strip (cheap fader) — and where per-voice tagging would be needed
+The channel-bus keys the fader by `InstrumentId`, so the per-channel cost is flat
+(one buffer copy + sum per channel). The expensive parts of a general per-track-bus
+design (per-voice track tagging, gain applied pre-effect-chain) are only needed to
+give **independent faders to two tracks that share one instrument**. We *allow*
+sharing but accept a **shared fader** for it (last-routed-track-wins per block) — so
+those costs never appear. Independent faders for shared instruments are **Phase 8**
+(future), not built now.
 
-### The invariant
-Every `SequencerTrack` owns exactly one instrument; every audible instrument is
-fronted by exactly one track. Layering uses multiple instruments/tracks. Per-note
-`note.instrument` multitimbral routing is removed.
+### The invariant (revised)
+**Every `SequencerTrack` has an instrument; instruments may be shared across tracks.**
+(Not strict 1:1 — sharing is intentional layering, e.g. Kick + Syncopated Kick on one
+drum instrument.) Per-note `note.instrument` routing is removed (Phase 4): a note's
+instrument comes solely from its track. A shared instrument shares its channel/fader;
+use two instruments (same patch) when independent faders are wanted, until Phase 8.
 
 ## Current state (what already exists)
 
@@ -135,18 +148,33 @@ The bus stage now exists; route the track controls into it. First user-visible w
   properly is the §2.1 tempo-curve work. `Global(Swing)` (no engine impl) and
   `Track(Solo)` automation (cross-track concept) also deferred.
 
-### Phase 3 — Establish & enforce the 1:1 invariant
-**Status:** ☐ Not started
+### Phase 3 — Make `track.instrument` mandatory (sharing allowed)
+**Status:** ☑ Done
 
-- [ ] Track creation binds/creates an instrument; instrument creation surfaces a track.
-- [ ] Guarantee `track.instrument == Some` for audible tracks (`track.rs:28`).
-- [ ] Migration: for each placement ensure its track has an instrument; per-note
-  instruments that differ from the track instrument → split into a new track or
-  coerce to the track instrument. Pick and document the policy.
-- [ ] Make `TrackMode` (`track.rs:40`, currently dead) meaningful → map onto the
-  instrument's `AllocationMode`.
-- [ ] Migration round-trip test (old song with per-note instruments → load → audio
-  identical or documented re-interpretation).
+Revised from "enforce strict 1:1" to the user's model: every track has an instrument,
+but instruments **may be shared** across tracks (shared fader — see Phase 8 for
+independent faders). No project migration needed — the audit found all 13 example
+projects already have an instrument on every arranged track; the 2 shared-instrument
+projects (Oxygene 80s, Synth Pop) are left as-is.
+
+- [x] Made `SequencerTrack.instrument: SeqInstrumentId` (dropped the `Option`;
+  `SeqInstrumentId` gained `Default = 0`, field is `#[serde(default)]`).
+  `Song::create_track` defaults to `SeqInstrumentId(0)`. ~17 `.instrument` sites
+  de-Optioned across sequencer/engine/GUI/MCP/analysis/tests (compiler-guided).
+- [x] GUI: removed the "— None — (per-note)" combobox option; the selector lists only
+  real instruments; label shows "— (none) —" only when id 0 maps to no loaded inst.
+- [x] MCP: `set_track_instrument(None)` is now a no-op (can't clear); `create_track`
+  keeps `Option<u16>` (None → default 0). *Signature tightening (required arg) deferred
+  to Phase 6 MCP cleanup.*
+- [x] `update_track_controls` drops the `None` skip; a shared instrument → last-wins
+  fader (documented in code; Phase 8 for independent faders).
+- [x] Serialization: non-null values serialize identically (bare integer), all 13
+  example projects load unchanged; `project.schema.json` regenerated (instrument field
+  no longer nullable). Tests: `new_track_has_a_default_instrument`,
+  `instruments_may_be_shared_across_tracks`; full suite green; independent review passed.
+- [ ] *(Deferred follow-up, not strictly Phase 3)* `TrackMode` → `AllocationMode`:
+  introduces a second source of truth for alloc mode under sharing — revisit with the
+  struct merge.
 
 ### Phase 4 — Deprecate `note.instrument`
 **Status:** ☐ Not started
@@ -192,6 +220,21 @@ each bus — not building bus infrastructure.
 - [ ] Add send taps off each channel bus (pre/post-fader configurable) → return
   busses with their own effect chains.
 - [ ] Dedicated mixer view with faders, pan, sends, inserts.
+
+### Phase 8 — (future) Independent faders for shared instruments
+**Status:** ☐ Not started — deferred, build only if needed
+
+Today two tracks sharing one instrument share its channel/fader (last-routed-track-
+wins per block); their notes still layer correctly. Giving each track an *independent*
+volume/pan on a shared instrument requires **per-voice track-tagging**: tag each voice
+with the track that triggered it and apply the track fader per-voice in the voice-sum
+loop. Caveats (the reason this is deferred, not default):
+- The per-voice gain lands **pre-effect-chain** (voices share the instrument's one
+  effect chain), so it is *not* a true post-FX fader for shared instruments.
+- Adds per-voice bookkeeping cost (the "more CPU" path discussed during planning).
+
+Workaround until then: use two instruments with the same patch when independent faders
+are wanted. Build this only if a real need appears.
 
 ---
 

@@ -947,7 +947,7 @@ fn map_category_to_role(cat: InstrumentCategory) -> Role {
 /// thread.
 #[must_use]
 pub fn infer_all_profiles(song: &Song, engine_state: &EngineState) -> Vec<InstrumentProfile> {
-    let referenced: HashSet<SeqInstrumentId> = song.tracks().filter_map(|t| t.instrument).collect();
+    let referenced: HashSet<SeqInstrumentId> = song.tracks().map(|t| t.instrument).collect();
     if referenced.is_empty() {
         return Vec::new();
     }
@@ -963,10 +963,8 @@ pub fn infer_all_profiles(song: &Song, engine_state: &EngineState) -> Vec<Instru
         let modules = engine_state
             .shared_graph
             .get_modules_for_instrument(snapshot.id);
-        let tracks: Vec<&SequencerTrack> = song
-            .tracks()
-            .filter(|t| t.instrument == Some(seq_id))
-            .collect();
+        let tracks: Vec<&SequencerTrack> =
+            song.tracks().filter(|t| t.instrument == seq_id).collect();
         let notes = collect_notes_for_instrument(song, &tracks);
         profiles.push(infer_instrument_profile(
             snapshot, &modules, &tracks, &notes,

@@ -658,9 +658,7 @@ impl Song {
         // Collect instrument IDs still in use (from tracks and notes)
         let mut used_instruments = HashSet::new();
         for track in &self.tracks {
-            if let Some(inst) = track.instrument {
-                used_instruments.insert(inst);
-            }
+            used_instruments.insert(track.instrument);
         }
         for pattern in &self.patterns {
             for note in pattern.notes() {

@@ -7093,15 +7093,9 @@
           "description": "Unique identifier."
         },
         "instrument": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SeqInstrumentId"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Instrument this track controls (None = MIDI out or none)."
+          "$ref": "#/$defs/SeqInstrumentId",
+          "default": 0,
+          "description": "Instrument this track routes its notes to. Every track has one;\ninstruments may be shared across tracks (intentional layering). Defaults\nto `SeqInstrumentId(0)` for a freshly created track until reassigned."
         },
         "mode": {
           "$ref": "#/$defs/TrackMode",

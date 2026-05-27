@@ -24,8 +24,11 @@ pub struct SequencerTrack {
     pub id: TrackId,
     /// Track name.
     pub name: String,
-    /// Instrument this track controls (None = MIDI out or none).
-    pub instrument: Option<SeqInstrumentId>,
+    /// Instrument this track routes its notes to. Every track has one;
+    /// instruments may be shared across tracks (intentional layering). Defaults
+    /// to `SeqInstrumentId(0)` for a freshly created track until reassigned.
+    #[serde(default)]
+    pub instrument: SeqInstrumentId,
     /// Volume (type-safe normalized 0.0-1.0).
     pub volume: NormalizedValue,
     /// Panning (type-safe: -1.0 = left, 0.0 = center, 1.0 = right).
@@ -47,7 +50,7 @@ impl SequencerTrack {
         Self {
             id,
             name: name.into(),
-            instrument: None,
+            instrument: SeqInstrumentId::default(),
             volume: NormalizedValue::MAX,
             pan: BipolarValue::CENTER,
             mute: false,
@@ -60,7 +63,7 @@ impl SequencerTrack {
     /// Set the instrument (builder pattern).
     #[must_use]
     pub fn with_instrument(mut self, instrument: SeqInstrumentId) -> Self {
-        self.instrument = Some(instrument);
+        self.instrument = instrument;
         self
     }
 
@@ -221,9 +224,27 @@ mod tests {
             .with_volume(NormalizedValue::new(0.8))
             .with_pan(BipolarValue::new(0.3));
 
-        assert_eq!(track.instrument, Some(SeqInstrumentId(1)));
+        assert_eq!(track.instrument, SeqInstrumentId(1));
         assert_eq!(track.volume, NormalizedValue::new(0.8));
         assert_eq!(track.pan, BipolarValue::new(0.3));
+    }
+
+    #[test]
+    fn new_track_has_a_default_instrument() {
+        // Phase 3: every track has an instrument (no `Option`); a freshly
+        // created track defaults to `SeqInstrumentId(0)` until reassigned.
+        let track = SequencerTrack::new(TrackId(3), "Fresh");
+        assert_eq!(track.instrument, SeqInstrumentId(0));
+    }
+
+    #[test]
+    fn instruments_may_be_shared_across_tracks() {
+        // Phase 3: sharing is allowed (intentional layering, e.g. Kick +
+        // Syncopated Kick). Two tracks can route to the same instrument.
+        let a = SequencerTrack::new(TrackId(0), "Kick").with_instrument(SeqInstrumentId(7));
+        let b =
+            SequencerTrack::new(TrackId(1), "Syncopated Kick").with_instrument(SeqInstrumentId(7));
+        assert_eq!(a.instrument, b.instrument);
     }
 
     #[test]

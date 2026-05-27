@@ -352,11 +352,11 @@ fn build_drum_pollution_song() -> Arc<RwLock<Song>> {
 
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = Some(SeqInstrumentId(0));
+        t.instrument = SeqInstrumentId(0);
     }
     let drum_track = song.create_track("Drums");
     if let Some(t) = song.track_mut(drum_track) {
-        t.instrument = Some(SeqInstrumentId(1));
+        t.instrument = SeqInstrumentId(1);
     }
 
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
@@ -613,11 +613,11 @@ fn build_two_track_song() -> Arc<RwLock<Song>> {
 
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = Some(SeqInstrumentId(0));
+        t.instrument = SeqInstrumentId(0);
     }
     let bass_track = song.create_track("Bass");
     if let Some(t) = song.track_mut(bass_track) {
-        t.instrument = Some(SeqInstrumentId(1));
+        t.instrument = SeqInstrumentId(1);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     song.place_pattern(bass_pattern_id, bass_track, Tick(0));
@@ -981,7 +981,7 @@ fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
     }
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = Some(SeqInstrumentId(0));
+        t.instrument = SeqInstrumentId(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));

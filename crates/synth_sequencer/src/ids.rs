@@ -443,7 +443,9 @@ impl TrackId {
 /// This is a compact u16 ID used for pattern data storage.
 /// For engine-level instrument identification, see `engine::instrument::InstrumentId`.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct SeqInstrumentId(pub u16);
 
 impl SeqInstrumentId {

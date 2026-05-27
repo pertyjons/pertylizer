@@ -2266,9 +2266,11 @@ impl SynthEngine {
     /// Real-time safe: `try_read()` only (on contention, last block's controls
     /// are kept); no allocation — every key is pre-allocated on instrument add,
     /// so this only resets and overwrites existing `Copy` values. Track →
-    /// instrument resolution goes through `InstrumentMapping`. When two tracks
-    /// drive the same instrument the last one in `tracks()` order wins for that
-    /// block (removed once Phase 3 enforces 1 track ↔ 1 instrument).
+    /// instrument resolution goes through `InstrumentMapping`. Instruments may
+    /// be shared across tracks (intentional layering); when two tracks drive the
+    /// same instrument the last one in `tracks()` order wins the fader for that
+    /// block. Independent faders for a shared instrument would need per-voice
+    /// tagging (channel-strip plan, Phase 8) — not built.
     fn update_track_controls(&mut self) {
         let Some(song) = self.sequencer.song().try_read() else {
             return;
@@ -2279,10 +2281,9 @@ impl SynthEngine {
         let any_solo = song.any_solo();
         let track_auto = self.sequencer.track_auto();
         for track in song.tracks() {
-            let Some(seq_id) = track.instrument else {
-                continue;
-            };
-            let Some(engine_id) = self.instrument_mapping.engine_id(seq_id) else {
+            // Every track has an instrument; a shared instrument means a shared
+            // fader (last track in iteration order wins for that block).
+            let Some(engine_id) = self.instrument_mapping.engine_id(track.instrument) else {
                 continue;
             };
             if let Some(control) = self.track_controls.get_mut(&engine_id) {

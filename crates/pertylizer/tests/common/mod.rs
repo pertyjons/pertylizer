@@ -149,7 +149,7 @@ pub fn build_single_pattern_song(
 
     let track_id = song.create_track("T1");
     if let Some(track) = song.track_mut(track_id) {
-        track.instrument = Some(SeqInstrumentId(0));
+        track.instrument = SeqInstrumentId(0);
     }
     assert!(
         song.place_pattern(pattern_id, track_id, Tick(0)),
@@ -213,7 +213,7 @@ pub fn build_sustained_note_song(name: &str) -> (Arc<RwLock<Song>>, PatternId, T
     }
     let track_id = song.create_track("T1");
     if let Some(track) = song.track_mut(track_id) {
-        track.instrument = Some(SeqInstrumentId(0));
+        track.instrument = SeqInstrumentId(0);
     }
     assert!(
         song.place_pattern(pattern_id, track_id, Tick(0)),

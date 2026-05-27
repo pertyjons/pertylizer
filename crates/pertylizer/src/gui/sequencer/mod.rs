@@ -776,7 +776,7 @@ struct TrackInfo {
     pan: BipolarValue,
     mute: bool,
     solo: bool,
-    instrument_id: Option<SeqInstrumentId>,
+    instrument_id: SeqInstrumentId,
 }
 
 /// Snapshot of a pattern in the song (for pattern management UI).
@@ -1264,15 +1264,11 @@ fn draw_arrangement(
                                     }
 
                                     // Instrument selector row
-                                    let inst_label = track
-                                        .instrument_id
-                                        .and_then(|seq_id| {
-                                            instruments
-                                                .iter()
-                                                .find(|inst| inst.id.0 == seq_id.0 as u64)
-                                        })
+                                    let inst_label = instruments
+                                        .iter()
+                                        .find(|inst| inst.id.0 == track.instrument_id.0 as u64)
                                         .map_or_else(
-                                            || "— None —".to_owned(),
+                                            || "— (none) —".to_owned(),
                                             |inst| inst.name.clone(),
                                         );
                                     egui::ComboBox::from_id_salt(
@@ -1281,25 +1277,14 @@ fn draw_arrangement(
                                     .selected_text(RichText::new(&inst_label).size(11.0))
                                     .width(116.0)
                                     .show_ui(ui, |ui| {
-                                        if ui
-                                            .selectable_label(
-                                                track.instrument_id.is_none(),
-                                                "— None — (per-note)",
-                                            )
-                                            .clicked()
-                                            && let mut song_w = song.write()
-                                            && let Some(trk) = song_w.track_mut(track.id)
-                                        {
-                                            trk.instrument = None;
-                                        }
                                         for inst in instruments {
                                             let seq_id = SeqInstrumentId::new(inst.id.0 as u16);
-                                            let selected = track.instrument_id == Some(seq_id);
+                                            let selected = track.instrument_id == seq_id;
                                             if ui.selectable_label(selected, &inst.name).clicked()
                                                 && let mut song_w = song.write()
                                                 && let Some(trk) = song_w.track_mut(track.id)
                                             {
-                                                trk.instrument = Some(seq_id);
+                                                trk.instrument = seq_id;
                                             }
                                         }
                                     });
@@ -1784,7 +1769,7 @@ fn draw_arrangement(
                         .tracks
                         .iter()
                         .find(|t| t.id == pl.track_id)
-                        .and_then(|t| t.instrument_id)
+                        .map(|t| t.instrument_id)
                         .and_then(|seq_id| {
                             instruments.iter().find(|inst| inst.id.0 == seq_id.0 as u64)
                         })
@@ -2623,16 +2608,16 @@ pub(crate) fn collect_piano_roll_data(
 
     let time_sig = song.default_time_signature;
 
-    // Collect distinct track instrument overrides for every placement of
-    // this pattern. Non-empty means the engine will override note.instrument.
+    // Collect the distinct instruments this pattern's placements route through
+    // (one per track). Used to show which instrument(s) actually play the
+    // pattern. (Per-note instrument is no longer consulted at playback.)
     let mut track_overrides: Vec<SeqInstrumentId> = Vec::new();
     for placement in song.arrangement() {
         if placement.pattern_id == pattern_id
             && let Some(track) = song.track(placement.track_id)
-            && let Some(inst) = track.instrument
-            && !track_overrides.contains(&inst)
+            && !track_overrides.contains(&track.instrument)
         {
-            track_overrides.push(inst);
+            track_overrides.push(track.instrument);
         }
     }
 
