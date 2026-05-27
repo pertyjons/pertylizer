@@ -4176,6 +4176,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "synth_awe",
  "synth_core",
  "thiserror 2.0.18",
  "tokio",

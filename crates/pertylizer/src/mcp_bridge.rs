@@ -720,6 +720,38 @@ impl SynthBridge for AppSynthBridge {
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
 
+        // Fetch the descriptor once and resolve the parameter entry the SAME way
+        // session.set_parameter does — `type_id` first (the stable identifier
+        // clients and project files usually pass), then display name. Matching
+        // only on name would silently skip validation for type_id-addressed
+        // params (e.g. "pre_delay" vs the "Pre-Delay" display name). The resolved
+        // entry is reused for both validation and the response below; the
+        // descriptor is the single source of truth shared with schema generation
+        // and MCP discovery.
+        let needle = normalize_param_name(param_name);
+        let descriptor = self.session.module_descriptor(inst_id, mid);
+        let param_desc = descriptor.as_ref().and_then(|desc| {
+            desc.parameters
+                .iter()
+                .find(|pd| normalize_param_name(&pd.type_id) == needle)
+                .or_else(|| {
+                    desc.parameters
+                        .iter()
+                        .find(|pd| normalize_param_name(&pd.name) == needle)
+                })
+        });
+
+        // Validate against the parameter's range BEFORE applying, so out-of-range
+        // input is rejected at the boundary with a clear message instead of being
+        // silently clamped (or not) downstream.
+        if let Some(pd) = param_desc {
+            pd.validate_f32(value)
+                .map_err(|source| McpBridgeError::InvalidParameterValue {
+                    name: pd.name.clone(),
+                    source,
+                })?;
+        }
+
         // Use session.set_parameter for correct effect/module routing
         self.session
             .set_parameter(
@@ -741,14 +773,7 @@ impl SynthBridge for AppSynthBridge {
             })?;
 
         // Read back the actual value directly from the descriptor (avoids listing all modules)
-        let needle = normalize_param_name(param_name);
-        let descriptor = self.session.module_descriptor(inst_id, mid);
-        if let Some(desc) = descriptor
-            && let Some(pd) = desc
-                .parameters
-                .iter()
-                .find(|pd| normalize_param_name(&pd.name) == needle)
-        {
+        if let Some(pd) = param_desc {
             return Ok(ParameterInfo {
                 name: pd.name.clone(),
                 value,
@@ -3190,7 +3215,11 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn set_awe_room_shape(&self, shape: &str, dimensions: &[f32]) -> Result<(), McpBridgeError> {
+    fn set_awe_room_shape(
+        &self,
+        shape: synth_awe::RoomShapeKind,
+        dimensions: &[f32],
+    ) -> Result<(), McpBridgeError> {
         let room = parse_room_shape(shape, dimensions)?;
 
         // Update shared state
@@ -3216,8 +3245,8 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn set_awe_material(&self, material: &str) -> Result<(), McpBridgeError> {
-        let mat = parse_material(material)?;
+    fn set_awe_material(&self, material: synth_awe::MaterialKind) -> Result<(), McpBridgeError> {
+        let mat = material.material();
 
         // Update shared state
         if let Ok(mut state) = self.shared.awe_state.lock() {
@@ -3317,7 +3346,7 @@ impl SynthBridge for AppSynthBridge {
         index: u8,
         rate: f32,
         amount: f32,
-        target: &str,
+        target: synth_awe::AweLfoTarget,
     ) -> Result<(), McpBridgeError> {
         use synth_awe::AweParam;
         use synth_core::{Hertz, NormalizedValue};
@@ -3325,7 +3354,6 @@ impl SynthBridge for AppSynthBridge {
         if !(1..=4).contains(&index) {
             return Err(McpBridgeError::InvalidLfoIndex(index));
         }
-        let lfo_target = parse_lfo_target(target)?;
         if !(0.01..=20.0).contains(&rate) {
             return Err(McpBridgeError::ValueOutOfRange {
                 name: "rate",
@@ -3356,7 +3384,7 @@ impl SynthBridge for AppSynthBridge {
             };
             lfo.rate = rate_hz;
             lfo.amount = amt;
-            lfo.target = lfo_target;
+            lfo.target = target;
         }
 
         // Queue for GUI
@@ -3369,22 +3397,22 @@ impl SynthBridge for AppSynthBridge {
             1 => (
                 AweParam::Lfo1Rate(rate_hz),
                 AweParam::Lfo1Amount(amt),
-                AweParam::Lfo1Target(lfo_target),
+                AweParam::Lfo1Target(target),
             ),
             2 => (
                 AweParam::Lfo2Rate(rate_hz),
                 AweParam::Lfo2Amount(amt),
-                AweParam::Lfo2Target(lfo_target),
+                AweParam::Lfo2Target(target),
             ),
             3 => (
                 AweParam::Lfo3Rate(rate_hz),
                 AweParam::Lfo3Amount(amt),
-                AweParam::Lfo3Target(lfo_target),
+                AweParam::Lfo3Target(target),
             ),
             4 => (
                 AweParam::Lfo4Rate(rate_hz),
                 AweParam::Lfo4Amount(amt),
-                AweParam::Lfo4Target(lfo_target),
+                AweParam::Lfo4Target(target),
             ),
             _ => unreachable!(),
         };
@@ -4705,64 +4733,14 @@ fn lfo_target_name(target: &synth_awe::AweLfoTarget) -> String {
     .to_string()
 }
 
-fn parse_lfo_target(target: &str) -> Result<synth_awe::AweLfoTarget, McpBridgeError> {
-    use synth_awe::AweLfoTarget;
-    match target {
-        "RoomLength" => Ok(AweLfoTarget::RoomLength),
-        "RoomWidth" => Ok(AweLfoTarget::RoomWidth),
-        "SourceX" => Ok(AweLfoTarget::SourceX),
-        "SourceY" => Ok(AweLfoTarget::SourceY),
-        "ListenerX" => Ok(AweLfoTarget::ListenerX),
-        "ListenerY" => Ok(AweLfoTarget::ListenerY),
-        "DryWet" => Ok(AweLfoTarget::DryWet),
-        "FreqWarp" => Ok(AweLfoTarget::FreqWarp),
-        "EarlyLate" => Ok(AweLfoTarget::EarlyLate),
-        "ModesAmount" => Ok(AweLfoTarget::ModesAmount),
-        "ResonanceBoost" => Ok(AweLfoTarget::ResonanceBoost),
-        "TailStretch" => Ok(AweLfoTarget::TailStretch),
-        "PortalAmount" => Ok(AweLfoTarget::PortalAmount),
-        "PreDelay" => Ok(AweLfoTarget::PreDelay),
-        "ModulationDepth" => Ok(AweLfoTarget::ModulationDepth),
-        "ModulationRate" => Ok(AweLfoTarget::ModulationRate),
-        "AirAbsorption" => Ok(AweLfoTarget::AirAbsorption),
-        "Width" => Ok(AweLfoTarget::Width),
-        "HighCut" => Ok(AweLfoTarget::HighCut),
-        "LowCut" => Ok(AweLfoTarget::LowCut),
-        "Temperature" => Ok(AweLfoTarget::Temperature),
-        _ => Err(McpBridgeError::InvalidLfoTarget(target.to_string())),
-    }
-}
-
-fn parse_material(name: &str) -> Result<synth_awe::Material, McpBridgeError> {
-    use synth_awe::Material;
-    match name.to_ascii_lowercase().as_str() {
-        "concrete" => Ok(Material::CONCRETE),
-        "wood" => Ok(Material::WOOD),
-        "glass" => Ok(Material::GLASS),
-        "metal" => Ok(Material::METAL),
-        "fabric" => Ok(Material::FABRIC),
-        "tile" => Ok(Material::TILE),
-        "marble" => Ok(Material::MARBLE),
-        "ice" => Ok(Material::ICE),
-        "carpet" => Ok(Material::CARPET),
-        "water" => Ok(Material::WATER),
-        "void" => Ok(Material::VOID),
-        "prism" => Ok(Material::PRISM),
-        "plasma" => Ok(Material::PLASMA),
-        "membrane" => Ok(Material::MEMBRANE),
-        "nanogel" => Ok(Material::NANOGEL),
-        _ => Err(McpBridgeError::InvalidMaterial(name.to_string())),
-    }
-}
-
 fn parse_room_shape(
-    shape: &str,
+    shape: synth_awe::RoomShapeKind,
     dimensions: &[f32],
 ) -> Result<synth_awe::RoomShape, McpBridgeError> {
-    use synth_awe::{Meters, RoomShape};
+    use synth_awe::{Meters, RoomShape, RoomShapeKind};
 
-    match shape.to_ascii_lowercase().as_str() {
-        "box" => {
+    match shape {
+        RoomShapeKind::Box => {
             if dimensions.len() < 3 {
                 return Err(McpBridgeError::Other(format!(
                     "Box requires 3 dimensions [length, width, height], got {}. \
@@ -4776,7 +4754,7 @@ fn parse_room_shape(
                 height: Meters::new(dimensions[2]),
             })
         }
-        "cylinder" => {
+        RoomShapeKind::Cylinder => {
             if dimensions.len() < 2 {
                 return Err(McpBridgeError::Other(format!(
                     "Cylinder requires 2 dimensions [radius, length], got {}. \
@@ -4789,7 +4767,7 @@ fn parse_room_shape(
                 length: Meters::new(dimensions[1]),
             })
         }
-        "lshape" | "l_shape" | "l-shape" => {
+        RoomShapeKind::LShape => {
             if dimensions.len() < 5 {
                 return Err(McpBridgeError::Other(format!(
                     "LShape requires 5 dimensions [length_a, width_a, length_b, width_b, height], got {}. \
@@ -4805,7 +4783,7 @@ fn parse_room_shape(
                 height: Meters::new(dimensions[4]),
             })
         }
-        "sphere" => {
+        RoomShapeKind::Sphere => {
             if dimensions.is_empty() {
                 return Err(McpBridgeError::Other(
                     "Sphere requires 1 dimension [radius]. \
@@ -4817,7 +4795,7 @@ fn parse_room_shape(
                 radius: Meters::new(dimensions[0]),
             })
         }
-        "dome" => {
+        RoomShapeKind::Dome => {
             if dimensions.is_empty() {
                 return Err(McpBridgeError::Other(
                     "Dome requires 1 dimension [radius]. \
@@ -4829,7 +4807,7 @@ fn parse_room_shape(
                 radius: Meters::new(dimensions[0]),
             })
         }
-        "tube" => {
+        RoomShapeKind::Tube => {
             if dimensions.len() < 2 {
                 return Err(McpBridgeError::Other(format!(
                     "Tube requires 2 dimensions [radius, length], got {}. \
@@ -4842,7 +4820,6 @@ fn parse_room_shape(
                 length: Meters::new(dimensions[1]),
             })
         }
-        _ => Err(McpBridgeError::InvalidRoomShape(shape.to_string())),
     }
 }
 

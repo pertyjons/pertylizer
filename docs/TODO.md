@@ -643,17 +643,31 @@ ship dates.
   `tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`.
   After session-reuse lands, parallelize the sweep target vector with `par_iter` for a 2-4×
   speedup on top (same sequence as §7.1 → §7.2).
-- [ ] **`batch_execute` dispatch-coverage guard test.** Every `#[tool]` works as a standalone
-  call (rmcp tool-router) but `batch_execute` routes through a *separate hand-maintained*
-  `dispatch_tools!` table in `synth_mcp::server` (`dispatch_tool_inner`, ~line 2157). Adding a
-  tool without an entry there makes it silently fail with `unknown tool` only via batch — exactly
-  the bug fixed in `00845fb` (the five Phase-6 description/color setters were missing). Add a test
-  that drives the new tools through `batch_execute` and asserts no `unknown tool` reply, so the
-  table can't drift from the tool set again. Needs the rmcp `ServerHandler` request plumbing
-  (`SynthMcpServer::new(bridge)` + a `CallToolRequestParam` for `batch_execute`); the headless rig
-  in `crates/pertylizer/tests/mcp_project_load.rs` already builds an `AppSynthBridge` to reuse.
-  Better still if the test enumerates the tool-router's registered names and asserts each appears
-  in the dispatch table.
+- [x] **`batch_execute` dispatch-coverage guard test.** Done in
+  `crates/pertylizer/tests/mcp_batch_dispatch_coverage.rs`: enumerates the rmcp tool-router's
+  registered names (`SynthMcpServer::router_tool_names`) and asserts each — except the documented
+  exemptions `batch_execute`, `preview_note`, `analyze_note` — is reachable through the
+  `dispatch_tool_inner` table (probed via `dispatch_tool_for_test` with scalar params so no tool
+  body runs). Prevents the router/dispatch drift fixed in `00845fb`.
+- [ ] **Static `#[schemars(range(...))]` on fixed-range numeric MCP fields.** Module/AWE *parameter*
+  values are now validated at the bridge boundary against the descriptor's `ValueRange`
+  (`ParameterDescriptor::validate_f32`), but the *globally* fixed numeric tool fields — MIDI note
+  (0–127), velocity (0–127), MIDI channel (1–16), LFO index (1–4) — still expose only a plain
+  `u8`/`f32` in their `JsonSchema` (prose-only bounds in `#[schemars(description=...)]`). They are
+  enforced at runtime via the `validate_*` helpers in `synth_mcp::server` but a schema-aware client
+  sees no `minimum`/`maximum`. Add `#[schemars(range(min = …, max = …))]` to those fields in the
+  param structs (`crates/synth_mcp/src/server.rs`) so the constraint is machine-readable. Verify the
+  attribute syntax/feature against the pinned `schemars` 1.2 first (it differs from 0.8). Low risk,
+  small; skipped during the 2026-05-27 validation pass for scope.
+- [ ] **Uniform machine-readable bounds on `synth_core` newtypes.** Newtype clamping is inconsistent:
+  `NormalizedValue`/`BipolarValue`/`Velocity`/`Phase` clamp in `new()`, but `Hertz`/`Gain`/`Cents`/
+  `Semitones` do not, and there is no uniform `const RANGE: ValueRange` on any newtype — so a shared
+  "spec → (schema | validation)" abstraction can only read bounds from the per-module
+  `ParameterDescriptor`, never from the type. `Param::with_f32` (`crates/synth_core/src/params/*.rs`)
+  then re-clamps ad hoc and sometimes hardcodes a range that duplicates the descriptor (e.g. the
+  2026-05-27 `Detune::with_f32` `-100..100` clamp mirrors `oscillator.rs:308` by hand). Consider a
+  `BoundedNewtype` trait (or `const RANGE`) so bounds live on the type and descriptors/`with_f32`
+  derive from it. Larger, cross-cutting refactor — plan separately.
 
 ---
 

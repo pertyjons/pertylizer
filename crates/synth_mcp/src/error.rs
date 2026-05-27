@@ -71,6 +71,16 @@ pub enum McpBridgeError {
         max: f32,
     },
 
+    /// A module parameter value was rejected by descriptor-driven validation.
+    #[error("invalid value for parameter '{name}': {source}")]
+    InvalidParameterValue {
+        /// The parameter that was being set.
+        name: String,
+        /// The underlying validation failure (range / finiteness).
+        #[source]
+        source: synth_core::ParamValueError,
+    },
+
     /// Invalid instrument category string.
     #[error(
         "invalid instrument category '{0}': valid categories are Drums, Bass, Lead, Pad, Keys, Strings, Brass, Woodwind, FX, Vocal, Other"
@@ -101,28 +111,6 @@ pub enum McpBridgeError {
          source_y, listener_x, listener_y"
     )]
     InvalidAweParameter(String),
-
-    /// Invalid AWE room shape.
-    #[error(
-        "unknown AWE room shape '{0}'. Valid shapes: Box, Cylinder, LShape, Sphere, Dome, Tube"
-    )]
-    InvalidRoomShape(String),
-
-    /// Invalid AWE material.
-    #[error(
-        "unknown AWE material '{0}'. Valid materials: Concrete, Wood, Glass, Metal, Fabric, Tile, \
-         Marble, Ice, Carpet, Water, Void, Prism, Plasma, Membrane, Nanogel"
-    )]
-    InvalidMaterial(String),
-
-    /// Invalid AWE LFO target.
-    #[error(
-        "unknown AWE LFO target '{0}'. Valid targets: RoomLength, RoomWidth, SourceX, SourceY, \
-         ListenerX, ListenerY, DryWet, FreqWarp, EarlyLate, ModesAmount, ResonanceBoost, \
-         TailStretch, PortalAmount, PreDelay, ModulationDepth, ModulationRate, AirAbsorption, \
-         Width, HighCut, LowCut, Temperature"
-    )]
-    InvalidLfoTarget(String),
 
     /// AWE preset not found.
     #[error("AWE preset '{0}' not found. Use list_awe_presets to see available presets.")]

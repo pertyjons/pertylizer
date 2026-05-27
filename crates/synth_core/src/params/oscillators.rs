@@ -420,7 +420,9 @@ impl OscillatorParam {
                 Self::Waveform(Waveform::from_index(value as usize).unwrap_or_default())
             }
             Self::Frequency(_) => Self::Frequency(Hertz::new(value)),
-            Self::Detune(_) => Self::Detune(Cents::new(value)),
+            // Clamp to the descriptor range (-100..100 cents); mirrors the
+            // `UnisonDetune` clamp below so every apply path stays in range.
+            Self::Detune(_) => Self::Detune(Cents::new(value.clamp(-100.0, 100.0))),
             Self::Octave(_) => Self::Octave(Semitones::new(value)),
             Self::PulseWidth(_) => Self::PulseWidth(PulseWidth::new(value)),
             Self::Level(_) => Self::Level(Gain::new(value)),

@@ -598,6 +598,28 @@ pub struct ParameterDescriptor {
     pub modulatable: bool,
 }
 
+/// Error returned when a value fails validation against a [`ParameterDescriptor`].
+///
+/// This is the single descriptor-driven validation shared by every layer that
+/// needs to reject bad input (the MCP boundary today). It draws on the same
+/// `range` that drives JSON-Schema generation, the GUI, and MCP discovery.
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
+pub enum ParamValueError {
+    /// The value was NaN or infinite.
+    #[error("value is not finite (NaN or infinity)")]
+    NotFinite,
+    /// The value fell outside the parameter's `[min, max]` range.
+    #[error("value {value} out of range: must be within {min}..={max}")]
+    OutOfRange {
+        /// The offending value.
+        value: f32,
+        /// Range minimum (inclusive).
+        min: f32,
+        /// Range maximum (inclusive).
+        max: f32,
+    },
+}
+
 impl ParameterDescriptor {
     /// Create a new float parameter descriptor.
     ///
@@ -754,6 +776,26 @@ impl ParameterDescriptor {
     #[must_use]
     pub fn default_value(&self) -> f32 {
         self.range.default
+    }
+
+    /// Validate a raw `f32` value against this parameter's range.
+    ///
+    /// Returns the value unchanged on success, or a [`ParamValueError`]
+    /// describing why it was rejected. For choice parameters the range is
+    /// `0..=(choices.len() - 1)`, so an out-of-bounds choice index is rejected
+    /// the same way as an out-of-range numeric value.
+    pub fn validate_f32(&self, value: f32) -> Result<f32, ParamValueError> {
+        if !value.is_finite() {
+            return Err(ParamValueError::NotFinite);
+        }
+        if !self.range.contains(value) {
+            return Err(ParamValueError::OutOfRange {
+                value,
+                min: self.range.min,
+                max: self.range.max,
+            });
+        }
+        Ok(value)
     }
 }
 
@@ -1209,5 +1251,71 @@ mod tests {
         let reader = ports.reader(PortName::CV, 1.0);
 
         assert_eq!(reader[0], 1.0);
+    }
+
+    fn descriptor_with_range(min: f32, max: f32, default: f32) -> ParameterDescriptor {
+        ParameterDescriptor::float(
+            "test_param",
+            Param::Oscillator(crate::params::OscillatorParam::Detune(crate::Cents::ZERO)),
+            "Test Param",
+        )
+        .value_range(ValueRange::new(min, max, default))
+    }
+
+    #[test]
+    fn validate_f32_accepts_in_range_and_bounds() {
+        let pd = descriptor_with_range(-100.0, 100.0, 0.0);
+        assert_eq!(pd.validate_f32(0.0), Ok(0.0));
+        assert_eq!(pd.validate_f32(-100.0), Ok(-100.0)); // inclusive min
+        assert_eq!(pd.validate_f32(100.0), Ok(100.0)); // inclusive max
+    }
+
+    #[test]
+    fn validate_f32_rejects_out_of_range() {
+        let pd = descriptor_with_range(0.0, 1.0, 0.5);
+        assert_eq!(
+            pd.validate_f32(1.5),
+            Err(ParamValueError::OutOfRange {
+                value: 1.5,
+                min: 0.0,
+                max: 1.0,
+            })
+        );
+        assert!(matches!(
+            pd.validate_f32(-0.1),
+            Err(ParamValueError::OutOfRange { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_f32_rejects_non_finite() {
+        let pd = descriptor_with_range(0.0, 1.0, 0.5);
+        assert_eq!(pd.validate_f32(f32::NAN), Err(ParamValueError::NotFinite));
+        assert_eq!(
+            pd.validate_f32(f32::INFINITY),
+            Err(ParamValueError::NotFinite)
+        );
+    }
+
+    #[test]
+    fn validate_f32_treats_choice_index_as_range() {
+        // choice() sets range 0..=(len-1); an out-of-bounds index is rejected.
+        let choices = vec![
+            ChoiceOption::new("a", "A"),
+            ChoiceOption::new("b", "B"),
+            ChoiceOption::new("c", "C"),
+        ];
+        let pd = ParameterDescriptor::choice(
+            "mode",
+            Param::Oscillator(crate::params::OscillatorParam::Detune(crate::Cents::ZERO)),
+            "Mode",
+            choices,
+        );
+        assert_eq!(pd.validate_f32(0.0), Ok(0.0));
+        assert_eq!(pd.validate_f32(2.0), Ok(2.0));
+        assert!(matches!(
+            pd.validate_f32(3.0),
+            Err(ParamValueError::OutOfRange { .. })
+        ));
     }
 }

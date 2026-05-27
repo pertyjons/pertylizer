@@ -1060,12 +1060,16 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Set a single AWE parameter by name. Value interpretation depends on the parameter.
     fn set_awe_parameter(&self, name: &str, value: f64) -> Result<(), McpBridgeError>;
 
-    /// Set the room shape. `shape` is one of: "Box", "Cylinder", "LShape", "Sphere", "Dome", "Tube".
-    /// `dimensions` contains shape-specific values (length, width, height, radius, etc.).
-    fn set_awe_room_shape(&self, shape: &str, dimensions: &[f32]) -> Result<(), McpBridgeError>;
+    /// Set the room shape. `dimensions` carries the shape-specific values
+    /// (length, width, height, radius, …) in meters.
+    fn set_awe_room_shape(
+        &self,
+        shape: synth_awe::RoomShapeKind,
+        dimensions: &[f32],
+    ) -> Result<(), McpBridgeError>;
 
-    /// Set the wall material by name.
-    fn set_awe_material(&self, material: &str) -> Result<(), McpBridgeError>;
+    /// Set the wall material.
+    fn set_awe_material(&self, material: synth_awe::MaterialKind) -> Result<(), McpBridgeError>;
 
     /// Load a named AWE preset. Returns the resulting state.
     fn set_awe_preset(&self, name: &str) -> Result<AweStateInfo, McpBridgeError>;
@@ -1079,7 +1083,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         index: u8,
         rate: f32,
         amount: f32,
-        target: &str,
+        target: synth_awe::AweLfoTarget,
     ) -> Result<(), McpBridgeError>;
 
     // === Sample library ===

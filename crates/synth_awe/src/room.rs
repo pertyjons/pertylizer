@@ -428,6 +428,90 @@ impl Material {
     }
 }
 
+/// Named wall-material preset selecting a built-in [`Material`].
+///
+/// This is the single source of truth for the material names exposed over MCP:
+/// the JSON-Schema `enum` and the name→[`Material`] mapping both derive from it,
+/// so there is nothing to keep in sync by hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum MaterialKind {
+    /// Hard concrete walls — hard, dark, cold.
+    Concrete,
+    /// Wood paneling — warm, balanced.
+    Wood,
+    /// Glass windows — bright but thin in the bass.
+    Glass,
+    /// Metal — ultra-bright, ringing.
+    Metal,
+    /// Fabric — very dark, high absorption especially in the highs.
+    Fabric,
+    /// Tile — hard, bright, clinical.
+    Tile,
+    /// Marble — warmer hard surface, moderate absorption.
+    Marble,
+    /// Ice — crisp, noticeable high-frequency absorption.
+    Ice,
+    /// Carpet — dead, absorbs everything.
+    Carpet,
+    /// Water — murmuring, medium-dark.
+    Water,
+    /// Void — perfectly reflective, infinite reverb.
+    Void,
+    /// Prism — extreme high-frequency absorption with high diffusion.
+    Prism,
+    /// Plasma — strong low-frequency damping with a bright tail.
+    Plasma,
+    /// Membrane — absorbs lows more than highs (non-physical).
+    Membrane,
+    /// Nanogel — ultra-absorbent but highly diffusive.
+    Nanogel,
+}
+
+impl MaterialKind {
+    /// Resolve to the underlying acoustic [`Material`].
+    #[must_use]
+    pub const fn material(self) -> Material {
+        match self {
+            Self::Concrete => Material::CONCRETE,
+            Self::Wood => Material::WOOD,
+            Self::Glass => Material::GLASS,
+            Self::Metal => Material::METAL,
+            Self::Fabric => Material::FABRIC,
+            Self::Tile => Material::TILE,
+            Self::Marble => Material::MARBLE,
+            Self::Ice => Material::ICE,
+            Self::Carpet => Material::CARPET,
+            Self::Water => Material::WATER,
+            Self::Void => Material::VOID,
+            Self::Prism => Material::PRISM,
+            Self::Plasma => Material::PLASMA,
+            Self::Membrane => Material::MEMBRANE,
+            Self::Nanogel => Material::NANOGEL,
+        }
+    }
+}
+
+/// Discriminant for [`RoomShape`] — the shape selector without its dimensions.
+///
+/// Pairs with a separate list of dimension values when constructing a
+/// [`RoomShape`]. This is the single source of truth for the shape names
+/// exposed over MCP, so the JSON-Schema `enum` needs no hand-maintained list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum RoomShapeKind {
+    /// Rectangular room — dimensions `[length, width, height]`.
+    Box,
+    /// Cylindrical room (pipeline/tunnel) — dimensions `[radius, length]`.
+    Cylinder,
+    /// L-shaped room — dimensions `[length_a, width_a, length_b, width_b, height]`.
+    LShape,
+    /// Spherical room — dimensions `[radius]`.
+    Sphere,
+    /// Half-sphere dome — dimensions `[radius]`.
+    Dome,
+    /// Open-ended tube (no end reflections) — dimensions `[radius, length]`.
+    Tube,
+}
+
 impl Default for Material {
     fn default() -> Self {
         Self::CONCRETE

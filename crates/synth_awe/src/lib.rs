@@ -22,7 +22,7 @@ pub mod types;
 pub use awe_engine::AweEngine;
 pub use params::{AweLfoTarget, AweParam, AweSnapshot, AweState};
 pub use presets::{AwePreset, awe_presets};
-pub use room::{Material, RoomShape};
+pub use room::{Material, MaterialKind, RoomShape, RoomShapeKind};
 pub use spatial_voice::{
     MAX_SPATIAL_VOICES, NotePositionMapping, SpatialContext, SpatialVoiceBank, SpatialVoiceInfo,
 };

@@ -1815,11 +1815,9 @@ pub struct SetAweParameterParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetAweRoomShapeParam {
     #[schemars(
-        description = "Room shape type: 'Box' (rectangular room), 'Cylinder' (tunnel/pipeline), \
-                       'LShape' (two connected rectangles), 'Sphere' (spherical room), \
-                       'Dome' (half-sphere), 'Tube' (open-ended cylinder, no end reflections)"
+        description = "Room shape type. Each shape expects a specific set of dimensions (see `dimensions`)."
     )]
-    pub shape: String,
+    pub shape: synth_awe::RoomShapeKind,
     #[schemars(description = "Room dimensions in meters (depends on shape): \
                        Box: [length, width, height] (e.g. [8.0, 5.0, 3.0]). \
                        Cylinder: [radius, length] (e.g. [1.0, 20.0]). \
@@ -1832,23 +1830,11 @@ pub struct SetAweRoomShapeParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetAweMaterialParam {
-    #[schemars(description = "Wall material name. Available materials: \
-                       Concrete (hard, dark, cold — low absorption), \
-                       Wood (warm, balanced — medium absorption), \
-                       Glass (bright, thin bass — reflects highs, absorbs lows), \
-                       Metal (ultra-bright, ringing — minimal absorption), \
-                       Fabric (very dark — high absorption, especially highs), \
-                       Tile (hard, bright, clinical — like bathroom tiles), \
-                       Marble (warmer hard surface — moderate absorption), \
-                       Ice (crisp, noticeable HF absorption), \
-                       Carpet (dead, absorbs everything — very high absorption), \
-                       Water (murmuring, medium-dark — moderate absorption), \
-                       Void (perfectly reflective — zero absorption, infinite reverb), \
-                       Prism (extreme HF absorption with high diffusion), \
-                       Plasma (strong LF damping with bright tail), \
-                       Membrane (absorbs lows more than highs — non-physical), \
-                       Nanogel (ultra-absorbent but highly diffusive)")]
-    pub material: String,
+    #[schemars(
+        description = "Wall material preset. Controls frequency-dependent absorption and \
+                       diffusion of the room surfaces."
+    )]
+    pub material: synth_awe::MaterialKind,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1870,13 +1856,8 @@ pub struct SetAweLfoParam {
     pub rate: f32,
     #[schemars(description = "Modulation amount (0.0-1.0). 0 = no modulation, 1 = maximum.")]
     pub amount: f32,
-    #[schemars(
-        description = "Modulation target: RoomLength, RoomWidth, SourceX, SourceY, ListenerX, \
-                       ListenerY, DryWet, FreqWarp, EarlyLate, ModesAmount, ResonanceBoost, \
-                       TailStretch, PortalAmount, PreDelay, ModulationDepth, ModulationRate, \
-                       AirAbsorption, Width, HighCut, LowCut, Temperature"
-    )]
-    pub target: String,
+    #[schemars(description = "Modulation target — which AWE parameter this LFO sweeps.")]
+    pub target: synth_awe::AweLfoTarget,
 }
 
 // ============================================================================
@@ -2147,6 +2128,36 @@ impl SynthMcpServer {
             ),
         }
         result
+    }
+
+    /// Names of every tool registered with the rmcp tool-router.
+    ///
+    /// Exposed for the `batch_execute` dispatch-coverage guard test, which
+    /// asserts every router-registered tool is also reachable through the
+    /// hand-maintained dispatch table below (so the two can't drift).
+    #[doc(hidden)]
+    #[must_use]
+    pub fn router_tool_names(&self) -> Vec<String> {
+        self.tool_router
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect()
+    }
+
+    /// Dispatch a tool by name exactly as `batch_execute` would — for tests.
+    ///
+    /// Pass a scalar `params` (e.g. `0`): it fails deserialization for every
+    /// tool's parameter struct, so no tool body runs (avoiding side effects and
+    /// blocking project-IO calls). The only observable distinction is whether
+    /// the dispatch table knows the tool (`unknown tool` vs `invalid params`).
+    #[doc(hidden)]
+    pub async fn dispatch_tool_for_test(
+        &self,
+        tool: &str,
+        params: serde_json::Value,
+    ) -> Result<String, String> {
+        self.dispatch_tool_inner(tool, params).await
     }
 
     async fn dispatch_tool_inner(
@@ -4845,9 +4856,9 @@ impl SynthMcpServer {
         }
         match self
             .bridge
-            .set_awe_room_shape(&params.0.shape, &params.0.dimensions)
+            .set_awe_room_shape(params.0.shape, &params.0.dimensions)
         {
-            Ok(()) => format!("OK: AWE room shape set to {}", params.0.shape),
+            Ok(()) => format!("OK: AWE room shape set to {:?}", params.0.shape),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -4860,8 +4871,8 @@ impl SynthMcpServer {
                        Exotic materials (Void, Prism, Plasma, Membrane) create non-physical effects."
     )]
     async fn set_awe_material(&self, params: Parameters<SetAweMaterialParam>) -> String {
-        match self.bridge.set_awe_material(&params.0.material) {
-            Ok(()) => format!("OK: AWE material set to {}", params.0.material),
+        match self.bridge.set_awe_material(params.0.material) {
+            Ok(()) => format!("OK: AWE material set to {:?}", params.0.material),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -4912,12 +4923,9 @@ impl SynthMcpServer {
         if let Err(e) = validate_range("amount", p.amount, 0.0, 1.0) {
             return format!("Error: {e}");
         }
-        match self
-            .bridge
-            .set_awe_lfo(p.index, p.rate, p.amount, &p.target)
-        {
+        match self.bridge.set_awe_lfo(p.index, p.rate, p.amount, p.target) {
             Ok(()) => format!(
-                "OK: AWE LFO {} → {} at {:.2} Hz (amount {:.2})",
+                "OK: AWE LFO {} → {:?} at {:.2} Hz (amount {:.2})",
                 p.index, p.target, p.rate, p.amount
             ),
             Err(e) => format!("Error: {e}"),
