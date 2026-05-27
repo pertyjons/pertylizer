@@ -643,6 +643,17 @@ ship dates.
   `tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`.
   After session-reuse lands, parallelize the sweep target vector with `par_iter` for a 2-4×
   speedup on top (same sequence as §7.1 → §7.2).
+- [ ] **`batch_execute` dispatch-coverage guard test.** Every `#[tool]` works as a standalone
+  call (rmcp tool-router) but `batch_execute` routes through a *separate hand-maintained*
+  `dispatch_tools!` table in `synth_mcp::server` (`dispatch_tool_inner`, ~line 2157). Adding a
+  tool without an entry there makes it silently fail with `unknown tool` only via batch — exactly
+  the bug fixed in `00845fb` (the five Phase-6 description/color setters were missing). Add a test
+  that drives the new tools through `batch_execute` and asserts no `unknown tool` reply, so the
+  table can't drift from the tool set again. Needs the rmcp `ServerHandler` request plumbing
+  (`SynthMcpServer::new(bridge)` + a `CallToolRequestParam` for `batch_execute`); the headless rig
+  in `crates/pertylizer/tests/mcp_project_load.rs` already builds an `AppSynthBridge` to reuse.
+  Better still if the test enumerates the tool-router's registered names and asserts each appears
+  in the dispatch table.
 
 ---
 
