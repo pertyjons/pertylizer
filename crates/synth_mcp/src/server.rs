@@ -2217,6 +2217,7 @@ impl SynthMcpServer {
             "set_song_tempo" => set_song_tempo(SetSongTempoParam),
             "set_song_name" => set_song_name(SetSongNameParam),
             "set_song_author" => set_song_author(SetSongAuthorParam),
+            "set_song_description" => set_song_description(SetSongDescriptionParam),
             "set_song_time_signature" => set_song_time_signature(SetSongTimeSignatureParam),
             "set_transport_loop" => set_transport_loop(SetTransportLoopParam),
             "clear_transport_loop" => clear_transport_loop(NoParams),
@@ -2226,6 +2227,7 @@ impl SynthMcpServer {
             "create_pattern" => create_pattern(CreatePatternParam),
             "delete_pattern" => delete_pattern(PatternIdParam),
             "rename_pattern" => rename_pattern(RenamePatternParam),
+            "set_pattern_description" => set_pattern_description(SetPatternDescriptionParam),
             "set_pattern_length" => set_pattern_length(SetPatternLengthParam),
             "duplicate_pattern" => duplicate_pattern(DuplicatePatternParam),
             "create_patterns" => create_patterns(CreatePatternsParam),
@@ -2250,6 +2252,8 @@ impl SynthMcpServer {
             "set_track_solo" => set_track_solo(SetTrackSoloParam),
             "set_track_instrument" => set_track_instrument(SetTrackInstrumentParam),
             "rename_track" => rename_track(RenameTrackParam),
+            "set_track_description" => set_track_description(SetTrackDescriptionParam),
+            "set_track_color" => set_track_color(SetTrackColorParam),
             "delete_track" => delete_track(DeleteTrackParam),
 
             // Arrangement
@@ -2297,6 +2301,7 @@ impl SynthMcpServer {
             "import_sample" => import_sample(ImportSampleParam),
             "delete_sample" => delete_sample(SampleIdParam),
             "rename_sample" => rename_sample(RenameSampleParam),
+            "set_sample_description" => set_sample_description(SetSampleDescriptionParam),
             "set_sample_root_note" => set_sample_root_note(SetSampleRootNoteParam),
             "normalize_sample" => normalize_sample(SampleIdParam),
             "reverse_sample" => reverse_sample(SampleIdParam),

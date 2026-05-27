@@ -369,6 +369,9 @@ pub fn draw_sample_view(
                                     state.scroll_offset = 0.0;
                                     state.zoom = 1.0;
                                     state.editing_name = false;
+                                    // Drop any in-progress description edit so its
+                                    // buffer can't commit onto the newly selected sample.
+                                    state.editing_description = false;
                                 }
                             }
                         });
@@ -826,14 +829,17 @@ fn draw_properties(
                         .desired_rows(2)
                         .desired_width(f32::INFINITY),
                 );
+                // Commit on every change so dismissing the panel can't strand
+                // the buffer; lost_focus just ends the edit session.
+                if resp.changed()
+                    && let Ok(mut lib) = library.write()
+                    && let Some(m) = lib.get_meta(id)
+                {
+                    let mut updated = m.clone();
+                    updated.description = state.description_buffer.clone();
+                    lib.update_meta(id, updated);
+                }
                 if resp.lost_focus() {
-                    if let Ok(mut lib) = library.write()
-                        && let Some(m) = lib.get_meta(id)
-                    {
-                        let mut updated = m.clone();
-                        updated.description = state.description_buffer.clone();
-                        lib.update_meta(id, updated);
-                    }
                     state.editing_description = false;
                 }
             } else {

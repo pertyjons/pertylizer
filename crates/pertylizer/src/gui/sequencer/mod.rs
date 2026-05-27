@@ -1468,7 +1468,11 @@ fn draw_arrangement(
                                                                 .desired_width(f32::INFINITY)
                                                                 .hint_text("Description"),
                                                         );
-                                                        if resp.lost_focus() {
+                                                        // Commit on every change so a popup
+                                                        // dismissal (click-outside) can never
+                                                        // strand an in-progress edit; lost_focus
+                                                        // just ends the edit session.
+                                                        if resp.changed() {
                                                             let new_desc = desc_buf.clone();
                                                             let mut song_w = song.write();
                                                             if let Some(trk) =
@@ -1477,7 +1481,8 @@ fn draw_arrangement(
                                                             {
                                                                 trk.description = new_desc;
                                                             }
-                                                            drop(song_w);
+                                                        }
+                                                        if resp.lost_focus() {
                                                             view_state.editing_track_description =
                                                                 None;
                                                         } else if !resp.has_focus() {
@@ -2995,8 +3000,13 @@ pub(crate) fn draw_piano_roll(
                         .hint_text("Description")
                         .font(egui::FontId::proportional(12.0)),
                 );
-                if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                // Commit on every change so switching patterns mid-edit can't
+                // strand the buffer; lost_focus (incl. Enter on a singleline)
+                // ends the edit session.
+                if resp.changed() {
                     commit_pattern_description(song, data.pattern_id, desc_buf.clone());
+                }
+                if resp.lost_focus() {
                     view_state.editing_pattern_description = None;
                 } else if !resp.has_focus() {
                     resp.request_focus();
