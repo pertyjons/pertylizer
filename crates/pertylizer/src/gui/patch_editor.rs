@@ -1487,6 +1487,9 @@ impl PatchEditor {
         instrument_id: u64,
         effect_chain_order: &[ModuleId],
         audio_input_snapshot: &AudioInputSnapshot,
+        // Modules referenced by a sequencer automation lane (this instrument);
+        // drawn with an "automated" header badge. Empty if none.
+        automated_modules: &HashSet<ModuleId>,
     ) -> PatchEditorResult {
         let mut result = PatchEditorResult::default();
 
@@ -1712,6 +1715,7 @@ impl PatchEditor {
             // Get processing info for this module
             let is_source = self.is_source(module_id);
             let is_sink = self.is_sink(module_id);
+            let is_automated = automated_modules.contains(&module_id);
 
             let is_inline_monitor = descriptor.type_id.0 == "inline_signal_monitor";
 
@@ -1766,6 +1770,21 @@ impl PatchEditor {
                                     .min_size(Vec2::new(14.0, 20.0)),
                                 )
                                 .on_hover_text("Sink Module\nConsumes signal (no outgoing connections).");
+                            }
+
+                            // Automation indicator (referenced by a sequencer
+                            // automation lane).
+                            if is_automated {
+                                ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(ri::PULSE_FILL)
+                                            .color(Color32::from_rgb(220, 170, 90))
+                                            .size(10.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(Vec2::new(14.0, 20.0)),
+                                )
+                                .on_hover_text("Automated\nA sequencer automation lane targets this module.");
                             }
 
                             // Connectivity status indicator

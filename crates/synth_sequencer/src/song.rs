@@ -194,6 +194,76 @@ impl Song {
         self.patterns.len()
     }
 
+    // === Automation reference index ===
+
+    /// Index of every module referenced by an [`AutomationTarget::Module`] lane:
+    /// `(instrument, module_type, instance)` → the set of descriptor `param_id`s
+    /// driven across all patterns. Only lanes with at least one point are
+    /// counted (an empty lane is a transient picker artifact, not a reference).
+    ///
+    /// Module identity is positional (see [`AutomationTarget::Module`]). Built on
+    /// demand (allocating); call once and query, e.g. for the Rack "automated"
+    /// badge. Not real-time safe — UI/command thread only.
+    ///
+    /// [`AutomationTarget::Module`]: super::automation::AutomationTarget::Module
+    #[must_use]
+    pub fn automated_module_params(
+        &self,
+    ) -> std::collections::HashMap<
+        (SeqInstrumentId, synth_core::ModuleType, u16),
+        std::collections::BTreeSet<String>,
+    > {
+        use super::automation::AutomationTarget;
+        let mut index = std::collections::HashMap::new();
+        for pattern in &self.patterns {
+            for lane in &pattern.automation {
+                if lane.is_empty() {
+                    continue;
+                }
+                if let AutomationTarget::Module {
+                    instrument,
+                    module_type,
+                    instance,
+                    param_id,
+                } = &lane.target
+                {
+                    index
+                        .entry((*instrument, *module_type, *instance))
+                        .or_insert_with(std::collections::BTreeSet::new)
+                        .insert(param_id.clone());
+                }
+            }
+        }
+        index
+    }
+
+    /// Whether any (non-empty) automation lane references the given module by its
+    /// positional identity. Cheaper than [`Self::automated_module_params`] for a
+    /// single lookup (e.g. a module-delete guard). UI/command thread only.
+    #[must_use]
+    pub fn is_module_automated(
+        &self,
+        instrument: SeqInstrumentId,
+        module_type: synth_core::ModuleType,
+        instance: u16,
+    ) -> bool {
+        use super::automation::AutomationTarget;
+        self.patterns.iter().any(|pattern| {
+            pattern.automation.iter().any(|lane| {
+                !lane.is_empty()
+                    && matches!(
+                        &lane.target,
+                        AutomationTarget::Module {
+                            instrument: i,
+                            module_type: mt,
+                            instance: inst,
+                            ..
+                        } if *i == instrument && *mt == module_type && *inst == instance
+                    )
+            })
+        })
+    }
+
     /// Delete a pattern.
     pub fn delete_pattern(&mut self, id: PatternId) -> Option<Pattern> {
         // Also remove from arrangement
@@ -865,5 +935,48 @@ mod tests {
 
         assert!(!song.track(a).unwrap().solo);
         assert!(!song.any_solo());
+    }
+
+    #[test]
+    fn test_automated_module_index() {
+        use crate::automation::{AutomationPoint, AutomationTarget};
+        use crate::time::PatternTick;
+        use synth_core::{ModuleType, NormalizedValue};
+
+        let mut song = Song::new("auto");
+        let pid = song.create_pattern(Duration(3840));
+        let target = AutomationTarget::Module {
+            instrument: SeqInstrumentId::new(2),
+            module_type: ModuleType::Filter,
+            instance: 1,
+            param_id: "cutoff".to_string(),
+        };
+
+        // An empty lane (picker artifact) is not counted as a reference.
+        song.pattern_mut(pid)
+            .unwrap()
+            .get_or_create_automation(target.clone());
+        assert!(!song.is_module_automated(SeqInstrumentId::new(2), ModuleType::Filter, 1));
+        assert!(song.automated_module_params().is_empty());
+
+        // A point makes it a real reference.
+        song.pattern_mut(pid)
+            .unwrap()
+            .get_or_create_automation(target)
+            .add_point(AutomationPoint::new(
+                PatternTick(0),
+                NormalizedValue::new(0.5),
+            ));
+
+        assert!(song.is_module_automated(SeqInstrumentId::new(2), ModuleType::Filter, 1));
+        // Different instance / instrument are not automated.
+        assert!(!song.is_module_automated(SeqInstrumentId::new(2), ModuleType::Filter, 2));
+        assert!(!song.is_module_automated(SeqInstrumentId::new(9), ModuleType::Filter, 1));
+
+        let index = song.automated_module_params();
+        let params = index
+            .get(&(SeqInstrumentId::new(2), ModuleType::Filter, 1))
+            .expect("filter instance 1 must be indexed");
+        assert!(params.contains("cutoff"));
     }
 }

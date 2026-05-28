@@ -2074,12 +2074,30 @@ impl SynthApp {
                 peak_level: self.audio_input.peak_level(),
                 recorded_seconds: self.audio_input.recorded_seconds(),
             };
+
+            // Modules referenced by an automation lane get an "automated" badge.
+            // Built per frame from the sequencer reference index for this
+            // instrument (positional module identity → ModuleId).
+            let automated_modules: std::collections::HashSet<synth_engine::ModuleId> = {
+                let seq_id = synth_sequencer::SeqInstrumentId::new(active_id.as_u64() as u16);
+                self.song
+                    .read()
+                    .automated_module_params()
+                    .keys()
+                    .filter(|(inst, _, _)| *inst == seq_id)
+                    .map(|(_, module_type, instance)| {
+                        synth_engine::ModuleId::new(*module_type, *instance)
+                    })
+                    .collect()
+            };
+
             let result = patch_editor.show(
                 ui,
                 &self.handle,
                 active_id.as_u64(),
                 &effect_chain_order,
                 &audio_input_snapshot,
+                &automated_modules,
             );
             let had_mutations = result.has_mutations();
 
@@ -2123,6 +2141,24 @@ impl SynthApp {
 
             // Handle module removal
             for module_id in result.modules_to_remove {
+                // Guard: block removing a module that an automation lane still
+                // targets, so the user doesn't silently orphan that lane.
+                // Module identity is positional (see AutomationTarget::Module);
+                // the GUI treats the engine instrument id as the sequencer id.
+                let seq_id = synth_sequencer::SeqInstrumentId::new(active_id.as_u64() as u16);
+                let referenced = self.song.read().is_module_automated(
+                    seq_id,
+                    module_id.module_type,
+                    module_id.instance,
+                );
+                if referenced {
+                    self.dialog_state.set_status(format!(
+                        "Can't remove {:?} #{}: an automation lane targets it. Delete the lane first.",
+                        module_id.module_type, module_id.instance
+                    ));
+                    continue;
+                }
+
                 // Check if this module has a visualization buffer to clean up
                 let has_vis_buffer = patch_editor.module_descriptor(module_id).is_some_and(|d| {
                     d.category == ModuleCategory::Visualizer
