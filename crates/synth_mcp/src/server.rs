@@ -2276,6 +2276,7 @@ impl SynthMcpServer {
             // Automation
             "add_automation_points" => add_automation_points(AddAutomationPointsParam),
             "list_automation_lanes" => list_automation_lanes(PatternIdParam),
+            "get_instrument_automation_targets" => get_instrument_automation_targets(InstrumentIdParam),
             "get_automation_points" => get_automation_points(GetAutomationPointsParam),
             "remove_automation_points" => remove_automation_points(RemoveAutomationPointsParam),
             "clear_automation_lane" => clear_automation_lane(ClearAutomationLaneParam),
@@ -4142,6 +4143,22 @@ impl SynthMcpServer {
     async fn list_automation_lanes(&self, params: Parameters<PatternIdParam>) -> String {
         match self.bridge.list_automation_lanes(params.0.pattern_id) {
             Ok(lanes) => to_json(&lanes),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "List the valid automation targets for an instrument: every automatable per-module parameter in its graph (with ready-to-use 'module:<type>:<instance>:<param>' target strings, ranges, and units) plus the instrument-level macros. Use this to discover correct targets before adding automation points."
+    )]
+    async fn get_instrument_automation_targets(
+        &self,
+        params: Parameters<InstrumentIdParam>,
+    ) -> String {
+        match self
+            .bridge
+            .get_instrument_automation_targets(params.0.instrument_id)
+        {
+            Ok(targets) => to_json(&targets),
             Err(e) => format!("Error: {e}"),
         }
     }

@@ -108,6 +108,15 @@ pub struct ParameterInfo {
     /// Allowed choices (for choice/enum parameters).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub choices: Option<Vec<String>>,
+    /// Stable descriptor identifier (snake_case, e.g. "cutoff"). This is the
+    /// `param_id` used to build a `module:<type>:<instance>:<param_id>`
+    /// automation target — distinct from the human-readable `name`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_id: Option<String>,
+    /// Whether this parameter may be a sequencer automation target (continuous
+    /// + RT-safe, non-enum). Mirrors `ParameterDescriptor::is_automatable`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_automatable: Option<bool>,
 }
 
 /// Information about a connection between modules.
@@ -503,6 +512,38 @@ pub struct AutomationLaneInfo {
     pub instrument_id: Option<u16>,
     /// Number of automation points.
     pub point_count: usize,
+}
+
+/// A valid automation target for an instrument, returned by
+/// `get_instrument_automation_targets`. The `target` string is ready to pass to
+/// the automation tools (`add/get/remove/clear_automation_*`).
+#[derive(Debug, Clone, Serialize)]
+pub struct AutomationTargetInfo {
+    /// Target string for the automation tools (e.g. "module:flt:4:cutoff" or
+    /// "FilterCutoff").
+    pub target: String,
+    /// "module" for a per-module parameter, "instrument" for a macro.
+    pub kind: String,
+    /// Module id string (e.g. "flt-4") — module targets only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module_id: Option<String>,
+    /// Descriptor `param_id` (snake_case) — module targets only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub param_id: Option<String>,
+    /// Human-readable parameter name (e.g. "Cutoff").
+    pub display_name: String,
+    /// Unit (e.g. "Hertz", "Seconds"), when the parameter has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// Minimum value (module targets).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<f32>,
+    /// Maximum value (module targets).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<f32>,
+    /// Response curve (e.g. "Linear", "Logarithmic") — module targets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_curve: Option<String>,
 }
 
 /// Information about an automation point.

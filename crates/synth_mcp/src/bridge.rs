@@ -16,12 +16,13 @@
 
 use crate::error::McpBridgeError;
 use crate::types::{
-    ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo, AwePresetInfo,
-    AweStateInfo, BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo,
-    DetailedSampleInfo, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo,
-    InputStateInfo, InstrumentInfo, InstrumentProfileResult, MatrixRoutingInfo, ModuleInfo,
-    ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo,
-    PlacementInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo,
+    AutomationTargetInfo, AwePresetInfo, AweStateInfo, BatchResult, BuildInstrumentResult,
+    ConnectionCheckResult, ConnectionInfo, DetailedSampleInfo, EngineStatus, ExamplePatchInfo,
+    GraphDiagnostic, InputDeviceInfo, InputStateInfo, InstrumentInfo, InstrumentProfileResult,
+    MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo,
+    PatchResourceData, PatternInfo, PlacementInfo, SampleInfo, SamplerStateInfo, SetSongResult,
+    SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -531,6 +532,15 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         pattern_id: u32,
     ) -> Result<Vec<AutomationLaneInfo>, McpBridgeError>;
+
+    /// List the valid automation targets for an instrument: every automatable
+    /// per-module parameter in its live graph (ready-to-use `module:` target
+    /// strings) plus the instrument-level macros. Makes targets discoverable
+    /// without reverse-engineering descriptor `type_id`s or instance indices.
+    fn get_instrument_automation_targets(
+        &self,
+        instrument_id: u64,
+    ) -> Result<Vec<AutomationTargetInfo>, McpBridgeError>;
 
     /// Get all automation points for a specific lane.
     fn get_automation_points(

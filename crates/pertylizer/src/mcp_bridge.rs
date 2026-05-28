@@ -23,13 +23,14 @@ use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
     AnalyzeHarmonyResult, AnalyzeMaskingMatrixResult, AnalyzeMixBusResult, AnalyzePatternResult,
     AnalyzeSectionResult, ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo,
-    AweLfoInfo, AwePresetInfo, AweStateInfo, BandOverlap, BatchItemResult, BatchResult,
-    BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity, EngineStatus,
-    ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope,
-    HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo, MixBusMetrics, ModuleInfo,
-    ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo,
-    PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo, PlacementInfo, SetSongResult,
-    SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    AutomationTargetInfo, AweLfoInfo, AwePresetInfo, AweStateInfo, BandOverlap, BatchItemResult,
+    BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity,
+    EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate,
+    HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo, MixBusMetrics,
+    ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo,
+    PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo,
+    PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap,
+    UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -111,6 +112,39 @@ impl AppSynthBridge {
             return Err(McpBridgeError::InstrumentNotFound(instrument_id));
         }
         Ok(())
+    }
+
+    /// The `ModuleId`s in an instrument's graph (empty if the instrument is
+    /// absent). Used to validate that a `Module` automation target names a module
+    /// that actually exists.
+    ///
+    /// Reads the session's **synchronous** registry, not the engine's
+    /// `shared_graph` (which the audio thread only rebuilds after draining its
+    /// command queue). This matters because a `batch_execute` that adds a module
+    /// and then automates it in the same request must see the just-added module —
+    /// the same reason the session keeps `alive_instruments` for `instrument_exists`.
+    fn instrument_module_ids(&self, instrument_id: u16) -> Vec<synth_engine::ModuleId> {
+        let inst_id = InstrumentId::new(u64::from(instrument_id));
+        self.session
+            .all_modules_for_instrument(inst_id)
+            .into_keys()
+            .collect()
+    }
+
+    /// Build a deduped `instrument_id → live module ids` cache for a set of
+    /// instruments, so bulk automation operations validate Module targets with
+    /// one graph query per instrument rather than one per point.
+    fn module_id_cache(
+        &self,
+        instrument_ids: impl IntoIterator<Item = u16>,
+    ) -> std::collections::HashMap<u16, Vec<synth_engine::ModuleId>> {
+        let mut cache = std::collections::HashMap::new();
+        for iid in instrument_ids {
+            cache
+                .entry(iid)
+                .or_insert_with(|| self.instrument_module_ids(iid));
+        }
+        cache
     }
 
     /// Convert an `InstrumentSnapshot` to an `InstrumentInfo`.
@@ -256,6 +290,8 @@ impl SynthBridge for AppSynthBridge {
                                         .as_ref()
                                         .map(|c| c.iter().map(|ch| ch.name.clone()).collect())
                                 }),
+                                type_id: pd.map(|pd| pd.type_id.clone()),
+                                is_automatable: pd.map(|pd| pd.is_automatable()),
                             }
                         })
                         .collect(),
@@ -785,6 +821,8 @@ impl SynthBridge for AppSynthBridge {
                     .choices
                     .as_ref()
                     .map(|c| c.iter().map(|ch| ch.name.clone()).collect()),
+                type_id: Some(pd.type_id.clone()),
+                is_automatable: Some(pd.is_automatable()),
             });
         }
         Ok(ParameterInfo {
@@ -795,6 +833,8 @@ impl SynthBridge for AppSynthBridge {
             max: None,
             default: None,
             choices: None,
+            type_id: None,
+            is_automatable: None,
         })
     }
 
@@ -1613,6 +1653,14 @@ impl SynthBridge for AppSynthBridge {
         &self,
         patterns: &[BridgePatternData],
     ) -> Result<BatchResult, McpBridgeError> {
+        // Validate module automation targets against the real graphs; build the
+        // cache before taking the song lock.
+        let module_cache = self.module_id_cache(
+            patterns
+                .iter()
+                .flat_map(|p| p.automation.iter().map(|pt| pt.instrument_id)),
+        );
+
         let mut song = self.shared.song.write();
 
         let mut items = Vec::with_capacity(patterns.len());
@@ -1621,18 +1669,27 @@ impl SynthBridge for AppSynthBridge {
         for (i, p) in patterns.iter().enumerate() {
             let duration = synth_sequencer::Duration(beats_to_ticks(p.length_beats));
             let id = song.create_pattern(duration);
+            let mut skipped_automation = 0usize;
             if let Some(pattern) = song.pattern_mut(id) {
                 pattern.name = p.name.clone();
                 for n in &p.notes {
                     insert_note_into_pattern(pattern, n);
                 }
-                insert_automation_into_pattern(pattern, &p.automation);
+                skipped_automation =
+                    insert_automation_into_pattern(pattern, &p.automation, &module_cache);
             }
+            // The pattern is created either way; surface skipped automation as a
+            // warning rather than dropping it silently.
+            let error = (skipped_automation > 0).then(|| {
+                format!(
+                    "{skipped_automation} automation point(s) skipped (unknown or invalid target)"
+                )
+            });
             items.push(BatchItemResult {
                 index: i,
                 success: true,
                 id: Some(u64::from(id.0)),
-                error: None,
+                error,
             });
             succeeded += 1;
         }
@@ -1747,6 +1804,14 @@ impl SynthBridge for AppSynthBridge {
         tracks: &[BridgeTrackData],
         placements: &[BridgeSongPlacement],
     ) -> Result<SetSongResult, McpBridgeError> {
+        // Validate module automation targets against the real graphs; build the
+        // cache before taking the song lock.
+        let module_cache = self.module_id_cache(
+            patterns
+                .iter()
+                .flat_map(|p| p.automation.iter().map(|pt| pt.instrument_id)),
+        );
+
         let mut song = self.shared.song.write();
 
         // Replace the entire song
@@ -1766,7 +1831,13 @@ impl SynthBridge for AppSynthBridge {
                     insert_note_into_pattern(pattern, n);
                     total_notes += 1;
                 }
-                insert_automation_into_pattern(pattern, &p.automation);
+                let skipped = insert_automation_into_pattern(pattern, &p.automation, &module_cache);
+                if skipped > 0 {
+                    errors.push(format!(
+                        "pattern[{i}] '{}': {skipped} automation point(s) skipped (unknown or invalid target)",
+                        p.name
+                    ));
+                }
             } else {
                 errors.push(format!("failed to access pattern[{i}] after creation"));
             }
@@ -2116,6 +2187,11 @@ impl SynthBridge for AppSynthBridge {
     ) -> Result<BatchResult, McpBridgeError> {
         use synth_sequencer::{AutomationPoint, PatternTick};
 
+        // Pre-fetch each referenced instrument's live module ids (before taking
+        // the song lock) so Module targets can be validated against the real
+        // graph without re-querying per point.
+        let module_cache = self.module_id_cache(points.iter().map(|pt| pt.instrument_id));
+
         let mut song_w = self.shared.song.write();
         let pat_id = synth_sequencer::PatternId(pattern_id);
         let pattern = song_w
@@ -2129,9 +2205,12 @@ impl SynthBridge for AppSynthBridge {
         for (i, pt) in points.iter().enumerate() {
             // Share the same target builder as the read/edit/clear tools so the
             // `module:<type>:<instance>:<param>` syntax (validated against the
-            // automatable allowlist) can also *create* lanes, not just plain
-            // instrument params.
-            let target = match build_automation_target(&pt.param, pt.instrument_id) {
+            // automatable allowlist + instrument graph) can also *create* lanes,
+            // not just plain instrument params.
+            let valid = module_cache
+                .get(&pt.instrument_id)
+                .map_or(&[][..], Vec::as_slice);
+            let target = match build_automation_target(&pt.param, pt.instrument_id, valid) {
                 Ok(t) => t,
                 Err(e) => {
                     items.push(BatchItemResult {
@@ -2191,19 +2270,100 @@ impl SynthBridge for AppSynthBridge {
             .collect())
     }
 
+    fn get_instrument_automation_targets(
+        &self,
+        instrument_id: u64,
+    ) -> Result<Vec<AutomationTargetInfo>, McpBridgeError> {
+        use synth_core::ModuleType;
+        use synth_sequencer::AutoInstrumentParam;
+        self.validate_instrument(instrument_id)?;
+
+        // Read from the session's synchronous registry (carries the live
+        // descriptors), so freshly-added modules appear and we don't rebuild a
+        // descriptor per module. Sort for deterministic output.
+        let inst_id = InstrumentId::new(instrument_id);
+        let mut modules: Vec<(synth_engine::ModuleId, synth_core::ModuleDescriptor)> = self
+            .session
+            .all_modules_for_instrument(inst_id)
+            .into_iter()
+            .collect();
+        modules.sort_by_key(|(id, _)| *id);
+
+        let has_filter = modules
+            .iter()
+            .any(|(id, _)| id.module_type == ModuleType::Filter);
+        let has_envelope = modules
+            .iter()
+            .any(|(id, _)| id.module_type == ModuleType::Envelope);
+
+        let mut targets = Vec::new();
+
+        // Per-module automatable parameters.
+        for (mid, descriptor) in &modules {
+            let prefix = mid.module_type.prefix();
+            let module_id = mid.to_string();
+            for pd in descriptor.parameters.iter().filter(|p| p.is_automatable()) {
+                let unit = pd.unit.suffix().trim();
+                targets.push(AutomationTargetInfo {
+                    target: format!("module:{prefix}:{}:{}", mid.instance, pd.type_id),
+                    kind: "module".to_string(),
+                    module_id: Some(module_id.clone()),
+                    param_id: Some(pd.type_id.clone()),
+                    display_name: pd.name.clone(),
+                    unit: (!unit.is_empty()).then(|| unit.to_string()),
+                    min: Some(pd.range.min),
+                    max: Some(pd.range.max),
+                    response_curve: Some(format!("{:?}", pd.response_curve)),
+                });
+            }
+        }
+
+        // Instrument-level macros — only those whose backing module exists, so
+        // the tool doesn't advertise a target that resolves to nothing.
+        for param in AutoInstrumentParam::ALL {
+            let available = match param {
+                AutoInstrumentParam::Volume | AutoInstrumentParam::Pan => true,
+                AutoInstrumentParam::FilterCutoff | AutoInstrumentParam::FilterResonance => {
+                    has_filter
+                }
+                AutoInstrumentParam::Attack
+                | AutoInstrumentParam::Decay
+                | AutoInstrumentParam::Sustain
+                | AutoInstrumentParam::Release => has_envelope,
+            };
+            if !available {
+                continue;
+            }
+            targets.push(AutomationTargetInfo {
+                target: format!("{param:?}"),
+                kind: "instrument".to_string(),
+                module_id: None,
+                param_id: None,
+                display_name: param.display_name().to_string(),
+                unit: None,
+                min: None,
+                max: None,
+                response_curve: None,
+            });
+        }
+
+        Ok(targets)
+    }
+
     fn get_automation_points(
         &self,
         pattern_id: u32,
         target: &str,
         instrument_id: u16,
     ) -> Result<Vec<AutomationPointInfo>, McpBridgeError> {
+        let valid_modules = self.instrument_module_ids(instrument_id);
         let song = self.shared.song.read();
         let pat_id = synth_sequencer::PatternId(pattern_id);
         let pattern = song
             .pattern(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
-        let auto_target = build_automation_target(target, instrument_id)?;
+        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
         let lane = pattern
             .automation_lane(&auto_target)
             .ok_or_else(|| McpBridgeError::Other(format!("automation lane not found: {target}")))?;
@@ -2226,13 +2386,14 @@ impl SynthBridge for AppSynthBridge {
         instrument_id: u16,
         beats: &[f32],
     ) -> Result<BatchResult, McpBridgeError> {
+        let valid_modules = self.instrument_module_ids(instrument_id);
         let mut song = self.shared.song.write();
         let pat_id = synth_sequencer::PatternId(pattern_id);
         let pattern = song
             .pattern_mut(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
-        let auto_target = build_automation_target(target, instrument_id)?;
+        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
         let lane = pattern.get_or_create_automation(auto_target);
 
         let total = beats.len();
@@ -2273,13 +2434,14 @@ impl SynthBridge for AppSynthBridge {
         target: &str,
         instrument_id: u16,
     ) -> Result<usize, McpBridgeError> {
+        let valid_modules = self.instrument_module_ids(instrument_id);
         let mut song = self.shared.song.write();
         let pat_id = synth_sequencer::PatternId(pattern_id);
         let pattern = song
             .pattern_mut(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
-        let auto_target = build_automation_target(target, instrument_id)?;
+        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
         let lane = pattern.get_or_create_automation(auto_target);
         let count = lane.len();
         lane.clear();
@@ -5308,17 +5470,23 @@ fn format_curve_type(curve: synth_sequencer::CurveType) -> String {
 ///   [`AutomationTarget::Module`](synth_sequencer::AutomationTarget::Module).
 ///   This is the inverse of [`automation_target_info`]'s Module rendering.
 ///
-/// Module targets are validated against the automation allowlist: the parameter
+/// Module targets are validated against the automation allowlist (the parameter
 /// must exist on that module type's descriptor and be
-/// [`ParameterDescriptor::is_automatable`](synth_core::ParameterDescriptor::is_automatable).
+/// [`ParameterDescriptor::is_automatable`](synth_core::ParameterDescriptor::is_automatable))
+/// AND against `valid_modules` — the `ModuleId`s that actually exist in the
+/// target instrument's graph — so a target can't bind to a non-existent module
+/// instance (which would be silently dead automation). Pass the instrument's
+/// live module ids (see `instrument_module_ids`); instrument-level params ignore
+/// it.
 fn build_automation_target(
     target: &str,
     instrument_id: u16,
+    valid_modules: &[synth_engine::ModuleId],
 ) -> Result<synth_sequencer::AutomationTarget, McpBridgeError> {
     let instrument = synth_sequencer::SeqInstrumentId::new(instrument_id);
 
     if let Some(rest) = target.strip_prefix("module:") {
-        return build_module_automation_target(rest, instrument);
+        return build_module_automation_target(rest, instrument, valid_modules);
     }
 
     let param = parse_auto_instrument_param(target)
@@ -5331,6 +5499,7 @@ fn build_automation_target(
 fn build_module_automation_target(
     body: &str,
     instrument: synth_sequencer::SeqInstrumentId,
+    valid_modules: &[synth_engine::ModuleId],
 ) -> Result<synth_sequencer::AutomationTarget, McpBridgeError> {
     let mut parts = body.splitn(3, ':');
     let (Some(prefix), Some(instance_str), Some(param_id)) =
@@ -5346,6 +5515,14 @@ fn build_module_automation_target(
     let instance: u16 = instance_str
         .parse()
         .map_err(|_| McpBridgeError::Other(format!("invalid module instance: '{instance_str}'")))?;
+
+    // Validate the instance actually exists in the instrument's graph, so a
+    // target can't silently bind to a missing module.
+    if !valid_modules.contains(&synth_engine::ModuleId::new(module_type, instance)) {
+        return Err(McpBridgeError::Other(format!(
+            "instrument has no '{prefix}-{instance}' module to automate"
+        )));
+    }
 
     // Validate against the allowlist: the param must exist on this module type
     // and be automatable (continuous + RT-safe, non-choice).
@@ -5408,18 +5585,32 @@ fn automation_target_info(target: &synth_sequencer::AutomationTarget) -> (String
 }
 
 /// Insert automation points from `BridgeAutomationPointData` into a pattern.
+///
+/// `module_cache` maps each point's `instrument_id` to that instrument's live
+/// module ids, used to validate `module:` targets (built by the caller before
+/// the song lock, see `module_id_cache`).
+///
+/// Returns the number of points skipped because their target was unknown,
+/// non-automatable, or named a module that doesn't exist — so the caller can
+/// surface them instead of dropping them silently.
 fn insert_automation_into_pattern(
     pattern: &mut synth_sequencer::Pattern,
     points: &[BridgeAutomationPointData],
-) {
+    module_cache: &std::collections::HashMap<u16, Vec<synth_engine::ModuleId>>,
+) -> usize {
     use synth_sequencer::{AutomationPoint, PatternTick};
 
+    let mut skipped = 0usize;
     for pt in points {
         // Use the shared builder so bulk pattern creation accepts
         // `module:<type>:<instance>:<param>` targets (validated against the
-        // automatable allowlist), not just plain instrument params. Unknown /
-        // non-automatable targets are skipped, as before.
-        let Ok(target) = build_automation_target(&pt.param, pt.instrument_id) else {
+        // automatable allowlist + instrument graph), not just plain instrument
+        // params.
+        let valid = module_cache
+            .get(&pt.instrument_id)
+            .map_or(&[][..], Vec::as_slice);
+        let Ok(target) = build_automation_target(&pt.param, pt.instrument_id, valid) else {
+            skipped += 1;
             continue;
         };
         let tick = PatternTick(beats_to_ticks(pt.beat));
@@ -5429,6 +5620,7 @@ fn insert_automation_into_pattern(
             AutomationPoint::new(tick, NormalizedValue::new(pt.value)).with_curve(curve),
         );
     }
+    skipped
 }
 
 /// Compute overlapping module pairs from their positions and sizes.
@@ -9536,11 +9728,17 @@ mod pre_master_peak_tests {
 #[cfg(test)]
 mod automation_target_tests {
     use super::*;
+    use synth_engine::ModuleId;
     use synth_sequencer::{AutomationTarget, SeqInstrumentId};
+
+    /// A module set with a single Filter at instance 1 (the common test graph).
+    fn flt1() -> Vec<ModuleId> {
+        vec![ModuleId::new(synth_core::ModuleType::Filter, 1)]
+    }
 
     #[test]
     fn build_module_target_parses_and_validates() {
-        let t = build_automation_target("module:flt:1:cutoff", 3).unwrap();
+        let t = build_automation_target("module:flt:1:cutoff", 3, &flt1()).unwrap();
         assert_eq!(
             t,
             AutomationTarget::Module {
@@ -9554,19 +9752,34 @@ mod automation_target_tests {
 
     #[test]
     fn build_instrument_target_still_works() {
-        let t = build_automation_target("FilterCutoff", 2).unwrap();
+        // Instrument-level params ignore the module set.
+        let t = build_automation_target("FilterCutoff", 2, &[]).unwrap();
         assert!(matches!(t, AutomationTarget::Instrument { .. }));
     }
 
     #[test]
     fn build_module_target_rejects_non_automatable_and_invalid() {
+        let m = flt1();
         // "type" is the FilterMode choice param — excluded from the allowlist.
-        assert!(build_automation_target("module:flt:1:type", 0).is_err());
-        // Unknown param / module type / instance / arity.
-        assert!(build_automation_target("module:flt:1:nope", 0).is_err());
-        assert!(build_automation_target("module:zzz:1:cutoff", 0).is_err());
-        assert!(build_automation_target("module:flt:x:cutoff", 0).is_err());
-        assert!(build_automation_target("module:flt:1", 0).is_err());
+        assert!(build_automation_target("module:flt:1:type", 0, &m).is_err());
+        // Unknown param / module type / instance-string / arity.
+        assert!(build_automation_target("module:flt:1:nope", 0, &m).is_err());
+        assert!(build_automation_target("module:zzz:1:cutoff", 0, &m).is_err());
+        assert!(build_automation_target("module:flt:x:cutoff", 0, &m).is_err());
+        assert!(build_automation_target("module:flt:1", 0, &m).is_err());
+    }
+
+    #[test]
+    fn build_module_target_rejects_missing_instance() {
+        // Instrument has flt-4 / flt-5 but no flt-1: a flt:1 target must be
+        // rejected rather than creating a silently-dead lane.
+        let modules = vec![
+            ModuleId::new(synth_core::ModuleType::Filter, 4),
+            ModuleId::new(synth_core::ModuleType::Filter, 5),
+        ];
+        assert!(build_automation_target("module:flt:1:cutoff", 1, &modules).is_err());
+        // The instances that do exist are accepted.
+        assert!(build_automation_target("module:flt:4:cutoff", 1, &modules).is_ok());
     }
 
     #[test]
@@ -9579,7 +9792,8 @@ mod automation_target_tests {
         };
         let (name, inst) = automation_target_info(&target);
         assert_eq!(inst, Some(5));
-        let rebuilt = build_automation_target(&name, inst.unwrap()).unwrap();
+        let modules = vec![ModuleId::new(synth_core::ModuleType::Filter, 2)];
+        let rebuilt = build_automation_target(&name, inst.unwrap(), &modules).unwrap();
         assert_eq!(rebuilt, target);
     }
 }
