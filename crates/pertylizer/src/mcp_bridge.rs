@@ -2114,7 +2114,7 @@ impl SynthBridge for AppSynthBridge {
         pattern_id: u32,
         points: &[BridgeAutomationPointData],
     ) -> Result<BatchResult, McpBridgeError> {
-        use synth_sequencer::{AutomationPoint, AutomationTarget, PatternTick, SeqInstrumentId};
+        use synth_sequencer::{AutomationPoint, PatternTick};
 
         let mut song_w = self.shared.song.write();
         let pat_id = synth_sequencer::PatternId(pattern_id);
@@ -2127,23 +2127,23 @@ impl SynthBridge for AppSynthBridge {
         let total = points.len();
 
         for (i, pt) in points.iter().enumerate() {
-            let param = match parse_auto_instrument_param(&pt.param) {
-                Some(p) => p,
-                None => {
+            // Share the same target builder as the read/edit/clear tools so the
+            // `module:<type>:<instance>:<param>` syntax (validated against the
+            // automatable allowlist) can also *create* lanes, not just plain
+            // instrument params.
+            let target = match build_automation_target(&pt.param, pt.instrument_id) {
+                Ok(t) => t,
+                Err(e) => {
                     items.push(BatchItemResult {
                         index: i,
                         success: false,
                         id: None,
-                        error: Some(format!("unknown param '{}'", pt.param)),
+                        error: Some(e.to_string()),
                     });
                     continue;
                 }
             };
 
-            let target = AutomationTarget::Instrument {
-                instrument: SeqInstrumentId::new(pt.instrument_id),
-                param,
-            };
             let tick = PatternTick(beats_to_ticks(pt.beat));
             let curve = parse_curve_type(&pt.curve);
             let lane = pattern.get_or_create_automation(target);
