@@ -59,6 +59,9 @@ pub struct Filter {
     override_cutoff: Option<Hertz>,
     /// Resonance override from sequencer automation.
     override_resonance: Option<NormalizedValue>,
+    /// Last block's final (ramped) base cutoff in Hz, for per-block linear
+    /// de-zippering of the effective cutoff across block boundaries.
+    cutoff_smoothed: f32,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -88,18 +91,29 @@ impl Filter {
             mod_offset_resonance: NormalizedValue::MIN,
             override_cutoff: None,
             override_resonance: None,
+            cutoff_smoothed: 1000.0,
             output_buffer: AudioBuffer::new(1024),
         }
     }
 
-    fn effective_cutoff(&self) -> Hertz {
+    /// Apply key-tracking + mod-matrix offset (and the audible-range clamp) to a
+    /// given base cutoff. Shared by [`Self::effective_cutoff`] (the un-ramped
+    /// target, used for queries/tests) and the per-sample ramped process path.
+    fn cutoff_from_base(&self, base_cutoff: Hertz) -> Hertz {
         let tracking_offset =
             (self.base_note.as_u8() as f32 - 60.0) * self.key_tracking.as_f32() * 100.0;
         // Apply mod matrix offset (in semitones, converted to exponential scaling)
         let total_offset = tracking_offset + self.mod_offset_cutoff.as_f32() * 100.0;
-        let base_cutoff = self.override_cutoff.unwrap_or(self.cutoff);
         let tracked = base_cutoff.as_f32() * (total_offset / 1200.0).exp2();
         Hertz::new(tracked.clamp(20.0, self.sample_rate.as_f32() * 0.49))
+    }
+
+    /// The target effective cutoff (override-or-base, with tracking/mod applied),
+    /// ignoring per-block smoothing. Currently used only by tests to assert the
+    /// override→effective mapping without driving a full process block.
+    #[cfg(test)]
+    fn effective_cutoff(&self) -> Hertz {
+        self.cutoff_from_base(self.override_cutoff.unwrap_or(self.cutoff))
     }
 
     /// Map FilterMode to SvfFilterType for character filters.
@@ -130,10 +144,11 @@ impl Filter {
     fn process_sample(
         &mut self,
         input: f32,
+        base_cutoff: Hertz,
         cutoff_mod: Semitones,
         res_mod: NormalizedValue,
     ) -> f32 {
-        let cutoff_hz = (self.effective_cutoff().as_f32()
+        let cutoff_hz = (self.cutoff_from_base(base_cutoff).as_f32()
             * (2.0_f32).powf(cutoff_mod.as_f32() / 12.0))
         .clamp(20.0, self.sample_rate.as_f32() * 0.49);
         let cutoff = Hertz::new(cutoff_hz);
@@ -341,21 +356,38 @@ impl PolyModule for Filter {
         let cutoff_cv = inputs.reader(PortName::CUTOFF_CV, 0.0);
         let res_cv = inputs.reader(PortName::RESONANCE_CV, 0.0);
 
+        // Per-block linear ramp of the base cutoff from the previous block's
+        // final value to this block's target, so control-rate cutoff automation
+        // doesn't step (zipper) at block boundaries. Key-tracking, mod-matrix
+        // offset and CV are applied per-sample on top of the ramped base.
+        let n = context.samples.as_usize();
+        let cutoff_start = self.cutoff_smoothed;
+        let cutoff_target = self.override_cutoff.unwrap_or(self.cutoff).as_f32();
+        #[allow(clippy::cast_precision_loss)]
+        let inv_n = if n > 0 { 1.0 / n as f32 } else { 0.0 };
+
         // Scale CV input to semitones. The Mod Matrix path uses ×48 (4 octaves
         // at full scale); applying the same scale here means a direct cable from
         // an envelope is just as expressive as routing through the matrix.
         // `env_amount` (default 0.25 = 12 st = 1 octave at full env) acts as
         // the per-filter "Env Amt" knob; `cv_amt` is a separate -1..+1
         // attenuverter that also flips polarity.
-        for i in 0..context.samples.as_usize() {
+        for i in 0..n {
             let input = audio_in[i];
             let cutoff_mod = Semitones::new(
                 cutoff_cv[i] * self.cutoff_mod_amount.as_f32() * self.env_amount.as_f32() * 48.0,
             );
             let res_mod = NormalizedValue::new(res_cv[i]);
 
-            self.output_buffer[i] = self.process_sample(input, cutoff_mod, res_mod);
+            // Linear ramp: sample (n-1) lands exactly on the target.
+            #[allow(clippy::cast_precision_loss)]
+            let ramp_t = (i + 1) as f32 * inv_n;
+            let base_cutoff = Hertz::new(cutoff_start + (cutoff_target - cutoff_start) * ramp_t);
+
+            self.output_buffer[i] = self.process_sample(input, base_cutoff, cutoff_mod, res_mod);
         }
+        // Carry the target as the next block's start for boundary continuity.
+        self.cutoff_smoothed = cutoff_target;
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
@@ -764,9 +796,69 @@ mod tests {
         filter.resonance = NormalizedValue::new(0.99);
 
         for _ in 0..1000 {
-            let out = filter.process_sample(0.5, Semitones::ZERO, NormalizedValue::MIN);
+            let out = filter.process_sample(
+                0.5,
+                Hertz::new(100.0),
+                Semitones::ZERO,
+                NormalizedValue::MIN,
+            );
             assert!(out.is_finite(), "Filter output is not finite");
             assert!(out.abs() < 100.0, "Filter output exploded");
         }
+    }
+
+    #[test]
+    fn test_filter_cutoff_override_ramps_without_zipper() {
+        use synth_core::SampleCount;
+
+        // Osc-free: feed the filter a constant DC input and watch the base cutoff
+        // ramp by inspecting `cutoff_smoothed` after each block. A step override
+        // must not jump the smoothed base cutoff in one sample.
+        let mut filter = Filter::new();
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        let mut input = AudioBuffer::new(256);
+        for i in 0..256 {
+            input[i] = 1.0;
+        }
+
+        let process = |filter: &mut Filter| {
+            let mut outputs = HashMap::new();
+            outputs.insert(PortName::OUT, AudioBuffer::new(256));
+            filter.process(
+                InputPorts::new(&[(PortName::IN, &input)]),
+                &mut outputs,
+                &ctx,
+            );
+        };
+
+        // Settle at the base cutoff (1000 Hz).
+        process(&mut filter);
+        assert!((filter.cutoff_smoothed - 1000.0).abs() < 1.0);
+
+        // Step the override to 20 Hz. Within the block the base cutoff must
+        // *traverse* from 1000 toward 20, not jump instantly; by block end it
+        // lands on the target.
+        filter.set_param_override(Param::Filter(FilterParam::Cutoff(Hertz::new(20.0))));
+
+        // Manually replicate the first ramp step to confirm continuity: the
+        // first sample's base cutoff is one (1/n) step below 1000, far from 20.
+        let n = 256.0;
+        let first_step = 1000.0 + (20.0 - 1000.0) * (1.0 / n);
+        assert!(
+            first_step > 900.0,
+            "first ramp step should stay near the previous value, got {first_step}"
+        );
+
+        process(&mut filter);
+        // Reached the target by block end.
+        assert!(
+            (filter.cutoff_smoothed - 20.0).abs() < 0.5,
+            "cutoff should ramp to target by block end, got {}",
+            filter.cutoff_smoothed
+        );
     }
 }

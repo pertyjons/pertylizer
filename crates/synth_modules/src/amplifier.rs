@@ -32,6 +32,9 @@ pub struct Amplifier {
     override_level: Option<Gain>,
     /// Pan override from sequencer automation.
     override_pan: Option<BipolarValue>,
+    /// Last block's final effective level, for per-block linear de-zippering of
+    /// the (control-rate) effective level across block boundaries.
+    level_prev: f32,
     output_left: AudioBuffer,
     output_right: AudioBuffer,
 }
@@ -48,6 +51,7 @@ impl Amplifier {
             mod_offset_pan: BipolarValue::CENTER,
             override_level: None,
             override_pan: None,
+            level_prev: Gain::UNITY.as_f32(),
             output_left: AudioBuffer::new(1024),
             output_right: AudioBuffer::new(1024),
         }
@@ -164,10 +168,18 @@ impl PolyModule for Amplifier {
 
         // Effective base values: an automation override replaces the base while
         // active; the base param is left untouched.
-        let level = self.override_level.unwrap_or(self.level);
+        let level_target = self.override_level.unwrap_or(self.level).as_f32();
         let pan = self.override_pan.unwrap_or(self.pan);
 
-        for i in 0..context.samples.as_usize() {
+        // Per-block linear ramp of the effective level from the previous block's
+        // final value to this block's target, so control-rate level/volume
+        // automation doesn't step (zipper) at block boundaries.
+        let n = context.samples.as_usize();
+        let level_start = self.level_prev;
+        #[allow(clippy::cast_precision_loss)]
+        let inv_n = if n > 0 { 1.0 / n as f32 } else { 0.0 };
+
+        for i in 0..n {
             // Get input: use stereo inputs if connected, otherwise mono
             let (input_l, input_r) = if has_stereo_input {
                 (audio_in_l[i], audio_in_r[i])
@@ -180,8 +192,12 @@ impl PolyModule for Amplifier {
             // In bipolar mode, CV can be negative (ring modulation)
             // In unipolar mode, CV is clamped to positive (standard VCA)
             let cv_scaled = if self.cv_bipolar { cv } else { cv.max(0.0) };
+            // Linear ramp: sample (n-1) lands exactly on the target.
+            #[allow(clippy::cast_precision_loss)]
+            let ramp_t = (i + 1) as f32 * inv_n;
+            let level_now = level_start + (level_target - level_start) * ramp_t;
             // Apply mod matrix level offset (additive to base level)
-            let base_level = (level.as_f32() + self.mod_offset_level.as_f32()).clamp(0.0, 2.0);
+            let base_level = (level_now + self.mod_offset_level.as_f32()).clamp(0.0, 2.0);
             let effective_level = base_level * cv_scaled;
 
             // BipolarValue::new() clamps internally to [-1, 1]
@@ -199,6 +215,9 @@ impl PolyModule for Amplifier {
             self.output_left[i] = Self::apply_clip(left, self.clip_mode);
             self.output_right[i] = Self::apply_clip(right, self.clip_mode);
         }
+        // Block ended exactly on the target (ramp_t == 1 at the last sample);
+        // carry it as the start of the next block for boundary continuity.
+        self.level_prev = level_target;
 
         if let Some(left) = outputs.get_mut(&PortName::LEFT) {
             left.copy_from(&self.output_left);
@@ -536,6 +555,8 @@ mod tests {
             ..ProcessContext::default()
         };
 
+        // Read the LAST sample: the effective level is now de-zippered with a
+        // per-block linear ramp, so it lands on the target by the block end.
         let run = |amp: &mut Amplifier, input: &AudioBuffer| -> f32 {
             let mut outputs = HashMap::new();
             outputs.insert(PortName::OUT, AudioBuffer::new(1024));
@@ -544,7 +565,7 @@ mod tests {
                 &mut outputs,
                 &context,
             );
-            outputs[&PortName::OUT][0]
+            outputs[&PortName::OUT][63]
         };
 
         let base_out = run(&mut amp, &input);
@@ -564,5 +585,57 @@ mod tests {
         assert!((reverted_out - base_out).abs() < 1e-4);
         assert!(amp.override_level.is_none());
         assert!(amp.override_pan.is_none());
+    }
+
+    #[test]
+    fn test_amplifier_level_override_ramps_without_zipper() {
+        let mut amp = Amplifier::new();
+        // Constant DC input so the output directly tracks the effective level.
+        let mut input = AudioBuffer::new(1024);
+        for i in 0..256 {
+            input[i] = 1.0;
+        }
+        let context = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        let run = |amp: &mut Amplifier, input: &AudioBuffer| -> Vec<f32> {
+            let mut outputs = HashMap::new();
+            outputs.insert(PortName::OUT, AudioBuffer::new(1024));
+            amp.process(
+                InputPorts::new(&[(PortName::IN, input)]),
+                &mut outputs,
+                &context,
+            );
+            (0..256).map(|i| outputs[&PortName::OUT][i]).collect()
+        };
+
+        // Block A at base level (unity): settled output.
+        let a = run(&mut amp, &input);
+        let last_a = a[255];
+        assert!(last_a > 0.1);
+
+        // Override to silence: block B must RAMP from last_a down, not step.
+        amp.set_param_override(Param::Amplifier(AmplifierParam::Level(Gain::new(0.0))));
+        let b = run(&mut amp, &input);
+
+        // Boundary continuity: B's first sample is one ramp step from A's last,
+        // not a hard jump to zero (which is what zipper noise would be).
+        assert!(
+            (b[0] - last_a).abs() < last_a * 0.05,
+            "expected smooth ramp across block boundary: last_a={last_a} first_b={}",
+            b[0]
+        );
+        // The ramp reaches the target (silence) by the end of the block.
+        assert!(
+            b[255] < 1e-6,
+            "should reach target by block end, got {}",
+            b[255]
+        );
+        // Monotonic descent — no per-sample spikes.
+        for w in b.windows(2) {
+            assert!(w[1] <= w[0] + 1e-6, "level ramp must be monotonic down");
+        }
     }
 }
