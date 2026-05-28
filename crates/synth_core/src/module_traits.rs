@@ -1051,6 +1051,32 @@ pub trait PolyModule: Describable + Send {
         // Default: nothing to clear
     }
 
+    /// Apply a transient parameter override from sequencer automation.
+    ///
+    /// Unlike [`set_param`](Self::set_param), which writes the module's stored
+    /// (base) value, an override is a transient layer applied on top of the base
+    /// during `process()` and removed by
+    /// [`clear_param_overrides`](Self::clear_param_overrides) on transport stop —
+    /// the base param is **never** mutated by automation, so a project saved
+    /// mid-playback still stores the base value.
+    ///
+    /// The `Param` carries both *which* parameter to override and the absolute
+    /// value to use: an override **replaces** the base for that parameter while
+    /// active. This is deliberately distinct from
+    /// [`set_mod_offset`](Self::set_mod_offset), which is *additive* — automation
+    /// is absolute, mod-matrix modulation is an offset.
+    ///
+    /// Default: no-op (module does not support automation overrides).
+    fn set_param_override(&mut self, _param: Param) {
+        // Default: no override support.
+    }
+
+    /// Clear all transient parameter overrides, reverting affected parameters to
+    /// their base values. Called on transport stop (real-time safe).
+    fn clear_param_overrides(&mut self) {
+        // Default: nothing to clear.
+    }
+
     /// Load sample audio data for playback (Sampler modules only).
     /// Default implementation does nothing.
     fn load_sample_data(

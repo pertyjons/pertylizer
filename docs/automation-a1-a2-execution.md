@@ -39,9 +39,11 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
 ## Step ledger
 
 ### Phase A1 + the override layer it needs
-- [ ] **S1 — Override API on `PolyModule`.** Add `set_param_override(&mut self,
-  param: &Param, value: f32)` and `clear_param_overrides(&mut self)`, default no-op.
-  Decide storage convention (small fixed override store per module). Build green.
+- [x] **S1 — Override API on `PolyModule`.** Added `set_param_override(&mut self,
+  param: Param)` and `clear_param_overrides(&mut self)`, default no-op (mirrors
+  `set_mod_offset`/`clear_mod_offsets`). `Param` carries the value, so the
+  `(&Param, f32)` shape was dropped for the cleaner `Param`-by-value. Override =
+  absolute *replace* (vs additive `set_mod_offset`). Per-module storage is S2.
 - [ ] **S2 — Implement override for A1-target modules.** Filter (Cutoff, Resonance),
   Envelope (Attack/Decay/Sustain/Release), Amplifier (Level/Pan), Oscillator (the
   pitch/PWM-relevant params). `process()` reads base+override. Unit tests per module.
@@ -88,3 +90,4 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
 ## Status log (append one line per iteration)
 
 - (run starts here)
+- S1 done — override API on `PolyModule` (default no-op). Gate green (fmt/build/clippy/test exit 0), code-review (none). Found: `ParameterDescriptor.modulatable` already encodes the S7 allowlist (choice→false, float→true).
