@@ -1,7 +1,7 @@
 # Pertylizer × MCP — AI Agent Integration Guide
 
 Pertylizer ships with a built-in [Model Context Protocol](https://modelcontextprotocol.io) server that exposes
-**~120 tools** for full remote control of the synth, sequencer, sample library, and Acoustic World Engine. Any
+**~150 tools** for full remote control of the synth, sequencer, sample library, and Acoustic World Engine. Any
 MCP-capable client — Claude Code, Claude Desktop, custom agents — can use it to build instruments, compose songs,
 edit patterns, render audio, and analyze the result, all while the synth keeps running.
 
@@ -146,7 +146,8 @@ Read the current state of instruments, modules, ports, parameters, and the audio
 | `list_instruments` | All instruments with id, name, category |
 | `get_instrument_info` | Modules, connections, parameter values for one instrument |
 | `get_instrument_profiles` | Auto-inferred role (drums/bass/lead/pad/pluck/FX) with confidence + signal trail |
-| `list_modules` | All modules in an instrument |
+| `get_instrument_automation_targets` | Valid automation targets for an instrument: every automatable per-module parameter (ready-to-use target string, range, unit, response curve) plus the instrument macros |
+| `list_modules` | All modules in an instrument; each parameter carries `type_id`, `unit`, `is_automatable`, and `response_curve` |
 | `list_module_types` | All 67 module types with categories |
 | `get_module_type_info` | Ports, parameters, defaults, and ranges for a module type |
 | `search_modules` | Fuzzy search by name across all module types |
@@ -169,7 +170,7 @@ Create instruments, wire modules together, set parameters.
 | `add_module`, `remove_module` | Modify the graph |
 | `connect`, `connect_multiple`, `disconnect` | Cables |
 | `clear_graph`, `auto_layout` | Reset / tidy |
-| `set_parameter`, `set_parameters` | One or many params atomically |
+| `set_parameter`, `set_parameters` | One or many params atomically; value may be a number, a choice string (`"sawtooth"`), or a boolean |
 | `build_instrument` | Single call: full instrument from a JSON spec |
 | `apply_example_patch`, `load_example_patch`, `list_example_patches` | Built-in patch library |
 
@@ -223,10 +224,15 @@ Non-realtime composition.
 
 ### Automation
 
-Pattern-level breakpoint automation for any parameter.
+Pattern-level breakpoint automation for instrument macros (Volume, Pan, Filter
+Cutoff/Resonance, Attack/Decay/Sustain/Release) and any continuous, RT-safe
+per-module parameter. Targets can be given as a structured `target` object or the
+`module:<type>:<instance>:<param>` DSL string; the `Exponential` curve takes a
+`curve_strength` (-127..=127). See [AI-Friendly Features](#ai-friendly-features).
 
 | Tool | Purpose |
 |------|---------|
+| `get_instrument_automation_targets` | Discover the valid targets (per-module + macros) for an instrument before editing |
 | `add_automation_points`, `remove_automation_points` | Edit |
 | `list_automation_lanes`, `get_automation_points` | Read |
 | `clear_automation_lane` | Wipe |
@@ -302,6 +308,72 @@ Pertylizer's MCP layer is designed *for agents*, not as an afterthought.
 
 Agents don't need to manually `set_instrument_category` — the synth tells them what each instrument *is*.
 
+### Self-describing, validated automation
+
+Automation is designed so an agent can pick the right target on the first try
+instead of guessing a stringly-typed DSL:
+
+- **Discover before you write.** `get_instrument_automation_targets(instrument_id)`
+  returns every valid target for an instrument — the instrument macros plus each
+  automatable per-module parameter — with a ready-to-use `target` string, `unit`,
+  `min`/`max`, and `response_curve`. No need to reverse-engineer `type_id`s or
+  instance indices from `list_modules`.
+
+```json
+// get_instrument_automation_targets(instrument_id=1) -> a flat array of targets
+[
+  { "target": "module:flt:4:cutoff", "kind": "module", "module_id": "flt-4",
+    "param_id": "cutoff", "display_name": "Cutoff", "unit": "Hz",
+    "min": 20.0, "max": 20000.0, "response_curve": "Logarithmic" },
+  { "target": "FilterCutoff", "kind": "instrument", "display_name": "Filter Cutoff" }
+]
+```
+
+Each entry's `target` string is ready to pass straight to the automation tools;
+`kind` distinguishes per-`module` parameters from instrument-level macros.
+
+- **Structured targets.** `add_automation_points` accepts a typed `target` object
+  in addition to the `module:<type>:<instance>:<param>` / macro string. The
+  structured form is a tagged union mirroring the engine's `AutomationTarget`, so
+  there is no prose grammar to memorize:
+
+```json
+{
+  "pattern_id": 0,
+  "points": [
+    { "target": { "module": { "module_type": "flt", "instance": 1, "param_id": "cutoff" } },
+      "instrument_id": 1, "beat": 0.0, "value": 0.1, "curve": "Linear" },
+    { "target": { "instrument": { "param": "FilterCutoff" } },
+      "instrument_id": 1, "beat": 4.0, "value": 0.9,
+      "curve": "Exponential", "curve_strength": -40 }
+  ]
+}
+```
+
+- **Instance validation.** Per-module targets are checked against the instrument's
+  real graph and the automatable allowlist (continuous + RT-safe, no enum or
+  structural params), so a target that points at a module instance that doesn't
+  exist is rejected rather than creating a silently dead lane.
+- **Curve strength.** The `Exponential` curve carries a `curve_strength`
+  (-127..=127; negative = ease-in, positive = ease-out).
+- **Response curves exposed.** Module/parameter listings include each parameter's
+  `response_curve` (e.g. cutoff is `Logarithmic`) and `unit`, so an agent can
+  convert a real value into the correct 0..1 lane value.
+
+### Forgiving input vocabulary
+
+The tools accept the shapes an agent naturally reaches for:
+
+- **Module-type tokens** are case-insensitive and accept the short key (`"flt"`),
+  the snake_case full name (`"ladder_filter"`), or the display name
+  (`"Ladder Filter"`) — in `add_module`, `build_instrument`, and automation targets.
+- **Parameter values** in `set_parameter` / `set_parameters` accept a number in the
+  native range, a choice *string* (`"sawtooth"`, matched against the choice id or
+  display name), or a boolean for on/off params — not just raw floats.
+- **Canonical param keys.** Parameter listings expose the snake_case `type_id`
+  (e.g. `"cutoff"`) next to the human-readable `name`, so the same key works for
+  reading, automating, and addressing a parameter.
+
 ### Deterministic offline analysis
 
 `analyze_section` and `analyze_mix_bus` render audio offline (separate `SynthEngine` instance, no shared state with
@@ -339,7 +411,7 @@ mod-matrix slot-source mismatches. Run it after any patch edit to catch broken g
                          ▼
 ┌─────────────────────────────────────────────────────────┐
 │  synth_mcp::server (rmcp + axum)                        │
-│  • 120 #[tool] handlers                                 │
+│  • ~150 #[tool] handlers                                │
 │  • Validates JSON params, serializes results            │
 └────────────────────────┬────────────────────────────────┘
                          │  SynthBridge trait (primitive types only)
