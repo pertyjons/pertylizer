@@ -969,6 +969,35 @@ impl Instrument {
         self.apply_param_override(module_id, build(value));
     }
 
+    /// Apply a normalized (`0..1`) automation value to a parameter on a
+    /// specific module, identified positionally by `module_type` + `instance`
+    /// (the [`AutomationTarget::Module`](synth_sequencer::AutomationTarget) form)
+    /// and by the descriptor `type_id` string `param_id` (e.g. `"cutoff"`).
+    ///
+    /// Resolves the parameter's cached descriptor, denormalizes through its
+    /// range/curve, and rebuilds the concrete [`Param`] with
+    /// [`Param::with_f32`](synth_core::Param::with_f32) before applying it via
+    /// the transient override path. No-op if the module or parameter is absent.
+    /// Real-time safe (cached descriptor read, no allocation).
+    pub fn apply_module_param_override(
+        &mut self,
+        module_type: ModuleType,
+        instance: u16,
+        param_id: &str,
+        normalized: NormalizedValue,
+    ) {
+        let module_id = crate::ModuleId::new(module_type, instance);
+        let Some(param) = self.voice_graph.module_descriptor(module_id).and_then(|d| {
+            d.parameters
+                .iter()
+                .find(|p| p.type_id == param_id)
+                .map(|p| p.id.with_f32(p.denormalize(normalized.as_f32())))
+        }) else {
+            return;
+        };
+        self.apply_param_override(module_id, param);
+    }
+
     /// Kill all voices immediately.
     pub fn panic(&mut self) {
         self.allocator.panic();

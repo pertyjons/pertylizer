@@ -2703,6 +2703,20 @@ fn route_sequencer_events(
                             *value,
                         ),
                     }
+                } else if let AutomationTarget::Module {
+                    instrument,
+                    module_type,
+                    instance,
+                    param_id,
+                } = target
+                    && let Some(engine_id) = mapping.engine_id(*instrument)
+                    && let Some(inst) = instruments.iter_mut().find(|i| i.id() == engine_id)
+                {
+                    // Generic A2 target: the positional (module_type, instance)
+                    // identity is rebuilt into a ModuleId, the parameter resolved
+                    // by descriptor type_id, and the 0..1 value denormalized via
+                    // that param's range. Reverted on stop (`handle_all_notes_off`).
+                    inst.apply_module_param_override(*module_type, *instance, param_id, *value);
                 }
             }
         }
@@ -3443,6 +3457,64 @@ mod tests {
         assert!(
             low < base * 0.25,
             "automation should have lowered the cutoff: {low} vs base {base}"
+        );
+    }
+
+    #[test]
+    fn module_automation_target_dispatches_through_override() {
+        use synth_core::{SampleCount, SampleRate};
+        use synth_modules::{Filter, Oscillator};
+        use synth_sequencer::{SeqInstrumentId, Tick};
+
+        // Osc -> Filter (sink); the filter is ModuleId(Filter, instance 1).
+        let mut instrument = Box::new(Instrument::new(InstrumentId::new(1), "test"));
+        let g = instrument.voice_graph_mut();
+        let osc_id = g.add_module(Box::new(Oscillator::new()));
+        let flt_id = g.add_module(Box::new(Filter::new()));
+        g.connect(osc_id, "out", flt_id, "in").unwrap();
+        let mut instruments = vec![instrument];
+
+        let mut mapping = InstrumentMapping::new();
+        mapping.insert(SeqInstrumentId(7), InstrumentId::new(1));
+
+        let note_rb = HeapRb::<NoteEvent>::new(16);
+        let (mut note_prod, _note_cons) = note_rb.split();
+        let drops = std::sync::atomic::AtomicU32::new(0);
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        fn settled_energy(graph: &mut ModuleGraph, ctx: &ProcessContext<'_>) -> f32 {
+            let mut out = AudioBuffer::new(256);
+            for _ in 0..16 {
+                graph.process(&mut out, ctx);
+            }
+            graph.process(&mut out, ctx);
+            (0..256).map(|i| out[i] * out[i]).sum()
+        }
+
+        let base = settled_energy(instruments[0].voice_graph_mut(), &ctx);
+        assert!(base > 1e-3, "expected audible base output, got {base}");
+
+        // Generic Module target: first Filter, "cutoff" param, 0.0 -> 20 Hz.
+        let events = vec![SequencerEvent::Parameter {
+            tick: Tick(0),
+            target: AutomationTarget::Module {
+                instrument: SeqInstrumentId(7),
+                module_type: ModuleType::Filter,
+                instance: 1,
+                param_id: "cutoff".to_string(),
+            },
+            value: NormalizedValue::MIN,
+        }];
+        route_sequencer_events(&events, &mut instruments, &mapping, &mut note_prod, &drops);
+
+        let low = settled_energy(instruments[0].voice_graph_mut(), &ctx);
+        assert!(
+            low < base * 0.25,
+            "module automation should have lowered the cutoff: {low} vs base {base}"
         );
     }
 }
