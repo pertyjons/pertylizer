@@ -398,7 +398,16 @@ impl PolyModule for Filter {
         if let Param::Filter(filter_param) = param {
             match filter_param {
                 FilterParam::Mode(m) => self.filter_type = m,
-                FilterParam::Cutoff(c) => self.cutoff = c.clamp_audible(),
+                FilterParam::Cutoff(c) => {
+                    self.cutoff = c.clamp_audible();
+                    // Seed the de-zipper anchor so a base change (patch load /
+                    // knob) takes effect immediately instead of gliding from the
+                    // previous anchor. An active automation override keeps
+                    // driving the ramp, so don't disturb it.
+                    if self.override_cutoff.is_none() {
+                        self.cutoff_smoothed = self.cutoff.as_f32();
+                    }
+                }
                 FilterParam::Resonance(r) => self.resonance = r,
                 FilterParam::KeyTracking(k) => self.key_tracking = k,
                 FilterParam::Drive(d) => self.drive = d,
@@ -738,6 +747,16 @@ mod tests {
         let filter = Filter::new();
         assert_eq!(filter.filter_type, FilterMode::Lowpass);
         assert!((filter.cutoff.as_f32() - 1000.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_filter_setparam_seeds_dezipper_anchor() {
+        // A base cutoff set via set_param must seed the ramp anchor so the first
+        // process block starts settled at the base, not gliding from the 1000 Hz
+        // init.
+        let mut filter = Filter::new();
+        filter.set_param(Param::Filter(FilterParam::Cutoff(Hertz::new(4000.0))));
+        assert!((filter.cutoff_smoothed - 4000.0).abs() < 0.5);
     }
 
     #[test]

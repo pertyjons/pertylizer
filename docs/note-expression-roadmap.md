@@ -169,6 +169,13 @@ generic param path ships, not after. Each is verified against current code.
   offline renderers do not yet evaluate automation, so they read base values. Bringing
   the offline path onto the same clock is future work (a known "offline reader sees
   state the live engine never wrote" bug class).
+- [ ] **`AutomationTarget::Module` `param_id: String` is cloned on the audio thread.**
+  _DEFERRED (A1/A2 first cut)._ In `sequencer_engine` the per-tick automation collection
+  and event emission `clone()` the target; for a `Module` target that heap-allocates the
+  `param_id` String inside `process()`, violating the RT-safety rule (bounded: control-rate,
+  only on changed Module points). The fix is to intern the param id into a `Copy` handle
+  (like `PortName` interns port names) so the target is alloc-free to clone — a data-model
+  change deferred out of the first cut.
 
 ---
 

@@ -117,6 +117,8 @@ impl Describable for Amplifier {
                 .description("Allow negative CV for ring modulation")
                 .range(0.0, 1.0)
                 .default(0.0)
+                // Discrete mode toggle, not a continuous automation target.
+                .modulatable(false)
                 .widget(WidgetHint::Toggle),
             )
             .port(
@@ -235,7 +237,15 @@ impl PolyModule for Amplifier {
     fn set_param(&mut self, param: Param) {
         if let Param::Amplifier(amp_param) = param {
             match amp_param {
-                AmplifierParam::Level(l) => self.level = Gain::new(l.as_f32().clamp(0.0, 2.0)),
+                AmplifierParam::Level(l) => {
+                    self.level = Gain::new(l.as_f32().clamp(0.0, 2.0));
+                    // Seed the de-zipper anchor so a base change takes effect
+                    // immediately rather than gliding from the previous anchor;
+                    // an active automation override keeps driving the ramp.
+                    if self.override_level.is_none() {
+                        self.level_prev = self.level.as_f32();
+                    }
+                }
                 AmplifierParam::Pan(p) => self.pan = p,
                 AmplifierParam::CvBipolar(b) => self.cv_bipolar = b,
             }
@@ -585,6 +595,31 @@ mod tests {
         assert!((reverted_out - base_out).abs() < 1e-4);
         assert!(amp.override_level.is_none());
         assert!(amp.override_pan.is_none());
+    }
+
+    #[test]
+    fn test_amplifier_param_automatable_allowlist() {
+        let d = Amplifier::new().descriptor();
+        let auto = |id: &str| {
+            d.parameters
+                .iter()
+                .find(|p| p.type_id == id)
+                .unwrap_or_else(|| panic!("missing param {id}"))
+                .is_automatable()
+        };
+        assert!(auto("level"));
+        assert!(auto("pan"));
+        // Discrete mode toggle — excluded from the automation allowlist.
+        assert!(!auto("cv_bipolar"));
+    }
+
+    #[test]
+    fn test_amplifier_setparam_seeds_dezipper_anchor() {
+        // A base level set via set_param must seed the ramp anchor so the first
+        // block starts at the base, not gliding from the unity init.
+        let mut amp = Amplifier::new();
+        amp.set_param(Param::Amplifier(AmplifierParam::Level(Gain::new(0.3))));
+        assert!((amp.level_prev - 0.3).abs() < 1e-6);
     }
 
     #[test]

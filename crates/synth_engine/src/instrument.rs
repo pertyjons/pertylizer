@@ -990,7 +990,10 @@ impl Instrument {
         let Some(param) = self.voice_graph.module_descriptor(module_id).and_then(|d| {
             d.parameters
                 .iter()
-                .find(|p| p.type_id == param_id)
+                // Only automatable (continuous, RT-safe, non-enum) params: guards
+                // against malformed/legacy targets whose `type_id` names a choice
+                // param, where `with_f32` would synthesize a garbage enum value.
+                .find(|p| p.type_id == param_id && p.is_automatable())
                 .map(|p| p.id.with_f32(p.denormalize(normalized.as_f32())))
         }) else {
             return;

@@ -940,14 +940,18 @@ mod tests {
             amp_id,
             Param::Amplifier(AmplifierParam::Level(Gain::new(0.0))),
         );
+        // Level is de-zippered with a per-block ramp, so the first block after
+        // the override fades down; the next block is fully silent.
+        let _ = peak(&mut voice, &ctx);
         assert!(
             peak(&mut voice, &ctx) < 1e-4,
-            "override should silence the amp"
+            "override should silence the amp once the ramp settles"
         );
 
         // Free-running oscillator: assert audible output is restored, not an
-        // exact peak (phase advances between blocks).
+        // exact peak (phase advances between blocks). One settling block first.
         voice.clear_param_overrides();
+        let _ = peak(&mut voice, &ctx);
         assert!(
             peak(&mut voice, &ctx) > 0.01,
             "clearing must restore audible output"

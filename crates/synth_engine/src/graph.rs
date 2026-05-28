@@ -1000,12 +1000,20 @@ mod tests {
             amp_id,
             Param::Amplifier(AmplifierParam::Level(Gain::new(0.0))),
         );
+        // The amp level is de-zippered with a per-block ramp, so the first block
+        // after the override fades down; the next block is fully silent.
+        let _ = peak(&mut graph, &ctx);
         let override_peak = peak(&mut graph, &ctx);
-        assert!(override_peak < 1e-4, "override should silence the amp");
+        assert!(
+            override_peak < 1e-4,
+            "override should silence the amp once the ramp settles"
+        );
 
         // The oscillator free-runs, so exact peaks drift block to block; assert
-        // that clearing restores audible output rather than an exact level.
+        // that clearing restores audible output rather than an exact level. One
+        // settling block first (the level ramps back up).
         graph.clear_param_overrides();
+        let _ = peak(&mut graph, &ctx);
         let reverted_peak = peak(&mut graph, &ctx);
         assert!(
             reverted_peak > 0.01,

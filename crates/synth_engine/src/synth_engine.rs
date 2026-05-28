@@ -1003,10 +1003,12 @@ impl SynthEngine {
                 self.state.transport.set_playing(false);
                 self.state.transport.set_ticks(0);
 
-                // Release all voices on all instruments
+                // Release all voices on all instruments and revert any
+                // automation overrides to their base values.
                 for instrument in &mut self.instruments {
                     instrument.all_notes_off();
                 }
+                self.clear_all_param_overrides();
             }
             EngineCommand::Pause => {
                 self.sequencer.pause();
@@ -1551,16 +1553,25 @@ impl SynthEngine {
     fn handle_all_notes_off(&mut self) {
         for instrument in &mut self.instruments {
             instrument.all_notes_off();
-            // Transport stop reverts automation overrides to their base values.
-            instrument.clear_param_overrides();
         }
-
         if self.use_modular_routing {
             self.module_graph.reset();
-            self.module_graph.clear_param_overrides();
         }
+        // Transport stop reverts automation overrides to their base values.
+        self.clear_all_param_overrides();
 
         let _ = self.event_producer.try_push(EngineEvent::AllNotesReleased);
+    }
+
+    /// Revert every transient automation override (instruments + modular graph)
+    /// to its base value. Invoked on any transport stop. Real-time safe.
+    fn clear_all_param_overrides(&mut self) {
+        for instrument in &mut self.instruments {
+            instrument.clear_param_overrides();
+        }
+        if self.use_modular_routing {
+            self.module_graph.clear_param_overrides();
+        }
     }
 
     // ========================================================================
@@ -2653,11 +2664,14 @@ fn route_sequencer_events(
                     && let Some(engine_id) = mapping.engine_id(*instrument)
                     && let Some(inst) = instruments.iter_mut().find(|i| i.id() == engine_id)
                 {
-                    // Module-targeted params resolve to the *first* module of
-                    // the relevant type in the instrument graph (the A1
-                    // convention) and apply through the transient override path,
-                    // denormalizing 0..1 via the descriptor range. Overrides are
-                    // reverted to base on transport stop (`handle_all_notes_off`).
+                    // The module-targeted params (FilterCutoff/Resonance, ADSR)
+                    // resolve to the *first* module of the relevant type in the
+                    // instrument graph (the A1 convention) and apply through the
+                    // transient override path, denormalizing 0..1 via the
+                    // descriptor range; those overrides revert to base on
+                    // transport stop (`clear_all_param_overrides`). Volume/Pan are
+                    // instrument-level channel state set directly (pre-existing
+                    // behavior, not part of the override layer).
                     match param {
                         AutoInstrumentParam::Volume => {
                             inst.set_volume(Gain::new(value.as_f32()));
@@ -2808,6 +2822,7 @@ impl AudioProcessor for SynthEngine {
             for instrument in &mut self.instruments {
                 instrument.all_notes_off();
             }
+            self.clear_all_param_overrides();
         }
 
         // Tick the recording state machine
