@@ -21,7 +21,7 @@ use crate::voice::{VoiceId, VoiceState};
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_awe::{SpatialContext, SpatialVoiceBank};
 use synth_core::{
-    AudioBuffer, BipolarValue, Gain, MidiNote, MuteState, NormalizedValue, ProcessContext,
+    AudioBuffer, BipolarValue, Gain, MidiNote, MuteState, NormalizedValue, Param, ProcessContext,
     SampleCount, SamplePosition, SampleRate, Seconds, Semitones, SoloState, Velocity,
 };
 use synth_dsp::oversampling::{Downsampler, OversamplingFactor};
@@ -909,6 +909,30 @@ impl Instrument {
     /// Release all notes.
     pub fn all_notes_off(&mut self) {
         self.allocator.all_notes_off();
+    }
+
+    /// Apply a transient automation override to a module, fanned out to every
+    /// voice in the pool so all currently allocated voices reflect the
+    /// automation value. The override is also written to the template
+    /// `voice_graph`, which `clone_structure` copies — so voices later rebuilt
+    /// from the template inherit it (the allocator reuses pooled voices for new
+    /// notes, so this only matters on an explicit voice rebuild). The base
+    /// parameter is never mutated. Real-time safe.
+    pub fn apply_param_override(&mut self, module_id: crate::ModuleId, param: Param) {
+        self.voice_graph.apply_param_override(module_id, param);
+        for voice in self.allocator.voices_mut() {
+            voice.apply_param_override(module_id, param);
+        }
+    }
+
+    /// Clear all transient automation overrides on the template graph and every
+    /// voice, reverting affected parameters to their base values. Called on
+    /// transport stop. Real-time safe.
+    pub fn clear_param_overrides(&mut self) {
+        self.voice_graph.clear_param_overrides();
+        for voice in self.allocator.voices_mut() {
+            voice.clear_param_overrides();
+        }
     }
 
     /// Kill all voices immediately.

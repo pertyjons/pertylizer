@@ -384,6 +384,18 @@ impl Voice {
         self.graph.set_param(module_id, param);
     }
 
+    /// Apply a transient automation override to a module in this voice's graph.
+    /// The base parameter is never mutated. Real-time safe.
+    pub fn apply_param_override(&mut self, module_id: crate::ModuleId, param: Param) {
+        self.graph.apply_param_override(module_id, param);
+    }
+
+    /// Clear all transient automation overrides in this voice's graph. Called
+    /// on transport stop. Real-time safe.
+    pub fn clear_param_overrides(&mut self) {
+        self.graph.clear_param_overrides();
+    }
+
     /// Get a parameter from a module in the graph.
     pub fn get_param(&self, module_id: crate::ModuleId, param: &Param) -> Option<f32> {
         self.graph.get_param(module_id, param)
@@ -894,5 +906,51 @@ mod tests {
         let voice = Voice::new(VoiceId::new(0));
         assert_eq!(voice.state, VoiceState::Idle);
         assert!(voice.graph.is_empty());
+    }
+
+    #[test]
+    fn test_voice_param_override_delegates_to_graph() {
+        use synth_core::{AmplifierParam, Gain, SampleCount, SampleRate};
+        use synth_modules::{Amplifier, Oscillator};
+
+        let mut voice = Voice::new(VoiceId::new(0));
+        let osc_id = voice.graph.add_module(Box::new(Oscillator::new()));
+        let amp_id = voice.graph.add_module(Box::new(Amplifier::new()));
+        voice
+            .graph
+            .connect(osc_id, "out", amp_id, "in")
+            .expect("osc out -> amp in");
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+
+        fn peak(voice: &mut Voice, ctx: &ProcessContext<'_>) -> f32 {
+            let mut out = AudioBuffer::new(256);
+            voice.graph.process(&mut out, ctx);
+            (0..256).map(|i| out[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        let base = peak(&mut voice, &ctx);
+        assert!(base > 0.01);
+
+        voice.apply_param_override(
+            amp_id,
+            Param::Amplifier(AmplifierParam::Level(Gain::new(0.0))),
+        );
+        assert!(
+            peak(&mut voice, &ctx) < 1e-4,
+            "override should silence the amp"
+        );
+
+        // Free-running oscillator: assert audible output is restored, not an
+        // exact peak (phase advances between blocks).
+        voice.clear_param_overrides();
+        assert!(
+            peak(&mut voice, &ctx) > 0.01,
+            "clearing must restore audible output"
+        );
     }
 }

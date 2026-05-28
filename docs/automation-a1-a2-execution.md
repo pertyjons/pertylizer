@@ -51,9 +51,13 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
   mod-matrix offsets still apply additively on top. Override setters clamp like
   `set_param`; `clear_param_overrides` reverts to base. One behavioral unit test per
   module (effective value under override + base-untouched + revert-on-clear).
-- [ ] **S3 — Graph + Voice plumbing.** `Graph::apply_param_override(module_id,
-  param, value)` / `clear_param_overrides()`, fanned out to every live voice; clear
-  hook on transport stop. RT-safe. Tests.
+- [x] **S3 — Graph + Voice plumbing.** `ModuleGraph::apply_param_override(module_id,
+  param)` (value carried in `Param`, per S1) routes to one module; `clear_param_overrides()`
+  fans out to all nodes (mirrors `apply_mod_offset`/`clear_mod_offsets`). `Voice` delegates
+  to its graph; `Instrument` fans out to template `voice_graph` + every pooled voice.
+  Clear hook on transport stop = `SynthEngine::handle_all_notes_off` (instruments +
+  modular `module_graph`). RT-safe (map/slice iteration, no alloc/lock/panic). Tests:
+  graph routing→silence→revert + unknown-module no-op, voice delegation.
 - [ ] **S4 — A1 dispatch.** Replace the `_ => {}` in the instrument `Parameter`
   dispatch (`synth_engine.rs:~2660`) for FilterCutoff/FilterResonance/Attack/Decay/
   Sustain/Release: resolve to the instrument's filter/envelope module (convention:
@@ -96,3 +100,4 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
 - (run starts here)
 - S1 done — override API on `PolyModule` (default no-op). Gate green (fmt/build/clippy/test exit 0), code-review (none). Found: `ParameterDescriptor.modulatable` already encodes the S7 allowlist (choice→false, float→true).
 - S2 done — per-module override storage for Filter/Envelope/Amplifier/Oscillator (`Option<T>` fields, `override.unwrap_or(base)` in process, mod-offset still additive on top). 4 behavioral unit tests. Gate green (fmt/build/clippy/test exit 0); independent code-review found no correctness bugs. Decisions: Oscillator targets Detune+PulseWidth (base Frequency is note-driven, left out); other modules keep the default no-op.
+- S3 done — Graph/Voice/Instrument override fan-out + transport-stop clear in `handle_all_notes_off`. 3 tests (osc→amp graph: override silences, clear restores; voice delegation; unknown-module no-op). Gate green (fmt/build/clippy/test exit 0); independent review found no correctness bugs. Notes: clear hook is `handle_all_notes_off` (sequencer sends AllNotesOff on stop); the allocator reuses pooled voices, so a future note inherits a template override only on an explicit voice rebuild (clone_structure copies override state) — doc'd on `Instrument::apply_param_override`.

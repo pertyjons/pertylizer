@@ -491,6 +491,28 @@ impl ModuleGraph {
         }
     }
 
+    /// Apply a transient automation override to a specific module.
+    ///
+    /// Routes to the module with the given id and replaces the targeted
+    /// parameter's effective value until [`Self::clear_param_overrides`]; the
+    /// module's stored base value (set via [`Self::set_param`]) is never
+    /// mutated. No-op if the module id is absent or the module does not support
+    /// the override (default `PolyModule` behaviour). Real-time safe.
+    pub fn apply_param_override(&mut self, module: ModuleId, param: Param) {
+        if let Some(node) = self.nodes.get_mut(&module) {
+            node.module.set_param_override(param);
+        }
+    }
+
+    /// Clear all transient automation overrides on every module in the graph,
+    /// reverting affected parameters to their base values. Called on transport
+    /// stop. Real-time safe.
+    pub fn clear_param_overrides(&mut self) {
+        for node in self.nodes.values_mut() {
+            node.module.clear_param_overrides();
+        }
+    }
+
     /// Get the last output sample value from a module (first sample of "out" port).
     ///
     /// Used to read LFO/Envelope output values for the mod matrix.
@@ -931,7 +953,68 @@ pub enum GraphError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synth_modules::Oscillator;
+    use synth_core::{AmplifierParam, Gain, SampleCount, SampleRate};
+    use synth_modules::{Amplifier, Oscillator};
+
+    #[test]
+    fn test_graph_param_override_routes_to_module_and_clears() {
+        // Osc (source) -> Amp (sink). Overriding the amp's level to zero must
+        // silence the graph output; clearing must restore the base level.
+        let mut graph = ModuleGraph::new();
+        let osc_id = graph.add_module(Box::new(Oscillator::new()));
+        let amp_id = graph.add_module(Box::new(Amplifier::new()));
+        graph
+            .connect(osc_id, "out", amp_id, "in")
+            .expect("osc out -> amp in");
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+
+        fn peak(graph: &mut ModuleGraph, ctx: &ProcessContext<'_>) -> f32 {
+            let mut out = AudioBuffer::new(256);
+            graph.process(&mut out, ctx);
+            (0..256).map(|i| out[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        let base_peak = peak(&mut graph, &ctx);
+        assert!(
+            base_peak > 0.01,
+            "expected audible base output, got {base_peak}"
+        );
+
+        graph.apply_param_override(
+            amp_id,
+            Param::Amplifier(AmplifierParam::Level(Gain::new(0.0))),
+        );
+        let override_peak = peak(&mut graph, &ctx);
+        assert!(override_peak < 1e-4, "override should silence the amp");
+
+        // The oscillator free-runs, so exact peaks drift block to block; assert
+        // that clearing restores audible output rather than an exact level.
+        graph.clear_param_overrides();
+        let reverted_peak = peak(&mut graph, &ctx);
+        assert!(
+            reverted_peak > 0.01,
+            "clearing must revert to the audible base level, got {reverted_peak}"
+        );
+    }
+
+    #[test]
+    fn test_graph_param_override_ignores_unknown_module() {
+        // Applying an override to an absent module id is a harmless no-op.
+        let mut graph = ModuleGraph::new();
+        let osc_id = graph.add_module(Box::new(Oscillator::new()));
+        let missing = crate::ModuleId::new(ModuleType::Amplifier, 99);
+        graph.apply_param_override(
+            missing,
+            Param::Amplifier(AmplifierParam::Level(Gain::new(0.0))),
+        );
+        // The real module is untouched and still present.
+        assert!(graph.get_module(osc_id).is_some());
+    }
 
     #[test]
     fn test_graph_creation() {

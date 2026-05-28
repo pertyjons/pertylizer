@@ -1550,10 +1550,13 @@ impl SynthEngine {
     fn handle_all_notes_off(&mut self) {
         for instrument in &mut self.instruments {
             instrument.all_notes_off();
+            // Transport stop reverts automation overrides to their base values.
+            instrument.clear_param_overrides();
         }
 
         if self.use_modular_routing {
             self.module_graph.reset();
+            self.module_graph.clear_param_overrides();
         }
 
         let _ = self.event_producer.try_push(EngineEvent::AllNotesReleased);
