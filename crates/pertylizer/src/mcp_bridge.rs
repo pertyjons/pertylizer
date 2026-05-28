@@ -5298,16 +5298,78 @@ fn format_curve_type(curve: synth_sequencer::CurveType) -> String {
     }
 }
 
-/// Build an `AutomationTarget` from parameter name and instrument ID.
+/// Build an `AutomationTarget` from a target string and instrument ID.
+///
+/// Two forms are accepted:
+/// - An instrument-level param name (e.g. `"FilterCutoff"`) →
+///   [`AutomationTarget::Instrument`](synth_sequencer::AutomationTarget::Instrument).
+/// - A generic module-parameter target `"module:<prefix>:<instance>:<param_id>"`
+///   (e.g. `"module:flt:1:cutoff"`) →
+///   [`AutomationTarget::Module`](synth_sequencer::AutomationTarget::Module).
+///   This is the inverse of [`automation_target_info`]'s Module rendering.
+///
+/// Module targets are validated against the automation allowlist: the parameter
+/// must exist on that module type's descriptor and be
+/// [`ParameterDescriptor::is_automatable`](synth_core::ParameterDescriptor::is_automatable).
 fn build_automation_target(
     target: &str,
     instrument_id: u16,
 ) -> Result<synth_sequencer::AutomationTarget, McpBridgeError> {
+    let instrument = synth_sequencer::SeqInstrumentId::new(instrument_id);
+
+    if let Some(rest) = target.strip_prefix("module:") {
+        return build_module_automation_target(rest, instrument);
+    }
+
     let param = parse_auto_instrument_param(target)
         .ok_or_else(|| McpBridgeError::Other(format!("unknown automation param: {target}")))?;
-    Ok(synth_sequencer::AutomationTarget::Instrument {
-        instrument: synth_sequencer::SeqInstrumentId::new(instrument_id),
-        param,
+    Ok(synth_sequencer::AutomationTarget::Instrument { instrument, param })
+}
+
+/// Parse and validate a module-parameter automation target from the
+/// `<prefix>:<instance>:<param_id>` body (the part after `"module:"`).
+fn build_module_automation_target(
+    body: &str,
+    instrument: synth_sequencer::SeqInstrumentId,
+) -> Result<synth_sequencer::AutomationTarget, McpBridgeError> {
+    let mut parts = body.splitn(3, ':');
+    let (Some(prefix), Some(instance_str), Some(param_id)) =
+        (parts.next(), parts.next(), parts.next())
+    else {
+        return Err(McpBridgeError::Other(format!(
+            "module target must be 'module:<type>:<instance>:<param>', got 'module:{body}'"
+        )));
+    };
+
+    let module_type = synth_core::ModuleType::from_prefix(prefix)
+        .ok_or_else(|| McpBridgeError::Other(format!("unknown module type prefix: '{prefix}'")))?;
+    let instance: u16 = instance_str
+        .parse()
+        .map_err(|_| McpBridgeError::Other(format!("invalid module instance: '{instance_str}'")))?;
+
+    // Validate against the allowlist: the param must exist on this module type
+    // and be automatable (continuous + RT-safe, non-choice).
+    let descriptor = crate::module_factory::get_descriptor(module_type).ok_or_else(|| {
+        McpBridgeError::Other(format!("no descriptor for module type '{prefix}'"))
+    })?;
+    let param = descriptor
+        .parameters
+        .iter()
+        .find(|p| p.type_id == param_id)
+        .ok_or_else(|| {
+            McpBridgeError::Other(format!("module '{prefix}' has no parameter '{param_id}'"))
+        })?;
+    if !param.is_automatable() {
+        return Err(McpBridgeError::Other(format!(
+            "parameter '{param_id}' on module '{prefix}' is not automatable"
+        )));
+    }
+
+    Ok(synth_sequencer::AutomationTarget::Module {
+        instrument,
+        module_type,
+        instance,
+        param_id: param_id.to_string(),
     })
 }
 
@@ -5338,7 +5400,8 @@ fn automation_target_info(target: &synth_sequencer::AutomationTarget) -> (String
             instance,
             param_id,
         } => (
-            format!("{module_type:?}[{instance}].{param_id}"),
+            // Canonical, round-trippable form parsed by `build_automation_target`.
+            format!("module:{}:{instance}:{param_id}", module_type.prefix()),
             Some(instrument.0),
         ),
     }
@@ -9467,5 +9530,56 @@ mod pre_master_peak_tests {
         let (peak, dbfs) = pre_master_peak_for(Some(&gains), 0.0, 0.0);
         assert_eq!(peak, 0.0);
         assert_eq!(dbfs, crate::audio::mix_analysis::SILENT_FLOOR_DBFS);
+    }
+}
+
+#[cfg(test)]
+mod automation_target_tests {
+    use super::*;
+    use synth_sequencer::{AutomationTarget, SeqInstrumentId};
+
+    #[test]
+    fn build_module_target_parses_and_validates() {
+        let t = build_automation_target("module:flt:1:cutoff", 3).unwrap();
+        assert_eq!(
+            t,
+            AutomationTarget::Module {
+                instrument: SeqInstrumentId::new(3),
+                module_type: synth_core::ModuleType::Filter,
+                instance: 1,
+                param_id: "cutoff".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn build_instrument_target_still_works() {
+        let t = build_automation_target("FilterCutoff", 2).unwrap();
+        assert!(matches!(t, AutomationTarget::Instrument { .. }));
+    }
+
+    #[test]
+    fn build_module_target_rejects_non_automatable_and_invalid() {
+        // "type" is the FilterMode choice param — excluded from the allowlist.
+        assert!(build_automation_target("module:flt:1:type", 0).is_err());
+        // Unknown param / module type / instance / arity.
+        assert!(build_automation_target("module:flt:1:nope", 0).is_err());
+        assert!(build_automation_target("module:zzz:1:cutoff", 0).is_err());
+        assert!(build_automation_target("module:flt:x:cutoff", 0).is_err());
+        assert!(build_automation_target("module:flt:1", 0).is_err());
+    }
+
+    #[test]
+    fn module_target_info_round_trips_through_build() {
+        let target = AutomationTarget::Module {
+            instrument: SeqInstrumentId::new(5),
+            module_type: synth_core::ModuleType::Filter,
+            instance: 2,
+            param_id: "resonance".to_string(),
+        };
+        let (name, inst) = automation_target_info(&target);
+        assert_eq!(inst, Some(5));
+        let rebuilt = build_automation_target(&name, inst.unwrap()).unwrap();
+        assert_eq!(rebuilt, target);
     }
 }
