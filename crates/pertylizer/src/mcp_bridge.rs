@@ -5412,15 +5412,15 @@ fn insert_automation_into_pattern(
     pattern: &mut synth_sequencer::Pattern,
     points: &[BridgeAutomationPointData],
 ) {
-    use synth_sequencer::{AutomationPoint, AutomationTarget, PatternTick, SeqInstrumentId};
+    use synth_sequencer::{AutomationPoint, PatternTick};
 
     for pt in points {
-        let Some(param) = parse_auto_instrument_param(&pt.param) else {
+        // Use the shared builder so bulk pattern creation accepts
+        // `module:<type>:<instance>:<param>` targets (validated against the
+        // automatable allowlist), not just plain instrument params. Unknown /
+        // non-automatable targets are skipped, as before.
+        let Ok(target) = build_automation_target(&pt.param, pt.instrument_id) else {
             continue;
-        };
-        let target = AutomationTarget::Instrument {
-            instrument: SeqInstrumentId::new(pt.instrument_id),
-            param,
         };
         let tick = PatternTick(beats_to_ticks(pt.beat));
         let curve = parse_curve_type(&pt.curve);
