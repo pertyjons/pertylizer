@@ -179,6 +179,58 @@ generic param path ships, not after. Each is verified against current code.
 
 ---
 
+## Cross-cutting — expression primitive taxonomy (the field-shape guardrail)
+**Applies to:** B, C, E · **Schema:** none (a classification that constrains the others)
+
+The set of musical-expression terms is open-ended (portamento, glissando, vibrato,
+tremolo, swell, scoop, fall, doit, trill, mordent, flam, drag, grace note, staccato,
+tenuto, ghost, accent, pizz, palm-mute…). Modelling *one term = one `Note` field*
+explodes the note model and re-implements the same DSP three times. They collapse to
+**four orthogonal primitives**; the rule is **place the primitive, not the term.**
+
+1. **Per-note modulator on a generic target** *(Phase C parametric → Phase E curve)* —
+   a curve *or* a parametric LFO (depth/rate/delay/shape) aimed at any
+   `(module_id, param)` via A2's addressing, applied as an additive offset on top of
+   the base (the mod-matrix `OscPitch` path, generalised). **Vibrato** = LFO→OscPitch;
+   **tremolo** = same LFO→Amp; **auto-pan** = →Pan; **brightness / MPE-slide** =
+   →Filter cutoff; **swell** = ramp→Amp; **scoop/fall/doit** & **pitch-envelope** =
+   short curve→OscPitch. Build the primitive once and vary the target — never three
+   separate "vibrato/tremolo/auto-pan" features.
+2. **Inter-note transition** *(Phase B)* — how note N connects to N+1: a *relation*
+   between notes, not state inside one. **Portamento/glide** = continuous;
+   **glissando** = stepped/chromatic; **legato/tie** = no retrigger. All are
+   `GlideState` + `AllocationMode::Legato`, parameterised on one axis: **interpolation
+   type (continuous vs stepped)** — the only thing separating glide from glissando.
+3. **Note-shape scalars** *(cheap, additive to `Note` — belongs in B/C, not E)* —
+   `Copy` `f32`/`bool` that shape a single note without a curve: **accent**
+   (velocity ×), **staccato/tenuto/marcato** (gate % of duration), **ghost/dead**,
+   **probability/ratchet**. RT-safe, alloc-free; these are the *only* terms that
+   justify a new `Note` field.
+4. **Generators / ornaments (Note Processors)** *(Phase E)* — things that *expand*
+   into primitives 1–3 or extra notes, and are therefore not storage: **arpeggio**
+   (Model B), **trill/mordent/turn** (a two-note arp — the same generator!),
+   **flam/drag/ruff/roll**, **grace note/acciaccatura**, **strum**, **humanize**,
+   **chord/scale-quantize**.
+
+Three consequences that should shape the Phase C/E field design:
+
+- **Adopt MPE / MIDI 2.0 as the canonical minimal dimension set** for primitive 1's
+  defaults — *bend, pressure, timbre/slide, velocity, release-velocity* — so MPE input
+  (Phase E) maps 1:1 onto the expression block with no translation layer.
+- **Stepped vs continuous interpolation is a curve/transition *property*, not a type.**
+  It is the single axis distinguishing glissando from portamento and trill/arp from
+  vibrato. Note the inversion of the **zipper-noise** pitfall above: here the steps are
+  *intentional holds* and smoothing would be the bug.
+- **Per-note spatial via AWE is a genuine differentiator not yet anywhere in this
+  plan.** It is just primitive 1 with an AWE room param as the target — per-note
+  position in the simulated room. No other synth has it; it earns a Phase E bullet.
+
+**Guardrail (one sentence):** a new musical term must map to an existing primitive +
+target, or it is a generator (primitive 4) — only add a `Note` field for a true
+note-shape scalar (primitive 3).
+
+---
+
 ## Phase A1 — Wire the 6 GUI-exposed instrument macros (bugfix)
 **Status:** ☑ Done (branch `feat/automation-a1-a2`) · **Effort:** S · **Axis:** broken → fix · **Schema:** none
 
@@ -228,7 +280,9 @@ staircases). The machinery exists in the allocator — this is the sequencer-sid
 data + wiring.
 
 - [ ] Add `Note.legato`/tie flag and `Note.glide` (target pitch or signed
-  semitones + glide time) in `note.rs`.
+  semitones + glide time + interpolation type) in `note.rs`. The interpolation axis
+  (continuous vs stepped) makes **glissando** the *same field* as portamento — see the
+  expression primitive taxonomy (primitive 2).
 - [ ] Drive the existing `AllocationMode::Legato` + `GlideState` per note from the
   sequencer playback path.
 - [ ] Precedence: per-note glide overrides the instrument allocator default.
@@ -242,10 +296,14 @@ data + wiring.
 Vibrato already works at patch level (mod matrix LFO→OscPitch); this makes it
 per-note and seeds the expression model.
 
-- [ ] Add a small per-note expression block (vibrato depth/delay, glide time,
-  probability…) that scales the existing mod-matrix pitch path.
-- [ ] This block **is** note expression in miniature — design its field shape so
-  Phase E can extend it rather than replace it.
+- [ ] Add a small per-note expression block that scales the existing mod-matrix pitch
+  path. Per the **expression primitive taxonomy**, this block is primitive 1
+  (parametric modulator: vibrato depth/delay/rate) plus the primitive-3 note-shape
+  scalars (accent, gate %, ghost, probability). Glide *time* stays with the transition
+  in Phase B (primitive 2), not here.
+- [ ] This block **is** note expression in miniature — design its field shape against
+  the *full* primitive set so Phase E's hand-drawn curves extend it rather than
+  replace it.
 
 ## Phase D — Shared / bus filter with automatable cutoff
 **Status:** ☐ Not started · **Effort:** L · **Axis:** blander → broken (sweep-centric tunes) · **Schema:** additive · **Depends on:** channel-strip Phase 7
@@ -271,10 +329,18 @@ before start.
   *inside* the note).
 - [ ] Generic per-note targets: reuse Phase A2's `(module_id, param)` addressing so
   curves can reach arbitrary module params per voice (this is the brief's "pivotal
-  question" — answering yes absorbs Problems 1b/1d/3 into expression).
-- [ ] MPE input mapping (per-note bend/pressure → per-note expression fields).
-- [ ] Note Processors layer (arpeggiator / chord / scale-quantize / humanize) —
-  optional, for live composition.
+  question" — answering yes absorbs Problems 1b/1d/3 into expression). This is the
+  taxonomy's primitive 1 with a hand-drawn curve as the source.
+- [ ] Per-note **spatial via AWE**: primitive 1 with an AWE room param as the target —
+  per-note position in the simulated room. Unique differentiator; no equivalent in
+  other synths.
+- [ ] MPE / MIDI 2.0 input mapping — drive the primitive-1 dimensions (bend, pressure,
+  timbre/slide, velocity, release-velocity) directly; this is the canonical minimal
+  set the Phase C expression block should already default to (see taxonomy).
+- [ ] Note Processors layer = the taxonomy's **primitive 4** (generators that expand
+  into primitives 1–3 or extra notes): arpeggiator, **trill/mordent/turn** (a two-note
+  arp), **flam/drag/ruff/roll**, **grace note**, **strum**, chord, scale-quantize,
+  humanize — optional, for live composition.
 - [ ] Voice allocator polish (unison, voice stealing — partially present).
 - [ ] Piano-roll per-note curve editor (the gating UI investment).
 
