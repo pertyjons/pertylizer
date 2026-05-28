@@ -87,9 +87,16 @@ pub enum McpBridgeError {
     )]
     InvalidCategory(String),
 
-    /// Invalid automation curve type.
-    #[error("invalid automation curve '{0}': valid curves are Linear, Step, Exponential, SCurve")]
-    InvalidCurve(String),
+    /// A parameter value (string choice or boolean) could not be applied.
+    #[error("invalid value '{value}' for parameter '{name}': {detail}")]
+    InvalidChoice {
+        /// The parameter that was being set.
+        name: String,
+        /// The value the client supplied.
+        value: String,
+        /// Why it was rejected (valid choices, or that the parameter is numeric).
+        detail: String,
+    },
 
     /// Index out of bounds in a batch operation.
     #[error("{name} index {index} out of bounds: only {count} items available")]

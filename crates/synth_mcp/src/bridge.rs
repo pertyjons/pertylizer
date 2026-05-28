@@ -274,13 +274,15 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     // === Write operations ===
 
-    /// Set a module parameter by name. Returns the parameter info with the actual value set.
+    /// Set a module parameter by name. The value may be a number, a boolean, or
+    /// a string choice (resolved against the parameter's descriptor). Returns the
+    /// parameter info with the actual value set.
     fn set_parameter(
         &self,
         instrument_id: u64,
         module_id: &str,
         param_name: &str,
-        value: f32,
+        value: BridgeParamValue,
     ) -> Result<ParameterInfo, McpBridgeError>;
 
     /// Send a MIDI note on.
@@ -1221,6 +1223,35 @@ pub trait SynthBridge: Send + Sync + 'static {
     ) -> Result<ConnectionCheckResult, McpBridgeError>;
 }
 
+/// Interpolation curve for an automation point.
+///
+/// Mirrors the sequencer's `CurveType` without depending on the sequencer
+/// crate. `Exponential` carries no strength here — it is supplied separately
+/// via `curve_strength` so the schema stays a flat string enum (the AWE-style
+/// pattern that advertises the valid values to MCP clients).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+pub enum CurveKind {
+    /// Linear interpolation to the next point.
+    #[default]
+    Linear,
+    /// Hold the value until the next point.
+    Step,
+    /// Exponential curve; strength comes from `curve_strength`.
+    Exponential,
+    /// Smoothstep S-curve.
+    SCurve,
+}
+
 /// Automation point data for MCP bridge.
 pub struct BridgeAutomationPointData {
     /// Instrument parameter name: "Volume", "Pan", "FilterCutoff", "FilterResonance",
@@ -1232,8 +1263,10 @@ pub struct BridgeAutomationPointData {
     pub beat: f32,
     /// Normalized value (0.0-1.0).
     pub value: f32,
-    /// Interpolation curve: "Linear", "Step", "Exponential", "SCurve".
-    pub curve: String,
+    /// Interpolation curve.
+    pub curve: CurveKind,
+    /// Strength for `CurveKind::Exponential` (-127..=127); ignored otherwise.
+    pub curve_strength: Option<i8>,
 }
 
 /// Parameter set for batch set_parameters operations.

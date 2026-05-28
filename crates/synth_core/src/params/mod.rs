@@ -582,6 +582,35 @@ impl ModuleType {
             _ => None,
         }
     }
+
+    /// Parse a module-type token supplied by a client in any of the forms it
+    /// might reasonably use: the short prefix (`"osc"`), or the type name in
+    /// `snake_case`, spaced, or lower-cased display form (`"oscillator"`,
+    /// `"Oscillator"`, `"math oscillator"`, `"math_oscillator"`). All matching
+    /// is case-insensitive. Returns `None` if the token is unrecognized.
+    ///
+    /// This is the forgiving inverse of [`prefix`](Self::prefix) /
+    /// [`name`](Self::name): `list_module_types` advertises the prefix as the
+    /// type key while tool descriptions and AI clients often pass the full
+    /// name, so accepting both avoids a class of silent "unknown module type"
+    /// failures.
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        let lower = token.trim().to_ascii_lowercase();
+        if let Some(mt) = Self::from_prefix(&lower) {
+            return Some(mt);
+        }
+        // Normalize separators (spaces, hyphens, …) to '_' so the serde
+        // `snake_case` names match spaced/display input as well.
+        let snake: String = lower
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        use serde::de::IntoDeserializer;
+        let de: serde::de::value::StrDeserializer<'_, serde::de::value::Error> =
+            snake.as_str().into_deserializer();
+        Self::deserialize(de).ok()
+    }
 }
 
 // ============================================================================
@@ -1171,6 +1200,35 @@ impl Port {
 mod tests {
     use super::*;
     use crate::types::Hertz;
+
+    #[test]
+    fn from_token_accepts_prefix_snake_and_display() {
+        // Short prefix (what list_module_types advertises as the type key).
+        assert_eq!(ModuleType::from_token("osc"), Some(ModuleType::Oscillator));
+        assert_eq!(ModuleType::from_token("flt"), Some(ModuleType::Filter));
+        // snake_case serde name.
+        assert_eq!(
+            ModuleType::from_token("oscillator"),
+            Some(ModuleType::Oscillator)
+        );
+        assert_eq!(
+            ModuleType::from_token("math_oscillator"),
+            Some(ModuleType::MathOscillator)
+        );
+        // Case-insensitive + spaced/display forms.
+        assert_eq!(
+            ModuleType::from_token("Oscillator"),
+            Some(ModuleType::Oscillator)
+        );
+        assert_eq!(
+            ModuleType::from_token("Math Oscillator"),
+            Some(ModuleType::MathOscillator)
+        );
+        assert_eq!(ModuleType::from_token("  LFO  "), Some(ModuleType::Lfo));
+        // Unknown tokens.
+        assert_eq!(ModuleType::from_token("definitely_not_a_module"), None);
+        assert_eq!(ModuleType::from_token(""), None);
+    }
 
     #[test]
     fn test_module_type_is_voice_module() {

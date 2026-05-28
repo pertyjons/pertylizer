@@ -103,16 +103,6 @@ fn validate_name(kind: &'static str, name: &str) -> Result<(), McpBridgeError> {
     Ok(())
 }
 
-/// Valid automation curve names.
-const VALID_CURVES: &[&str] = &["Linear", "Step", "Exponential", "SCurve"];
-
-fn validate_curve(curve: &str) -> Result<(), McpBridgeError> {
-    if !VALID_CURVES.contains(&curve) {
-        return Err(McpBridgeError::InvalidCurve(curve.to_string()));
-    }
-    Ok(())
-}
-
 /// Validate note fields that are always required (add_note, add_notes, etc.).
 fn validate_note_fields(
     pitch: u8,
@@ -151,11 +141,13 @@ fn validate_note_update_fields(
 
 /// Validate automation point fields.
 fn validate_automation_point(pt: &AutomationPointInput) -> Result<(), McpBridgeError> {
+    if pt.param.is_none() && pt.target.is_none() {
+        return Err(McpBridgeError::Other(
+            "automation point requires a 'param' string or a structured 'target'".to_string(),
+        ));
+    }
     validate_range("value", pt.value, 0.0, 1.0)?;
     validate_range("beat", pt.beat, 0.0, 9999.0)?;
-    if let Some(ref curve) = pt.curve {
-        validate_curve(curve)?;
-    }
     Ok(())
 }
 
@@ -499,9 +491,9 @@ pub struct SetParameterParam {
     #[schemars(description = "Parameter name, e.g. 'frequency', 'resonance'")]
     pub param_name: String,
     #[schemars(
-        description = "New value in the parameter's native range (e.g. 20.0-20000.0 for cutoff in Hz). Use list_module_types or get_module_info to discover valid ranges."
+        description = "New value. A number in the parameter's native range (e.g. 20.0-20000.0 for cutoff in Hz), a boolean for on/off parameters, or a string for choice/enum parameters (e.g. 'sawtooth', matched against the choice id or display name). Use get_module_info to discover ranges and choices."
     )]
-    pub value: f32,
+    pub value: ParamValueInput,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1013,7 +1005,7 @@ pub struct AddModuleParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
     pub instrument_id: u64,
     #[schemars(
-        description = "Module type key from list_module_types, e.g. 'oscillator', 'filter', 'amplifier'"
+        description = "Module type. Accepts the short type key from list_module_types (e.g. 'osc', 'flt', 'amp'), the full name in snake_case (e.g. 'oscillator', 'ladder_filter'), or the display name (e.g. 'Oscillator', 'Ladder Filter'). Case-insensitive."
     )]
     pub module_type: String,
 }
@@ -1383,21 +1375,80 @@ pub struct ClearPatternParam {
     pub pattern_id: u32,
 }
 
+/// A structured automation target — a typed alternative to the
+/// `module:<type>:<instance>:<param>` DSL string accepted by `param`. Per-module
+/// targets are validated against the instrument graph and the automatable
+/// allowlist either way.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationTargetInput {
+    /// A parameter on a specific module in the instrument's graph (e.g. the
+    /// cutoff of filter instance 1).
+    Module {
+        /// Module type token: the short key, snake_case, or display name
+        /// (e.g. "flt", "filter", "Filter") — see add_module.
+        module_type: String,
+        /// 1-based instance index within that module type.
+        instance: u16,
+        /// Descriptor parameter id (e.g. "cutoff"). See get_module_info.
+        param_id: String,
+    },
+    /// An instrument-level macro: Volume, Pan, FilterCutoff, FilterResonance,
+    /// Attack, Decay, Sustain, Release.
+    Instrument {
+        /// Macro name.
+        param: String,
+    },
+}
+
+impl AutomationTargetInput {
+    /// Render to the canonical target DSL string consumed by the bridge.
+    fn to_target_string(&self) -> String {
+        match self {
+            Self::Module {
+                module_type,
+                instance,
+                param_id,
+            } => format!("module:{module_type}:{instance}:{param_id}"),
+            Self::Instrument { param } => param.clone(),
+        }
+    }
+}
+
 /// An automation point to add.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AutomationPointInput {
     #[schemars(
-        description = "Parameter: Volume, Pan, FilterCutoff, FilterResonance, Attack, Decay, Sustain, Release"
+        description = "Target as a DSL string: an instrument macro (Volume, Pan, FilterCutoff, FilterResonance, Attack, Decay, Sustain, Release) or 'module:<type>:<instance>:<param>' (e.g. 'module:flt:1:cutoff'). Provide this OR the structured 'target'."
     )]
-    pub param: String,
+    pub param: Option<String>,
+    #[schemars(
+        description = "Structured target (alternative to 'param'; takes precedence if both are given)."
+    )]
+    pub target: Option<AutomationTargetInput>,
     #[schemars(description = "Instrument index (default 0)")]
     pub instrument_id: Option<u16>,
     #[schemars(description = "Position in beats")]
     pub beat: f32,
     #[schemars(description = "Normalized value (0.0-1.0)")]
     pub value: f32,
-    #[schemars(description = "Interpolation curve: Linear (default), Step, Exponential, SCurve")]
-    pub curve: Option<String>,
+    #[schemars(description = "Interpolation curve (default Linear)")]
+    pub curve: Option<crate::bridge::CurveKind>,
+    #[schemars(
+        description = "Strength for the Exponential curve (-127..=127, negative = ease-in, positive = ease-out); ignored for other curves."
+    )]
+    pub curve_strength: Option<i8>,
+}
+
+impl AutomationPointInput {
+    /// The effective target DSL string: the structured `target` wins, otherwise
+    /// the `param` string (empty if neither is set, which downstream rejects).
+    fn effective_target(&self) -> String {
+        match &self.target {
+            Some(t) => t.to_target_string(),
+            None => self.param.clone().unwrap_or_default(),
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2744,23 +2795,29 @@ impl SynthMcpServer {
         description = "Set a module parameter to a new value. Returns the parameter info with the actual value set (may differ from requested due to clamping). Use list_modules and get_module_info to discover available parameters."
     )]
     async fn set_parameter(&self, params: Parameters<SetParameterParam>) -> String {
-        if params.0.value.is_nan() {
-            return format!(
-                "Error: {}",
-                McpBridgeError::ValueOutOfRange {
-                    name: "value",
-                    value: params.0.value,
-                    min: f32::NEG_INFINITY,
-                    max: f32::INFINITY,
+        let p = params.0;
+        let value = match p.value {
+            ParamValueInput::Number(n) => {
+                if !n.is_finite() {
+                    return format!(
+                        "Error: {}",
+                        McpBridgeError::ValueOutOfRange {
+                            name: "value",
+                            value: n as f32,
+                            min: f32::NEG_INFINITY,
+                            max: f32::INFINITY,
+                        }
+                    );
                 }
-            );
-        }
-        match self.bridge.set_parameter(
-            params.0.instrument_id,
-            &params.0.module_id,
-            &params.0.param_name,
-            params.0.value,
-        ) {
+                crate::bridge::BridgeParamValue::Number(n)
+            }
+            ParamValueInput::Bool(b) => crate::bridge::BridgeParamValue::Bool(b),
+            ParamValueInput::Choice(s) => crate::bridge::BridgeParamValue::Choice(s),
+        };
+        match self
+            .bridge
+            .set_parameter(p.instrument_id, &p.module_id, &p.param_name, value)
+        {
             Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
@@ -4124,11 +4181,12 @@ impl SynthMcpServer {
             .points
             .into_iter()
             .map(|pt| crate::bridge::BridgeAutomationPointData {
-                param: pt.param,
+                param: pt.effective_target(),
                 instrument_id: pt.instrument_id.unwrap_or(0),
                 beat: pt.beat,
                 value: pt.value,
-                curve: pt.curve.unwrap_or_else(|| "Linear".to_string()),
+                curve: pt.curve.unwrap_or_default(),
+                curve_strength: pt.curve_strength,
             })
             .collect();
         match self.bridge.add_automation_points(p.pattern_id, &points) {
@@ -5502,11 +5560,72 @@ fn convert_automation_points(
         .unwrap_or_default()
         .into_iter()
         .map(|pt| crate::bridge::BridgeAutomationPointData {
-            param: pt.param,
+            param: pt.effective_target(),
             instrument_id: pt.instrument_id.unwrap_or(0),
             beat: pt.beat,
             value: pt.value,
-            curve: pt.curve.unwrap_or_else(|| "Linear".to_string()),
+            curve: pt.curve.unwrap_or_default(),
+            curve_strength: pt.curve_strength,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod automation_target_input_tests {
+    use super::*;
+
+    #[test]
+    fn module_target_renders_canonical_dsl_string() {
+        let t = AutomationTargetInput::Module {
+            module_type: "flt".to_string(),
+            instance: 1,
+            param_id: "cutoff".to_string(),
+        };
+        assert_eq!(t.to_target_string(), "module:flt:1:cutoff");
+    }
+
+    #[test]
+    fn instrument_target_renders_macro_name() {
+        let t = AutomationTargetInput::Instrument {
+            param: "FilterCutoff".to_string(),
+        };
+        assert_eq!(t.to_target_string(), "FilterCutoff");
+    }
+
+    fn point(param: Option<&str>, target: Option<AutomationTargetInput>) -> AutomationPointInput {
+        AutomationPointInput {
+            param: param.map(str::to_string),
+            target,
+            instrument_id: None,
+            beat: 0.0,
+            value: 0.5,
+            curve: None,
+            curve_strength: None,
+        }
+    }
+
+    #[test]
+    fn effective_target_prefers_structured_over_string() {
+        let p = point(
+            Some("Volume"),
+            Some(AutomationTargetInput::Module {
+                module_type: "flt".to_string(),
+                instance: 2,
+                param_id: "resonance".to_string(),
+            }),
+        );
+        assert_eq!(p.effective_target(), "module:flt:2:resonance");
+    }
+
+    #[test]
+    fn effective_target_falls_back_to_param_string() {
+        assert_eq!(point(Some("Pan"), None).effective_target(), "Pan");
+        assert_eq!(point(None, None).effective_target(), "");
+    }
+
+    #[test]
+    fn validate_automation_point_requires_a_target() {
+        assert!(validate_automation_point(&point(None, None)).is_err());
+        assert!(validate_automation_point(&point(Some("Volume"), None)).is_ok());
+    }
 }

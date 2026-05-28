@@ -292,6 +292,7 @@ impl SynthBridge for AppSynthBridge {
                                 }),
                                 type_id: pd.map(|pd| pd.type_id.clone()),
                                 is_automatable: pd.map(|pd| pd.is_automatable()),
+                                response_curve: pd.map(|pd| format!("{:?}", pd.response_curve)),
                             }
                         })
                         .collect(),
@@ -747,7 +748,7 @@ impl SynthBridge for AppSynthBridge {
         instrument_id: u64,
         module_id: &str,
         param_name: &str,
-        value: f32,
+        value: BridgeParamValue,
     ) -> Result<ParameterInfo, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
@@ -776,6 +777,11 @@ impl SynthBridge for AppSynthBridge {
                         .find(|pd| normalize_param_name(&pd.name) == needle)
                 })
         });
+
+        // Resolve the supplied value (number / bool / string choice) to the
+        // parameter's native f32, rejecting unknown choices at the boundary
+        // instead of silently mapping them to index 0.
+        let value = resolve_param_value(&value, param_desc, param_name)?;
 
         // Validate against the parameter's range BEFORE applying, so out-of-range
         // input is rejected at the boundary with a clear message instead of being
@@ -823,6 +829,7 @@ impl SynthBridge for AppSynthBridge {
                     .map(|c| c.iter().map(|ch| ch.name.clone()).collect()),
                 type_id: Some(pd.type_id.clone()),
                 is_automatable: Some(pd.is_automatable()),
+                response_curve: Some(format!("{:?}", pd.response_curve)),
             });
         }
         Ok(ParameterInfo {
@@ -835,6 +842,7 @@ impl SynthBridge for AppSynthBridge {
             choices: None,
             type_id: None,
             is_automatable: None,
+            response_curve: None,
         })
     }
 
@@ -1050,7 +1058,7 @@ impl SynthBridge for AppSynthBridge {
     fn add_module(&self, instrument_id: u64, module_type: &str) -> Result<String, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
-        let mt = synth_core::ModuleType::from_prefix(module_type)
+        let mt = parse_module_type(module_type)
             .ok_or_else(|| McpBridgeError::InvalidModuleType(module_type.to_string()))?;
 
         let (module_id, _descriptor) = self
@@ -1996,7 +2004,7 @@ impl SynthBridge for AppSynthBridge {
             Vec::with_capacity(spec.modules.len());
 
         for module_def in &spec.modules {
-            let mt = match synth_core::ModuleType::from_prefix(&module_def.module_type) {
+            let mt = match parse_module_type(&module_def.module_type) {
                 Some(mt) => mt,
                 None => {
                     errors.push(format!("invalid module type: {}", module_def.module_type));
@@ -2224,7 +2232,7 @@ impl SynthBridge for AppSynthBridge {
             };
 
             let tick = PatternTick(beats_to_ticks(pt.beat));
-            let curve = parse_curve_type(&pt.curve);
+            let curve = curve_from_kind(pt.curve, pt.curve_strength);
             let lane = pattern.get_or_create_automation(target);
             lane.add_point(
                 AutomationPoint::new(tick, NormalizedValue::new(pt.value)).with_curve(curve),
@@ -4276,7 +4284,7 @@ impl SynthBridge for AppSynthBridge {
     fn get_module_type_info(&self, type_key: &str) -> Result<ModuleTypeInfo, McpBridgeError> {
         use crate::module_factory::{ALL_MODULE_TYPES, get_descriptor};
 
-        let mt = synth_core::ModuleType::from_prefix(type_key)
+        let mt = parse_module_type(type_key)
             .ok_or_else(|| McpBridgeError::InvalidModuleType(type_key.to_string()))?;
 
         if !ALL_MODULE_TYPES.contains(&mt) {
@@ -5363,6 +5371,87 @@ fn normalize_param_name(s: &str) -> String {
     s.to_lowercase().replace('_', " ")
 }
 
+/// Strip every non-alphanumeric character and lowercase the rest, so that the
+/// prefix, `snake_case`, `CamelCase`, and spaced display forms of a name all
+/// collapse to the same comparable token (e.g. `"Math Oscillator"`,
+/// `"math_oscillator"`, `"MathOscillator"` → `"mathoscillator"`).
+fn squash_token(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Resolve a bridge parameter value (number / bool / string choice) to the
+/// parameter's native `f32`.
+///
+/// Numbers and booleans map directly (`true`/`false` → `1.0`/`0.0`). A string
+/// is treated as a choice and matched case-insensitively against the
+/// descriptor's choice ids **and** display names, returning the choice index.
+/// Unknown choices — or a string aimed at a non-choice parameter — are errors,
+/// so bad input is rejected at the boundary rather than silently becoming the
+/// first option.
+fn resolve_param_value(
+    value: &BridgeParamValue,
+    pd: Option<&synth_core::ParameterDescriptor>,
+    param_name: &str,
+) -> Result<f32, McpBridgeError> {
+    match value {
+        BridgeParamValue::Number(n) => Ok(*n as f32),
+        BridgeParamValue::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
+        BridgeParamValue::Choice(s) => {
+            let Some(pd) = pd else {
+                return Err(McpBridgeError::InvalidChoice {
+                    name: param_name.to_string(),
+                    value: s.clone(),
+                    detail: "parameter descriptor unavailable; pass a numeric value".to_string(),
+                });
+            };
+            let Some(choices) = pd.choices.as_ref() else {
+                return Err(McpBridgeError::InvalidChoice {
+                    name: pd.name.clone(),
+                    value: s.clone(),
+                    detail: "this parameter takes a number, not a string".to_string(),
+                });
+            };
+            choices
+                .iter()
+                .position(|c| c.id.eq_ignore_ascii_case(s) || c.name.eq_ignore_ascii_case(s))
+                .map(|i| i as f32)
+                .ok_or_else(|| McpBridgeError::InvalidChoice {
+                    name: pd.name.clone(),
+                    value: s.clone(),
+                    detail: format!(
+                        "valid choices are {}",
+                        choices
+                            .iter()
+                            .map(|c| c.id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                })
+        }
+    }
+}
+
+/// Resolve a client-supplied module-type token to a [`ModuleType`].
+///
+/// Tries the canonical forms first via [`ModuleType::from_token`] (prefix +
+/// `snake_case`/spaced name), then falls back to a separator-insensitive match
+/// against each known type's display name so that anything `list_module_types`
+/// advertises — its `type_key` *or* its `name` — round-trips, along with
+/// `CamelCase` variants.
+fn parse_module_type(token: &str) -> Option<synth_core::ModuleType> {
+    if let Some(mt) = synth_core::ModuleType::from_token(token) {
+        return Some(mt);
+    }
+    let squashed = squash_token(token);
+    crate::module_factory::ALL_MODULE_TYPES
+        .iter()
+        .copied()
+        .find(|mt| squash_token(mt.name()) == squashed)
+}
+
 /// Extract Mod Matrix routings from a `ModMatrix` module's parameter
 /// snapshot. Skips slots beyond the configured grid size and fully-empty
 /// slots (`None → None`); partially-configured slots (only source or only
@@ -5438,14 +5527,20 @@ fn parse_auto_instrument_param(name: &str) -> Option<synth_sequencer::AutoInstru
     }
 }
 
-/// Parse a curve type string.
-fn parse_curve_type(s: &str) -> synth_sequencer::CurveType {
+/// Map a bridge [`CurveKind`](synth_mcp::bridge::CurveKind) plus optional
+/// strength to the sequencer's `CurveType`. The strength is only meaningful for
+/// `Exponential` (clamped to its `i8` domain by the type); it defaults to 0.
+fn curve_from_kind(
+    kind: synth_mcp::bridge::CurveKind,
+    strength: Option<i8>,
+) -> synth_sequencer::CurveType {
+    use synth_mcp::bridge::CurveKind;
     use synth_sequencer::CurveType;
-    match s {
-        "Step" => CurveType::Step,
-        "Exponential" => CurveType::Exponential(0),
-        "SCurve" => CurveType::SCurve,
-        _ => CurveType::Linear,
+    match kind {
+        CurveKind::Linear => CurveType::Linear,
+        CurveKind::Step => CurveType::Step,
+        CurveKind::Exponential => CurveType::Exponential(strength.unwrap_or(0)),
+        CurveKind::SCurve => CurveType::SCurve,
     }
 }
 
@@ -5465,8 +5560,9 @@ fn format_curve_type(curve: synth_sequencer::CurveType) -> String {
 /// Two forms are accepted:
 /// - An instrument-level param name (e.g. `"FilterCutoff"`) →
 ///   [`AutomationTarget::Instrument`](synth_sequencer::AutomationTarget::Instrument).
-/// - A generic module-parameter target `"module:<prefix>:<instance>:<param_id>"`
-///   (e.g. `"module:flt:1:cutoff"`) →
+/// - A generic module-parameter target `"module:<type>:<instance>:<param_id>"`
+///   (e.g. `"module:flt:1:cutoff"`, or the `ModuleId`-style dash form
+///   `"module:flt-1:cutoff"` that every other tool uses) →
 ///   [`AutomationTarget::Module`](synth_sequencer::AutomationTarget::Module).
 ///   This is the inverse of [`automation_target_info`]'s Module rendering.
 ///
@@ -5494,24 +5590,35 @@ fn build_automation_target(
     Ok(synth_sequencer::AutomationTarget::Instrument { instrument, param })
 }
 
-/// Parse and validate a module-parameter automation target from the
-/// `<prefix>:<instance>:<param_id>` body (the part after `"module:"`).
+/// Parse and validate a module-parameter automation target from the body after
+/// `"module:"`. Accepts both `"<type>:<instance>:<param_id>"` (colon form) and
+/// `"<type>-<instance>:<param_id>"` (the dash form that mirrors the `ModuleId`
+/// rendering — e.g. `"flt-1"` — used by every other tool). The `param_id` is
+/// the final `':'`-separated segment; the module identity precedes it and may
+/// separate its type token from the instance index with `':'` or `'-'`. The
+/// type token itself is resolved leniently (prefix or full name) via
+/// [`parse_module_type`].
 fn build_module_automation_target(
     body: &str,
     instrument: synth_sequencer::SeqInstrumentId,
     valid_modules: &[synth_engine::ModuleId],
 ) -> Result<synth_sequencer::AutomationTarget, McpBridgeError> {
-    let mut parts = body.splitn(3, ':');
-    let (Some(prefix), Some(instance_str), Some(param_id)) =
-        (parts.next(), parts.next(), parts.next())
-    else {
-        return Err(McpBridgeError::Other(format!(
-            "module target must be 'module:<type>:<instance>:<param>', got 'module:{body}'"
-        )));
+    let malformed = || {
+        McpBridgeError::Other(format!(
+            "module target must be 'module:<type>:<instance>:<param>' \
+             (or 'module:<type>-<instance>:<param>'), got 'module:{body}'"
+        ))
     };
+    let (module_ref, param_id) = body.rsplit_once(':').ok_or_else(malformed)?;
+    // Split off the instance from the END: the instance is always the trailing
+    // token, while the type token itself may contain a '-' (a hyphenated
+    // multi-word name like "ladder-filter" that `parse_module_type` accepts).
+    // Splitting on the first separator would mis-slice such names.
+    let (type_token, instance_str) = module_ref.rsplit_once([':', '-']).ok_or_else(malformed)?;
 
-    let module_type = synth_core::ModuleType::from_prefix(prefix)
-        .ok_or_else(|| McpBridgeError::Other(format!("unknown module type prefix: '{prefix}'")))?;
+    let module_type = parse_module_type(type_token)
+        .ok_or_else(|| McpBridgeError::Other(format!("unknown module type: '{type_token}'")))?;
+    let prefix = module_type.prefix();
     let instance: u16 = instance_str
         .parse()
         .map_err(|_| McpBridgeError::Other(format!("invalid module instance: '{instance_str}'")))?;
@@ -5614,7 +5721,7 @@ fn insert_automation_into_pattern(
             continue;
         };
         let tick = PatternTick(beats_to_ticks(pt.beat));
-        let curve = parse_curve_type(&pt.curve);
+        let curve = curve_from_kind(pt.curve, pt.curve_strength);
         let lane = pattern.get_or_create_automation(target);
         lane.add_point(
             AutomationPoint::new(tick, NormalizedValue::new(pt.value)).with_curve(curve),
@@ -9751,6 +9858,54 @@ mod automation_target_tests {
     }
 
     #[test]
+    fn build_module_target_accepts_dash_and_full_name_forms() {
+        let expected = AutomationTarget::Module {
+            instrument: SeqInstrumentId::new(3),
+            module_type: synth_core::ModuleType::Filter,
+            instance: 1,
+            param_id: "cutoff".to_string(),
+        };
+        // Dash form mirrors the ModuleId rendering used by every other tool.
+        assert_eq!(
+            build_automation_target("module:flt-1:cutoff", 3, &flt1()).unwrap(),
+            expected
+        );
+        // Full type name (snake_case) instead of the 3-letter prefix.
+        assert_eq!(
+            build_automation_target("module:filter:1:cutoff", 3, &flt1()).unwrap(),
+            expected
+        );
+        // Full name + dash form together.
+        assert_eq!(
+            build_automation_target("module:filter-1:cutoff", 3, &flt1()).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn build_module_target_handles_hyphenated_multiword_type_name() {
+        // A hyphenated multi-word type name ("ladder-filter" — which
+        // parse_module_type accepts) must not be mis-split on its internal '-';
+        // the instance is the trailing token. Both colon and dash instance
+        // separators must resolve to the same target.
+        let ldr = vec![ModuleId::new(synth_core::ModuleType::LadderFilter, 1)];
+        let expected = AutomationTarget::Module {
+            instrument: SeqInstrumentId::new(3),
+            module_type: synth_core::ModuleType::LadderFilter,
+            instance: 1,
+            param_id: "cutoff".to_string(),
+        };
+        assert_eq!(
+            build_automation_target("module:ladder-filter:1:cutoff", 3, &ldr).unwrap(),
+            expected
+        );
+        assert_eq!(
+            build_automation_target("module:ladder-filter-1:cutoff", 3, &ldr).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
     fn build_instrument_target_still_works() {
         // Instrument-level params ignore the module set.
         let t = build_automation_target("FilterCutoff", 2, &[]).unwrap();
@@ -9795,5 +9950,146 @@ mod automation_target_tests {
         let modules = vec![ModuleId::new(synth_core::ModuleType::Filter, 2)];
         let rebuilt = build_automation_target(&name, inst.unwrap(), &modules).unwrap();
         assert_eq!(rebuilt, target);
+    }
+}
+
+#[cfg(test)]
+mod mcp_helper_tests {
+    use super::*;
+    use synth_core::ModuleType;
+
+    #[test]
+    fn parse_module_type_accepts_prefix_name_display_and_camel() {
+        // Prefix (the type key list_module_types advertises).
+        assert_eq!(parse_module_type("ldr"), Some(ModuleType::LadderFilter));
+        // snake_case name.
+        assert_eq!(
+            parse_module_type("ladder_filter"),
+            Some(ModuleType::LadderFilter)
+        );
+        // Display name (what list_module_types puts in `name`).
+        assert_eq!(
+            parse_module_type("Ladder Filter"),
+            Some(ModuleType::LadderFilter)
+        );
+        // CamelCase + a display name that diverges from the identifier.
+        assert_eq!(
+            parse_module_type("LadderFilter"),
+            Some(ModuleType::LadderFilter)
+        );
+        assert_eq!(parse_module_type("LPC Vocoder"), Some(ModuleType::Vocoder));
+        assert_eq!(parse_module_type("vocoder"), Some(ModuleType::Vocoder));
+        // Unknown.
+        assert_eq!(parse_module_type("nonexistent"), None);
+    }
+
+    #[test]
+    fn curve_from_kind_maps_strength_only_for_exponential() {
+        use synth_mcp::bridge::CurveKind;
+        use synth_sequencer::CurveType;
+        assert_eq!(
+            curve_from_kind(CurveKind::Linear, Some(40)),
+            CurveType::Linear
+        );
+        assert_eq!(curve_from_kind(CurveKind::Step, None), CurveType::Step);
+        assert_eq!(
+            curve_from_kind(CurveKind::SCurve, Some(7)),
+            CurveType::SCurve
+        );
+        assert_eq!(
+            curve_from_kind(CurveKind::Exponential, Some(-30)),
+            CurveType::Exponential(-30)
+        );
+        // Missing strength defaults to 0.
+        assert_eq!(
+            curve_from_kind(CurveKind::Exponential, None),
+            CurveType::Exponential(0)
+        );
+    }
+
+    /// Returns the Filter descriptor and the type_id of its first choice param.
+    fn filter_choice_param() -> (synth_core::ParameterDescriptor, String) {
+        let desc =
+            crate::module_factory::get_descriptor(ModuleType::Filter).expect("filter descriptor");
+        let choice = desc
+            .parameters
+            .iter()
+            .find(|p| p.choices.is_some())
+            .expect("filter has a choice param")
+            .clone();
+        (choice.clone(), choice.type_id.clone())
+    }
+
+    #[test]
+    fn resolve_param_value_numbers_and_bools_pass_through() {
+        use synth_mcp::bridge::BridgeParamValue;
+        assert_eq!(
+            resolve_param_value(&BridgeParamValue::Number(440.0), None, "frequency").unwrap(),
+            440.0
+        );
+        assert_eq!(
+            resolve_param_value(&BridgeParamValue::Bool(true), None, "on").unwrap(),
+            1.0
+        );
+        assert_eq!(
+            resolve_param_value(&BridgeParamValue::Bool(false), None, "on").unwrap(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn resolve_param_value_resolves_choice_by_id_and_name() {
+        use synth_mcp::bridge::BridgeParamValue;
+        let (pd, _) = filter_choice_param();
+        let choices = pd.choices.as_ref().unwrap();
+        let first = &choices[0];
+        // Match by id (case-insensitive) → index 0.
+        let by_id = resolve_param_value(
+            &BridgeParamValue::Choice(first.id.to_uppercase()),
+            Some(&pd),
+            &pd.name,
+        )
+        .unwrap();
+        assert_eq!(by_id, 0.0);
+        // Match by display name → index 0.
+        let by_name = resolve_param_value(
+            &BridgeParamValue::Choice(first.name.clone()),
+            Some(&pd),
+            &pd.name,
+        )
+        .unwrap();
+        assert_eq!(by_name, 0.0);
+    }
+
+    #[test]
+    fn resolve_param_value_rejects_unknown_choice() {
+        use synth_mcp::bridge::BridgeParamValue;
+        let (pd, _) = filter_choice_param();
+        let err = resolve_param_value(
+            &BridgeParamValue::Choice("definitely_not_a_choice".to_string()),
+            Some(&pd),
+            &pd.name,
+        )
+        .unwrap_err();
+        assert!(matches!(err, McpBridgeError::InvalidChoice { .. }));
+    }
+
+    #[test]
+    fn resolve_param_value_rejects_string_for_numeric_param() {
+        use synth_mcp::bridge::BridgeParamValue;
+        let desc =
+            crate::module_factory::get_descriptor(ModuleType::Filter).expect("filter descriptor");
+        let numeric = desc
+            .parameters
+            .iter()
+            .find(|p| p.choices.is_none())
+            .expect("filter has a numeric param");
+        let err = resolve_param_value(
+            &BridgeParamValue::Choice("sawtooth".to_string()),
+            Some(numeric),
+            &numeric.name,
+        )
+        .unwrap_err();
+        assert!(matches!(err, McpBridgeError::InvalidChoice { .. }));
     }
 }

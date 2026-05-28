@@ -117,6 +117,12 @@ pub struct ParameterInfo {
     /// + RT-safe, non-enum). Mirrors `ParameterDescriptor::is_automatable`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_automatable: Option<bool>,
+    /// Value-mapping curve (e.g. "Linear", "Logarithmic", "Exponential"),
+    /// mirroring `ParameterDescriptor::response_curve`. Tells a client how the
+    /// native value maps onto a 0..1 control so it can place sliders/automation
+    /// sensibly.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_curve: Option<String>,
 }
 
 /// Information about a connection between modules.
