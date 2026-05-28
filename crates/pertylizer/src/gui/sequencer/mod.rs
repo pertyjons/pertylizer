@@ -3393,20 +3393,20 @@ pub(crate) fn draw_piano_roll(
                         }
                         let target = &lane.target;
                         let is_foreign = match target {
-                            AutomationTarget::Instrument { instrument, .. } => {
+                            AutomationTarget::Instrument { instrument, .. }
+                            | AutomationTarget::Module { instrument, .. } => {
                                 *instrument != view_state.selected_instrument
                             }
                             _ => false,
                         };
-                        let inst_name =
-                            if let AutomationTarget::Instrument { instrument, .. } = target {
-                                instruments
-                                    .iter()
-                                    .find(|inst| inst.id.0 == instrument.0 as u64)
-                                    .map(|inst| inst.name.clone())
-                            } else {
-                                None
-                            };
+                        let inst_name = match target {
+                            AutomationTarget::Instrument { instrument, .. }
+                            | AutomationTarget::Module { instrument, .. } => instruments
+                                .iter()
+                                .find(|inst| inst.id.0 == instrument.0 as u64)
+                                .map(|inst| inst.name.clone()),
+                            _ => None,
+                        };
                         let base = target.display_name();
                         let arrow = egui_remixicon::icons::ARROW_RIGHT_S_LINE;
                         let label = if is_foreign {
@@ -3446,6 +3446,57 @@ pub(crate) fn draw_piano_roll(
                         let is_selected = view_state.selected_automation.as_ref() == Some(&target);
                         if ui.selectable_label(is_selected, &label).clicked() {
                             view_state.selected_automation = Some(target);
+                        }
+                    }
+
+                    // 3. Per-module parameters of the selected instrument
+                    //    (generic A2 targets), filtered to the automatable
+                    //    allowlist. Lets the user automate any continuous,
+                    //    RT-safe module parameter, not just the fixed
+                    //    instrument-level set above.
+                    if let Some(inst) = instruments
+                        .iter()
+                        .find(|i| i.id.0 == view_state.selected_instrument.0 as u64)
+                    {
+                        let mut module_ids = inst.patch_editor.module_ids();
+                        module_ids.sort_unstable(); // deterministic (type, instance) order
+                        let mut shown_module_header = false;
+                        for module_id in module_ids {
+                            let Some(desc) = inst.patch_editor.module_descriptor(module_id) else {
+                                continue;
+                            };
+                            for param in &desc.parameters {
+                                if !param.is_automatable() {
+                                    continue;
+                                }
+                                let target = AutomationTarget::Module {
+                                    instrument: view_state.selected_instrument,
+                                    module_type: module_id.module_type,
+                                    instance: module_id.instance,
+                                    param_id: param.type_id.clone(),
+                                };
+                                // Skip params already shown as an existing lane above.
+                                let already_shown = data
+                                    .automation_lanes
+                                    .iter()
+                                    .any(|l| l.target == target && !l.points.is_empty());
+                                if already_shown {
+                                    continue;
+                                }
+                                if !shown_module_header {
+                                    ui.separator();
+                                    shown_module_header = true;
+                                }
+                                let label = format!(
+                                    "{} {} · {}",
+                                    desc.name, module_id.instance, param.name
+                                );
+                                let is_selected =
+                                    view_state.selected_automation.as_ref() == Some(&target);
+                                if ui.selectable_label(is_selected, &label).clicked() {
+                                    view_state.selected_automation = Some(target);
+                                }
+                            }
                         }
                     }
                 });
