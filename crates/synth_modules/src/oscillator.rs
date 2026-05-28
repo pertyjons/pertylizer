@@ -75,6 +75,13 @@ pub struct Oscillator {
     /// Level offset (additive, from mod matrix).
     mod_offset_level: BipolarValue,
 
+    // Transient automation overrides (replace the base value while active,
+    // cleared on transport stop; the base param is never mutated).
+    /// Detune override from sequencer automation.
+    override_detune: Option<Cents>,
+    /// Pulse-width override from sequencer automation.
+    override_pulse_width: Option<PulseWidthParam>,
+
     // Outputs
     output_buffer: AudioBuffer,
     output_buffer_left: AudioBuffer,
@@ -110,6 +117,8 @@ impl Oscillator {
             prev_sync: NormalizedValue::MIN,
             mod_offset_pitch: Semitones::ZERO,
             mod_offset_level: BipolarValue::CENTER,
+            override_detune: None,
+            override_pulse_width: None,
             output_buffer: AudioBuffer::new(1024),
             output_buffer_left: AudioBuffer::new(1024),
             output_buffer_right: AudioBuffer::new(1024),
@@ -122,7 +131,8 @@ impl Oscillator {
         let octave_mult = crate::math::semitones_to_ratio(self.octave.as_f32());
         // Apply mod matrix pitch offset (in semitones)
         let mod_mult = crate::math::semitones_to_ratio(self.mod_offset_pitch.as_f32());
-        Hertz::new(self.detune.apply(self.frequency).as_f32() * octave_mult * mod_mult)
+        let detune = self.override_detune.unwrap_or(self.detune);
+        Hertz::new(detune.apply(self.frequency).as_f32() * octave_mult * mod_mult)
     }
 
     /// Recalculate unison detune ratios and pan positions.
@@ -464,11 +474,15 @@ impl PolyModule for Oscillator {
         let voice_count = self.unison_voice_count.as_usize();
         let base_freq = self.actual_frequency();
 
+        // An automation override replaces the base pulse width while active;
+        // the base param is left untouched.
+        let pulse_width = self.override_pulse_width.unwrap_or(self.pulse_width);
+
         // Hoist the unmodulated form so the audio loop's else-branch is a
         // straight copy rather than re-clamping per sample. `PulseWidth`'s
         // range [0.01, 0.99] is already a subset of NormalizedValue's
         // [0, 1], so `new_unchecked` is sound here.
-        let pulse_width_unmodulated = NormalizedValue::new_unchecked(self.pulse_width.as_f32());
+        let pulse_width_unmodulated = NormalizedValue::new_unchecked(pulse_width.as_f32());
 
         for i in 0..n_samples {
             let fm = fm_reader[i] * self.fm_amount.as_f32();
@@ -487,7 +501,7 @@ impl PolyModule for Oscillator {
 
             let effective_pulse_width = if pwm_reader.is_connected() {
                 NormalizedValue::new(
-                    (self.pulse_width.as_f32() + pwm_reader[i] * 0.49).clamp(0.01, 0.99),
+                    (pulse_width.as_f32() + pwm_reader[i] * 0.49).clamp(0.01, 0.99),
                 )
             } else {
                 pulse_width_unmodulated
@@ -675,6 +689,23 @@ impl PolyModule for Oscillator {
         self.mod_offset_level = BipolarValue::CENTER;
     }
 
+    fn set_param_override(&mut self, param: Param) {
+        if let Param::Oscillator(osc_param) = param {
+            match osc_param {
+                OscillatorParam::Detune(d) => self.override_detune = Some(d.clamp_detune()),
+                OscillatorParam::PulseWidth(pw) => self.override_pulse_width = Some(pw),
+                // Base frequency is note-driven; remaining params are not
+                // pitch/PWM automation targets in this first cut.
+                _ => {}
+            }
+        }
+    }
+
+    fn clear_param_overrides(&mut self) {
+        self.override_detune = None;
+        self.override_pulse_width = None;
+    }
+
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
@@ -683,6 +714,45 @@ impl PolyModule for Oscillator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_oscillator_param_override_replaces_base_and_reverts() {
+        let mut osc = Oscillator::new();
+        osc.set_param(Param::Oscillator(OscillatorParam::Frequency(Hertz::new(
+            440.0,
+        ))));
+        osc.set_param(Param::Oscillator(OscillatorParam::Detune(Cents::ZERO)));
+        osc.set_param(Param::Oscillator(OscillatorParam::PulseWidth(
+            PulseWidthParam::SQUARE,
+        )));
+
+        let base_freq = osc.actual_frequency().as_f32();
+        assert!((base_freq - 440.0).abs() < 0.5);
+
+        // +100 cents (one semitone, the clamp_detune ceiling) raises the pitch
+        // by the 12-TET ratio 2^(1/12).
+        osc.set_param_override(Param::Oscillator(OscillatorParam::Detune(Cents::new(
+            100.0,
+        ))));
+        let override_freq = osc.actual_frequency().as_f32();
+        assert!((override_freq / base_freq - 2.0_f32.powf(1.0 / 12.0)).abs() < 1e-3);
+
+        // Pulse-width override is stored without touching the base.
+        osc.set_param_override(Param::Oscillator(OscillatorParam::PulseWidth(
+            PulseWidthParam::new(0.25),
+        )));
+        assert!(matches!(osc.override_pulse_width, Some(pw) if (pw.as_f32() - 0.25).abs() < 1e-6));
+
+        // Base params are never mutated by the override.
+        assert!(osc.detune.as_f32().abs() < 1e-6);
+        assert!((osc.pulse_width.as_f32() - PulseWidthParam::SQUARE.as_f32()).abs() < 1e-6);
+
+        // Clearing reverts to the base.
+        osc.clear_param_overrides();
+        assert!((osc.actual_frequency().as_f32() - 440.0).abs() < 0.5);
+        assert!(osc.override_detune.is_none());
+        assert!(osc.override_pulse_width.is_none());
+    }
 
     #[test]
     fn test_oscillator_creation() {

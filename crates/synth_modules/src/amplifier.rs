@@ -26,6 +26,12 @@ pub struct Amplifier {
     mod_offset_level: BipolarValue,
     /// Pan offset (additive, from mod matrix).
     mod_offset_pan: BipolarValue,
+    // Transient automation overrides (replace the base value while active,
+    // cleared on transport stop; the base param is never mutated).
+    /// Level override from sequencer automation.
+    override_level: Option<Gain>,
+    /// Pan override from sequencer automation.
+    override_pan: Option<BipolarValue>,
     output_left: AudioBuffer,
     output_right: AudioBuffer,
 }
@@ -40,6 +46,8 @@ impl Amplifier {
             sample_rate: SampleRate::DVD_QUALITY,
             mod_offset_level: BipolarValue::CENTER,
             mod_offset_pan: BipolarValue::CENTER,
+            override_level: None,
+            override_pan: None,
             output_left: AudioBuffer::new(1024),
             output_right: AudioBuffer::new(1024),
         }
@@ -154,6 +162,11 @@ impl PolyModule for Amplifier {
         // Determine if we have stereo input
         let has_stereo_input = audio_in_l.is_connected() || audio_in_r.is_connected();
 
+        // Effective base values: an automation override replaces the base while
+        // active; the base param is left untouched.
+        let level = self.override_level.unwrap_or(self.level);
+        let pan = self.override_pan.unwrap_or(self.pan);
+
         for i in 0..context.samples.as_usize() {
             // Get input: use stereo inputs if connected, otherwise mono
             let (input_l, input_r) = if has_stereo_input {
@@ -168,16 +181,14 @@ impl PolyModule for Amplifier {
             // In unipolar mode, CV is clamped to positive (standard VCA)
             let cv_scaled = if self.cv_bipolar { cv } else { cv.max(0.0) };
             // Apply mod matrix level offset (additive to base level)
-            let base_level = (self.level.as_f32() + self.mod_offset_level.as_f32()).clamp(0.0, 2.0);
+            let base_level = (level.as_f32() + self.mod_offset_level.as_f32()).clamp(0.0, 2.0);
             let effective_level = base_level * cv_scaled;
 
             // BipolarValue::new() clamps internally to [-1, 1]
             let effective_pan = if pan_cv.is_connected() {
-                BipolarValue::new(self.pan.as_f32() + pan_cv[i] + self.mod_offset_pan.as_f32())
+                BipolarValue::new(pan.as_f32() + pan_cv[i] + self.mod_offset_pan.as_f32())
             } else {
-                BipolarValue::new(
-                    (self.pan.as_f32() + self.mod_offset_pan.as_f32()).clamp(-1.0, 1.0),
-                )
+                BipolarValue::new((pan.as_f32() + self.mod_offset_pan.as_f32()).clamp(-1.0, 1.0))
             };
 
             let (pan_left, pan_right) = Gain::from_pan(effective_pan);
@@ -261,6 +272,24 @@ impl PolyModule for Amplifier {
     fn clear_mod_offsets(&mut self) {
         self.mod_offset_level = BipolarValue::CENTER;
         self.mod_offset_pan = BipolarValue::CENTER;
+    }
+
+    fn set_param_override(&mut self, param: Param) {
+        if let Param::Amplifier(amp_param) = param {
+            match amp_param {
+                AmplifierParam::Level(l) => {
+                    self.override_level = Some(Gain::new(l.as_f32().clamp(0.0, 2.0)));
+                }
+                AmplifierParam::Pan(p) => self.override_pan = Some(p),
+                // CvBipolar is a mode toggle, not an automation target.
+                AmplifierParam::CvBipolar(_) => {}
+            }
+        }
+    }
+
+    fn clear_param_overrides(&mut self) {
+        self.override_level = None;
+        self.override_pan = None;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
@@ -490,5 +519,50 @@ mod tests {
         amp.pan = BipolarValue::CENTER;
         let (l, r) = amp.pan_coefficients();
         assert!((l.as_f32() - r.as_f32()).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_amplifier_level_override_replaces_base_and_reverts() {
+        let mut amp = Amplifier::new();
+        amp.set_param(Param::Amplifier(AmplifierParam::Level(Gain::new(0.5))));
+
+        let mut input = AudioBuffer::new(1024);
+        for i in 0..64 {
+            input[i] = 1.0;
+        }
+        let context = ProcessContext {
+            samples: synth_core::SampleCount::new(64),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+
+        let run = |amp: &mut Amplifier, input: &AudioBuffer| -> f32 {
+            let mut outputs = HashMap::new();
+            outputs.insert(PortName::OUT, AudioBuffer::new(1024));
+            amp.process(
+                InputPorts::new(&[(PortName::IN, input)]),
+                &mut outputs,
+                &context,
+            );
+            outputs[&PortName::OUT][0]
+        };
+
+        let base_out = run(&mut amp, &input);
+        assert!(base_out > 0.0);
+
+        // Override tripling the level (0.5 -> 1.5) roughly triples the output.
+        amp.set_param_override(Param::Amplifier(AmplifierParam::Level(Gain::new(1.5))));
+        let override_out = run(&mut amp, &input);
+        assert!((override_out / base_out - 3.0).abs() < 1e-3);
+
+        // Base param is never mutated by the override.
+        assert!((amp.level.as_f32() - 0.5).abs() < 1e-6);
+
+        // Clearing reverts to the base.
+        amp.clear_param_overrides();
+        let reverted_out = run(&mut amp, &input);
+        assert!((reverted_out - base_out).abs() < 1e-4);
+        assert!(amp.override_level.is_none());
+        assert!(amp.override_pan.is_none());
     }
 }

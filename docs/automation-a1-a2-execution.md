@@ -44,9 +44,13 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
   `set_mod_offset`/`clear_mod_offsets`). `Param` carries the value, so the
   `(&Param, f32)` shape was dropped for the cleaner `Param`-by-value. Override =
   absolute *replace* (vs additive `set_mod_offset`). Per-module storage is S2.
-- [ ] **S2 — Implement override for A1-target modules.** Filter (Cutoff, Resonance),
-  Envelope (Attack/Decay/Sustain/Release), Amplifier (Level/Pan), Oscillator (the
-  pitch/PWM-relevant params). `process()` reads base+override. Unit tests per module.
+- [x] **S2 — Implement override for A1-target modules.** Filter (Cutoff, Resonance),
+  Envelope (Attack/Decay/Sustain/Release), Amplifier (Level/Pan), Oscillator (Detune,
+  PulseWidth — the pitch/PWM-relevant continuous params; base Frequency is note-driven).
+  Per-module `Option<T>` override fields; `process()` reads `override.unwrap_or(base)`,
+  mod-matrix offsets still apply additively on top. Override setters clamp like
+  `set_param`; `clear_param_overrides` reverts to base. One behavioral unit test per
+  module (effective value under override + base-untouched + revert-on-clear).
 - [ ] **S3 — Graph + Voice plumbing.** `Graph::apply_param_override(module_id,
   param, value)` / `clear_param_overrides()`, fanned out to every live voice; clear
   hook on transport stop. RT-safe. Tests.
@@ -91,3 +95,4 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
 
 - (run starts here)
 - S1 done — override API on `PolyModule` (default no-op). Gate green (fmt/build/clippy/test exit 0), code-review (none). Found: `ParameterDescriptor.modulatable` already encodes the S7 allowlist (choice→false, float→true).
+- S2 done — per-module override storage for Filter/Envelope/Amplifier/Oscillator (`Option<T>` fields, `override.unwrap_or(base)` in process, mod-offset still additive on top). 4 behavioral unit tests. Gate green (fmt/build/clippy/test exit 0); independent code-review found no correctness bugs. Decisions: Oscillator targets Detune+PulseWidth (base Frequency is note-driven, left out); other modules keep the default no-op.

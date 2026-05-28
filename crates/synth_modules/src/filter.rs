@@ -53,6 +53,13 @@ pub struct Filter {
     /// Resonance modulation offset (additive, 0-1 range).
     mod_offset_resonance: NormalizedValue,
 
+    // Transient automation overrides (replace the base value while active,
+    // cleared on transport stop; the base param is never mutated).
+    /// Cutoff override from sequencer automation.
+    override_cutoff: Option<Hertz>,
+    /// Resonance override from sequencer automation.
+    override_resonance: Option<NormalizedValue>,
+
     // Output buffer
     output_buffer: AudioBuffer,
 }
@@ -79,6 +86,8 @@ impl Filter {
             karlsen: KarlsenFilter::new(),
             mod_offset_cutoff: Semitones::ZERO,
             mod_offset_resonance: NormalizedValue::MIN,
+            override_cutoff: None,
+            override_resonance: None,
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -88,7 +97,8 @@ impl Filter {
             (self.base_note.as_u8() as f32 - 60.0) * self.key_tracking.as_f32() * 100.0;
         // Apply mod matrix offset (in semitones, converted to exponential scaling)
         let total_offset = tracking_offset + self.mod_offset_cutoff.as_f32() * 100.0;
-        let tracked = self.cutoff.as_f32() * (total_offset / 1200.0).exp2();
+        let base_cutoff = self.override_cutoff.unwrap_or(self.cutoff);
+        let tracked = base_cutoff.as_f32() * (total_offset / 1200.0).exp2();
         Hertz::new(tracked.clamp(20.0, self.sample_rate.as_f32() * 0.49))
     }
 
@@ -128,8 +138,9 @@ impl Filter {
         .clamp(20.0, self.sample_rate.as_f32() * 0.49);
         let cutoff = Hertz::new(cutoff_hz);
         // Clamp resonance to 0.99 max to prevent instability at self-oscillation
+        let base_resonance = self.override_resonance.unwrap_or(self.resonance);
         let resonance =
-            (self.resonance.as_f32() + res_mod.as_f32() + self.mod_offset_resonance.as_f32())
+            (base_resonance.as_f32() + res_mod.as_f32() + self.mod_offset_resonance.as_f32())
                 .clamp(0.0, 0.99);
 
         match self.model {
@@ -443,6 +454,22 @@ impl PolyModule for Filter {
         self.mod_offset_resonance = NormalizedValue::MIN;
     }
 
+    fn set_param_override(&mut self, param: Param) {
+        if let Param::Filter(filter_param) = param {
+            match filter_param {
+                FilterParam::Cutoff(c) => self.override_cutoff = Some(c.clamp_audible()),
+                FilterParam::Resonance(r) => self.override_resonance = Some(r),
+                // Other params are non-automatable (choice/structural); ignore.
+                _ => {}
+            }
+        }
+    }
+
+    fn clear_param_overrides(&mut self) {
+        self.override_cutoff = None;
+        self.override_resonance = None;
+    }
+
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
@@ -679,6 +706,36 @@ mod tests {
         let filter = Filter::new();
         assert_eq!(filter.filter_type, FilterMode::Lowpass);
         assert!((filter.cutoff.as_f32() - 1000.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_filter_param_override_replaces_base_and_reverts() {
+        let mut filter = Filter::new();
+        filter.set_param(Param::Filter(FilterParam::Cutoff(Hertz::new(1000.0))));
+        filter.set_param(Param::Filter(FilterParam::Resonance(NormalizedValue::new(
+            0.2,
+        ))));
+
+        // No override: effective cutoff follows the base.
+        assert!((filter.effective_cutoff().as_f32() - 1000.0).abs() < 0.5);
+
+        // Override replaces the base while active.
+        filter.set_param_override(Param::Filter(FilterParam::Cutoff(Hertz::new(400.0))));
+        filter.set_param_override(Param::Filter(FilterParam::Resonance(NormalizedValue::new(
+            0.9,
+        ))));
+        assert!((filter.effective_cutoff().as_f32() - 400.0).abs() < 0.5);
+        assert!(matches!(filter.override_resonance, Some(r) if (r.as_f32() - 0.9).abs() < 1e-6));
+
+        // Base params are never mutated by the override.
+        assert!((filter.cutoff.as_f32() - 1000.0).abs() < 1e-3);
+        assert!((filter.resonance.as_f32() - 0.2).abs() < 1e-3);
+
+        // Clearing reverts to the base.
+        filter.clear_param_overrides();
+        assert!((filter.effective_cutoff().as_f32() - 1000.0).abs() < 0.5);
+        assert!(filter.override_cutoff.is_none());
+        assert!(filter.override_resonance.is_none());
     }
 
     #[test]

@@ -141,6 +141,12 @@ pub struct Envelope {
     position_buffer: Arc<EnvelopePositionBuffer>,
     /// Previous gate value for edge detection (persists across buffers).
     prev_gate: NormalizedValue,
+    // Transient automation overrides (replace the base value while active,
+    // cleared on transport stop; the base param is never mutated).
+    override_attack: Option<Seconds>,
+    override_decay: Option<Seconds>,
+    override_sustain: Option<NormalizedValue>,
+    override_release: Option<Seconds>,
 }
 
 impl Envelope {
@@ -163,6 +169,10 @@ impl Envelope {
             time_in_stage: Seconds::ZERO,
             position_buffer: Arc::new(EnvelopePositionBuffer::new()),
             prev_gate: NormalizedValue::MIN,
+            override_attack: None,
+            override_decay: None,
+            override_sustain: None,
+            override_release: None,
         }
     }
 
@@ -212,17 +222,24 @@ impl Envelope {
 
         let prev_stage = self.stage;
 
+        // Effective ADSR values: a transient automation override replaces the
+        // base for the duration it is active; the base is left untouched.
+        let attack = self.override_attack.unwrap_or(self.attack);
+        let decay = self.override_decay.unwrap_or(self.decay);
+        let sustain = self.override_sustain.unwrap_or(self.sustain);
+        let release = self.override_release.unwrap_or(self.release);
+
         match self.stage {
             EnvelopeStage::Idle => {
                 self.level = NormalizedValue::MIN;
             }
             EnvelopeStage::Attack => {
-                if self.attack.as_f32() <= 0.001 {
+                if attack.as_f32() <= 0.001 {
                     self.level = NormalizedValue::MAX;
                     self.stage = EnvelopeStage::Decay;
-                    self.target_level = self.sustain;
+                    self.target_level = sustain;
                 } else {
-                    let base_coef = self.attack.to_exp_coeff(self.sample_rate);
+                    let base_coef = attack.to_exp_coeff(self.sample_rate);
                     let effective_coef = Self::apply_curve(base_coef, self.attack_curve.as_f32());
 
                     let target = self.target_level.as_f32();
@@ -233,38 +250,38 @@ impl Envelope {
                     if self.level.as_f32() >= 0.999 {
                         self.level = NormalizedValue::MAX;
                         self.stage = EnvelopeStage::Decay;
-                        self.target_level = self.sustain;
+                        self.target_level = sustain;
                     }
                 }
             }
             EnvelopeStage::Decay => {
-                if self.decay.as_f32() <= 0.001 {
-                    self.level = self.sustain;
+                if decay.as_f32() <= 0.001 {
+                    self.level = sustain;
                     self.stage = EnvelopeStage::Sustain;
                 } else {
-                    let base_coef = self.decay.to_exp_coeff(self.sample_rate);
-                    let sustain = self.sustain.as_f32();
+                    let base_coef = decay.to_exp_coeff(self.sample_rate);
+                    let sustain_level = sustain.as_f32();
                     let current = self.level.as_f32();
                     let effective_coef = Self::apply_curve(base_coef, self.decay_curve.as_f32());
 
-                    let new_level = sustain + (current - sustain) * effective_coef;
+                    let new_level = sustain_level + (current - sustain_level) * effective_coef;
                     self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
 
-                    if self.level.as_f32() <= sustain + 0.001 {
-                        self.level = self.sustain;
+                    if self.level.as_f32() <= sustain_level + 0.001 {
+                        self.level = sustain;
                         self.stage = EnvelopeStage::Sustain;
                     }
                 }
             }
             EnvelopeStage::Sustain => {
-                self.level = self.sustain;
+                self.level = sustain;
             }
             EnvelopeStage::Release => {
-                if self.release.as_f32() <= 0.001 {
+                if release.as_f32() <= 0.001 {
                     self.level = NormalizedValue::MIN;
                     self.stage = EnvelopeStage::Idle;
                 } else {
-                    let base_coef = self.release.to_exp_coeff(self.sample_rate);
+                    let base_coef = release.to_exp_coeff(self.sample_rate);
                     let current = self.level.as_f32();
                     let effective_coef = Self::apply_curve(base_coef, self.release_curve.as_f32());
 
@@ -522,6 +539,32 @@ impl PolyModule for Envelope {
         self.stage == EnvelopeStage::Idle
     }
 
+    fn set_param_override(&mut self, param: Param) {
+        if let Param::Envelope(env_param) = param {
+            match env_param {
+                EnvelopeParam::Attack(a) => {
+                    self.override_attack = Some(Seconds::new(a.as_f32().max(0.0)));
+                }
+                EnvelopeParam::Decay(d) => {
+                    self.override_decay = Some(Seconds::new(d.as_f32().max(0.0)));
+                }
+                EnvelopeParam::Sustain(s) => self.override_sustain = Some(s),
+                EnvelopeParam::Release(r) => {
+                    self.override_release = Some(Seconds::new(r.as_f32().max(0.0)));
+                }
+                // Curves and velocity sensitivity are not automation targets here.
+                _ => {}
+            }
+        }
+    }
+
+    fn clear_param_overrides(&mut self) {
+        self.override_attack = None;
+        self.override_decay = None;
+        self.override_sustain = None;
+        self.override_release = None;
+    }
+
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
@@ -543,5 +586,42 @@ mod tests {
         env.sample_rate = SampleRate::DVD_QUALITY;
         env.trigger(Velocity::MAX);
         assert_eq!(env.stage, EnvelopeStage::Attack);
+    }
+
+    #[test]
+    fn test_envelope_param_override_replaces_base_and_reverts() {
+        let mut env = Envelope::new();
+        env.sample_rate = SampleRate::DVD_QUALITY;
+        env.set_param(Param::Envelope(EnvelopeParam::Sustain(
+            NormalizedValue::new(0.5),
+        )));
+        env.set_param(Param::Envelope(EnvelopeParam::Attack(Seconds::new(0.2))));
+
+        // In the sustain stage the level tracks the base sustain.
+        env.stage = EnvelopeStage::Sustain;
+        let _ = env.process_sample();
+        assert!((env.level.as_f32() - 0.5).abs() < 1e-6);
+
+        // Override replaces the base while active.
+        env.set_param_override(Param::Envelope(EnvelopeParam::Sustain(
+            NormalizedValue::new(0.9),
+        )));
+        env.set_param_override(Param::Envelope(EnvelopeParam::Attack(Seconds::new(0.01))));
+        env.stage = EnvelopeStage::Sustain;
+        let _ = env.process_sample();
+        assert!((env.level.as_f32() - 0.9).abs() < 1e-6);
+
+        // Base params are never mutated by the override.
+        assert!((env.sustain.as_f32() - 0.5).abs() < 1e-6);
+        assert!((env.attack.as_f32() - 0.2).abs() < 1e-6);
+        assert!(matches!(env.override_attack, Some(a) if (a.as_f32() - 0.01).abs() < 1e-6));
+
+        // Clearing reverts to the base.
+        env.clear_param_overrides();
+        env.stage = EnvelopeStage::Sustain;
+        let _ = env.process_sample();
+        assert!((env.level.as_f32() - 0.5).abs() < 1e-6);
+        assert!(env.override_sustain.is_none());
+        assert!(env.override_attack.is_none());
     }
 }
