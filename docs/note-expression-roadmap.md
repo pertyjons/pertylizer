@@ -18,8 +18,8 @@ first, richness second.
 
 ## Status at a glance
 
-- [ ] **Phase A1** — Wire the 6 already-GUI-exposed instrument macros (bugfix; no schema change)
-- [ ] **Phase A2** — `AutomationTarget::Module { instrument, module_id, param }` (generic, additive)
+- [x] **Phase A1** — Wire the 6 already-GUI-exposed instrument macros (bugfix; no schema change)
+- [x] **Phase A2** — `AutomationTarget::Module { instrument, module_id, param }` (generic, additive)
 - [ ] **Phase B** — Per-note legato/tie + glide fields, driving the existing allocator machinery
 - [ ] **Phase C** — Per-note vibrato depth + a small per-note expression block (note expression in miniature)
 - [ ] **Phase D** — Shared/bus filter with automatable cutoff (rides on channel-strip Phase 7)
@@ -78,22 +78,18 @@ The moment an automation lane points at a module param, that lane becomes a
 *dependant* of the module. Two things must follow from a single "who references
 this module?" query, reused everywhere:
 
-- [ ] **Visibility in the Rack view.** A module whose param is automated must show
-  it on its panel (`instrument_rack.rs`, `module_panel.rs`) — an *automated* badge
-  on the module and ideally on the specific param control, the same way a mod-matrix
-  destination reads as "wired". Silent automation that doesn't sound (A1) is one
-  trap; automation that sounds but is invisible is the next one.
-- [ ] **Deletion / rename guard.** `PatchEditorState::remove_module`
-  (`patch_editor.rs:624`) currently tears a module out unconditionally. A module
-  referenced by ≥1 automation lane must not vanish silently — either block the
-  delete with a warning that lists the referencing lanes, or allow it and convert
-  those lanes to a flagged *orphan* state (warn, keep, no-op) so nothing is lost.
-  Decide which; the orphan path is also the fallback for projects edited outside
-  the GUI.
-- [ ] **One reference index.** Both of the above need the same lookup
-  (`module_id → [lanes]`). Build it once (sequencer-side, from the automation
-  lanes) so the Rack badge and the delete guard can't disagree. Phase D's bus
-  filter and Phase E's per-note curves register through the same index.
+- [x] **Visibility in the Rack view.** Done: a `ri::PULSE_FILL` *automated* badge on
+  the module's panel header (`patch_editor.rs` header row), driven per frame from the
+  reference index. (Per-param control badge not yet — module-level only for the first cut.)
+- [x] **Deletion guard.** Done (block-with-warning): `egui_backend` blocks removing a
+  module that an automation lane targets and surfaces a `dialog_state` status toast;
+  the lane is preserved. (The orphan-flag path and *rename* guard are deferred; note
+  that the dispatch already no-ops safely on an absent module, so an out-of-GUI orphan
+  is harmless at playback.)
+- [x] **One reference index.** Done: `Song::automated_module_params()` (and the
+  single-lookup `is_module_automated`) builds `module → [param_ids]` once,
+  sequencer-side, so the Rack badge and delete guard share one source of truth.
+  Phase D / E register through the same index.
 
 This is *derived* state — no on-disk schema change — but it is the difference
 between "generic automation exists" and "generic automation is safe to live in".
@@ -122,17 +118,19 @@ of it.
   (`graph.rs:454`, `voice.rs:728`) adds it on top per block, reset each cycle, base
   untouched. But it only covers a **fixed** destination set (OscPitch/FilterCutoff/…),
   the same fixed set noted in Context.
-- [ ] **Generalize the base+override split to any `(module_id, param)`.** A2 needs
-  the mod-matrix mechanism widened from the fixed destination enum to a generic
-  transient override slot the lane writes, applied over the base at process time and
-  cleared on stop → param reverts to base. New work; not free in `set_param`.
-- [ ] **Define the combine rule per target.** Automation is typically *absolute*
-  (the lane value replaces the base while active) whereas mod-matrix is an
-  *additive offset*. Decide which each target uses, and what holds before the first
-  point / in gaps between lanes (→ base).
-- [ ] **Save semantics.** Saving writes the base (knob) value, never the momentary
-  automated value — even mid-playback. Ties into the Rack badge: in read mode the
-  knob shows the live automated value but still *stores* the base.
+- [x] **Generalize the base+override split to any `(module_id, param)`.** Done:
+  `PolyModule::set_param_override(Param)` / `clear_param_overrides()` (default no-op),
+  per-module `Option<T>` override storage read as `override.unwrap_or(base)` in
+  `process()`, fanned out via `Graph`/`Voice`/`Instrument`, cleared on transport stop
+  (`handle_all_notes_off`). The base param is never mutated.
+- [x] **Combine rule per target (for automation).** Decided: automation is **absolute**
+  (the override *replaces* the base while active); mod-matrix stays an additive offset
+  applied on top. Before the first point / in gaps / on stop → the override is cleared
+  and the param reverts to base. (The mod-matrix-vs-automation *ordering* when both
+  drive one param is the separate deferred item below.)
+- [x] **Save semantics.** Holds by construction: overrides never touch the stored base,
+  so saving always writes the base (knob) value even mid-playback. (Read-mode knob
+  *display* of the live automated value is a GUI nicety, not yet implemented.)
 
 ---
 
@@ -140,85 +138,80 @@ of it.
 **Applies to:** A1, A2, D, E · these are decisions that must be made *before* the
 generic param path ships, not after. Each is verified against current code.
 
-- [ ] **`ModuleId` is positional, not a stable identity.** It is `{ module_type,
-  instance: u16 }` (`commands.rs:43`); `apply_mod_offset` even resolves "the Nth
-  instance of a type" (`graph.rs:454`). A lane that stores a `ModuleId` silently
-  **re-points to a different module** if a same-type module is added/removed/
-  reordered — and A1's "first filter in the graph" convention has the identical
-  fragility. The reference index (other cross-cutting section) is *not enough*;
-  automation needs a stable per-module identity, or a documented, deterministic
-  re-resolution rule that survives graph edits.
-- [ ] **Discrete / enum params can't be smoothly automated.** `Param` carries
-  `choice` params — `FilterMode`, `FilterModel` (`filters.rs:159-173`, decoded via
-  `from_index`), oscillator `Waveform`, etc. A continuous normalized lane
-  interpolating *through* them is nonsense (halfway between saw and square = ?).
-  The descriptor already distinguishes `choice` from continuous — the lane engine
-  must read that: continuous → interpolate/smooth, discrete → stepped/quantized.
-- [ ] **Not every param is RT-safe to automate.** `grid_size` on the mod matrix
-  (`mod_matrix.rs:137`, "Number of modulation slots") *resizes the grid* —
-  automating it would heap-allocate on the audio thread. The picker (A2 GUI/MCP)
-  must offer only an **allowlist**: continuous *and* RT-safe params. Structural /
-  sizing params are not automatable. Decide the flag's home (descriptor).
-- [ ] **Control-rate stepping = zipper noise.** The apply path is a hard set —
-  `set_volume` (`instrument.rs:749`), `Graph::set_param` (`graph.rs:332`) — with no
-  ramp. Per-block automation of cutoff/volume/etc. clicks without smoothing. Decide
-  where smoothing lives (per-param ramp in the override layer vs. per-module).
-- [ ] **Per-voice fan-out + mid-note seeding.** A lane is *one* per-instrument
-  timeline value, but params live per-voice (`handle_set_module_param` writes the
-  template *and every live voice*, `synth_engine.rs:1729`). The override must fan
-  out to all voices each block, and a voice triggered **mid-sweep** must start at
-  the current automated value, not the base — the mod matrix dodges this with a
-  per-voice LFO, an instrument lane cannot.
-- [ ] **Two controllers, one param.** A filter cutoff can be driven by a mod-matrix
-  LFO (additive offset) *and* an automation lane *simultaneously* — the mod matrix
-  already targets `FilterCutoff`. Define the order: base → automation (absolute) →
-  mod-matrix offset on top? Undefined today; collisions are silent.
-- [ ] **Offline render must apply the override identically.** The `analyze_*` tools
-  render offline; if the override layer only runs in the live `process()`, analysis
-  reads base values, not automated ones — a fresh instance of the known
-  "offline reader sees state the live engine never wrote" bug class. Evaluate
-  automation in the offline path too, on the same clock.
+- [ ] **`ModuleId` is positional, not a stable identity.** _DEFERRED (A1/A2 first cut)._
+  It is `{ module_type, instance: u16 }` (`commands.rs:43`). A1 and A2 deliberately
+  use this positional identity ("first module of that type" for A1; `module_type`+
+  `instance` for A2), so a lane silently re-points if same-type modules are
+  added/removed/reordered. Accepted for the first cut; a stable per-module identity
+  (or a deterministic re-resolution rule) is future work that A2's `AutomationTarget::Module`
+  would migrate to.
+- [x] **Discrete / enum params can't be smoothly automated.** Done: the automatable
+  allowlist (`ParameterDescriptor::is_automatable()` = `modulatable && choices.is_none()`)
+  excludes `choice`/enum params (`FilterMode`, `Waveform`, …); GUI/MCP filter on it.
+- [x] **Not every param is RT-safe to automate.** Done: same allowlist excludes
+  structural/sizing params; the flag's home is the descriptor (`modulatable`, now also
+  set `false` on `unison`/`steps`/`pulses`/`rotation`/`length`).
+- [x] **Control-rate stepping = zipper noise.** Done (cutoff/volume): per-block linear
+  ramp of the effective override value in the Amplifier (`level`) and Filter (`cutoff`).
+  (Resonance/pan and other params left un-ramped for the first cut.)
+- [x] **Per-voice fan-out + mid-note seeding.** Done: `Instrument::apply_param_override`
+  fans the override to the template `voice_graph` **and** every pooled voice each
+  update, so a voice triggered after an update inherits the current value via the
+  template. (Sub-block mid-sweep seeding of a voice triggered *between* updates is
+  bounded by the automation update rate — acceptable for the first cut.)
+- [ ] **Two controllers, one param.** _DEFERRED (A1/A2 first cut)._ A filter cutoff can
+  be driven by a mod-matrix offset *and* an automation override simultaneously. The
+  first cut applies the override as the base (absolute replace) with the mod-matrix
+  offset still added on top per block; the precise, documented combine *ordering* when
+  both are active is left for a follow-up.
+- [ ] **Offline render must apply the override identically.** _DEFERRED (A1/A2 first
+  cut)._ The override layer currently runs in the live `process()` path; the `analyze_*`
+  offline renderers do not yet evaluate automation, so they read base values. Bringing
+  the offline path onto the same clock is future work (a known "offline reader sees
+  state the live engine never wrote" bug class).
 
 ---
 
 ## Phase A1 — Wire the 6 GUI-exposed instrument macros (bugfix)
-**Status:** ☐ Not started · **Effort:** S · **Axis:** broken → fix · **Schema:** none
+**Status:** ☑ Done (branch `feat/automation-a1-a2`) · **Effort:** S · **Axis:** broken → fix · **Schema:** none
 
 The targets already exist in the enum, the GUI, and MCP; only the playback
 dispatch is missing. This is a bugfix of a silent no-op, not a feature.
 
-- [ ] In the `Parameter` dispatch (`synth_engine.rs:2660`), replace the `_ => {}`
+- [x] In the `Parameter` dispatch (`route_sequencer_events`), replace the `_ => {}`
   for FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release with resolution to
-  the instrument's filter/envelope module. **Apply via the override layer, not the
-  destructive `set_param`** — see Cross-cutting "automation value model"; otherwise
-  the macro latches and a save corrupts the patch base.
-- [ ] Define the resolution convention for instruments with **multiple** filters
-  (e.g. "first filter module in the graph"). Document it next to the dispatch.
-- [ ] Denormalize `NormalizedValue 0..1` → param range via the existing descriptor
-  ranges (descriptor-driven validation already landed, 6ee1c5e).
-- [ ] **Migration note for `history.md`:** existing saved projects may already
-  contain dead FilterCutoff/ADSR lanes; once wired they begin to *sound* on load —
-  a deliberate behavioral change to old projects.
+  the instrument's filter/envelope module. Applied via the **override layer**
+  (`Instrument::apply_normalized_override`), not the destructive `set_param`, so the
+  macro never latches over the patch base.
+- [x] Resolution convention for instruments with **multiple** filters: the **first
+  module of that type in the graph** (lowest `ModuleId` instance). Documented next to
+  the dispatch.
+- [x] Denormalize `NormalizedValue 0..1` → param range via the cached descriptor
+  range/curve (`ModuleGraph::module_descriptor`, zero-alloc on the audio thread).
 
 ## Phase A2 — `AutomationTarget::Module` (generic param automation)
-**Status:** ☐ Not started · **Effort:** M · **Axis:** broken → fix (filter/PWM) · **Schema:** additive
+**Status:** ☑ Done (branch `feat/automation-a1-a2`) · **Effort:** M · **Axis:** broken → fix (filter/PWM) · **Schema:** additive
 
 The biggest single faithfulness win: turns the analyzer's already-extracted
 per-frame PWM and filter-cutoff contours into exact playback instead of a static
 midpoint / fixed-rate LFO guess.
 
-- [ ] Add `AutomationTarget::Module { instrument: SeqInstrumentId, module_id:
-  ModuleId, param: Param }` (additive enum variant) in `automation.rs`.
-- [ ] Dispatch it through the **override** layer, not `Graph::set_param` — see
-  Cross-cutting "automation value model". Reusing the destructive `SetModuleParameter`
-  path would latch/corrupt the patch base.
-- [ ] GUI: extend the lane target picker (`sequencer/mod.rs:3375`) to browse
-  modules + params for the selected instrument.
-- [ ] MCP: accept module targets in `build_automation_target`
-  (`mcp_bridge.rs:5302`) and surface them in `automation_target_info`.
-- [ ] Referential integrity + visibility — see the **Cross-cutting** section
-  below. A targeted module must show as *automated* in the Rack view, and it can
-  no longer be silently deleted/renamed out from under a live lane.
+- [x] Added `AutomationTarget::Module { instrument: SeqInstrumentId, module_type:
+  ModuleType, instance: u16, param_id: String }` (additive enum variant) in
+  `automation.rs`. **Shape differs from `{ module_id, param }`:** `AutomationTarget`
+  is a `HashMap` key (must stay `Eq+Hash`) but `Param` holds `f32` (not `Eq`), and
+  `ModuleId` lives in `synth_engine` (unreachable from `synth_sequencer`). Module
+  identity is therefore positional (`module_type`+`instance`, mirroring `ModuleId`)
+  and the param is its stable descriptor `type_id` string.
+- [x] Dispatched through the **override** layer (`Instrument::apply_module_param_override`),
+  not `Graph::set_param`; the engine rebuilds the concrete `Param` via
+  `descriptor.id.with_f32(denormalize(value))`. Base param never mutated.
+- [x] GUI: lane target picker (`sequencer/mod.rs`) browses the selected instrument's
+  modules + automatable params.
+- [x] MCP: `build_automation_target` accepts `module:<prefix>:<instance>:<param_id>`
+  and `automation_target_info` emits the same canonical form (round-trips).
+- [x] Referential integrity + visibility — see the **Cross-cutting** section. A
+  targeted module shows an *automated* badge in the Rack view and is delete-guarded.
 
 ## Phase B — Per-note legato/tie + glide
 **Status:** ☐ Not started · **Effort:** S–M · **Axis:** broken → fix (arpeggio, portamento) · **Schema:** additive

@@ -1,5 +1,35 @@
 # Version History
 
+## [0.292.0] - 2026-05-28
+
+### Instrument macro automation now sounds (A1)
+
+The six GUI-exposed instrument automation macros (Filter Cutoff/Resonance,
+Attack/Decay/Sustain/Release) were a silent no-op in playback; they now drive the
+instrument's first filter/envelope module of that type via a new transient
+parameter-override layer. **Migration:** projects that already contain these
+automation lanes begin to *sound* on load — a deliberate behavioral change to old
+projects.
+
+### Generic per-module parameter automation (A2)
+
+Added `AutomationTarget::Module`, letting a sequencer lane automate any continuous,
+real-time-safe parameter of any module in an instrument's graph; targets are
+browsable in the lane picker and over MCP (`module:<type>:<instance>:<param>`),
+filtered to an automatable allowlist that excludes enum and structural/sizing params.
+
+### Transient override layer (the patch base is never overwritten)
+
+Automation applies as a transient override on top of the stored base value and
+reverts on transport stop, so saving never corrupts the patch; control-rate
+cutoff/volume changes are de-zippered with a per-block linear ramp.
+
+### Automated-module visibility and delete safety
+
+A module targeted by an automation lane shows an *automated* badge in the Rack and
+is guarded against deletion (the removal is blocked with a warning so the lane is
+preserved), both backed by one sequencer-side reference index.
+
 ## [0.291.0] - 2026-05-25
 
 ### README restructure and expansion

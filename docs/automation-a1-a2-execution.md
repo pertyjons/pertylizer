@@ -139,10 +139,16 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
   numeric convention (`SeqInstrumentId::new(id as u16)`, as used elsewhere). Gate green;
   independent review verified index logic, lock-safety (no re-entrancy/deadlock), guard
   correctness, identity convention — no bugs. GUI not exercised headlessly.
-- [ ] **S12 — Wrap-up.** Update `docs/note-expression-roadmap.md` checkboxes +
-  Status lines; record deferred items (offline parity, combine order, stable
-  ModuleId) as explicit roadmap TODOs; update `docs/history.md` (one/two-sentence
-  style). Final full gate.
+- [x] **S12 — Wrap-up.** Flipped Phase A1/A2 to Done in `docs/note-expression-roadmap.md`
+  (status lines + all phase checkboxes), flipped the cross-cutting items that landed
+  (visibility badge, delete guard, reference index, base+override generalization, combine
+  rule for automation, save semantics, discrete-param + RT-safe allowlist, zipper smoothing,
+  per-voice fan-out), and explicitly marked the three **deferred** items _DEFERRED (A1/A2
+  first cut)_: stable (non-positional) ModuleId, mod-matrix-vs-automation combine ordering
+  ("two controllers"), offline-render parity. Added a `docs/history.md` 0.292.0 entry
+  (incl. the migration note: old projects' FilterCutoff/ADSR lanes now sound on load) and
+  bumped `pertylizer` to 0.292.0. Final gate green (fmt/build/clippy/test exit 0). Docs +
+  version only — no logic change; self-verified doc accuracy (all code reviewed in S1–S11).
 
 ## Status log (append one line per iteration)
 
@@ -158,3 +164,4 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
 - S10 done — per-block linear ramp de-zippers the effective override value at block boundaries: amplifier level (`level_prev`) and filter cutoff (`cutoff_smoothed` + extracted `cutoff_from_base`). Init to default base (1.0/1000 Hz) so no zero-sweep; carries target across blocks for continuity. Filter `effective_cutoff` is now `#[cfg(test)]` (process path uses `cutoff_from_base`). 2 new tests (amp DC continuity/monotonic/target; filter ramp-to-target); updated S2 amp test to read settled sample. Gate green (fmt/build/clippy/test exit 0); independent review confirmed ramp math (last sample lands on target, continuous across blocks), no 0-sweep, filter refactor bit-identical for constant base, RT-safe — no bugs. Chose linear over one-pole (no lag, no sample-rate coupling). Resonance/pan left un-ramped (out of cutoff/volume scope); cutoff ramps linear-in-Hz (noted).
 - S8 done — GUI lane-target picker section 3: browses selected instrument's modules (`PatchEditor::module_ids`/`module_descriptor`) and offers `AutomationTarget::Module` lanes for each `is_automatable()` param; disambiguating labels, deterministic order, lazy separator, foreign-badge extended to Module lanes. Gate green (build/clippy/test exit 0); independent review found no bugs (borrow safety, dedup filter, casts, or-pattern, ordering all verified). UI not exercised headlessly — type-check + review only.
 - S6 done — Module dispatch: `route_sequencer_events` gained an `else if let Module` branch → `Instrument::apply_module_param_override` (rebuild ModuleId from module_type+instance, resolve param by descriptor `type_id`, denormalize, `Param::with_f32`, apply via override path). Fully generic, no per-param arms; RT-safe. Dispatch test (Module Filter/1/"cutoff" → attenuation). Gate green (fmt/build/clippy/test exit 0); independent review confirmed RT-safety, with_f32/denormalize round-trip, mutually-exclusive branch flow, 1-based instance match, discriminating test — no bugs. Note: A1 uses first-of-type; S6 uses exact (type,instance) — agrees on fresh graphs, positional by design.
+- S12 done — wrap-up (docs + version only, no logic). `note-expression-roadmap.md`: A1/A2 Status → Done, all phase + landed cross-cutting checkboxes flipped, three deferred items explicitly marked _DEFERRED (A1/A2 first cut)_ (stable ModuleId, combine ordering, offline-render parity). `history.md` 0.292.0 entry + migration note (old FilterCutoff/ADSR lanes now sound on load); bumped pertylizer 0.291.0→0.292.0. Final full gate green (fmt/build/clippy/test exit 0). Skipped agent code-review (prose + version bump only; all logic reviewed in S1–S11) — self-verified doc accuracy. **A1 + A2 first cut COMPLETE.**
