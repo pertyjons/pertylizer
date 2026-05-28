@@ -4234,6 +4234,7 @@ dependencies = [
  "fastrand",
  "schemars",
  "serde",
+ "serde_json",
  "synth_core",
 ]
 
