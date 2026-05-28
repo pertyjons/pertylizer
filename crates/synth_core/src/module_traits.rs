@@ -724,6 +724,28 @@ impl ParameterDescriptor {
         self
     }
 
+    /// Whether this parameter may be used as a sequencer automation target.
+    ///
+    /// A parameter is automatable iff it is **continuous** and **real-time-safe**
+    /// to change per processing block. This reuses the [`modulatable`] flag (the
+    /// existing "continuous + RT-safe" signal — module authors set it `false` for
+    /// structural/sizing params such as unison voice count, pattern length, or
+    /// step counts) and additionally excludes `choice`/enum parameters, which are
+    /// discrete selections (e.g. `FilterMode`, `Waveform`) and cannot be ramped.
+    ///
+    /// This is a *descriptor-level eligibility* check: it reports whether a param
+    /// is the right *kind* to automate, not whether the owning module currently
+    /// honours an override for it. In the A1/A2 first cut the transient override
+    /// is implemented only for a subset of modules (Filter, Envelope, Amplifier,
+    /// Oscillator); automating an eligible param on any other module is a
+    /// documented no-op until its override is implemented.
+    ///
+    /// [`modulatable`]: Self::modulatable
+    #[must_use]
+    pub fn is_automatable(&self) -> bool {
+        self.modulatable && self.choices.is_none()
+    }
+
     /// Map a normalized value (0-1) to the parameter range.
     #[must_use]
     pub fn denormalize(&self, normalized: f32) -> f32 {
@@ -1343,5 +1365,30 @@ mod tests {
             pd.validate_f32(3.0),
             Err(ParamValueError::OutOfRange { .. })
         ));
+    }
+
+    #[test]
+    fn is_automatable_includes_continuous_excludes_choice_and_structural() {
+        let detune =
+            || Param::Oscillator(crate::params::OscillatorParam::Detune(crate::Cents::ZERO));
+
+        // Continuous, modulatable float: automatable.
+        assert!(ParameterDescriptor::float("cutoff", detune(), "Cutoff").is_automatable());
+
+        // Structural/sizing float (opted out via modulatable(false)): excluded.
+        assert!(
+            !ParameterDescriptor::float("unison", detune(), "Unison")
+                .modulatable(false)
+                .is_automatable()
+        );
+
+        // Choice/enum param: excluded (discrete, not a ramp).
+        let choice = ParameterDescriptor::choice(
+            "mode",
+            detune(),
+            "Mode",
+            vec![ChoiceOption::new("a", "A"), ChoiceOption::new("b", "B")],
+        );
+        assert!(!choice.is_automatable());
     }
 }

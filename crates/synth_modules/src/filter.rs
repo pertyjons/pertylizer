@@ -709,6 +709,24 @@ mod tests {
     }
 
     #[test]
+    fn test_filter_param_automatable_allowlist() {
+        let d = Filter::new().descriptor();
+        let auto = |id: &str| {
+            d.parameters
+                .iter()
+                .find(|p| p.type_id == id)
+                .unwrap_or_else(|| panic!("missing param {id}"))
+                .is_automatable()
+        };
+        // Continuous params are automatable.
+        assert!(auto("cutoff"));
+        assert!(auto("resonance"));
+        // Choice/enum params are excluded.
+        assert!(!auto("type")); // FilterMode
+        assert!(!auto("model")); // FilterModel
+    }
+
+    #[test]
     fn test_filter_param_override_replaces_base_and_reverts() {
         let mut filter = Filter::new();
         filter.set_param(Param::Filter(FilterParam::Cutoff(Hertz::new(1000.0))));

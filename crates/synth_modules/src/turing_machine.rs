@@ -186,6 +186,8 @@ impl Describable for TuringMachine {
                 .description("Shift register length (8 or 16)")
                 .range(8.0, 16.0)
                 .default(16.0)
+                // Structural/sizing param (shift-register length): not ramp-able.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .port(

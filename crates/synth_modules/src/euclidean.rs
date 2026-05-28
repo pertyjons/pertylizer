@@ -182,6 +182,9 @@ impl Describable for Euclidean {
                 .description("Number of steps in the pattern")
                 .range(1.0, 32.0)
                 .default(16.0)
+                // Structural/sizing param (pattern length): not a continuous,
+                // ramp-able automation/modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -193,6 +196,8 @@ impl Describable for Euclidean {
                 .description("Number of active pulses")
                 .range(0.0, 32.0)
                 .default(4.0)
+                // Structural/sizing param (discrete pulse count): not ramp-able.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -204,6 +209,8 @@ impl Describable for Euclidean {
                 .description("Pattern rotation offset")
                 .range(0.0, 31.0)
                 .default(0.0)
+                // Structural param (discrete rotation index): not ramp-able.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -376,6 +383,21 @@ impl PolyModule for Euclidean {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_euclidean_structural_params_not_automatable() {
+        // Steps/pulses/rotation are structural/sizing counts, so they must be
+        // excluded from the sequencer automation allowlist.
+        let d = Euclidean::new().descriptor();
+        for id in ["steps", "pulses", "rotation"] {
+            let p = d
+                .parameters
+                .iter()
+                .find(|p| p.type_id == id)
+                .unwrap_or_else(|| panic!("missing param {id}"));
+            assert!(!p.is_automatable(), "{id} must not be automatable");
+        }
+    }
 
     #[test]
     fn test_euclidean_pattern_4_16() {

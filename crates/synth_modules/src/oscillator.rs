@@ -374,6 +374,9 @@ impl Describable for Oscillator {
                 .description("Number of unison voices (1 = off)")
                 .range(1.0, 7.0)
                 .default(1.0)
+                // Structural/sizing param: voices appear/disappear, so it is not
+                // a continuous automation/modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -714,6 +717,26 @@ impl PolyModule for Oscillator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_oscillator_param_automatable_allowlist() {
+        let d = Oscillator::new().descriptor();
+        let auto = |id: &str| {
+            d.parameters
+                .iter()
+                .find(|p| p.type_id == id)
+                .unwrap_or_else(|| panic!("missing param {id}"))
+                .is_automatable()
+        };
+        // Continuous params (incl. the A1 override targets) are automatable.
+        assert!(auto("detune"));
+        assert!(auto("pulse_width"));
+        // Choice/enum params are excluded.
+        assert!(!auto("waveform"));
+        assert!(!auto("fm_mode"));
+        // Structural/sizing param is excluded (modulatable(false)).
+        assert!(!auto("unison"));
+    }
 
     #[test]
     fn test_oscillator_param_override_replaces_base_and_reverts() {
