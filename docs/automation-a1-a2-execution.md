@@ -70,9 +70,17 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
   `route_sequencer_events` FilterCutoff → attenuation.
 
 ### Phase A2 — generic `AutomationTarget::Module`
-- [ ] **S5 — Data model.** Add `AutomationTarget::Module { instrument:
-  SeqInstrumentId, module_id: ModuleId, param: Param }` in
-  `synth_sequencer/src/automation.rs` (additive). Serde round-trip test.
+- [x] **S5 — Data model.** Added `AutomationTarget::Module { instrument:
+  SeqInstrumentId, module_type: ModuleType, instance: u16, param_id: String }` in
+  `synth_sequencer/src/automation.rs` (additive). **Design deviation from the ledger's
+  `module_id: ModuleId, param: Param`** forced by two hard constraints: (1)
+  `AutomationTarget` is a `HashMap` key (`last_automation_values`) so must stay
+  `Eq+Hash`, but `Param` holds `f32` (PartialEq only); (2) `ModuleId` lives in
+  `synth_engine`, which `synth_sequencer` can't depend on. So module identity is
+  positional (`module_type`+`instance`, mirrors `ModuleId`; stable-id deferred per
+  decision 2) and the param is its descriptor `type_id` string (stable/unique). S6
+  rebuilds the `Param` via `descriptor.id.with_f32(denormalize(value))`. Serde
+  round-trip + map-key test; regenerated `schemas/project.schema.json`.
 - [ ] **S6 — Dispatch.** Route the `Module` target through the same override apply
   path as A1 in the sequencer playback path. Tests.
 - [ ] **S7 — Automatable allowlist.** Descriptor-level flag: a param is automatable
@@ -106,3 +114,4 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
 - S2 done — per-module override storage for Filter/Envelope/Amplifier/Oscillator (`Option<T>` fields, `override.unwrap_or(base)` in process, mod-offset still additive on top). 4 behavioral unit tests. Gate green (fmt/build/clippy/test exit 0); independent code-review found no correctness bugs. Decisions: Oscillator targets Detune+PulseWidth (base Frequency is note-driven, left out); other modules keep the default no-op.
 - S3 done — Graph/Voice/Instrument override fan-out + transport-stop clear in `handle_all_notes_off`. 3 tests (osc→amp graph: override silences, clear restores; voice delegation; unknown-module no-op). Gate green (fmt/build/clippy/test exit 0); independent review found no correctness bugs. Notes: clear hook is `handle_all_notes_off` (sequencer sends AllNotesOff on stop); the allocator reuses pooled voices, so a future note inherits a template override only on an explicit voice rebuild (clone_structure copies override state) — doc'd on `Instrument::apply_param_override`.
 - S4 done — A1 dispatch: `route_sequencer_events` now handles all 6 module-targeted params via `Instrument::apply_normalized_override` (first-of-type module + cached-descriptor denormalize + override apply). Added zero-alloc `ModuleGraph::module_descriptor` (so the audio thread never calls the allocating `descriptor()`). 2 tests (instrument settled-energy revert cycle + dispatch path). Gate green (fmt/build/clippy/test exit 0); independent review confirmed all 6 arms correctly wired + RT-safe, no bugs. Test-debug lesson: comparing filter energy needs warm-up blocks — a cold-start/retune transient initially made a 20 Hz lowpass read *louder* than 1 kHz; 16 warm-up blocks fixed the measurement (not the feature).
+- S5 done — `AutomationTarget::Module` variant added. **Ledger's `module_id: ModuleId, param: Param` was not implementable**: `AutomationTarget` is a HashMap key (needs Eq+Hash) but `Param` holds f32 (PartialEq only), and `ModuleId` is in `synth_engine` (unreachable from `synth_sequencer`). Redesigned to `{ instrument, module_type, instance, param_id: String }` — all Eq/Hash/JsonSchema/Serde-clean; positional module identity + descriptor `type_id` for the param; S6 rebuilds `Param` via `with_f32`+`denormalize`. serde round-trip + map-key test; regenerated `project.schema.json` (only schema touched). Gate green; independent review confirmed `type_id` is documented stable/unique and the design is sound, no bugs. Added `serde_json` dev-dep to synth_sequencer. Note: Module automation events are silently dropped until S6 wires the dispatch.

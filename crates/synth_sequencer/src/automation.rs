@@ -1,7 +1,7 @@
 //! Automation system for parameter control over time.
 
 use serde::{Deserialize, Serialize};
-use synth_core::NormalizedValue;
+use synth_core::{ModuleType, NormalizedValue};
 
 use super::ids::{SeqInstrumentId, TrackId};
 use super::time::PatternTick;
@@ -198,6 +198,31 @@ pub enum AutomationTarget {
     Track { track: TrackId, param: TrackParam },
     /// Global parameter.
     Global(GlobalParam),
+    /// A parameter on a specific module within an instrument's graph (the
+    /// generic A2 target — any continuous, RT-safe module parameter).
+    ///
+    /// Module identity is **positional** for this first cut: `module_type` +
+    /// `instance` mirror the structure of `synth_engine::ModuleId` (a stable,
+    /// non-positional `ModuleId` is a deferred TODO). `synth_sequencer` cannot
+    /// depend on `synth_engine`, so the engine reconstructs the `ModuleId` from
+    /// these two fields when dispatching.
+    ///
+    /// The parameter is identified by its descriptor `type_id` (e.g. `"cutoff"`)
+    /// rather than a [`synth_core::Param`] value: `Param` carries an `f32` and so
+    /// is neither `Eq` nor `Hash`, but `AutomationTarget` is used as a map key.
+    /// The dispatch resolves the descriptor by `param_id`, denormalizes the
+    /// `0..1` lane value through its range, and rebuilds the concrete `Param`
+    /// with `Param::with_f32`.
+    Module {
+        /// Instrument owning the module.
+        instrument: SeqInstrumentId,
+        /// Module type (with `instance`, the positional module identity).
+        module_type: ModuleType,
+        /// 1-based instance index within the module type (as in `ModuleId`).
+        instance: u16,
+        /// Descriptor `type_id` of the target parameter (e.g. `"cutoff"`).
+        param_id: String,
+    },
 }
 
 impl AutomationTarget {
@@ -212,6 +237,17 @@ impl AutomationTarget {
                 format!("Track {} {param:?}", track.0)
             }
             Self::Global(param) => format!("{param:?}"),
+            Self::Module {
+                instrument,
+                module_type,
+                instance,
+                param_id,
+            } => {
+                format!(
+                    "Inst {} {module_type:?} {instance} {param_id}",
+                    instrument.0
+                )
+            }
         }
     }
 }
@@ -407,5 +443,24 @@ mod tests {
 
         assert_eq!(lane.len(), 1);
         assert_eq!(lane.points()[0].value, NormalizedValue::new(0.8));
+    }
+
+    #[test]
+    fn test_module_target_serde_round_trip() {
+        let target = AutomationTarget::Module {
+            instrument: SeqInstrumentId::new(3),
+            module_type: ModuleType::Filter,
+            instance: 1,
+            param_id: "cutoff".to_string(),
+        };
+
+        let json = serde_json::to_string(&target).unwrap();
+        let decoded: AutomationTarget = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, target);
+
+        // The variant is usable as a map key (Eq + Hash), like the others.
+        let mut map = std::collections::HashMap::new();
+        map.insert(target.clone(), NormalizedValue::new(0.5));
+        assert_eq!(map.get(&target), Some(&NormalizedValue::new(0.5)));
     }
 }

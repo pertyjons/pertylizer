@@ -5332,6 +5332,15 @@ fn automation_target_info(target: &synth_sequencer::AutomationTarget) -> (String
             (format!("{param:?}"), Some(track.0))
         }
         synth_sequencer::AutomationTarget::Global(param) => (format!("{param:?}"), None),
+        synth_sequencer::AutomationTarget::Module {
+            instrument,
+            module_type,
+            instance,
+            param_id,
+        } => (
+            format!("{module_type:?}[{instance}].{param_id}"),
+            Some(instrument.0),
+        ),
     }
 }
 

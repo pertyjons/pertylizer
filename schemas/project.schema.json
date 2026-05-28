@@ -178,6 +178,46 @@
             "Global"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A parameter on a specific module within an instrument's graph (the\ngeneric A2 target — any continuous, RT-safe module parameter).\n\nModule identity is **positional** for this first cut: `module_type` +\n`instance` mirror the structure of `synth_engine::ModuleId` (a stable,\nnon-positional `ModuleId` is a deferred TODO). `synth_sequencer` cannot\ndepend on `synth_engine`, so the engine reconstructs the `ModuleId` from\nthese two fields when dispatching.\n\nThe parameter is identified by its descriptor `type_id` (e.g. `\"cutoff\"`)\nrather than a [`synth_core::Param`] value: `Param` carries an `f32` and so\nis neither `Eq` nor `Hash`, but `AutomationTarget` is used as a map key.\nThe dispatch resolves the descriptor by `param_id`, denormalizes the\n`0..1` lane value through its range, and rebuilds the concrete `Param`\nwith `Param::with_f32`.",
+          "properties": {
+            "Module": {
+              "properties": {
+                "instance": {
+                  "description": "1-based instance index within the module type (as in `ModuleId`).",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "instrument": {
+                  "$ref": "#/$defs/SeqInstrumentId",
+                  "description": "Instrument owning the module."
+                },
+                "module_type": {
+                  "$ref": "#/$defs/ModuleType",
+                  "description": "Module type (with `instance`, the positional module identity)."
+                },
+                "param_id": {
+                  "description": "Descriptor `type_id` of the target parameter (e.g. `\"cutoff\"`).",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "instrument",
+                "module_type",
+                "instance",
+                "param_id"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Module"
+          ],
+          "type": "object"
         }
       ]
     },
