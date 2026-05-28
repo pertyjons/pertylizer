@@ -25,9 +25,10 @@ use crate::state::EngineState;
 use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
 use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
 use synth_core::{
-    AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue, CcNumber, Gain,
-    MidiNote, NormalizedValue, Param, PolyModule as PolyModuleTrait, ProcessContext, SampleCount,
-    SampleRate, Seconds, StreamInfo, Velocity,
+    AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue, CcNumber,
+    EnvelopeParam, FilterParam, Gain, Hertz, MidiNote, ModuleType, NormalizedValue, Param,
+    PolyModule as PolyModuleTrait, ProcessContext, SampleCount, SampleRate, Seconds, StreamInfo,
+    Velocity,
 };
 use synth_sequencer::{AutoInstrumentParam, AutomationTarget, GlobalParam, SequencerEvent};
 
@@ -2652,6 +2653,11 @@ fn route_sequencer_events(
                     && let Some(engine_id) = mapping.engine_id(*instrument)
                     && let Some(inst) = instruments.iter_mut().find(|i| i.id() == engine_id)
                 {
+                    // Module-targeted params resolve to the *first* module of
+                    // the relevant type in the instrument graph (the A1
+                    // convention) and apply through the transient override path,
+                    // denormalizing 0..1 via the descriptor range. Overrides are
+                    // reverted to base on transport stop (`handle_all_notes_off`).
                     match param {
                         AutoInstrumentParam::Volume => {
                             inst.set_volume(Gain::new(value.as_f32()));
@@ -2660,7 +2666,42 @@ fn route_sequencer_events(
                             // Map 0.0-1.0 to -1.0..1.0
                             inst.set_pan(BipolarValue::new(value.as_f32() * 2.0 - 1.0));
                         }
-                        _ => {} // FilterCutoff etc. requires module routing (future)
+                        AutoInstrumentParam::FilterCutoff => inst.apply_normalized_override(
+                            ModuleType::Filter,
+                            |p| matches!(p, Param::Filter(FilterParam::Cutoff(_))),
+                            |v| Param::Filter(FilterParam::Cutoff(Hertz::new(v))),
+                            *value,
+                        ),
+                        AutoInstrumentParam::FilterResonance => inst.apply_normalized_override(
+                            ModuleType::Filter,
+                            |p| matches!(p, Param::Filter(FilterParam::Resonance(_))),
+                            |v| Param::Filter(FilterParam::Resonance(NormalizedValue::new(v))),
+                            *value,
+                        ),
+                        AutoInstrumentParam::Attack => inst.apply_normalized_override(
+                            ModuleType::Envelope,
+                            |p| matches!(p, Param::Envelope(EnvelopeParam::Attack(_))),
+                            |v| Param::Envelope(EnvelopeParam::Attack(Seconds::new(v))),
+                            *value,
+                        ),
+                        AutoInstrumentParam::Decay => inst.apply_normalized_override(
+                            ModuleType::Envelope,
+                            |p| matches!(p, Param::Envelope(EnvelopeParam::Decay(_))),
+                            |v| Param::Envelope(EnvelopeParam::Decay(Seconds::new(v))),
+                            *value,
+                        ),
+                        AutoInstrumentParam::Sustain => inst.apply_normalized_override(
+                            ModuleType::Envelope,
+                            |p| matches!(p, Param::Envelope(EnvelopeParam::Sustain(_))),
+                            |v| Param::Envelope(EnvelopeParam::Sustain(NormalizedValue::new(v))),
+                            *value,
+                        ),
+                        AutoInstrumentParam::Release => inst.apply_normalized_override(
+                            ModuleType::Envelope,
+                            |p| matches!(p, Param::Envelope(EnvelopeParam::Release(_))),
+                            |v| Param::Envelope(EnvelopeParam::Release(Seconds::new(v))),
+                            *value,
+                        ),
                     }
                 }
             }
@@ -3344,5 +3385,64 @@ mod tests {
         // Entering preview clears solo.
         enter_preview(&mut engine, &mut handle);
         assert_eq!(engine.sequencer.solo_pattern(), None);
+    }
+
+    #[test]
+    fn filter_cutoff_automation_dispatches_through_override() {
+        use synth_core::{SampleCount, SampleRate};
+        use synth_modules::{Filter, Oscillator};
+        use synth_sequencer::{SeqInstrumentId, Tick};
+
+        // Instrument graph: Osc -> Filter (sink). No voices allocated, so the
+        // override lands on the template graph that we process directly.
+        let mut instrument = Box::new(Instrument::new(InstrumentId::new(1), "test"));
+        let g = instrument.voice_graph_mut();
+        let osc_id = g.add_module(Box::new(Oscillator::new()));
+        let flt_id = g.add_module(Box::new(Filter::new()));
+        g.connect(osc_id, "out", flt_id, "in").unwrap();
+        let mut instruments = vec![instrument];
+
+        let mut mapping = InstrumentMapping::new();
+        mapping.insert(SeqInstrumentId(7), InstrumentId::new(1));
+
+        let note_rb = HeapRb::<NoteEvent>::new(16);
+        let (mut note_prod, _note_cons) = note_rb.split();
+        let drops = std::sync::atomic::AtomicU32::new(0);
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        // Warm-up blocks first so the filter reaches steady state before
+        // measuring (avoids start/retune transients dominating the energy).
+        fn settled_energy(graph: &mut ModuleGraph, ctx: &ProcessContext<'_>) -> f32 {
+            let mut out = AudioBuffer::new(256);
+            for _ in 0..16 {
+                graph.process(&mut out, ctx);
+            }
+            graph.process(&mut out, ctx);
+            (0..256).map(|i| out[i] * out[i]).sum()
+        }
+
+        let base = settled_energy(instruments[0].voice_graph_mut(), &ctx);
+        assert!(base > 1e-3, "expected audible base output, got {base}");
+
+        // FilterCutoff automation at 0.0 -> 20 Hz cutoff via the dispatch path.
+        let events = vec![SequencerEvent::Parameter {
+            tick: Tick(0),
+            target: AutomationTarget::Instrument {
+                instrument: SeqInstrumentId(7),
+                param: AutoInstrumentParam::FilterCutoff,
+            },
+            value: NormalizedValue::MIN,
+        }];
+        route_sequencer_events(&events, &mut instruments, &mapping, &mut note_prod, &drops);
+
+        let low = settled_energy(instruments[0].voice_graph_mut(), &ctx);
+        assert!(
+            low < base * 0.25,
+            "automation should have lowered the cutoff: {low} vs base {base}"
+        );
     }
 }

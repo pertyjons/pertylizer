@@ -58,12 +58,16 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
   Clear hook on transport stop = `SynthEngine::handle_all_notes_off` (instruments +
   modular `module_graph`). RT-safe (map/slice iteration, no alloc/lock/panic). Tests:
   graph routing→silence→revert + unknown-module no-op, voice delegation.
-- [ ] **S4 — A1 dispatch.** Replace the `_ => {}` in the instrument `Parameter`
-  dispatch (`synth_engine.rs:~2660`) for FilterCutoff/FilterResonance/Attack/Decay/
-  Sustain/Release: resolve to the instrument's filter/envelope module (convention:
-  **first module of that type in the graph**, documented next to the dispatch),
-  denormalize `NormalizedValue 0..1` via descriptor ranges, apply via the override
-  path. Clear on stop. Tests covering a real draw → sound → stop → revert cycle.
+- [x] **S4 — A1 dispatch.** Replaced the `_ => {}` in `route_sequencer_events` for
+  FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release. New
+  `Instrument::apply_normalized_override(module_type, is_target, build, normalized)`
+  resolves the **first module of that type** (BTreeMap order = lowest instance),
+  reads the **cached** descriptor via new `ModuleGraph::module_descriptor` (zero-alloc;
+  `PolyModule::descriptor()` allocates a Vec, forbidden on the audio thread),
+  denormalizes 0..1 through the matched param's descriptor range/curve, then applies
+  via the override path. Clear-on-stop is the S3 `handle_all_notes_off` hook. Tests:
+  instrument-level draw→sound→override→revert (settled-energy) + dispatch-level
+  `route_sequencer_events` FilterCutoff → attenuation.
 
 ### Phase A2 — generic `AutomationTarget::Module`
 - [ ] **S5 — Data model.** Add `AutomationTarget::Module { instrument:
@@ -101,3 +105,4 @@ fan-out and clear run on the audio thread → pre-allocated, lock-free, no panic
 - S1 done — override API on `PolyModule` (default no-op). Gate green (fmt/build/clippy/test exit 0), code-review (none). Found: `ParameterDescriptor.modulatable` already encodes the S7 allowlist (choice→false, float→true).
 - S2 done — per-module override storage for Filter/Envelope/Amplifier/Oscillator (`Option<T>` fields, `override.unwrap_or(base)` in process, mod-offset still additive on top). 4 behavioral unit tests. Gate green (fmt/build/clippy/test exit 0); independent code-review found no correctness bugs. Decisions: Oscillator targets Detune+PulseWidth (base Frequency is note-driven, left out); other modules keep the default no-op.
 - S3 done — Graph/Voice/Instrument override fan-out + transport-stop clear in `handle_all_notes_off`. 3 tests (osc→amp graph: override silences, clear restores; voice delegation; unknown-module no-op). Gate green (fmt/build/clippy/test exit 0); independent review found no correctness bugs. Notes: clear hook is `handle_all_notes_off` (sequencer sends AllNotesOff on stop); the allocator reuses pooled voices, so a future note inherits a template override only on an explicit voice rebuild (clone_structure copies override state) — doc'd on `Instrument::apply_param_override`.
+- S4 done — A1 dispatch: `route_sequencer_events` now handles all 6 module-targeted params via `Instrument::apply_normalized_override` (first-of-type module + cached-descriptor denormalize + override apply). Added zero-alloc `ModuleGraph::module_descriptor` (so the audio thread never calls the allocating `descriptor()`). 2 tests (instrument settled-energy revert cycle + dispatch path). Gate green (fmt/build/clippy/test exit 0); independent review confirmed all 6 arms correctly wired + RT-safe, no bugs. Test-debug lesson: comparing filter energy needs warm-up blocks — a cold-start/retune transient initially made a 20 Hz lowpass read *louder* than 1 kHz; 16 warm-up blocks fixed the measurement (not the feature).

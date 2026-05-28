@@ -240,6 +240,17 @@ impl ModuleGraph {
         self.nodes.get(&id).map(|n| n.module.as_ref())
     }
 
+    /// Borrow the cached descriptor for a module.
+    ///
+    /// Unlike [`PolyModule::descriptor`], which rebuilds a fresh descriptor and
+    /// allocates (a `Vec` of parameters plus strings), this returns the
+    /// descriptor cached at `add_module` time — zero-allocation, so it is safe
+    /// to call on the audio thread (e.g. to denormalize an automation value via
+    /// a parameter's range). Returns `None` if the module id is absent.
+    pub fn module_descriptor(&self, id: ModuleId) -> Option<&ModuleDescriptor> {
+        self.nodes.get(&id).map(|node| &node.descriptor)
+    }
+
     /// Get a mutable module by ID.
     pub fn get_module_mut(&mut self, id: ModuleId) -> Option<&mut (dyn PolyModule + '_)> {
         if let Some(node) = self.nodes.get_mut(&id) {

@@ -21,8 +21,9 @@ use crate::voice::{VoiceId, VoiceState};
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_awe::{SpatialContext, SpatialVoiceBank};
 use synth_core::{
-    AudioBuffer, BipolarValue, Gain, MidiNote, MuteState, NormalizedValue, Param, ProcessContext,
-    SampleCount, SamplePosition, SampleRate, Seconds, Semitones, SoloState, Velocity,
+    AudioBuffer, BipolarValue, Gain, MidiNote, ModuleType, MuteState, NormalizedValue, Param,
+    ProcessContext, SampleCount, SamplePosition, SampleRate, Seconds, Semitones, SoloState,
+    Velocity,
 };
 use synth_dsp::oversampling::{Downsampler, OversamplingFactor};
 
@@ -935,6 +936,39 @@ impl Instrument {
         }
     }
 
+    /// Apply a normalized (`0..1`) automation value to the **first** module of
+    /// `module_type` in this instrument's graph, via the transient override
+    /// path.
+    ///
+    /// The value is denormalized through the descriptor of the first parameter
+    /// matching `is_target` (so the descriptor `range`/curve is the single
+    /// source of truth for the mapping); `build` then constructs the concrete
+    /// [`Param`] from the denormalized value. No-op if the module or a matching
+    /// parameter is absent. The base parameter is never mutated.
+    ///
+    /// Real-time safe: reads the cached descriptor (no allocation) and applies
+    /// through [`Self::apply_param_override`].
+    pub fn apply_normalized_override(
+        &mut self,
+        module_type: ModuleType,
+        is_target: impl Fn(&Param) -> bool,
+        build: impl Fn(f32) -> Param,
+        normalized: NormalizedValue,
+    ) {
+        let Some(module_id) = self.voice_graph.find_module_by_type(module_type) else {
+            return;
+        };
+        let Some(value) = self.voice_graph.module_descriptor(module_id).and_then(|d| {
+            d.parameters
+                .iter()
+                .find(|p| is_target(&p.id))
+                .map(|p| p.denormalize(normalized.as_f32()))
+        }) else {
+            return;
+        };
+        self.apply_param_override(module_id, build(value));
+    }
+
     /// Kill all voices immediately.
     pub fn panic(&mut self) {
         self.allocator.panic();
@@ -1478,5 +1512,56 @@ mod tests {
         let extreme = super::soft_clip(2.0);
         assert!(extreme < 1.0);
         assert!(extreme > 0.9);
+    }
+
+    #[test]
+    fn test_filter_cutoff_automation_denormalizes_and_reverts() {
+        use synth_core::{FilterParam, Hertz, SampleCount, SampleRate};
+        use synth_modules::{Filter, Oscillator};
+
+        // A real draw -> sound -> stop -> revert cycle: an Osc -> Filter graph
+        // (filter is the sink) processed directly.
+        let mut inst = Instrument::new(InstrumentId::new(1), "test");
+        let g = inst.voice_graph_mut();
+        let osc_id = g.add_module(Box::new(Oscillator::new()));
+        let flt_id = g.add_module(Box::new(Filter::new()));
+        g.connect(osc_id, "out", flt_id, "in").unwrap();
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+
+        // Run several warm-up blocks so the filter reaches steady state, then
+        // measure the energy of the next block (avoids start/retune transients).
+        fn settled_energy(graph: &mut ModuleGraph, ctx: &ProcessContext<'_>) -> f32 {
+            let mut out = AudioBuffer::new(256);
+            for _ in 0..16 {
+                graph.process(&mut out, ctx);
+            }
+            graph.process(&mut out, ctx);
+            (0..256).map(|i| out[i] * out[i]).sum()
+        }
+
+        // Base cutoff is 1000 Hz: the 440 Hz sawtooth passes.
+        let base = settled_energy(inst.voice_graph_mut(), &ctx);
+        assert!(base > 1e-3, "expected audible base output, got {base}");
+
+        // Normalized 0.0 denormalizes to the descriptor minimum (20 Hz, via the
+        // logarithmic cutoff range), heavily attenuating the fundamental.
+        inst.apply_normalized_override(
+            ModuleType::Filter,
+            |p| matches!(p, Param::Filter(FilterParam::Cutoff(_))),
+            |v| Param::Filter(FilterParam::Cutoff(Hertz::new(v))),
+            NormalizedValue::MIN,
+        );
+        let low = settled_energy(inst.voice_graph_mut(), &ctx);
+        assert!(low < base * 0.25, "low-cutoff energy {low} vs base {base}");
+
+        // The transport-stop path reverts to the base cutoff.
+        inst.clear_param_overrides();
+        let reverted = settled_energy(inst.voice_graph_mut(), &ctx);
+        assert!(reverted > base * 0.5, "reverted {reverted} vs base {base}");
     }
 }
