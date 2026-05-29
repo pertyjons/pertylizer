@@ -9,7 +9,8 @@ use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
 use synth_sequencer::{
-    Duration as SeqDuration, Glide, NoteId, PatternId, PatternTick, Pitch, Tick, TrackId, Velocity,
+    Duration as SeqDuration, Glide, NoteExpression, NoteId, PatternId, PatternTick, Pitch, Tick,
+    TrackId, Velocity,
 };
 
 use crate::patch::{ConnectionState, ModuleState, ParamValue};
@@ -80,6 +81,12 @@ pub(crate) enum UndoAction {
     SetGlideBatch {
         pattern_id: PatternId,
         changes: Vec<(NoteId, Option<Glide>, Option<Glide>)>,
+    },
+    /// Batch per-note expression-block change (multi-edit).
+    /// Each tuple is `(note_id, old_expression, new_expression)`.
+    SetExpressionBatch {
+        pattern_id: PatternId,
+        changes: Vec<(NoteId, Option<NoteExpression>, Option<NoteExpression>)>,
     },
 
     // ── Pattern + track metadata ──
@@ -411,6 +418,16 @@ impl UndoManager {
                 pattern_id,
                 changes,
             } => UndoAction::SetGlideBatch {
+                pattern_id: *pattern_id,
+                changes: changes
+                    .iter()
+                    .map(|(id, old, new)| (*id, *new, *old))
+                    .collect(),
+            },
+            UndoAction::SetExpressionBatch {
+                pattern_id,
+                changes,
+            } => UndoAction::SetExpressionBatch {
                 pattern_id: *pattern_id,
                 changes: changes
                     .iter()

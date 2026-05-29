@@ -283,14 +283,23 @@ that map 1:1 onto those dimensions now even if only vibrato is wired in C.
   vibrato clears any in-progress vibrato (per-note re-seed) rather than letting it
   carry through the slur — acceptable per-note semantics.
 
-### C5 — GUI: expression editing in the piano-roll
+### C5 — GUI: expression editing in the piano-roll ✅ (next commit)
 
-- [ ] Per-note expression affordances: accent/velocity tweak, gate-length handle,
-  ghost toggle, probability, and a vibrato mini-control (depth/rate). Keep it
-  compact — this block is the seed of the Phase E curve UI; lay out so a future
-  curve editor extends it.
+- [x] Added expression editing to the selection inspector: accent (×), gate (%),
+  probability (%) as DragValues; ghost + vibrato-enable toggles; vibrato depth/rate
+  DragValues (shown when the selection has vibrato). Per-field edits preserve each
+  note's other fields (`unwrap_or_default` + single-field closures); an all-default
+  block collapses back to `None` (review fix — no pointless storage/dot).
+- [x] Full **undo**: `SetExpressionBatch` (+invert/apply), `Pattern::set_note_expression`,
+  `NoteExpression: Default`. Toggles push one entry; DragValue drags collapse to one
+  entry on release (`finish_expression_drag` diffs snapshot vs current). Vibrato
+  depth/rate only touch already-vibrato notes (B4/C3 mixed-selection lesson).
+- [x] A small accent-yellow dot marks notes carrying expression. `PianoRollNote`
+  carries `expression`.
 - **Verify:** edit → save → reload → playback. `/code-review` medium.
 - **Commit:** `Phase C5: piano-roll per-note expression editing`
+- **Done:** gate green (real exit codes); review = 3 low-sev findings, all matching
+  pre-existing inspector behavior; applied the all-default→None collapse.
 
 ### C6 — MCP: expose the expression block
 

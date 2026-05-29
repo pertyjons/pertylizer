@@ -298,6 +298,20 @@ impl Pattern {
         }
     }
 
+    /// Set (or clear) the per-note expression block.
+    pub fn set_note_expression(
+        &mut self,
+        id: NoteId,
+        expression: Option<super::note::NoteExpression>,
+    ) -> bool {
+        if let Some(note) = self.note_mut(id) {
+            note.expression = expression;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Quantize only the selected notes to a custom grid with strength.
     pub fn quantize_selected(
         &mut self,

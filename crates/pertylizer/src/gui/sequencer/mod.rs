@@ -10,12 +10,12 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, Vec2};
-use synth_core::{BipolarValue, Bpm, MidiNote, Milliseconds, NormalizedValue, Semitones};
+use synth_core::{BipolarValue, Bpm, Hertz, MidiNote, Milliseconds, NormalizedValue, Semitones};
 use synth_engine::{EngineCommand, EngineHandle, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
-    Glide, GlideFrom, GlideInterp, NoteId, NoteName, PatternId, PatternTick, Pitch,
-    SeqInstrumentId, Song, Tick, TimeSignature, TrackId, Velocity,
+    Glide, GlideFrom, GlideInterp, NoteExpression, NoteId, NoteName, PatternId, PatternTick, Pitch,
+    SeqInstrumentId, Song, Tick, TimeSignature, TrackId, Velocity, Vibrato, VibratoShape,
 };
 
 use crate::gui::input::KEY_MAP;
@@ -140,6 +140,11 @@ struct Clipboard {
 /// collapses into a single `SetGlideBatch` undo entry on release.
 type GlideDragStart = (PatternId, Vec<(NoteId, Option<Glide>)>);
 
+/// Pre-edit per-note expression snapshot captured at drag start, so an
+/// expression DragValue drag collapses into a single `SetExpressionBatch` undo
+/// entry on release (mirrors [`GlideDragStart`]).
+type ExprDragStart = (PatternId, Vec<(NoteId, Option<NoteExpression>)>);
+
 /// Piano roll view state (persists across frames).
 pub struct SequencerViewState {
     /// Clipboard for copy/paste operations.
@@ -232,6 +237,8 @@ pub struct SequencerViewState {
     /// Pre-edit per-note glide snapshot captured when a glide DragValue starts,
     /// so the whole drag collapses into one `SetGlideBatch` undo entry on release.
     inspector_glide_drag_start: Option<GlideDragStart>,
+    /// Pre-edit per-note expression snapshot for the expression DragValues.
+    inspector_expr_drag_start: Option<ExprDragStart>,
     /// Snap value (in ticks) for arrangement-view operations: placement
     /// create, placement drag-move, and placement resize. 0 = no snap.
     arrangement_snap_ticks: u32,
@@ -285,6 +292,7 @@ impl SequencerViewState {
             pattern_length_drag_start: None,
             inspector_vel_drag_start: None,
             inspector_glide_drag_start: None,
+            inspector_expr_drag_start: None,
             // Default snap: 1 beat (1/4 note at TICKS_PER_QUARTER = 960).
             arrangement_snap_ticks: synth_sequencer::TICKS_PER_QUARTER,
             tap_tempo_times: Vec::new(),
@@ -2619,6 +2627,7 @@ struct PianoRollNote {
     velocity: Velocity,
     legato: bool,
     glide: Option<Glide>,
+    expression: Option<NoteExpression>,
 }
 
 /// Snapshot of a single automation point for rendering.
@@ -2682,6 +2691,7 @@ pub(crate) fn collect_piano_roll_data(
                 velocity: n.velocity,
                 legato: n.legato,
                 glide: n.glide,
+                expression: n.expression,
             }
         })
         .collect();
@@ -2817,6 +2827,99 @@ fn quantize_tick(tick: PatternTick, ticks_per_row: u16) -> PatternTick {
 /// Selection inspector row: shows pitch / start / length of the selected notes
 /// (or "—" when they differ) and an editable velocity DragValue that batches an
 /// undo entry on drag/focus release.
+/// Default per-note vibrato installed when the inspector's Vibrato toggle is enabled.
+fn default_inspector_vibrato() -> Vibrato {
+    Vibrato {
+        depth: Semitones::new(0.3),
+        rate: Hertz::new(5.5),
+        delay: Milliseconds::new(0.0),
+        shape: VibratoShape::Sine,
+    }
+}
+
+/// Apply a per-note expression edit to the selected notes (preserving each
+/// note's *other* fields) and push one `SetExpressionBatch` undo entry. For
+/// discrete (toggle) edits.
+fn apply_expression_edit(
+    song: &Arc<RwLock<Song>>,
+    undo: &mut crate::undo::UndoManager,
+    pid: PatternId,
+    selected: &[&PianoRollNote],
+    edit: impl Fn(&mut NoteExpression),
+) {
+    let mut changes: Vec<(NoteId, Option<NoteExpression>, Option<NoteExpression>)> = Vec::new();
+    {
+        let mut song_w = song.write();
+        if let Some(pattern) = song_w.pattern_mut(pid) {
+            for n in selected {
+                let old = n.expression;
+                let mut e = old.unwrap_or_default();
+                edit(&mut e);
+                // Collapse an all-default block back to None (no pointless storage/dot).
+                let new = (e != NoteExpression::default()).then_some(e);
+                if new != old {
+                    pattern.set_note_expression(n.note_id, new);
+                    changes.push((n.note_id, old, new));
+                }
+            }
+        }
+    }
+    if !changes.is_empty() {
+        undo.push(crate::undo::UndoAction::SetExpressionBatch {
+            pattern_id: pid,
+            changes,
+        });
+    }
+}
+
+/// Live-apply a per-note expression edit (no undo) — used while an expression
+/// DragValue is dragging; the drag collapses into one undo entry on release via
+/// [`finish_expression_drag`]. Preserves each note's other fields.
+fn live_expression_edit(
+    song: &Arc<RwLock<Song>>,
+    pid: PatternId,
+    selected: &[&PianoRollNote],
+    edit: impl Fn(&mut NoteExpression),
+) {
+    let mut song_w = song.write();
+    if let Some(pattern) = song_w.pattern_mut(pid) {
+        for n in selected {
+            let mut e = n.expression.unwrap_or_default();
+            edit(&mut e);
+            // Collapse an all-default block back to None (no pointless storage/dot).
+            pattern.set_note_expression(n.note_id, (e != NoteExpression::default()).then_some(e));
+        }
+    }
+}
+
+/// On expression-DragValue release, diff the pre-drag snapshot against the now
+/// current pattern state and push one `SetExpressionBatch` undo entry.
+fn finish_expression_drag(
+    song: &Arc<RwLock<Song>>,
+    undo: &mut crate::undo::UndoManager,
+    pid: PatternId,
+    before: Vec<(NoteId, Option<NoteExpression>)>,
+) {
+    let mut changes = Vec::new();
+    {
+        let song_r = song.read();
+        if let Some(pattern) = song_r.pattern(pid) {
+            for (id, old) in before {
+                let new = pattern.note(id).and_then(|n| n.expression);
+                if new != old {
+                    changes.push((id, old, new));
+                }
+            }
+        }
+    }
+    if !changes.is_empty() {
+        undo.push(crate::undo::UndoAction::SetExpressionBatch {
+            pattern_id: pid,
+            changes,
+        });
+    }
+}
+
 fn draw_piano_roll_selection_inspector(
     ui: &mut egui::Ui,
     data: &PianoRollData,
@@ -3129,6 +3232,182 @@ fn draw_piano_roll_selection_inspector(
                                 changes,
                             });
                         }
+                    }
+                }
+            });
+
+            // ── Per-note expression block: accent / gate / ghost / probability ──
+            // (taxonomy primitive 3 note-shape scalars + primitive 1 vibrato).
+            // Each control edits only its own field, preserving the others per note.
+            let cur = selected
+                .iter()
+                .find_map(|n| n.expression)
+                .unwrap_or_default();
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+
+                // Accent (velocity ×). DragValue → live edit + one undo on release.
+                ui.label(RichText::new("Accent").color(t.colors.text_dim).size(10.0));
+                let mut accent = cur.accent.unwrap_or(1.0);
+                let r = ui
+                    .add(
+                        egui::DragValue::new(&mut accent)
+                            .range(0.0..=4.0)
+                            .speed(0.02)
+                            .fixed_decimals(2),
+                    )
+                    .on_hover_text("Velocity multiplier (1.0 = unchanged)");
+                if r.drag_started() || r.gained_focus() {
+                    view_state.inspector_expr_drag_start = Some((
+                        pid,
+                        selected.iter().map(|n| (n.note_id, n.expression)).collect(),
+                    ));
+                }
+                if r.changed() {
+                    live_expression_edit(song, pid, &selected, |e| e.accent = Some(accent));
+                }
+                if (r.drag_stopped() || r.lost_focus())
+                    && let Some((dpid, before)) = view_state.inspector_expr_drag_start.take()
+                    && dpid == pid
+                {
+                    finish_expression_drag(song, undo_manager, pid, before);
+                }
+
+                // Gate (% of duration, staccato/tenuto).
+                ui.label(RichText::new("Gate").color(t.colors.text_dim).size(10.0));
+                let mut gate_pct = cur.gate.map_or(100.0, |g| g.as_f32() * 100.0);
+                let r = ui
+                    .add(
+                        egui::DragValue::new(&mut gate_pct)
+                            .range(1.0..=100.0)
+                            .speed(1.0)
+                            .suffix(" %"),
+                    )
+                    .on_hover_text("Note length as a % of its duration (staccato)");
+                if r.drag_started() || r.gained_focus() {
+                    view_state.inspector_expr_drag_start = Some((
+                        pid,
+                        selected.iter().map(|n| (n.note_id, n.expression)).collect(),
+                    ));
+                }
+                if r.changed() {
+                    let g = NormalizedValue::new((gate_pct / 100.0).clamp(0.0, 1.0));
+                    live_expression_edit(song, pid, &selected, |e| e.gate = Some(g));
+                }
+                if (r.drag_stopped() || r.lost_focus())
+                    && let Some((dpid, before)) = view_state.inspector_expr_drag_start.take()
+                    && dpid == pid
+                {
+                    finish_expression_drag(song, undo_manager, pid, before);
+                }
+
+                // Probability (% chance to play).
+                ui.label(RichText::new("Prob").color(t.colors.text_dim).size(10.0));
+                let mut prob_pct = cur.probability.map_or(100.0, |p| p.as_f32() * 100.0);
+                let r = ui
+                    .add(
+                        egui::DragValue::new(&mut prob_pct)
+                            .range(0.0..=100.0)
+                            .speed(1.0)
+                            .suffix(" %"),
+                    )
+                    .on_hover_text("Chance this note plays (resolved at playback)");
+                if r.drag_started() || r.gained_focus() {
+                    view_state.inspector_expr_drag_start = Some((
+                        pid,
+                        selected.iter().map(|n| (n.note_id, n.expression)).collect(),
+                    ));
+                }
+                if r.changed() {
+                    let p = NormalizedValue::new((prob_pct / 100.0).clamp(0.0, 1.0));
+                    live_expression_edit(song, pid, &selected, |e| e.probability = Some(p));
+                }
+                if (r.drag_stopped() || r.lost_focus())
+                    && let Some((dpid, before)) = view_state.inspector_expr_drag_start.take()
+                    && dpid == pid
+                {
+                    finish_expression_drag(song, undo_manager, pid, before);
+                }
+
+                // Ghost (forced-soft) — discrete toggle.
+                let mut ghost = cur.ghost;
+                if ui
+                    .checkbox(&mut ghost, "Ghost")
+                    .on_hover_text("Force a soft (ghost) velocity")
+                    .changed()
+                {
+                    apply_expression_edit(song, undo_manager, pid, &selected, |e| e.ghost = ghost);
+                }
+            });
+
+            // ── Vibrato mini-control (taxonomy primitive 1): enable + depth/rate ──
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let mut vib_on = cur.vibrato.is_some();
+                if ui
+                    .checkbox(&mut vib_on, "Vibrato")
+                    .on_hover_text("Per-note pitch vibrato")
+                    .changed()
+                {
+                    let v = vib_on.then(default_inspector_vibrato);
+                    apply_expression_edit(song, undo_manager, pid, &selected, |e| e.vibrato = v);
+                }
+                if let Some(v) = cur.vibrato {
+                    ui.label(RichText::new("Depth").color(t.colors.text_dim).size(10.0));
+                    let mut depth = v.depth.as_f32();
+                    let rd = ui
+                        .add(
+                            egui::DragValue::new(&mut depth)
+                                .range(0.0..=2.0)
+                                .speed(0.01)
+                                .suffix(" st"),
+                        )
+                        .on_hover_text("Vibrato depth (semitones)");
+                    ui.label(RichText::new("Rate").color(t.colors.text_dim).size(10.0));
+                    let mut rate = v.rate.as_f32();
+                    let rr = ui
+                        .add(
+                            egui::DragValue::new(&mut rate)
+                                .range(0.1..=20.0)
+                                .speed(0.1)
+                                .suffix(" Hz"),
+                        )
+                        .on_hover_text("Vibrato rate");
+                    if rd.drag_started()
+                        || rd.gained_focus()
+                        || rr.drag_started()
+                        || rr.gained_focus()
+                    {
+                        view_state.inspector_expr_drag_start = Some((
+                            pid,
+                            selected.iter().map(|n| (n.note_id, n.expression)).collect(),
+                        ));
+                    }
+                    if rd.changed() || rr.changed() {
+                        // Only notes that already have vibrato get depth/rate edits.
+                        let mut song_w = song.write();
+                        if let Some(pattern) = song_w.pattern_mut(pid) {
+                            for n in selected
+                                .iter()
+                                .filter(|n| n.expression.is_some_and(|e| e.vibrato.is_some()))
+                            {
+                                let mut e = n.expression.unwrap_or_default();
+                                if let Some(vib) = e.vibrato.as_mut() {
+                                    vib.depth = Semitones::new(depth);
+                                    vib.rate = Hertz::new(rate);
+                                }
+                                pattern.set_note_expression(n.note_id, Some(e));
+                            }
+                        }
+                    }
+                    if (rd.drag_stopped()
+                        || rd.lost_focus()
+                        || rr.drag_stopped()
+                        || rr.lost_focus())
+                        && let Some((dpid, before)) = view_state.inspector_expr_drag_start.take()
+                        && dpid == pid
+                    {
+                        finish_expression_drag(song, undo_manager, pid, before);
                     }
                 }
             });
@@ -4388,6 +4667,14 @@ pub(crate) fn draw_piano_roll(
                             Pos2::new((gx + 6.0).min(note_rect.max.x), note_rect.min.y + 1.0),
                         ],
                         Stroke::new(1.5, t.colors.accent_cyan),
+                    );
+                }
+                // Per-note expression (C5): a small dot at the top-right corner.
+                if note.expression.is_some() && note_width > 5.0 {
+                    painter.circle_filled(
+                        Pos2::new(note_rect.max.x - 2.5, note_rect.min.y + 2.5),
+                        1.5,
+                        t.colors.accent_yellow,
                     );
                 }
 

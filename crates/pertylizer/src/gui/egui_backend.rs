@@ -4137,6 +4137,17 @@ impl SynthApp {
                     }
                 }
             }
+            UndoAction::SetExpressionBatch {
+                pattern_id,
+                changes,
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    for (note_id, _old, new) in changes {
+                        pattern.set_note_expression(*note_id, *new);
+                    }
+                }
+            }
             UndoAction::RenamePattern {
                 pattern_id,
                 new_name,

@@ -100,7 +100,7 @@ pub struct Vibrato {
 ///   bend-dimension modulator) is wired in Phase C.
 /// - **primitive 3** — note-shape scalars that shape a single note without a
 ///   curve: `accent` (velocity ×), `gate` (% of duration), `ghost`, `probability`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteExpression {
     /// Per-note vibrato (primitive 1).
     #[serde(default)]
