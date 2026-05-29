@@ -21,8 +21,8 @@ use crate::types::{
     ConnectionCheckResult, ConnectionInfo, DetailedSampleInfo, EngineStatus, ExamplePatchInfo,
     GraphDiagnostic, InputDeviceInfo, InputStateInfo, InstrumentInfo, InstrumentProfileResult,
     MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo,
-    PatchResourceData, PatternInfo, PlacementInfo, SampleInfo, SamplerStateInfo, SetSongResult,
-    SongInfo, TrackInfo, UiSnapshot,
+    PatchResourceData, PatternInfo, PlacementInfo, ProjectSchemaInfo, SampleInfo, SamplerStateInfo,
+    SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -252,6 +252,13 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         instrument_id: u64,
     ) -> Result<Vec<GraphDiagnostic>, McpBridgeError>;
+
+    /// Return the authoritative on-disk `.pertyproj` JSON Schema plus the build
+    /// version that generated it. The implementor embeds the committed
+    /// `schemas/project.schema.json` (the exact artifact external tools must
+    /// match), so callers can validate or diff project files without re-deriving
+    /// the schema and risking introspection-vs-disk drift.
+    fn get_project_schema(&self) -> Result<ProjectSchemaInfo, McpBridgeError>;
 
     // === Instrument lifecycle ===
 

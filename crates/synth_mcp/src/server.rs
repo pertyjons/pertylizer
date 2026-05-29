@@ -2375,6 +2375,7 @@ impl SynthMcpServer {
             "get_parameter" => get_parameter(GetParameterParam),
             "get_engine_status" => get_engine_status(NoParams),
             "get_graph_diagnostics" => get_graph_diagnostics(InstrumentIdParam),
+            "get_project_schema" => get_project_schema(NoParams),
             "get_ui_snapshot" => get_ui_snapshot(InstrumentIdParam),
 
             // Module types & discovery
@@ -2934,6 +2935,20 @@ impl SynthMcpServer {
     async fn get_graph_diagnostics(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.get_graph_diagnostics(params.0.instrument_id) {
             Ok(diags) => to_json(&diags),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Return the authoritative on-disk JSON Schema for `.pertyproj` project files \
+                       plus the build version that generated it. Use this to validate or diff project \
+                       files against the exact committed schema — it avoids the introspection-vs-disk \
+                       encoding drift you'd get from reading parameter values live (e.g. an enum reported \
+                       numerically here but stored as a string on disk)."
+    )]
+    async fn get_project_schema(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.get_project_schema() {
+            Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
     }

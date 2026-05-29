@@ -185,6 +185,24 @@ pub enum DiagnosticSeverity {
     Error,
 }
 
+/// The authoritative on-disk JSON Schema for `.pertyproj` project files, paired
+/// with the build version that generated it.
+///
+/// Returned by `get_project_schema`. The `schema` is the exact committed
+/// `schemas/project.schema.json` (embedded at build time), not a live re-derived
+/// copy — so external tooling diffing against it sees zero introspection-vs-disk
+/// drift. `app_version` is the version of the crate that owns `ProjectFile` and
+/// regenerates the schema, letting a CI check fire when the format changes.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectSchemaInfo {
+    /// File name of the schema artifact (e.g. `"project.schema.json"`).
+    pub schema_file: String,
+    /// Build version of the application that generated the schema.
+    pub app_version: String,
+    /// The full JSON Schema document.
+    pub schema: serde_json::Value,
+}
+
 /// Information about an example patch.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExamplePatchInfo {

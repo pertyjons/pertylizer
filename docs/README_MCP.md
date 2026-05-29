@@ -156,6 +156,7 @@ Read the current state of instruments, modules, ports, parameters, and the audio
 | `check_connection` | Whether a specific connection exists |
 | `get_parameter` | Current value of one parameter |
 | `get_graph_diagnostics` | Detect feedback loops, unreachable modules, missing outputs |
+| `get_project_schema` | Authoritative on-disk `.pertyproj` JSON Schema + build version (validate/diff project files without introspection drift) |
 | `get_ui_snapshot` | Current GUI focus, selection, view |
 | `get_engine_status` | Sample rate, transport state, BPM, voice count |
 

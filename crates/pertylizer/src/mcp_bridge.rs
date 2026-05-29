@@ -29,8 +29,8 @@ use synth_mcp::types::{
     HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo, MixBusMetrics,
     ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo,
     PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo,
-    PlacementInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap,
-    UiSnapshot,
+    PlacementInfo, ProjectSchemaInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo,
+    UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -40,6 +40,13 @@ use crate::session::SynthSession;
 /// to mark a module that is wired only through a Mod Matrix slot rather
 /// than via real audio/CV cables.
 const MATRIX_VIRTUAL_PORT: &str = "matrix";
+
+/// The committed `.pertyproj` JSON Schema, embedded at build time. Surfaced by
+/// `get_project_schema` so external tools validate or diff project files against
+/// the exact on-disk artifact — returning this (rather than a live `schema_for!`
+/// re-derivation) guarantees zero introspection-vs-disk drift. The `gen_schemas`
+/// `checked_in_schemas_match_generated` test keeps it in sync with `ProjectFile`.
+const PROJECT_SCHEMA_JSON: &str = include_str!("../../../schemas/project.schema.json");
 
 /// Bridge implementation for the Pertylizer application.
 pub struct AppSynthBridge {
@@ -536,6 +543,18 @@ impl SynthBridge for AppSynthBridge {
         }
 
         Ok(diagnostics)
+    }
+
+    fn get_project_schema(&self) -> Result<ProjectSchemaInfo, McpBridgeError> {
+        let schema: serde_json::Value = serde_json::from_str(PROJECT_SCHEMA_JSON).map_err(|e| {
+            McpBridgeError::Other(format!("embedded project schema is invalid JSON: {e}"))
+        })?;
+
+        Ok(ProjectSchemaInfo {
+            schema_file: "project.schema.json".to_string(),
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+            schema,
+        })
     }
 
     // === Instrument lifecycle ===
@@ -10020,6 +10039,34 @@ mod automation_target_tests {
 mod mcp_helper_tests {
     use super::*;
     use synth_core::ModuleType;
+
+    /// The embedded `.pertyproj` schema that `get_project_schema` ships is valid
+    /// JSON and a well-formed JSON Schema document (has `$schema`, an object
+    /// root, and `properties`). Guards against the tool returning a truncated or
+    /// corrupt artifact, and pins the bytes external tools diff against.
+    #[test]
+    fn embedded_project_schema_is_valid_and_well_formed() {
+        let schema: serde_json::Value =
+            serde_json::from_str(PROJECT_SCHEMA_JSON).expect("embedded schema must be valid JSON");
+        assert!(
+            schema.get("$schema").is_some(),
+            "schema must carry a $schema dialect declaration"
+        );
+        assert_eq!(
+            schema.get("type").and_then(|t| t.as_str()),
+            Some("object"),
+            "project schema root must be an object"
+        );
+        assert!(
+            schema
+                .get("properties")
+                .and_then(|p| p.as_object())
+                .is_some_and(|p| !p.is_empty()),
+            "schema must declare project properties"
+        );
+        // The build version paired with the schema is non-empty.
+        assert!(!env!("CARGO_PKG_VERSION").is_empty());
+    }
 
     #[test]
     fn add_note_applies_legato_and_relative_glide() {
