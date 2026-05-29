@@ -10,12 +10,12 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, Vec2};
-use synth_core::{BipolarValue, Bpm, MidiNote, NormalizedValue, Semitones};
+use synth_core::{BipolarValue, Bpm, MidiNote, Milliseconds, NormalizedValue, Semitones};
 use synth_engine::{EngineCommand, EngineHandle, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
-    NoteId, NoteName, PatternId, PatternTick, Pitch, SeqInstrumentId, Song, Tick, TimeSignature,
-    TrackId, Velocity,
+    Glide, GlideFrom, GlideInterp, NoteId, NoteName, PatternId, PatternTick, Pitch,
+    SeqInstrumentId, Song, Tick, TimeSignature, TrackId, Velocity,
 };
 
 use crate::gui::input::KEY_MAP;
@@ -135,6 +135,11 @@ struct Clipboard {
 // VIEW STATE
 // ============================================================================
 
+/// Pre-edit per-note glide snapshot captured at drag start (pattern + the
+/// prior `(note_id, glide)` of each selected note), so a glide DragValue drag
+/// collapses into a single `SetGlideBatch` undo entry on release.
+type GlideDragStart = (PatternId, Vec<(NoteId, Option<Glide>)>);
+
 /// Piano roll view state (persists across frames).
 pub struct SequencerViewState {
     /// Clipboard for copy/paste operations.
@@ -224,6 +229,9 @@ pub struct SequencerViewState {
     /// DragValue gains focus / starts dragging. Used to emit one composite
     /// undo entry covering the whole edit on release.
     inspector_vel_drag_start: Option<(PatternId, Vec<(NoteId, Velocity)>)>,
+    /// Pre-edit per-note glide snapshot captured when a glide DragValue starts,
+    /// so the whole drag collapses into one `SetGlideBatch` undo entry on release.
+    inspector_glide_drag_start: Option<GlideDragStart>,
     /// Snap value (in ticks) for arrangement-view operations: placement
     /// create, placement drag-move, and placement resize. 0 = no snap.
     arrangement_snap_ticks: u32,
@@ -276,6 +284,7 @@ impl SequencerViewState {
             pr_zoom_y: 1.0,
             pattern_length_drag_start: None,
             inspector_vel_drag_start: None,
+            inspector_glide_drag_start: None,
             // Default snap: 1 beat (1/4 note at TICKS_PER_QUARTER = 960).
             arrangement_snap_ticks: synth_sequencer::TICKS_PER_QUARTER,
             tap_tempo_times: Vec::new(),
@@ -2608,6 +2617,8 @@ struct PianoRollNote {
     start_tick: PatternTick,
     end_tick: Option<PatternTick>,
     velocity: Velocity,
+    legato: bool,
+    glide: Option<Glide>,
 }
 
 /// Snapshot of a single automation point for rendering.
@@ -2669,6 +2680,8 @@ pub(crate) fn collect_piano_roll_data(
                 start_tick: n.start,
                 end_tick: n.end(),
                 velocity: n.velocity,
+                legato: n.legato,
+                glide: n.glide,
             }
         })
         .collect();
@@ -2927,6 +2940,195 @@ fn draw_piano_roll_selection_inspector(
                             pattern_id: data.pattern_id,
                             changes,
                         });
+                    }
+                }
+            });
+
+            // ── Per-note expression: tie/legato + glide (taxonomy primitive 2) ──
+            let pid = data.pattern_id;
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+
+                // Tie / legato — discrete toggle, one undo entry per click.
+                let mut legato = selected.iter().all(|n| n.legato);
+                if ui
+                    .checkbox(&mut legato, "Tie")
+                    .on_hover_text("Legato: connect to the next note without retriggering")
+                    .changed()
+                {
+                    let changes: Vec<(NoteId, bool, bool)> = selected
+                        .iter()
+                        .filter(|n| n.legato != legato)
+                        .map(|n| (n.note_id, n.legato, legato))
+                        .collect();
+                    if !changes.is_empty() {
+                        {
+                            let mut song_w = song.write();
+                            if let Some(pattern) = song_w.pattern_mut(pid) {
+                                for (nid, _, new) in &changes {
+                                    pattern.set_note_legato(*nid, *new);
+                                }
+                            }
+                        }
+                        undo_manager.push(crate::undo::UndoAction::SetLegatoBatch {
+                            pattern_id: pid,
+                            changes,
+                        });
+                    }
+                }
+
+                ui.separator();
+
+                // Glide enable — discrete toggle; enabling installs a sensible default.
+                let default_glide = Glide {
+                    from: GlideFrom::Semitones(Semitones::new(-2.0)),
+                    time: Milliseconds::new(100.0),
+                    interp: GlideInterp::Continuous,
+                };
+                let mut glide_on =
+                    !selected.is_empty() && selected.iter().all(|n| n.glide.is_some());
+                if ui
+                    .checkbox(&mut glide_on, "Glide")
+                    .on_hover_text("Portamento/glissando into this note")
+                    .changed()
+                {
+                    let new_glide = glide_on.then_some(default_glide);
+                    let changes: Vec<(NoteId, Option<Glide>, Option<Glide>)> = selected
+                        .iter()
+                        .filter(|n| n.glide != new_glide)
+                        .map(|n| (n.note_id, n.glide, new_glide))
+                        .collect();
+                    if !changes.is_empty() {
+                        {
+                            let mut song_w = song.write();
+                            if let Some(pattern) = song_w.pattern_mut(pid) {
+                                for (nid, _, new) in &changes {
+                                    pattern.set_note_glide(*nid, *new);
+                                }
+                            }
+                        }
+                        undo_manager.push(crate::undo::UndoAction::SetGlideBatch {
+                            pattern_id: pid,
+                            changes,
+                        });
+                    }
+                }
+
+                // Glide parameters — shown when at least one selected note glides.
+                if let Some(cur) = selected.iter().find_map(|n| n.glide) {
+                    // The inspector expresses the source as a relative offset; an
+                    // absolute Pitch source (MCP-set) collapses to the default.
+                    let mut from_semis = match cur.from {
+                        GlideFrom::Semitones(s) => s.as_f32(),
+                        GlideFrom::Pitch(_) => -2.0,
+                    };
+                    let mut time_ms = cur.time.as_f32();
+                    let mut stepped = matches!(cur.interp, GlideInterp::Stepped);
+
+                    ui.label(RichText::new("From").color(t.colors.text_dim).size(10.0));
+                    let from_resp = ui
+                        .add(
+                            egui::DragValue::new(&mut from_semis)
+                                .range(-24.0..=24.0)
+                                .speed(0.5)
+                                .suffix(" st"),
+                        )
+                        .on_hover_text("Glide source, semitones relative to this note");
+
+                    ui.label(RichText::new("Time").color(t.colors.text_dim).size(10.0));
+                    let time_resp = ui
+                        .add(
+                            egui::DragValue::new(&mut time_ms)
+                                .range(0.0..=2000.0)
+                                .speed(2.0)
+                                .suffix(" ms"),
+                        )
+                        .on_hover_text("Glide time");
+
+                    let make = |from_semis: f32, time_ms: f32, stepped: bool| Glide {
+                        from: GlideFrom::Semitones(Semitones::new(from_semis)),
+                        time: Milliseconds::new(time_ms),
+                        interp: if stepped {
+                            GlideInterp::Stepped
+                        } else {
+                            GlideInterp::Continuous
+                        },
+                    };
+
+                    // Capture pre-drag glide once, collapse the whole drag into one
+                    // undo entry on release (mirrors the velocity DragValue).
+                    if from_resp.drag_started()
+                        || from_resp.gained_focus()
+                        || time_resp.drag_started()
+                        || time_resp.gained_focus()
+                    {
+                        view_state.inspector_glide_drag_start =
+                            Some((pid, selected.iter().map(|n| (n.note_id, n.glide)).collect()));
+                    }
+                    // From/Time edits only touch notes that *already* glide — they
+                    // never force glide onto a non-gliding note in a mixed selection
+                    // (use the Glide checkbox for that). Multi-edit shares the one
+                    // representative value, like the velocity inspector.
+                    if from_resp.changed() || time_resp.changed() {
+                        let g = make(from_semis, time_ms, stepped);
+                        let mut song_w = song.write();
+                        if let Some(pattern) = song_w.pattern_mut(pid) {
+                            for n in selected.iter().filter(|n| n.glide.is_some()) {
+                                pattern.set_note_glide(n.note_id, Some(g));
+                            }
+                        }
+                    }
+                    if (from_resp.drag_stopped()
+                        || from_resp.lost_focus()
+                        || time_resp.drag_stopped()
+                        || time_resp.lost_focus())
+                        && let Some((dpid, before)) = view_state.inspector_glide_drag_start.take()
+                        && dpid == pid
+                    {
+                        let g = make(from_semis, time_ms, stepped);
+                        let changes: Vec<(NoteId, Option<Glide>, Option<Glide>)> = before
+                            .into_iter()
+                            .filter_map(|(id, old)| {
+                                // Only notes that already glided were edited above.
+                                (old.is_some() && old != Some(g)).then_some((id, old, Some(g)))
+                            })
+                            .collect();
+                        if !changes.is_empty() {
+                            undo_manager.push(crate::undo::UndoAction::SetGlideBatch {
+                                pattern_id: pid,
+                                changes,
+                            });
+                        }
+                    }
+
+                    // Stepped (glissando) toggle — discrete, one undo entry.
+                    if ui
+                        .checkbox(&mut stepped, "Stepped")
+                        .on_hover_text(
+                            "Glissando: hold at chromatic steps instead of a smooth ramp",
+                        )
+                        .changed()
+                    {
+                        let g = make(from_semis, time_ms, stepped);
+                        let changes: Vec<(NoteId, Option<Glide>, Option<Glide>)> = selected
+                            .iter()
+                            .filter(|n| n.glide.is_some() && n.glide != Some(g))
+                            .map(|n| (n.note_id, n.glide, Some(g)))
+                            .collect();
+                        if !changes.is_empty() {
+                            {
+                                let mut song_w = song.write();
+                                if let Some(pattern) = song_w.pattern_mut(pid) {
+                                    for (nid, _, new) in &changes {
+                                        pattern.set_note_glide(*nid, *new);
+                                    }
+                                }
+                            }
+                            undo_manager.push(crate::undo::UndoAction::SetGlideBatch {
+                                pattern_id: pid,
+                                changes,
+                            });
+                        }
                     }
                 }
             });
@@ -4162,6 +4364,30 @@ pub(crate) fn draw_piano_roll(
                         2.0,
                         Stroke::new(0.5, inst_color),
                         egui::StrokeKind::Inside,
+                    );
+                }
+
+                // Per-note expression markers (B4): a tie underline for legato
+                // and a small ramp glyph at the left edge for glide.
+                if note.legato {
+                    let y_line = note_rect.max.y - 1.0;
+                    painter.line_segment(
+                        [
+                            Pos2::new(note_rect.min.x + 1.0, y_line),
+                            Pos2::new(note_rect.max.x - 1.0, y_line),
+                        ],
+                        Stroke::new(1.5, t.colors.accent_yellow),
+                    );
+                }
+                if note.glide.is_some() {
+                    // Diagonal ramp from bottom-left up into the note's leading edge.
+                    let gx = note_rect.min.x;
+                    painter.line_segment(
+                        [
+                            Pos2::new(gx + 0.5, note_rect.max.y - 1.0),
+                            Pos2::new((gx + 6.0).min(note_rect.max.x), note_rect.min.y + 1.0),
+                        ],
+                        Stroke::new(1.5, t.colors.accent_cyan),
                     );
                 }
 

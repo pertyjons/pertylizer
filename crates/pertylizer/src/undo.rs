@@ -9,7 +9,7 @@ use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
 use synth_sequencer::{
-    Duration as SeqDuration, NoteId, PatternId, PatternTick, Pitch, Tick, TrackId, Velocity,
+    Duration as SeqDuration, Glide, NoteId, PatternId, PatternTick, Pitch, Tick, TrackId, Velocity,
 };
 
 use crate::patch::{ConnectionState, ModuleState, ParamValue};
@@ -68,6 +68,18 @@ pub(crate) enum UndoAction {
     SetVelocitiesBatch {
         pattern_id: PatternId,
         changes: Vec<(NoteId, Velocity, Velocity)>,
+    },
+    /// Batch per-note legato/tie change (multi-edit).
+    /// Each tuple is `(note_id, old_legato, new_legato)`.
+    SetLegatoBatch {
+        pattern_id: PatternId,
+        changes: Vec<(NoteId, bool, bool)>,
+    },
+    /// Batch per-note glide change (multi-edit).
+    /// Each tuple is `(note_id, old_glide, new_glide)`.
+    SetGlideBatch {
+        pattern_id: PatternId,
+        changes: Vec<(NoteId, Option<Glide>, Option<Glide>)>,
     },
 
     // ── Pattern + track metadata ──
@@ -379,6 +391,26 @@ impl UndoManager {
                 pattern_id,
                 changes,
             } => UndoAction::SetVelocitiesBatch {
+                pattern_id: *pattern_id,
+                changes: changes
+                    .iter()
+                    .map(|(id, old, new)| (*id, *new, *old))
+                    .collect(),
+            },
+            UndoAction::SetLegatoBatch {
+                pattern_id,
+                changes,
+            } => UndoAction::SetLegatoBatch {
+                pattern_id: *pattern_id,
+                changes: changes
+                    .iter()
+                    .map(|(id, old, new)| (*id, *new, *old))
+                    .collect(),
+            },
+            UndoAction::SetGlideBatch {
+                pattern_id,
+                changes,
+            } => UndoAction::SetGlideBatch {
                 pattern_id: *pattern_id,
                 changes: changes
                     .iter()

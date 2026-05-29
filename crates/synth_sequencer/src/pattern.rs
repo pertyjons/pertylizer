@@ -278,6 +278,26 @@ impl Pattern {
         }
     }
 
+    /// Set the legato/tie flag of a note.
+    pub fn set_note_legato(&mut self, id: NoteId, legato: bool) -> bool {
+        if let Some(note) = self.note_mut(id) {
+            note.legato = legato;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Set (or clear) the per-note glide.
+    pub fn set_note_glide(&mut self, id: NoteId, glide: Option<super::note::Glide>) -> bool {
+        if let Some(note) = self.note_mut(id) {
+            note.glide = glide;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Quantize only the selected notes to a custom grid with strength.
     pub fn quantize_selected(
         &mut self,

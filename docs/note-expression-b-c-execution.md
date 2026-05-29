@@ -135,17 +135,25 @@ stepped = glissando).
   still sounds, just without its glide. Fix later by carrying the trigger through
   the steal fade-out.
 
-### B4 — GUI: piano-roll tie/legato toggle + glide handle
+### B4 — GUI: piano-roll tie/legato toggle + glide handle ✅ (next commit)
 
-- [ ] In the piano-roll (`gui/sequencer/mod.rs`), add a per-note legato/tie toggle
-  (context action or modifier-drag between abutting notes) writing `Note.legato`.
-- [ ] Add a glide handle between two abutting notes that sets `Note.glide`
-  (drag length → `Glide.time`; default `Continuous`, with a toggle to `Stepped`).
-- [ ] Reflect state visually (tie arc / glide ramp glyph). Keep snapshot pattern
-  (`collect_piano_roll_data`) — collect, release lock, draw.
+- [x] Added per-note editing to the **selection inspector**
+  (`draw_piano_roll_selection_inspector`): a "Tie" (legato) toggle, a "Glide"
+  enable toggle (installs a sensible default), and From (semitone offset) / Time
+  (ms) / Stepped controls. (Chose the inspector over canvas drag-handles — more
+  robust + matches the existing velocity multi-edit pattern.)
+- [x] Full **undo** integration: new `SetLegatoBatch`/`SetGlideBatch` actions
+  (`undo.rs` enum + invert, `egui_backend.rs` apply) and `Pattern::set_note_legato`
+  /`set_note_glide`. Glide DragValues collapse a drag into one undo entry on release.
+- [x] Visual markers in the note-draw loop: a tie underline (accent-yellow) for
+  legato and a left-edge ramp glyph (accent-cyan) for glide. Snapshot pattern kept
+  (`PianoRollNote` carries `legato`/`glide`).
 - **Verify:** round-trip edit → save → reload preserves fields; playback matches
   B3. `/code-review` medium.
 - **Commit:** `Phase B4: piano-roll tie/legato toggle + glide handle`
+- **Done:** gate green; code-review fix applied — From/Time edits only touch
+  already-gliding notes (never force glide onto a mixed selection). Pre-existing
+  scroll-wheel-without-drag undo gap left as-is (mirrors velocity inspector).
 
 ### B5 — MCP: expose legato/glide on note creation
 
