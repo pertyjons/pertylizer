@@ -85,20 +85,25 @@ stepped = glissando).
 - **Commit:** `Phase B1: add per-note legato + Glide value type to Note (additive)`
 - **Done:** types exported from crate root; schema regenerated; 292 tests green.
 
-### B2 — Sequencer event plumbing
+### B2 — Sequencer event plumbing ✅ (next commit)
 
-- [ ] Extend `SequencerEvent::NoteOn` (`events.rs:17`) with `legato: bool` and
+- [x] Extend `SequencerEvent::NoteOn` (`events.rs:17`) with `legato: bool` and
   `glide: Option<Glide>` (both `Copy` — RT-safety constraint above).
-- [ ] In `sequencer_engine.rs:534` emission, populate the two new fields from the
-  source `Note`. Reconcile with the **existing placement-boundary legato coalesce**
-  (`sequencer_engine.rs:511-528`): per-note `legato` is a *superset* signal — when
-  a note is marked `legato`, suppress its `NoteOff`+`NoteOn` boundary the same way
-  the coalesce already does for abutting same-pitch notes, but now across *any*
-  successor (pitch may differ → glide). Document the interaction in a comment.
-- [ ] Update `events.rs` constructors/tests and any exhaustive matches on `NoteOn`.
+- [x] In `sequencer_engine.rs:534` emission, populate the two new fields from the
+  source `Note`. Introduced a `Copy` `PendingNote` scratch struct (replaces the
+  4-tuple) carrying the fields alloc-free. Documented the **superset** interaction
+  with the placement-boundary legato coalesce as a comment; the actual coalesce
+  *generalisation* (suppress NoteOff+NoteOn across any successor + glide) is
+  deferred to B3 so B2 stays behavior-neutral.
+- [x] Update `events.rs` constructors/tests; consumer (`synth_engine.rs:2617`)
+  uses `..` so it ignores the new fields — no exhaustive match broke.
+- [x] Absolute `GlideFrom::Pitch` source is transposed into the placement key at
+  emission; review fix: drop the glide if that transpose leaves MIDI range
+  (avoids a desynced source/target pair) rather than `unwrap_or(p)`.
 - **Verify:** events now carry the data; consumer still ignores it → no audible
   change. Confirm existing sequencer_engine legato tests still pass. `/code-review` medium.
 - **Commit:** `Phase B2: carry per-note legato/glide through SequencerEvent::NoteOn`
+- **Done:** full suite green; code-review (1 low-sev transpose-desync finding) applied.
 
 ### B3 — Engine consumption: drive Legato + GlideState per note *(audio thread)*
 

@@ -29,6 +29,10 @@ first, richness second.
 Mark each `- [ ]` as `- [x]` and flip the per-phase **Status** line when it lands.
 Keep `docs/history.md` updated against each ship date.
 
+> **Phases B & C have a commit-sized execution plan:**
+> `docs/note-expression-b-c-execution.md` (one logical commit per step,
+> `/code-review` + build gate before each). Use it when working B/C in a loop.
+
 ## Context — verified engine state (2026-05-28)
 
 The export side's view of Pertylizer is stale; the points below were confirmed

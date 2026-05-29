@@ -10,8 +10,8 @@ use parking_lot::RwLock;
 
 use synth_core::{BipolarValue, Bpm, NormalizedValue, SampleCount, SampleRate};
 use synth_sequencer::{
-    AutomationTarget, PatternId, PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song,
-    TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity,
+    AutomationTarget, Glide, GlideFrom, PatternId, PatternTick, Pitch, SeqInstrumentId,
+    SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity,
 };
 
 /// Minimum change threshold for automation value deduplication.
@@ -61,6 +61,24 @@ struct ActiveNote {
     end_tick: Option<Tick>,
 }
 
+/// A note collected at the current tick, before NoteOn emission.
+///
+/// `Copy`/alloc-free so it lives in the pre-allocated `scratch_notes` buffer
+/// without per-tick heap churn. Carries the per-note expression (`legato`,
+/// `glide`) so it can ride the emitted `SequencerEvent::NoteOn`.
+#[derive(Debug, Clone, Copy)]
+struct PendingNote {
+    pitch: Pitch,
+    velocity: Velocity,
+    instrument: SeqInstrumentId,
+    end_tick: Option<Tick>,
+    /// Per-note tie/legato intent (taxonomy primitive 2).
+    legato: bool,
+    /// Per-note glide; any absolute `GlideFrom::Pitch` is already transposed to
+    /// the placement key.
+    glide: Option<Glide>,
+}
+
 /// The sequencer engine processes song data and emits real-time events.
 ///
 /// It maintains sample-accurate timing by accumulating fractional ticks
@@ -95,7 +113,7 @@ pub struct SequencerEngine {
     /// Cleared alongside `last_automation_values` at every transport reset.
     track_auto: HashMap<TrackId, TrackAutoOverride>,
     /// Pre-allocated scratch buffer for note collection (avoids per-tick allocation).
-    scratch_notes: Vec<(Pitch, Velocity, SeqInstrumentId, Option<Tick>)>,
+    scratch_notes: Vec<PendingNote>,
     /// Pre-allocated scratch buffer for automation collection (avoids per-tick allocation).
     scratch_automation: Vec<(AutomationTarget, NormalizedValue)>,
     /// When set, only emit notes from placements whose pattern id matches.
@@ -415,12 +433,16 @@ impl SequencerEngine {
                     let end_tick = note
                         .duration
                         .map(|d| Tick(self.current_tick.0 + u64::from(d.0)));
-                    self.scratch_notes.push((
-                        note.pitch,
-                        note.velocity,
-                        self.preview_instrument,
+                    // Preview has no placement transpose, so glide source pitch
+                    // needs no adjustment.
+                    self.scratch_notes.push(PendingNote {
+                        pitch: note.pitch,
+                        velocity: note.velocity,
+                        instrument: self.preview_instrument,
                         end_tick,
-                    ));
+                        legato: note.legato,
+                        glide: note.glide,
+                    });
                 }
                 for lane in &pattern.automation {
                     if let Some(value) = lane.value_at(PatternTick(pattern_tick)) {
@@ -489,12 +511,27 @@ impl SequencerEngine {
 
                     let effective_instrument = track_instrument;
 
-                    self.scratch_notes.push((
-                        transposed_pitch,
-                        note.velocity,
-                        effective_instrument,
+                    // Transpose an absolute glide source into the placement key so
+                    // the emitted event is self-contained (relative semitones are
+                    // key-independent and pass through unchanged). If the absolute
+                    // source would leave MIDI range under transpose, drop the glide
+                    // rather than emit a desynced source/target pair.
+                    let glide = note.glide.and_then(|g| match g.from {
+                        GlideFrom::Pitch(p) => p.transpose(placement.transpose).map(|tp| Glide {
+                            from: GlideFrom::Pitch(tp),
+                            ..g
+                        }),
+                        GlideFrom::Semitones(_) => Some(g),
+                    });
+
+                    self.scratch_notes.push(PendingNote {
+                        pitch: transposed_pitch,
+                        velocity: note.velocity,
+                        instrument: effective_instrument,
                         end_tick,
-                    ));
+                        legato: note.legato,
+                        glide,
+                    });
                 }
 
                 // Collect automation values at this tick
@@ -511,8 +548,21 @@ impl SequencerEngine {
         // extend the active note instead of emitting NoteOff+NoteOn. The
         // extended end_tick keeps `check_note_offs` below from firing the
         // pending NoteOff, so the voice sustains across the boundary.
+        //
+        // The per-note `legato`/`glide` fields are *carried* here but not yet
+        // acted upon: Phase B3 generalises this same-pitch coalesce into a
+        // per-note-legato superset (suppress NoteOff+NoteOn across *any*
+        // successor, gliding when the pitch differs) and drives the engine's
+        // GlideState. For now they only ride the emitted event.
         for i in 0..self.scratch_notes.len() {
-            let (pitch, velocity, instrument, end_tick) = self.scratch_notes[i];
+            let PendingNote {
+                pitch,
+                velocity,
+                instrument,
+                end_tick,
+                legato,
+                glide,
+            } = self.scratch_notes[i];
 
             let extending_idx = self.active_notes.iter().position(|n| {
                 n.pitch == pitch
@@ -536,6 +586,8 @@ impl SequencerEngine {
                 pitch,
                 velocity,
                 instrument,
+                legato,
+                glide,
             });
         }
 

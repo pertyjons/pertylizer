@@ -7,6 +7,7 @@ use synth_core::NormalizedValue;
 
 use super::automation::AutomationTarget;
 use super::ids::SeqInstrumentId;
+use super::note::Glide;
 use super::pitch::{Pitch, Velocity};
 use super::time::Tick;
 
@@ -23,6 +24,14 @@ pub enum SequencerEvent {
         velocity: Velocity,
         /// Instrument to play.
         instrument: SeqInstrumentId,
+        /// Per-note tie/legato intent (taxonomy primitive 2). `Copy`/alloc-free
+        /// so this event stays RT-safe to clone on the audio thread. Carried from
+        /// the source `Note`; consumed by the engine in Phase B3.
+        legato: bool,
+        /// Per-note glide (portamento/glissando), `None` when absent. Any absolute
+        /// `GlideFrom::Pitch` source is already transposed to the placement's key
+        /// at emission, so the event is self-contained. Consumed in Phase B3.
+        glide: Option<Glide>,
     },
     /// Note off event.
     NoteOff {
@@ -116,6 +125,8 @@ mod tests {
             pitch: Pitch::new(60).unwrap(),
             velocity: Velocity::MF,
             instrument: SeqInstrumentId(0),
+            legato: false,
+            glide: None,
         };
         assert_eq!(event.tick().0, 1000);
     }
@@ -127,6 +138,8 @@ mod tests {
             pitch: Pitch::new(60).unwrap(),
             velocity: Velocity::MF,
             instrument: SeqInstrumentId(0),
+            legato: false,
+            glide: None,
         };
         assert!(note_on.is_note_on());
         assert!(!note_on.is_note_off());
@@ -148,12 +161,16 @@ mod tests {
                 pitch: Pitch::new(60).unwrap(),
                 velocity: Velocity::MF,
                 instrument: SeqInstrumentId(0),
+                legato: false,
+                glide: None,
             },
             SequencerEvent::NoteOn {
                 tick: Tick(100),
                 pitch: Pitch::new(62).unwrap(),
                 velocity: Velocity::MF,
                 instrument: SeqInstrumentId(0),
+                legato: false,
+                glide: None,
             },
             SequencerEvent::NoteOff {
                 tick: Tick(300),
@@ -175,6 +192,8 @@ mod tests {
             pitch: Pitch::new(60).unwrap(),
             velocity: Velocity::MF,
             instrument: SeqInstrumentId(5),
+            legato: false,
+            glide: None,
         };
         assert_eq!(note.instrument(), Some(SeqInstrumentId(5)));
     }
