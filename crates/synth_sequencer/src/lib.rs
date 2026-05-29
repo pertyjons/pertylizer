@@ -46,7 +46,7 @@ pub use ids::{
     TrackIndex,
 };
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
-pub use note::Note;
+pub use note::{Glide, GlideFrom, GlideInterp, Note};
 pub use pattern::{Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};
 pub use song::{PatternPlacement, Song, TempoChange, TimeSignatureChange};

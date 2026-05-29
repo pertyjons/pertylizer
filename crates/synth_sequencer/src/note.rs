@@ -3,10 +3,55 @@
 //! Notes are stored with start time and duration, not as separate on/off events.
 
 use serde::{Deserialize, Serialize};
+use synth_core::{Milliseconds, Semitones};
 
 use super::ids::{NoteId, TrackId};
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
+
+/// Interpolation type for a per-note glide.
+///
+/// The single taxonomy axis (roadmap: expression primitive 2) that separates a
+/// continuous portamento from a stepped glissando. `Stepped` quantizes the glide
+/// trajectory to semitones — the intentional-holds case, where smoothing would be
+/// the bug (the inverse of the zipper-noise pitfall).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum GlideInterp {
+    /// Continuous portamento (smooth pitch ramp).
+    #[default]
+    Continuous,
+    /// Stepped glissando (quantized to semitones).
+    Stepped,
+}
+
+/// Where a per-note glide starts from.
+///
+/// Either a signed semitone offset relative to the note's own pitch (the common
+/// case) or an absolute source pitch.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum GlideFrom {
+    /// Signed semitone offset from this note's pitch (e.g. `-12.0` = an octave below).
+    Semitones(Semitones),
+    /// Absolute source pitch to glide from.
+    Pitch(Pitch),
+}
+
+/// Per-note glide (portamento / glissando) — taxonomy primitive 2.
+///
+/// Drives the engine's existing `GlideState` (exponential portamento) from
+/// per-note sequencer data. `Copy`/alloc-free so it can ride the audio-thread
+/// `SequencerEvent::NoteOn` without heap allocation.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Glide {
+    /// Where the glide starts from.
+    pub from: GlideFrom,
+    /// Glide time (how long to reach this note's pitch).
+    pub time: Milliseconds,
+    /// Continuous (portamento) vs stepped (glissando).
+    pub interp: GlideInterp,
+}
 
 /// A note in a pattern.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -23,6 +68,13 @@ pub struct Note {
     pub velocity: Velocity,
     /// Track/channel for mono-per-track behavior.
     pub track: Option<TrackId>,
+    /// Tie / legato intent: when set, this note connects to its successor without
+    /// re-gating (taxonomy primitive 2). Additive; defaults to `false`.
+    #[serde(default)]
+    pub legato: bool,
+    /// Per-note glide (portamento/glissando). Additive; defaults to `None`.
+    #[serde(default)]
+    pub glide: Option<Glide>,
 }
 
 impl Note {
@@ -36,6 +88,8 @@ impl Note {
             pitch,
             velocity,
             track: None,
+            legato: false,
+            glide: None,
         }
     }
 
@@ -50,6 +104,20 @@ impl Note {
     #[must_use]
     pub fn with_track(mut self, track: TrackId) -> Self {
         self.track = Some(track);
+        self
+    }
+
+    /// Set the legato/tie flag (builder pattern).
+    #[must_use]
+    pub fn with_legato(mut self, legato: bool) -> Self {
+        self.legato = legato;
+        self
+    }
+
+    /// Set the per-note glide (builder pattern).
+    #[must_use]
+    pub fn with_glide(mut self, glide: Glide) -> Self {
+        self.glide = Some(glide);
         self
     }
 
@@ -129,6 +197,54 @@ mod tests {
         assert!(late_note.is_playing_at(PatternTick(100)));
         assert!(late_note.is_playing_at(PatternTick(200)));
         assert!(!late_note.is_playing_at(PatternTick(300)));
+    }
+
+    #[test]
+    fn test_note_defaults_legato_glide() {
+        let note = test_note();
+        assert!(!note.legato);
+        assert!(note.glide.is_none());
+    }
+
+    #[test]
+    fn test_note_with_legato_and_glide() {
+        let glide = Glide {
+            from: GlideFrom::Semitones(Semitones::new(-12.0)),
+            time: Milliseconds::new(50.0),
+            interp: GlideInterp::Continuous,
+        };
+        let note = test_note().with_legato(true).with_glide(glide);
+        assert!(note.legato);
+        assert_eq!(note.glide, Some(glide));
+    }
+
+    #[test]
+    fn test_note_serde_roundtrip_with_expression() {
+        let glide = Glide {
+            from: GlideFrom::Pitch(Pitch::new(48).unwrap()),
+            time: Milliseconds::new(120.0),
+            interp: GlideInterp::Stepped,
+        };
+        let note = test_note().with_legato(true).with_glide(glide);
+        let json = serde_json::to_string(&note).unwrap();
+        let back: Note = serde_json::from_str(&json).unwrap();
+        assert_eq!(note, back);
+    }
+
+    #[test]
+    fn test_note_deserializes_without_new_fields() {
+        // Legacy JSON predating legato/glide must load with defaults (additive schema).
+        let json = r#"{
+            "id": 7,
+            "start": 0,
+            "duration": null,
+            "pitch": 60,
+            "velocity": 80,
+            "track": null
+        }"#;
+        let note: Note = serde_json::from_str(json).unwrap();
+        assert!(!note.legato);
+        assert!(note.glide.is_none());
     }
 
     #[test]

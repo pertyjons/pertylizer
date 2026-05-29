@@ -799,6 +799,75 @@
       "format": "float",
       "type": "number"
     },
+    "Glide": {
+      "description": "Per-note glide (portamento / glissando) — taxonomy primitive 2.\n\nDrives the engine's existing `GlideState` (exponential portamento) from\nper-note sequencer data. `Copy`/alloc-free so it can ride the audio-thread\n`SequencerEvent::NoteOn` without heap allocation.",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/GlideFrom",
+          "description": "Where the glide starts from."
+        },
+        "interp": {
+          "$ref": "#/$defs/GlideInterp",
+          "description": "Continuous (portamento) vs stepped (glissando)."
+        },
+        "time": {
+          "$ref": "#/$defs/Milliseconds",
+          "description": "Glide time (how long to reach this note's pitch)."
+        }
+      },
+      "required": [
+        "from",
+        "time",
+        "interp"
+      ],
+      "type": "object"
+    },
+    "GlideFrom": {
+      "description": "Where a per-note glide starts from.\n\nEither a signed semitone offset relative to the note's own pitch (the common\ncase) or an absolute source pitch.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Signed semitone offset from this note's pitch (e.g. `-12.0` = an octave below).",
+          "properties": {
+            "Semitones": {
+              "$ref": "#/$defs/Semitones"
+            }
+          },
+          "required": [
+            "Semitones"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Absolute source pitch to glide from.",
+          "properties": {
+            "Pitch": {
+              "$ref": "#/$defs/Pitch"
+            }
+          },
+          "required": [
+            "Pitch"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "GlideInterp": {
+      "description": "Interpolation type for a per-note glide.\n\nThe single taxonomy axis (roadmap: expression primitive 2) that separates a\ncontinuous portamento from a stepped glissando. `Stepped` quantizes the glide\ntrajectory to semitones — the intentional-holds case, where smoothing would be\nthe bug (the inverse of the zipper-noise pitfall).",
+      "oneOf": [
+        {
+          "const": "Continuous",
+          "description": "Continuous portamento (smooth pitch ramp).",
+          "type": "string"
+        },
+        {
+          "const": "Stepped",
+          "description": "Stepped glissando (quantized to semitones).",
+          "type": "string"
+        }
+      ]
+    },
     "GlobalParam": {
       "description": "Automatable global parameters.",
       "enum": [
@@ -6512,9 +6581,26 @@
           ],
           "description": "Duration in ticks."
         },
+        "glide": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Glide"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-note glide (portamento/glissando). Additive; defaults to `None`."
+        },
         "id": {
           "$ref": "#/$defs/NoteId",
           "description": "Unique ID for this note (for editing/selection)."
+        },
+        "legato": {
+          "default": false,
+          "description": "Tie / legato intent: when set, this note connects to its successor without\nre-gating (taxonomy primitive 2). Additive; defaults to `false`.",
+          "type": "boolean"
         },
         "pitch": {
           "$ref": "#/$defs/Pitch",
