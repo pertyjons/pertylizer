@@ -1,5 +1,18 @@
 # Version History
 
+## [0.297.0] - 2026-05-29
+
+### Export robustness — MCP introspection tooling (Parallel track)
+
+Two new MCP tools. `get_project_schema` returns the authoritative on-disk
+`.pertyproj` JSON Schema (the exact committed artifact, embedded via `include_str!`)
+plus the build version, so external tools validate or diff project files without the
+introspection-vs-disk encoding drift of reading live parameter values. `lint_project`
+runs the graph diagnostics over every instrument in one pass and aggregates them into
+a project-wide report (per-instrument entries + error/warning/info totals), surfacing
+behavioural issues (unconnected ports, silent voices, feedback loops) that schema
+validation can't.
+
 ## [0.296.0] - 2026-05-29
 
 ### Automation A1/A2 deferred follow-ups (Track F)

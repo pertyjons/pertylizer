@@ -24,7 +24,7 @@ first, richness second.
 - [x] **Phase C** — Per-note vibrato depth + a small per-note expression block (note expression in miniature)
 - [ ] **Phase D** — Shared/bus filter with automatable cutoff (rides on channel-strip Phase 7)
 - [ ] **Phase E** — Full Note Expression: per-note custom curves + generic per-note targets + MPE
-- [ ] **Parallel track** — `get_project_schema` MCP tool + file-level load-lint (export robustness)
+- [x] **Parallel track** — `get_project_schema` MCP tool + file-level load-lint (export robustness)
 
 Mark each `- [ ]` as `- [x]` and flip the per-phase **Status** line when it lands.
 Keep `docs/history.md` updated against each ship date.
@@ -366,16 +366,17 @@ before start.
 - [ ] Piano-roll per-note curve editor (the gating UI investment).
 
 ## Parallel track — export robustness (independent, cheap)
-**Status:** ☐ Not started · **Effort:** S · **Axis:** neither (tooling)
+**Status:** ☑ Done (P1 + P2) · **Effort:** S · **Axis:** neither (tooling)
 
-- [ ] `get_project_schema` MCP tool returning the authoritative on-disk
-  `.pertyproj` schema + a build version string. Fixes the encoding drift where
-  introspection reports `osc.Waveform` numerically (`sawtooth = 2.0`) while on-disk
-  is string-only (`"sawtooth"`); enables a CI diff that fires when the format
-  changes.
-- [ ] File-level load-lint: surface `get_graph_diagnostics` as a single pass
-  returning *warnings* (unconnected ports, silent voices, out-of-range derived
-  values), not just schema validation.
+- [x] `get_project_schema` MCP tool returning the authoritative on-disk
+  `.pertyproj` schema (embedded committed artifact) + the build version string.
+  Fixes the encoding drift where introspection reports `osc.Waveform` numerically
+  (`sawtooth = 2.0`) while on-disk is string-only (`"sawtooth"`); enables a CI diff
+  that fires when the format changes.
+- [x] File-level load-lint: `lint_project` runs `get_graph_diagnostics` over every
+  instrument in one pass, returning per-instrument entries + error/warning/info
+  totals (unconnected ports, silent voices, feedback loops) — behavioural warnings
+  beyond schema validation.
 
 ---
 

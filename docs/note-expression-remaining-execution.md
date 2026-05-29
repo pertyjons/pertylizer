@@ -179,8 +179,9 @@ Independent of everything else; cheap; lands any time. Good loop steps after F.
 - **Schema:** none. `/code-review` medium.
 - **Commit:** `MCP P2: file-level load-lint (project-wide get_graph_diagnostics warnings)`
 
-### P-close
-- [ ] Flip roadmap **Parallel track** `Status` + glance; `docs/history.md`; version bump.
+### P-close ✅
+- [x] Flipped roadmap **Parallel track** `Status` (☑ Done, P1+P2) + both glance items;
+  `docs/history.md` 0.297.0 entry; version bump to 0.297.0.
 - **Commit:** `Export robustness: history + status`
 
 ---
