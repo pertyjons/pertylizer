@@ -1,0 +1,281 @@
+# Execution plan: Phases B & C (per-note legato/glide + expression block)
+
+Companion to `docs/note-expression-roadmap.md` (the north-star roadmap). This is
+the **commit-sized execution plan** for Phase B and Phase C, sequenced for a
+step-by-step loop: each step is one logical commit, **preceded by a
+`/code-review`** and the standard build gate (`cargo fmt --check && cargo build
+&& cargo clippy --all-targets && cargo test`).
+
+Read the roadmap's two governing sections before starting and keep them open:
+
+- **Expression primitive taxonomy** (roadmap §"expression primitive taxonomy") —
+  *place the primitive, not the term*. B is primitive 2 (inter-note transition);
+  C is primitive 1 (parametric modulator) + primitive 3 (note-shape scalars).
+- **Automation value model** (base vs. override) — vibrato (C) rides the
+  **additive** mod-matrix offset path, never the destructive `set_param`.
+
+## Loop protocol (every step)
+
+1. Implement exactly the one step.
+2. `/code-review` the working tree (effort per the step's note; default `medium`,
+   `high` for the two audio-thread steps B3/C4). Apply or consciously dismiss
+   each finding.
+3. Build gate: `cargo fmt --check && cargo build && cargo clippy --all-targets && cargo test` — all zero-warning.
+4. Run gen_schemas if they are updated
+5. Commit with the step's suggested message. Do **not** bundle two steps.
+6. Flip the step's checkbox here; flip the roadmap `Status` line only when the
+   whole phase lands; append a one/two-sentence `docs/history.md` line at phase end.
+
+## Verified code anchors (confirmed 2026-05-29)
+
+| Concern                                                                     | Location                                                                                                                              | 
+|-----------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| `Note` struct (6 fields, additive target)                                   | `synth_sequencer/src/note.rs:13-26`                                                                                                   |
+| Seq event model (`SequencerEvent::NoteOn` = tick/pitch/velocity/instrument) | `synth_sequencer/src/events.rs:15-44`                                                                                                 |
+| Seq playback emission (note-on push + placement-boundary legato coalesce)   | `synth_engine/src/sequencer_engine.rs:514-540`                                                                                        |
+| Audio-thread event consumer → `instruments[idx].note_on(note, vel)`         | `synth_engine/src/synth_engine.rs:2617-2660`                                                                                          |
+| `Instrument::note_on` → `allocator.note_on`                                 | `synth_engine/src/instrument.rs` (`note_on`), `voice_allocator.rs:242-252`                                                            |
+| `AllocationMode::{Polyphonic,Mono,Legato,Unison}`                           | `voice_allocator.rs:17-28`                                                                                                            |
+| Legato glides pitch without re-gate; mono retriggers w/ glide               | `voice_allocator.rs:248-258`                                                                                                          |
+| `GlideState::start(target_freq, glide_time)` (exp portamento)               | `voice.rs:172-191`                                                                                                                    |
+| Per-instrument glide config                                                 | `voice_allocator.rs` config `glide_time`; setter `voice.rs:405`; cmd `synth_engine.rs:1358,1699`                                      |
+| Mod-matrix pitch dest `ModDestination::OscPitch(u8)` (semitones, additive)  | `synth_core/src/params/mod_matrix.rs:255-260,388`                                                                                     |
+| Override layer (Phase A1/A2) — additive offset model                        | `instrument.rs:951` (`apply_normalized_override`), `instrument.rs:982` (`apply_module_param_override`); `voice.rs:389`/`graph.rs:512` |
+| GUI piano-roll                                                              | `crates/pertylizer/src/gui/sequencer/mod.rs` (`collect_piano_roll_data`, automation picker ~3375)                                     |
+| MCP note creation                                                           | `crates/pertylizer/src/mcp_bridge.rs` (`add_notes`)                                                                                   |
+
+**RT-safety constraint (governs B2/B3/C2/C3/C4):** `SequencerEvent::NoteOn` is
+consumed on the audio thread (`synth_engine.rs:2617`) and the event vec is cloned
+per tick in `sequencer_engine`. Every per-note expression field added to the event
+must be `Copy` and alloc-free (`f32`/`bool`/small `enum`/`Option<Copy struct>`) —
+no `String`, no `Vec`. This is the lesson from the deferred A2 `param_id: String`
+RT-safety item; do not repeat it here.
+
+---
+
+## Phase B — Per-note legato/tie + glide
+
+**Goal (roadmap):** retire the two worst pitch artifacts — machine-gun arpeggio
+re-gating and portamento staircases — by driving the *existing* allocator
+Legato + `GlideState` machinery from per-note sequencer data. The DSP exists;
+this is data + wiring. Taxonomy: **primitive 2** (inter-note transition),
+parameterised on one axis — interpolation type (continuous = portamento,
+stepped = glissando).
+
+### B1 — Note data model: `legato` flag + `Glide` value type ✅ (4115525)
+
+- [x] In `note.rs`, add two additive fields to `Note`:
+    - `legato: bool` (tie / no-retrigger intent for this note onto its successor).
+    - `glide: Option<Glide>` where `Glide` is a new `Copy` struct in `note.rs`:
+      `{ from: GlideFrom, time: Milliseconds, interp: GlideInterp }`.
+        - `GlideFrom` enum: `Semitones(Semitones)` (signed, relative) or
+          `Pitch(Pitch)` (absolute source). Default to relative semitones.
+        - `GlideInterp` enum: `Continuous` | `Stepped` — the single taxonomy axis
+          separating portamento from glissando. (`Stepped` is a stub here; honoured
+          in B3.)
+    - Use existing newtypes (`Milliseconds`/`Seconds`, `Semitones`, `Pitch`) — no
+      raw `f32`. Per CLAUDE.md newtype rule.
+- [x] `#[serde(default)]` on both new fields so existing `.pertyproj` /
+  pattern JSON loads unchanged (additive schema). Derive `Copy` is impossible
+  (`Note` already isn't `Copy`); ensure `Glide`/`GlideFrom`/`GlideInterp` are
+  `Copy + PartialEq + Serialize + Deserialize + JsonSchema`.
+- [x] Builder methods `Note::with_legato(bool)` / `with_glide(Glide)` (`#[must_use]`).
+- [x] Unit tests: serde round-trip incl. defaults-absent JSON; builder set/clear.
+- **Verify:** no behavior change yet (engine ignores the fields). `/code-review` medium.
+- **Commit:** `Phase B1: add per-note legato + Glide value type to Note (additive)`
+- **Done:** types exported from crate root; schema regenerated; 292 tests green.
+
+### B2 — Sequencer event plumbing
+
+- [ ] Extend `SequencerEvent::NoteOn` (`events.rs:17`) with `legato: bool` and
+  `glide: Option<Glide>` (both `Copy` — RT-safety constraint above).
+- [ ] In `sequencer_engine.rs:534` emission, populate the two new fields from the
+  source `Note`. Reconcile with the **existing placement-boundary legato coalesce**
+  (`sequencer_engine.rs:511-528`): per-note `legato` is a *superset* signal — when
+  a note is marked `legato`, suppress its `NoteOff`+`NoteOn` boundary the same way
+  the coalesce already does for abutting same-pitch notes, but now across *any*
+  successor (pitch may differ → glide). Document the interaction in a comment.
+- [ ] Update `events.rs` constructors/tests and any exhaustive matches on `NoteOn`.
+- **Verify:** events now carry the data; consumer still ignores it → no audible
+  change. Confirm existing sequencer_engine legato tests still pass. `/code-review` medium.
+- **Commit:** `Phase B2: carry per-note legato/glide through SequencerEvent::NoteOn`
+
+### B3 — Engine consumption: drive Legato + GlideState per note *(audio thread)*
+
+- [ ] Extend the trigger signature down the chain to carry per-note expression:
+  `Instrument::note_on` → `VoiceAllocator::note_on` → voice. Add a `Copy`
+  `NoteTrigger { legato: bool, glide: Option<Glide> }` (or pass the two fields)
+  rather than widening to a struct held across the boundary.
+- [ ] At the audio-thread consumer (`synth_engine.rs:2617`) read `legato`/`glide`
+  off the `NoteOn` event and pass them in. No allocation.
+- [ ] Drive existing machinery:
+    - `glide.is_some()` → call `GlideState::start(target_freq, glide_time)`
+      (`voice.rs:174`) on the triggered/continued voice, converting `GlideFrom`
+      → a source `Hertz` (relative semitones applied to target pitch; absolute
+      Pitch → Hertz) and `Glide.time` → `Seconds`.
+    - `legato` → take the `AllocationMode::Legato` no-retrigger branch
+      (`voice_allocator.rs:248`, `glide_to_note`) for this note *regardless of the
+      instrument's configured mode* — i.e. per-note legato overrides the allocator
+      default. Define & comment precedence (roadmap B bullet 3).
+    - `GlideInterp::Stepped` → quantise the glide trajectory to semitone steps
+      (glissando). Smallest correct approach: a stepped variant of `GlideState`'s
+      interpolation (the intentional-holds case — note the zipper-noise inversion
+      in the taxonomy; do **not** smooth it).
+- [ ] Precedence rule documented next to the dispatch: per-note `glide.time`
+  overrides the instrument allocator `glide_time`; absent per-note glide → fall
+  back to the instrument default (current behavior preserved).
+- [ ] Tests: a legato-tagged note pair produces one gate (no retrigger); a glide
+  note produces a pitch ramp; stepped glide holds at semitones. Prefer an
+  offline-render or allocator-level unit test (mirror existing
+  `sequencer_engine` legato tests).
+- **Verify (the audible payoff):** arpeggio of tied notes plays under one held
+  gate; slides ramp. `/code-review` **high** (audio-thread, RT-safety). Confirm
+  no heap/lock/panic added in `process()`/trigger path.
+- **Commit:** `Phase B3: drive per-note legato + glide from the sequencer trigger`
+
+### B4 — GUI: piano-roll tie/legato toggle + glide handle
+
+- [ ] In the piano-roll (`gui/sequencer/mod.rs`), add a per-note legato/tie toggle
+  (context action or modifier-drag between abutting notes) writing `Note.legato`.
+- [ ] Add a glide handle between two abutting notes that sets `Note.glide`
+  (drag length → `Glide.time`; default `Continuous`, with a toggle to `Stepped`).
+- [ ] Reflect state visually (tie arc / glide ramp glyph). Keep snapshot pattern
+  (`collect_piano_roll_data`) — collect, release lock, draw.
+- **Verify:** round-trip edit → save → reload preserves fields; playback matches
+  B3. `/code-review` medium.
+- **Commit:** `Phase B4: piano-roll tie/legato toggle + glide handle`
+
+### B5 — MCP: expose legato/glide on note creation
+
+- [ ] Extend `add_notes` (`mcp_bridge.rs`) to accept optional `legato` and
+  `glide { from, time_ms, interp }` per note; forgiving token parsing consistent
+  with existing MCP ergonomics (cf. module-type tokens). Defaults = current.
+- [ ] Round-trip test + a `README_MCP` note.
+- **Verify:** create a tied/gliding note via MCP, confirm it plays. `/code-review` medium.
+- **Commit:** `Phase B5: MCP add_notes accepts per-note legato/glide`
+
+### B-close
+
+- [ ] Flip roadmap **Phase B** `Status` to ☑ Done and the §"Status at a glance"
+  checkbox. Add one `docs/history.md` line. Final full build gate. `/code-review`
+  of the whole phase diff (medium) before the close commit if anything changed.
+- **Commit:** `Phase B: history + roadmap status`
+
+---
+
+## Phase C — Per-note vibrato + expression block
+
+**Goal (roadmap):** make vibrato (today only patch-level via mod-matrix
+LFO→OscPitch) **per-note**, and seed the miniature note-expression block.
+Taxonomy: **primitive 1** (parametric modulator: depth/rate/delay → an additive
+offset on a target, reusing the mod-matrix `OscPitch` path) **plus primitive 3**
+(note-shape scalars — accent, gate %, ghost, probability — the only terms that
+justify new `Note` fields). Glide *time* stays in B (primitive 2), not here.
+
+**Field-shape guardrail (roadmap C bullet 2 + taxonomy consequence 1):** design
+the expression block against the **full** MPE/MIDI-2.0 minimal dimension set —
+*bend, pressure, timbre/slide, velocity, release-velocity* — so Phase E's
+hand-drawn curves *extend* this block rather than replace it. Pick field names
+that map 1:1 onto those dimensions now even if only vibrato is wired in C.
+
+### C1 — Note expression-block data model
+
+- [ ] In `note.rs`, add `expression: Option<NoteExpression>` (`#[serde(default)]`),
+  a new `Copy` struct. Two groups, both alloc-free:
+    - **primitive 1 (parametric modulator — vibrato seed):** `vibrato: Option<Vibrato>`
+      = `{ depth: Semitones, rate: Hertz, delay: Milliseconds, shape: LfoShape }`.
+      Name the broader block fields against MPE dims so E slots in: reserve
+      conceptual room for `pressure`/`timbre`/`bend`/`release_velocity` even if only
+      vibrato is implemented (document this; do not add dead fields gratuitously —
+      add the vibrato one, leave a doc comment naming the intended MPE set).
+    - **primitive 3 (note-shape scalars):** `accent: Option<f32>` (velocity ×),
+      `gate: Option<NormalizedValue>` (gate % of duration), `ghost: bool`,
+      `probability: Option<NormalizedValue>`.
+    - Newtypes throughout; `Copy + PartialEq + serde + JsonSchema`.
+- [ ] Builders + serde-default tests (absent block loads as `None`).
+- **Verify:** additive, no behavior change. `/code-review` medium.
+- **Commit:** `Phase C1: add per-note NoteExpression block (vibrato + note-shape scalars)`
+
+### C2 — Sequencer event plumbing
+
+- [ ] Carry `expression: Option<NoteExpression>` (`Copy`) on `SequencerEvent::NoteOn`
+  (RT-safety constraint). Populate from `Note` at emission (`sequencer_engine.rs:534`).
+- [ ] **Probability** is resolved sequencer-side at emission, not on the audio
+  thread (avoids RNG in `process()` and keeps the event deterministic per the
+  no-`Math.random` posture). Decide note inclusion before pushing `NoteOn`; seed
+  source TBD (pattern/tick-derived, documented).
+- **Verify:** events carry the block; consumer ignores (except probability gating
+  the emit). `/code-review` medium.
+- **Commit:** `Phase C2: carry NoteExpression through SequencerEvent::NoteOn`
+
+### C3 — Engine consumption: note-shape scalars *(cheap, additive)*
+
+- [ ] At the trigger consumer, apply the primitive-3 scalars — all `Copy`, no DSP:
+    - `accent` → multiply velocity before `note_on`.
+    - `gate` → scale the effective note length / schedule the note-off earlier
+      (staccato/tenuto). Implement at the sequencer note-off scheduling
+      (`check_note_offs`, `sequencer_engine.rs:576`) or as a per-note release —
+      pick the one that keeps gate a function of duration only.
+    - `ghost` → velocity floor / fixed low velocity.
+    - (`probability` already handled in C2.)
+- [ ] Tests for each scalar's effect on the emitted/triggered note.
+- **Verify:** accents/staccato audible; defaults unchanged. `/code-review` medium.
+- **Commit:** `Phase C3: apply per-note note-shape scalars (accent/gate/ghost)`
+
+### C4 — Engine consumption: per-note vibrato via mod-matrix offset *(audio thread)*
+
+- [ ] Wire `Vibrato` to the **additive** per-voice pitch-offset path — the
+  generalised mod-matrix `OscPitch` route (`mod_matrix.rs:255-260,388`), **not**
+  `set_param` (roadmap value-model section). A per-voice LFO (depth/rate/delay/shape)
+  adds semitone offset on top of base pitch, reset per note — exactly the
+  mod-matrix model, now seeded per note instead of per patch.
+- [ ] Reuse, don't duplicate: drive the existing per-voice OscPitch offset
+  accumulator if the voice already exposes one; otherwise add a minimal per-voice
+  vibrato LFO that feeds the same offset sum the mod matrix writes to (so mod-matrix
+  vibrato + per-note vibrato compose additively — consistent with the documented
+  combine rule).
+- [ ] `delay` → onset ramp of depth after note start. `shape` → LFO waveform.
+  All pre-allocated / atomics; for-loops in the sample path. No heap/lock/panic.
+- [ ] Tests: a vibrato note produces periodic pitch modulation of the right
+  depth/rate after the delay; zero depth = no change.
+- **Verify:** dead leads gain motion per note. `/code-review` **high** (audio-thread,
+  RT-safety). Confirm additive-offset (base pitch untouched) and no allocation.
+- **Commit:** `Phase C4: per-note vibrato via additive mod-matrix OscPitch offset`
+
+### C5 — GUI: expression editing in the piano-roll
+
+- [ ] Per-note expression affordances: accent/velocity tweak, gate-length handle,
+  ghost toggle, probability, and a vibrato mini-control (depth/rate). Keep it
+  compact — this block is the seed of the Phase E curve UI; lay out so a future
+  curve editor extends it.
+- **Verify:** edit → save → reload → playback. `/code-review` medium.
+- **Commit:** `Phase C5: piano-roll per-note expression editing`
+
+### C6 — MCP: expose the expression block
+
+- [ ] Extend `add_notes` with optional `expression { vibrato{depth,rate,delay,shape},
+  accent, gate, ghost, probability }`; forgiving tokens; defaults = current.
+  Round-trip test + `README_MCP` note.
+- **Verify:** MCP-created expressive note plays. `/code-review` medium.
+- **Commit:** `Phase C6: MCP add_notes accepts NoteExpression block`
+
+### C-close
+
+- [ ] Flip roadmap **Phase C** `Status` ☑ Done + glance checkbox; `docs/history.md`
+  line. Final build gate.
+- **Commit:** `Phase C: history + roadmap status`
+
+---
+
+## Notes / deferred-out-of-scope (record, don't silently drop)
+
+- **Stable (non-positional) module identity** and **mod-matrix-vs-automation
+  combine ordering** remain the A1/A2 deferred items (`docs/TODO.md`); C4's
+  additive composition assumes the documented "override replaces base, mod offset
+  added on top" rule and does not re-open ordering.
+- **MPE input mapping**, **hand-drawn per-note curves**, **per-note AWE spatial**,
+  and **Note Processors (arp/trill/flam/strum)** are all **Phase E** — C only
+  designs the block's field shape so E extends it. Do not implement them here.
+- **Offline-render parity** for any new per-note expression inherits the existing
+  deferred `analyze_*` offline-render item; flag if a C step makes analysis read a
+  value the live engine never produced.
