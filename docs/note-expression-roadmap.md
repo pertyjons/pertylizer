@@ -136,8 +136,10 @@ of it.
 - [x] **Combine rule per target (for automation).** Decided: automation is **absolute**
   (the override *replaces* the base while active); mod-matrix stays an additive offset
   applied on top. Before the first point / in gaps / on stop → the override is cleared
-  and the param reverts to base. (The mod-matrix-vs-automation *ordering* when both
-  drive one param is the separate deferred item below.)
+  and the param reverts to base. **Ordering when both drive one param (F3, resolved):**
+  the effective value is `(override.unwrap_or(base)) + mod_offset` — override replaces
+  base, then the mod-matrix offset adds on top of the override. Documented on
+  `PolyModule::set_param_override` and locked by a filter test.
 - [x] **Save semantics.** Holds by construction: overrides never touch the stored base,
   so saving always writes the base (knob) value even mid-playback. (Read-mode knob
   *display* of the live automated value is a GUI nicety, not yet implemented.)
@@ -169,11 +171,12 @@ generic param path ships, not after. Each is verified against current code.
   update, so a voice triggered after an update inherits the current value via the
   template. (Sub-block mid-sweep seeding of a voice triggered *between* updates is
   bounded by the automation update rate — acceptable for the first cut.)
-- [ ] **Two controllers, one param.** _DEFERRED (A1/A2 first cut)._ A filter cutoff can
+- [x] **Two controllers, one param.** _RESOLVED (F3)._ A filter cutoff can
   be driven by a mod-matrix offset *and* an automation override simultaneously. The
-  first cut applies the override as the base (absolute replace) with the mod-matrix
-  offset still added on top per block; the precise, documented combine *ordering* when
-  both are active is left for a follow-up.
+  combine order is now defined and documented: `effective = (override.unwrap_or(base))
+  + mod_offset` — the automation override replaces the base, then the mod-matrix offset
+  adds on top of the override. Stated on the `PolyModule::set_param_override` contract
+  and locked by `filter::test_automation_override_then_mod_offset_combine_order`.
 - [ ] **Offline render must apply the override identically.** _DEFERRED (A1/A2 first
   cut)._ The override layer currently runs in the live `process()` path; the `analyze_*`
   offline renderers do not yet evaluate automation, so they read base values. Bringing

@@ -807,6 +807,38 @@ mod tests {
         assert!(filter.override_resonance.is_none());
     }
 
+    /// The combine rule when BOTH an automation override and a mod-matrix offset
+    /// drive one param (the resolved "two controllers" question): the automation
+    /// override **replaces the base**, then the mod-matrix offset is **added on
+    /// top of the override** (not the base). Locks the documented ordering.
+    #[test]
+    fn test_automation_override_then_mod_offset_combine_order() {
+        let mut filter = Filter::new();
+        filter.set_param(Param::Filter(FilterParam::Cutoff(Hertz::new(1000.0))));
+
+        // A mod-matrix cutoff offset of +1 octave (value 0.25 → 0.25*48 = 12
+        // semitones). With no override it scales the BASE: 1000 → 2000.
+        filter.set_mod_offset(0, 0.25);
+        assert!(
+            (filter.effective_cutoff().as_f32() - 2000.0).abs() < 5.0,
+            "mod offset scales the base when no override: {}",
+            filter.effective_cutoff().as_f32()
+        );
+
+        // Now an automation override of 1500 Hz: it REPLACES the base, and the
+        // same +1-octave mod offset adds ON TOP OF THE OVERRIDE → 1500 → 3000
+        // (not base*2 = 2000, and not override alone = 1500).
+        filter.set_param_override(Param::Filter(FilterParam::Cutoff(Hertz::new(1500.0))));
+        assert!(
+            (filter.effective_cutoff().as_f32() - 3000.0).abs() < 5.0,
+            "override replaces base, mod offset adds on top: {}",
+            filter.effective_cutoff().as_f32()
+        );
+
+        // Base is untouched throughout.
+        assert!((filter.cutoff.as_f32() - 1000.0).abs() < 1e-3);
+    }
+
     #[test]
     fn test_filter_stability() {
         let mut filter = Filter::new();

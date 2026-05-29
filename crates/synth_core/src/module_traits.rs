@@ -1088,6 +1088,12 @@ pub trait PolyModule: Describable + Send {
     /// [`set_mod_offset`](Self::set_mod_offset), which is *additive* — automation
     /// is absolute, mod-matrix modulation is an offset.
     ///
+    /// **Combine order when both drive one parameter** (the resolved "two
+    /// controllers" rule): the effective value is
+    /// `(override.unwrap_or(base)) + mod_offset` — i.e. the automation override
+    /// replaces the base, then the mod-matrix offset is added *on top of the
+    /// override*. Implementors must follow this order in `process()`.
+    ///
     /// Default: no-op (module does not support automation overrides).
     fn set_param_override(&mut self, _param: Param) {
         // Default: no override support.

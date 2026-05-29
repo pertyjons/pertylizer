@@ -88,20 +88,21 @@ RT-safety violation in shipped code.
   on every drop); full fix = route cleared targets through the engine's
   `return_producer` off-thread drop channel. Tracked below.
 
-### F3 — Mod-matrix vs. automation combine ordering ("two controllers")
+### F3 — Mod-matrix vs. automation combine ordering ("two controllers") ✅ (next commit)
 **Why:** a filter cutoff can be driven by a mod-matrix offset *and* an automation
-override at once; the precedence is currently unspecified (the first cut: override
-replaces base, mod offset added on top). Define and document the rule. (Done
-before F2 because it's small and independent.)
+override at once; the precedence was unspecified.
 
-- [ ] Decide + document the combine order for `(base, automation override,
-  mod-matrix offset)` on one param. The shipped behavior — *override replaces base,
-  then mod-matrix offset adds on top* — is a defensible default; ratify it (or pick
-  better) and write it where the override is applied (`graph.rs`/`voice.rs`) and in
-  the roadmap value-model section.
-- [ ] Add a test that drives one param from both at once and asserts the documented
-  result; flag any param where the order is observably wrong.
-- **Schema:** none. `/code-review` **high** (audio-thread).
+- [x] Ratified the shipped behavior as the rule: `effective = override.unwrap_or(base)
+  + mod_offset` (override replaces base, mod-matrix offset adds on top of the
+  override). Verified it's already consistent across implementors (filter +
+  amplifier both `override.unwrap_or(base)` then `+ mod_offset`). Documented on the
+  **`PolyModule::set_param_override` contract** (central, every module implements it)
+  and flipped both roadmap deferred items (value-model + "two controllers" pitfall).
+- [x] Added `filter::test_automation_override_then_mod_offset_combine_order` locking
+  it: base 1000 + mod (+1 oct) = 2000; override 1500 + same mod = 3000 (on the
+  override, not the base); base untouched.
+- **Schema:** none (no logic change; doc + test). Review: no-logic-change → no
+  regression; rule confirmed accurate across modules.
 - **Commit:** `Automation F3: define + test mod-matrix vs automation combine order`
 
 ### F4 — Offline-render parity for `analyze_*`
