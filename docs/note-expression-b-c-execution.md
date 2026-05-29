@@ -198,23 +198,24 @@ the expression block against the **full** MPE/MIDI-2.0 minimal dimension set —
 hand-drawn curves *extend* this block rather than replace it. Pick field names
 that map 1:1 onto those dimensions now even if only vibrato is wired in C.
 
-### C1 — Note expression-block data model
+### C1 — Note expression-block data model ✅ (next commit)
 
-- [ ] In `note.rs`, add `expression: Option<NoteExpression>` (`#[serde(default)]`),
-  a new `Copy` struct. Two groups, both alloc-free:
-    - **primitive 1 (parametric modulator — vibrato seed):** `vibrato: Option<Vibrato>`
-      = `{ depth: Semitones, rate: Hertz, delay: Milliseconds, shape: LfoShape }`.
-      Name the broader block fields against MPE dims so E slots in: reserve
-      conceptual room for `pressure`/`timbre`/`bend`/`release_velocity` even if only
-      vibrato is implemented (document this; do not add dead fields gratuitously —
-      add the vibrato one, leave a doc comment naming the intended MPE set).
-    - **primitive 3 (note-shape scalars):** `accent: Option<f32>` (velocity ×),
-      `gate: Option<NormalizedValue>` (gate % of duration), `ghost: bool`,
-      `probability: Option<NormalizedValue>`.
-    - Newtypes throughout; `Copy + PartialEq + serde + JsonSchema`.
-- [ ] Builders + serde-default tests (absent block loads as `None`).
+- [x] Added `Note.expression: Option<NoteExpression>` (`#[serde(default)]`) plus
+  `NoteExpression`/`Vibrato`/`VibratoShape` (`Copy + PartialEq + serde + JsonSchema`):
+    - **primitive 1:** `vibrato: Option<Vibrato>` = `{ depth: Semitones, rate: Hertz,
+      delay: Milliseconds, shape: VibratoShape }`. Used a self-contained
+      `VibratoShape` (Sine/Triangle/Square/Saw) rather than coupling to a core LFO
+      enum (consistent with B's local `GlideInterp`); the engine maps it in C4. The
+      block's doc comment names the intended MPE dimension set so Phase E extends it.
+    - **primitive 3:** `accent: Option<f32>` (velocity ×), `gate: Option<NormalizedValue>`,
+      `ghost: bool`, `probability: Option<NormalizedValue>`.
+- [x] Builders + serde tests (absent block → `None`; present-but-partial block
+  fills field defaults — inner `#[serde(default)]` per review). Schema regenerated.
 - **Verify:** additive, no behavior change. `/code-review` medium.
 - **Commit:** `Phase C1: add per-note NoteExpression block (vibrato + note-shape scalars)`
+- **Done:** review verdict — `accent: f32` kept (dimensionless ratio, no fitting
+  newtype); fix applied — inner `NoteExpression` fields are `#[serde(default)]` so
+  partial blocks load.
 
 ### C2 — Sequencer event plumbing
 

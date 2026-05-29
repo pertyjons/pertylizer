@@ -6581,6 +6581,18 @@
           ],
           "description": "Duration in ticks."
         },
+        "expression": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoteExpression"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-note expression block (vibrato + note-shape scalars). Additive;\ndefaults to `None`."
+        },
         "glide": {
           "anyOf": [
             {
@@ -6632,6 +6644,62 @@
         "pitch",
         "velocity"
       ],
+      "type": "object"
+    },
+    "NoteExpression": {
+      "description": "Per-note expression block — *note expression in miniature*.\n\nTwo taxonomy groups, both `Copy`/alloc-free:\n- **primitive 1** — a parametric modulator ([`Vibrato`]). The block is named\n  against the MPE / MIDI-2.0 minimal dimension set (*bend, pressure,\n  timbre/slide, velocity, release-velocity*) so the Phase E hand-drawn curve\n  editor extends this block rather than replacing it; only vibrato (a\n  bend-dimension modulator) is wired in Phase C.\n- **primitive 3** — note-shape scalars that shape a single note without a\n  curve: `accent` (velocity ×), `gate` (% of duration), `ghost`, `probability`.",
+      "properties": {
+        "accent": {
+          "default": null,
+          "description": "Accent: velocity multiplier (1.0 = unchanged, >1 louder). Applied before\nthe note is triggered. Dimensionless ratio.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "gate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NormalizedValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Gate length as a fraction of the note's duration (staccato/tenuto).\n`None` = full duration."
+        },
+        "ghost": {
+          "default": false,
+          "description": "Ghost note: forced low velocity.",
+          "type": "boolean"
+        },
+        "probability": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NormalizedValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Trigger probability (0.0–1.0). Resolved sequencer-side at emission\n(Phase C2), never with RNG on the audio thread. `None` = always plays."
+        },
+        "vibrato": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Vibrato"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-note vibrato (primitive 1)."
+        }
+      },
       "type": "object"
     },
     "NoteId": {
@@ -7565,6 +7633,59 @@
       "description": "MIDI velocity (0-127, normalized to 0.0-1.0).\n\nRepresents how hard a note was played.\nStored internally as normalized f32 for smooth processing.",
       "format": "float",
       "type": "number"
+    },
+    "Vibrato": {
+      "description": "Per-note vibrato — taxonomy **primitive 1** (a parametric modulator).\n\nAn additive pitch LFO seeded per note; the engine drives it through the same\nadditive offset path the mod-matrix `OscPitch` destination uses (Phase C4),\nnever the destructive `set_param`. `Copy`/alloc-free for the audio thread.",
+      "properties": {
+        "delay": {
+          "$ref": "#/$defs/Milliseconds",
+          "description": "Onset delay before the vibrato ramps in after note start."
+        },
+        "depth": {
+          "$ref": "#/$defs/Semitones",
+          "description": "Peak pitch deviation."
+        },
+        "rate": {
+          "$ref": "#/$defs/Hertz",
+          "description": "LFO rate."
+        },
+        "shape": {
+          "$ref": "#/$defs/VibratoShape",
+          "description": "LFO shape."
+        }
+      },
+      "required": [
+        "depth",
+        "rate",
+        "delay",
+        "shape"
+      ],
+      "type": "object"
+    },
+    "VibratoShape": {
+      "description": "LFO shape for per-note vibrato.\n\nA self-contained sequencer-side enum (like [`GlideInterp`]) so the note model\ndoesn't couple to a `synth_core` LFO param type; the engine maps it onto its\nown LFO in Phase C4.",
+      "oneOf": [
+        {
+          "const": "Sine",
+          "description": "Sine (the natural vibrato shape).",
+          "type": "string"
+        },
+        {
+          "const": "Triangle",
+          "description": "Triangle.",
+          "type": "string"
+        },
+        {
+          "const": "Square",
+          "description": "Square (trill-like).",
+          "type": "string"
+        },
+        {
+          "const": "Saw",
+          "description": "Sawtooth (ramp).",
+          "type": "string"
+        }
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

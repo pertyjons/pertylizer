@@ -3,7 +3,7 @@
 //! Notes are stored with start time and duration, not as separate on/off events.
 
 use serde::{Deserialize, Serialize};
-use synth_core::{Milliseconds, Semitones};
+use synth_core::{Hertz, Milliseconds, NormalizedValue, Semitones};
 
 use super::ids::{NoteId, TrackId};
 use super::pitch::{Pitch, Velocity};
@@ -53,6 +53,75 @@ pub struct Glide {
     pub interp: GlideInterp,
 }
 
+/// LFO shape for per-note vibrato.
+///
+/// A self-contained sequencer-side enum (like [`GlideInterp`]) so the note model
+/// doesn't couple to a `synth_core` LFO param type; the engine maps it onto its
+/// own LFO in Phase C4.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum VibratoShape {
+    /// Sine (the natural vibrato shape).
+    #[default]
+    Sine,
+    /// Triangle.
+    Triangle,
+    /// Square (trill-like).
+    Square,
+    /// Sawtooth (ramp).
+    Saw,
+}
+
+/// Per-note vibrato — taxonomy **primitive 1** (a parametric modulator).
+///
+/// An additive pitch LFO seeded per note; the engine drives it through the same
+/// additive offset path the mod-matrix `OscPitch` destination uses (Phase C4),
+/// never the destructive `set_param`. `Copy`/alloc-free for the audio thread.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Vibrato {
+    /// Peak pitch deviation.
+    pub depth: Semitones,
+    /// LFO rate.
+    pub rate: Hertz,
+    /// Onset delay before the vibrato ramps in after note start.
+    pub delay: Milliseconds,
+    /// LFO shape.
+    pub shape: VibratoShape,
+}
+
+/// Per-note expression block — *note expression in miniature*.
+///
+/// Two taxonomy groups, both `Copy`/alloc-free:
+/// - **primitive 1** — a parametric modulator ([`Vibrato`]). The block is named
+///   against the MPE / MIDI-2.0 minimal dimension set (*bend, pressure,
+///   timbre/slide, velocity, release-velocity*) so the Phase E hand-drawn curve
+///   editor extends this block rather than replacing it; only vibrato (a
+///   bend-dimension modulator) is wired in Phase C.
+/// - **primitive 3** — note-shape scalars that shape a single note without a
+///   curve: `accent` (velocity ×), `gate` (% of duration), `ghost`, `probability`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct NoteExpression {
+    /// Per-note vibrato (primitive 1).
+    #[serde(default)]
+    pub vibrato: Option<Vibrato>,
+    /// Accent: velocity multiplier (1.0 = unchanged, >1 louder). Applied before
+    /// the note is triggered. Dimensionless ratio.
+    #[serde(default)]
+    pub accent: Option<f32>,
+    /// Gate length as a fraction of the note's duration (staccato/tenuto).
+    /// `None` = full duration.
+    #[serde(default)]
+    pub gate: Option<NormalizedValue>,
+    /// Ghost note: forced low velocity.
+    #[serde(default)]
+    pub ghost: bool,
+    /// Trigger probability (0.0–1.0). Resolved sequencer-side at emission
+    /// (Phase C2), never with RNG on the audio thread. `None` = always plays.
+    #[serde(default)]
+    pub probability: Option<NormalizedValue>,
+}
+
 /// A note in a pattern.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Note {
@@ -75,6 +144,10 @@ pub struct Note {
     /// Per-note glide (portamento/glissando). Additive; defaults to `None`.
     #[serde(default)]
     pub glide: Option<Glide>,
+    /// Per-note expression block (vibrato + note-shape scalars). Additive;
+    /// defaults to `None`.
+    #[serde(default)]
+    pub expression: Option<NoteExpression>,
 }
 
 impl Note {
@@ -90,6 +163,7 @@ impl Note {
             track: None,
             legato: false,
             glide: None,
+            expression: None,
         }
     }
 
@@ -118,6 +192,13 @@ impl Note {
     #[must_use]
     pub fn with_glide(mut self, glide: Glide) -> Self {
         self.glide = Some(glide);
+        self
+    }
+
+    /// Set the per-note expression block (builder pattern).
+    #[must_use]
+    pub fn with_expression(mut self, expression: NoteExpression) -> Self {
+        self.expression = Some(expression);
         self
     }
 
@@ -233,7 +314,8 @@ mod tests {
 
     #[test]
     fn test_note_deserializes_without_new_fields() {
-        // Legacy JSON predating legato/glide must load with defaults (additive schema).
+        // Legacy JSON predating legato/glide/expression must load with defaults
+        // (additive schema).
         let json = r#"{
             "id": 7,
             "start": 0,
@@ -245,6 +327,70 @@ mod tests {
         let note: Note = serde_json::from_str(json).unwrap();
         assert!(!note.legato);
         assert!(note.glide.is_none());
+        assert!(note.expression.is_none());
+    }
+
+    #[test]
+    fn test_note_expression_defaults_and_builder() {
+        let note = test_note();
+        assert!(note.expression.is_none());
+
+        let expr = NoteExpression {
+            vibrato: Some(Vibrato {
+                depth: Semitones::new(0.3),
+                rate: synth_core::Hertz::new(5.5),
+                delay: Milliseconds::new(40.0),
+                shape: VibratoShape::Sine,
+            }),
+            accent: Some(1.2),
+            gate: Some(NormalizedValue::new(0.5)),
+            ghost: false,
+            probability: None,
+        };
+        let note = test_note().with_expression(expr);
+        assert_eq!(note.expression, Some(expr));
+    }
+
+    #[test]
+    fn test_note_expression_partial_block_deserializes() {
+        // A present-but-partial expression block fills missing fields with
+        // defaults (additive at the field level too).
+        let json = r#"{
+            "id": 1,
+            "start": 0,
+            "duration": null,
+            "pitch": 60,
+            "velocity": 80,
+            "track": null,
+            "expression": { "accent": 1.2 }
+        }"#;
+        let note: Note = serde_json::from_str(json).unwrap();
+        let expr = note.expression.expect("expression present");
+        assert_eq!(expr.accent, Some(1.2));
+        assert!(expr.vibrato.is_none());
+        assert!(expr.gate.is_none());
+        assert!(!expr.ghost);
+        assert!(expr.probability.is_none());
+    }
+
+    #[test]
+    fn test_note_expression_serde_roundtrip() {
+        let expr = NoteExpression {
+            vibrato: Some(Vibrato {
+                depth: Semitones::new(0.5),
+                rate: synth_core::Hertz::new(6.0),
+                delay: Milliseconds::new(0.0),
+                shape: VibratoShape::Triangle,
+            }),
+            accent: None,
+            gate: Some(NormalizedValue::new(0.75)),
+            ghost: true,
+            probability: Some(NormalizedValue::new(0.8)),
+        };
+        let note = test_note().with_expression(expr);
+        let json = serde_json::to_string(&note).unwrap();
+        let back: Note = serde_json::from_str(&json).unwrap();
+        assert_eq!(note, back);
     }
 
     #[test]
