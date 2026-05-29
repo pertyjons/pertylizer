@@ -527,8 +527,34 @@ expression that also retires the `sid-analyzer` export gaps. Covers generic
 sequencer→module automation (Phase A1 bugfix: the 6 GUI-exposed but dead
 FilterCutoff/ADSR instrument macros; A2: `AutomationTarget::Module`), per-note
 legato/glide (B), per-note vibrato (C), shared/bus filter (D, rides on
-channel-strip Phase 7), and the full Note Expression + MPE system (E). The two
-bullets below are **Phase E** of that roadmap.
+channel-strip Phase 7), and the full Note Expression + MPE system (E).
+
+**Phase A1/A2 deferred follow-ups (first cut shipped v0.292.0).** The generic
+sequencer→module automation landed (the 6 dead FilterCutoff/ADSR macros now sound,
+plus the generic `AutomationTarget::Module`). These three were explicitly deferred
+from that first cut and are the remaining open work:
+
+- [ ] **Stable (non-positional) ModuleId identity.** `AutomationTarget::Module`
+  identifies its target positionally by `module_type` + `instance` (mirrors
+  `ModuleId`). Reordering or removing modules in a patch can therefore silently
+  re-point an automation lane at the wrong module instance. Needs a stable,
+  non-positional module identity that survives graph edits, then a migration of
+  the positional `Module` lanes onto it (engine `ModuleId`, the seq-side
+  `{module_type, instance}` key, the GUI picker, and the MCP `module:<prefix>:<instance>:<param_id>`
+  form all consume the positional convention today).
+- [ ] **Mod-matrix vs. automation combine ordering ("two controllers").** When a
+  mod-matrix offset *and* an automation override target the same param, the
+  precedence/combine rule is unspecified. The first cut applies the override as an
+  absolute *replace* of the base, with mod-matrix offsets still added additively on
+  top — but the "two controllers drive one param" case needs a defined, documented
+  rule (and possibly a user-facing choice).
+- [ ] **Offline-render parity for `analyze_*`.** The offline render path behind the
+  `analyze_*` tools does not apply automation override state, so analysis can see a
+  value the live audio engine never produced. Same bug class as the analyze_*
+  offline-render snapshot issue (see `docs/history.md` 74d18da) — extend the offline
+  reader to honour the automation overrides.
+
+The two bullets below are **Phase E** of that roadmap.
 
 - [ ] MPE support — MIDI Polyphonic Expression for per-note pitch bend, pressure, slide
 - [ ] Polyphonic aftertouch routing to module parameters
