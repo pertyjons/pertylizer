@@ -967,6 +967,37 @@ mod tests {
     use synth_core::{AmplifierParam, Gain, SampleCount, SampleRate};
     use synth_modules::{Amplifier, Oscillator};
 
+    /// F2 verification: the positional `ModuleId { module_type, instance }` is
+    /// stable across removal of a same-type sibling — removing one module never
+    /// renumbers the survivors, and instance numbers are monotonic (never
+    /// reused), so an `AutomationTarget::Module` lane keyed on a surviving
+    /// instance keeps resolving to the same module. This is why F2 (a separate
+    /// stable id + on-disk migration) is unnecessary: positional identity is
+    /// already non-positional-in-effect.
+    #[test]
+    fn module_instance_identity_is_stable_across_removal() {
+        let mut graph = ModuleGraph::new();
+        let osc1 = graph.add_module(Box::new(Oscillator::new()));
+        let osc2 = graph.add_module(Box::new(Oscillator::new()));
+        assert_eq!(osc1.instance, 1);
+        assert_eq!(osc2.instance, 2);
+
+        // Remove the first same-type module.
+        graph.remove_module(osc1);
+        // The survivor keeps its instance (2) — not renumbered to 1.
+        assert!(graph.get_module(osc1).is_none());
+        assert!(
+            graph.get_module(osc2).is_some(),
+            "surviving module must keep instance 2 after a sibling is removed"
+        );
+
+        // A newly added same-type module gets instance 3 (monotonic), NOT a
+        // reused 1 — so it can never shadow a lane that targets instance 2.
+        let osc3 = graph.add_module(Box::new(Oscillator::new()));
+        assert_eq!(osc3.instance, 3, "instance numbers must not be reused");
+        assert!(graph.get_module(osc2).is_some());
+    }
+
     #[test]
     fn test_graph_param_override_routes_to_module_and_clears() {
         // Osc (source) -> Amp (sink). Overriding the amp's level to zero must

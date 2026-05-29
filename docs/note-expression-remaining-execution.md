@@ -121,25 +121,31 @@ override at once; the precedence was unspecified.
 - **Schema:** none. Review: test-only; proves existing behavior + regression guard.
 - **Commit:** `Automation F4: regression test — Module automation reaches offline render`
 
-### F2 — Stable (non-positional) ModuleId identity
-**Why:** `AutomationTarget::Module` identifies its target positionally
-(`module_type`+`instance`); reordering/removing same-type modules silently
-re-points a lane. The biggest of the four — likely **splits into F2a/F2b**.
+### F2 — Stable (non-positional) ModuleId identity ✅ CLOSED (verified unnecessary)
+**Premise (from the roadmap): a lane "silently re-points if same-type modules are
+added/removed/reordered."** Verified against the code (user chose "verify first"):
+**this does not happen.** The positional `ModuleId { module_type, instance }` is
+effectively stable —
 
-- [ ] **F2a — introduce a stable per-module id.** Add a stable, non-positional
-  identity to a module instance (a persisted `u32`/uuid assigned at creation that
-  survives graph edits), alongside the positional `ModuleId`. Persist it; assign on
-  load/migration for existing patches. Dual-resolve: lanes still resolve positionally
-  until F2b.
-  - **Commit:** `Automation F2a: stable per-module identity (assigned + persisted)`
-- [ ] **F2b — migrate `Module` lanes onto the stable id.** Switch
-  `AutomationTarget::Module` to key on the stable id (engine `ModuleId`, the seq-side
-  `{module_type, instance}` key, the GUI picker, and the MCP token all consume the
-  positional convention today — migrate each). One-time migration of existing
-  positional lanes on project load.
-  - **Commit:** `Automation F2b: migrate Module automation lanes to stable id`
-- **Schema:** **additive/migrating** (lane target gains the stable id) — `gen_schemas`
-  + a load-migration test for pre-F2 projects. `/code-review` **high** each.
+- `next_instance` is a **monotonic per-type counter**, never decremented, numbers
+  **never reused** (`graph.rs:155`).
+- `remove_module` drops only the target node + its connections; it does **not**
+  renumber survivors or touch the counter (`graph.rs:220`).
+- Load uses `add_module_with_id` with the parsed instance and keeps the counter
+  `>=` the max loaded id, so **save/load preserves** instances (`graph.rs:200`,
+  `synth_engine.rs`); save writes the live id string, not an enumeration order.
+
+So removing a same-type sibling **never re-points** a lane on a surviving instance,
+and a new module gets a fresh number (can't shadow it). The only residual is that a
+lane targeting a *removed* module becomes an **orphan** — and the dispatch already
+**no-ops safely on an absent module** (roadmap notes this). No silent wrong-target.
+
+- [x] Locked by `graph::module_instance_identity_is_stable_across_removal`
+  (add two same-type, remove the first → survivor keeps instance 2; next add is
+  instance 3, not a reused 1).
+- **F2a/F2b (stable id + on-disk migration): NOT NEEDED — dropped.** No schema
+  change. The roadmap "positional identity" pitfall is corrected to RESOLVED.
+- **Commit:** `Automation F2: verify positional module identity is stable (no migration needed)`
 
 ### F-close
 - [ ] Tick the four roadmap "pitfalls" `- [ ]` items + the `docs/TODO.md` follow-ups;

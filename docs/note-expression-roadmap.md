@@ -150,13 +150,18 @@ of it.
 **Applies to:** A1, A2, D, E · these are decisions that must be made *before* the
 generic param path ships, not after. Each is verified against current code.
 
-- [ ] **`ModuleId` is positional, not a stable identity.** _DEFERRED (A1/A2 first cut)._
-  It is `{ module_type, instance: u16 }` (`commands.rs:43`). A1 and A2 deliberately
-  use this positional identity ("first module of that type" for A1; `module_type`+
-  `instance` for A2), so a lane silently re-points if same-type modules are
-  added/removed/reordered. Accepted for the first cut; a stable per-module identity
-  (or a deterministic re-resolution rule) is future work that A2's `AutomationTarget::Module`
-  would migrate to.
+- [x] **`ModuleId` is positional, but effectively stable — no re-pointing.** _RESOLVED
+  (F2, verified)._ It is `{ module_type, instance: u16 }` (`commands.rs:43`). The earlier
+  worry was that a lane "silently re-points if same-type modules are added/removed/
+  reordered." Verified against the graph: `next_instance` is a **monotonic per-type counter**
+  (never decremented, numbers never reused, `graph.rs:155`); `remove_module` drops only the
+  target node + its connections and does **not** renumber survivors (`graph.rs:220`); load uses
+  `add_module_with_id` and keeps the counter `>=` the max loaded id, so **save/load preserves**
+  instances (`graph.rs:200`). Therefore removing a same-type sibling **never re-points** a lane
+  on a surviving instance, and a new module gets a fresh number. The only residual is that a
+  lane targeting a *removed* module becomes an **orphan**, which the dispatch **no-ops on
+  safely**. No stable-id migration needed — locked by
+  `graph::module_instance_identity_is_stable_across_removal`.
 - [x] **Discrete / enum params can't be smoothly automated.** Done: the automatable
   allowlist (`ParameterDescriptor::is_automatable()` = `modulatable && choices.is_none()`)
   excludes `choice`/enum params (`FilterMode`, `Waveform`, …); GUI/MCP filter on it.
