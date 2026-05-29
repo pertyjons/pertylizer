@@ -275,16 +275,79 @@ pub struct GlideSpec {
     pub stepped: bool,
 }
 
-/// Per-note expression carried into a voice trigger (taxonomy primitive 2).
+/// LFO shape for per-note vibrato (engine-native mirror of the sequencer
+/// `VibratoShape`; mapped at the sequencer-event consumer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VibratoWave {
+    /// Sine (the natural vibrato shape).
+    #[default]
+    Sine,
+    /// Triangle.
+    Triangle,
+    /// Square.
+    Square,
+    /// Sawtooth (ramp).
+    Saw,
+}
+
+impl VibratoWave {
+    /// Bipolar LFO value in `[-1, 1]` at the given phase (`0..1`).
+    #[inline]
+    fn value(self, phase: f32) -> f32 {
+        match self {
+            Self::Sine => (std::f32::consts::TAU * phase).sin(),
+            Self::Triangle => {
+                if phase < 0.5 {
+                    4.0 * phase - 1.0
+                } else {
+                    3.0 - 4.0 * phase
+                }
+            }
+            Self::Square => {
+                if phase < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
+            }
+            Self::Saw => 2.0 * phase - 1.0,
+        }
+    }
+}
+
+/// Per-note vibrato specification, resolved to engine-native types.
+///
+/// Drives an additive per-voice pitch LFO (taxonomy primitive 1). The depth is
+/// applied as a semitone offset *on top of* the base pitch (the same additive
+/// model as the mod-matrix `OscPitch` destination — never a destructive write),
+/// so a mod-matrix vibrato and a per-note vibrato compose additively.
+#[derive(Debug, Clone, Copy)]
+pub struct VibratoSpec {
+    /// Peak pitch deviation.
+    pub depth: Semitones,
+    /// LFO rate.
+    pub rate: Hertz,
+    /// Depth fades in 0→full linearly over this time from note onset (`0` =
+    /// instant). Click-free onset.
+    pub fade_in: Seconds,
+    /// LFO shape.
+    pub shape: VibratoWave,
+}
+
+/// Per-note expression carried into a voice trigger.
 ///
 /// `Copy`/alloc-free so it threads through the audio-thread trigger path without
 /// allocation. Default = no per-note expression (current behavior).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoteTrigger {
-    /// Force legato (no envelope retrigger), overriding the allocation mode.
+    /// Force legato (no envelope retrigger), overriding the allocation mode
+    /// (taxonomy primitive 2).
     pub legato: bool,
-    /// Optional per-note glide; `None` falls back to the instrument glide time.
+    /// Optional per-note glide; `None` falls back to the instrument glide time
+    /// (taxonomy primitive 2).
     pub glide: Option<GlideSpec>,
+    /// Optional per-note vibrato (taxonomy primitive 1).
+    pub vibrato: Option<VibratoSpec>,
 }
 
 /// Default pitch bend range in semitones (standard MIDI is ±2).
@@ -364,6 +427,16 @@ pub struct Voice {
     /// Configured glide time.
     glide_time: Seconds,
 
+    /// Per-note vibrato spec (`None` = no per-note vibrato).
+    pub(crate) vibrato: Option<VibratoSpec>,
+    /// Vibrato LFO phase (`0..1`).
+    vibrato_phase: f32,
+    /// Time since the vibrato note's onset (drives the depth fade-in).
+    vibrato_elapsed: Seconds,
+    /// Current vibrato pitch offset, recomputed per block by `advance_vibrato`
+    /// and read in `process_audio` (mirrors the glide-update pattern).
+    pub(crate) vibrato_offset: Semitones,
+
     /// Cached output module ID for stereo output extraction.
     /// Priority: StereoOutput > Amplifier > Mixer
     output_module_id: Option<crate::ModuleId>,
@@ -399,6 +472,10 @@ impl Voice {
             steal_fade_samples: SampleCount::new(128),
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
+            vibrato: None,
+            vibrato_phase: 0.0,
+            vibrato_elapsed: Seconds::ZERO,
+            vibrato_offset: Semitones::ZERO,
             output_module_id: None,
             mod_matrix_id: None,
             mod_slots_cache: Vec::with_capacity(16),
@@ -430,6 +507,10 @@ impl Voice {
             steal_fade_samples: SampleCount::new(128),
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
+            vibrato: None,
+            vibrato_phase: 0.0,
+            vibrato_elapsed: Seconds::ZERO,
+            vibrato_offset: Semitones::ZERO,
             output_module_id: output_id,
             mod_matrix_id,
             mod_slots_cache: Vec::with_capacity(16),
@@ -533,6 +614,7 @@ impl Voice {
         let target_freq = Hertz::new(self.note_to_freq(note));
         let was_active = matches!(self.state, VoiceState::Active { .. });
         self.seed_glide(target_freq, was_active, trigger.glide);
+        self.seed_vibrato(trigger.vibrato);
 
         // Set state with embedded note data
         self.state = VoiceState::Active {
@@ -556,6 +638,9 @@ impl Voice {
     /// Change pitch without retriggering, honoring per-note glide.
     pub fn glide_to_note_expr(&mut self, new_note: MidiNote, trigger: NoteTrigger) {
         let target_freq = Hertz::new(self.note_to_freq(new_note));
+        // Re-seed vibrato for the new (legato) note so its per-note vibrato takes
+        // effect even though the envelope isn't retriggered.
+        self.seed_vibrato(trigger.vibrato);
 
         match trigger.glide {
             Some(g) => {
@@ -606,6 +691,45 @@ impl Voice {
                 self.glide.stepped = false;
             }
         }
+    }
+
+    /// Seed (or clear) the per-note vibrato for a newly triggered note. Resets
+    /// the LFO phase and the fade-in clock so each note starts cleanly.
+    fn seed_vibrato(&mut self, vibrato: Option<VibratoSpec>) {
+        self.vibrato = vibrato;
+        self.vibrato_phase = 0.0;
+        self.vibrato_elapsed = Seconds::ZERO;
+        self.vibrato_offset = Semitones::ZERO;
+    }
+
+    /// Advance the per-note vibrato LFO by one block and recompute the current
+    /// pitch offset (semitones). Called once per block alongside `glide.update`.
+    /// Pure arithmetic — RT-safe (no alloc/lock/panic).
+    pub fn advance_vibrato(&mut self, delta_time: Seconds) {
+        let Some(spec) = self.vibrato else {
+            self.vibrato_offset = Semitones::ZERO;
+            return;
+        };
+        self.vibrato_elapsed = Seconds::new(self.vibrato_elapsed.as_f32() + delta_time.as_f32());
+        // Advance phase (rate * dt), wrapped to [0,1).
+        self.vibrato_phase =
+            (self.vibrato_phase + spec.rate.as_f32() * delta_time.as_f32()).fract();
+        // Linear depth fade-in over `fade_in` from onset (0 = instant), click-free.
+        let fade = if spec.fade_in.as_f32() > 0.0 {
+            (self.vibrato_elapsed.as_f32() / spec.fade_in.as_f32()).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let lfo = spec.shape.value(self.vibrato_phase);
+        let offset = spec.depth.as_f32() * lfo * fade;
+        // Defensive: a non-finite depth/rate (only reachable via a programmatic
+        // write that bypasses validation) must not propagate NaN into the
+        // oscillator frequency and poison the mix/AWE buffers.
+        self.vibrato_offset = if offset.is_finite() {
+            Semitones::new(offset)
+        } else {
+            Semitones::ZERO
+        };
     }
 
     /// Trigger note off.
@@ -673,6 +797,10 @@ impl Voice {
         self.state = VoiceState::Idle;
         self.age = SampleCount::ZERO;
         self.glide = GlideState::default();
+        self.vibrato = None;
+        self.vibrato_phase = 0.0;
+        self.vibrato_elapsed = Seconds::ZERO;
+        self.vibrato_offset = Semitones::ZERO;
         // Note: We don't reset macro controllers here since they are channel-wide,
         // not per-voice. They persist across notes.
 
@@ -699,9 +827,12 @@ impl Voice {
         // === Calculate frequency with pitch bend ===
         let base_freq = self.glide.get_frequency();
 
-        // Apply pitch bend: bend_semitones = pitch_bend * range
+        // Apply pitch bend + per-note vibrato as additive semitone offsets on top
+        // of the base pitch (base/glide pitch untouched). The mod-matrix OscPitch
+        // destination still adds its own offset to the oscillator afterwards, so
+        // mod-matrix vibrato and per-note vibrato compose additively.
         let bend_semitones = self.expression.pitch_bend_range * self.pitch_bend.as_f32();
-        let freq = bend_semitones.apply(base_freq);
+        let freq = (bend_semitones + self.vibrato_offset).apply(base_freq);
 
         // Set oscillator frequencies in the graph before processing
         self.graph.set_oscillator_frequency(freq);
@@ -916,6 +1047,10 @@ impl Voice {
             steal_fade_samples: self.steal_fade_samples,
             glide: GlideState::default(),
             glide_time: self.glide_time,
+            vibrato: None,
+            vibrato_phase: 0.0,
+            vibrato_elapsed: Seconds::ZERO,
+            vibrato_offset: Semitones::ZERO,
             output_module_id: output_id,
             mod_matrix_id,
             mod_slots_cache: Vec::with_capacity(16),
@@ -1007,6 +1142,85 @@ mod tests {
         assert!(
             (semis - semis.round()).abs() < 1e-3,
             "stepped glide freq {freq} = {semis} semitones above A4 is not on a step"
+        );
+    }
+
+    fn vibrato_trigger(depth: f32, rate: f32, fade_in: f32) -> NoteTrigger {
+        NoteTrigger {
+            legato: false,
+            glide: None,
+            vibrato: Some(VibratoSpec {
+                depth: Semitones::new(depth),
+                rate: Hertz::new(rate),
+                fade_in: Seconds::new(fade_in),
+                shape: VibratoWave::Sine,
+            }),
+        }
+    }
+
+    #[test]
+    fn vibrato_modulates_pitch_offset() {
+        let mut voice = Voice::new(VoiceId::new(0));
+        voice.note_on_expr(
+            MidiNote::A4,
+            Velocity::MF,
+            SamplePosition::ZERO,
+            vibrato_trigger(0.5, 5.0, 0.0),
+        );
+        // 5 Hz → period 0.2 s; a quarter period (0.05 s) → phase 0.25 → sin = 1 →
+        // offset ≈ +depth.
+        voice.advance_vibrato(Seconds::new(0.05));
+        let off = voice.vibrato_offset.as_f32();
+        assert!(
+            (off - 0.5).abs() < 0.05,
+            "quarter-period sine vibrato ≈ +depth, got {off}"
+        );
+        // Offset stays bounded by depth across a full cycle.
+        for _ in 0..40 {
+            voice.advance_vibrato(Seconds::new(0.01));
+            assert!(voice.vibrato_offset.as_f32().abs() <= 0.5 + 1e-4);
+        }
+    }
+
+    #[test]
+    fn vibrato_zero_depth_is_silent() {
+        let mut voice = Voice::new(VoiceId::new(0));
+        voice.note_on_expr(
+            MidiNote::A4,
+            Velocity::MF,
+            SamplePosition::ZERO,
+            vibrato_trigger(0.0, 5.0, 0.0),
+        );
+        for _ in 0..10 {
+            voice.advance_vibrato(Seconds::new(0.02));
+            assert_eq!(voice.vibrato_offset.as_f32(), 0.0);
+        }
+    }
+
+    #[test]
+    fn no_vibrato_keeps_offset_zero() {
+        let mut voice = Voice::new(VoiceId::new(0));
+        voice.note_on(MidiNote::A4, Velocity::MF, SamplePosition::ZERO);
+        voice.advance_vibrato(Seconds::new(0.05));
+        assert_eq!(voice.vibrato_offset.as_f32(), 0.0);
+    }
+
+    #[test]
+    fn vibrato_fade_in_ramps_depth() {
+        let mut voice = Voice::new(VoiceId::new(0));
+        // 0.2 s fade-in; at a quarter period (0.05 s) the sine is at +1 but the
+        // fade scale is only 0.25, so the offset is ~depth * 0.25.
+        voice.note_on_expr(
+            MidiNote::A4,
+            Velocity::MF,
+            SamplePosition::ZERO,
+            vibrato_trigger(0.8, 5.0, 0.2),
+        );
+        voice.advance_vibrato(Seconds::new(0.05));
+        let off = voice.vibrato_offset.as_f32();
+        assert!(
+            (off - 0.2).abs() < 0.05,
+            "faded vibrato ≈ depth*0.25, got {off}"
         );
     }
 

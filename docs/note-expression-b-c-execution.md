@@ -255,25 +255,33 @@ that map 1:1 onto those dimensions now even if only vibrato is wired in C.
   limitation), so the legato note keeps the prior velocity while telemetry shows
   the accented one. Fix when legato velocity is wired.
 
-### C4 — Engine consumption: per-note vibrato via mod-matrix offset *(audio thread)*
+### C4 — Engine consumption: per-note vibrato via mod-matrix offset *(audio thread)* ✅ (next commit)
 
-- [ ] Wire `Vibrato` to the **additive** per-voice pitch-offset path — the
-  generalised mod-matrix `OscPitch` route (`mod_matrix.rs:255-260,388`), **not**
-  `set_param` (roadmap value-model section). A per-voice LFO (depth/rate/delay/shape)
-  adds semitone offset on top of base pitch, reset per note — exactly the
-  mod-matrix model, now seeded per note instead of per patch.
-- [ ] Reuse, don't duplicate: drive the existing per-voice OscPitch offset
-  accumulator if the voice already exposes one; otherwise add a minimal per-voice
-  vibrato LFO that feeds the same offset sum the mod matrix writes to (so mod-matrix
-  vibrato + per-note vibrato compose additively — consistent with the documented
-  combine rule).
-- [ ] `delay` → onset ramp of depth after note start. `shape` → LFO waveform.
-  All pre-allocated / atomics; for-loops in the sample path. No heap/lock/panic.
-- [ ] Tests: a vibrato note produces periodic pitch modulation of the right
-  depth/rate after the delay; zero depth = no change.
+- [x] Added a per-voice vibrato LFO whose semitone offset is **added to
+  `bend_semitones`** before `.apply(base_freq)` in `process_audio` — an additive
+  transient offset; the base/glide pitch is never mutated. The mod-matrix
+  `OscPitch` destination still adds its own offset to the oscillator afterwards,
+  so mod-matrix vibrato and per-note vibrato compose additively (verified in review).
+- [x] Engine-native `VibratoSpec { depth, rate, fade_in, shape }` + `VibratoWave`
+  (Sine/Triangle/Square/Saw); threaded via `NoteTrigger.vibrato` through the
+  allocator to `Voice::{seed_vibrato, advance_vibrato}`. `advance_vibrato` runs once
+  per block alongside `glide.update` (both `process` paths) — pure arithmetic,
+  RT-safe, `is_finite` guard so a NaN never reaches the oscillator.
+- [x] `delay` → a click-free linear **fade-in** of depth over that time from onset
+  (`fade_in`); `shape` → the LFO waveform. Phase wrapped to `[0,1)`.
+- [x] Tests: quarter-period sine ≈ +depth; bounded by depth over a cycle; zero
+  depth = silent; no-vibrato → offset stays ZERO (behavior-preserving); fade-in ramps.
 - **Verify:** dead leads gain motion per note. `/code-review` **high** (audio-thread,
   RT-safety). Confirm additive-offset (base pitch untouched) and no allocation.
 - **Commit:** `Phase C4: per-note vibrato via additive mod-matrix OscPitch offset`
+- **Done:** 2 high finders — additive model + RT-safety confirmed clean. Caught a
+  real build break (two `NoteTrigger` test literals missing the new `vibrato` field)
+  that a piped-`rg` gate had masked; fixed + re-verified via cargo's true exit code.
+  NaN guard added (finding 2).
+- **Deferred (recorded):** (a) vibrato is **dropped on a stolen voice** (same
+  `pending_note`-carries-no-trigger gap as glide). (b) A legato note *without*
+  vibrato clears any in-progress vibrato (per-note re-seed) rather than letting it
+  carry through the slur — acceptable per-note semantics.
 
 ### C5 — GUI: expression editing in the piano-roll
 

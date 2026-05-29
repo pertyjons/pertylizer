@@ -649,6 +649,7 @@ mod tests {
         let legato = NoteTrigger {
             legato: true,
             glide: None,
+            vibrato: None,
         };
         allocator.note_on_expr(MidiNote::new(64), Velocity::new(0.8), legato);
 
@@ -680,6 +681,7 @@ mod tests {
                 time: Seconds::new(0.1),
                 stepped: false,
             }),
+            vibrato: None,
         };
         allocator.note_on_expr(MidiNote::new(81), Velocity::new(0.8), trigger);
 

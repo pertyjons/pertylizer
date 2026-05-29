@@ -1107,6 +1107,7 @@ impl Instrument {
                 // Update glide and increment age (at original rate)
                 let delta_time = Seconds::new(sample_count as f32 / context.sample_rate.as_f32());
                 voice.glide.update(delta_time);
+                voice.advance_vibrato(delta_time);
                 voice.age = voice.age + samples;
 
                 // Handle stealing fade-out completion
@@ -1245,6 +1246,7 @@ impl Instrument {
                 // Update glide and increment age
                 let delta_time = Seconds::new(sample_count as f32 / context.sample_rate.as_f32());
                 voice.glide.update(delta_time);
+                voice.advance_vibrato(delta_time);
                 voice.age = voice.age + samples;
 
                 // Handle stealing fade-out completion

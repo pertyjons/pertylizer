@@ -32,7 +32,7 @@ use synth_core::{
 };
 use synth_sequencer::{
     AutoInstrumentParam, AutomationTarget, Glide, GlideFrom, GlideInterp, GlobalParam,
-    SequencerEvent,
+    NoteExpression, SequencerEvent, VibratoShape,
 };
 
 /// Size of the command ring buffer.
@@ -2612,9 +2612,10 @@ fn resolve_instrument_index(
 fn note_trigger(
     legato: bool,
     glide: &Option<Glide>,
+    expression: &Option<NoteExpression>,
     target: synth_sequencer::Pitch,
 ) -> crate::voice::NoteTrigger {
-    let spec = glide.map(|g| {
+    let glide_spec = glide.map(|g| {
         let from_offset = match g.from {
             GlideFrom::Semitones(s) => s,
             GlideFrom::Pitch(p) => {
@@ -2627,9 +2628,26 @@ fn note_trigger(
             stepped: matches!(g.interp, GlideInterp::Stepped),
         }
     });
+    // Vibrato (taxonomy primitive 1): map the sequencer shape onto the engine LFO
+    // and the fade-in time onto Seconds. Note-shape scalars (accent/gate/ghost/
+    // probability) are already resolved sequencer-side, so they're ignored here.
+    let vibrato_spec = expression
+        .and_then(|e| e.vibrato)
+        .map(|v| crate::voice::VibratoSpec {
+            depth: v.depth,
+            rate: v.rate,
+            fade_in: Seconds::from(v.delay),
+            shape: match v.shape {
+                VibratoShape::Sine => crate::voice::VibratoWave::Sine,
+                VibratoShape::Triangle => crate::voice::VibratoWave::Triangle,
+                VibratoShape::Square => crate::voice::VibratoWave::Square,
+                VibratoShape::Saw => crate::voice::VibratoWave::Saw,
+            },
+        });
     crate::voice::NoteTrigger {
         legato,
-        glide: spec,
+        glide: glide_spec,
+        vibrato: vibrato_spec,
     }
 }
 
@@ -2652,11 +2670,12 @@ fn route_sequencer_events(
                 instrument,
                 legato,
                 glide,
+                expression,
                 ..
             } => {
                 let note = MidiNote::new(pitch.as_midi());
                 let vel = *velocity;
-                let trigger = note_trigger(*legato, glide, *pitch);
+                let trigger = note_trigger(*legato, glide, expression, *pitch);
 
                 if let Some(idx) = resolve_instrument_index(instrument, mapping, instruments) {
                     instruments[idx].note_on_expr(note, vel, trigger);
