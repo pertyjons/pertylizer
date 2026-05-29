@@ -22,7 +22,7 @@ use synth_core::{AudioBuffer, BipolarValue, Gain, NormalizedValue, ProcessContex
 use synth_sequencer::ReturnBusId;
 
 use crate::effect_chain::EffectChain;
-use crate::instrument::soft_clip;
+use crate::instrument::mix_stereo_faded;
 
 /// A return-bus channel — the runtime sub-mix with an effect chain and a
 /// per-block fader snapshot (the authoritative fader lives in the song).
@@ -129,15 +129,12 @@ impl ReturnBusChannel {
         let left_gain = pan_left.as_f32() * volume;
         let right_gain = pan_right.as_f32() * volume;
 
-        let src = self.input.as_slice();
-        let dst = mix_buffer.as_mut_slice();
-        let frames = src.len().min(dst.len());
-        let mut i = 0;
-        while i + 1 < frames {
-            dst[i] += soft_clip(src[i] * left_gain);
-            dst[i + 1] += soft_clip(src[i + 1] * right_gain);
-            i += 2;
-        }
+        mix_stereo_faded(
+            self.input.as_slice(),
+            left_gain,
+            right_gain,
+            mix_buffer.as_mut_slice(),
+        );
     }
 }
 

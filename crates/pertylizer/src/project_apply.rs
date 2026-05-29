@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock as PRwLock;
 
-use synth_core::{ModuleType, VoiceCount};
+use synth_core::{ModuleType, Param, ParameterDescriptor, VoiceCount};
 use synth_engine::commands::InstrumentParam;
 use synth_engine::shared_state::{
     ConnectionSnapshot, InstrumentSnapshot, ModuleStateSnapshot, ReturnBusSnapshot,
@@ -370,21 +370,10 @@ fn build_patch_from_engine(
     sorted_modules.sort_by_key(|m| m.id);
 
     for module in sorted_modules {
-        let mut param_map: BTreeMap<String, ParamValue> = BTreeMap::new();
-        if let Some(descriptor) = session.module_descriptor(snap.id, module.id) {
-            for desc_param in &descriptor.parameters {
-                if let Some(engine_param) = module
-                    .parameters
-                    .iter()
-                    .find(|p| p.same_kind(&desc_param.id))
-                {
-                    param_map.insert(
-                        desc_param.type_id.clone(),
-                        ParamValue::from_param(engine_param, desc_param),
-                    );
-                }
-            }
-        }
+        let param_map = session
+            .module_descriptor(snap.id, module.id)
+            .map(|d| map_params_to_values(&d.parameters, &module.parameters))
+            .unwrap_or_default();
         patch.modules.push(ModuleState {
             id: module.id.to_string(),
             module_type: module.module_type,
@@ -418,10 +407,28 @@ fn build_patch_from_engine(
     patch
 }
 
+/// Map a module's live engine `Param` values onto its descriptor's parameters,
+/// keyed by `type_id`, for serialization. Choice params serialize by id (via
+/// `ParamValue::from_param`). Shared by instrument-patch and return-effect save.
+fn map_params_to_values(
+    descriptor_params: &[ParameterDescriptor],
+    engine_params: &[Param],
+) -> BTreeMap<String, ParamValue> {
+    let mut map: BTreeMap<String, ParamValue> = BTreeMap::new();
+    for desc_param in descriptor_params {
+        if let Some(engine_param) = engine_params.iter().find(|p| p.same_kind(&desc_param.id)) {
+            map.insert(
+                desc_param.type_id.clone(),
+                ParamValue::from_param(engine_param, desc_param),
+            );
+        }
+    }
+    map
+}
+
 /// Convert the engine's published return-bus effect snapshots into the
-/// serializable project form. Each effect's parameter values are mapped through
-/// a type-derived descriptor (from `create_effect`) so choice params serialize
-/// by id, exactly like instrument effects.
+/// serializable project form, using a type-derived descriptor (from
+/// `create_effect`) to map param values exactly like instrument effects.
 fn build_return_bus_effects(snaps: &[ReturnBusSnapshot]) -> Vec<ReturnBusEffectsState> {
     snaps
         .iter()
@@ -431,22 +438,11 @@ fn build_return_bus_effects(snaps: &[ReturnBusSnapshot]) -> Vec<ReturnBusEffects
                 .iter()
                 .filter_map(|fx| {
                     let (_, descriptor) = crate::module_factory::create_effect(fx.module_type)?;
-                    let mut parameters: BTreeMap<String, ParamValue> = BTreeMap::new();
-                    for desc_param in &descriptor.parameters {
-                        if let Some(engine_param) =
-                            fx.parameters.iter().find(|p| p.same_kind(&desc_param.id))
-                        {
-                            parameters.insert(
-                                desc_param.type_id.clone(),
-                                ParamValue::from_param(engine_param, desc_param),
-                            );
-                        }
-                    }
                     Some(ModuleState {
                         id: fx.module_id.to_string(),
                         module_type: fx.module_type,
                         position: Position::default(),
-                        parameters,
+                        parameters: map_params_to_values(&descriptor.parameters, &fx.parameters),
                     })
                 })
                 .collect();

@@ -15,7 +15,7 @@ use std::time::Instant;
 use crate::commands::{EngineCommand, EngineEvent, ModuleId, NoteEvent, PortId, ReorderDirection};
 use crate::effect_chain::{EffectChain, EffectSlot};
 use crate::graph::ModuleGraph;
-use crate::instrument::{Instrument, InstrumentId, MidiChannel, soft_clip};
+use crate::instrument::{Instrument, InstrumentId, MidiChannel, mix_stereo_faded};
 use crate::instrument_mapping::InstrumentMapping;
 use crate::metering::MeteringSystem;
 use crate::recording::RecordingState;
@@ -403,6 +403,10 @@ pub struct SynthEngine {
     /// off the steady-state hot path), processed after the channel-bus stage.
     /// The fader/mute is a per-block snapshot of the song definition.
     return_busses: Vec<ReturnBusChannel>,
+    /// `ReturnBusId` → index into `return_busses`, rebuilt on every return-bus
+    /// mutation (off the hot path) so `update_track_controls` resolves sends and
+    /// faders in O(1) instead of scanning the vec each audio block.
+    return_index: std::collections::HashMap<ReturnBusId, usize>,
     /// Per-instrument resolved send taps, refreshed each block alongside
     /// `track_controls`. Pre-allocated with `MAX_CHANNEL_SENDS` capacity per
     /// instrument so the audio thread never grows a vec. Keyed by engine id.
@@ -493,6 +497,7 @@ impl SynthEngine {
             prev_instrument_outputs: std::collections::HashMap::new(),
             track_controls: std::collections::HashMap::new(),
             return_busses: Vec::new(),
+            return_index: std::collections::HashMap::new(),
             channel_sends: std::collections::HashMap::new(),
             metering: MeteringSystem::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
@@ -780,6 +785,7 @@ impl SynthEngine {
             }
             EngineCommand::ClearReturnBusses => {
                 self.return_busses.clear();
+                self.return_index.clear();
                 self.update_shared_return_effects();
             }
             EngineCommand::AddReturnEffect {
@@ -1416,12 +1422,22 @@ impl SynthEngine {
     // Return-bus (effect-send) management handlers
     // ========================================================================
 
+    /// Rebuild the `ReturnBusId` → index map from `return_busses`. Cheap (few
+    /// busses) and only called on return-bus mutations, never the hot path.
+    fn rebuild_return_index(&mut self) {
+        self.return_index.clear();
+        for (idx, bus) in self.return_busses.iter().enumerate() {
+            self.return_index.insert(bus.id(), idx);
+        }
+    }
+
     fn handle_create_return_bus(&mut self, id: ReturnBusId) {
         // Re-using an existing id is a no-op so a project load is idempotent.
         if self.return_busses.iter().any(|b| b.id() == id) {
             return;
         }
         self.return_busses.push(ReturnBusChannel::new(id));
+        self.rebuild_return_index();
         self.update_shared_return_effects();
     }
 
@@ -1431,6 +1447,7 @@ impl SynthEngine {
         }
         // Stale send taps resolve to no destination on the next
         // `update_track_controls` and are simply dropped.
+        self.rebuild_return_index();
         self.update_shared_return_effects();
     }
 
@@ -2464,21 +2481,17 @@ impl SynthEngine {
             }
             // Resolve this track's send taps to return-bus indices. Like the
             // fader, a shared instrument takes the last track's sends for the
-            // block (clear then repopulate). Sends to a missing return bus, or
-            // beyond `MAX_CHANNEL_SENDS`, are dropped.
+            // block: clear unconditionally, then repopulate — so a track with no
+            // sends sharing an instrument with one that has sends doesn't inherit
+            // them. Sends to a missing return bus, or beyond `MAX_CHANNEL_SENDS`,
+            // are dropped.
             if let Some(list) = self.channel_sends.get_mut(&engine_id) {
-                if !track.sends.is_empty() {
-                    list.clear();
-                }
+                list.clear();
                 for send in &track.sends {
                     if list.len() >= MAX_CHANNEL_SENDS {
                         break;
                     }
-                    let Some(return_index) = self
-                        .return_busses
-                        .iter()
-                        .position(|b| b.id() == send.target)
-                    else {
+                    let Some(&return_index) = self.return_index.get(&send.target) else {
                         continue;
                     };
                     list.push(ChannelSend {
@@ -2494,8 +2507,8 @@ impl SynthEngine {
         // mirroring per-track controls). A channel with no matching song def
         // keeps its previous fader and simply isn't driven.
         for def in song.return_busses() {
-            if let Some(channel) = self.return_busses.iter_mut().find(|c| c.id() == def.id) {
-                channel.set_fader(def.volume, def.pan, def.mute);
+            if let Some(&idx) = self.return_index.get(&def.id) {
+                self.return_busses[idx].set_fader(def.volume, def.pan, def.mute);
             }
         }
     }
@@ -2772,7 +2785,6 @@ fn mix_channel_busses(
         let right_gain = pan_right.as_f32() * volume;
 
         let src = instrument.last_output_interleaved();
-        let frames = src.len().min(dst.len());
 
         // Send taps into return busses. Pre-fader taps the raw channel signal;
         // post-fader taps after the channel fader/pan (the common case, so the
@@ -2786,12 +2798,7 @@ fn mix_channel_busses(
             }
         }
 
-        let mut i = 0;
-        while i + 1 < frames {
-            dst[i] += soft_clip(src[i] * left_gain);
-            dst[i + 1] += soft_clip(src[i + 1] * right_gain);
-            i += 2;
-        }
+        mix_stereo_faded(src, left_gain, right_gain, dst);
     }
 }
 
@@ -3972,6 +3979,34 @@ mod tests {
         assert_eq!(sends[0].return_index, 1);
         assert!((sends[0].level - 0.5).abs() < 1e-6);
         assert!(sends[0].pre_fader);
+    }
+
+    #[test]
+    fn shared_instrument_send_list_does_not_carry_over_between_tracks() {
+        // Two tracks share instrument 0; the first sends to a return, the second
+        // (which wins for the block) has none. The shared channel must end with
+        // NO sends — the first track's send must not leak into it.
+        let (mut engine, mut handle) = SynthEngine::new();
+        add_default_instrument(&mut engine, &mut handle); // FIRST ↔ SeqInstrumentId(0)
+        handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(0) });
+
+        let mut song = Song::default();
+        let with_send = song.create_track("with_send"); // instrument 0
+        song.track_mut(with_send)
+            .unwrap()
+            .sends
+            .push(TrackSend::new(ReturnBusId(0), NormalizedValue::MAX));
+        let _no_send = song.create_track("no_send"); // also instrument 0, later → wins
+        handle.send(EngineCommand::SetSong {
+            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+        });
+        engine.process_commands();
+        engine.update_track_controls();
+
+        assert!(
+            engine.channel_sends[&InstrumentId::FIRST].is_empty(),
+            "a no-send track sharing an instrument must clear the carried-over send"
+        );
     }
 
     /// Render `blocks` callbacks of a sustained C4 and return the total output

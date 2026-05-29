@@ -2625,11 +2625,14 @@ impl SynthBridge for AppSynthBridge {
             song.create_return_bus(name)
         };
         // Allocate the engine-side runtime channel (off the audio hot path).
+        // If the command can't be queued, roll back the song write so the song
+        // and engine don't disagree about which return busses exist.
         if !self
             .session
             .command_sender()
             .send(EngineCommand::CreateReturnBus { id })
         {
+            self.shared.song.write().delete_return_bus(id);
             return Err(McpBridgeError::CommandSendFailed {
                 command: "CreateReturnBus",
             });

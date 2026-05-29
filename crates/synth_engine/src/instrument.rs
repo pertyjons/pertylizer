@@ -350,6 +350,20 @@ pub(crate) fn soft_clip(sample: f32) -> f32 {
     }
 }
 
+/// Sum an interleaved-stereo source into `dst`, applying per-channel gain and
+/// per-sample [`soft_clip`]. Shared by the per-instrument channel-bus stage and
+/// the return-bus output so both clip/mix identically.
+#[inline]
+pub(crate) fn mix_stereo_faded(src: &[f32], left_gain: f32, right_gain: f32, dst: &mut [f32]) {
+    let frames = src.len().min(dst.len());
+    let mut i = 0;
+    while i + 1 < frames {
+        dst[i] += soft_clip(src[i] * left_gain);
+        dst[i + 1] += soft_clip(src[i + 1] * right_gain);
+        i += 2;
+    }
+}
+
 /// A synthesizer instrument - an independent sound source with its own voice allocation.
 ///
 /// Instruments enable multitimbral operation where different MIDI channels can

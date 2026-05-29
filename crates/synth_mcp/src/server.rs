@@ -4640,7 +4640,8 @@ impl SynthMcpServer {
 
     #[tool(description = "Set a return bus's output volume (0.0 = silent, 1.0 = full).")]
     async fn set_return_bus_volume(&self, params: Parameters<SetReturnBusVolumeParam>) -> String {
-        if let Err(e) = validate_range("volume", params.0.volume, 0.0, 2.0) {
+        // Stored as NormalizedValue (clamps to [0, 1]); validate to match.
+        if let Err(e) = validate_range("volume", params.0.volume, 0.0, 1.0) {
             return validation_err(e);
         }
         match self
@@ -4708,7 +4709,8 @@ impl SynthMcpServer {
         description = "Add or update a track's effect send to a return bus (upsert by target). pre_fader taps before the channel fader."
     )]
     async fn set_track_send(&self, params: Parameters<SetTrackSendParam>) -> String {
-        if let Err(e) = validate_range("level", params.0.level, 0.0, 2.0) {
+        // Stored as NormalizedValue (clamps to [0, 1]); validate to match.
+        if let Err(e) = validate_range("level", params.0.level, 0.0, 1.0) {
             return validation_err(e);
         }
         match self.bridge.set_track_send(
