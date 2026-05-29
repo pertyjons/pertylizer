@@ -1,5 +1,16 @@
 # Version History
 
+## [0.294.0] - 2026-05-29
+
+### Per-note vibrato + expression block (Phase C)
+
+Notes now carry an optional expression block: per-note vibrato (depth/rate/
+fade-in/shape, an additive pitch LFO composing with the mod-matrix `OscPitch`
+path), plus note-shape scalars accent (velocity ×), gate (staccato % of
+duration), ghost (forced-soft), and probability (resolved deterministically
+sequencer-side; preview always sounds). Editable in the piano-roll selection
+inspector (with undo) and over MCP `add_notes`.
+
 ## [0.293.0] - 2026-05-29
 
 ### Per-note legato/tie + glide (Phase B)

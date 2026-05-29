@@ -21,7 +21,7 @@ first, richness second.
 - [x] **Phase A1** — Wire the 6 already-GUI-exposed instrument macros (bugfix; no schema change)
 - [x] **Phase A2** — `AutomationTarget::Module { instrument, module_id, param }` (generic, additive)
 - [x] **Phase B** — Per-note legato/tie + glide fields, driving the existing allocator machinery
-- [ ] **Phase C** — Per-note vibrato depth + a small per-note expression block (note expression in miniature)
+- [x] **Phase C** — Per-note vibrato depth + a small per-note expression block (note expression in miniature)
 - [ ] **Phase D** — Shared/bus filter with automatable cutoff (rides on channel-strip Phase 7)
 - [ ] **Phase E** — Full Note Expression: per-note custom curves + generic per-note targets + MPE
 - [ ] **Parallel track** — `get_project_schema` MCP tool + file-level load-lint (export robustness)
@@ -295,7 +295,7 @@ data + wiring.
   replay as glide.
 
 ## Phase C — Per-note vibrato + expression block
-**Status:** ☐ Not started · **Effort:** S · **Axis:** blander → richer (dead leads) · **Schema:** additive
+**Status:** ☑ Done (v0.294.0) · **Effort:** S · **Axis:** blander → richer (dead leads) · **Schema:** additive
 
 Vibrato already works at patch level (mod matrix LFO→OscPitch); this makes it
 per-note and seeds the expression model.

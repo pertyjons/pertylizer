@@ -318,11 +318,19 @@ that map 1:1 onto those dimensions now even if only vibrato is wired in C.
 - **Done:** gate green (real exit codes); review `[]` clean. Fixed two B5 test
   literals missing the new `expression` field (caught via cargo's true exit code).
 
-### C-close
+### C-close ✅ (next commit)
 
-- [ ] Flip roadmap **Phase C** `Status` ☑ Done + glance checkbox; `docs/history.md`
-  line. Final build gate.
+- [x] Flipped roadmap **Phase C** `Status` → ☑ Done (v0.294.0) + glance checkbox;
+  added a `docs/history.md` 0.294.0 section; bumped `pertylizer` to 0.294.0. Final
+  build gate green (real exit codes). Docs/version only — no fresh code-review.
 - **Commit:** `Phase C: history + roadmap status`
+
+---
+
+**Plan complete.** Phases B (v0.293.0) and C (v0.294.0) shipped end-to-end:
+data model → sequencer events → engine (legato/glide/vibrato/note-shape scalars)
+→ piano-roll GUI (with undo) → MCP. Deferred items are recorded in each step and
+the section below.
 
 ---
 
