@@ -15,7 +15,7 @@ use std::time::Instant;
 use crate::commands::{EngineCommand, EngineEvent, ModuleId, NoteEvent, PortId, ReorderDirection};
 use crate::effect_chain::{EffectChain, EffectSlot};
 use crate::graph::ModuleGraph;
-use crate::instrument::{Instrument, InstrumentId, MidiChannel, mix_stereo_faded};
+use crate::instrument::{Instrument, InstrumentId, MidiChannel, mix_stereo_faded, stereo_peak};
 use crate::instrument_mapping::InstrumentMapping;
 use crate::metering::MeteringSystem;
 use crate::recording::RecordingState;
@@ -275,6 +275,19 @@ impl EngineHandle {
     /// Get the current RMS meter values.
     pub fn rms_meters(&self) -> (synth_core::Amplitude, synth_core::Amplitude) {
         self.state.meters.get_rms()
+    }
+
+    /// Post-fader peak for a channel (instrument), or 0.0 when it isn't
+    /// currently audible/metered. Read each frame to drive a per-strip meter.
+    #[must_use]
+    pub fn channel_peak(&self, id: InstrumentId) -> f32 {
+        self.state.channel_meters.peak_for(id.0)
+    }
+
+    /// Post-fader peak for a return bus, or 0.0 when muted/absent.
+    #[must_use]
+    pub fn return_peak(&self, id: synth_sequencer::ReturnBusId) -> f32 {
+        self.state.return_meters.peak_for(u64::from(id.0))
     }
 
     /// Get the current voice count.
@@ -2620,13 +2633,19 @@ impl SynthEngine {
             &self.channel_sends,
             &mut self.return_busses,
             &mut self.mix_buffer,
+            &self.state.channel_meters,
         );
 
         // Process each return bus's effect chain and sum the wet result back
-        // into the master mix (after the dry channels).
-        for bus in &mut self.return_busses {
-            bus.mix_into(context, &mut self.mix_buffer);
+        // into the master mix (after the dry channels), publishing each
+        // return's post-fader peak for metering.
+        for (i, bus) in self.return_busses.iter_mut().enumerate() {
+            let peak = bus.mix_into(context, &mut self.mix_buffer);
+            self.state
+                .return_meters
+                .publish(i, u64::from(bus.id().0), peak);
         }
+        self.state.return_meters.set_count(self.return_busses.len());
 
         // Capture each instrument's post-effect-chain output for the
         // next callback. Pure copy into pre-allocated buffers — no allocs.
@@ -2758,48 +2777,52 @@ fn mix_channel_busses(
     channel_sends: &std::collections::HashMap<InstrumentId, Vec<ChannelSend>>,
     return_busses: &mut [ReturnBusChannel],
     mix_buffer: &mut AudioBuffer,
+    channel_meters: &crate::state::ChannelMeterBank,
 ) {
     let dst = mix_buffer.as_mut_slice();
-    for instrument in instruments {
-        if any_soloed && !instrument.is_solo() {
-            continue;
-        }
-        if instrument.mute_state().is_muted() {
-            continue;
-        }
-
+    // Publish one meter slot per instrument, in order (silent channels read 0),
+    // so the GUI can show a level on every strip.
+    for (i, instrument) in instruments.iter().enumerate() {
+        let soloed_out = any_soloed && !instrument.is_solo();
         let track = track_controls
             .get(&instrument.id())
             .copied()
             .unwrap_or(TrackControl::NEUTRAL);
-        if !track.audible {
-            continue;
-        }
+        let audible = !soloed_out && !instrument.mute_state().is_muted() && track.audible;
 
-        // Compose instrument fader with track fader. Additive pan through one
-        // constant-power law; multiplicative volume.
-        let pan = BipolarValue::new(instrument.pan().as_f32() + track.pan.as_f32());
-        let (pan_left, pan_right) = Gain::from_pan(pan);
-        let volume = instrument.volume().as_f32() * track.volume.as_f32();
-        let left_gain = pan_left.as_f32() * volume;
-        let right_gain = pan_right.as_f32() * volume;
+        let peak = if audible {
+            // Compose instrument fader with track fader. Additive pan through one
+            // constant-power law; multiplicative volume.
+            let pan = BipolarValue::new(instrument.pan().as_f32() + track.pan.as_f32());
+            let (pan_left, pan_right) = Gain::from_pan(pan);
+            let volume = instrument.volume().as_f32() * track.volume.as_f32();
+            let left_gain = pan_left.as_f32() * volume;
+            let right_gain = pan_right.as_f32() * volume;
 
-        let src = instrument.last_output_interleaved();
+            let src = instrument.last_output_interleaved();
 
-        // Send taps into return busses. Pre-fader taps the raw channel signal;
-        // post-fader taps after the channel fader/pan (the common case, so the
-        // send tracks the fader). Linear sum — soft-clip is applied only on the
-        // return's own output, not per-tap.
-        if let Some(sends) = channel_sends.get(&instrument.id()) {
-            for send in sends {
-                if let Some(bus) = return_busses.get_mut(send.return_index) {
-                    apply_send_tap(src, left_gain, right_gain, *send, bus.input_mut());
+            // Send taps into return busses. Pre-fader taps the raw channel
+            // signal; post-fader taps after the channel fader/pan (the common
+            // case, so the send tracks the fader). Linear sum — soft-clip is
+            // applied only on the return's own output, not per-tap.
+            if let Some(sends) = channel_sends.get(&instrument.id()) {
+                for send in sends {
+                    if let Some(bus) = return_busses.get_mut(send.return_index) {
+                        apply_send_tap(src, left_gain, right_gain, *send, bus.input_mut());
+                    }
                 }
             }
-        }
 
-        mix_stereo_faded(src, left_gain, right_gain, dst);
+            let peak = stereo_peak(src, left_gain, right_gain);
+            mix_stereo_faded(src, left_gain, right_gain, dst);
+            peak
+        } else {
+            0.0
+        };
+
+        channel_meters.publish(i, instrument.id().0, peak);
     }
+    channel_meters.set_count(instruments.len());
 }
 
 /// Sum one channel's send into a return bus's accumulation buffer.

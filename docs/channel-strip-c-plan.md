@@ -17,7 +17,7 @@ phase layers onto it.
 - [x] **Phase 4** — Remove `note.instrument` (route only via `track.instrument`; preview via threaded instrument)
 - [x] **Phase 5** — Orphan-preview: **kept** the engine-side branch; scratch-track rework closed as not-worth-it; added the missing preview/lifecycle tests
 - [x] **Phase 6** — Save/load + MCP cleanup (per-note `instrument_id` removed; descriptions + track color via MCP/GUI; instrument/patch/group color split to its own PR — engine refactor)
-- [~] **Phase 7** — Sends/returns + mixer view (§1.4): **7a (engine sends + dynamic return busses + persistence incl. return effect chains + MCP) done**; 7b (mixer view) remains
+- [x] **Phase 7** — Sends/returns + mixer view (§1.4): **7a done**; **7b mixer view done** — track/return/master strips with faders, pan, mute/solo, sends, create/delete/rename return, live post-fader VU meters (lock-free per-channel/per-return peak banks), and inserts (returns edited inline; channels jump to the Rack patch editor)
 - [ ] **Phase 8** — (future) Independent faders for *shared* instruments — per-voice-tagged per-track bus
 
 **Revised direction (2026-05-27, user decision):** strict 1 track ↔ 1 instrument is
@@ -269,7 +269,7 @@ by bus-routing need, not sold as a simplification.
   setter add — split out to keep this PR free of `synth_engine` changes.
 
 ### Phase 7 — Sends/returns + mixer view (§1.4)
-**Status:** ◑ 7a done (engine sends + dynamic return busses + persistence + MCP); 7b (mixer view) next
+**Status:** ☑ Done — 7a (engine sends + dynamic return busses + persistence + MCP) and 7b (dedicated mixer view) both landed
 
 The per-channel bus from Phase 1 already exists, so this was just adding taps off
 each bus — not building bus infrastructure.
@@ -295,7 +295,23 @@ each bus — not building bus infrastructure.
   `GlobalProjectState.return_bus_effects`, and rebuilt on load (`create_effect` +
   `AddReturnEffect` + `SetReturnEffectParameter`, in chain order). Round-trip test
   (`return_bus_effect_persistence.rs`) drives a real engine through save → load → save.
-- [ ] **7b — dedicated mixer view** with faders, pan, sends, inserts.
+- [x] **7b — dedicated mixer view** (`gui/mixer_view.rs`, new `AppView::Mixer`
+  tab). A console of vertical channel strips — one per track (instrument label,
+  per-return send sliders with pre/post toggle, pan, mute/solo, volume fader,
+  level meter), one per return bus (inline inserts editor, pan, mute, volume,
+  level meter, rename, delete), and a master strip. All faders/pan/mute/solo/
+  sends mutate the `Song` directly (Model C — engine reads live); return
+  create/delete sends `Create/RemoveReturnBus`.
+- [x] **Per-channel VU meters.** Lock-free fixed-size atomic peak banks on
+  `EngineState` (`ChannelMeterBank`, keyed by `InstrumentId`/`ReturnBusId`),
+  published post-fader from the channel-bus stage and the return loop each
+  block; read via `EngineHandle::channel_peak`/`return_peak` and smoothed
+  (fast-attack/slow-release) for display. No audio-thread locks or allocs.
+- [x] **Inserts.** Return-bus inserts are edited inline in the mixer (add /
+  remove / bypass / descriptor-driven param sliders via the `*ReturnEffect*`
+  commands) — returns had no other editor. Channel (instrument) inserts open the
+  Rack's existing patch editor via a jump button, rather than duplicating it.
+- [x] **Return-bus rename** inline in the strip header.
 
 ### Phase 8 — (future) Independent faders for shared instruments
 **Status:** ☐ Not started — deferred, build only if needed

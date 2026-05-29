@@ -20,6 +20,8 @@ pub enum AppView {
     Pattern,
     /// Sequencer view (piano roll / arrangement).
     Sequencer,
+    /// Mixer view (per-channel faders, pan, sends, return busses, master).
+    Mixer,
     /// Sample browser and editor view.
     Sample,
 }

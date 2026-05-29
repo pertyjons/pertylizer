@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32 as StdAtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32 as StdAtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use parking_lot::RwLock;
 
@@ -184,6 +184,86 @@ impl MeterState {
     }
 }
 
+/// Maximum number of per-channel / per-return meter slots published to the GUI.
+/// Channels (instruments) and return busses beyond this cap simply aren't
+/// metered — the audio path is unaffected.
+pub const MAX_METER_SLOTS: usize = 128;
+
+/// One published meter slot: a key (an `InstrumentId` or `ReturnBusId` as `u64`)
+/// and that channel's post-fader peak level for the latest processed block.
+#[derive(Debug)]
+struct MeterSlot {
+    key: AtomicU64,
+    peak: AtomicF32,
+}
+
+impl MeterSlot {
+    fn new() -> Self {
+        Self {
+            key: AtomicU64::new(0),
+            peak: AtomicF32::new(0.0),
+        }
+    }
+}
+
+/// Lock-free bank of per-channel post-fader peak meters.
+///
+/// The audio thread publishes one slot per channel (or return bus) in processing
+/// order each block and records the live count; the GUI reads slots by key each
+/// frame. Fixed-size + atomic, so neither side allocates or takes a lock — the
+/// same discipline as [`MeterState`] for the master meters, extended to a
+/// dynamic, keyed set.
+#[derive(Debug)]
+pub struct ChannelMeterBank {
+    slots: [MeterSlot; MAX_METER_SLOTS],
+    count: AtomicUsize,
+}
+
+impl ChannelMeterBank {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            slots: std::array::from_fn(|_| MeterSlot::new()),
+            count: AtomicUsize::new(0),
+        }
+    }
+
+    /// Publish one channel's peak at `index` (audio thread). Indices beyond the
+    /// cap are silently dropped.
+    pub fn publish(&self, index: usize, key: u64, peak: f32) {
+        if let Some(slot) = self.slots.get(index) {
+            slot.key.store(key, Ordering::Relaxed);
+            slot.peak.store(peak);
+        }
+    }
+
+    /// Record how many slots are live this block (audio thread), clamped to the
+    /// cap. Call after publishing all slots.
+    pub fn set_count(&self, count: usize) {
+        self.count
+            .store(count.min(MAX_METER_SLOTS), Ordering::Relaxed);
+    }
+
+    /// Read the post-fader peak for `key`, or `0.0` if it isn't currently metered
+    /// (GUI thread).
+    #[must_use]
+    pub fn peak_for(&self, key: u64) -> f32 {
+        let n = self.count.load(Ordering::Relaxed).min(MAX_METER_SLOTS);
+        for slot in self.slots.iter().take(n) {
+            if slot.key.load(Ordering::Relaxed) == key {
+                return slot.peak.load();
+            }
+        }
+        0.0
+    }
+}
+
+impl Default for ChannelMeterBank {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Transport state shared between threads.
 #[derive(Debug)]
 pub struct TransportState {
@@ -356,6 +436,11 @@ pub const NO_FOCUSED_INSTRUMENT: u64 = u64::MAX;
 pub struct EngineState {
     /// Metering.
     pub meters: MeterState,
+    /// Per-channel (per-instrument) post-fader peak meters, keyed by
+    /// `InstrumentId`. Published by the channel-bus stage each block.
+    pub channel_meters: ChannelMeterBank,
+    /// Per-return-bus post-fader peak meters, keyed by `ReturnBusId`.
+    pub return_meters: ChannelMeterBank,
     /// Transport.
     pub transport: TransportState,
     /// Master volume.
@@ -393,6 +478,8 @@ impl EngineState {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             meters: MeterState::new(),
+            channel_meters: ChannelMeterBank::new(),
+            return_meters: ChannelMeterBank::new(),
             transport: TransportState::new(),
             master_volume: AtomicF32::new(1.0),
             voice_count: AtomicU32::new(0),
@@ -455,6 +542,8 @@ impl Default for EngineState {
     fn default() -> Self {
         Self {
             meters: MeterState::new(),
+            channel_meters: ChannelMeterBank::new(),
+            return_meters: ChannelMeterBank::new(),
             transport: TransportState::new(),
             master_volume: AtomicF32::new(1.0),
             voice_count: AtomicU32::new(0),
@@ -469,5 +558,46 @@ impl Default for EngineState {
             octave_offsets: RwLock::new(HashMap::new()),
             event_drops: StdAtomicU32::new(0),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_meter_bank_publishes_and_reads_by_key() {
+        let bank = ChannelMeterBank::new();
+        // Nothing published yet → every key reads 0.
+        assert_eq!(bank.peak_for(7), 0.0);
+
+        bank.publish(0, 7, 0.5);
+        bank.publish(1, 42, 0.25);
+        bank.set_count(2);
+
+        assert_eq!(bank.peak_for(7), 0.5);
+        assert_eq!(bank.peak_for(42), 0.25);
+        // A key that isn't in the live range reads 0.
+        assert_eq!(bank.peak_for(99), 0.0);
+    }
+
+    #[test]
+    fn channel_meter_bank_count_bounds_visible_slots() {
+        let bank = ChannelMeterBank::new();
+        bank.publish(0, 1, 0.9);
+        bank.publish(1, 2, 0.8);
+        // Only one slot is declared live, so slot 1's key is invisible.
+        bank.set_count(1);
+        assert_eq!(bank.peak_for(1), 0.9);
+        assert_eq!(bank.peak_for(2), 0.0);
+    }
+
+    #[test]
+    fn channel_meter_bank_ignores_out_of_range_index() {
+        let bank = ChannelMeterBank::new();
+        // Out-of-range publish must not panic and must not become visible.
+        bank.publish(MAX_METER_SLOTS, 5, 1.0);
+        bank.set_count(MAX_METER_SLOTS);
+        assert_eq!(bank.peak_for(5), 0.0);
     }
 }

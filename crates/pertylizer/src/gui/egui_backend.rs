@@ -326,6 +326,9 @@ struct SynthApp {
     /// Sample view state.
     sample_view_state: crate::gui::sample_view::SampleViewState,
 
+    /// Mixer view state (rename buffer + smoothed meter levels).
+    mixer_view_state: crate::gui::mixer_view::MixerViewState,
+
     /// Audio input manager for recording.
     audio_input: crate::audio::input::AudioInputManager,
 
@@ -442,6 +445,7 @@ impl SynthApp {
             pending_awe_preset_save: None,
             sample_library: config.sample_library,
             sample_view_state: crate::gui::sample_view::SampleViewState::new(),
+            mixer_view_state: crate::gui::mixer_view::MixerViewState::default(),
             audio_input: crate::audio::input::AudioInputManager::new(),
             analyze_window: crate::gui::analyze::AnalyzeWindow::new(),
             instrument_edit_target: None,
@@ -856,6 +860,27 @@ impl eframe::App for SynthApp {
                         &self.instruments,
                         &mut self.undo_manager,
                     );
+                }
+                AppView::Mixer => {
+                    let action = crate::gui::mixer_view::draw_mixer_view(
+                        ui,
+                        &mut self.handle,
+                        &self.song,
+                        &self.instruments,
+                        &mut self.mixer_view_state,
+                    );
+                    if let Some(crate::gui::mixer_view::MixerViewAction::EditChannelFx(seq_id)) =
+                        action
+                        && let Some(inst) = self
+                            .instruments
+                            .iter()
+                            .find(|i| i.id.0 == u64::from(seq_id.0))
+                    {
+                        // Channel inserts live on the instrument — open its
+                        // patch editor in the Rack.
+                        self.active_instrument_id = Some(inst.id);
+                        self.active_view = AppView::Rack;
+                    }
                 }
                 AppView::Sample => {
                     // Refresh input device cache on demand (not every frame)
@@ -2860,7 +2885,7 @@ impl SynthApp {
     fn render_view_selector(&mut self, ui: &mut egui::Ui) {
         use egui_remixicon::icons as ri;
         let t = theme();
-        let views: [(AppView, &str); 5] = [
+        let views: [(AppView, &str); 6] = [
             (AppView::Rack, &format!("{} Rack", ri::LAYOUT_GRID_FILL)),
             (
                 AppView::AcousticWorld,
@@ -2868,6 +2893,7 @@ impl SynthApp {
             ),
             (AppView::Pattern, &format!("{} Pattern", ri::PIANO_FILL)),
             (AppView::Sequencer, &format!("{} Seq", ri::PLAY_LIST_FILL)),
+            (AppView::Mixer, &format!("{} Mixer", ri::EQUALIZER_FILL)),
             (AppView::Sample, &format!("{} Sample", ri::MUSIC_FILL)),
         ];
         let seg_w = 80.0_f32;

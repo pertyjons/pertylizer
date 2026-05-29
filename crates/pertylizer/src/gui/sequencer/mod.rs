@@ -6530,6 +6530,6 @@ pub(crate) fn draw_sequencer_view(
 }
 
 /// Convert a sequencer track color to an egui Color32.
-fn track_color_to_egui(color: synth_sequencer::TrackColor) -> Color32 {
+pub(crate) fn track_color_to_egui(color: synth_sequencer::TrackColor) -> Color32 {
     Color32::from_rgb(color.r, color.g, color.b)
 }

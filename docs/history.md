@@ -1,5 +1,31 @@
 # Version History
 
+## [0.301.0] - 2026-05-29
+
+### Channel-strip Phase 7b — mixer view complete (meters, inserts, rename)
+
+Finished the mixer view. **Per-channel VU meters:** lock-free fixed-size atomic
+peak banks on `EngineState` (`ChannelMeterBank`, keyed by `InstrumentId`/
+`ReturnBusId`) are published post-fader from the channel-bus stage and the return
+loop each block, read via `EngineHandle::channel_peak`/`return_peak`, and smoothed
+for display — no audio-thread locks or allocations. **Inserts:** return busses get
+an inline inserts editor (add/remove/bypass + descriptor-driven param sliders via
+the `*ReturnEffect*` commands), since they had no other editor; channel inserts
+open the Rack's existing patch editor via a jump button instead of duplicating it.
+**Return-bus rename** is now editable inline in the strip header.
+
+## [0.300.0] - 2026-05-29
+
+### Channel-strip Phase 7b — mixer view (first increment)
+
+New **Mixer** tab (`AppView::Mixer`, `gui/mixer_view.rs`): a console of vertical
+channel strips — one per track (instrument label, per-return send sliders with pre/post
+toggle, pan, mute/solo, volume fader), one per return bus (pan, mute, volume, delete),
+and a master strip. Faders/pan/mute/solo/sends mutate the `Song` directly (Model C — the
+engine reads them live); the "+ Return Bus" button and per-return delete also send
+`Create/RemoveReturnBus`. Per-channel VU meters are deferred (need engine post-fader
+level publishing), as are insert-FX editing and return rename in the UI.
+
 ## [0.299.0] - 2026-05-29
 
 ### Channel-strip Phase 7a — return effect-chain persistence

@@ -66,6 +66,9 @@ pub mod pattern_view;
 pub mod sample_view;
 
 #[cfg(feature = "gui-egui")]
+pub mod mixer_view;
+
+#[cfg(feature = "gui-egui")]
 pub mod welcome_view;
 
 #[cfg(feature = "gui-egui")]

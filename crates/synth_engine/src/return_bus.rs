@@ -22,7 +22,7 @@ use synth_core::{AudioBuffer, BipolarValue, Gain, NormalizedValue, ProcessContex
 use synth_sequencer::ReturnBusId;
 
 use crate::effect_chain::EffectChain;
-use crate::instrument::mix_stereo_faded;
+use crate::instrument::{mix_stereo_faded, stereo_peak};
 
 /// A return-bus channel — the runtime sub-mix with an effect chain and a
 /// per-block fader snapshot (the authoritative fader lives in the song).
@@ -119,22 +119,23 @@ impl ReturnBusChannel {
     ///
     /// The chain always runs (so effect tails advance even with no input this
     /// block); a muted channel simply skips the contribution to `mix_buffer`.
-    pub fn mix_into(&mut self, context: &ProcessContext<'_>, mix_buffer: &mut AudioBuffer) {
+    ///
+    /// Returns the post-fader peak amplitude of this block's contribution (0.0
+    /// when muted), for per-return metering.
+    pub fn mix_into(&mut self, context: &ProcessContext<'_>, mix_buffer: &mut AudioBuffer) -> f32 {
         self.effect_chain.process(&mut self.input, context);
         if self.muted {
-            return;
+            return 0.0;
         }
         let (pan_left, pan_right) = Gain::from_pan(self.pan);
         let volume = self.volume.as_f32();
         let left_gain = pan_left.as_f32() * volume;
         let right_gain = pan_right.as_f32() * volume;
 
-        mix_stereo_faded(
-            self.input.as_slice(),
-            left_gain,
-            right_gain,
-            mix_buffer.as_mut_slice(),
-        );
+        let src = self.input.as_slice();
+        let peak = stereo_peak(src, left_gain, right_gain);
+        mix_stereo_faded(src, left_gain, right_gain, mix_buffer.as_mut_slice());
+        peak
     }
 }
 
