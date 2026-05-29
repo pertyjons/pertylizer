@@ -1683,6 +1683,73 @@ pub struct SetTrackInstrumentParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CreateReturnBusParam {
+    #[schemars(description = "Return bus name (e.g. \"Reverb\", \"Delay\")")]
+    pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReturnBusIdParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetReturnBusVolumeParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "Volume (0.0 = silent, 1.0 = full)")]
+    pub volume: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetReturnBusPanParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right)")]
+    pub pan: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetReturnBusMuteParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "Whether the return bus should be muted")]
+    pub muted: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RenameReturnBusParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "New name")]
+    pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTrackSendParam {
+    #[schemars(description = "Track ID (the channel sending)")]
+    pub track_id: u16,
+    #[schemars(description = "Destination return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "Send level (0.0 = none, 1.0 = unity)")]
+    pub level: f32,
+    #[serde(default)]
+    #[schemars(
+        description = "Tap point: true = pre-fader, false = post-fader (default). Post-fader follows the channel fader."
+    )]
+    pub pre_fader: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RemoveTrackSendParam {
+    #[schemars(description = "Track ID")]
+    pub track_id: u16,
+    #[schemars(description = "Destination return bus ID to remove the send to")]
+    pub return_id: u16,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RenameTrackParam {
     #[schemars(description = "Track ID")]
     pub track_id: u16,
@@ -2466,6 +2533,17 @@ impl SynthMcpServer {
             "set_track_description" => set_track_description(SetTrackDescriptionParam),
             "set_track_color" => set_track_color(SetTrackColorParam),
             "delete_track" => delete_track(DeleteTrackParam),
+
+            // Return busses (effect sends)
+            "list_return_busses" => list_return_busses(NoParams),
+            "create_return_bus" => create_return_bus(CreateReturnBusParam),
+            "delete_return_bus" => delete_return_bus(ReturnBusIdParam),
+            "set_return_bus_volume" => set_return_bus_volume(SetReturnBusVolumeParam),
+            "set_return_bus_pan" => set_return_bus_pan(SetReturnBusPanParam),
+            "set_return_bus_mute" => set_return_bus_mute(SetReturnBusMuteParam),
+            "rename_return_bus" => rename_return_bus(RenameReturnBusParam),
+            "set_track_send" => set_track_send(SetTrackSendParam),
+            "remove_track_send" => remove_track_send(RemoveTrackSendParam),
 
             // Arrangement
             "place_pattern" => place_pattern(PlacePatternParam),
@@ -4523,6 +4601,147 @@ impl SynthMcpServer {
     async fn delete_track(&self, params: Parameters<DeleteTrackParam>) -> String {
         match self.bridge.delete_track(params.0.track_id) {
             Ok(()) => format!("OK: deleted track {}", params.0.track_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // === Return busses (effect sends) ===
+
+    #[tool(
+        description = "List all return busses (effect-send destinations) with their fader settings."
+    )]
+    async fn list_return_busses(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.list_return_busses() {
+            Ok(busses) => to_json(&busses),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Create a return bus (a sub-mix with its own effect chain, fed by track sends). Returns its ID."
+    )]
+    async fn create_return_bus(&self, params: Parameters<CreateReturnBusParam>) -> String {
+        if let Err(e) = validate_name("return bus", &params.0.name) {
+            return validation_err(e);
+        }
+        match self.bridge.create_return_bus(&params.0.name) {
+            Ok(id) => format!("OK: created return bus {id} '{}'", params.0.name),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Delete a return bus and remove every track send that targeted it.")]
+    async fn delete_return_bus(&self, params: Parameters<ReturnBusIdParam>) -> String {
+        match self.bridge.delete_return_bus(params.0.return_id) {
+            Ok(()) => format!("OK: deleted return bus {}", params.0.return_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Set a return bus's output volume (0.0 = silent, 1.0 = full).")]
+    async fn set_return_bus_volume(&self, params: Parameters<SetReturnBusVolumeParam>) -> String {
+        if let Err(e) = validate_range("volume", params.0.volume, 0.0, 2.0) {
+            return validation_err(e);
+        }
+        match self
+            .bridge
+            .set_return_bus_volume(params.0.return_id, params.0.volume)
+        {
+            Ok(()) => format!(
+                "OK: return bus {} volume set to {}",
+                params.0.return_id, params.0.volume
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Set a return bus's output pan (-1.0 = left, 0.0 = center, 1.0 = right).")]
+    async fn set_return_bus_pan(&self, params: Parameters<SetReturnBusPanParam>) -> String {
+        if let Err(e) = validate_range("pan", params.0.pan, -1.0, 1.0) {
+            return validation_err(e);
+        }
+        match self
+            .bridge
+            .set_return_bus_pan(params.0.return_id, params.0.pan)
+        {
+            Ok(()) => format!(
+                "OK: return bus {} pan set to {}",
+                params.0.return_id, params.0.pan
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Mute or unmute a return bus.")]
+    async fn set_return_bus_mute(&self, params: Parameters<SetReturnBusMuteParam>) -> String {
+        match self
+            .bridge
+            .set_return_bus_mute(params.0.return_id, params.0.muted)
+        {
+            Ok(()) => format!(
+                "OK: return bus {} {}",
+                params.0.return_id,
+                if params.0.muted { "muted" } else { "unmuted" }
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Rename a return bus.")]
+    async fn rename_return_bus(&self, params: Parameters<RenameReturnBusParam>) -> String {
+        if let Err(e) = validate_name("return bus", &params.0.name) {
+            return validation_err(e);
+        }
+        match self
+            .bridge
+            .rename_return_bus(params.0.return_id, &params.0.name)
+        {
+            Ok(()) => format!(
+                "OK: return bus {} renamed to '{}'",
+                params.0.return_id, params.0.name
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Add or update a track's effect send to a return bus (upsert by target). pre_fader taps before the channel fader."
+    )]
+    async fn set_track_send(&self, params: Parameters<SetTrackSendParam>) -> String {
+        if let Err(e) = validate_range("level", params.0.level, 0.0, 2.0) {
+            return validation_err(e);
+        }
+        match self.bridge.set_track_send(
+            params.0.track_id,
+            params.0.return_id,
+            params.0.level,
+            params.0.pre_fader,
+        ) {
+            Ok(()) => format!(
+                "OK: track {} sends {} to return bus {} ({})",
+                params.0.track_id,
+                params.0.level,
+                params.0.return_id,
+                if params.0.pre_fader {
+                    "pre-fader"
+                } else {
+                    "post-fader"
+                }
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Remove a track's effect send to a return bus.")]
+    async fn remove_track_send(&self, params: Parameters<RemoveTrackSendParam>) -> String {
+        match self
+            .bridge
+            .remove_track_send(params.0.track_id, params.0.return_id)
+        {
+            Ok(()) => format!(
+                "OK: removed track {} send to return bus {}",
+                params.0.track_id, params.0.return_id
+            ),
             Err(e) => format!("Error: {e}"),
         }
     }

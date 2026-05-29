@@ -17,7 +17,7 @@ phase layers onto it.
 - [x] **Phase 4** — Remove `note.instrument` (route only via `track.instrument`; preview via threaded instrument)
 - [x] **Phase 5** — Orphan-preview: **kept** the engine-side branch; scratch-track rework closed as not-worth-it; added the missing preview/lifecycle tests
 - [x] **Phase 6** — Save/load + MCP cleanup (per-note `instrument_id` removed; descriptions + track color via MCP/GUI; instrument/patch/group color split to its own PR — engine refactor)
-- [ ] **Phase 7** — Sends/returns + mixer view (§1.4 payoff, now just taps off the bus)
+- [~] **Phase 7** — Sends/returns + mixer view (§1.4): **7a (engine sends + dynamic return busses + persistence + MCP) done**; 7b (mixer view) + return effect-chain persistence remain
 - [ ] **Phase 8** — (future) Independent faders for *shared* instruments — per-voice-tagged per-track bus
 
 **Revised direction (2026-05-27, user decision):** strict 1 track ↔ 1 instrument is
@@ -269,14 +269,32 @@ by bus-routing need, not sold as a simplification.
   setter add — split out to keep this PR free of `synth_engine` changes.
 
 ### Phase 7 — Sends/returns + mixer view (§1.4)
-**Status:** ☐ Not started
+**Status:** ◑ 7a done (engine sends + dynamic return busses + persistence + MCP); 7b (mixer view) next
 
-The per-channel bus from Phase 1 already exists, so this is now just adding taps off
+The per-channel bus from Phase 1 already exists, so this was just adding taps off
 each bus — not building bus infrastructure.
 
-- [ ] Add send taps off each channel bus (pre/post-fader configurable) → return
-  busses with their own effect chains.
-- [ ] Dedicated mixer view with faders, pan, sends, inserts.
+- [x] **7a — send taps + dynamic return busses (engine).** `TrackSend`
+  (target/level/pre-or-post-fader) on `SequencerTrack`; taps added in
+  `mix_channel_busses` into per-return accumulation buffers, then each return runs its
+  own `EffectChain` and is mixed back to master (`ReturnBusChannel::mix_into`). RT-safe:
+  per-channel send snapshot pre-allocated (`MAX_CHANNEL_SENDS`, no audio-thread alloc);
+  return channels created/removed via `CreateReturnBus`/`RemoveReturnBus` off the hot
+  path. **Return-bus definitions live in the `Song`** (name/volume/pan/mute), read live
+  by the engine each block like track controls (Model C) — so routing + faders
+  round-trip via save/load automatically and are reconstructed on load
+  (`project_apply`) and in the offline renderer. Effects on returns via
+  `AddReturnEffect`/`RemoveReturnEffect`/`SetReturnEffect{Parameter,Enabled}`. MCP:
+  `create_/delete_/list_return_busses`, `set_return_bus_volume/pan/mute`,
+  `rename_return_bus`, `set_/remove_track_send` (+ sends surfaced on `list_tracks`).
+  Tests at every layer (engine DSP/commands/send-resolution/audio, sequencer serde
+  round-trip, MCP bridge round-trip); fmt/build/clippy/test all clean.
+- [ ] **Deferred — return effect-chain *content* persistence.** Return-bus effect
+  chains (the reverb instance + its params) are not yet saved/loaded — same level as
+  master effects today. Needs serializing each return's chain (type + params via
+  `AudioEffect::get_params`) and rebuilding on load (`create_effect` +
+  `AddReturnEffect` + `SetReturnEffectParameter`).
+- [ ] **7b — dedicated mixer view** with faders, pan, sends, inserts.
 
 ### Phase 8 — (future) Independent faders for shared instruments
 **Status:** ☐ Not started — deferred, build only if needed

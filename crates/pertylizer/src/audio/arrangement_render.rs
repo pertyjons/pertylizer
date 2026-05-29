@@ -396,6 +396,15 @@ impl OfflineEngineSession {
             song: Arc::clone(song),
         });
 
+        // Reconstruct the song's return-bus channels so sends route correctly
+        // in the offline render (idempotent: re-creating an existing id is a
+        // no-op). Faders are read live from the song; effect chains on returns
+        // are not yet persisted, so offline renders hear the dry-summed returns.
+        for bus in song.read().return_busses() {
+            self.handle
+                .send_blocking(EngineCommand::CreateReturnBus { id: bus.id });
+        }
+
         // Sentinel sample_position in the warm-up block keeps the engine from
         // seeing a duplicate position 0 when the real render begins. Only
         // needed on the first call — subsequent renders inherit the same

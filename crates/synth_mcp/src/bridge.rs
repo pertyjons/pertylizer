@@ -22,8 +22,8 @@ use crate::types::{
     ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo, InputStateInfo, InstrumentInfo,
     InstrumentProfileResult, MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo,
     OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry,
-    ProjectLintReport, ProjectSchemaInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo,
-    TrackInfo, UiSnapshot,
+    ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo, SampleInfo, SamplerStateInfo,
+    SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -686,6 +686,41 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Delete a track and its placements.
     fn delete_track(&self, track_id: u16) -> Result<(), McpBridgeError>;
+
+    // === Return busses (effect sends) ===
+
+    /// List all return busses.
+    fn list_return_busses(&self) -> Result<Vec<ReturnBusInfo>, McpBridgeError>;
+
+    /// Create a new return bus; returns its id.
+    fn create_return_bus(&self, name: &str) -> Result<u16, McpBridgeError>;
+
+    /// Delete a return bus and strip every track send that targeted it.
+    fn delete_return_bus(&self, return_id: u16) -> Result<(), McpBridgeError>;
+
+    /// Set a return bus's output volume (0.0-1.0).
+    fn set_return_bus_volume(&self, return_id: u16, volume: f32) -> Result<(), McpBridgeError>;
+
+    /// Set a return bus's output pan (-1.0 = left, 0.0 = center, 1.0 = right).
+    fn set_return_bus_pan(&self, return_id: u16, pan: f32) -> Result<(), McpBridgeError>;
+
+    /// Mute or unmute a return bus.
+    fn set_return_bus_mute(&self, return_id: u16, muted: bool) -> Result<(), McpBridgeError>;
+
+    /// Rename a return bus.
+    fn rename_return_bus(&self, return_id: u16, name: &str) -> Result<(), McpBridgeError>;
+
+    /// Add or update a track's send to a return bus (upsert by target).
+    fn set_track_send(
+        &self,
+        track_id: u16,
+        return_id: u16,
+        level: f32,
+        pre_fader: bool,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Remove a track's send to a return bus.
+    fn remove_track_send(&self, track_id: u16, return_id: u16) -> Result<(), McpBridgeError>;
 
     // === Pattern management ===
 

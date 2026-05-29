@@ -50,6 +50,10 @@ pub enum McpBridgeError {
     #[error("track not found: {0}")]
     TrackNotFound(u16),
 
+    /// Return bus not found.
+    #[error("return bus not found: {0}")]
+    ReturnBusNotFound(u16),
+
     /// MIDI note out of valid range.
     #[error("invalid MIDI note {0}: must be 0-127")]
     InvalidMidiNote(u8),

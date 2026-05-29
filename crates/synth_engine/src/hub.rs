@@ -331,6 +331,8 @@ impl EngineHub {
             | EngineCommand::SetEffectParameter { .. }
             | EngineCommand::SetMasterVolume(_)
             | EngineCommand::SetGlideTime(_)
+            | EngineCommand::SetReturnEffectParameter { .. }
+            | EngineCommand::SetReturnEffectEnabled { .. }
             | EngineCommand::SetFocusedInstrument(_) => perms.can_modify_params,
 
             // Topology changes
@@ -345,6 +347,10 @@ impl EngineHub {
             | EngineCommand::SetEffectChainOrder { .. }
             | EngineCommand::AddVisualizer { .. }
             | EngineCommand::RemoveVisualizer { .. }
+            | EngineCommand::CreateReturnBus { .. }
+            | EngineCommand::RemoveReturnBus { .. }
+            | EngineCommand::AddReturnEffect { .. }
+            | EngineCommand::RemoveReturnEffect { .. }
             | EngineCommand::ClearAllModules => perms.can_modify_topology,
 
             // Transport control

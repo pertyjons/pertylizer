@@ -7048,6 +7048,46 @@
       "minItems": 3,
       "type": "array"
     },
+    "ReturnBus": {
+      "description": "Definition of a return bus (effect-send destination) as stored in the song.\n\nThis is the persistent, source-of-truth description — id, name, and fader\n(volume/pan/mute). The engine owns the runtime channel (the effect chain and\naudio buffers) keyed by `id`, and reads this fader live each block, exactly\nas it reads per-track controls (Model C: the song owns channel/routing\ndata). The effect-chain *contents* on a return are engine-side runtime state\nand are not yet persisted here (a follow-up, matching master effects).",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ReturnBusId",
+          "description": "Unique identifier, referenced by [`TrackSend::target`]."
+        },
+        "mute": {
+          "default": false,
+          "description": "Mute (excluded from the master mix).",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "Display name (e.g. \"Reverb\", \"Delay\").",
+          "type": "string"
+        },
+        "pan": {
+          "$ref": "#/$defs/BipolarValue",
+          "description": "Output pan (-1.0 = left, 0.0 = centre, 1.0 = right)."
+        },
+        "volume": {
+          "$ref": "#/$defs/NormalizedValue",
+          "description": "Output fader level (0.0 = silent, 1.0 = unity)."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "volume",
+        "pan"
+      ],
+      "type": "object"
+    },
+    "ReturnBusId": {
+      "description": "Unique identifier for a return bus (effect-send destination).\n\nReturn busses are an engine concept (a sub-mix with its own effect chain),\nbut tracks reference them by this id in their send taps, so the id lives in\nthe sequencer alongside the routing data it keys.",
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": "integer"
+    },
     "RoomShape": {
       "description": "Shape of the simulated room.",
       "examples": [
@@ -7313,6 +7353,13 @@
           "$ref": "#/$defs/BipolarValue",
           "description": "Panning (type-safe: -1.0 = left, 0.0 = center, 1.0 = right)."
         },
+        "sends": {
+          "description": "Effect-send taps from this channel to return busses. Empty by default.",
+          "items": {
+            "$ref": "#/$defs/TrackSend"
+          },
+          "type": "array"
+        },
         "solo": {
           "description": "Solo state.",
           "type": "boolean"
@@ -7416,6 +7463,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "next_return_bus_id": {
+          "default": 0,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
         "next_track_id": {
           "format": "uint16",
           "maximum": 65535,
@@ -7425,6 +7479,13 @@
         "patterns": {
           "items": {
             "$ref": "#/$defs/Pattern"
+          },
+          "type": "array"
+        },
+        "return_busses": {
+          "description": "Return busses (effect-send destinations) referenced by `TrackSend`s.\nSource of truth for the busses' fader (read live by the engine).",
+          "items": {
+            "$ref": "#/$defs/ReturnBus"
           },
           "type": "array"
         },
@@ -7632,6 +7693,29 @@
         "Solo"
       ],
       "type": "string"
+    },
+    "TrackSend": {
+      "description": "A send tap from a track's channel to a return bus.\n\nThe channel's signal is summed into the target return bus scaled by `level`.\n`pre_fader` selects whether the tap is taken before (`true`) or after\n(`false`, the default) the channel fader/pan — post-fader is the common case\n(the send follows the fader), pre-fader keeps the send constant regardless of\nthe channel level (e.g. a fully-wet cue/monitor send).",
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/NormalizedValue",
+          "description": "Send level (0.0 = no send, 1.0 = unity)."
+        },
+        "pre_fader": {
+          "default": false,
+          "description": "Tap point: `true` = pre-fader, `false` = post-fader.",
+          "type": "boolean"
+        },
+        "target": {
+          "$ref": "#/$defs/ReturnBusId",
+          "description": "Destination return bus."
+        }
+      },
+      "required": [
+        "target",
+        "level"
+      ],
+      "type": "object"
     },
     "Velocity": {
       "description": "MIDI velocity (0-127, normalized to 0.0-1.0).\n\nRepresents how hard a note was played.\nStored internally as normalized f32 for smooth processing.",

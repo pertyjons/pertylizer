@@ -1,5 +1,22 @@
 # Version History
 
+## [0.298.0] - 2026-05-29
+
+### Channel-strip Phase 7a — sends & return busses (engine)
+
+Tracks can now send to dynamic **return busses** — sub-mixes with their own effect
+chains, fed by per-channel taps and mixed back into the master. `TrackSend`
+(target/level/pre-or-post-fader) lives on the track; return-bus definitions
+(name/volume/pan/mute) live in the `Song` and are read live by the engine each block
+(Model C), so routing + faders round-trip through save/load automatically and are
+reconstructed on load and in the offline renderer. RT-safe: per-channel send snapshots
+are pre-allocated (fixed cap, no audio-thread allocation) and return channels are
+created/removed via commands off the hot path. Effects can be added to a return chain
+(`AddReturnEffect`/…); MCP gains `create_/delete_/list_return_busses`,
+`set_return_bus_volume/pan/mute`, `rename_return_bus`, and `set_/remove_track_send`.
+Return *effect-chain contents* are not yet persisted (a follow-up, matching master
+effects); the mixer view is Phase 7b.
+
 ## [0.297.0] - 2026-05-29
 
 ### Export robustness — MCP introspection tooling (Parallel track)

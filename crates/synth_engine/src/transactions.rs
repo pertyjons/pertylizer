@@ -610,6 +610,7 @@ impl EngineCommand {
             Self::AddInstrument { .. }
             | Self::AddModuleInstance { .. }
             | Self::AddEffectInstance { .. }
+            | Self::AddReturnEffect { .. }
             | Self::AddVisualizer { .. } => return None,
             // AWE commands
             Self::SetAweParameter { param } => Self::SetAweParameter { param: *param },
@@ -654,6 +655,32 @@ impl EngineCommand {
             } => Self::SetEffectChainOrder {
                 instrument_id: *instrument_id,
                 order: order.clone(),
+            },
+
+            // Return-bus commands (all clonable)
+            Self::CreateReturnBus { id } => Self::CreateReturnBus { id: *id },
+            Self::RemoveReturnBus { id } => Self::RemoveReturnBus { id: *id },
+            Self::RemoveReturnEffect { return_id, id } => Self::RemoveReturnEffect {
+                return_id: *return_id,
+                id: *id,
+            },
+            Self::SetReturnEffectParameter {
+                return_id,
+                module_id,
+                param,
+            } => Self::SetReturnEffectParameter {
+                return_id: *return_id,
+                module_id: *module_id,
+                param: *param,
+            },
+            Self::SetReturnEffectEnabled {
+                return_id,
+                module_id,
+                enabled,
+            } => Self::SetReturnEffectEnabled {
+                return_id: *return_id,
+                module_id: *module_id,
+                enabled: *enabled,
             },
 
             // Non-clonable commands (contain move-only types or Arc data)

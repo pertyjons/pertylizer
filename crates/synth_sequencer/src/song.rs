@@ -2,10 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ids::{PatternId, SeqInstrumentId, TrackId};
+use super::ids::{PatternId, ReturnBusId, SeqInstrumentId, TrackId};
 use super::pattern::{Pattern, RowResolution};
 use super::time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
-use super::track::SequencerTrack;
+use super::track::{ReturnBus, SequencerTrack};
 use synth_core::{Bpm, Gain, Semitones};
 
 /// Tempo change event.
@@ -118,6 +118,13 @@ pub struct Song {
     /// Row resolution for pattern grid display and quantization.
     #[serde(default)]
     pub row_resolution: RowResolution,
+
+    /// Return busses (effect-send destinations) referenced by `TrackSend`s.
+    /// Source of truth for the busses' fader (read live by the engine).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    return_busses: Vec<ReturnBus>,
+    #[serde(default)]
+    next_return_bus_id: u16,
 }
 
 impl Song {
@@ -138,6 +145,8 @@ impl Song {
             default_tempo: Bpm::new(120.0),
             default_time_signature: TimeSignature::COMMON,
             row_resolution: RowResolution::default(),
+            return_busses: Vec::new(),
+            next_return_bus_id: 0,
         }
     }
 
@@ -395,6 +404,37 @@ impl Song {
         self.arrangement.retain(|p| p.track_id != id);
         let pos = self.tracks.iter().position(|t| t.id == id)?;
         Some(self.tracks.remove(pos))
+    }
+
+    // --- Return busses (effect sends) --------------------------------------
+
+    /// All return busses.
+    #[must_use]
+    pub fn return_busses(&self) -> &[ReturnBus] {
+        &self.return_busses
+    }
+
+    /// Get a mutable return bus by id.
+    pub fn return_bus_mut(&mut self, id: ReturnBusId) -> Option<&mut ReturnBus> {
+        self.return_busses.iter_mut().find(|b| b.id == id)
+    }
+
+    /// Create a new return bus with an auto-assigned id and return that id.
+    pub fn create_return_bus(&mut self, name: impl Into<String>) -> ReturnBusId {
+        let id = ReturnBusId(self.next_return_bus_id);
+        self.next_return_bus_id = self.next_return_bus_id.saturating_add(1);
+        self.return_busses.push(ReturnBus::new(id, name));
+        id
+    }
+
+    /// Delete a return bus and strip every track send that targeted it.
+    /// Returns the removed definition, if any.
+    pub fn delete_return_bus(&mut self, id: ReturnBusId) -> Option<ReturnBus> {
+        let pos = self.return_busses.iter().position(|b| b.id == id)?;
+        for track in &mut self.tracks {
+            track.sends.retain(|s| s.target != id);
+        }
+        Some(self.return_busses.remove(pos))
     }
 
     /// Check if any track is soloed.
@@ -766,6 +806,63 @@ impl Default for Song {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::track::TrackSend;
+    use synth_core::{BipolarValue, NormalizedValue};
+
+    #[test]
+    fn return_busses_and_sends_round_trip_json() {
+        let mut song = Song::new("rt");
+        let rid = song.create_return_bus("Reverb");
+        {
+            let def = song.return_bus_mut(rid).unwrap();
+            def.volume = NormalizedValue::new(0.7);
+            def.pan = BipolarValue::new(-0.3);
+            def.mute = true;
+        }
+        let tid = song.create_track("lead");
+        song.track_mut(tid).unwrap().sends.push(TrackSend {
+            target: rid,
+            level: NormalizedValue::new(0.4),
+            pre_fader: true,
+        });
+
+        let json = serde_json::to_string(&song).unwrap();
+        let back: Song = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.return_busses().len(), 1);
+        let rb = &back.return_busses()[0];
+        assert_eq!(rb.id, rid);
+        assert_eq!(rb.name, "Reverb");
+        assert!((rb.volume.as_f32() - 0.7).abs() < 1e-6);
+        assert!((rb.pan.as_f32() - (-0.3)).abs() < 1e-6);
+        assert!(rb.mute);
+
+        let t = back.tracks().next().unwrap();
+        assert_eq!(t.sends.len(), 1);
+        assert_eq!(t.sends[0].target, rid);
+        assert!((t.sends[0].level.as_f32() - 0.4).abs() < 1e-6);
+        assert!(t.sends[0].pre_fader);
+    }
+
+    #[test]
+    fn delete_return_bus_strips_targeting_sends() {
+        let mut song = Song::new("rt");
+        let rid = song.create_return_bus("Reverb");
+        let tid = song.create_track("lead");
+        song.track_mut(tid)
+            .unwrap()
+            .sends
+            .push(TrackSend::new(rid, NormalizedValue::MAX));
+        assert_eq!(song.tracks().next().unwrap().sends.len(), 1);
+
+        song.delete_return_bus(rid);
+        assert!(song.return_busses().is_empty());
+        assert_eq!(
+            song.tracks().next().unwrap().sends.len(),
+            0,
+            "sends targeting a deleted return bus must be removed"
+        );
+    }
 
     #[test]
     fn test_song_creation() {

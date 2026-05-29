@@ -26,6 +26,7 @@ pub mod instrument;
 pub mod instrument_mapping;
 pub mod metering;
 pub mod recording;
+pub mod return_bus;
 pub mod sequencer_engine;
 pub mod shared_state;
 pub mod state;
@@ -56,6 +57,7 @@ pub use instrument::{Instrument, InstrumentCategory, InstrumentId, MidiChannel};
 pub use instrument_mapping::InstrumentMapping;
 pub use metering::*;
 pub use recording::RecordingState;
+pub use return_bus::ReturnBusChannel;
 pub use sequencer_engine::{PlayState, SequencerEngine};
 pub use shared_state::{
     AtomicF32, ConnectionSnapshot, InstrumentSnapshot, ModuleStateSnapshot, SharedEngineState,

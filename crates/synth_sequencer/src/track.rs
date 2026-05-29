@@ -2,8 +2,75 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ids::{SeqInstrumentId, TrackId};
+use super::ids::{ReturnBusId, SeqInstrumentId, TrackId};
 use synth_core::{BipolarValue, NormalizedValue};
+
+/// A send tap from a track's channel to a return bus.
+///
+/// The channel's signal is summed into the target return bus scaled by `level`.
+/// `pre_fader` selects whether the tap is taken before (`true`) or after
+/// (`false`, the default) the channel fader/pan — post-fader is the common case
+/// (the send follows the fader), pre-fader keeps the send constant regardless of
+/// the channel level (e.g. a fully-wet cue/monitor send).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TrackSend {
+    /// Destination return bus.
+    pub target: ReturnBusId,
+    /// Send level (0.0 = no send, 1.0 = unity).
+    pub level: NormalizedValue,
+    /// Tap point: `true` = pre-fader, `false` = post-fader.
+    #[serde(default)]
+    pub pre_fader: bool,
+}
+
+impl TrackSend {
+    /// Create a post-fader send at the given level.
+    #[must_use]
+    pub fn new(target: ReturnBusId, level: NormalizedValue) -> Self {
+        Self {
+            target,
+            level,
+            pre_fader: false,
+        }
+    }
+}
+
+/// Definition of a return bus (effect-send destination) as stored in the song.
+///
+/// This is the persistent, source-of-truth description — id, name, and fader
+/// (volume/pan/mute). The engine owns the runtime channel (the effect chain and
+/// audio buffers) keyed by `id`, and reads this fader live each block, exactly
+/// as it reads per-track controls (Model C: the song owns channel/routing
+/// data). The effect-chain *contents* on a return are engine-side runtime state
+/// and are not yet persisted here (a follow-up, matching master effects).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReturnBus {
+    /// Unique identifier, referenced by [`TrackSend::target`].
+    pub id: ReturnBusId,
+    /// Display name (e.g. "Reverb", "Delay").
+    pub name: String,
+    /// Output fader level (0.0 = silent, 1.0 = unity).
+    pub volume: NormalizedValue,
+    /// Output pan (-1.0 = left, 0.0 = centre, 1.0 = right).
+    pub pan: BipolarValue,
+    /// Mute (excluded from the master mix).
+    #[serde(default)]
+    pub mute: bool,
+}
+
+impl ReturnBus {
+    /// Create a return bus at unity gain / centre pan.
+    #[must_use]
+    pub fn new(id: ReturnBusId, name: impl Into<String>) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            volume: NormalizedValue::MAX,
+            pan: BipolarValue::CENTER,
+            mute: false,
+        }
+    }
+}
 
 /// Track playback mode - determines how notes are allocated to voices.
 #[derive(
@@ -45,6 +112,9 @@ pub struct SequencerTrack {
     pub color: TrackColor,
     /// Playback mode (polyphonic or mono-voice).
     pub mode: TrackMode,
+    /// Effect-send taps from this channel to return busses. Empty by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sends: Vec<TrackSend>,
 }
 
 impl SequencerTrack {
@@ -62,6 +132,7 @@ impl SequencerTrack {
             solo: false,
             color: TrackColor::default(),
             mode: TrackMode::default(),
+            sends: Vec::new(),
         }
     }
 

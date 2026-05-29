@@ -455,6 +455,24 @@ impl SeqInstrumentId {
     }
 }
 
+/// Unique identifier for a return bus (effect-send destination).
+///
+/// Return busses are an engine concept (a sub-mix with its own effect chain),
+/// but tracks reference them by this id in their send taps, so the id lives in
+/// the sequencer alongside the routing data it keys.
+#[must_use]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub struct ReturnBusId(pub u16);
+
+impl ReturnBusId {
+    /// Create a new return-bus ID.
+    pub fn new(id: u16) -> Self {
+        Self(id)
+    }
+}
+
 /// Unique identifier for a note within a pattern.
 /// Used for selection, undo/redo, and editing operations.
 #[must_use]

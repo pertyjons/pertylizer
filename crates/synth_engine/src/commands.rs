@@ -18,7 +18,7 @@ use synth_core::{
     Seconds, Semitones, Velocity,
 };
 use synth_core::{ModuleType, Param};
-use synth_sequencer::{PatternId, SeqInstrumentId, Tick, TrackId};
+use synth_sequencer::{PatternId, ReturnBusId, SeqInstrumentId, Tick, TrackId};
 
 /// Unique identifier for a module instance.
 ///
@@ -300,6 +300,45 @@ pub enum EngineCommand {
     SetInstrumentSolo {
         instrument_id: InstrumentId,
         solo: bool,
+    },
+
+    // === Return busses (effect sends) ===
+    /// Create the engine-side runtime channel for a return bus. The bus's
+    /// definition (name, fader) lives in the song; the engine reads the fader
+    /// live each block. Re-using an existing id is a no-op (ids come from the
+    /// song / project load).
+    CreateReturnBus { id: ReturnBusId },
+
+    /// Remove a return bus's runtime channel by id. Send taps that referenced
+    /// it become inert (resolved to no destination on the next block).
+    RemoveReturnBus { id: ReturnBusId },
+
+    /// Add a pre-created effect instance to a return bus's effect chain
+    /// (real-time safe: the effect is built off the audio thread).
+    AddReturnEffect {
+        return_id: ReturnBusId,
+        id: ModuleId,
+        effect: Box<dyn synth_core::AudioEffect>,
+    },
+
+    /// Remove an effect from a return bus's effect chain.
+    RemoveReturnEffect {
+        return_id: ReturnBusId,
+        id: ModuleId,
+    },
+
+    /// Set a parameter on an effect in a return bus's effect chain.
+    SetReturnEffectParameter {
+        return_id: ReturnBusId,
+        module_id: ModuleId,
+        param: Param,
+    },
+
+    /// Enable or bypass an effect in a return bus's effect chain.
+    SetReturnEffectEnabled {
+        return_id: ReturnBusId,
+        module_id: ModuleId,
+        enabled: bool,
     },
 
     // === Note control ===
@@ -1250,6 +1289,42 @@ impl std::fmt::Debug for EngineCommand {
                 .debug_struct("LoadSampleData")
                 .field("instrument_id", instrument_id)
                 .field("module_id", module_id)
+                .finish(),
+            Self::CreateReturnBus { id } => {
+                f.debug_struct("CreateReturnBus").field("id", id).finish()
+            }
+            Self::RemoveReturnBus { id } => {
+                f.debug_struct("RemoveReturnBus").field("id", id).finish()
+            }
+            Self::AddReturnEffect { return_id, id, .. } => f
+                .debug_struct("AddReturnEffect")
+                .field("return_id", return_id)
+                .field("id", id)
+                .finish(),
+            Self::RemoveReturnEffect { return_id, id } => f
+                .debug_struct("RemoveReturnEffect")
+                .field("return_id", return_id)
+                .field("id", id)
+                .finish(),
+            Self::SetReturnEffectParameter {
+                return_id,
+                module_id,
+                param,
+            } => f
+                .debug_struct("SetReturnEffectParameter")
+                .field("return_id", return_id)
+                .field("module_id", module_id)
+                .field("param", param)
+                .finish(),
+            Self::SetReturnEffectEnabled {
+                return_id,
+                module_id,
+                enabled,
+            } => f
+                .debug_struct("SetReturnEffectEnabled")
+                .field("return_id", return_id)
+                .field("module_id", module_id)
+                .field("enabled", enabled)
                 .finish(),
         }
     }

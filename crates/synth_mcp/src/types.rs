@@ -561,6 +561,35 @@ pub struct TrackInfo {
     pub mute: bool,
     /// Whether the track is soloed.
     pub solo: bool,
+    /// Effect sends from this track to return busses. Empty when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sends: Vec<SendInfo>,
+}
+
+/// An effect send from a track to a return bus.
+#[derive(Debug, Clone, Serialize)]
+pub struct SendInfo {
+    /// Destination return-bus ID.
+    pub target: u16,
+    /// Send level (0.0 = none, 1.0 = unity).
+    pub level: f32,
+    /// `true` = pre-fader tap, `false` = post-fader.
+    pub pre_fader: bool,
+}
+
+/// Information about a return bus (effect-send destination).
+#[derive(Debug, Clone, Serialize)]
+pub struct ReturnBusInfo {
+    /// Return-bus ID (referenced by track sends).
+    pub id: u16,
+    /// Display name.
+    pub name: String,
+    /// Output fader level (0.0-1.0).
+    pub volume: f32,
+    /// Output pan (-1.0 = left, 0.0 = center, 1.0 = right).
+    pub pan: f32,
+    /// Whether the bus is muted.
+    pub mute: bool,
 }
 
 /// Information about a pattern placement in the arrangement.

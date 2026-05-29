@@ -1446,6 +1446,15 @@ impl SynthBridge for AppSynthBridge {
                 pan: t.pan.as_f32(),
                 mute: t.mute,
                 solo: t.solo,
+                sends: t
+                    .sends
+                    .iter()
+                    .map(|s| synth_mcp::SendInfo {
+                        target: s.target.0,
+                        level: s.level.as_f32(),
+                        pre_fader: s.pre_fader,
+                    })
+                    .collect(),
             })
             .collect();
         tracks.sort_by_key(|t| t.id);
@@ -2590,6 +2599,135 @@ impl SynthBridge for AppSynthBridge {
         let tid = synth_sequencer::TrackId(track_id);
         song.delete_track(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        Ok(())
+    }
+
+    // === Return busses (effect sends) ===
+
+    fn list_return_busses(&self) -> Result<Vec<synth_mcp::ReturnBusInfo>, McpBridgeError> {
+        let song = self.shared.song.read();
+        Ok(song
+            .return_busses()
+            .iter()
+            .map(|b| synth_mcp::ReturnBusInfo {
+                id: b.id.0,
+                name: b.name.clone(),
+                volume: b.volume.as_f32(),
+                pan: b.pan.as_f32(),
+                mute: b.mute,
+            })
+            .collect())
+    }
+
+    fn create_return_bus(&self, name: &str) -> Result<u16, McpBridgeError> {
+        let id = {
+            let mut song = self.shared.song.write();
+            song.create_return_bus(name)
+        };
+        // Allocate the engine-side runtime channel (off the audio hot path).
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::CreateReturnBus { id })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "CreateReturnBus",
+            });
+        }
+        Ok(id.0)
+    }
+
+    fn delete_return_bus(&self, return_id: u16) -> Result<(), McpBridgeError> {
+        let id = synth_sequencer::ReturnBusId(return_id);
+        {
+            let mut song = self.shared.song.write();
+            song.delete_return_bus(id)
+                .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
+        }
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::RemoveReturnBus { id })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "RemoveReturnBus",
+            });
+        }
+        Ok(())
+    }
+
+    fn set_return_bus_volume(&self, return_id: u16, volume: f32) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let bus = song
+            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
+        bus.volume = synth_core::NormalizedValue::new(volume);
+        Ok(())
+    }
+
+    fn set_return_bus_pan(&self, return_id: u16, pan: f32) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let bus = song
+            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
+        bus.pan = synth_core::BipolarValue::new(pan);
+        Ok(())
+    }
+
+    fn set_return_bus_mute(&self, return_id: u16, muted: bool) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let bus = song
+            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
+        bus.mute = muted;
+        Ok(())
+    }
+
+    fn rename_return_bus(&self, return_id: u16, name: &str) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let bus = song
+            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
+        bus.name = name.to_string();
+        Ok(())
+    }
+
+    fn set_track_send(
+        &self,
+        track_id: u16,
+        return_id: u16,
+        level: f32,
+        pre_fader: bool,
+    ) -> Result<(), McpBridgeError> {
+        let rid = synth_sequencer::ReturnBusId(return_id);
+        let mut song = self.shared.song.write();
+        if !song.return_busses().iter().any(|b| b.id == rid) {
+            return Err(McpBridgeError::ReturnBusNotFound(return_id));
+        }
+        let track = song
+            .track_mut(synth_sequencer::TrackId(track_id))
+            .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        let level = synth_core::NormalizedValue::new(level);
+        if let Some(send) = track.sends.iter_mut().find(|s| s.target == rid) {
+            send.level = level;
+            send.pre_fader = pre_fader;
+        } else {
+            track.sends.push(synth_sequencer::TrackSend {
+                target: rid,
+                level,
+                pre_fader,
+            });
+        }
+        Ok(())
+    }
+
+    fn remove_track_send(&self, track_id: u16, return_id: u16) -> Result<(), McpBridgeError> {
+        let rid = synth_sequencer::ReturnBusId(return_id);
+        let mut song = self.shared.song.write();
+        let track = song
+            .track_mut(synth_sequencer::TrackId(track_id))
+            .ok_or(McpBridgeError::TrackNotFound(track_id))?;
+        track.sends.retain(|s| s.target != rid);
         Ok(())
     }
 

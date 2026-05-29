@@ -19,6 +19,7 @@ use crate::instrument::{Instrument, InstrumentId, MidiChannel, soft_clip};
 use crate::instrument_mapping::InstrumentMapping;
 use crate::metering::MeteringSystem;
 use crate::recording::RecordingState;
+use crate::return_bus::ReturnBusChannel;
 use crate::sequencer_engine::{PlayState, SequencerEngine};
 use crate::shared_state::{ConnectionSnapshot, ModuleStateSnapshot};
 use crate::state::EngineState;
@@ -33,7 +34,7 @@ use synth_core::{
 };
 use synth_sequencer::{
     AutoInstrumentParam, AutomationTarget, Glide, GlideFrom, GlideInterp, GlobalParam,
-    NoteExpression, SequencerEvent, VibratoShape,
+    NoteExpression, ReturnBusId, SequencerEvent, VibratoShape,
 };
 
 /// Size of the command ring buffer.
@@ -394,6 +395,17 @@ pub struct SynthEngine {
     /// to the instrument's own fader unchanged.
     track_controls: std::collections::HashMap<InstrumentId, TrackControl>,
 
+    // === Sends / returns (Phase 7) ===
+    /// Return busses (effect-send destinations), each with its own effect
+    /// chain and fader. Created/removed via commands (allocation happens there,
+    /// off the steady-state hot path), processed after the channel-bus stage.
+    /// The fader/mute is a per-block snapshot of the song definition.
+    return_busses: Vec<ReturnBusChannel>,
+    /// Per-instrument resolved send taps, refreshed each block alongside
+    /// `track_controls`. Pre-allocated with `MAX_CHANNEL_SENDS` capacity per
+    /// instrument so the audio thread never grows a vec. Keyed by engine id.
+    channel_sends: std::collections::HashMap<InstrumentId, Vec<ChannelSend>>,
+
     // === Metering ===
     metering: MeteringSystem,
 
@@ -478,6 +490,8 @@ impl SynthEngine {
             graph_output: AudioBuffer::new(1024),
             prev_instrument_outputs: std::collections::HashMap::new(),
             track_controls: std::collections::HashMap::new(),
+            return_busses: Vec::new(),
+            channel_sends: std::collections::HashMap::new(),
             metering: MeteringSystem::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
@@ -753,6 +767,49 @@ impl SynthEngine {
                 solo,
             } => {
                 self.handle_set_instrument_solo(instrument_id, solo);
+            }
+
+            // Return busses (effect sends)
+            EngineCommand::CreateReturnBus { id } => {
+                self.handle_create_return_bus(id);
+            }
+            EngineCommand::RemoveReturnBus { id } => {
+                self.handle_remove_return_bus(id);
+            }
+            EngineCommand::AddReturnEffect {
+                return_id,
+                id,
+                effect,
+            } => {
+                self.handle_add_return_effect(return_id, id, effect);
+            }
+            EngineCommand::RemoveReturnEffect { return_id, id } => {
+                if let Some(bus) = self.return_busses.iter_mut().find(|b| b.id() == return_id) {
+                    bus.effect_chain_mut().remove_effect(id);
+                }
+            }
+            EngineCommand::SetReturnEffectParameter {
+                return_id,
+                module_id,
+                param,
+            } => {
+                if let Some(bus) = self.return_busses.iter_mut().find(|b| b.id() == return_id)
+                    && let Some(slot) = bus.effect_chain_mut().find_effect_by_id(module_id)
+                {
+                    slot.effect.set_param(param);
+                    slot.state = crate::effect_chain::EnabledState::Active;
+                }
+            }
+            EngineCommand::SetReturnEffectEnabled {
+                return_id,
+                module_id,
+                enabled,
+            } => {
+                if let Some(bus) = self.return_busses.iter_mut().find(|b| b.id() == return_id)
+                    && let Some(slot) = bus.effect_chain_mut().find_effect_by_id(module_id)
+                {
+                    slot.state = crate::effect_chain::EnabledState::from(enabled);
+                }
             }
 
             // Note control
@@ -1305,6 +1362,10 @@ impl SynthEngine {
         // Pre-allocate the track-control entry (neutral until a track claims it).
         self.track_controls
             .insert(instrument.id(), TrackControl::NEUTRAL);
+        // Pre-allocate the per-channel send list at full capacity so the audio
+        // thread refreshes it (clear + push) without ever growing the vec.
+        self.channel_sends
+            .insert(instrument.id(), Vec::with_capacity(MAX_CHANNEL_SENDS));
         self.instruments.push(instrument);
         self.update_shared_instruments();
     }
@@ -1330,6 +1391,7 @@ impl SynthEngine {
             // Drop this instrument's sidechain cache and track-control entry.
             self.prev_instrument_outputs.remove(&instrument_id);
             self.track_controls.remove(&instrument_id);
+            self.channel_sends.remove(&instrument_id);
             // Clear any sidechain references that pointed at this id.
             for inst in &mut self.instruments {
                 if inst.sidechain_source_id() == Some(instrument_id) {
@@ -1338,6 +1400,38 @@ impl SynthEngine {
             }
             let _ = self.instrument_return_producer.try_push(instrument);
             self.update_shared_instruments();
+        }
+    }
+
+    // ========================================================================
+    // Return-bus (effect-send) management handlers
+    // ========================================================================
+
+    fn handle_create_return_bus(&mut self, id: ReturnBusId) {
+        // Re-using an existing id is a no-op so a project load is idempotent.
+        if self.return_busses.iter().any(|b| b.id() == id) {
+            return;
+        }
+        self.return_busses.push(ReturnBusChannel::new(id));
+    }
+
+    fn handle_remove_return_bus(&mut self, id: ReturnBusId) {
+        if let Some(idx) = self.return_busses.iter().position(|b| b.id() == id) {
+            self.return_busses.remove(idx);
+        }
+        // Stale send taps resolve to no destination on the next
+        // `update_track_controls` and are simply dropped.
+    }
+
+    fn handle_add_return_effect(
+        &mut self,
+        return_id: ReturnBusId,
+        id: ModuleId,
+        effect: Box<dyn synth_core::AudioEffect>,
+    ) {
+        if let Some(bus) = self.return_busses.iter_mut().find(|b| b.id() == return_id) {
+            bus.effect_chain_mut()
+                .add_effect(id, effect, SampleRate::new(self.sample_rate));
         }
     }
 
@@ -2304,6 +2398,9 @@ impl SynthEngine {
         for control in self.track_controls.values_mut() {
             *control = TrackControl::NEUTRAL;
         }
+        for sends in self.channel_sends.values_mut() {
+            sends.clear();
+        }
         let any_solo = song.any_solo();
         let track_auto = self.sequencer.track_auto();
         for track in song.tracks() {
@@ -2320,6 +2417,41 @@ impl SynthEngine {
                     pan: auto.pan.unwrap_or(track.pan),
                     audible: track.is_audible(any_solo) && !auto.muted.unwrap_or(false),
                 };
+            }
+            // Resolve this track's send taps to return-bus indices. Like the
+            // fader, a shared instrument takes the last track's sends for the
+            // block (clear then repopulate). Sends to a missing return bus, or
+            // beyond `MAX_CHANNEL_SENDS`, are dropped.
+            if let Some(list) = self.channel_sends.get_mut(&engine_id) {
+                if !track.sends.is_empty() {
+                    list.clear();
+                }
+                for send in &track.sends {
+                    if list.len() >= MAX_CHANNEL_SENDS {
+                        break;
+                    }
+                    let Some(return_index) = self
+                        .return_busses
+                        .iter()
+                        .position(|b| b.id() == send.target)
+                    else {
+                        continue;
+                    };
+                    list.push(ChannelSend {
+                        return_index,
+                        level: send.level.as_f32(),
+                        pre_fader: send.pre_fader,
+                    });
+                }
+            }
+        }
+        // Snapshot the return-bus faders from the song into the runtime
+        // channels (the song is the source of truth; the engine reads live,
+        // mirroring per-track controls). A channel with no matching song def
+        // keeps its previous fader and simply isn't driven.
+        for def in song.return_busses() {
+            if let Some(channel) = self.return_busses.iter_mut().find(|c| c.id() == def.id) {
+                channel.set_fader(def.volume, def.pan, def.mute);
             }
         }
     }
@@ -2414,15 +2546,30 @@ impl SynthEngine {
                 instrument.process(context, spatial_ctx.as_ref(), &mut self.spatial_voice_bank);
         }
 
+        // Clear each return bus's send-accumulation buffer for this block before
+        // the channel-bus stage taps into it.
+        for bus in &mut self.return_busses {
+            bus.prepare_block(buffer_size);
+        }
+
         // Channel-bus stage: compose each channel's instrument fader with its
-        // owning-track fader and sum into the master mix. Single insertion point
-        // for track controls and sends/returns (Phase 7).
+        // owning-track fader and sum into the master mix, tapping configured
+        // sends into the return busses. Single insertion point for track
+        // controls and sends/returns (Phase 7).
         mix_channel_busses(
             &self.instruments,
             any_soloed,
             &self.track_controls,
+            &self.channel_sends,
+            &mut self.return_busses,
             &mut self.mix_buffer,
         );
+
+        // Process each return bus's effect chain and sum the wet result back
+        // into the master mix (after the dry channels).
+        for bus in &mut self.return_busses {
+            bus.mix_into(context, &mut self.mix_buffer);
+        }
 
         // Capture each instrument's post-effect-chain output for the
         // next callback. Pure copy into pre-allocated buffers — no allocs.
@@ -2510,6 +2657,22 @@ impl TrackControl {
     };
 }
 
+/// Maximum number of send taps resolved per channel each block. Pre-allocated
+/// so `update_track_controls` can refresh the per-channel send list without
+/// growing a vec on the audio thread; extra sends beyond this cap are ignored.
+const MAX_CHANNEL_SENDS: usize = 16;
+
+/// A resolved send tap for one channel: the target return bus *index* (already
+/// resolved from `ReturnBusId` to a position in `return_busses`), the send
+/// level, and the pre/post-fader tap point. Built each block by
+/// `update_track_controls` from the track's `sends`.
+#[derive(Clone, Copy)]
+struct ChannelSend {
+    return_index: usize,
+    level: f32,
+    pre_fader: bool,
+}
+
 /// Channel-bus stage: mix every instrument's channel into the master buffer.
 ///
 /// Channel-strip model: each instrument is a channel whose post-effect,
@@ -2535,6 +2698,8 @@ fn mix_channel_busses(
     instruments: &[Box<Instrument>],
     any_soloed: bool,
     track_controls: &std::collections::HashMap<InstrumentId, TrackControl>,
+    channel_sends: &std::collections::HashMap<InstrumentId, Vec<ChannelSend>>,
+    return_busses: &mut [ReturnBusChannel],
     mix_buffer: &mut AudioBuffer,
 ) {
     let dst = mix_buffer.as_mut_slice();
@@ -2564,12 +2729,54 @@ fn mix_channel_busses(
 
         let src = instrument.last_output_interleaved();
         let frames = src.len().min(dst.len());
+
+        // Send taps into return busses. Pre-fader taps the raw channel signal;
+        // post-fader taps after the channel fader/pan (the common case, so the
+        // send tracks the fader). Linear sum — soft-clip is applied only on the
+        // return's own output, not per-tap.
+        if let Some(sends) = channel_sends.get(&instrument.id()) {
+            for send in sends {
+                if let Some(bus) = return_busses.get_mut(send.return_index) {
+                    apply_send_tap(src, left_gain, right_gain, *send, bus.input_mut());
+                }
+            }
+        }
+
         let mut i = 0;
         while i + 1 < frames {
             dst[i] += soft_clip(src[i] * left_gain);
             dst[i + 1] += soft_clip(src[i + 1] * right_gain);
             i += 2;
         }
+    }
+}
+
+/// Sum one channel's send into a return bus's accumulation buffer.
+///
+/// `pre_fader` taps the raw channel signal (`src` scaled only by the send
+/// level); otherwise the post-fader signal (`src` scaled by the channel
+/// fader/pan gains *and* the send level) is summed — the common case where the
+/// send level tracks the channel fader. Linear, no soft-clip (that is applied
+/// once on the return's own output in [`ReturnBus::mix_into`]).
+#[inline]
+fn apply_send_tap(
+    src: &[f32],
+    left_gain: f32,
+    right_gain: f32,
+    send: ChannelSend,
+    dst: &mut [f32],
+) {
+    let (l, r) = if send.pre_fader {
+        (send.level, send.level)
+    } else {
+        (left_gain * send.level, right_gain * send.level)
+    };
+    let n = src.len().min(dst.len());
+    let mut i = 0;
+    while i + 1 < n {
+        dst[i] += src[i] * l;
+        dst[i + 1] += src[i + 1] * r;
+        i += 2;
     }
 }
 
@@ -3591,6 +3798,228 @@ mod tests {
         assert!(
             low < base * 0.25,
             "module automation should have lowered the cutoff: {low} vs base {base}"
+        );
+    }
+
+    // --- Sends / returns (Phase 7) ------------------------------------------
+
+    use synth_sequencer::{ReturnBusId, Song, TrackSend};
+
+    #[test]
+    fn apply_send_tap_post_fader_scales_by_channel_and_send() {
+        // 2 frames; post-fader multiplies by the channel gains AND the level.
+        let src = [0.2, 0.4, 0.2, 0.4];
+        let send = ChannelSend {
+            return_index: 0,
+            level: 0.5,
+            pre_fader: false,
+        };
+        let mut dst = [0.0f32; 4];
+        apply_send_tap(&src, 0.5, 0.25, send, &mut dst);
+        assert!((dst[0] - 0.2 * 0.5 * 0.5).abs() < 1e-6);
+        assert!((dst[1] - 0.4 * 0.25 * 0.5).abs() < 1e-6);
+        assert!((dst[2] - 0.2 * 0.5 * 0.5).abs() < 1e-6);
+        assert!((dst[3] - 0.4 * 0.25 * 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn apply_send_tap_pre_fader_ignores_channel_gains_and_accumulates() {
+        let src = [0.2, 0.4, 0.2, 0.4];
+        let send = ChannelSend {
+            return_index: 0,
+            level: 0.5,
+            pre_fader: true,
+        };
+        let mut dst = [0.0f32; 4];
+        // Pre-fader: the 0.5/0.25 channel gains must be ignored.
+        apply_send_tap(&src, 0.5, 0.25, send, &mut dst);
+        assert!((dst[0] - 0.2 * 0.5).abs() < 1e-6);
+        assert!((dst[1] - 0.4 * 0.5).abs() < 1e-6);
+        // A second tap accumulates (+=) into the same return buffer.
+        apply_send_tap(&src, 1.0, 1.0, send, &mut dst);
+        assert!((dst[0] - 2.0 * 0.2 * 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn apply_send_tap_clamps_to_shorter_buffer() {
+        let src = [0.2, 0.4, 0.2, 0.4];
+        let send = ChannelSend {
+            return_index: 0,
+            level: 1.0,
+            pre_fader: true,
+        };
+        let mut dst = [0.0f32; 2]; // shorter than src — must not panic
+        apply_send_tap(&src, 1.0, 1.0, send, &mut dst);
+        assert!((dst[0] - 0.2).abs() < 1e-6);
+        assert!((dst[1] - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn return_bus_create_remove_and_fader_synced_from_song() {
+        let (mut engine, mut handle) = SynthEngine::new();
+        handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(0) });
+        handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(1) });
+        engine.process_commands();
+        assert_eq!(engine.return_busses.len(), 2);
+
+        // Re-using an id is a no-op (load idempotence).
+        handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(0) });
+        engine.process_commands();
+        assert_eq!(engine.return_busses.len(), 2);
+
+        // The fader is owned by the song; the engine snapshots it each block.
+        let mut song = Song::default();
+        let id = song.create_return_bus("Reverb"); // → ReturnBusId(0)
+        assert_eq!(id, ReturnBusId(0));
+        let def = song.return_bus_mut(id).unwrap();
+        def.volume = NormalizedValue::new(0.3);
+        def.pan = BipolarValue::new(-0.5);
+        def.mute = true;
+        handle.send(EngineCommand::SetSong {
+            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+        });
+        engine.process_commands();
+        engine.update_track_controls();
+        let bus = engine
+            .return_busses
+            .iter()
+            .find(|b| b.id() == ReturnBusId(0))
+            .unwrap();
+        assert!((bus.volume().as_f32() - 0.3).abs() < 1e-6);
+        assert!((bus.pan().as_f32() - (-0.5)).abs() < 1e-6);
+        assert!(bus.is_muted());
+
+        handle.send(EngineCommand::RemoveReturnBus { id: ReturnBusId(0) });
+        engine.process_commands();
+        assert_eq!(engine.return_busses.len(), 1);
+        assert_eq!(engine.return_busses[0].id(), ReturnBusId(1));
+    }
+
+    #[test]
+    fn update_track_controls_resolves_sends_and_drops_missing() {
+        let (mut engine, mut handle) = SynthEngine::new();
+        add_default_instrument(&mut engine, &mut handle); // FIRST ↔ SeqInstrumentId(0)
+        handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(5) });
+        handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(9) });
+
+        let mut song = Song::default();
+        let tid = song.create_track("t"); // default instrument = SeqInstrumentId(0)
+        let track = song.track_mut(tid).unwrap();
+        track.sends.push(TrackSend {
+            target: ReturnBusId(9),
+            level: NormalizedValue::new(0.5),
+            pre_fader: true,
+        });
+        // A send to a non-existent return bus must be dropped, not panic.
+        track.sends.push(TrackSend {
+            target: ReturnBusId(99),
+            level: NormalizedValue::MAX,
+            pre_fader: false,
+        });
+        handle.send(EngineCommand::SetSong {
+            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+        });
+        engine.process_commands();
+        engine.update_track_controls();
+
+        let sends = &engine.channel_sends[&InstrumentId::FIRST];
+        assert_eq!(sends.len(), 1, "the missing-target send must be dropped");
+        // ReturnBusId(9) was created second → index 1.
+        assert_eq!(sends[0].return_index, 1);
+        assert!((sends[0].level - 0.5).abs() < 1e-6);
+        assert!(sends[0].pre_fader);
+    }
+
+    /// Render `blocks` callbacks of a sustained C4 and return the total output
+    /// energy. `with_send` adds a unity return bus and routes a full post-fader
+    /// send to it via the song.
+    fn render_send_energy(with_send: bool) -> f32 {
+        let (mut engine, mut handle) = SynthEngine::new();
+        add_default_instrument(&mut engine, &mut handle);
+        if with_send {
+            handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(0) });
+            let mut song = Song::default();
+            let tid = song.create_track("t");
+            let track = song.track_mut(tid).unwrap();
+            track.sends.push(TrackSend {
+                target: ReturnBusId(0),
+                level: NormalizedValue::MAX,
+                pre_fader: false,
+            });
+            handle.send(EngineCommand::SetSong {
+                song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+            });
+        }
+        handle.note_on(MidiNote::C4, Velocity::new(0.8));
+        engine.process_commands();
+
+        let context = AudioCallbackContext {
+            sample_rate: synth_core::audio::SampleRate(48000),
+            frames: 256,
+            channels: 2,
+            stream_time: 0.0,
+            sample_position: 0,
+            output_latency: Seconds::ZERO,
+        };
+        let mut out = vec![0.0f32; 256 * 2];
+        let mut energy = 0.0f32;
+        for _ in 0..32 {
+            out.fill(0.0);
+            engine.process(&mut out, &context);
+            energy += out.iter().map(|s| s * s).sum::<f32>();
+        }
+        energy
+    }
+
+    #[test]
+    fn return_effect_commands_add_and_remove_from_chain() {
+        let (mut engine, mut handle) = SynthEngine::new();
+        handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(0) });
+        engine.process_commands();
+
+        let effect_slots = |engine: &SynthEngine| -> usize {
+            engine.return_busses[0]
+                .effect_chain()
+                .slots()
+                .iter()
+                .filter(|s| matches!(s, crate::effect_chain::ChainSlot::Effect(_)))
+                .count()
+        };
+        assert_eq!(effect_slots(&engine), 0);
+
+        handle.send(EngineCommand::AddReturnEffect {
+            return_id: ReturnBusId(0),
+            id: ModuleId::new(ModuleType::Distortion, 1),
+            effect: Box::new(synth_modules::Distortion::new()),
+        });
+        engine.process_commands();
+        assert_eq!(
+            effect_slots(&engine),
+            1,
+            "effect should be added to the return chain"
+        );
+
+        handle.send(EngineCommand::RemoveReturnEffect {
+            return_id: ReturnBusId(0),
+            id: ModuleId::new(ModuleType::Distortion, 1),
+        });
+        engine.process_commands();
+        assert_eq!(
+            effect_slots(&engine),
+            0,
+            "effect should be removed from the return chain"
+        );
+    }
+
+    #[test]
+    fn send_routes_channel_signal_into_return_and_back_to_master() {
+        let baseline = render_send_energy(false);
+        let with_send = render_send_energy(true);
+        assert!(baseline > 1e-4, "baseline render should be audible");
+        assert!(
+            with_send > baseline * 1.3,
+            "a unity post-fader send through an (empty-chain) return bus must add \
+             wet energy to the master mix (baseline={baseline}, with_send={with_send})"
         );
     }
 }

@@ -42,8 +42,8 @@ pub use automation::{AutoInstrumentParam, GlobalParam, TrackParam};
 pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType, ParamId};
 pub use events::SequencerEvent;
 pub use ids::{
-    NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId,
-    TrackIndex,
+    NoteId, PatternId, ReturnBusId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount,
+    TrackId, TrackIndex,
 };
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use note::{Glide, GlideFrom, GlideInterp, Note, NoteExpression, Vibrato, VibratoShape};
@@ -51,15 +51,15 @@ pub use pattern::{Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};
 pub use song::{PatternPlacement, Song, TempoChange, TimeSignatureChange};
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
-pub use track::{SequencerTrack, TrackColor, TrackMode};
+pub use track::{ReturnBus, SequencerTrack, TrackColor, TrackMode, TrackSend};
 
 /// Prelude module for convenient imports.
 pub mod prelude {
     pub use super::automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
     pub use super::events::SequencerEvent;
     pub use super::ids::{
-        NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId,
-        TrackIndex,
+        NoteId, PatternId, ReturnBusId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow,
+        TrackCount, TrackId, TrackIndex,
     };
     pub use super::input::{InputCommand, InputSource};
     pub use super::note::Note;

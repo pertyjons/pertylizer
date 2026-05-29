@@ -63,6 +63,13 @@ pub fn apply_project(
     sender.send(EngineCommand::SetMasterVolume(project.global.master_volume));
     sender.send(EngineCommand::SetGlideTime(project.global.glide_time));
 
+    // Create the engine-side runtime channel for each return bus defined in the
+    // song. Faders are read live from the song; effect chains on returns are
+    // not yet persisted (a follow-up, matching master effects).
+    for bus in project.song.return_busses() {
+        sender.send(EngineCommand::CreateReturnBus { id: bus.id });
+    }
+
     // Bridge the async gap between queued `AddInstrument` commands and the
     // audio thread updating its snapshot — without this, a client calling
     // `load_project` immediately followed by `list_instruments` would see a
