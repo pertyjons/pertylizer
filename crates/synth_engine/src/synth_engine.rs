@@ -27,10 +27,13 @@ use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
 use synth_core::{
     AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue, CcNumber,
     EnvelopeParam, FilterParam, Gain, Hertz, MidiNote, ModuleType, NormalizedValue, Param,
-    PolyModule as PolyModuleTrait, ProcessContext, SampleCount, SampleRate, Seconds, StreamInfo,
-    Velocity,
+    PolyModule as PolyModuleTrait, ProcessContext, SampleCount, SampleRate, Seconds, Semitones,
+    StreamInfo, Velocity,
 };
-use synth_sequencer::{AutoInstrumentParam, AutomationTarget, GlobalParam, SequencerEvent};
+use synth_sequencer::{
+    AutoInstrumentParam, AutomationTarget, Glide, GlideFrom, GlideInterp, GlobalParam,
+    SequencerEvent,
+};
 
 /// Size of the command ring buffer.
 /// Large enough to handle patch loading (100+ modules with params/connections).
@@ -2601,6 +2604,35 @@ fn resolve_instrument_index(
     }
 }
 
+/// Resolve a per-note `NoteTrigger` from a `SequencerEvent::NoteOn`'s expression.
+///
+/// `glide.from` is converted to a target-relative semitone offset (so it is
+/// transpose-invariant): relative `Semitones` pass through; an absolute `Pitch`
+/// becomes `source_midi - target_midi`. RT-safe — no allocation.
+fn note_trigger(
+    legato: bool,
+    glide: &Option<Glide>,
+    target: synth_sequencer::Pitch,
+) -> crate::voice::NoteTrigger {
+    let spec = glide.map(|g| {
+        let from_offset = match g.from {
+            GlideFrom::Semitones(s) => s,
+            GlideFrom::Pitch(p) => {
+                Semitones::new(f32::from(p.as_midi()) - f32::from(target.as_midi()))
+            }
+        };
+        crate::voice::GlideSpec {
+            from_offset,
+            time: Seconds::from(g.time),
+            stepped: matches!(g.interp, GlideInterp::Stepped),
+        }
+    });
+    crate::voice::NoteTrigger {
+        legato,
+        glide: spec,
+    }
+}
+
 /// Route sequencer events to the appropriate instruments.
 ///
 /// Uses `InstrumentMapping` for stable lookup instead of vec-index casting.
@@ -2618,13 +2650,16 @@ fn route_sequencer_events(
                 pitch,
                 velocity,
                 instrument,
+                legato,
+                glide,
                 ..
             } => {
                 let note = MidiNote::new(pitch.as_midi());
                 let vel = *velocity;
+                let trigger = note_trigger(*legato, glide, *pitch);
 
                 if let Some(idx) = resolve_instrument_index(instrument, mapping, instruments) {
-                    instruments[idx].note_on(note, vel);
+                    instruments[idx].note_on_expr(note, vel, trigger);
 
                     if note_event_producer
                         .try_push(NoteEvent::On {

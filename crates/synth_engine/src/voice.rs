@@ -154,6 +154,11 @@ pub(crate) struct GlideState {
     pub(crate) position: NormalizedValue,
     /// Whether glide is active.
     pub(crate) active: bool,
+    /// Stepped (glissando) interpolation: quantize to integer semitones.
+    /// When `true` the trajectory holds at chromatic steps instead of sweeping
+    /// continuously — the *intentional-holds* case (smoothing it would be the
+    /// bug, the inverse of zipper noise).
+    pub(crate) stepped: bool,
 }
 
 impl Default for GlideState {
@@ -165,21 +170,37 @@ impl Default for GlideState {
             time: Seconds::ZERO,
             position: NormalizedValue::MAX,
             active: false,
+            stepped: false,
         }
     }
 }
 
 impl GlideState {
-    /// Start a new glide from current frequency to target.
+    /// Start a new glide from current frequency to target (continuous).
     pub(crate) fn start(&mut self, target_freq: Hertz, glide_time: Seconds) {
-        if glide_time.as_f32() > 0.0
-            && (self.current_freq.as_f32() - target_freq.as_f32()).abs() > 0.01
-        {
-            self.from_freq = self.current_freq;
+        self.start_from(self.current_freq, target_freq, glide_time, false);
+    }
+
+    /// Start a glide with an explicit source frequency.
+    ///
+    /// Unlike [`start`](Self::start) (which glides from the voice's current
+    /// frequency), this seeds both endpoints — used by per-note glide where the
+    /// source pitch is specified by the note, not by whatever was playing.
+    pub(crate) fn start_from(
+        &mut self,
+        from_freq: Hertz,
+        target_freq: Hertz,
+        glide_time: Seconds,
+        stepped: bool,
+    ) {
+        if glide_time.as_f32() > 0.0 && (from_freq.as_f32() - target_freq.as_f32()).abs() > 0.01 {
+            self.from_freq = from_freq;
             self.to_freq = target_freq;
+            self.current_freq = from_freq;
             self.time = glide_time;
             self.position = NormalizedValue::MIN;
             self.active = true;
+            self.stepped = stepped;
         } else {
             // No glide - jump directly
             self.current_freq = target_freq;
@@ -187,6 +208,7 @@ impl GlideState {
             self.to_freq = target_freq;
             self.position = NormalizedValue::MAX;
             self.active = false;
+            self.stepped = false;
         }
     }
 
@@ -214,8 +236,17 @@ impl GlideState {
             // Exponential interpolation (sounds more natural for pitch)
             // f(t) = from * (to/from)^t
             let ratio = self.to_freq.as_f32() / self.from_freq.as_f32().max(f32::EPSILON);
-            self.current_freq =
-                Hertz::new(self.from_freq.as_f32() * ratio.powf(self.position.as_f32()));
+            let raw = self.from_freq.as_f32() * ratio.powf(self.position.as_f32());
+            self.current_freq = if self.stepped {
+                // Glissando: hold at integer semitones relative to the source so
+                // the sweep lands on chromatic steps. Both endpoints are note
+                // frequencies, so the steps coincide with real notes.
+                let from = self.from_freq.as_f32().max(f32::EPSILON);
+                let semis = (12.0 * (raw / from).log2()).round();
+                Hertz::new(from * (semis / 12.0).exp2())
+            } else {
+                Hertz::new(raw)
+            };
         }
 
         self.current_freq
@@ -226,6 +257,34 @@ impl GlideState {
     pub(crate) fn get_frequency(&self) -> Hertz {
         self.current_freq
     }
+}
+
+/// Per-note glide specification, resolved to engine-native types.
+///
+/// `from_offset` is the source pitch expressed as a signed semitone offset from
+/// the note's *own* target pitch — so it is key/transpose invariant and the
+/// engine never needs the sequencer's `GlideFrom`. Built at the sequencer-event
+/// consumer from `synth_sequencer::Glide`.
+#[derive(Debug, Clone, Copy)]
+pub struct GlideSpec {
+    /// Source pitch as a signed semitone offset from the target note.
+    pub from_offset: Semitones,
+    /// Glide time.
+    pub time: Seconds,
+    /// Stepped (glissando) vs continuous (portamento).
+    pub stepped: bool,
+}
+
+/// Per-note expression carried into a voice trigger (taxonomy primitive 2).
+///
+/// `Copy`/alloc-free so it threads through the audio-thread trigger path without
+/// allocation. Default = no per-note expression (current behavior).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoteTrigger {
+    /// Force legato (no envelope retrigger), overriding the allocation mode.
+    pub legato: bool,
+    /// Optional per-note glide; `None` falls back to the instrument glide time.
+    pub glide: Option<GlideSpec>,
 }
 
 /// Default pitch bend range in semitones (standard MIDI is ±2).
@@ -456,19 +515,24 @@ impl Voice {
 
     /// Trigger note on with type-safe velocity.
     pub fn note_on(&mut self, note: MidiNote, velocity: Velocity, time: SamplePosition) {
-        let target_freq = Hertz::new(self.note_to_freq(note));
+        self.note_on_expr(note, velocity, time, NoteTrigger::default());
+    }
 
-        // Start glide from current position if we have a glide time and were already active
+    /// Trigger note on, retriggering the envelope, with per-note expression.
+    ///
+    /// With `trigger.glide` the pitch ramps from the note-specified source; with
+    /// no glide it falls back to the instrument glide time from the current
+    /// frequency (identical to [`note_on`](Self::note_on)).
+    pub fn note_on_expr(
+        &mut self,
+        note: MidiNote,
+        velocity: Velocity,
+        time: SamplePosition,
+        trigger: NoteTrigger,
+    ) {
+        let target_freq = Hertz::new(self.note_to_freq(note));
         let was_active = matches!(self.state, VoiceState::Active { .. });
-        if self.glide_time.as_f32() > 0.0 && was_active {
-            self.glide.start(target_freq, self.glide_time);
-        } else {
-            // No glide - set frequency immediately
-            self.glide.current_freq = target_freq;
-            self.glide.from_freq = target_freq;
-            self.glide.to_freq = target_freq;
-            self.glide.active = false;
-        }
+        self.seed_glide(target_freq, was_active, trigger.glide);
 
         // Set state with embedded note data
         self.state = VoiceState::Active {
@@ -486,15 +550,27 @@ impl Voice {
     ///
     /// Updates the note in the current state if active.
     pub fn glide_to_note(&mut self, new_note: MidiNote) {
+        self.glide_to_note_expr(new_note, NoteTrigger::default());
+    }
+
+    /// Change pitch without retriggering, honoring per-note glide.
+    pub fn glide_to_note_expr(&mut self, new_note: MidiNote, trigger: NoteTrigger) {
         let target_freq = Hertz::new(self.note_to_freq(new_note));
 
-        // Update glide target
-        if self.glide_time.as_f32() > 0.0 {
-            self.glide.start(target_freq, self.glide_time);
-        } else {
-            self.glide.current_freq = target_freq;
-            self.glide.to_freq = target_freq;
-            self.glide.active = false;
+        match trigger.glide {
+            Some(g) => {
+                let from_freq = g.from_offset.apply(target_freq);
+                self.glide
+                    .start_from(from_freq, target_freq, g.time, g.stepped);
+            }
+            None if self.glide_time.as_f32() > 0.0 => {
+                self.glide.start(target_freq, self.glide_time);
+            }
+            None => {
+                self.glide.current_freq = target_freq;
+                self.glide.to_freq = target_freq;
+                self.glide.active = false;
+            }
         }
 
         // Update the note in the state (only if active)
@@ -505,6 +581,30 @@ impl Voice {
         } = &mut self.state
         {
             *note = new_note;
+        }
+    }
+
+    /// Seed the glide state for a (re)triggered note. With an explicit per-note
+    /// glide the source is the note-relative offset; otherwise fall back to the
+    /// instrument glide time from the current frequency.
+    fn seed_glide(&mut self, target_freq: Hertz, was_active: bool, glide: Option<GlideSpec>) {
+        match glide {
+            Some(g) => {
+                let from_freq = g.from_offset.apply(target_freq);
+                self.glide
+                    .start_from(from_freq, target_freq, g.time, g.stepped);
+            }
+            None if self.glide_time.as_f32() > 0.0 && was_active => {
+                self.glide.start(target_freq, self.glide_time);
+            }
+            None => {
+                // No glide - set frequency immediately
+                self.glide.current_freq = target_freq;
+                self.glide.from_freq = target_freq;
+                self.glide.to_freq = target_freq;
+                self.glide.active = false;
+                self.glide.stepped = false;
+            }
         }
     }
 
@@ -872,6 +972,42 @@ mod tests {
         let freq = glide.update(Seconds::new(0.1));
         assert!(!glide.active);
         assert!((freq.as_f32() - 880.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_glide_start_from_explicit_source() {
+        // Per-note glide seeds both endpoints regardless of current_freq.
+        let mut glide = GlideState {
+            current_freq: Hertz::new(100.0),
+            ..Default::default()
+        };
+        glide.start_from(Hertz::A4, Hertz::new(880.0), Seconds::new(0.1), false);
+
+        assert!(glide.active);
+        assert_eq!(glide.from_freq, Hertz::A4);
+        assert_eq!(glide.current_freq, Hertz::A4); // starts at source, not 100 Hz
+        assert_eq!(glide.to_freq, Hertz::new(880.0));
+
+        let freq = glide.update(Seconds::new(0.05));
+        assert!(freq.as_f32() > 440.0 && freq.as_f32() < 880.0);
+    }
+
+    #[test]
+    fn test_glide_stepped_holds_at_semitones() {
+        // Stepped (glissando) quantizes the trajectory to integer semitones
+        // relative to the source. A4 (440) -> A5 (880), one octave = 12 steps.
+        let mut glide = GlideState::default();
+        glide.start_from(Hertz::A4, Hertz::new(880.0), Seconds::new(1.0), true);
+        assert!(glide.stepped);
+
+        // Advance partway and assert the frequency lands on a chromatic step
+        // (440 * 2^(n/12) for integer n), not a continuous value.
+        let freq = glide.update(Seconds::new(0.3)).as_f32();
+        let semis = 12.0 * (freq / 440.0).log2();
+        assert!(
+            (semis - semis.round()).abs() < 1e-3,
+            "stepped glide freq {freq} = {semis} semitones above A4 is not on a step"
+        );
     }
 
     #[test]

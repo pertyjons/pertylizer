@@ -105,38 +105,35 @@ stepped = glissando).
 - **Commit:** `Phase B2: carry per-note legato/glide through SequencerEvent::NoteOn`
 - **Done:** full suite green; code-review (1 low-sev transpose-desync finding) applied.
 
-### B3 — Engine consumption: drive Legato + GlideState per note *(audio thread)*
+### B3 — Engine consumption: drive Legato + GlideState per note *(audio thread)* ✅ (next commit)
 
-- [ ] Extend the trigger signature down the chain to carry per-note expression:
-  `Instrument::note_on` → `VoiceAllocator::note_on` → voice. Add a `Copy`
-  `NoteTrigger { legato: bool, glide: Option<Glide> }` (or pass the two fields)
-  rather than widening to a struct held across the boundary.
-- [ ] At the audio-thread consumer (`synth_engine.rs:2617`) read `legato`/`glide`
-  off the `NoteOn` event and pass them in. No allocation.
-- [ ] Drive existing machinery:
-    - `glide.is_some()` → call `GlideState::start(target_freq, glide_time)`
-      (`voice.rs:174`) on the triggered/continued voice, converting `GlideFrom`
-      → a source `Hertz` (relative semitones applied to target pitch; absolute
-      Pitch → Hertz) and `Glide.time` → `Seconds`.
-    - `legato` → take the `AllocationMode::Legato` no-retrigger branch
-      (`voice_allocator.rs:248`, `glide_to_note`) for this note *regardless of the
-      instrument's configured mode* — i.e. per-note legato overrides the allocator
-      default. Define & comment precedence (roadmap B bullet 3).
-    - `GlideInterp::Stepped` → quantise the glide trajectory to semitone steps
-      (glissando). Smallest correct approach: a stepped variant of `GlideState`'s
-      interpolation (the intentional-holds case — note the zipper-noise inversion
-      in the taxonomy; do **not** smooth it).
-- [ ] Precedence rule documented next to the dispatch: per-note `glide.time`
-  overrides the instrument allocator `glide_time`; absent per-note glide → fall
-  back to the instrument default (current behavior preserved).
-- [ ] Tests: a legato-tagged note pair produces one gate (no retrigger); a glide
-  note produces a pitch ramp; stepped glide holds at semitones. Prefer an
-  offline-render or allocator-level unit test (mirror existing
-  `sequencer_engine` legato tests).
+- [x] Threaded a `Copy` engine-native `NoteTrigger { legato, glide: Option<GlideSpec> }`
+  (`GlideSpec { from_offset: Semitones, time, stepped }`) down
+  `Instrument::note_on_expr` → `VoiceAllocator::note_on_expr` → `Voice::note_on_expr`/
+  `glide_to_note_expr`. The old `note_on`/`glide_to_note` are now thin
+  default-trigger wrappers (behavior-preserving, verified equivalent in review).
+- [x] Consumer (`synth_engine.rs` `note_trigger()`) reads `legato`/`glide` off the
+  event and builds the trigger alloc-free; absolute `GlideFrom::Pitch` → a
+  target-relative semitone offset (transpose-invariant), so the engine never sees
+  sequencer `GlideFrom`.
+- [x] Drive machinery: `GlideState::start_from(from, to, time, stepped)` seeds an
+  explicit source; `legato` forces the no-retrigger `glide_to_note` path
+  regardless of allocation mode; `GlideInterp::Stepped` quantises the trajectory
+  to integer semitones in `update()` (control-rate per block; div-by-zero guarded).
+- [x] Precedence documented at the dispatch: per-note `glide.time` overrides the
+  instrument `glide_time`; absent per-note glide → instrument default (preserved).
+- [x] Tests: per-note legato on a poly allocator → one voice, no retrigger
+  (start_time unchanged); per-note glide seeds explicit source/target; stepped
+  glide holds at semitones; `start_from` seeds both endpoints.
 - **Verify (the audible payoff):** arpeggio of tied notes plays under one held
   gate; slides ramp. `/code-review` **high** (audio-thread, RT-safety). Confirm
   no heap/lock/panic added in `process()`/trigger path.
 - **Commit:** `Phase B3: drive per-note legato + glide from the sequencer trigger`
+- **Done:** full suite green; high code-review = 2 finders, both `[]`.
+- **Deferred (recorded):** per-note glide is **dropped on a stolen voice**
+  (`steal_for`/`pending_note` carry no `NoteTrigger`). Acceptable first cut — note
+  still sounds, just without its glide. Fix later by carrying the trigger through
+  the steal fade-out.
 
 ### B4 — GUI: piano-roll tie/legato toggle + glide handle
 

@@ -877,6 +877,21 @@ impl Instrument {
     /// Returns the voice ID if a voice was allocated.
     /// The note is checked against the key range and transposed before playing.
     pub fn note_on(&mut self, note: MidiNote, velocity: Velocity) -> Option<VoiceId> {
+        self.note_on_expr(note, velocity, crate::voice::NoteTrigger::default())
+    }
+
+    /// Handle a note on event with per-note expression (legato/glide).
+    ///
+    /// Same key-range/transpose handling as [`note_on`](Self::note_on); the
+    /// `trigger` carries the per-note legato/glide resolved from the sequencer
+    /// event. Per-note glide offsets are note-relative, so they survive the
+    /// instrument transpose unchanged.
+    pub fn note_on_expr(
+        &mut self,
+        note: MidiNote,
+        velocity: Velocity,
+        trigger: crate::voice::NoteTrigger,
+    ) -> Option<VoiceId> {
         if self.mute_state.is_muted() {
             return None;
         }
@@ -889,7 +904,8 @@ impl Instrument {
         // Apply transpose
         let transposed_note = self.transpose_note(note)?;
 
-        self.allocator.note_on(transposed_note, velocity)
+        self.allocator
+            .note_on_expr(transposed_note, velocity, trigger)
     }
 
     /// Handle a note off event.

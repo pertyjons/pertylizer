@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::voice::{Voice, VoiceId, VoiceState};
+use crate::voice::{NoteTrigger, Voice, VoiceId, VoiceState};
 use synth_core::{Cents, MidiNote, SampleCount, SamplePosition, Seconds, Velocity, VoiceCount};
 
 /// Voice allocation mode.
@@ -210,14 +210,36 @@ impl VoiceAllocator {
 
     /// Handle note on event.
     pub fn note_on(&mut self, note: MidiNote, velocity: Velocity) -> Option<VoiceId> {
+        self.note_on_expr(note, velocity, NoteTrigger::default())
+    }
+
+    /// Handle note on event with per-note expression (legato/glide).
+    ///
+    /// A per-note `legato` flag overrides the configured allocation mode: the
+    /// note glides onto the active voice without retriggering, regardless of
+    /// whether the instrument is Poly/Mono/Legato/Unison. Per-note `glide`
+    /// overrides the instrument's default glide time; absent it, behavior is
+    /// identical to [`note_on`](Self::note_on).
+    pub fn note_on_expr(
+        &mut self,
+        note: MidiNote,
+        velocity: Velocity,
+        trigger: NoteTrigger,
+    ) -> Option<VoiceId> {
         self.held_notes.retain(|(n, _)| *n != note);
         self.held_notes.push((note, velocity));
 
+        if trigger.legato {
+            // Per-note legato: force the no-retrigger glide path on the active
+            // voice (or trigger normally if no voice is active yet).
+            return self.allocate_mono(note, velocity, false, trigger);
+        }
+
         match self.config.mode {
-            AllocationMode::Polyphonic => self.allocate_poly(note, velocity),
-            AllocationMode::Mono => self.allocate_mono(note, velocity, true),
-            AllocationMode::Legato => self.allocate_mono(note, velocity, false),
-            AllocationMode::Unison => self.allocate_unison(note, velocity),
+            AllocationMode::Polyphonic => self.allocate_poly(note, velocity, trigger),
+            AllocationMode::Mono => self.allocate_mono(note, velocity, true, trigger),
+            AllocationMode::Legato => self.allocate_mono(note, velocity, false, trigger),
+            AllocationMode::Unison => self.allocate_unison(note, velocity, trigger),
         }
     }
 
@@ -371,10 +393,15 @@ impl VoiceAllocator {
     }
 
     /// Allocate voice for polyphonic mode.
-    fn allocate_poly(&mut self, note: MidiNote, velocity: Velocity) -> Option<VoiceId> {
+    fn allocate_poly(
+        &mut self,
+        note: MidiNote,
+        velocity: Velocity,
+        trigger: NoteTrigger,
+    ) -> Option<VoiceId> {
         // First, try to find an idle voice
         if let Some(voice) = self.voices.iter_mut().find(|v| v.is_available()) {
-            voice.note_on(note, velocity, self.time);
+            voice.note_on_expr(note, velocity, self.time, trigger);
             self.last_note = Some(note);
             return Some(voice.id);
         }
@@ -383,7 +410,7 @@ impl VoiceAllocator {
         if self.config.stealing == StealingStrategy::SameNote
             && let Some(voice) = self.voices.iter_mut().find(|v| v.note() == Some(note))
         {
-            voice.note_on(note, velocity, self.time);
+            voice.note_on_expr(note, velocity, self.time, trigger);
             return Some(voice.id);
         }
 
@@ -408,6 +435,7 @@ impl VoiceAllocator {
         note: MidiNote,
         velocity: Velocity,
         retrigger: bool,
+        trigger: NoteTrigger,
     ) -> Option<VoiceId> {
         // Find active voice index or use first
         let voice_idx = self.voices.iter().position(|v| v.is_active()).unwrap_or(0);
@@ -418,15 +446,15 @@ impl VoiceAllocator {
 
         let voice = &mut self.voices[voice_idx];
 
-        // Set glide time on the voice
+        // Set glide time on the voice (per-note glide in `trigger` overrides this).
         voice.set_glide_time(self.config.glide_time);
 
         if retrigger || !voice.is_active() {
-            // Mono mode: retrigger envelope with glide
-            voice.note_on(note, velocity, self.time);
+            // Mono mode (or first note): retrigger envelope with glide.
+            voice.note_on_expr(note, velocity, self.time, trigger);
         } else {
-            // Legato mode: glide to new pitch without retriggering
-            voice.glide_to_note(note);
+            // Legato mode: glide to new pitch without retriggering.
+            voice.glide_to_note_expr(note, trigger);
         }
 
         self.last_note = Some(note);
@@ -434,7 +462,12 @@ impl VoiceAllocator {
     }
 
     /// Allocate all voices for unison mode.
-    fn allocate_unison(&mut self, note: MidiNote, velocity: Velocity) -> Option<VoiceId> {
+    fn allocate_unison(
+        &mut self,
+        note: MidiNote,
+        velocity: Velocity,
+        trigger: NoteTrigger,
+    ) -> Option<VoiceId> {
         let num_voices = self.voices.len();
         let detune_per_voice = self.config.unison_detune / num_voices as f32;
 
@@ -443,7 +476,7 @@ impl VoiceAllocator {
             // e.g. with 4 voices and 10 cents total: -7.5, -2.5, +2.5, +7.5
             let detune = detune_per_voice * (i as f32 - (num_voices as f32 - 1.0) / 2.0);
 
-            self.voices[i].note_on(note, velocity, self.time);
+            self.voices[i].note_on_expr(note, velocity, self.time, trigger);
 
             // Apply detune to oscillators
             self.voices[i].set_oscillator_detune(detune);
@@ -595,6 +628,65 @@ mod tests {
         // And it should be playing the latest note
         let active = allocator.voices.iter().find(|v| v.is_active()).unwrap();
         assert_eq!(active.note(), Some(MidiNote::new(64)));
+    }
+
+    #[test]
+    fn test_per_note_legato_overrides_poly_no_retrigger() {
+        use crate::voice::NoteTrigger;
+
+        // Polyphonic instrument, but a per-note legato flag must force the
+        // no-retrigger glide path onto the active voice.
+        let config = AllocatorConfig {
+            max_voices: VoiceCount::QUAD,
+            mode: AllocationMode::Polyphonic,
+            ..Default::default()
+        };
+        let mut allocator = VoiceAllocator::new(config);
+
+        allocator.note_on(MidiNote::C4, Velocity::new(0.8));
+        allocator.advance_time(SampleCount::new(100));
+
+        let legato = NoteTrigger {
+            legato: true,
+            glide: None,
+        };
+        allocator.note_on_expr(MidiNote::new(64), Velocity::new(0.8), legato);
+
+        // Still one voice (no new allocation), now playing E4, and its
+        // start_time is unchanged → the envelope was NOT retriggered.
+        assert_eq!(allocator.active_voice_count(), 1);
+        let active = allocator.voices.iter().find(|v| v.is_active()).unwrap();
+        assert_eq!(active.note(), Some(MidiNote::new(64)));
+        assert_eq!(active.state.start_time(), Some(SamplePosition::ZERO));
+    }
+
+    #[test]
+    fn test_per_note_glide_seeds_explicit_source() {
+        use crate::voice::{GlideSpec, NoteTrigger};
+        use synth_core::Semitones;
+
+        let config = AllocatorConfig {
+            max_voices: VoiceCount::QUAD,
+            mode: AllocationMode::Polyphonic,
+            ..Default::default()
+        };
+        let mut allocator = VoiceAllocator::new(config);
+
+        // A5 (880 Hz) with a glide starting one octave below (A4, 440 Hz).
+        let trigger = NoteTrigger {
+            legato: false,
+            glide: Some(GlideSpec {
+                from_offset: Semitones::new(-12.0),
+                time: Seconds::new(0.1),
+                stepped: false,
+            }),
+        };
+        allocator.note_on_expr(MidiNote::new(81), Velocity::new(0.8), trigger);
+
+        let voice = allocator.voices.iter().find(|v| v.is_active()).unwrap();
+        assert!(voice.glide.active);
+        assert!((voice.glide.to_freq.as_f32() - 880.0).abs() < 1.0);
+        assert!((voice.glide.from_freq.as_f32() - 440.0).abs() < 1.0);
     }
 
     #[test]
