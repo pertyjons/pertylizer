@@ -10,7 +10,7 @@ mod common;
 
 use synth_core::{BipolarValue, Gain, ModuleType};
 use synth_engine::instrument::InstrumentId;
-use synth_sequencer::{AutomationTarget, GlobalParam, TrackParam};
+use synth_sequencer::{AutomationTarget, GlobalParam, SeqInstrumentId, TrackParam};
 
 use pertylizer::audio::arrangement_render::{OfflineEngineSession, render_arrangement_to_buffer};
 use pertylizer::audio::mix_analysis::analyze_mix_buffer;
@@ -477,5 +477,43 @@ fn global_master_volume_automation_ramps_down() {
     assert!(
         first > second * 1.5,
         "master-volume ramp-down: first half louder (first={first}, second={second})"
+    );
+}
+
+// F4: per-module automation (`AutomationTarget::Module`) must reach the offline
+// render too — the `analyze_*` path runs the same engine `process()` (Play→Seek→
+// process), which routes sequencer Parameter events through the override layer.
+// This is the case the roadmap pitfall worried analysis "reads base values" for;
+// it does not. Ramps the amplifier's `level` param 1.0 → 0.0 via a Module lane
+// and asserts the rendered first half is clearly louder than the second.
+#[test]
+fn module_param_automation_ramps_down() {
+    let rig = setup_with_patch(&sustain_patch());
+    let (song, pattern_id, _track_id) = build_sustained_note_song("ModuleLevelRamp");
+    add_ramp_automation(
+        &song,
+        pattern_id,
+        AutomationTarget::Module {
+            instrument: SeqInstrumentId(0),
+            module_type: ModuleType::Amplifier,
+            instance: 1,
+            param_id: "level".into(),
+        },
+        1.0,
+        0.0,
+    );
+    let shared = McpSharedState::with_song(song);
+
+    let out = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("render");
+
+    let mid = (out.samples.len() / 2) & !1;
+    let first = left_rms(&out.samples[..mid]);
+    let second = left_rms(&out.samples[mid..]);
+    assert!(first > 0.0, "first half should be audible");
+    assert!(
+        first > second * 1.5,
+        "module-param (amp level) ramp-down must reach the offline render: \
+         first={first}, second={second}"
     );
 }

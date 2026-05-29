@@ -177,11 +177,14 @@ generic param path ships, not after. Each is verified against current code.
   + mod_offset` — the automation override replaces the base, then the mod-matrix offset
   adds on top of the override. Stated on the `PolyModule::set_param_override` contract
   and locked by `filter::test_automation_override_then_mod_offset_combine_order`.
-- [ ] **Offline render must apply the override identically.** _DEFERRED (A1/A2 first
-  cut)._ The override layer currently runs in the live `process()` path; the `analyze_*`
-  offline renderers do not yet evaluate automation, so they read base values. Bringing
-  the offline path onto the same clock is future work (a known "offline reader sees
-  state the live engine never wrote" bug class).
+- [x] **Offline render must apply the override identically.** _RESOLVED (F4) — was
+  already satisfied._ The `analyze_*` offline renderer (`OfflineEngineSession`) runs
+  the **same** engine `process()` as live (Play → Seek → process), which advances the
+  sequencer and routes its `Parameter` events through the override layer — so module/
+  track/global automation is applied identically offline. The pitfall predated this
+  offline-session design. Locked by `module_param_automation_ramps_down` (a Module
+  cutoff/level lane audibly ramps the offline render), alongside the existing
+  Track/Global ramp tests.
 - [ ] **`AutomationTarget::Module` `param_id: String` is cloned on the audio thread.**
   _DEFERRED (A1/A2 first cut)._ In `sequencer_engine` the per-tick automation collection
   and event emission `clone()` the target; for a `Module` target that heap-allocates the

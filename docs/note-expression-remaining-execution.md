@@ -105,20 +105,21 @@ override at once; the precedence was unspecified.
   regression; rule confirmed accurate across modules.
 - **Commit:** `Automation F3: define + test mod-matrix vs automation combine order`
 
-### F4 — Offline-render parity for `analyze_*`
-**Why:** the `analyze_*` tools render through `OfflineEngineSession`, which does
-**not** evaluate automation, so analysis reads base values the live engine never
-produced (the known "offline reader sees state the live engine never wrote" bug
-class, cf. 74d18da).
+### F4 — Offline-render parity for `analyze_*` ✅ (next commit) — already satisfied
+**Why (stale premise):** the pitfall assumed `analyze_*` reads base values offline.
 
-- [ ] Drive the sequencer automation collection inside `OfflineEngineSession::
-  render_range` on the same per-block clock as live playback, so module/track/
-  global overrides (and the F1 handles) are applied during offline render.
-- [ ] Test: an instrument with a Module cutoff automation lane analyzed offline
-  reports the swept cutoff contour, not the static base (mirror an existing
-  analyze_* test).
-- **Schema:** none. `/code-review` medium (offline path, not RT).
-- **Commit:** `Automation F4: apply automation overrides in offline render (analyze_* parity)`
+- [x] **Verified by code + test: already correct, no code change needed.**
+  `OfflineEngineSession::render_range` runs the **same** engine `process()` as live
+  (Play → Seek → process), which advances the `SequencerEngine` (collects automation
+  → emits `Parameter` events) and `route_sequencer_events` applies the override. The
+  pitfall predated this offline-session design (the existing determinism tests
+  already cover Track + Global automation offline — just not the A2 `Module` target).
+- [x] Added `module_param_automation_ramps_down` (the missing `AutomationTarget::Module`
+  case): an amp-`level` lane ramped 1.0→0.0 makes the offline first half clearly
+  louder than the second — proof the module override reaches offline audio. Flipped
+  the roadmap pitfall.
+- **Schema:** none. Review: test-only; proves existing behavior + regression guard.
+- **Commit:** `Automation F4: regression test — Module automation reaches offline render`
 
 ### F2 — Stable (non-positional) ModuleId identity
 **Why:** `AutomationTarget::Module` identifies its target positionally
