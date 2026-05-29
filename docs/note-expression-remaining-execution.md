@@ -147,9 +147,11 @@ lane targeting a *removed* module becomes an **orphan** — and the dispatch alr
   change. The roadmap "positional identity" pitfall is corrected to RESOLVED.
 - **Commit:** `Automation F2: verify positional module identity is stable (no migration needed)`
 
-### F-close
-- [ ] Tick the four roadmap "pitfalls" `- [ ]` items + the `docs/TODO.md` follow-ups;
-  `docs/history.md` line; version bump.
+### F-close ✅
+- [x] Ticked the resolved roadmap pitfalls (positional `ModuleId` → RESOLVED via F2;
+  `param_id` clone → RESOLVED via F1) and the `docs/TODO.md` "Stable ModuleId" item;
+  recorded the F1 `Arc<str>` off-thread-drop residual as a new low-priority TODO.
+  `docs/history.md` line + version bump.
 - **Commit:** `Automation deferred follow-ups: history + status`
 
 ---

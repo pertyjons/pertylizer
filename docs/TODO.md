@@ -534,14 +534,20 @@ sequencer→module automation landed (the 6 dead FilterCutoff/ADSR macros now so
 plus the generic `AutomationTarget::Module`). These three were explicitly deferred
 from that first cut and are the remaining open work:
 
-- [ ] **Stable (non-positional) ModuleId identity.** `AutomationTarget::Module`
-  identifies its target positionally by `module_type` + `instance` (mirrors
-  `ModuleId`). Reordering or removing modules in a patch can therefore silently
-  re-point an automation lane at the wrong module instance. Needs a stable,
-  non-positional module identity that survives graph edits, then a migration of
-  the positional `Module` lanes onto it (engine `ModuleId`, the seq-side
-  `{module_type, instance}` key, the GUI picker, and the MCP `module:<prefix>:<instance>:<param_id>`
-  form all consume the positional convention today).
+- [x] **Stable (non-positional) ModuleId identity — verified unnecessary (F2).**
+  `AutomationTarget::Module` keys on `module_type` + `instance`. Verified the worry
+  (a lane "silently re-points" when modules are added/removed) does not occur: instance
+  numbers are monotonic and never reused, `remove_module` does not renumber survivors,
+  and load preserves instances via `add_module_with_id`. Removing a same-type sibling
+  never re-points a surviving lane; worst case is a harmless orphaned lane (dispatch
+  no-ops on an absent module). No stable-id migration needed. Locked by
+  `graph::module_instance_identity_is_stable_across_removal`.
+- [ ] **`ParamId(Arc<str>)` off-thread drop (F1 residual).** Cloning a `Module`
+  automation target is now alloc-free, but the engine's cached clone can become the
+  last `Arc` reference and so *drop* (free) on the audio thread — but only if the
+  source lane was removed mid-playback. Strict improvement over the prior `String`
+  (which freed on every drop). Full fix: route cleared/replaced targets through the
+  engine's `return_producer` off-thread drop channel. Low priority (bounded, rare).
 - [ ] **Mod-matrix vs. automation combine ordering ("two controllers").** When a
   mod-matrix offset *and* an automation override target the same param, the
   precedence/combine rule is unspecified. The first cut applies the override as an

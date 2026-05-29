@@ -190,13 +190,13 @@ generic param path ships, not after. Each is verified against current code.
   offline-session design. Locked by `module_param_automation_ramps_down` (a Module
   cutoff/level lane audibly ramps the offline render), alongside the existing
   Track/Global ramp tests.
-- [ ] **`AutomationTarget::Module` `param_id: String` is cloned on the audio thread.**
-  _DEFERRED (A1/A2 first cut)._ In `sequencer_engine` the per-tick automation collection
-  and event emission `clone()` the target; for a `Module` target that heap-allocates the
-  `param_id` String inside `process()`, violating the RT-safety rule (bounded: control-rate,
-  only on changed Module points). The fix is to intern the param id into a `Copy` handle
-  (like `PortName` interns port names) so the target is alloc-free to clone — a data-model
-  change deferred out of the first cut.
+- [x] **`AutomationTarget::Module` `param_id` is alloc-free to clone.** _RESOLVED (F1)._
+  Was a `String` that heap-allocated on every per-tick `target.clone()` in
+  `sequencer_engine` — a real RT-safety violation. Now `ParamId(Arc<str>)`: cloning is an
+  atomic refcount bump (no alloc, no lock). Chose `Arc<str>` over a `PortName`-style intern
+  handle because the dispatch matches `param_id` against each descriptor's `type_id` **string**,
+  so a `Copy` handle would force a lock-taking `as_str()` on the audio thread — trading an
+  alloc for a lock. `#[serde(transparent)]` keeps the on-disk form a bare string.
 
 ---
 

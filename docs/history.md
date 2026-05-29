@@ -1,5 +1,19 @@
 # Version History
 
+## [0.296.0] - 2026-05-29
+
+### Automation A1/A2 deferred follow-ups (Track F)
+
+Retired the cross-cutting automation debt deferred from the A1/A2 first cut. F1:
+`AutomationTarget::Module`'s `param_id` is now `ParamId(Arc<str>)` instead of `String`,
+so the per-tick `target.clone()` on the audio thread is alloc-free (atomic refcount bump,
+no lock) — `#[serde(transparent)]` keeps the on-disk form a bare string. F3: ratified and
+test-locked the mod-matrix-vs-automation combine order (`effective = override.unwrap_or(base)
++ mod_offset`) on the `PolyModule::set_param_override` contract. F4: added a regression test
+proving `Module` automation reaches the offline `analyze_*` render (was already correct). F2:
+verified the positional `ModuleId` never silently re-points a lane (monotonic, never-reused
+instances; survivors not renumbered on removal) — the stable-id migration was unnecessary.
+
 ## [0.295.0] - 2026-05-29
 
 ### Phase C review fixes
