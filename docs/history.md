@@ -1,5 +1,16 @@
 # Version History
 
+## [0.293.0] - 2026-05-29
+
+### Per-note legato/tie + glide (Phase B)
+
+Notes now carry optional `legato` (tie — connect without retriggering) and
+`glide` (portamento/glissando into the note: relative-semitone or absolute
+source, glide time, continuous/stepped interpolation), driven end-to-end through
+the sequencer events into the voice allocator's existing `GlideState`/legato
+machinery. Editable in the piano-roll selection inspector (with undo) and over
+MCP `add_notes`; per-note legato overrides the instrument's allocation mode.
+
 ## [0.292.0] - 2026-05-28
 
 ### Instrument macro automation now sounds (A1)

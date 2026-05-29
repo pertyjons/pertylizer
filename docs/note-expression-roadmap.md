@@ -20,7 +20,7 @@ first, richness second.
 
 - [x] **Phase A1** — Wire the 6 already-GUI-exposed instrument macros (bugfix; no schema change)
 - [x] **Phase A2** — `AutomationTarget::Module { instrument, module_id, param }` (generic, additive)
-- [ ] **Phase B** — Per-note legato/tie + glide fields, driving the existing allocator machinery
+- [x] **Phase B** — Per-note legato/tie + glide fields, driving the existing allocator machinery
 - [ ] **Phase C** — Per-note vibrato depth + a small per-note expression block (note expression in miniature)
 - [ ] **Phase D** — Shared/bus filter with automatable cutoff (rides on channel-strip Phase 7)
 - [ ] **Phase E** — Full Note Expression: per-note custom curves + generic per-note targets + MPE
@@ -277,7 +277,7 @@ midpoint / fixed-rate LFO guess.
   targeted module shows an *automated* badge in the Rack view and is delete-guarded.
 
 ## Phase B — Per-note legato/tie + glide
-**Status:** ☐ Not started · **Effort:** S–M · **Axis:** broken → fix (arpeggio, portamento) · **Schema:** additive
+**Status:** ☑ Done (v0.293.0) · **Effort:** S–M · **Axis:** broken → fix (arpeggio, portamento) · **Schema:** additive
 
 Retires the two worst pitch artifacts (machine-gun arpeggio re-gating; portamento
 staircases). The machinery exists in the allocator — this is the sequencer-side

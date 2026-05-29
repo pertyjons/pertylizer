@@ -173,11 +173,12 @@ stepped = glissando).
 - **Done:** gate green; review fixes applied — validate `glide.from_pitch`
   (range) + `glide.time_ms` (finite, 0..60000) at the MCP boundary; interp aliases.
 
-### B-close
+### B-close ✅ (next commit)
 
-- [ ] Flip roadmap **Phase B** `Status` to ☑ Done and the §"Status at a glance"
-  checkbox. Add one `docs/history.md` line. Final full build gate. `/code-review`
-  of the whole phase diff (medium) before the close commit if anything changed.
+- [x] Flipped roadmap **Phase B** `Status` → ☑ Done (v0.293.0) and the §"Status at
+  a glance" checkbox. Added a `docs/history.md` 0.293.0 section; bumped
+  `pertylizer` to 0.293.0. Final full build gate green. (Docs/version only — no
+  code changed since B5's review, so no fresh code-review needed.)
 - **Commit:** `Phase B: history + roadmap status`
 
 ---
