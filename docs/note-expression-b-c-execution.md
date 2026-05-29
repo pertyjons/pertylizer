@@ -234,19 +234,26 @@ that map 1:1 onto those dimensions now even if only vibrato is wired in C.
 - **Done:** gate green; tests for `deterministic_unit` range + probability
   endpoints. Review: correctness/RT-safety clean; preview-bypass applied.
 
-### C3 — Engine consumption: note-shape scalars *(cheap, additive)*
+### C3 — Engine consumption: note-shape scalars *(cheap, additive)* ✅ (next commit)
 
-- [ ] At the trigger consumer, apply the primitive-3 scalars — all `Copy`, no DSP:
-    - `accent` → multiply velocity before `note_on`.
-    - `gate` → scale the effective note length / schedule the note-off earlier
-      (staccato/tenuto). Implement at the sequencer note-off scheduling
-      (`check_note_offs`, `sequencer_engine.rs:576`) or as a per-note release —
-      pick the one that keeps gate a function of duration only.
-    - `ghost` → velocity floor / fixed low velocity.
-    - (`probability` already handled in C2.)
-- [ ] Tests for each scalar's effect on the emitted/triggered note.
+- [x] Resolved the primitive-3 scalars **sequencer-side at emission** (consistent
+  with C2's probability), in both collection paths:
+    - `accent` → velocity multiplier; `ghost` → ×0.4 forced-soft. Composed in
+      `shaped_velocity`; the emitted `NoteOn` (and telemetry) carry the final
+      velocity. (Chose sequencer-side over the engine consumer so all note-shape
+      scalars resolve in one place; the engine consumes only vibrato in C4.)
+    - `gate` → `shaped_duration_ticks` scales the note's `end_tick` (a function of
+      duration only), clamped ≥1 tick. Staccato correctly breaks the legato
+      placement-boundary coalesce (verified in review).
+- [x] Tests: velocity accent/ghost compose + clamp; gate halving + zero→1-tick floor.
 - **Verify:** accents/staccato audible; defaults unchanged. `/code-review` medium.
 - **Commit:** `Phase C3: apply per-note note-shape scalars (accent/gate/ghost)`
+- **Done:** gate green; review fixes — `is_finite` guard on accent (no NaN→audio);
+  corrected the gate-floor doc comment.
+- **Deferred (recorded):** `accent` is **dropped on a legato note** — the
+  no-retrigger `glide_to_note` path doesn't re-apply velocity (a B3-area
+  limitation), so the legato note keeps the prior velocity while telemetry shows
+  the accented one. Fix when legato velocity is wired.
 
 ### C4 — Engine consumption: per-note vibrato via mod-matrix offset *(audio thread)*
 

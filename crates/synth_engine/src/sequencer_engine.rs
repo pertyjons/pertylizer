@@ -98,6 +98,46 @@ fn deterministic_unit(seed: u64) -> f32 {
     ((z >> 40) as f32) / 16_777_216.0
 }
 
+/// Ghost-note velocity scale (forced-soft articulation).
+const GHOST_VELOCITY_SCALE: f32 = 0.4;
+
+/// Apply the note-shape velocity scalars to a base velocity: `accent` (a
+/// multiplier, >1 louder) and `ghost` (forced soft). Resolved sequencer-side so
+/// the emitted `NoteOn` already carries the final velocity — the engine consumes
+/// only vibrato from the expression block.
+fn shaped_velocity(base: Velocity, expr: Option<NoteExpression>) -> Velocity {
+    let Some(e) = expr else {
+        return base;
+    };
+    let mut factor = e.accent.unwrap_or(1.0);
+    if e.ghost {
+        factor *= GHOST_VELOCITY_SCALE;
+    }
+    // Defensive: a non-finite accent (only reachable via a programmatic/MCP write,
+    // never normal JSON) must not propagate NaN into the audio path — `Velocity::new`
+    // clamp does not sanitize NaN.
+    if !factor.is_finite() || (factor - 1.0).abs() < f32::EPSILON {
+        return base;
+    }
+    Velocity::new(base.0 * factor)
+}
+
+/// Apply the `gate` note-shape scalar to a duration in ticks (staccato/tenuto).
+/// `None` → unchanged. Clamps to ≥1 tick so the note keeps a non-zero end_tick:
+/// a zero-length note (end == onset) would be eligible for an immediate same-tick
+/// NoteOff in `check_note_offs`, which is an articulation we never want here.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss
+)]
+fn shaped_duration_ticks(duration_ticks: u32, expr: Option<NoteExpression>) -> u32 {
+    match expr.and_then(|e| e.gate) {
+        Some(gate) => ((duration_ticks as f32) * gate.as_f32()).round().max(1.0) as u32,
+        None => duration_ticks,
+    }
+}
+
 /// Decide whether a note plays this occurrence, given its per-note probability.
 ///
 /// `None` probability → always plays. The roll is seeded by the absolute song
@@ -468,14 +508,17 @@ impl SequencerEngine {
                     // probability — auditioning a pattern should always sound the
                     // note so the user can hear/edit it; probability is a
                     // performance feature, applied only in arrangement playback.
-                    let end_tick = note
-                        .duration
-                        .map(|d| Tick(self.current_tick.0 + u64::from(d.0)));
+                    let end_tick = note.duration.map(|d| {
+                        Tick(
+                            self.current_tick.0
+                                + u64::from(shaped_duration_ticks(d.0, note.expression)),
+                        )
+                    });
                     // Preview has no placement transpose, so glide source pitch
                     // needs no adjustment.
                     self.scratch_notes.push(PendingNote {
                         pitch: note.pitch,
-                        velocity: note.velocity,
+                        velocity: shaped_velocity(note.velocity, note.expression),
                         instrument: self.preview_instrument,
                         end_tick,
                         legato: note.legato,
@@ -551,9 +594,13 @@ impl SequencerEngine {
                         .transpose(placement.transpose)
                         .unwrap_or(note.pitch);
 
-                    let end_tick = note
-                        .duration
-                        .map(|d| Tick(placement.start.0 + note.start.0 as u64 + d.0 as u64));
+                    let end_tick = note.duration.map(|d| {
+                        Tick(
+                            placement.start.0
+                                + note.start.0 as u64
+                                + u64::from(shaped_duration_ticks(d.0, note.expression)),
+                        )
+                    });
 
                     let effective_instrument = track_instrument;
 
@@ -572,7 +619,7 @@ impl SequencerEngine {
 
                     self.scratch_notes.push(PendingNote {
                         pitch: transposed_pitch,
-                        velocity: note.velocity,
+                        velocity: shaped_velocity(note.velocity, note.expression),
                         instrument: effective_instrument,
                         end_tick,
                         legato: note.legato,
@@ -760,6 +807,50 @@ mod tests {
             assert!((0.0..1.0).contains(&v), "seed {seed} → {v} out of [0,1)");
             assert_eq!(v, deterministic_unit(seed), "must be reproducible");
         }
+    }
+
+    #[test]
+    fn shaped_velocity_accent_ghost_and_absent() {
+        use synth_sequencer::NoteExpression;
+        let base = Velocity::new(0.5);
+        let expr = |accent: Option<f32>, ghost: bool| NoteExpression {
+            vibrato: None,
+            accent,
+            gate: None,
+            ghost,
+            probability: None,
+        };
+        // No expression → unchanged.
+        assert_eq!(shaped_velocity(base, None), base);
+        // Accent 1.5× → 0.75.
+        assert!((shaped_velocity(base, Some(expr(Some(1.5), false))).0 - 0.75).abs() < 1e-6);
+        // Ghost → 0.5 * 0.4 = 0.2.
+        assert!((shaped_velocity(base, Some(expr(None, true))).0 - 0.2).abs() < 1e-6);
+        // Accent + ghost compose: 0.5 * 2.0 * 0.4 = 0.4.
+        assert!((shaped_velocity(base, Some(expr(Some(2.0), true))).0 - 0.4).abs() < 1e-6);
+        // Accent that overshoots clamps to 1.0.
+        assert!((shaped_velocity(base, Some(expr(Some(10.0), false))).0 - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn shaped_duration_gate_and_floor() {
+        use synth_sequencer::NoteExpression;
+        let expr = |gate: Option<f32>| {
+            gate.map(|g| NoteExpression {
+                vibrato: None,
+                accent: None,
+                gate: Some(synth_core::NormalizedValue::new(g)),
+                ghost: false,
+                probability: None,
+            })
+        };
+        // No gate → unchanged.
+        assert_eq!(shaped_duration_ticks(960, None), 960);
+        assert_eq!(shaped_duration_ticks(960, expr(None)), 960);
+        // Half gate → 480.
+        assert_eq!(shaped_duration_ticks(960, expr(Some(0.5))), 480);
+        // Zero gate → clamped to 1 tick (never coincident NoteOff/NoteOn).
+        assert_eq!(shaped_duration_ticks(960, expr(Some(0.0))), 1);
     }
 
     #[test]
