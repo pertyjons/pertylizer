@@ -1237,7 +1237,8 @@
                   "description": "Anti-aliasing algorithm",
                   "enum": [
                     "polyblep",
-                    "minblep"
+                    "minblep",
+                    "raw"
                   ],
                   "title": "Anti-Alias",
                   "type": "string"

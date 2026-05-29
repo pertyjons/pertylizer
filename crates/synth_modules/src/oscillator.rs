@@ -196,12 +196,15 @@ impl Oscillator {
         let sample = match self.waveform {
             Waveform::Sine => crate::math::fast_sin_turns(p),
             Waveform::Triangle => {
-                // Triangle uses BLAMP (not BLEP) — no MinBLEP alternative needed
+                // Triangle uses BLAMP (not BLEP) — no MinBLEP alternative needed.
+                // Raw mode skips the band-limiting for the naive aliased edge.
                 let mut tri = Phase::new_unchecked(p).triangle();
-                let dist_to_peak = p - 0.25;
-                tri += poly_blamp(dist_to_peak, dt) * 4.0;
-                let dist_to_trough = p - 0.75;
-                tri -= poly_blamp(dist_to_trough, dt) * 4.0;
+                if self.aa_mode != AntiAliasMode::Raw {
+                    let dist_to_peak = p - 0.25;
+                    tri += poly_blamp(dist_to_peak, dt) * 4.0;
+                    let dist_to_trough = p - 0.75;
+                    tri -= poly_blamp(dist_to_trough, dt) * 4.0;
+                }
                 tri
             }
             Waveform::Sawtooth => {
@@ -209,6 +212,7 @@ impl Oscillator {
                 match self.aa_mode {
                     AntiAliasMode::PolyBlep => saw -= poly_blep(p, dt),
                     AntiAliasMode::MinBlep => saw -= Self::minblep_correction(p, dt),
+                    AntiAliasMode::Raw => {} // naive — leave the raw aliased edge
                 }
                 saw
             }
@@ -223,6 +227,7 @@ impl Oscillator {
                         sq += Self::minblep_correction(p, dt);
                         sq -= Self::minblep_correction((p + 0.5).rem_euclid(1.0), dt);
                     }
+                    AntiAliasMode::Raw => {} // naive — leave the raw aliased edge
                 }
                 sq
             }
@@ -238,10 +243,13 @@ impl Oscillator {
                         pulse += Self::minblep_correction(p, dt);
                         pulse -= Self::minblep_correction((p + (1.0 - pw)).rem_euclid(1.0), dt);
                     }
+                    AntiAliasMode::Raw => {} // naive — leave the raw aliased edge
                 }
                 pulse
             }
             Waveform::DsfSaw => {
+                // Inherently band-limited (harmonic sum) — ignores `aa_mode`,
+                // including Raw: there is no aliased edge to leave in.
                 #[allow(clippy::cast_possible_truncation)]
                 let num_harmonics =
                     (self.sample_rate.as_f32() / (2.0 * freq.as_f32())).max(1.0) as u32;

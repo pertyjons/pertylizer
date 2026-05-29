@@ -276,15 +276,19 @@ pub enum AntiAliasMode {
     PolyBlep,
     /// Minimum-phase band-limited step (higher quality, uses lookup table)
     MinBlep,
+    /// No band-limiting — naive (aliased) waveform. Restores the raw, gritty
+    /// "SID / lo-fi" edge of an unfiltered 8-bit oscillator.
+    Raw,
 }
 
 impl AntiAliasMode {
-    pub const ALL: [Self; 2] = [Self::PolyBlep, Self::MinBlep];
+    pub const ALL: [Self; 3] = [Self::PolyBlep, Self::MinBlep, Self::Raw];
 
     pub fn name(self) -> &'static str {
         match self {
             Self::PolyBlep => "PolyBLEP",
             Self::MinBlep => "MinBLEP",
+            Self::Raw => "Raw",
         }
     }
 
@@ -292,12 +296,14 @@ impl AntiAliasMode {
         match self {
             Self::PolyBlep => "polyblep",
             Self::MinBlep => "minblep",
+            Self::Raw => "raw",
         }
     }
 
     pub fn from_index(idx: usize) -> Self {
         match idx {
             1 => Self::MinBlep,
+            2 => Self::Raw,
             _ => Self::PolyBlep,
         }
     }
@@ -306,6 +312,7 @@ impl AntiAliasMode {
         match self {
             Self::PolyBlep => 0,
             Self::MinBlep => 1,
+            Self::Raw => 2,
         }
     }
 }
