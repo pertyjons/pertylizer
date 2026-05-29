@@ -1,0 +1,249 @@
+# Execution plan: remaining note-expression / automation work
+
+Companion to `docs/note-expression-roadmap.md`. Phases **A1, A2, B, C are done**
+(shipped through v0.295.0). This is the **commit-sized execution plan** for what
+remains, sequenced for a step-by-step loop: each step is one logical commit,
+**preceded by a `/code-review`**, the build gate, and `gen_schemas` when the
+on-disk schema changes.
+
+## What remains (from the roadmap)
+
+| Track | What | Blocked? |
+|---|---|---|
+| **F** — A1/A2 deferred cross-cutting follow-ups | param-id interning · stable ModuleId identity · combine ordering · offline-render parity | No — do first |
+| **P** — export robustness (Parallel track) | `get_project_schema` MCP tool · file-level load-lint | No — cheap, independent |
+| **D** — shared/bus filter w/ automatable cutoff | bus effect chain + shared filter + automation target | **Yes** — needs channel-strip Phase 7 |
+| **E** — full Note Expression + MPE (north star) | per-note curves, generic per-note targets, MPE, AWE-spatial, Note Processors, curve UI | **Yes** — needs a UX plan first; optional |
+
+**Loop scope = Track F then Track P.** Both are well-defined and commit-sized.
+**The loop must STOP at the Phase D and Phase E gates** (see those sections) —
+they need a prerequisite (channel-strip Phase 7) or a design doc (E UX plan) that
+is itself a separate planning task, not a code step.
+
+## Loop protocol (every step)
+
+1. Implement exactly the one step.
+2. `/code-review` the working tree (effort per the step's note; `high` for the
+   audio-thread steps F1/F3/D2/E*). Apply or consciously dismiss each finding.
+3. Build gate: `cargo fmt --check && cargo build && cargo clippy --all-targets && cargo test`
+   — all zero-warning. **Verify cargo's true exit code**, not a piped stage's
+   (a `| rg` pipe masks compile failures — bitten twice in B/C).
+4. `cargo run -p pertylizer --bin gen_schemas` **iff** the on-disk schema changed;
+   commit the regenerated `schemas/*.json`.
+5. Commit with the step's suggested message. Do **not** bundle two steps.
+6. Flip the step's checkbox here; flip the roadmap `Status`/glance line only when
+   the whole phase/track lands; append a `docs/history.md` line + version bump at
+   track close.
+
+## Verified code anchors (confirmed 2026-05-29)
+
+| Concern | Location |
+|---|---|
+| `AutomationTarget::Module { …, param_id: String }` | `synth_sequencer/src/automation.rs:216-224` |
+| Audio-thread `target.clone()` (heap-allocs the `param_id` String) | `synth_engine/src/sequencer_engine.rs:565,672,736,753` |
+| String-interning model to copy (`PortName`, u32 `Copy`, lock-free pool) | `synth_core/src/types/interned.rs`, `types/mod.rs:48` |
+| Module-param override dispatch (positional `module_type`+`instance`) | `synth_engine/src/synth_engine.rs` (`apply_module_param_override`), `instrument.rs:982` |
+| Engine `ModuleId { module_type, instance: u16 }` (positional) | `synth_engine/src/commands.rs:43` |
+| GUI lane target picker | `crates/pertylizer/src/gui/sequencer/mod.rs` (~3375) |
+| MCP automation-target bridge (`module:<prefix>:<instance>:<param_id>`) | `crates/pertylizer/src/mcp_bridge.rs:5566-5690` |
+| Offline render session (no automation today) | `crates/pertylizer/src/audio/arrangement_render.rs` (`OfflineEngineSession::render_range`) |
+| `analyze_*` offline-render snapshot bug class (reference fix) | `docs/history.md` 74d18da; memory `project_analyze_offline_render_snapshot_bug` |
+| mod-matrix additive offset vs automation absolute override | roadmap §"automation value model"; `graph.rs:454` (`apply_mod_offset`) |
+| `get_graph_diagnostics` (P2 builds on it) | `crates/pertylizer/src/mcp_bridge.rs`; memory `project_diagnostics_effect_chain` |
+| Channel-strip Phase 7 (Phase D prerequisite, **not started**) | `docs/channel-strip-c-plan.md` §"Phase 7" |
+
+These mirror `docs/TODO.md` §"Phase A1/A2 deferred follow-ups" — keep both in sync.
+
+---
+
+## Track F — A1/A2 deferred cross-cutting follow-ups
+
+Retires the automation debt explicitly deferred from the A1/A2 first cut
+(roadmap §"pitfalls & open design questions", the four `- [ ]` items). Order is
+deliberate: **F1 first** because it reshapes `AutomationTarget::Module`, which
+F2/F3 also touch.
+
+### F1 — Intern `param_id` to a `Copy` handle (RT-safety) *(audio thread)*
+**Why:** `sequencer_engine` clones `AutomationTarget` per tick on the audio
+thread; a `Module` target heap-allocates its `param_id: String` inside the
+process path — a real RT-safety violation in shipped code.
+
+- [ ] Add an interned, `Copy`, `Eq+Hash` param-id handle (e.g. `ParamId(u32)`)
+  in `synth_core`, modelled on `PortName`/`interned.rs` (global lock-free pool,
+  pre-interned common ids, dynamic intern off the audio thread). Reuse the
+  existing interner infra rather than a second pool if `PortName`'s generalises.
+- [ ] Change `AutomationTarget::Module.param_id: String` → the interned handle.
+  Keep `Eq+Hash` (it's a `HashMap` key). **Serialization must still round-trip as
+  the param-id *string*** (serde via the pool) so existing `.pertyproj` files load
+  unchanged — verify with a load test of a pre-F1 project.
+- [ ] Confirm the four `target.clone()` sites are now alloc-free (the handle is
+  `Copy`). MCP `module:<prefix>:<instance>:<param_id>` parse/emit interns/resolves
+  the string at the boundary, not on the audio thread.
+- [ ] Tests: serde round-trip (string ⇄ handle); a Module automation lane plays
+  with no per-tick allocation (assert via the existing alloc-free patterns).
+- **Schema:** none expected (serialized form stays a string) — but run `gen_schemas`
+  and diff to confirm. `/code-review` **high** (audio-thread + data-model).
+- **Commit:** `Automation F1: intern AutomationTarget::Module param_id (RT-safe Copy handle)`
+
+### F3 — Mod-matrix vs. automation combine ordering ("two controllers")
+**Why:** a filter cutoff can be driven by a mod-matrix offset *and* an automation
+override at once; the precedence is currently unspecified (the first cut: override
+replaces base, mod offset added on top). Define and document the rule. (Done
+before F2 because it's small and independent.)
+
+- [ ] Decide + document the combine order for `(base, automation override,
+  mod-matrix offset)` on one param. The shipped behavior — *override replaces base,
+  then mod-matrix offset adds on top* — is a defensible default; ratify it (or pick
+  better) and write it where the override is applied (`graph.rs`/`voice.rs`) and in
+  the roadmap value-model section.
+- [ ] Add a test that drives one param from both at once and asserts the documented
+  result; flag any param where the order is observably wrong.
+- **Schema:** none. `/code-review` **high** (audio-thread).
+- **Commit:** `Automation F3: define + test mod-matrix vs automation combine order`
+
+### F4 — Offline-render parity for `analyze_*`
+**Why:** the `analyze_*` tools render through `OfflineEngineSession`, which does
+**not** evaluate automation, so analysis reads base values the live engine never
+produced (the known "offline reader sees state the live engine never wrote" bug
+class, cf. 74d18da).
+
+- [ ] Drive the sequencer automation collection inside `OfflineEngineSession::
+  render_range` on the same per-block clock as live playback, so module/track/
+  global overrides (and the F1 handles) are applied during offline render.
+- [ ] Test: an instrument with a Module cutoff automation lane analyzed offline
+  reports the swept cutoff contour, not the static base (mirror an existing
+  analyze_* test).
+- **Schema:** none. `/code-review` medium (offline path, not RT).
+- **Commit:** `Automation F4: apply automation overrides in offline render (analyze_* parity)`
+
+### F2 — Stable (non-positional) ModuleId identity
+**Why:** `AutomationTarget::Module` identifies its target positionally
+(`module_type`+`instance`); reordering/removing same-type modules silently
+re-points a lane. The biggest of the four — likely **splits into F2a/F2b**.
+
+- [ ] **F2a — introduce a stable per-module id.** Add a stable, non-positional
+  identity to a module instance (a persisted `u32`/uuid assigned at creation that
+  survives graph edits), alongside the positional `ModuleId`. Persist it; assign on
+  load/migration for existing patches. Dual-resolve: lanes still resolve positionally
+  until F2b.
+  - **Commit:** `Automation F2a: stable per-module identity (assigned + persisted)`
+- [ ] **F2b — migrate `Module` lanes onto the stable id.** Switch
+  `AutomationTarget::Module` to key on the stable id (engine `ModuleId`, the seq-side
+  `{module_type, instance}` key, the GUI picker, and the MCP token all consume the
+  positional convention today — migrate each). One-time migration of existing
+  positional lanes on project load.
+  - **Commit:** `Automation F2b: migrate Module automation lanes to stable id`
+- **Schema:** **additive/migrating** (lane target gains the stable id) — `gen_schemas`
+  + a load-migration test for pre-F2 projects. `/code-review` **high** each.
+
+### F-close
+- [ ] Tick the four roadmap "pitfalls" `- [ ]` items + the `docs/TODO.md` follow-ups;
+  `docs/history.md` line; version bump.
+- **Commit:** `Automation deferred follow-ups: history + status`
+
+---
+
+## Track P — export robustness (Parallel track)
+
+Independent of everything else; cheap; lands any time. Good loop steps after F.
+
+### P1 — `get_project_schema` MCP tool
+- [ ] Add an MCP tool returning the authoritative on-disk `.pertyproj` schema
+  (the generated `schemas/project.schema.json`) + a build version string. Fixes
+  the introspection-vs-on-disk encoding drift (e.g. `osc.Waveform` reported
+  numerically `sawtooth = 2.0` while on-disk is the string `"sawtooth"`); enables a
+  CI diff that fires when the format changes.
+- [ ] Round-trip test + `README_MCP` entry.
+- **Schema:** none (MCP tool param, not persisted). `/code-review` medium.
+- **Commit:** `MCP P1: get_project_schema tool (authoritative on-disk schema + version)`
+
+### P2 — file-level load-lint
+- [ ] Surface `get_graph_diagnostics` as a single load-lint pass returning
+  *warnings* (unconnected ports, silent voices, out-of-range derived values), not
+  just schema validation — per-instrument across the whole project. Reuse the
+  existing diagnostics scope (see memory `project_diagnostics_effect_chain`).
+- [ ] Test + `README_MCP` entry.
+- **Schema:** none. `/code-review` medium.
+- **Commit:** `MCP P2: file-level load-lint (project-wide get_graph_diagnostics warnings)`
+
+### P-close
+- [ ] Flip roadmap **Parallel track** `Status` + glance; `docs/history.md`; version bump.
+- **Commit:** `Export robustness: history + status`
+
+---
+
+## Phase D — shared / bus filter with automatable cutoff  ⛔ GATED
+
+**STOP — prerequisite not met.** Phase D rides on **channel-strip Phase 7**
+(sends/returns + bus effect chain), which is **not started**
+(`docs/channel-strip-c-plan.md` §"Phase 7"). The bus stage today is fader-only
+(`synth_engine.rs:2515-2555`). Do not start D in the loop until Phase 7 lands.
+
+The roadmap also notes D is **largely covered by A2** (per-instrument filter
+cutoff is already automatable), so its audible payoff is small — sequence it only
+if a tune genuinely needs a *shared* SID-style global-filter sweep.
+
+When unblocked (sketch, to be re-planned against Phase 7's bus API):
+- [ ] **D1** — extend the bus stage to a bus effect chain (this *is* channel-strip
+  Phase 7 — sends/returns).
+- [ ] **D2** — let multiple instruments route into a shared bus carrying a filter *(audio thread)*.
+- [ ] **D3** — expose the bus filter cutoff as an `AutomationTarget` (reuses A2 +
+  the F1/F2 target machinery) → exact shared sweeps.
+- [ ] **D-close** — roadmap status + history + version.
+
+---
+
+## Phase E — full Note Expression + MPE (north star)  ⛔ GATED
+
+**STOP — needs a UX plan first.** The piano-roll per-note **curve editor** is the
+real cost center; the roadmap explicitly says E "requires its own UX plan before
+start" and "stop before it if the UI cost outweighs the richness." Do not start E
+in the loop until **E0** (a design doc) exists and is approved.
+
+E reuses everything below it: A2's `(module_id, param)` addressing (via F1/F2's
+target), the C expression block (the curve editor *extends* it), and the additive
+override path. Sketch sequence (to be expanded in E0):
+
+- [ ] **E0 — UX/design plan** for the per-note curve editor (a doc, not code): data
+  model for hand-drawn curves, interaction, how it extends the C `NoteExpression`
+  block, performance budget. **This is the gate.**
+- [ ] **E1** — per-note curve data model on `Note` (curve points; `Copy`/alloc-free
+  or arena'd off the audio thread). Additive serde. Schema regen.
+- [ ] **E2** — generic per-note targets: reuse the A2/F-track `(module_id, param)`
+  addressing so a curve reaches arbitrary module params *per voice* (the brief's
+  "pivotal question"; absorbs Problems 1b/1d/3 into expression) *(audio thread)*.
+- [ ] **E3** — engine playback of per-note curves (additive offset path, RT-safe) *(audio thread)*.
+- [ ] **E4** — MPE / MIDI 2.0 input mapping onto the primitive-1 dimensions (bend,
+  pressure, timbre/slide, velocity, release-velocity) — the set C already defaults to.
+- [ ] **E5** — per-note **spatial via AWE** (primitive 1 with an AWE room param as
+  the target) — the unique differentiator.
+- [ ] **E6** — Note Processors layer (taxonomy primitive 4): arpeggiator, trill/
+  mordent/turn (two-note arp), flam/drag/ruff/roll, grace note, strum, chord,
+  scale-quantize, humanize. Each *expands* into primitives 1–3 or extra notes.
+- [ ] **E7** — voice-allocator polish (unison, voice stealing — partially present).
+- [ ] **E8** — piano-roll per-note curve editor UI (the gating UI investment).
+- [ ] **E-close** — roadmap status + history + version.
+
+---
+
+## Recommended loop order
+
+1. **F1** (RT-safety — fixes a real audio-thread alloc in shipped code).
+2. **F3** (small; ratifies the combine rule the rest assume).
+3. **F4** (correctness — stops `analyze_*` from lying).
+4. **F2a → F2b** (stable identity; the largest of the four).
+5. **F-close.**
+6. **P1 → P2 → P-close** (independent export wins).
+7. **STOP.** D needs channel-strip Phase 7; E needs the E0 UX plan. Re-plan each
+   when its gate clears — don't autostart them in the loop.
+
+## Deferred / out-of-scope (record, don't silently drop)
+
+- Per-note glide & vibrato are **dropped on a stolen voice** (`steal_for`/
+  `pending_note` carry no `NoteTrigger`) — B3/C4 deferral; fix by threading the
+  trigger through the steal fade-out. Independent of the tracks above.
+- The inspector multi-edit **flattens per-note variation** of the edited field
+  (matches the velocity inspector) — intentional; revisit only with a relative-delta
+  UX.
+- MCP `update_notes` cannot edit the expression block (only add/replace + GUI) —
+  add an expression field to `NoteUpdateInput` if needed.

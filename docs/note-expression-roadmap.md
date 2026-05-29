@@ -32,6 +32,12 @@ Keep `docs/history.md` updated against each ship date.
 > **Phases B & C have a commit-sized execution plan:**
 > `docs/note-expression-b-c-execution.md` (one logical commit per step,
 > `/code-review` + build gate before each). Use it when working B/C in a loop.
+>
+> **The remaining work (the A1/A2 deferred follow-ups, Phase D, Phase E, and the
+> Parallel track) has its own commit-sized plan:**
+> `docs/note-expression-remaining-execution.md`. Loop-able now: the deferred
+> follow-ups (Track F) + export robustness (Track P); Phase D and Phase E are
+> gated (channel-strip Phase 7 / a UX plan) and the loop stops at those gates.
 
 ## Context — verified engine state (2026-05-28)
 
