@@ -2376,6 +2376,7 @@ impl SynthMcpServer {
             "get_engine_status" => get_engine_status(NoParams),
             "get_graph_diagnostics" => get_graph_diagnostics(InstrumentIdParam),
             "get_project_schema" => get_project_schema(NoParams),
+            "lint_project" => lint_project(NoParams),
             "get_ui_snapshot" => get_ui_snapshot(InstrumentIdParam),
 
             // Module types & discovery
@@ -2949,6 +2950,20 @@ impl SynthMcpServer {
     async fn get_project_schema(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_project_schema() {
             Ok(info) => to_json(&info),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Lint the whole project: run graph diagnostics over every instrument and \
+                       aggregate them into one report. Surfaces behavioural issues schema validation \
+                       can't — unconnected ports, silent voices, feedback loops, missing audio paths — \
+                       per instrument, with total error/warning/info counts. A healthy project reports \
+                       error_count = 0 and warning_count = 0. Use after loading a project or before export."
+    )]
+    async fn lint_project(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.lint_project() {
+            Ok(report) => to_json(&report),
             Err(e) => format!("Error: {e}"),
         }
     }

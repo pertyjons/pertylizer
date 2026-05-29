@@ -185,6 +185,36 @@ pub enum DiagnosticSeverity {
     Error,
 }
 
+/// Per-instrument diagnostics within a project-wide load-lint pass.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectLintEntry {
+    /// Instrument the diagnostics belong to.
+    pub instrument_id: u64,
+    /// Instrument name (for human-readable reports).
+    pub instrument_name: String,
+    /// All graph diagnostics found for this instrument (any severity).
+    pub diagnostics: Vec<GraphDiagnostic>,
+}
+
+/// Project-wide load-lint report: runs the graph diagnostics over every
+/// instrument and aggregates the results. Surfaces *behavioural* warnings
+/// (unconnected ports, silent voices, feedback loops, …) that schema validation
+/// alone can't catch. A clean project has `error_count == 0 && warning_count == 0`,
+/// which lets a CI gate or a post-load check assert health in one call.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectLintReport {
+    /// Number of instruments inspected.
+    pub instruments_checked: usize,
+    /// Total `Error`-severity diagnostics across all instruments.
+    pub error_count: usize,
+    /// Total `Warning`-severity diagnostics across all instruments.
+    pub warning_count: usize,
+    /// Total `Info`-severity diagnostics across all instruments.
+    pub info_count: usize,
+    /// One entry per instrument that produced at least one diagnostic.
+    pub entries: Vec<ProjectLintEntry>,
+}
+
 /// The authoritative on-disk JSON Schema for `.pertyproj` project files, paired
 /// with the build version that generated it.
 ///

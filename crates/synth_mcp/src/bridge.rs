@@ -18,11 +18,12 @@ use crate::error::McpBridgeError;
 use crate::types::{
     ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo,
     AutomationTargetInfo, AwePresetInfo, AweStateInfo, BatchResult, BuildInstrumentResult,
-    ConnectionCheckResult, ConnectionInfo, DetailedSampleInfo, EngineStatus, ExamplePatchInfo,
-    GraphDiagnostic, InputDeviceInfo, InputStateInfo, InstrumentInfo, InstrumentProfileResult,
-    MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo,
-    PatchResourceData, PatternInfo, PlacementInfo, ProjectSchemaInfo, SampleInfo, SamplerStateInfo,
-    SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    ConnectionCheckResult, ConnectionInfo, DetailedSampleInfo, DiagnosticSeverity, EngineStatus,
+    ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo, InputStateInfo, InstrumentInfo,
+    InstrumentProfileResult, MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo,
+    OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry,
+    ProjectLintReport, ProjectSchemaInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo,
+    TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -259,6 +260,23 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// match), so callers can validate or diff project files without re-deriving
     /// the schema and risking introspection-vs-disk drift.
     fn get_project_schema(&self) -> Result<ProjectSchemaInfo, McpBridgeError>;
+
+    /// Run the graph diagnostics over every instrument and aggregate the results
+    /// into one project-wide load-lint report — a single call that surfaces
+    /// *behavioural* warnings (unconnected ports, silent voices, feedback loops)
+    /// across the whole project, complementing the structural `get_project_schema`
+    /// validation. Composed from `list_instruments` + `get_graph_diagnostics`, so
+    /// every bridge gets it for free and there's a single source of diagnostic
+    /// truth. Only instruments with at least one diagnostic appear in `entries`.
+    fn lint_project(&self) -> Result<ProjectLintReport, McpBridgeError> {
+        let instruments = self.list_instruments()?;
+        let mut per_instrument = Vec::with_capacity(instruments.len());
+        for instrument in &instruments {
+            let diagnostics = self.get_graph_diagnostics(instrument.id)?;
+            per_instrument.push((instrument.id, instrument.name.clone(), diagnostics));
+        }
+        Ok(build_lint_report(per_instrument))
+    }
 
     // === Instrument lifecycle ===
 
@@ -1335,4 +1353,92 @@ pub struct BridgeParamSet {
     pub param_name: String,
     /// New value.
     pub value: f32,
+}
+
+/// Aggregate per-instrument diagnostics into a project-wide lint report: tally
+/// severities and keep only the instruments that produced a diagnostic. Pure
+/// (no engine access) so `SynthBridge::lint_project` stays a thin I/O wrapper
+/// and the aggregation is unit-testable on its own.
+pub(crate) fn build_lint_report(
+    per_instrument: Vec<(u64, String, Vec<GraphDiagnostic>)>,
+) -> ProjectLintReport {
+    let instruments_checked = per_instrument.len();
+    let mut entries = Vec::new();
+    let mut error_count = 0;
+    let mut warning_count = 0;
+    let mut info_count = 0;
+
+    for (instrument_id, instrument_name, diagnostics) in per_instrument {
+        for diagnostic in &diagnostics {
+            match diagnostic.severity {
+                DiagnosticSeverity::Error => error_count += 1,
+                DiagnosticSeverity::Warning => warning_count += 1,
+                DiagnosticSeverity::Info => info_count += 1,
+            }
+        }
+        if !diagnostics.is_empty() {
+            entries.push(ProjectLintEntry {
+                instrument_id,
+                instrument_name,
+                diagnostics,
+            });
+        }
+    }
+
+    ProjectLintReport {
+        instruments_checked,
+        error_count,
+        warning_count,
+        info_count,
+        entries,
+    }
+}
+
+#[cfg(test)]
+mod lint_report_tests {
+    use super::build_lint_report;
+    use crate::types::{DiagnosticSeverity, GraphDiagnostic};
+
+    fn diag(severity: DiagnosticSeverity) -> GraphDiagnostic {
+        GraphDiagnostic {
+            severity,
+            module_id: None,
+            message: "x".to_string(),
+        }
+    }
+
+    #[test]
+    fn tallies_severities_and_skips_clean_instruments() {
+        let report = build_lint_report(vec![
+            (
+                1,
+                "Bass".to_string(),
+                vec![
+                    diag(DiagnosticSeverity::Warning),
+                    diag(DiagnosticSeverity::Error),
+                ],
+            ),
+            // A clean instrument: counted in instruments_checked, absent from entries.
+            (2, "Lead".to_string(), vec![]),
+            (3, "Pad".to_string(), vec![diag(DiagnosticSeverity::Info)]),
+        ]);
+
+        assert_eq!(report.instruments_checked, 3);
+        assert_eq!(report.error_count, 1);
+        assert_eq!(report.warning_count, 1);
+        assert_eq!(report.info_count, 1);
+        // Only the two instruments with diagnostics appear.
+        assert_eq!(report.entries.len(), 2);
+        assert_eq!(report.entries[0].instrument_id, 1);
+        assert_eq!(report.entries[1].instrument_id, 3);
+    }
+
+    #[test]
+    fn empty_project_is_clean() {
+        let report = build_lint_report(vec![]);
+        assert_eq!(report.instruments_checked, 0);
+        assert_eq!(report.error_count, 0);
+        assert_eq!(report.warning_count, 0);
+        assert!(report.entries.is_empty());
+    }
 }
