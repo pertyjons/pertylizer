@@ -237,6 +237,28 @@ fn validate_note_input(n: &NoteInput) -> Result<(), McpBridgeError> {
             validate_range("glide.time_ms", t, 0.0, 60_000.0)?;
         }
     }
+    if let Some(e) = &n.expression {
+        if let Some(a) = e.accent {
+            validate_range("expression.accent", a, 0.0, 16.0)?;
+        }
+        if let Some(g) = e.gate {
+            validate_range("expression.gate", g, 0.0, 1.0)?;
+        }
+        if let Some(p) = e.probability {
+            validate_range("expression.probability", p, 0.0, 1.0)?;
+        }
+        if let Some(v) = &e.vibrato {
+            if let Some(d) = v.depth {
+                validate_range("expression.vibrato.depth", d, 0.0, 48.0)?;
+            }
+            if let Some(r) = v.rate {
+                validate_range("expression.vibrato.rate", r, 0.0, 100.0)?;
+            }
+            if let Some(ms) = v.delay_ms {
+                validate_range("expression.vibrato.delay_ms", ms, 0.0, 60_000.0)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1348,6 +1370,34 @@ pub struct GlideInput {
     pub interp: Option<String>,
 }
 
+/// Per-note vibrato for batch note operations.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct VibratoInput {
+    #[schemars(description = "Peak pitch deviation in semitones. Default 0.3.")]
+    pub depth: Option<f32>,
+    #[schemars(description = "LFO rate in Hz. Default 5.5.")]
+    pub rate: Option<f32>,
+    #[schemars(description = "Depth fade-in time in milliseconds. Default 0 (instant).")]
+    pub delay_ms: Option<f32>,
+    #[schemars(description = "LFO shape: 'sine' (default), 'triangle', 'square', or 'saw'.")]
+    pub shape: Option<String>,
+}
+
+/// Per-note expression block for batch note operations.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ExpressionInput {
+    #[schemars(description = "Accent: velocity multiplier (1.0 = unchanged, >1 louder).")]
+    pub accent: Option<f32>,
+    #[schemars(description = "Gate length as a fraction of duration (0..1, staccato/tenuto).")]
+    pub gate: Option<f32>,
+    #[schemars(description = "Ghost note: force a soft velocity. Default false.")]
+    pub ghost: Option<bool>,
+    #[schemars(description = "Trigger probability (0..1). Default 1 (always plays).")]
+    pub probability: Option<f32>,
+    #[schemars(description = "Optional per-note pitch vibrato.")]
+    pub vibrato: Option<VibratoInput>,
+}
+
 /// A note to add in a batch operation.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteInput {
@@ -1365,6 +1415,10 @@ pub struct NoteInput {
     pub legato: Option<bool>,
     #[schemars(description = "Optional per-note glide (portamento/glissando) into this note.")]
     pub glide: Option<GlideInput>,
+    #[schemars(
+        description = "Optional per-note expression: accent, gate, ghost, probability, vibrato."
+    )]
+    pub expression: Option<ExpressionInput>,
 }
 
 /// Map a `NoteInput` (MCP JSON) to a bridge-level `BridgeNoteData`, resolving
@@ -1389,6 +1443,21 @@ fn note_input_to_bridge(n: &NoteInput) -> crate::bridge::BridgeNoteData {
                     || s.eq_ignore_ascii_case("gliss")
             }),
         }),
+        expression: n
+            .expression
+            .as_ref()
+            .map(|e| crate::bridge::BridgeExpression {
+                accent: e.accent,
+                gate: e.gate,
+                ghost: e.ghost.unwrap_or(false),
+                probability: e.probability,
+                vibrato: e.vibrato.as_ref().map(|v| crate::bridge::BridgeVibrato {
+                    depth: v.depth.unwrap_or(0.3),
+                    rate: v.rate.unwrap_or(5.5),
+                    delay_ms: v.delay_ms.unwrap_or(0.0),
+                    shape: v.shape.clone(),
+                }),
+            }),
     }
 }
 

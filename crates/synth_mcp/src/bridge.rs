@@ -43,6 +43,35 @@ pub struct BridgeGlide {
     pub stepped: bool,
 }
 
+/// Per-note vibrato for batch note operations (primitive fields only; the
+/// bridge implementation resolves `shape` into the sequencer's `VibratoShape`).
+#[derive(Debug, Clone, Default)]
+pub struct BridgeVibrato {
+    /// Peak pitch deviation in semitones.
+    pub depth: f32,
+    /// LFO rate in Hz.
+    pub rate: f32,
+    /// Depth fade-in time in milliseconds.
+    pub delay_ms: f32,
+    /// LFO shape token (`sine`/`triangle`/`square`/`saw`); defaults to sine.
+    pub shape: Option<String>,
+}
+
+/// Per-note expression block for batch note operations.
+#[derive(Debug, Clone, Default)]
+pub struct BridgeExpression {
+    /// Accent: velocity multiplier (1.0 = unchanged).
+    pub accent: Option<f32>,
+    /// Gate as a fraction of duration (0..1).
+    pub gate: Option<f32>,
+    /// Ghost (forced-soft) note.
+    pub ghost: bool,
+    /// Trigger probability (0..1).
+    pub probability: Option<f32>,
+    /// Optional per-note vibrato.
+    pub vibrato: Option<BridgeVibrato>,
+}
+
 /// Note data for batch add/replace operations.
 pub struct BridgeNoteData {
     /// MIDI pitch (0-127).
@@ -57,6 +86,8 @@ pub struct BridgeNoteData {
     pub legato: bool,
     /// Optional per-note glide.
     pub glide: Option<BridgeGlide>,
+    /// Optional per-note expression block.
+    pub expression: Option<BridgeExpression>,
 }
 
 /// Note update for batch update operations.

@@ -301,13 +301,22 @@ that map 1:1 onto those dimensions now even if only vibrato is wired in C.
 - **Done:** gate green (real exit codes); review = 3 low-sev findings, all matching
   pre-existing inspector behavior; applied the all-default→None collapse.
 
-### C6 — MCP: expose the expression block
+### C6 — MCP: expose the expression block ✅ (next commit)
 
-- [ ] Extend `add_notes` with optional `expression { vibrato{depth,rate,delay,shape},
-  accent, gate, ghost, probability }`; forgiving tokens; defaults = current.
-  Round-trip test + `README_MCP` note.
+- [x] `NoteInput` gains optional `expression { accent, gate, ghost, probability,
+  vibrato{depth,rate,delay_ms,shape} }` (server.rs `ExpressionInput`/`VibratoInput`);
+  `BridgeNoteData` gains `BridgeExpression`/`BridgeVibrato`. `note_input_to_bridge`
+  maps it (all four NoteInput→Bridge paths route through it); pertylizer resolves
+  via `expression_from_bridge` + forgiving `vibrato_shape_from_token` (sine default,
+  tri/sqr/sawtooth aliases). All-default block collapses to `None` (matches GUI).
+- [x] `validate_note_input` range-checks the sub-fields (accent 0..16, gate/prob
+  0..1, vibrato depth/rate/delay) at the MCP boundary — hard errors, NaN-rejecting,
+  before the unclamped `Semitones`/`Hertz` newtypes.
+- [x] Round-trip tests (full block; empty→None) + `README_MCP` expression section.
 - **Verify:** MCP-created expressive note plays. `/code-review` medium.
 - **Commit:** `Phase C6: MCP add_notes accepts NoteExpression block`
+- **Done:** gate green (real exit codes); review `[]` clean. Fixed two B5 test
+  literals missing the new `expression` field (caught via cargo's true exit code).
 
 ### C-close
 

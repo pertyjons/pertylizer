@@ -216,6 +216,14 @@ optional fields beyond pitch/start/duration/velocity:
   - `time_ms` (f32) — glide time, default `100`.
   - `interp` — `"continuous"` (smooth portamento, default) or `"stepped"`
     (chromatic glissando).
+- `expression` — per-note shaping + vibrato:
+  - `accent` (f32) — velocity multiplier (`1.0` = unchanged, `>1` louder).
+  - `gate` (0–1) — note length as a fraction of its duration (staccato).
+  - `ghost` (bool) — force a soft velocity.
+  - `probability` (0–1) — chance the note plays (resolved at playback; preview
+    always sounds it).
+  - `vibrato` — `{ depth (semitones), rate (Hz), delay_ms (depth fade-in),
+    shape: sine|triangle|square|saw }`.
 
 ### Tracks & Arrangement
 

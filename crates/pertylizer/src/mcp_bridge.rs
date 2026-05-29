@@ -15,9 +15,9 @@ use synth_engine::commands::ModuleId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_mcp::bridge::SynthBridge;
 use synth_mcp::bridge::{
-    BridgeAutomationPointData, BridgeGlide, BridgeInstrumentDef, BridgeNoteData, BridgeNoteUpdate,
-    BridgeParamSet, BridgeParamValue, BridgePatternData, BridgePlacementData, BridgeSongPlacement,
-    BridgeTrackData,
+    BridgeAutomationPointData, BridgeExpression, BridgeGlide, BridgeInstrumentDef, BridgeNoteData,
+    BridgeNoteUpdate, BridgeParamSet, BridgeParamValue, BridgePatternData, BridgePlacementData,
+    BridgeSongPlacement, BridgeTrackData,
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
@@ -5336,10 +5336,49 @@ fn glide_from_bridge(g: &BridgeGlide, target: synth_sequencer::Pitch) -> synth_s
     }
 }
 
-/// Apply the per-note expression (legato/glide) from `BridgeNoteData` to a note.
+/// Parse a forgiving vibrato-shape token into a `VibratoShape` (default sine).
+fn vibrato_shape_from_token(token: Option<&str>) -> synth_sequencer::VibratoShape {
+    match token.map(str::trim) {
+        Some(s) if s.eq_ignore_ascii_case("triangle") || s.eq_ignore_ascii_case("tri") => {
+            synth_sequencer::VibratoShape::Triangle
+        }
+        Some(s) if s.eq_ignore_ascii_case("square") || s.eq_ignore_ascii_case("sqr") => {
+            synth_sequencer::VibratoShape::Square
+        }
+        Some(s) if s.eq_ignore_ascii_case("saw") || s.eq_ignore_ascii_case("sawtooth") => {
+            synth_sequencer::VibratoShape::Saw
+        }
+        _ => synth_sequencer::VibratoShape::Sine,
+    }
+}
+
+/// Resolve a bridge-level expression block into the sequencer's `NoteExpression`.
+fn expression_from_bridge(e: &BridgeExpression) -> synth_sequencer::NoteExpression {
+    synth_sequencer::NoteExpression {
+        vibrato: e.vibrato.as_ref().map(|v| synth_sequencer::Vibrato {
+            depth: synth_core::Semitones::new(v.depth),
+            rate: synth_core::Hertz::new(v.rate),
+            delay: synth_core::Milliseconds::new(v.delay_ms),
+            shape: vibrato_shape_from_token(v.shape.as_deref()),
+        }),
+        accent: e.accent,
+        gate: e.gate.map(synth_core::NormalizedValue::new),
+        ghost: e.ghost,
+        probability: e.probability.map(synth_core::NormalizedValue::new),
+    }
+}
+
+/// Apply the per-note expression (legato/glide/expression block) from
+/// `BridgeNoteData` to a note. An all-default expression block collapses to
+/// `None` (matches the GUI editor's normalization).
 fn apply_bridge_expression(note: &mut synth_sequencer::Note, n: &BridgeNoteData) {
     note.legato = n.legato;
     note.glide = n.glide.as_ref().map(|g| glide_from_bridge(g, note.pitch));
+    note.expression = n
+        .expression
+        .as_ref()
+        .map(expression_from_bridge)
+        .filter(|e| *e != synth_sequencer::NoteExpression::default());
 }
 
 /// Try to insert a note from `BridgeNoteData` into a pattern.
@@ -10007,6 +10046,7 @@ mod mcp_helper_tests {
                 time_ms: 80.0,
                 stepped: true,
             }),
+            expression: None,
         };
         let id = try_insert_note_into_pattern(&mut pattern, &data).unwrap();
         let note = pattern.note(synth_sequencer::NoteId(id)).unwrap();
@@ -10038,6 +10078,7 @@ mod mcp_helper_tests {
                 time_ms: 100.0,
                 stepped: false,
             }),
+            expression: None,
         };
         let id = try_insert_note_into_pattern(&mut pattern, &data).unwrap();
         let note = pattern.note(synth_sequencer::NoteId(id)).unwrap();
@@ -10048,6 +10089,70 @@ mod mcp_helper_tests {
             synth_sequencer::GlideFrom::Pitch(synth_sequencer::Pitch::new(60).unwrap())
         );
         assert_eq!(g.interp, synth_sequencer::GlideInterp::Continuous);
+    }
+
+    #[test]
+    fn add_note_applies_expression_block() {
+        let mut pattern = synth_sequencer::Pattern::new(
+            synth_sequencer::PatternId::new(0),
+            synth_sequencer::Duration(3840),
+        );
+        let data = BridgeNoteData {
+            pitch: 60,
+            start_beat: 0.0,
+            duration_beats: 1.0,
+            velocity: 100,
+            legato: false,
+            glide: None,
+            expression: Some(BridgeExpression {
+                accent: Some(1.5),
+                gate: Some(0.5),
+                ghost: true,
+                probability: Some(0.8),
+                vibrato: Some(synth_mcp::bridge::BridgeVibrato {
+                    depth: 0.4,
+                    rate: 6.0,
+                    delay_ms: 20.0,
+                    shape: Some("triangle".to_owned()),
+                }),
+            }),
+        };
+        let id = try_insert_note_into_pattern(&mut pattern, &data).unwrap();
+        let note = pattern.note(synth_sequencer::NoteId(id)).unwrap();
+        let e = note.expression.expect("expression applied");
+        assert_eq!(e.accent, Some(1.5));
+        assert!((e.gate.unwrap().as_f32() - 0.5).abs() < f32::EPSILON);
+        assert!(e.ghost);
+        assert!((e.probability.unwrap().as_f32() - 0.8).abs() < f32::EPSILON);
+        let v = e.vibrato.expect("vibrato applied");
+        assert!((v.depth.as_f32() - 0.4).abs() < f32::EPSILON);
+        assert_eq!(v.shape, synth_sequencer::VibratoShape::Triangle);
+    }
+
+    #[test]
+    fn add_note_empty_expression_collapses_to_none() {
+        let mut pattern = synth_sequencer::Pattern::new(
+            synth_sequencer::PatternId::new(0),
+            synth_sequencer::Duration(3840),
+        );
+        // An expression block with no fields set is semantically "no expression".
+        let data = BridgeNoteData {
+            pitch: 60,
+            start_beat: 0.0,
+            duration_beats: 1.0,
+            velocity: 100,
+            legato: false,
+            glide: None,
+            expression: Some(BridgeExpression::default()),
+        };
+        let id = try_insert_note_into_pattern(&mut pattern, &data).unwrap();
+        assert!(
+            pattern
+                .note(synth_sequencer::NoteId(id))
+                .unwrap()
+                .expression
+                .is_none()
+        );
     }
 
     #[test]
