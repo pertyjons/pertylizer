@@ -7,7 +7,7 @@ use synth_core::NormalizedValue;
 
 use super::automation::AutomationTarget;
 use super::ids::SeqInstrumentId;
-use super::note::Glide;
+use super::note::{Glide, NoteExpression};
 use super::pitch::{Pitch, Velocity};
 use super::time::Tick;
 
@@ -32,6 +32,12 @@ pub enum SequencerEvent {
         /// `GlideFrom::Pitch` source is already transposed to the placement's key
         /// at emission, so the event is self-contained. Consumed in Phase B3.
         glide: Option<Glide>,
+        /// Per-note expression block (vibrato + note-shape scalars), `None` when
+        /// absent. `Copy`/alloc-free. Probability is already resolved at emission
+        /// (the note is simply not emitted when it loses the roll), so the engine
+        /// consumes only the remaining fields (note-shape scalars in C3, vibrato
+        /// in C4).
+        expression: Option<NoteExpression>,
     },
     /// Note off event.
     NoteOff {
@@ -127,6 +133,7 @@ mod tests {
             instrument: SeqInstrumentId(0),
             legato: false,
             glide: None,
+            expression: None,
         };
         assert_eq!(event.tick().0, 1000);
     }
@@ -140,6 +147,7 @@ mod tests {
             instrument: SeqInstrumentId(0),
             legato: false,
             glide: None,
+            expression: None,
         };
         assert!(note_on.is_note_on());
         assert!(!note_on.is_note_off());
@@ -163,6 +171,7 @@ mod tests {
                 instrument: SeqInstrumentId(0),
                 legato: false,
                 glide: None,
+                expression: None,
             },
             SequencerEvent::NoteOn {
                 tick: Tick(100),
@@ -171,6 +180,7 @@ mod tests {
                 instrument: SeqInstrumentId(0),
                 legato: false,
                 glide: None,
+                expression: None,
             },
             SequencerEvent::NoteOff {
                 tick: Tick(300),
@@ -194,6 +204,7 @@ mod tests {
             instrument: SeqInstrumentId(5),
             legato: false,
             glide: None,
+            expression: None,
         };
         assert_eq!(note.instrument(), Some(SeqInstrumentId(5)));
     }

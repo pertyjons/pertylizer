@@ -10,8 +10,8 @@ use parking_lot::RwLock;
 
 use synth_core::{BipolarValue, Bpm, NormalizedValue, SampleCount, SampleRate};
 use synth_sequencer::{
-    AutomationTarget, Glide, GlideFrom, PatternId, PatternTick, Pitch, SeqInstrumentId,
-    SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity,
+    AutomationTarget, Glide, GlideFrom, NoteExpression, PatternId, PatternTick, Pitch,
+    SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity,
 };
 
 /// Minimum change threshold for automation value deduplication.
@@ -77,6 +77,40 @@ struct PendingNote {
     /// Per-note glide; any absolute `GlideFrom::Pitch` is already transposed to
     /// the placement key.
     glide: Option<Glide>,
+    /// Per-note expression block (vibrato + note-shape scalars). Probability has
+    /// already been resolved before this note was collected.
+    expression: Option<NoteExpression>,
+}
+
+/// Deterministic pseudo-random value in `[0, 1)` from a 64-bit seed.
+///
+/// SplitMix64 finalizer — pure arithmetic, RT-safe (no RNG state, no syscall,
+/// no allocation), and reproducible for a given playback timeline. Used to
+/// resolve per-note trigger probability at emission so the audio thread never
+/// calls an RNG (the project's no-`Math.random` posture).
+#[allow(clippy::cast_precision_loss)]
+fn deterministic_unit(seed: u64) -> f32 {
+    let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    // Top 24 bits → [0, 1); 2^24 = 16_777_216 (exactly representable in f32).
+    ((z >> 40) as f32) / 16_777_216.0
+}
+
+/// Decide whether a note plays this occurrence, given its per-note probability.
+///
+/// `None` probability → always plays. The roll is seeded by the absolute song
+/// tick and the note id, so it is deterministic for a given timeline yet varies
+/// as a looped section advances in absolute time.
+fn note_passes_probability(note: &synth_sequencer::Note, tick: Tick) -> bool {
+    match note.expression.and_then(|e| e.probability) {
+        None => true,
+        Some(prob) => {
+            let seed = tick.0.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ note.id.0;
+            deterministic_unit(seed) < prob.as_f32()
+        }
+    }
 }
 
 /// The sequencer engine processes song data and emits real-time events.
@@ -430,6 +464,10 @@ impl SequencerEngine {
                     if note.start.0 != pattern_tick {
                         continue;
                     }
+                    // NB: preview/audition deliberately does NOT apply per-note
+                    // probability — auditioning a pattern should always sound the
+                    // note so the user can hear/edit it; probability is a
+                    // performance feature, applied only in arrangement playback.
                     let end_tick = note
                         .duration
                         .map(|d| Tick(self.current_tick.0 + u64::from(d.0)));
@@ -442,6 +480,7 @@ impl SequencerEngine {
                         end_tick,
                         legato: note.legato,
                         glide: note.glide,
+                        expression: note.expression,
                     });
                 }
                 for lane in &pattern.automation {
@@ -499,6 +538,13 @@ impl SequencerEngine {
                     if note.start.0 != pattern_tick {
                         continue;
                     }
+                    // Resolve per-note trigger probability here (sequencer-side,
+                    // deterministic), so a losing roll simply omits the note — the
+                    // audio thread never runs an RNG. Absolute song tick seeds it,
+                    // so a looped section varies roll-to-roll yet stays reproducible.
+                    if !note_passes_probability(note, self.current_tick) {
+                        continue;
+                    }
 
                     let transposed_pitch = note
                         .pitch
@@ -531,6 +577,7 @@ impl SequencerEngine {
                         end_tick,
                         legato: note.legato,
                         glide,
+                        expression: note.expression,
                     });
                 }
 
@@ -562,6 +609,7 @@ impl SequencerEngine {
                 end_tick,
                 legato,
                 glide,
+                expression,
             } = self.scratch_notes[i];
 
             let extending_idx = self.active_notes.iter().position(|n| {
@@ -588,6 +636,7 @@ impl SequencerEngine {
                 instrument,
                 legato,
                 glide,
+                expression,
             });
         }
 
@@ -703,6 +752,45 @@ impl Default for SequencerEngine {
 mod tests {
     use super::*;
     use synth_sequencer::{Duration, PatternTick, SeqInstrumentId, Velocity};
+
+    #[test]
+    fn deterministic_unit_is_in_range_and_reproducible() {
+        for seed in [0u64, 1, 42, 1_000_000, u64::MAX, 0x9E37_79B9_7F4A_7C15] {
+            let v = deterministic_unit(seed);
+            assert!((0.0..1.0).contains(&v), "seed {seed} → {v} out of [0,1)");
+            assert_eq!(v, deterministic_unit(seed), "must be reproducible");
+        }
+    }
+
+    #[test]
+    fn probability_gate_endpoints_and_absent() {
+        use synth_sequencer::{Note, NoteExpression, NoteId};
+        let mk = |prob: Option<f32>| {
+            let mut n = Note::new(
+                NoteId(7),
+                PatternTick(0),
+                Pitch::new(60).unwrap(),
+                Velocity::MF,
+            );
+            if let Some(p) = prob {
+                n = n.with_expression(NoteExpression {
+                    vibrato: None,
+                    accent: None,
+                    gate: None,
+                    ghost: false,
+                    probability: Some(synth_core::NormalizedValue::new(p)),
+                });
+            }
+            n
+        };
+        // No expression / no probability → always plays.
+        assert!(note_passes_probability(&mk(None), Tick(0)));
+        // p = 1.0 → always plays; p = 0.0 → never plays (for any tick).
+        for t in [0u64, 123, 99_999] {
+            assert!(note_passes_probability(&mk(Some(1.0)), Tick(t)));
+            assert!(!note_passes_probability(&mk(Some(0.0)), Tick(t)));
+        }
+    }
 
     /// A song with one note in a pattern that is NOT placed in the arrangement
     /// (an "orphan" pattern). Returns the song + the orphan pattern id.

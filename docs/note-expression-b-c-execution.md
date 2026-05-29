@@ -217,17 +217,22 @@ that map 1:1 onto those dimensions now even if only vibrato is wired in C.
   newtype); fix applied — inner `NoteExpression` fields are `#[serde(default)]` so
   partial blocks load.
 
-### C2 — Sequencer event plumbing
+### C2 — Sequencer event plumbing ✅ (next commit)
 
-- [ ] Carry `expression: Option<NoteExpression>` (`Copy`) on `SequencerEvent::NoteOn`
-  (RT-safety constraint). Populate from `Note` at emission (`sequencer_engine.rs:534`).
-- [ ] **Probability** is resolved sequencer-side at emission, not on the audio
-  thread (avoids RNG in `process()` and keeps the event deterministic per the
-  no-`Math.random` posture). Decide note inclusion before pushing `NoteOn`; seed
-  source TBD (pattern/tick-derived, documented).
+- [x] `SequencerEvent::NoteOn` + `PendingNote` carry `expression: Option<NoteExpression>`
+  (`Copy`), populated from the source `Note` in both collection paths; consumer
+  still uses `..` (no consumption until C3/C4).
+- [x] **Probability** resolved sequencer-side at emission: `note_passes_probability`
+  + a `deterministic_unit` SplitMix64 finalizer (pure arithmetic, RT-safe, no RNG).
+  A losing roll `continue`s before the note is collected, so it's simply not
+  emitted (no orphan NoteOff). Seed = `absolute_tick * C ^ note_id` → reproducible
+  per timeline yet varies as a looped section advances. **Preview/audition bypasses
+  probability** (review fix) — auditioning always sounds the note.
 - **Verify:** events carry the block; consumer ignores (except probability gating
   the emit). `/code-review` medium.
 - **Commit:** `Phase C2: carry NoteExpression through SequencerEvent::NoteOn`
+- **Done:** gate green; tests for `deterministic_unit` range + probability
+  endpoints. Review: correctness/RT-safety clean; preview-bypass applied.
 
 ### C3 — Engine consumption: note-shape scalars *(cheap, additive)*
 
