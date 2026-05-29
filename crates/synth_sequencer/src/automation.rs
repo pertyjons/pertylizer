@@ -1,10 +1,64 @@
 //! Automation system for parameter control over time.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use synth_core::{ModuleType, NormalizedValue};
 
 use super::ids::{SeqInstrumentId, TrackId};
 use super::time::PatternTick;
+
+/// Interned-by-`Arc` parameter id for [`AutomationTarget::Module`].
+///
+/// Wraps `Arc<str>` so cloning the target on the audio thread (the per-tick
+/// automation collection / event emission in `sequencer_engine`) is an atomic
+/// refcount bump — RT-safe (no heap allocation, no lock), unlike the previous
+/// `String` which allocated on every clone.
+///
+/// Chosen over a global intern pool + `Copy` handle (the roadmap's original
+/// sketch): the engine dispatch matches the param id against each descriptor's
+/// `type_id` **string**, so an intern handle would force a lock-taking
+/// `as_str()` on the audio thread — trading an allocation for a lock. `Arc<str>`
+/// keeps the dispatch's lock-free `&str` compare while making the clone cheap.
+/// Serializes transparently as the id string, so existing projects load unchanged.
+///
+/// **Drop caveat (tracked follow-up):** dropping a clone on the audio thread is a
+/// refcount *decrement*; only if the source lane was removed mid-playback (so the
+/// engine's cached clone in `last_automation_values` / the event buffer is the
+/// last ref) does the next `clear()` free on the audio thread. This is a strict
+/// improvement over the prior `String` (which freed on *every* drop) but not yet
+/// fully eliminated — the robust fix is to route cleared targets through the
+/// engine's existing off-thread drop channel (`return_producer`), deferred here.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+#[schemars(transparent)]
+pub struct ParamId(Arc<str>);
+
+impl ParamId {
+    /// Borrow the id as a string slice (RT-safe — no lock, no allocation).
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for ParamId {
+    fn from(s: &str) -> Self {
+        Self(Arc::from(s))
+    }
+}
+
+impl From<String> for ParamId {
+    fn from(s: String) -> Self {
+        Self(Arc::from(s))
+    }
+}
+
+impl std::fmt::Display for ParamId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// A single automation point.
 #[must_use]
@@ -221,7 +275,8 @@ pub enum AutomationTarget {
         /// 1-based instance index within the module type (as in `ModuleId`).
         instance: u16,
         /// Descriptor `type_id` of the target parameter (e.g. `"cutoff"`).
-        param_id: String,
+        /// `Arc`-interned so cloning this target is RT-safe (see [`ParamId`]).
+        param_id: ParamId,
     },
 }
 
@@ -451,10 +506,19 @@ mod tests {
             instrument: SeqInstrumentId::new(3),
             module_type: ModuleType::Filter,
             instance: 1,
-            param_id: "cutoff".to_string(),
+            param_id: "cutoff".into(),
         };
 
         let json = serde_json::to_string(&target).unwrap();
+        // param_id serializes as a bare string (serde-transparent), so the on-disk
+        // form is unchanged from the pre-interning `String` field — pre-F1 projects
+        // load unchanged.
+        assert!(
+            json.contains(r#""param_id":"cutoff""#),
+            "param_id must serialize as a bare string, got: {json}"
+        );
+        // Round-trip from the bare-string form == the pre-F1 on-disk form, so a
+        // legacy project (param_id stored as a plain string) loads unchanged.
         let decoded: AutomationTarget = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, target);
 

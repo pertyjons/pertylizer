@@ -5716,7 +5716,7 @@ fn build_module_automation_target(
         instrument,
         module_type,
         instance,
-        param_id: param_id.to_string(),
+        param_id: synth_sequencer::ParamId::from(param_id),
     })
 }
 
@@ -9915,7 +9915,7 @@ mod automation_target_tests {
                 instrument: SeqInstrumentId::new(3),
                 module_type: synth_core::ModuleType::Filter,
                 instance: 1,
-                param_id: "cutoff".to_string(),
+                param_id: "cutoff".into(),
             }
         );
     }
@@ -9926,7 +9926,7 @@ mod automation_target_tests {
             instrument: SeqInstrumentId::new(3),
             module_type: synth_core::ModuleType::Filter,
             instance: 1,
-            param_id: "cutoff".to_string(),
+            param_id: "cutoff".into(),
         };
         // Dash form mirrors the ModuleId rendering used by every other tool.
         assert_eq!(
@@ -9956,7 +9956,7 @@ mod automation_target_tests {
             instrument: SeqInstrumentId::new(3),
             module_type: synth_core::ModuleType::LadderFilter,
             instance: 1,
-            param_id: "cutoff".to_string(),
+            param_id: "cutoff".into(),
         };
         assert_eq!(
             build_automation_target("module:ladder-filter:1:cutoff", 3, &ldr).unwrap(),
@@ -10006,7 +10006,7 @@ mod automation_target_tests {
             instrument: SeqInstrumentId::new(5),
             module_type: synth_core::ModuleType::Filter,
             instance: 2,
-            param_id: "resonance".to_string(),
+            param_id: "resonance".into(),
         };
         let (name, inst) = automation_target_info(&target);
         assert_eq!(inst, Some(5));

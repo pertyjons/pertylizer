@@ -63,27 +63,30 @@ Retires the automation debt explicitly deferred from the A1/A2 first cut
 deliberate: **F1 first** because it reshapes `AutomationTarget::Module`, which
 F2/F3 also touch.
 
-### F1 — Intern `param_id` to a `Copy` handle (RT-safety) *(audio thread)*
+### F1 — RT-safe `param_id` (Arc-interned) ✅ (next commit)
 **Why:** `sequencer_engine` clones `AutomationTarget` per tick on the audio
-thread; a `Module` target heap-allocates its `param_id: String` inside the
-process path — a real RT-safety violation in shipped code.
+thread; a `Module` target heap-allocated its `param_id: String` per clone — a real
+RT-safety violation in shipped code.
 
-- [ ] Add an interned, `Copy`, `Eq+Hash` param-id handle (e.g. `ParamId(u32)`)
-  in `synth_core`, modelled on `PortName`/`interned.rs` (global lock-free pool,
-  pre-interned common ids, dynamic intern off the audio thread). Reuse the
-  existing interner infra rather than a second pool if `PortName`'s generalises.
-- [ ] Change `AutomationTarget::Module.param_id: String` → the interned handle.
-  Keep `Eq+Hash` (it's a `HashMap` key). **Serialization must still round-trip as
-  the param-id *string*** (serde via the pool) so existing `.pertyproj` files load
-  unchanged — verify with a load test of a pre-F1 project.
-- [ ] Confirm the four `target.clone()` sites are now alloc-free (the handle is
-  `Copy`). MCP `module:<prefix>:<instance>:<param_id>` parse/emit interns/resolves
-  the string at the boundary, not on the audio thread.
-- [ ] Tests: serde round-trip (string ⇄ handle); a Module automation lane plays
-  with no per-tick allocation (assert via the existing alloc-free patterns).
-- **Schema:** none expected (serialized form stays a string) — but run `gen_schemas`
-  and diff to confirm. `/code-review` **high** (audio-thread + data-model).
-- **Commit:** `Automation F1: intern AutomationTarget::Module param_id (RT-safe Copy handle)`
+- [x] **Chose `ParamId(Arc<str>)` over the roadmap's intern-pool `Copy` handle.**
+  Reason found at implementation time: the dispatch matches `param_id` against each
+  descriptor's `type_id` **string**, so an intern handle would force a lock-taking
+  `as_str()` on the audio thread — trading an alloc for a lock. `Arc<str>` clone is
+  an atomic refcount bump (RT-safe: no alloc, no lock), and the dispatch keeps its
+  lock-free `&str` compare. (Enabled serde `rc`; `#[serde(transparent)]` +
+  `#[schemars(transparent)]` → serializes as a bare string, projects load unchanged.)
+- [x] All four `target.clone()` sites are now alloc-free; the `BTreeSet<String>`
+  reference index (UI-thread) takes `param_id.as_str().to_owned()`; MCP token
+  round-trips via `ParamId::from` / `Display`; all construction sites build via `.into()`.
+- [x] Tests: serde round-trip asserts the bare-string on-disk form (back-compat).
+  Schema regenerated (`param_id` → a `ParamId` string `$def`, value unchanged).
+- **Verify:** `/code-review` **high** — clone-side RT goal achieved + back-compat clean.
+- **Commit:** `Automation F1: RT-safe AutomationTarget::Module param_id (Arc<str>)`
+- **Deferred (recorded):** the corresponding **drop** of a clone on the audio
+  thread frees *iff* the source lane was removed mid-playback (engine's cached
+  clone becomes last ref). Strict improvement over the prior `String` (which freed
+  on every drop); full fix = route cleared targets through the engine's
+  `return_producer` off-thread drop channel. Tracked below.
 
 ### F3 — Mod-matrix vs. automation combine ordering ("two controllers")
 **Why:** a filter cutoff can be driven by a mod-matrix offset *and* an automation
@@ -247,3 +250,10 @@ override path. Sketch sequence (to be expanded in E0):
   UX.
 - MCP `update_notes` cannot edit the expression block (only add/replace + GUI) —
   add an expression field to `NoteUpdateInput` if needed.
+- **Audio-thread drop of automation state.** `last_automation_values` and the
+  emitted-event buffer hold `ParamId(Arc<str>)` clones cleared on the audio thread;
+  if the source lane was removed mid-playback the clone can be the last ref and
+  free on the RT thread (F1 review finding). Strictly better than the pre-F1
+  `String` (always freed); full fix = route the cleared targets through the
+  engine's `return_producer` off-thread drop channel (as modules/instruments
+  already are). Independent of the tracks above.

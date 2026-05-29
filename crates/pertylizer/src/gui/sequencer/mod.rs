@@ -3965,7 +3965,7 @@ pub(crate) fn draw_piano_roll(
                                     instrument: view_state.selected_instrument,
                                     module_type: module_id.module_type,
                                     instance: module_id.instance,
-                                    param_id: param.type_id.clone(),
+                                    param_id: param.type_id.as_str().into(),
                                 };
                                 // Skip params already shown as an existing lane above.
                                 let already_shown = data

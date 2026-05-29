@@ -2786,7 +2786,12 @@ fn route_sequencer_events(
                     // identity is rebuilt into a ModuleId, the parameter resolved
                     // by descriptor type_id, and the 0..1 value denormalized via
                     // that param's range. Reverted on stop (`handle_all_notes_off`).
-                    inst.apply_module_param_override(*module_type, *instance, param_id, *value);
+                    inst.apply_module_param_override(
+                        *module_type,
+                        *instance,
+                        param_id.as_str(),
+                        *value,
+                    );
                 }
             }
         }
@@ -3576,7 +3581,7 @@ mod tests {
                 instrument: SeqInstrumentId(7),
                 module_type: ModuleType::Filter,
                 instance: 1,
-                param_id: "cutoff".to_string(),
+                param_id: "cutoff".into(),
             },
             value: NormalizedValue::MIN,
         }];

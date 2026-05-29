@@ -39,7 +39,7 @@ pub mod track;
 
 // Re-export commonly used types
 pub use automation::{AutoInstrumentParam, GlobalParam, TrackParam};
-pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
+pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType, ParamId};
 pub use events::SequencerEvent;
 pub use ids::{
     NoteId, PatternId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId,

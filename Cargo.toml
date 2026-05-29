@@ -28,7 +28,10 @@ description = "Pertylizer — a modular synthesizer with 35 voice modules, 21 ef
 
 [workspace.dependencies]
 # Core dependencies
-serde = { version = "1.0.228", features = ["derive"] }
+# "rc" enables Serialize/Deserialize for Rc/Arc (used by AutomationTarget's
+# Arc<str> param id). Inert for existing types — a serialized struct holding
+# Rc/Arc would not compile without it, so none exist today.
+serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = "1.0.150"
 thiserror = "2.0.18"
 

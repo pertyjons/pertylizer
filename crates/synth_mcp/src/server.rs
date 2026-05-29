@@ -5692,7 +5692,7 @@ mod automation_target_input_tests {
         let t = AutomationTargetInput::Module {
             module_type: "flt".to_string(),
             instance: 1,
-            param_id: "cutoff".to_string(),
+            param_id: "cutoff".into(),
         };
         assert_eq!(t.to_target_string(), "module:flt:1:cutoff");
     }
@@ -5724,7 +5724,7 @@ mod automation_target_input_tests {
             Some(AutomationTargetInput::Module {
                 module_type: "flt".to_string(),
                 instance: 2,
-                param_id: "resonance".to_string(),
+                param_id: "resonance".into(),
             }),
         );
         assert_eq!(p.effective_target(), "module:flt:2:resonance");

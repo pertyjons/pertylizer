@@ -201,8 +201,8 @@
                   "description": "Module type (with `instance`, the positional module identity)."
                 },
                 "param_id": {
-                  "description": "Descriptor `type_id` of the target parameter (e.g. `\"cutoff\"`).",
-                  "type": "string"
+                  "$ref": "#/$defs/ParamId",
+                  "description": "Descriptor `type_id` of the target parameter (e.g. `\"cutoff\"`).\n`Arc`-interned so cloning this target is RT-safe (see [`ParamId`])."
                 }
               },
               "required": [
@@ -6732,6 +6732,10 @@
           "type": "string"
         }
       ]
+    },
+    "ParamId": {
+      "description": "Interned-by-`Arc` parameter id for [`AutomationTarget::Module`].\n\nWraps `Arc<str>` so cloning the target on the audio thread (the per-tick\nautomation collection / event emission in `sequencer_engine`) is an atomic\nrefcount bump — RT-safe (no heap allocation, no lock), unlike the previous\n`String` which allocated on every clone.\n\nChosen over a global intern pool + `Copy` handle (the roadmap's original\nsketch): the engine dispatch matches the param id against each descriptor's\n`type_id` **string**, so an intern handle would force a lock-taking\n`as_str()` on the audio thread — trading an allocation for a lock. `Arc<str>`\nkeeps the dispatch's lock-free `&str` compare while making the clone cheap.\nSerializes transparently as the id string, so existing projects load unchanged.\n\n**Drop caveat (tracked follow-up):** dropping a clone on the audio thread is a\nrefcount *decrement*; only if the source lane was removed mid-playback (so the\nengine's cached clone in `last_automation_values` / the event buffer is the\nlast ref) does the next `clear()` free on the audio thread. This is a strict\nimprovement over the prior `String` (which freed on *every* drop) but not yet\nfully eliminated — the robust fix is to route cleared targets through the\nengine's existing off-thread drop channel (`return_producer`), deferred here.",
+      "type": "string"
     },
     "Patch": {
       "description": "A complete synthesizer patch.",

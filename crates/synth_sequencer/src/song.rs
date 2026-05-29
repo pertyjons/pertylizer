@@ -230,7 +230,7 @@ impl Song {
                     index
                         .entry((*instrument, *module_type, *instance))
                         .or_insert_with(std::collections::BTreeSet::new)
-                        .insert(param_id.clone());
+                        .insert(param_id.as_str().to_owned());
                 }
             }
         }
@@ -949,7 +949,7 @@ mod tests {
             instrument: SeqInstrumentId::new(2),
             module_type: ModuleType::Filter,
             instance: 1,
-            param_id: "cutoff".to_string(),
+            param_id: "cutoff".into(),
         };
 
         // An empty lane (picker artifact) is not counted as a reference.
