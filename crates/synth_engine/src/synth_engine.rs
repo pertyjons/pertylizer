@@ -778,6 +778,10 @@ impl SynthEngine {
             EngineCommand::RemoveReturnBus { id } => {
                 self.handle_remove_return_bus(id);
             }
+            EngineCommand::ClearReturnBusses => {
+                self.return_busses.clear();
+                self.update_shared_return_effects();
+            }
             EngineCommand::AddReturnEffect {
                 return_id,
                 id,

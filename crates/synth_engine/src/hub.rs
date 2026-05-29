@@ -349,6 +349,7 @@ impl EngineHub {
             | EngineCommand::RemoveVisualizer { .. }
             | EngineCommand::CreateReturnBus { .. }
             | EngineCommand::RemoveReturnBus { .. }
+            | EngineCommand::ClearReturnBusses
             | EngineCommand::AddReturnEffect { .. }
             | EngineCommand::RemoveReturnEffect { .. }
             | EngineCommand::ClearAllModules => perms.can_modify_topology,

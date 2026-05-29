@@ -145,3 +145,42 @@ fn return_bus_effect_chain_survives_save_load_save() {
         "return-bus effect chain must round-trip through save → load → save"
     );
 }
+
+#[test]
+fn applying_a_project_resets_existing_return_channels_instead_of_stacking() {
+    // An engine that already holds a return bus with one effect...
+    let mut rig = Rig::new();
+    let rid = rig.song.write().create_return_bus("Reverb");
+    rig.handle
+        .command_sender()
+        .send(EngineCommand::CreateReturnBus { id: rid });
+    rig.handle
+        .command_sender()
+        .send(EngineCommand::AddReturnEffect {
+            return_id: rid,
+            id: ModuleId::new(ModuleType::Distortion, 1),
+            effect: Box::new(synth_modules::Distortion::new()),
+        });
+    rig.pump(4);
+
+    let project = rig.build_project();
+    assert_eq!(project.global.return_bus_effects[0].effects.len(), 1);
+
+    // ...re-applying a project must reset return channels first, not append to
+    // the surviving channel (CreateReturnBus is a no-op for an existing id).
+    project_apply::apply_project(&project, &rig.session, &rig.song, &rig.sample_library)
+        .expect("apply_project");
+    rig.pump(8);
+
+    let project2 = rig.build_project();
+    assert_eq!(
+        project2.global.return_bus_effects.len(),
+        1,
+        "exactly one return bus after re-apply"
+    );
+    assert_eq!(
+        project2.global.return_bus_effects[0].effects.len(),
+        1,
+        "re-loading must reset the return channel, not stack effects onto the old chain"
+    );
+}

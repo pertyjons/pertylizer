@@ -397,9 +397,11 @@ impl OfflineEngineSession {
         });
 
         // Reconstruct the song's return-bus channels so sends route correctly
-        // in the offline render (idempotent: re-creating an existing id is a
-        // no-op). Faders are read live from the song; effect chains on returns
-        // are not yet persisted, so offline renders hear the dry-summed returns.
+        // in the offline render. Reset first so channels from a prior render of
+        // a different song don't linger (this session is reused across calls).
+        // Faders are read live from the song; effect chains on returns are not
+        // reconstructed here, so offline renders hear the dry-summed returns.
+        self.handle.send_blocking(EngineCommand::ClearReturnBusses);
         for bus in song.read().return_busses() {
             self.handle
                 .send_blocking(EngineCommand::CreateReturnBus { id: bus.id });

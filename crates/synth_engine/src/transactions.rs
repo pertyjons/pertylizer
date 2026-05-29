@@ -660,6 +660,7 @@ impl EngineCommand {
             // Return-bus commands (all clonable)
             Self::CreateReturnBus { id } => Self::CreateReturnBus { id: *id },
             Self::RemoveReturnBus { id } => Self::RemoveReturnBus { id: *id },
+            Self::ClearReturnBusses => Self::ClearReturnBusses,
             Self::RemoveReturnEffect { return_id, id } => Self::RemoveReturnEffect {
                 return_id: *return_id,
                 id: *id,

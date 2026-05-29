@@ -313,6 +313,11 @@ pub enum EngineCommand {
     /// it become inert (resolved to no destination on the next block).
     RemoveReturnBus { id: ReturnBusId },
 
+    /// Remove *all* return-bus runtime channels (and their effect chains).
+    /// Used to reset return state before (re)loading a project so a load
+    /// starts from a clean slate rather than stacking onto leftover channels.
+    ClearReturnBusses,
+
     /// Add a pre-created effect instance to a return bus's effect chain
     /// (real-time safe: the effect is built off the audio thread).
     AddReturnEffect {
@@ -1296,6 +1301,7 @@ impl std::fmt::Debug for EngineCommand {
             Self::RemoveReturnBus { id } => {
                 f.debug_struct("RemoveReturnBus").field("id", id).finish()
             }
+            Self::ClearReturnBusses => write!(f, "ClearReturnBusses"),
             Self::AddReturnEffect { return_id, id, .. } => f
                 .debug_struct("AddReturnEffect")
                 .field("return_id", return_id)

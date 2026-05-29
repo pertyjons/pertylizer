@@ -65,6 +65,10 @@ pub fn apply_project(
     sender.send(EngineCommand::SetMasterVolume(project.global.master_volume));
     sender.send(EngineCommand::SetGlideTime(project.global.glide_time));
 
+    // Reset any return-bus channels left over from a previously-loaded project
+    // before recreating this project's — otherwise CreateReturnBus is a no-op
+    // for a surviving id and AddReturnEffect would stack onto the old chain.
+    sender.send(EngineCommand::ClearReturnBusses);
     // Create the engine-side runtime channel for each return bus defined in the
     // song (faders are read live from the song), then rebuild its effect chain
     // in order. Commands drain in order, so AddReturnEffect after CreateReturnBus
