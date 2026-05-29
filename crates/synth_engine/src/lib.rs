@@ -60,8 +60,9 @@ pub use recording::RecordingState;
 pub use return_bus::ReturnBusChannel;
 pub use sequencer_engine::{PlayState, SequencerEngine};
 pub use shared_state::{
-    AtomicF32, ConnectionSnapshot, InstrumentSnapshot, ModuleStateSnapshot, SharedEngineState,
-    SharedGraphState, SharedMeterState, SharedTransportState,
+    AtomicF32, ConnectionSnapshot, InstrumentSnapshot, ModuleStateSnapshot, ReturnBusSnapshot,
+    ReturnEffectSnapshot, SharedEngineState, SharedGraphState, SharedMeterState,
+    SharedTransportState,
 };
 pub use state::*;
 pub use synth_engine::{CommandSender, EngineHandle, SynthEngine};

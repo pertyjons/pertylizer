@@ -1,5 +1,17 @@
 # Version History
 
+## [0.299.0] - 2026-05-29
+
+### Channel-strip Phase 7a — return effect-chain persistence
+
+A saved return bus now keeps its effect chain. The audio thread publishes each
+return's effects (type + param values, in chain order) into a shared snapshot
+(`EngineState.return_bus_effects`) on every return-effect mutation; the save path
+captures it into `GlobalProjectState.return_bus_effects`, and load rebuilds each chain
+via `create_effect` + `AddReturnEffect` + `SetReturnEffectParameter`. Round-trip test
+drives a real engine through save → load → save. (The bus's id/name/fader continue to
+live in the `Song`.)
+
 ## [0.298.0] - 2026-05-29
 
 ### Channel-strip Phase 7a — sends & return busses (engine)

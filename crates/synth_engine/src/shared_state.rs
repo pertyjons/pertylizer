@@ -17,6 +17,7 @@ use synth_core::{
     Amplitude, BipolarValue, BypassState, CpuUsage, Gain, MuteState, PortName, SoloState,
 };
 use synth_core::{ModuleType, Param};
+use synth_sequencer::ReturnBusId;
 
 /// Atomic f32 wrapper for lock-free meter access.
 #[derive(Debug)]
@@ -652,6 +653,30 @@ impl Default for SharedGraphState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// One effect in a return bus's chain, captured for persistence.
+#[derive(Debug, Clone)]
+pub struct ReturnEffectSnapshot {
+    /// Module id (type + instance).
+    pub module_id: ModuleId,
+    /// Effect type.
+    pub module_type: ModuleType,
+    /// Current parameter values (each `Param` carries its type + value).
+    pub parameters: Vec<Param>,
+    /// Whether the effect is bypassed.
+    pub bypassed: bool,
+}
+
+/// A return bus's effect chain in processing order, captured off the audio
+/// thread for persistence (the save path reads this; the audio thread
+/// publishes it on every return-effect mutation).
+#[derive(Debug, Clone)]
+pub struct ReturnBusSnapshot {
+    /// Return bus id.
+    pub id: ReturnBusId,
+    /// Effects in chain (processing) order.
+    pub effects: Vec<ReturnEffectSnapshot>,
 }
 
 /// Complete shared engine state for multi-GUI access.

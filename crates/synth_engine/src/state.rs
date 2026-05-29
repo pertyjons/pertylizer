@@ -14,7 +14,7 @@ use synth_sequencer::Tick;
 
 use crate::instrument::InstrumentId;
 use crate::recording::RecordingState;
-use crate::shared_state::{InstrumentSnapshot, SharedGraphState};
+use crate::shared_state::{InstrumentSnapshot, ReturnBusSnapshot, SharedGraphState};
 use crate::visualizers::VisualizationBuffer;
 
 /// Atomic float for thread-safe parameter sharing.
@@ -378,6 +378,9 @@ pub struct EngineState {
     pub effect_count: AtomicU32,
     /// Instrument metadata snapshots for MCP and multi-GUI access.
     pub instrument_snapshots: RwLock<Vec<InstrumentSnapshot>>,
+    /// Return-bus effect chains, published for the save path (the fader/name
+    /// live in the `Song`; the effect chain is engine-side runtime state).
+    pub return_bus_effects: RwLock<Vec<ReturnBusSnapshot>>,
     /// Per-instrument keyboard octave offset, applied by note-rendering paths
     /// that don't go through the GUI keyboard (e.g. MCP `preview_note`).
     /// Set by `apply_patch` from `Patch::settings.octave_offset`. Default 0.
@@ -400,6 +403,7 @@ impl EngineState {
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
             instrument_snapshots: RwLock::new(Vec::new()),
+            return_bus_effects: RwLock::new(Vec::new()),
             octave_offsets: RwLock::new(HashMap::new()),
             event_drops: StdAtomicU32::new(0),
         })
@@ -461,6 +465,7 @@ impl Default for EngineState {
             shared_graph: SharedGraphState::new(),
             effect_count: AtomicU32::new(0),
             instrument_snapshots: RwLock::new(Vec::new()),
+            return_bus_effects: RwLock::new(Vec::new()),
             octave_offsets: RwLock::new(HashMap::new()),
             event_drops: StdAtomicU32::new(0),
         }

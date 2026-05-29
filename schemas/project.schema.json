@@ -926,6 +926,13 @@
           "description": "Keyboard octave offset.",
           "format": "int32",
           "type": "integer"
+        },
+        "return_bus_effects": {
+          "description": "Effect chains on return busses (the busses themselves — id/name/fader —\nlive in the `Song`; only the engine-side effect chain is captured here).",
+          "items": {
+            "$ref": "#/$defs/ReturnBusEffectsState"
+          },
+          "type": "array"
         }
       },
       "type": "object"
@@ -7078,6 +7085,30 @@
         "name",
         "volume",
         "pan"
+      ],
+      "type": "object"
+    },
+    "ReturnBusEffectsState": {
+      "description": "The effect chain on one return bus, in processing order, for persistence.",
+      "properties": {
+        "effects": {
+          "description": "Effects in chain order (each a module type + parameter values).",
+          "items": {
+            "$ref": "#/$defs/ModuleState"
+          },
+          "type": "array"
+        },
+        "id": {
+          "description": "Return bus id (matches a `ReturnBus` in the song).",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "effects"
       ],
       "type": "object"
     },

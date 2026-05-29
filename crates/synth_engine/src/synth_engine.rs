@@ -21,7 +21,9 @@ use crate::metering::MeteringSystem;
 use crate::recording::RecordingState;
 use crate::return_bus::ReturnBusChannel;
 use crate::sequencer_engine::{PlayState, SequencerEngine};
-use crate::shared_state::{ConnectionSnapshot, ModuleStateSnapshot};
+use crate::shared_state::{
+    ConnectionSnapshot, ModuleStateSnapshot, ReturnBusSnapshot, ReturnEffectSnapshot,
+};
 use crate::state::EngineState;
 use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
 use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
@@ -787,6 +789,7 @@ impl SynthEngine {
                 if let Some(bus) = self.return_busses.iter_mut().find(|b| b.id() == return_id) {
                     bus.effect_chain_mut().remove_effect(id);
                 }
+                self.update_shared_return_effects();
             }
             EngineCommand::SetReturnEffectParameter {
                 return_id,
@@ -799,6 +802,7 @@ impl SynthEngine {
                     slot.effect.set_param(param);
                     slot.state = crate::effect_chain::EnabledState::Active;
                 }
+                self.update_shared_return_effects();
             }
             EngineCommand::SetReturnEffectEnabled {
                 return_id,
@@ -810,6 +814,7 @@ impl SynthEngine {
                 {
                     slot.state = crate::effect_chain::EnabledState::from(enabled);
                 }
+                self.update_shared_return_effects();
             }
 
             // Note control
@@ -1413,6 +1418,7 @@ impl SynthEngine {
             return;
         }
         self.return_busses.push(ReturnBusChannel::new(id));
+        self.update_shared_return_effects();
     }
 
     fn handle_remove_return_bus(&mut self, id: ReturnBusId) {
@@ -1421,6 +1427,7 @@ impl SynthEngine {
         }
         // Stale send taps resolve to no destination on the next
         // `update_track_controls` and are simply dropped.
+        self.update_shared_return_effects();
     }
 
     fn handle_add_return_effect(
@@ -1433,6 +1440,39 @@ impl SynthEngine {
             bus.effect_chain_mut()
                 .add_effect(id, effect, SampleRate::new(self.sample_rate));
         }
+        self.update_shared_return_effects();
+    }
+
+    /// Publish each return bus's effect chain (type + params + order) into the
+    /// shared snapshot for the save path. Off the steady-state hot loop (called
+    /// only on return-effect mutations); `get_params()` allocation is fine here.
+    fn update_shared_return_effects(&self) {
+        use crate::effect_chain::ChainSlot;
+        let snapshots: Vec<ReturnBusSnapshot> = self
+            .return_busses
+            .iter()
+            .map(|bus| {
+                let effects = bus
+                    .effect_chain()
+                    .slots()
+                    .iter()
+                    .filter_map(|slot| match slot {
+                        ChainSlot::Effect(es) => Some(ReturnEffectSnapshot {
+                            module_id: es.module_id,
+                            module_type: es.module_type,
+                            parameters: es.effect.get_params(),
+                            bypassed: es.state.is_bypassed(),
+                        }),
+                        ChainSlot::Visualizer(_) => None,
+                    })
+                    .collect();
+                ReturnBusSnapshot {
+                    id: bus.id(),
+                    effects,
+                }
+            })
+            .collect();
+        *self.state.return_bus_effects.write() = snapshots;
     }
 
     fn handle_set_instrument_param(

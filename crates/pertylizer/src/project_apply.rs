@@ -10,13 +10,15 @@ use parking_lot::RwLock as PRwLock;
 
 use synth_core::{ModuleType, VoiceCount};
 use synth_engine::commands::InstrumentParam;
-use synth_engine::shared_state::{ConnectionSnapshot, InstrumentSnapshot, ModuleStateSnapshot};
+use synth_engine::shared_state::{
+    ConnectionSnapshot, InstrumentSnapshot, ModuleStateSnapshot, ReturnBusSnapshot,
+};
 use synth_engine::{CommandSender, EngineCommand, InstrumentId, MidiChannel, ModuleId};
 use synth_sampler::SampleLibrary;
 use synth_sequencer::Song;
 
 use crate::patch::{ConnectionState, InstrumentState, ModuleState, ParamValue, Patch, Position};
-use crate::project::{GlobalProjectState, ProjectFile};
+use crate::project::{GlobalProjectState, ProjectFile, ReturnBusEffectsState};
 use crate::session::{SessionError, SynthSession};
 
 type SharedSong = Arc<PRwLock<Song>>;
@@ -64,10 +66,39 @@ pub fn apply_project(
     sender.send(EngineCommand::SetGlideTime(project.global.glide_time));
 
     // Create the engine-side runtime channel for each return bus defined in the
-    // song. Faders are read live from the song; effect chains on returns are
-    // not yet persisted (a follow-up, matching master effects).
+    // song (faders are read live from the song), then rebuild its effect chain
+    // in order. Commands drain in order, so AddReturnEffect after CreateReturnBus
+    // is safe.
     for bus in project.song.return_busses() {
         sender.send(EngineCommand::CreateReturnBus { id: bus.id });
+    }
+    for rb in &project.global.return_bus_effects {
+        let return_id = synth_sequencer::ReturnBusId(rb.id);
+        for fx in &rb.effects {
+            let Ok(module_id) = fx.id.parse::<ModuleId>() else {
+                continue;
+            };
+            let Some((effect, descriptor)) = crate::module_factory::create_effect(fx.module_type)
+            else {
+                continue;
+            };
+            sender.send(EngineCommand::AddReturnEffect {
+                return_id,
+                id: module_id,
+                effect,
+            });
+            for (type_id, value) in &fx.parameters {
+                if let Some(param_desc) =
+                    descriptor.parameters.iter().find(|p| &p.type_id == type_id)
+                {
+                    sender.send(EngineCommand::SetReturnEffectParameter {
+                        return_id,
+                        module_id,
+                        param: value.to_param(param_desc),
+                    });
+                }
+            }
+        }
     }
 
     // Bridge the async gap between queued `AddInstrument` commands and the
@@ -260,6 +291,7 @@ pub fn build_project_from_engine(
 
     let song_clone = { song.read().clone() };
     let master_volume = synth_core::Gain::new(engine_state.master_volume.load());
+    let return_bus_effects = build_return_bus_effects(&engine_state.return_bus_effects.read());
     let global = GlobalProjectState {
         master_volume,
         octave_offset: opts.octave_offset.unwrap_or(0),
@@ -267,6 +299,7 @@ pub fn build_project_from_engine(
         awe: opts.awe,
         awe_preset: None,
         awe_description: opts.awe_description.filter(|s| !s.is_empty()),
+        return_bus_effects,
     };
 
     let active_instrument_id = snapshots.first().map_or(0, |s| s.id.as_u64());
@@ -379,6 +412,46 @@ fn build_patch_from_engine(
         .collect();
 
     patch
+}
+
+/// Convert the engine's published return-bus effect snapshots into the
+/// serializable project form. Each effect's parameter values are mapped through
+/// a type-derived descriptor (from `create_effect`) so choice params serialize
+/// by id, exactly like instrument effects.
+fn build_return_bus_effects(snaps: &[ReturnBusSnapshot]) -> Vec<ReturnBusEffectsState> {
+    snaps
+        .iter()
+        .map(|bus| {
+            let effects = bus
+                .effects
+                .iter()
+                .filter_map(|fx| {
+                    let (_, descriptor) = crate::module_factory::create_effect(fx.module_type)?;
+                    let mut parameters: BTreeMap<String, ParamValue> = BTreeMap::new();
+                    for desc_param in &descriptor.parameters {
+                        if let Some(engine_param) =
+                            fx.parameters.iter().find(|p| p.same_kind(&desc_param.id))
+                        {
+                            parameters.insert(
+                                desc_param.type_id.clone(),
+                                ParamValue::from_param(engine_param, desc_param),
+                            );
+                        }
+                    }
+                    Some(ModuleState {
+                        id: fx.module_id.to_string(),
+                        module_type: fx.module_type,
+                        position: Position::default(),
+                        parameters,
+                    })
+                })
+                .collect();
+            ReturnBusEffectsState {
+                id: bus.id.0,
+                effects,
+            }
+        })
+        .collect()
 }
 
 fn load_bundle_into_engine(

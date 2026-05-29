@@ -17,7 +17,7 @@ phase layers onto it.
 - [x] **Phase 4** — Remove `note.instrument` (route only via `track.instrument`; preview via threaded instrument)
 - [x] **Phase 5** — Orphan-preview: **kept** the engine-side branch; scratch-track rework closed as not-worth-it; added the missing preview/lifecycle tests
 - [x] **Phase 6** — Save/load + MCP cleanup (per-note `instrument_id` removed; descriptions + track color via MCP/GUI; instrument/patch/group color split to its own PR — engine refactor)
-- [~] **Phase 7** — Sends/returns + mixer view (§1.4): **7a (engine sends + dynamic return busses + persistence + MCP) done**; 7b (mixer view) + return effect-chain persistence remain
+- [~] **Phase 7** — Sends/returns + mixer view (§1.4): **7a (engine sends + dynamic return busses + persistence incl. return effect chains + MCP) done**; 7b (mixer view) remains
 - [ ] **Phase 8** — (future) Independent faders for *shared* instruments — per-voice-tagged per-track bus
 
 **Revised direction (2026-05-27, user decision):** strict 1 track ↔ 1 instrument is
@@ -289,11 +289,12 @@ each bus — not building bus infrastructure.
   `rename_return_bus`, `set_/remove_track_send` (+ sends surfaced on `list_tracks`).
   Tests at every layer (engine DSP/commands/send-resolution/audio, sequencer serde
   round-trip, MCP bridge round-trip); fmt/build/clippy/test all clean.
-- [ ] **Deferred — return effect-chain *content* persistence.** Return-bus effect
-  chains (the reverb instance + its params) are not yet saved/loaded — same level as
-  master effects today. Needs serializing each return's chain (type + params via
-  `AudioEffect::get_params`) and rebuilding on load (`create_effect` +
-  `AddReturnEffect` + `SetReturnEffectParameter`).
+- [x] **Return effect-chain *content* persistence.** Each return's effect chain
+  (type + params) is published from the audio thread into a shared snapshot
+  (`EngineState.return_bus_effects`) on every return-effect mutation, saved in
+  `GlobalProjectState.return_bus_effects`, and rebuilt on load (`create_effect` +
+  `AddReturnEffect` + `SetReturnEffectParameter`, in chain order). Round-trip test
+  (`return_bus_effect_persistence.rs`) drives a real engine through save → load → save.
 - [ ] **7b — dedicated mixer view** with faders, pan, sends, inserts.
 
 ### Phase 8 — (future) Independent faders for shared instruments

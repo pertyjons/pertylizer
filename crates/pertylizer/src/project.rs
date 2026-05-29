@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::patch::{Author, AwePresetFile, InstrumentState, Patch, PatchError};
+use crate::patch::{Author, AwePresetFile, InstrumentState, ModuleState, Patch, PatchError};
 use synth_core::{BipolarValue, Gain, Seconds, Semitones};
 use synth_engine::instrument::InstrumentId;
 use synth_sequencer::Song;
@@ -61,6 +61,19 @@ pub struct GlobalProjectState {
     /// unsaved rooms survive a project save / load round-trip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub awe_description: Option<String>,
+    /// Effect chains on return busses (the busses themselves — id/name/fader —
+    /// live in the `Song`; only the engine-side effect chain is captured here).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub return_bus_effects: Vec<ReturnBusEffectsState>,
+}
+
+/// The effect chain on one return bus, in processing order, for persistence.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ReturnBusEffectsState {
+    /// Return bus id (matches a `ReturnBus` in the song).
+    pub id: u16,
+    /// Effects in chain order (each a module type + parameter values).
+    pub effects: Vec<ModuleState>,
 }
 
 fn default_master_volume() -> Gain {
@@ -76,6 +89,7 @@ impl Default for GlobalProjectState {
             awe: None,
             awe_preset: None,
             awe_description: None,
+            return_bus_effects: Vec::new(),
         }
     }
 }
