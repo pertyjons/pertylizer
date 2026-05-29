@@ -324,6 +324,74 @@ fn load_project_works_without_gui() {
 }
 
 #[test]
+fn load_empty_song_without_gui() {
+    // The SID exporter emits a project with no instruments and a song with no
+    // patterns/tracks/arrangement for a silent subtune. Loading that must
+    // succeed cleanly (no panic on the empty arrangement / zero instruments),
+    // not just validate against the schema. Guards docs/sid-to-pertylizer.md
+    // backlog #6 ("unverified whether Pertylizer accepts an empty song").
+    use std::sync::atomic::Ordering;
+
+    let mut rig = build_headless_rig();
+
+    let empty = pertylizer::project::ProjectFile::new(
+        Vec::new(),
+        0,
+        None,
+        Song::new("Empty Subtune"),
+        pertylizer::project::GlobalProjectState::default(),
+    );
+    let tmp = tempfile::Builder::new()
+        .suffix(".json")
+        .tempfile()
+        .expect("temp file");
+    empty.save(tmp.path()).expect("write empty project");
+
+    let before = rig._shared.project_revision.load(Ordering::Acquire);
+    rig.bridge
+        .load_project(tmp.path().to_str().expect("UTF-8 path"))
+        .expect("load_project should accept an empty song without a GUI");
+    rig.pump(16);
+    let after = rig._shared.project_revision.load(Ordering::Acquire);
+
+    assert_eq!(
+        after,
+        before + 1,
+        "loading an empty song should bump project_revision exactly once"
+    );
+
+    let status = rig
+        ._shared
+        .last_project_io_status
+        .lock()
+        .expect("status lock")
+        .clone();
+    assert!(
+        matches!(status, Some(Ok(_))),
+        "last_project_io_status should be Ok after loading an empty song, got {status:?}"
+    );
+
+    assert!(
+        rig.bridge
+            .list_instruments()
+            .expect("list_instruments")
+            .is_empty(),
+        "empty project should load with no instruments"
+    );
+    assert!(
+        rig.bridge
+            .list_patterns()
+            .expect("list_patterns")
+            .is_empty(),
+        "empty project should load with no patterns"
+    );
+    assert!(
+        rig.bridge.list_tracks().expect("list_tracks").is_empty(),
+        "empty project should load with no tracks"
+    );
+}
+
+#[test]
 fn description_and_color_setters_round_trip_via_bridge() {
     // Phase 6: song/pattern/track descriptions + track color are pure Song
     // writes, so they reach the shared Song immediately (no engine pump) and
