@@ -35,6 +35,7 @@ const SCHEMA_FILES: &[&str] = &[
     "patch.schema.json",
     "awe-preset.schema.json",
     "bundle-metadata.schema.json",
+    "descriptors.json",
 ];
 
 /// Regenerate schemas into a temp directory and byte-compare with the
