@@ -24,6 +24,7 @@ use crate::shared_state::{ConnectionSnapshot, ModuleStateSnapshot};
 use crate::state::EngineState;
 use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
 use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
+use synth_core::params::LfoWaveform;
 use synth_core::{
     AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue, CcNumber,
     EnvelopeParam, FilterParam, Gain, Hertz, MidiNote, ModuleType, NormalizedValue, Param,
@@ -2637,11 +2638,12 @@ fn note_trigger(
             depth: v.depth,
             rate: v.rate,
             fade_in: Seconds::from(v.delay),
+            // Map the serialized sequencer shape onto the shared synth_core LFO enum.
             shape: match v.shape {
-                VibratoShape::Sine => crate::voice::VibratoWave::Sine,
-                VibratoShape::Triangle => crate::voice::VibratoWave::Triangle,
-                VibratoShape::Square => crate::voice::VibratoWave::Square,
-                VibratoShape::Saw => crate::voice::VibratoWave::Saw,
+                VibratoShape::Sine => LfoWaveform::Sine,
+                VibratoShape::Triangle => LfoWaveform::Triangle,
+                VibratoShape::Square => LfoWaveform::Square,
+                VibratoShape::Saw => LfoWaveform::Sawtooth,
             },
         });
     crate::voice::NoteTrigger {

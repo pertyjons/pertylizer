@@ -2856,7 +2856,7 @@ fn apply_expression_edit(
                 let mut e = old.unwrap_or_default();
                 edit(&mut e);
                 // Collapse an all-default block back to None (no pointless storage/dot).
-                let new = (e != NoteExpression::default()).then_some(e);
+                let new = e.normalized();
                 if new != old {
                     pattern.set_note_expression(n.note_id, new);
                     changes.push((n.note_id, old, new));
@@ -2887,7 +2887,7 @@ fn live_expression_edit(
             let mut e = n.expression.unwrap_or_default();
             edit(&mut e);
             // Collapse an all-default block back to None (no pointless storage/dot).
-            pattern.set_note_expression(n.note_id, (e != NoteExpression::default()).then_some(e));
+            pattern.set_note_expression(n.note_id, e.normalized());
         }
     }
 }
@@ -3239,6 +3239,10 @@ fn draw_piano_roll_selection_inspector(
             // ── Per-note expression block: accent / gate / ghost / probability ──
             // (taxonomy primitive 3 note-shape scalars + primitive 1 vibrato).
             // Each control edits only its own field, preserving the others per note.
+            // Multi-edit semantics match the velocity inspector: controls display
+            // the first selected note's value and an edit writes that field to all
+            // selected (it does not preserve per-note variation of the edited
+            // field — only of the *other* fields).
             let cur = selected
                 .iter()
                 .find_map(|n| n.expression)
@@ -3264,7 +3268,10 @@ fn draw_piano_roll_selection_inspector(
                     ));
                 }
                 if r.changed() {
-                    live_expression_edit(song, pid, &selected, |e| e.accent = Some(accent));
+                    // Returning to the neutral value (1.0×) clears the field so the
+                    // block can collapse to None (no lingering expression dot).
+                    let accent_field = (accent != 1.0).then_some(accent);
+                    live_expression_edit(song, pid, &selected, |e| e.accent = accent_field);
                 }
                 if (r.drag_stopped() || r.lost_focus())
                     && let Some((dpid, before)) = view_state.inspector_expr_drag_start.take()
@@ -3291,8 +3298,10 @@ fn draw_piano_roll_selection_inspector(
                     ));
                 }
                 if r.changed() {
-                    let g = NormalizedValue::new((gate_pct / 100.0).clamp(0.0, 1.0));
-                    live_expression_edit(song, pid, &selected, |e| e.gate = Some(g));
+                    // Neutral gate (100% = full duration) clears the field.
+                    let gate_field = (gate_pct < 100.0)
+                        .then(|| NormalizedValue::new((gate_pct / 100.0).clamp(0.0, 1.0)));
+                    live_expression_edit(song, pid, &selected, |e| e.gate = gate_field);
                 }
                 if (r.drag_stopped() || r.lost_focus())
                     && let Some((dpid, before)) = view_state.inspector_expr_drag_start.take()
@@ -3319,8 +3328,10 @@ fn draw_piano_roll_selection_inspector(
                     ));
                 }
                 if r.changed() {
-                    let p = NormalizedValue::new((prob_pct / 100.0).clamp(0.0, 1.0));
-                    live_expression_edit(song, pid, &selected, |e| e.probability = Some(p));
+                    // Neutral probability (100% = always plays) clears the field.
+                    let prob_field = (prob_pct < 100.0)
+                        .then(|| NormalizedValue::new((prob_pct / 100.0).clamp(0.0, 1.0)));
+                    live_expression_edit(song, pid, &selected, |e| e.probability = prob_field);
                 }
                 if (r.drag_stopped() || r.lost_focus())
                     && let Some((dpid, before)) = view_state.inspector_expr_drag_start.take()

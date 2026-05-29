@@ -257,6 +257,22 @@ fn validate_note_input(n: &NoteInput) -> Result<(), McpBridgeError> {
             if let Some(ms) = v.delay_ms {
                 validate_range("expression.vibrato.delay_ms", ms, 0.0, 60_000.0)?;
             }
+            // Reject an unrecognized shape token rather than silently coercing it
+            // to sine. Token set mirrors `VibratoShape::from_token` (synth_sequencer,
+            // not reachable from this crate).
+            if let Some(shape) = v.shape.as_deref() {
+                let t = shape.trim();
+                let known = [
+                    "sine", "sin", "triangle", "tri", "square", "sqr", "saw", "sawtooth",
+                ];
+                if !known.iter().any(|k| t.eq_ignore_ascii_case(k)) {
+                    return Err(McpBridgeError::InvalidChoice {
+                        name: "expression.vibrato.shape".to_owned(),
+                        value: shape.to_owned(),
+                        detail: "expected one of: sine, triangle, square, saw".to_owned(),
+                    });
+                }
+            }
         }
     }
     Ok(())

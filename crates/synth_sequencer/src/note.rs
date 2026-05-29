@@ -73,6 +73,26 @@ pub enum VibratoShape {
     Saw,
 }
 
+impl VibratoShape {
+    /// Parse a forgiving shape token, `None` for an unrecognized one (so a
+    /// boundary like MCP can reject typos rather than silently coercing to sine).
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        let t = token.trim();
+        if t.eq_ignore_ascii_case("sine") || t.eq_ignore_ascii_case("sin") {
+            Some(Self::Sine)
+        } else if t.eq_ignore_ascii_case("triangle") || t.eq_ignore_ascii_case("tri") {
+            Some(Self::Triangle)
+        } else if t.eq_ignore_ascii_case("square") || t.eq_ignore_ascii_case("sqr") {
+            Some(Self::Square)
+        } else if t.eq_ignore_ascii_case("saw") || t.eq_ignore_ascii_case("sawtooth") {
+            Some(Self::Saw)
+        } else {
+            None
+        }
+    }
+}
+
 /// Per-note vibrato — taxonomy **primitive 1** (a parametric modulator).
 ///
 /// An additive pitch LFO seeded per note; the engine drives it through the same
@@ -120,6 +140,17 @@ pub struct NoteExpression {
     /// (Phase C2), never with RNG on the audio thread. `None` = always plays.
     #[serde(default)]
     pub probability: Option<NormalizedValue>,
+}
+
+impl NoteExpression {
+    /// Collapse an all-default block to `None` — the single source of truth for
+    /// the "never persist an empty expression block" invariant. Every writer
+    /// (GUI inspector, MCP bridge, `Pattern::set_note_expression`) routes through
+    /// this so the rule can't drift between call sites.
+    #[must_use]
+    pub fn normalized(self) -> Option<Self> {
+        (self != Self::default()).then_some(self)
+    }
 }
 
 /// A note in a pattern.
@@ -371,6 +402,44 @@ mod tests {
         assert!(expr.gate.is_none());
         assert!(!expr.ghost);
         assert!(expr.probability.is_none());
+    }
+
+    #[test]
+    fn test_vibrato_shape_from_token() {
+        assert_eq!(VibratoShape::from_token("sine"), Some(VibratoShape::Sine));
+        assert_eq!(
+            VibratoShape::from_token(" TRI "),
+            Some(VibratoShape::Triangle)
+        );
+        assert_eq!(
+            VibratoShape::from_token("Square"),
+            Some(VibratoShape::Square)
+        );
+        assert_eq!(
+            VibratoShape::from_token("sawtooth"),
+            Some(VibratoShape::Saw)
+        );
+        // Unknown/typo → None (caller rejects rather than silently coercing).
+        assert_eq!(VibratoShape::from_token("sqaure"), None);
+        assert_eq!(VibratoShape::from_token(""), None);
+    }
+
+    #[test]
+    fn test_note_expression_normalized_collapses_default() {
+        // All-default block → None.
+        assert_eq!(NoteExpression::default().normalized(), None);
+        // A block with any non-default field survives.
+        let accented = NoteExpression {
+            accent: Some(1.5),
+            ..Default::default()
+        };
+        assert_eq!(accented.normalized(), Some(accented));
+        // ghost=true alone is non-default and must survive.
+        let ghost = NoteExpression {
+            ghost: true,
+            ..Default::default()
+        };
+        assert_eq!(ghost.normalized(), Some(ghost));
     }
 
     #[test]

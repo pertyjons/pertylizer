@@ -82,15 +82,21 @@ struct PendingNote {
     expression: Option<NoteExpression>,
 }
 
+/// Golden-ratio odd constant — the SplitMix64 increment (same role as the
+/// mixers in `synth_modules::math`; kept local because this is a stateless
+/// sequencer-side hash, not the streaming `xorshift32` RNG).
+const SPLITMIX_GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
+
 /// Deterministic pseudo-random value in `[0, 1)` from a 64-bit seed.
 ///
 /// SplitMix64 finalizer — pure arithmetic, RT-safe (no RNG state, no syscall,
-/// no allocation), and reproducible for a given playback timeline. Used to
-/// resolve per-note trigger probability at emission so the audio thread never
-/// calls an RNG (the project's no-`Math.random` posture).
+/// no allocation), and reproducible for a given seed. Used to resolve per-note
+/// trigger probability at emission so the audio thread never calls an RNG (the
+/// project's no-`Math.random` posture). The finalizer mixes structured input
+/// thoroughly, so callers may feed a plain xor of their key fields.
 #[allow(clippy::cast_precision_loss)]
 fn deterministic_unit(seed: u64) -> f32 {
-    let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = seed.wrapping_add(SPLITMIX_GAMMA);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^= z >> 31;
@@ -126,28 +132,38 @@ fn shaped_velocity(base: Velocity, expr: Option<NoteExpression>) -> Velocity {
 /// `None` → unchanged. Clamps to ≥1 tick so the note keeps a non-zero end_tick:
 /// a zero-length note (end == onset) would be eligible for an immediate same-tick
 /// NoteOff in `check_note_offs`, which is an articulation we never want here.
+///
+/// `gate` is **ignored on a legato note** (`legato == true`): a tie wants its
+/// full duration so the placement-boundary coalesce can sustain across it —
+/// shortening it would silently sever the legato join. This keeps the three
+/// note-shape scalars consistent under legato (accent/ghost apply via the
+/// glided voice's velocity; gate defers to the tie).
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )]
-fn shaped_duration_ticks(duration_ticks: u32, expr: Option<NoteExpression>) -> u32 {
+fn shaped_duration_ticks(duration_ticks: u32, expr: Option<NoteExpression>, legato: bool) -> u32 {
     match expr.and_then(|e| e.gate) {
-        Some(gate) => ((duration_ticks as f32) * gate.as_f32()).round().max(1.0) as u32,
-        None => duration_ticks,
+        Some(gate) if !legato => ((duration_ticks as f32) * gate.as_f32()).round().max(1.0) as u32,
+        _ => duration_ticks,
     }
 }
 
 /// Decide whether a note plays this occurrence, given its per-note probability.
 ///
-/// `None` probability → always plays. The roll is seeded by the absolute song
-/// tick and the note id, so it is deterministic for a given timeline yet varies
-/// as a looped section advances in absolute time.
-fn note_passes_probability(note: &synth_sequencer::Note, tick: Tick) -> bool {
+/// `None` probability → always plays. The roll is seeded by the song tick, the
+/// note id, and a `roll_nonce` that increments on every loop-wrap. The nonce is
+/// what makes a *looped* section re-roll each pass — `current_tick` resets to
+/// `loop_start` on wrap, so without it the same note would roll identically
+/// every loop. The nonce resets with the transport, so playback from a given
+/// start is still fully reproducible. The three fields are rotated apart before
+/// the SplitMix finalizer decorrelates them.
+fn note_passes_probability(note: &synth_sequencer::Note, tick: Tick, roll_nonce: u64) -> bool {
     match note.expression.and_then(|e| e.probability) {
         None => true,
         Some(prob) => {
-            let seed = tick.0.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ note.id.0;
+            let seed = tick.0 ^ note.id.0.rotate_left(32) ^ roll_nonce.rotate_left(17);
             deterministic_unit(seed) < prob.as_f32()
         }
     }
@@ -204,6 +220,10 @@ pub struct SequencerEngine {
     /// Instrument that orphan-preview notes play through (no track context
     /// exists in preview mode). Set together with `preview_pattern`.
     preview_instrument: SeqInstrumentId,
+    /// Per-note-probability roll nonce. Increments on every loop-wrap so a
+    /// looped section re-rolls each pass; resets to 0 with the transport so
+    /// playback from a given start is reproducible.
+    roll_nonce: u64,
 }
 
 impl SequencerEngine {
@@ -229,6 +249,7 @@ impl SequencerEngine {
             solo_pattern: None,
             preview_pattern: None,
             preview_instrument: SeqInstrumentId(0),
+            roll_nonce: 0,
         }
     }
 
@@ -258,6 +279,7 @@ impl SequencerEngine {
             solo_pattern: None,
             preview_pattern: None,
             preview_instrument: SeqInstrumentId(0),
+            roll_nonce: 0,
         }
     }
 
@@ -316,6 +338,7 @@ impl SequencerEngine {
         if self.play_state == PlayState::Stopped {
             self.current_tick = Tick::ZERO;
             self.tick_accumulator = 0.0;
+            self.roll_nonce = 0;
         }
         self.play_state = PlayState::Playing;
         self.update_cached_state();
@@ -331,6 +354,7 @@ impl SequencerEngine {
         self.play_state = PlayState::Stopped;
         self.current_tick = Tick::ZERO;
         self.tick_accumulator = 0.0;
+        self.roll_nonce = 0;
 
         // Generate NoteOff events for all active notes
         let events = self.release_all_notes();
@@ -349,6 +373,8 @@ impl SequencerEngine {
         self.track_auto.clear();
         self.current_tick = tick;
         self.tick_accumulator = 0.0;
+        // Reset the probability roll nonce so a seek-then-play is reproducible.
+        self.roll_nonce = 0;
         self.update_cached_state();
         events
     }
@@ -437,6 +463,9 @@ impl SequencerEngine {
                 self.last_automation_values.clear();
                 self.track_auto.clear();
                 self.current_tick = self.loop_start;
+                // Advance the probability roll nonce so a looped section re-rolls
+                // each pass (current_tick resets here, so it can't supply variation).
+                self.roll_nonce = self.roll_nonce.wrapping_add(1);
             } else if !self.looping
                 && self.cached_song_length > Tick::ZERO
                 && self.current_tick >= self.cached_song_length
@@ -453,6 +482,7 @@ impl SequencerEngine {
                 self.play_state = PlayState::Stopped;
                 self.current_tick = Tick::ZERO;
                 self.tick_accumulator = 0.0;
+                self.roll_nonce = 0;
                 break;
             }
 
@@ -511,7 +541,11 @@ impl SequencerEngine {
                     let end_tick = note.duration.map(|d| {
                         Tick(
                             self.current_tick.0
-                                + u64::from(shaped_duration_ticks(d.0, note.expression)),
+                                + u64::from(shaped_duration_ticks(
+                                    d.0,
+                                    note.expression,
+                                    note.legato,
+                                )),
                         )
                     });
                     // Preview has no placement transpose, so glide source pitch
@@ -585,7 +619,7 @@ impl SequencerEngine {
                     // deterministic), so a losing roll simply omits the note — the
                     // audio thread never runs an RNG. Absolute song tick seeds it,
                     // so a looped section varies roll-to-roll yet stays reproducible.
-                    if !note_passes_probability(note, self.current_tick) {
+                    if !note_passes_probability(note, self.current_tick, self.roll_nonce) {
                         continue;
                     }
 
@@ -598,7 +632,11 @@ impl SequencerEngine {
                         Tick(
                             placement.start.0
                                 + note.start.0 as u64
-                                + u64::from(shaped_duration_ticks(d.0, note.expression)),
+                                + u64::from(shaped_duration_ticks(
+                                    d.0,
+                                    note.expression,
+                                    note.legato,
+                                )),
                         )
                     });
 
@@ -845,12 +883,14 @@ mod tests {
             })
         };
         // No gate → unchanged.
-        assert_eq!(shaped_duration_ticks(960, None), 960);
-        assert_eq!(shaped_duration_ticks(960, expr(None)), 960);
+        assert_eq!(shaped_duration_ticks(960, None, false), 960);
+        assert_eq!(shaped_duration_ticks(960, expr(None), false), 960);
         // Half gate → 480.
-        assert_eq!(shaped_duration_ticks(960, expr(Some(0.5))), 480);
+        assert_eq!(shaped_duration_ticks(960, expr(Some(0.5)), false), 480);
         // Zero gate → clamped to 1 tick (never coincident NoteOff/NoteOn).
-        assert_eq!(shaped_duration_ticks(960, expr(Some(0.0))), 1);
+        assert_eq!(shaped_duration_ticks(960, expr(Some(0.0)), false), 1);
+        // Legato ignores gate (the tie keeps full duration).
+        assert_eq!(shaped_duration_ticks(960, expr(Some(0.25)), true), 960);
     }
 
     #[test]
@@ -875,12 +915,23 @@ mod tests {
             n
         };
         // No expression / no probability → always plays.
-        assert!(note_passes_probability(&mk(None), Tick(0)));
-        // p = 1.0 → always plays; p = 0.0 → never plays (for any tick).
+        assert!(note_passes_probability(&mk(None), Tick(0), 0));
+        // p = 1.0 → always plays; p = 0.0 → never plays (for any tick + nonce).
         for t in [0u64, 123, 99_999] {
-            assert!(note_passes_probability(&mk(Some(1.0)), Tick(t)));
-            assert!(!note_passes_probability(&mk(Some(0.0)), Tick(t)));
+            assert!(note_passes_probability(&mk(Some(1.0)), Tick(t), 0));
+            assert!(!note_passes_probability(&mk(Some(0.0)), Tick(t), 7));
         }
+        // The roll nonce varies the result at a FIXED tick (the looped-section
+        // case, where current_tick resets every pass) — so a p=0.5 note does not
+        // play-or-skip identically forever. Assert both outcomes occur across nonces.
+        let half = mk(Some(0.5));
+        let rolls: Vec<bool> = (0..32)
+            .map(|nonce| note_passes_probability(&half, Tick(480), nonce))
+            .collect();
+        assert!(
+            rolls.iter().any(|&b| b) && rolls.iter().any(|&b| !b),
+            "nonce must vary the roll across loop passes: {rolls:?}"
+        );
     }
 
     /// A song with one note in a pattern that is NOT placed in the arrangement

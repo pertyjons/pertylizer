@@ -271,7 +271,7 @@ impl VoiceAllocator {
 
                         if self.config.mode == AllocationMode::Legato {
                             // Legato: just glide pitch, don't retrigger
-                            voice.glide_to_note(prev_note);
+                            voice.glide_to_note(prev_note, prev_vel);
                         } else {
                             // Mono: retrigger with glide
                             voice.note_on(prev_note, prev_vel, self.time);
@@ -453,8 +453,10 @@ impl VoiceAllocator {
             // Mono mode (or first note): retrigger envelope with glide.
             voice.note_on_expr(note, velocity, self.time, trigger);
         } else {
-            // Legato mode: glide to new pitch without retriggering.
-            voice.glide_to_note_expr(note, trigger);
+            // Legato mode: glide to new pitch without retriggering. The shaped
+            // velocity is still written into the voice state so accent/ghost
+            // apply on legato notes too.
+            voice.glide_to_note_expr(note, velocity, trigger);
         }
 
         self.last_note = Some(note);

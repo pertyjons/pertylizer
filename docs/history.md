@@ -1,5 +1,18 @@
 # Version History
 
+## [0.295.0] - 2026-05-29
+
+### Phase C review fixes
+
+Addressed a high-effort review of the per-note expression work: probability now
+re-rolls each loop pass (a loop-wrap nonce) instead of being static; accent/ghost
+now apply on legato notes (the glide path writes the shaped velocity); `gate` is
+ignored on legato notes so a tie keeps full length; the MCP `vibrato.shape` token
+is validated (typos rejected, not silently coerced to sine); per-note vibrato now
+shares `synth_core`'s LFO shape math (`LfoWaveform` + `Phase`) instead of a
+duplicate enum; and the all-default expression collapse is centralized in
+`NoteExpression::normalized`.
+
 ## [0.294.0] - 2026-05-29
 
 ### Per-note vibrato + expression block (Phase C)

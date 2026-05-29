@@ -250,10 +250,10 @@ that map 1:1 onto those dimensions now even if only vibrato is wired in C.
 - **Commit:** `Phase C3: apply per-note note-shape scalars (accent/gate/ghost)`
 - **Done:** gate green; review fixes — `is_finite` guard on accent (no NaN→audio);
   corrected the gate-floor doc comment.
-- **Deferred (recorded):** `accent` is **dropped on a legato note** — the
-  no-retrigger `glide_to_note` path doesn't re-apply velocity (a B3-area
-  limitation), so the legato note keeps the prior velocity while telemetry shows
-  the accented one. Fix when legato velocity is wired.
+- **Deferred (recorded):** ~~`accent` is dropped on a legato note~~ **RESOLVED**
+  in the Phase C review-fix pass — `glide_to_note_expr` now takes the (shaped)
+  velocity and writes it into the active voice state, which `process_audio` reads
+  per block, so accent/ghost apply on legato notes too.
 
 ### C4 — Engine consumption: per-note vibrato via mod-matrix offset *(audio thread)* ✅ (next commit)
 
@@ -331,6 +331,38 @@ that map 1:1 onto those dimensions now even if only vibrato is wired in C.
 data model → sequencer events → engine (legato/glide/vibrato/note-shape scalars)
 → piano-roll GUI (with undo) → MCP. Deferred items are recorded in each step and
 the section below.
+
+### Phase C review-fix pass
+
+A high-effort multi-angle `/code-review` of `ae1362c..` surfaced 10 findings;
+all addressed:
+
+1. **Probability static in a loop** — added a `roll_nonce` that increments on
+   loop-wrap and seeds the roll, so a looped section re-rolls each pass yet stays
+   reproducible from transport start.
+2. **accent/ghost dropped on legato** — `glide_to_note_expr` now writes the shaped
+   velocity into the active voice state (read per block by `process_audio`).
+3. **gate vs legato** — `gate` is ignored on legato notes (a tie keeps full length;
+   it would otherwise sever the coalesce); makes the three scalars consistent under legato.
+4. **MCP shape silently coerced** — `VibratoShape::from_token` + `validate_note_input`
+   rejects an unknown shape token instead of defaulting to sine.
+5. **VibratoWave duplication** — replaced by `synth_core::LfoWaveform` + `Phase`
+   (shared shape math; `vibrato_phase` is now the `Phase` newtype).
+6. **collapse-to-None in 3 places** — centralized as `NoteExpression::normalized`,
+   enforced in `Pattern::set_note_expression` and used by GUI/MCP.
+7. **neutral value left a dot** — accent 1.0 / gate 100% / prob 100% now clear the
+   field so the block collapses.
+8. **third PRNG idiom** — named the `SPLITMIX_GAMMA` constant + cross-referenced
+   `synth_modules::math`; dropped the redundant second use of the literal.
+9. **vibrato vs mod-matrix LFO** — documented the deliberate per-note-vs-per-patch
+   scope decision on `VibratoSpec` (refuted ghost+accent "cancellation": `factor==1.0`
+   is correct multiplicative composition).
+10. **multi-edit flatten** — kept (consistent with the velocity inspector), documented.
+
+The per-control DragValue boilerplate dedup (Simplification angle) was *not*
+done: the mutation/undo logic already shares the `*_expression_edit` helpers, and
+a closure wrapper over the remaining per-control snapshot/finish triad (each with
+a distinct neutral value + field map) fights egui's borrow model for little gain.
 
 ---
 

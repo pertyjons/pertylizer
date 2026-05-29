@@ -5336,20 +5336,13 @@ fn glide_from_bridge(g: &BridgeGlide, target: synth_sequencer::Pitch) -> synth_s
     }
 }
 
-/// Parse a forgiving vibrato-shape token into a `VibratoShape` (default sine).
+/// Resolve a vibrato-shape token to a `VibratoShape`, defaulting to sine when
+/// absent. An unrecognized token is *rejected at validation* (see
+/// `validate_note_input`), so reaching here with garbage falls back to sine.
 fn vibrato_shape_from_token(token: Option<&str>) -> synth_sequencer::VibratoShape {
-    match token.map(str::trim) {
-        Some(s) if s.eq_ignore_ascii_case("triangle") || s.eq_ignore_ascii_case("tri") => {
-            synth_sequencer::VibratoShape::Triangle
-        }
-        Some(s) if s.eq_ignore_ascii_case("square") || s.eq_ignore_ascii_case("sqr") => {
-            synth_sequencer::VibratoShape::Square
-        }
-        Some(s) if s.eq_ignore_ascii_case("saw") || s.eq_ignore_ascii_case("sawtooth") => {
-            synth_sequencer::VibratoShape::Saw
-        }
-        _ => synth_sequencer::VibratoShape::Sine,
-    }
+    token
+        .and_then(synth_sequencer::VibratoShape::from_token)
+        .unwrap_or(synth_sequencer::VibratoShape::Sine)
 }
 
 /// Resolve a bridge-level expression block into the sequencer's `NoteExpression`.
@@ -5378,7 +5371,7 @@ fn apply_bridge_expression(note: &mut synth_sequencer::Note, n: &BridgeNoteData)
         .expression
         .as_ref()
         .map(expression_from_bridge)
-        .filter(|e| *e != synth_sequencer::NoteExpression::default());
+        .and_then(synth_sequencer::NoteExpression::normalized);
 }
 
 /// Try to insert a note from `BridgeNoteData` into a pattern.

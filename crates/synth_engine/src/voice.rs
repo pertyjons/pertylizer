@@ -16,8 +16,9 @@
 
 use crate::ModuleId;
 use crate::graph::ModuleGraph;
+use synth_core::params::LfoWaveform;
 use synth_core::tuning::TuningTable;
-use synth_core::{AudioBuffer, PortName, ProcessContext};
+use synth_core::{AudioBuffer, Phase, PortName, ProcessContext};
 use synth_core::{
     BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds,
     Semitones, Velocity,
@@ -275,43 +276,18 @@ pub struct GlideSpec {
     pub stepped: bool,
 }
 
-/// LFO shape for per-note vibrato (engine-native mirror of the sequencer
-/// `VibratoShape`; mapped at the sequencer-event consumer).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum VibratoWave {
-    /// Sine (the natural vibrato shape).
-    #[default]
-    Sine,
-    /// Triangle.
-    Triangle,
-    /// Square.
-    Square,
-    /// Sawtooth (ramp).
-    Saw,
-}
-
-impl VibratoWave {
-    /// Bipolar LFO value in `[-1, 1]` at the given phase (`0..1`).
-    #[inline]
-    fn value(self, phase: f32) -> f32 {
-        match self {
-            Self::Sine => (std::f32::consts::TAU * phase).sin(),
-            Self::Triangle => {
-                if phase < 0.5 {
-                    4.0 * phase - 1.0
-                } else {
-                    3.0 - 4.0 * phase
-                }
-            }
-            Self::Square => {
-                if phase < 0.5 {
-                    1.0
-                } else {
-                    -1.0
-                }
-            }
-            Self::Saw => 2.0 * phase - 1.0,
-        }
+/// Evaluate a bipolar LFO value in `[-1, 1]` for the given waveform and phase,
+/// reusing `synth_core::Phase`'s shape math (shared with the LFO module and the
+/// mod matrix, so a per-note vibrato and a mod-matrix LFO of the same shape stay
+/// in sync). `SampleAndHold`/`SmoothRandom` are unreachable from a per-note
+/// `VibratoShape` and fall back to sine.
+#[inline]
+fn lfo_shape_value(shape: LfoWaveform, phase: Phase) -> f32 {
+    match shape {
+        LfoWaveform::Triangle => phase.triangle(),
+        LfoWaveform::Sawtooth => phase.sawtooth(),
+        LfoWaveform::Square => phase.pulse(NormalizedValue::CENTER),
+        _ => phase.sin(),
     }
 }
 
@@ -321,6 +297,14 @@ impl VibratoWave {
 /// applied as a semitone offset *on top of* the base pitch (the same additive
 /// model as the mod-matrix `OscPitch` destination — never a destructive write),
 /// so a mod-matrix vibrato and a per-note vibrato compose additively.
+///
+/// **Why a separate LFO, not the mod matrix:** the mod matrix is patch-scoped
+/// (one shared LFO config for the instrument), whereas this is *per note* —
+/// seeded, phase-reset and faded-in independently for each note, with its own
+/// depth/rate/shape. Routing it through the mod matrix would require per-note
+/// overrides of a per-patch destination (the deferred A2 "two controllers, one
+/// param" problem). The shape math is shared via `synth_core::Phase`
+/// (`lfo_shape_value`) so the two never visually/audibly diverge.
 #[derive(Debug, Clone, Copy)]
 pub struct VibratoSpec {
     /// Peak pitch deviation.
@@ -330,8 +314,8 @@ pub struct VibratoSpec {
     /// Depth fades in 0→full linearly over this time from note onset (`0` =
     /// instant). Click-free onset.
     pub fade_in: Seconds,
-    /// LFO shape.
-    pub shape: VibratoWave,
+    /// LFO shape (the shared `synth_core` waveform enum).
+    pub shape: LfoWaveform,
 }
 
 /// Per-note expression carried into a voice trigger.
@@ -429,8 +413,8 @@ pub struct Voice {
 
     /// Per-note vibrato spec (`None` = no per-note vibrato).
     pub(crate) vibrato: Option<VibratoSpec>,
-    /// Vibrato LFO phase (`0..1`).
-    vibrato_phase: f32,
+    /// Vibrato LFO phase.
+    vibrato_phase: Phase,
     /// Time since the vibrato note's onset (drives the depth fade-in).
     vibrato_elapsed: Seconds,
     /// Current vibrato pitch offset, recomputed per block by `advance_vibrato`
@@ -473,7 +457,7 @@ impl Voice {
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
             vibrato: None,
-            vibrato_phase: 0.0,
+            vibrato_phase: Phase::ZERO,
             vibrato_elapsed: Seconds::ZERO,
             vibrato_offset: Semitones::ZERO,
             output_module_id: None,
@@ -508,7 +492,7 @@ impl Voice {
             glide: GlideState::default(),
             glide_time: Seconds::ZERO,
             vibrato: None,
-            vibrato_phase: 0.0,
+            vibrato_phase: Phase::ZERO,
             vibrato_elapsed: Seconds::ZERO,
             vibrato_offset: Semitones::ZERO,
             output_module_id: output_id,
@@ -630,13 +614,23 @@ impl Voice {
 
     /// Change pitch without retriggering (for legato mode).
     ///
-    /// Updates the note in the current state if active.
-    pub fn glide_to_note(&mut self, new_note: MidiNote) {
-        self.glide_to_note_expr(new_note, NoteTrigger::default());
+    /// Updates the note (and velocity) in the current state if active.
+    pub fn glide_to_note(&mut self, new_note: MidiNote, velocity: Velocity) {
+        self.glide_to_note_expr(new_note, velocity, NoteTrigger::default());
     }
 
     /// Change pitch without retriggering, honoring per-note glide.
-    pub fn glide_to_note_expr(&mut self, new_note: MidiNote, trigger: NoteTrigger) {
+    ///
+    /// The new note's `velocity` is written into the active voice state so that
+    /// per-note velocity shaping (accent/ghost, resolved sequencer-side) still
+    /// affects amplitude on a legato glide — `process_audio` reads velocity from
+    /// the state each block. The envelope is *not* retriggered.
+    pub fn glide_to_note_expr(
+        &mut self,
+        new_note: MidiNote,
+        velocity: Velocity,
+        trigger: NoteTrigger,
+    ) {
         let target_freq = Hertz::new(self.note_to_freq(new_note));
         // Re-seed vibrato for the new (legato) note so its per-note vibrato takes
         // effect even though the envelope isn't retriggered.
@@ -658,14 +652,15 @@ impl Voice {
             }
         }
 
-        // Update the note in the state (only if active)
+        // Update the note + velocity in the state (only if active).
         if let VoiceState::Active {
             note,
-            velocity: _,
+            velocity: vel,
             start_time: _,
         } = &mut self.state
         {
             *note = new_note;
+            *vel = velocity;
         }
     }
 
@@ -697,7 +692,7 @@ impl Voice {
     /// the LFO phase and the fade-in clock so each note starts cleanly.
     fn seed_vibrato(&mut self, vibrato: Option<VibratoSpec>) {
         self.vibrato = vibrato;
-        self.vibrato_phase = 0.0;
+        self.vibrato_phase = Phase::ZERO;
         self.vibrato_elapsed = Seconds::ZERO;
         self.vibrato_offset = Semitones::ZERO;
     }
@@ -711,16 +706,17 @@ impl Voice {
             return;
         };
         self.vibrato_elapsed = Seconds::new(self.vibrato_elapsed.as_f32() + delta_time.as_f32());
-        // Advance phase (rate * dt), wrapped to [0,1).
-        self.vibrato_phase =
-            (self.vibrato_phase + spec.rate.as_f32() * delta_time.as_f32()).fract();
+        // Advance phase (rate * dt); `Phase::advance` wraps to [0,1).
+        self.vibrato_phase = self
+            .vibrato_phase
+            .advance(spec.rate.as_f32() * delta_time.as_f32());
         // Linear depth fade-in over `fade_in` from onset (0 = instant), click-free.
         let fade = if spec.fade_in.as_f32() > 0.0 {
             (self.vibrato_elapsed.as_f32() / spec.fade_in.as_f32()).clamp(0.0, 1.0)
         } else {
             1.0
         };
-        let lfo = spec.shape.value(self.vibrato_phase);
+        let lfo = lfo_shape_value(spec.shape, self.vibrato_phase);
         let offset = spec.depth.as_f32() * lfo * fade;
         // Defensive: a non-finite depth/rate (only reachable via a programmatic
         // write that bypasses validation) must not propagate NaN into the
@@ -798,7 +794,7 @@ impl Voice {
         self.age = SampleCount::ZERO;
         self.glide = GlideState::default();
         self.vibrato = None;
-        self.vibrato_phase = 0.0;
+        self.vibrato_phase = Phase::ZERO;
         self.vibrato_elapsed = Seconds::ZERO;
         self.vibrato_offset = Semitones::ZERO;
         // Note: We don't reset macro controllers here since they are channel-wide,
@@ -1048,7 +1044,7 @@ impl Voice {
             glide: GlideState::default(),
             glide_time: self.glide_time,
             vibrato: None,
-            vibrato_phase: 0.0,
+            vibrato_phase: Phase::ZERO,
             vibrato_elapsed: Seconds::ZERO,
             vibrato_offset: Semitones::ZERO,
             output_module_id: output_id,
@@ -1153,7 +1149,7 @@ mod tests {
                 depth: Semitones::new(depth),
                 rate: Hertz::new(rate),
                 fade_in: Seconds::new(fade_in),
-                shape: VibratoWave::Sine,
+                shape: LfoWaveform::Sine,
             }),
         }
     }

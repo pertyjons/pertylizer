@@ -298,14 +298,16 @@ impl Pattern {
         }
     }
 
-    /// Set (or clear) the per-note expression block.
+    /// Set (or clear) the per-note expression block. An all-default block is
+    /// normalized to `None` here (the central enforcement of "never persist an
+    /// empty expression block"), so callers can't accidentally store one.
     pub fn set_note_expression(
         &mut self,
         id: NoteId,
         expression: Option<super::note::NoteExpression>,
     ) -> bool {
         if let Some(note) = self.note_mut(id) {
-            note.expression = expression;
+            note.expression = expression.and_then(super::note::NoteExpression::normalized);
             true
         } else {
             false
