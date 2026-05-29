@@ -32,7 +32,10 @@ description = "Pertylizer — a modular synthesizer with 35 voice modules, 21 ef
 # Arc<str> param id). Inert for existing types — a serialized struct holding
 # Rc/Arc would not compile without it, so none exist today.
 serde = { version = "1.0.228", features = ["derive", "rc"] }
-serde_json = "1.0.150"
+# `raw_value` lets `get_project_schema` pass the embedded 251 KB schema through
+# verbatim (Box<RawValue>) instead of parsing it into a Value tree and
+# re-serializing on every call.
+serde_json = { version = "1.0.150", features = ["raw_value"] }
 thiserror = "2.0.18"
 
 # Audio I/O

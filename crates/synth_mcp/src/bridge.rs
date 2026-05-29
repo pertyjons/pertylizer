@@ -254,8 +254,8 @@ pub trait SynthBridge: Send + Sync + 'static {
         instrument_id: u64,
     ) -> Result<Vec<GraphDiagnostic>, McpBridgeError>;
 
-    /// Return the authoritative on-disk `.pertyproj` JSON Schema plus the build
-    /// version that generated it. The implementor embeds the committed
+    /// Return the authoritative on-disk `.pertyproj` JSON Schema plus the format
+    /// and build versions. The implementor embeds the committed
     /// `schemas/project.schema.json` (the exact artifact external tools must
     /// match), so callers can validate or diff project files without re-deriving
     /// the schema and risking introspection-vs-disk drift.
@@ -267,13 +267,21 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// across the whole project, complementing the structural `get_project_schema`
     /// validation. Composed from `list_instruments` + `get_graph_diagnostics`, so
     /// every bridge gets it for free and there's a single source of diagnostic
-    /// truth. Only instruments with at least one diagnostic appear in `entries`.
+    /// truth. Only instruments with an actionable diagnostic appear in `entries`.
     fn lint_project(&self) -> Result<ProjectLintReport, McpBridgeError> {
         let instruments = self.list_instruments()?;
         let mut per_instrument = Vec::with_capacity(instruments.len());
         for instrument in &instruments {
-            let diagnostics = self.get_graph_diagnostics(instrument.id)?;
-            per_instrument.push((instrument.id, instrument.name.clone(), diagnostics));
+            match self.get_graph_diagnostics(instrument.id) {
+                Ok(diagnostics) => {
+                    per_instrument.push((instrument.id, instrument.name.clone(), diagnostics));
+                }
+                // The instrument vanished between the `list_instruments` snapshot
+                // and this call (a concurrent GUI/MCP delete). Skip it rather than
+                // aborting the whole report over a transient race.
+                Err(McpBridgeError::InstrumentNotFound(_)) => continue,
+                Err(e) => return Err(e),
+            }
         }
         Ok(build_lint_report(per_instrument))
     }
@@ -1356,9 +1364,11 @@ pub struct BridgeParamSet {
 }
 
 /// Aggregate per-instrument diagnostics into a project-wide lint report: tally
-/// severities and keep only the instruments that produced a diagnostic. Pure
-/// (no engine access) so `SynthBridge::lint_project` stays a thin I/O wrapper
-/// and the aggregation is unit-testable on its own.
+/// every severity across all instruments, but list in `entries` only the
+/// instruments carrying an *actionable* (`Warning`/`Error`) diagnostic — so an
+/// empty project (whose instruments emit only an `Info` "graph is empty" note)
+/// doesn't flood the report. Pure (no engine access) so `SynthBridge::lint_project`
+/// stays a thin I/O wrapper and the aggregation is unit-testable on its own.
 pub(crate) fn build_lint_report(
     per_instrument: Vec<(u64, String, Vec<GraphDiagnostic>)>,
 ) -> ProjectLintReport {
@@ -1369,14 +1379,21 @@ pub(crate) fn build_lint_report(
     let mut info_count = 0;
 
     for (instrument_id, instrument_name, diagnostics) in per_instrument {
+        let mut actionable = false;
         for diagnostic in &diagnostics {
             match diagnostic.severity {
-                DiagnosticSeverity::Error => error_count += 1,
-                DiagnosticSeverity::Warning => warning_count += 1,
+                DiagnosticSeverity::Error => {
+                    error_count += 1;
+                    actionable = true;
+                }
+                DiagnosticSeverity::Warning => {
+                    warning_count += 1;
+                    actionable = true;
+                }
                 DiagnosticSeverity::Info => info_count += 1,
             }
         }
-        if !diagnostics.is_empty() {
+        if actionable {
             entries.push(ProjectLintEntry {
                 instrument_id,
                 instrument_name,
@@ -1408,7 +1425,7 @@ mod lint_report_tests {
     }
 
     #[test]
-    fn tallies_severities_and_skips_clean_instruments() {
+    fn tallies_all_severities_but_entries_are_actionable_only() {
         let report = build_lint_report(vec![
             (
                 1,
@@ -1420,17 +1437,37 @@ mod lint_report_tests {
             ),
             // A clean instrument: counted in instruments_checked, absent from entries.
             (2, "Lead".to_string(), vec![]),
+            // Info-only (e.g. empty graph): counted in info_count, but NOT in
+            // entries — it isn't actionable.
             (3, "Pad".to_string(), vec![diag(DiagnosticSeverity::Info)]),
         ]);
 
         assert_eq!(report.instruments_checked, 3);
         assert_eq!(report.error_count, 1);
         assert_eq!(report.warning_count, 1);
+        // info_count tallies the Info note even though instrument 3 is absent
+        // from entries — so the counts are not derivable from entries alone.
         assert_eq!(report.info_count, 1);
-        // Only the two instruments with diagnostics appear.
-        assert_eq!(report.entries.len(), 2);
+        assert_eq!(report.entries.len(), 1);
         assert_eq!(report.entries[0].instrument_id, 1);
-        assert_eq!(report.entries[1].instrument_id, 3);
+    }
+
+    #[test]
+    fn actionable_entry_keeps_its_info_diagnostics_for_context() {
+        let report = build_lint_report(vec![(
+            1,
+            "Bass".to_string(),
+            vec![
+                diag(DiagnosticSeverity::Info),
+                diag(DiagnosticSeverity::Error),
+            ],
+        )]);
+
+        assert_eq!(report.entries.len(), 1);
+        // The whole diagnostic list (Info included) rides along for context.
+        assert_eq!(report.entries[0].diagnostics.len(), 2);
+        assert_eq!(report.error_count, 1);
+        assert_eq!(report.info_count, 1);
     }
 
     #[test]

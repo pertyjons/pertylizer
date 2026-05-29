@@ -185,7 +185,10 @@ pub enum DiagnosticSeverity {
     Error,
 }
 
-/// Per-instrument diagnostics within a project-wide load-lint pass.
+/// Per-instrument diagnostics within a project-wide load-lint pass. Present only
+/// for instruments that have at least one *actionable* (`Warning`/`Error`)
+/// diagnostic; when included, carries **all** of that instrument's diagnostics
+/// (including any `Info` notes) for context.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectLintEntry {
     /// Instrument the diagnostics belong to.
@@ -201,6 +204,13 @@ pub struct ProjectLintEntry {
 /// (unconnected ports, silent voices, feedback loops, …) that schema validation
 /// alone can't catch. A clean project has `error_count == 0 && warning_count == 0`,
 /// which lets a CI gate or a post-load check assert health in one call.
+///
+/// `entries` lists only instruments with an actionable (`Warning`/`Error`)
+/// diagnostic, so a fresh project full of empty instruments (which emit only an
+/// `Info` "graph is empty" note) doesn't flood it. The counts are project-wide
+/// totals over *every* instrument, so they are **not** derivable from `entries`
+/// alone — `info_count` in particular includes notes from instruments that never
+/// appear in `entries`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectLintReport {
     /// Number of instruments inspected.
@@ -209,28 +219,37 @@ pub struct ProjectLintReport {
     pub error_count: usize,
     /// Total `Warning`-severity diagnostics across all instruments.
     pub warning_count: usize,
-    /// Total `Info`-severity diagnostics across all instruments.
+    /// Total `Info`-severity diagnostics across all instruments (including those
+    /// omitted from `entries` because they have no actionable diagnostic).
     pub info_count: usize,
-    /// One entry per instrument that produced at least one diagnostic.
+    /// One entry per instrument with at least one `Warning`/`Error` diagnostic.
     pub entries: Vec<ProjectLintEntry>,
 }
 
 /// The authoritative on-disk JSON Schema for `.pertyproj` project files, paired
-/// with the build version that generated it.
+/// with the format and build versions.
 ///
 /// Returned by `get_project_schema`. The `schema` is the exact committed
-/// `schemas/project.schema.json` (embedded at build time), not a live re-derived
-/// copy — so external tooling diffing against it sees zero introspection-vs-disk
-/// drift. `app_version` is the version of the crate that owns `ProjectFile` and
-/// regenerates the schema, letting a CI check fire when the format changes.
+/// `schemas/project.schema.json` (embedded at build time and passed through
+/// verbatim), not a live re-derived copy — so external tooling diffing against it
+/// sees zero introspection-vs-disk drift.
+///
+/// To detect a *format* change, pin `schema_format_version`: it bumps only when
+/// the on-disk project format changes. `app_version` is a build stamp that moves
+/// every release, so it is **not** a reliable format-change signal.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectSchemaInfo {
     /// File name of the schema artifact (e.g. `"project.schema.json"`).
     pub schema_file: String,
-    /// Build version of the application that generated the schema.
+    /// The `.pertyproj` format version — bumped only when the on-disk format
+    /// changes. Pin this for format-change detection.
+    pub schema_format_version: String,
+    /// Build version of the application (a release stamp; changes every release,
+    /// so not a format-change signal — use `schema_format_version` for that).
     pub app_version: String,
-    /// The full JSON Schema document.
-    pub schema: serde_json::Value,
+    /// The full JSON Schema document, passed through verbatim from the committed
+    /// artifact (no parse-then-reserialize round-trip).
+    pub schema: Box<serde_json::value::RawValue>,
 }
 
 /// Information about an example patch.

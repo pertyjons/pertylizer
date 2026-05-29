@@ -46,6 +46,11 @@ const MATRIX_VIRTUAL_PORT: &str = "matrix";
 /// the exact on-disk artifact — returning this (rather than a live `schema_for!`
 /// re-derivation) guarantees zero introspection-vs-disk drift. The `gen_schemas`
 /// `checked_in_schemas_match_generated` test keeps it in sync with `ProjectFile`.
+///
+/// NOTE: the `../../../schemas/` workspace-root-relative path is assumed in three
+/// places that must move together if the layout changes: this `include_str!`,
+/// `crates/pertylizer/src/bin/gen_schemas.rs` (writes it), and the drift test in
+/// `crates/pertylizer/tests/` (byte-compares it).
 const PROJECT_SCHEMA_JSON: &str = include_str!("../../../schemas/project.schema.json");
 
 /// Bridge implementation for the Pertylizer application.
@@ -546,12 +551,17 @@ impl SynthBridge for AppSynthBridge {
     }
 
     fn get_project_schema(&self) -> Result<ProjectSchemaInfo, McpBridgeError> {
-        let schema: serde_json::Value = serde_json::from_str(PROJECT_SCHEMA_JSON).map_err(|e| {
-            McpBridgeError::Other(format!("embedded project schema is invalid JSON: {e}"))
-        })?;
+        // Pass the embedded artifact through verbatim as a `RawValue` — this
+        // validates it's well-formed JSON once but skips building (and the caller
+        // skips re-serializing) a full 251 KB `Value` tree on every call.
+        let schema = serde_json::value::RawValue::from_string(PROJECT_SCHEMA_JSON.to_string())
+            .map_err(|e| {
+                McpBridgeError::Other(format!("embedded project schema is invalid JSON: {e}"))
+            })?;
 
         Ok(ProjectSchemaInfo {
             schema_file: "project.schema.json".to_string(),
+            schema_format_version: crate::project::ProjectFile::FORMAT_VERSION.to_string(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             schema,
         })

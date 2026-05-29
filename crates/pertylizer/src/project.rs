@@ -81,6 +81,12 @@ impl Default for GlobalProjectState {
 }
 
 impl ProjectFile {
+    /// The `.pertyproj` on-disk format version. Bumped **only** when the project
+    /// file format itself changes — unlike the app's `CARGO_PKG_VERSION`, which
+    /// moves every release. This is the value external tooling should pin to
+    /// detect a format change (see `get_project_schema`).
+    pub const FORMAT_VERSION: &'static str = "1.0";
+
     /// Create a new project file with the given instruments and song.
     pub fn new(
         instruments: Vec<InstrumentState>,
@@ -91,7 +97,7 @@ impl ProjectFile {
     ) -> Self {
         Self {
             file_type: "project".to_string(),
-            version: "1.0".to_string(),
+            version: Self::FORMAT_VERSION.to_string(),
             instruments,
             active_instrument_id,
             author,
