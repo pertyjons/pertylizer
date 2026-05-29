@@ -225,7 +225,19 @@ fn validate_note_input(n: &NoteInput) -> Result<(), McpBridgeError> {
         n.velocity.unwrap_or(100),
         n.start_beat,
         n.duration_beats,
-    )
+    )?;
+    // Glide fields are validated at the boundary too, so a bogus glide source is
+    // a surfaced error rather than a silently-dropped glide (consistent with the
+    // main pitch being validated).
+    if let Some(g) = &n.glide {
+        if let Some(p) = g.from_pitch {
+            validate_midi_note(p)?;
+        }
+        if let Some(t) = g.time_ms {
+            validate_range("glide.time_ms", t, 0.0, 60_000.0)?;
+        }
+    }
+    Ok(())
 }
 
 /// Validate an `AutomationPointInput` slice.
@@ -1317,6 +1329,25 @@ pub struct SeqSeekParam {
 
 // === Batch parameter structs ===
 
+/// Per-note glide (portamento/glissando) for batch note operations.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GlideInput {
+    #[schemars(
+        description = "Glide source as a semitone offset relative to the note (negative = below). Use this OR from_pitch. Default -2."
+    )]
+    pub from_semitones: Option<f32>,
+    #[schemars(
+        description = "Glide source as an absolute MIDI pitch (0-127). Takes precedence over from_semitones."
+    )]
+    pub from_pitch: Option<u8>,
+    #[schemars(description = "Glide time in milliseconds. Default 100.")]
+    pub time_ms: Option<f32>,
+    #[schemars(
+        description = "'continuous' (smooth portamento, default) or 'stepped' (chromatic glissando)."
+    )]
+    pub interp: Option<String>,
+}
+
 /// A note to add in a batch operation.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteInput {
@@ -1328,6 +1359,37 @@ pub struct NoteInput {
     pub duration_beats: f32,
     #[schemars(description = "Velocity (0-127). Default 100 if omitted.")]
     pub velocity: Option<u8>,
+    #[schemars(
+        description = "Tie/legato: connect to the next note without retriggering. Default false."
+    )]
+    pub legato: Option<bool>,
+    #[schemars(description = "Optional per-note glide (portamento/glissando) into this note.")]
+    pub glide: Option<GlideInput>,
+}
+
+/// Map a `NoteInput` (MCP JSON) to a bridge-level `BridgeNoteData`, resolving
+/// the forgiving glide tokens (default time 100 ms, continuous interp).
+fn note_input_to_bridge(n: &NoteInput) -> crate::bridge::BridgeNoteData {
+    crate::bridge::BridgeNoteData {
+        pitch: n.pitch,
+        start_beat: n.start_beat,
+        duration_beats: n.duration_beats,
+        velocity: n.velocity.unwrap_or(100),
+        legato: n.legato.unwrap_or(false),
+        glide: n.glide.as_ref().map(|g| crate::bridge::BridgeGlide {
+            from_semitones: g.from_semitones,
+            from_pitch: g.from_pitch,
+            time_ms: g.time_ms.unwrap_or(100.0),
+            stepped: g.interp.as_deref().is_some_and(|s| {
+                // Forgiving: accept common synonyms for the stepped articulation.
+                let s = s.trim();
+                s.eq_ignore_ascii_case("stepped")
+                    || s.eq_ignore_ascii_case("step")
+                    || s.eq_ignore_ascii_case("glissando")
+                    || s.eq_ignore_ascii_case("gliss")
+            }),
+        }),
+    }
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -4084,17 +4146,7 @@ impl SynthMcpServer {
                 return validation_err(e);
             }
         }
-        let notes: Vec<_> = params
-            .0
-            .notes
-            .iter()
-            .map(|n| crate::bridge::BridgeNoteData {
-                pitch: n.pitch,
-                start_beat: n.start_beat,
-                duration_beats: n.duration_beats,
-                velocity: n.velocity.unwrap_or(100),
-            })
-            .collect();
+        let notes: Vec<_> = params.0.notes.iter().map(note_input_to_bridge).collect();
         match self.bridge.add_notes(params.0.pattern_id, &notes) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
@@ -4139,17 +4191,7 @@ impl SynthMcpServer {
                 return validation_err(e);
             }
         }
-        let notes: Vec<_> = params
-            .0
-            .notes
-            .iter()
-            .map(|n| crate::bridge::BridgeNoteData {
-                pitch: n.pitch,
-                start_beat: n.start_beat,
-                duration_beats: n.duration_beats,
-                velocity: n.velocity.unwrap_or(100),
-            })
-            .collect();
+        let notes: Vec<_> = params.0.notes.iter().map(note_input_to_bridge).collect();
         match self.bridge.replace_notes(params.0.pattern_id, &notes) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
@@ -4525,12 +4567,7 @@ impl SynthMcpServer {
                     .notes
                     .unwrap_or_default()
                     .iter()
-                    .map(|n| crate::bridge::BridgeNoteData {
-                        pitch: n.pitch,
-                        start_beat: n.start_beat,
-                        duration_beats: n.duration_beats,
-                        velocity: n.velocity.unwrap_or(100),
-                    })
+                    .map(note_input_to_bridge)
                     .collect(),
                 automation: convert_automation_points(p.automation),
             })
@@ -4653,16 +4690,7 @@ impl SynthMcpServer {
             .map(|pat| crate::bridge::BridgePatternData {
                 name: pat.name,
                 length_beats: pat.length_beats,
-                notes: pat
-                    .notes
-                    .iter()
-                    .map(|n| crate::bridge::BridgeNoteData {
-                        pitch: n.pitch,
-                        start_beat: n.start_beat,
-                        duration_beats: n.duration_beats,
-                        velocity: n.velocity.unwrap_or(100),
-                    })
-                    .collect(),
+                notes: pat.notes.iter().map(note_input_to_bridge).collect(),
                 automation: convert_automation_points(pat.automation),
             })
             .collect();

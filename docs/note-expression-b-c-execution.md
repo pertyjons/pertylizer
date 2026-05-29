@@ -155,14 +155,23 @@ stepped = glissando).
   already-gliding notes (never force glide onto a mixed selection). Pre-existing
   scroll-wheel-without-drag undo gap left as-is (mirrors velocity inspector).
 
-### B5 — MCP: expose legato/glide on note creation
+### B5 — MCP: expose legato/glide on note creation ✅ (next commit)
 
-- [ ] Extend `add_notes` (`mcp_bridge.rs`) to accept optional `legato` and
-  `glide { from, time_ms, interp }` per note; forgiving token parsing consistent
-  with existing MCP ergonomics (cf. module-type tokens). Defaults = current.
-- [ ] Round-trip test + a `README_MCP` note.
+- [x] `NoteInput` (`synth_mcp/server.rs`) gains optional `legato: bool` and
+  `glide { from_semitones | from_pitch, time_ms, interp }`; `BridgeNoteData`
+  gains `legato` + `BridgeGlide`. A new `note_input_to_bridge` helper centralises
+  the (previously 4×-duplicated) `NoteInput → BridgeNoteData` mapping. Forgiving
+  parsing: `interp` accepts stepped/step/glissando/gliss (else continuous);
+  `from_pitch` precedence; defaults time 100 ms, offset −2 st.
+- [x] Both insert paths (`try_insert_note_into_pattern` + bulk
+  `insert_note_into_pattern`) resolve the glide via `glide_from_bridge` and apply
+  legato/glide, so inline-note creation gets expression too.
+- [x] Round-trip tests (relative glide + stepped; absolute `from_pitch`
+  precedence) + a `README_MCP` per-note-expression section.
 - **Verify:** create a tied/gliding note via MCP, confirm it plays. `/code-review` medium.
 - **Commit:** `Phase B5: MCP add_notes accepts per-note legato/glide`
+- **Done:** gate green; review fixes applied — validate `glide.from_pitch`
+  (range) + `glide.time_ms` (finite, 0..60000) at the MCP boundary; interp aliases.
 
 ### B-close
 

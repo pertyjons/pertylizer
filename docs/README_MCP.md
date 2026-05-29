@@ -205,6 +205,18 @@ Non-realtime composition.
 | `update_note`, `update_notes`, `replace_notes`, `remove_note` | Edits |
 | `clear_pattern` | Wipe a pattern |
 
+**Per-note expression (`add_notes`).** Each note in `add_notes` accepts two
+optional fields beyond pitch/start/duration/velocity:
+
+- `legato` (bool) — tie into the next note without retriggering the envelope.
+- `glide` — portamento/glissando *into* the note:
+  - `from_semitones` (f32) — source as a semitone offset relative to the note
+    (negative = below), **or** `from_pitch` (0–127) for an absolute source
+    (takes precedence). Default `-2`.
+  - `time_ms` (f32) — glide time, default `100`.
+  - `interp` — `"continuous"` (smooth portamento, default) or `"stepped"`
+    (chromatic glissando).
+
 ### Tracks & Arrangement
 
 | Tool | Purpose |

@@ -15,7 +15,7 @@ use synth_engine::commands::ModuleId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_mcp::bridge::SynthBridge;
 use synth_mcp::bridge::{
-    BridgeAutomationPointData, BridgeInstrumentDef, BridgeNoteData, BridgeNoteUpdate,
+    BridgeAutomationPointData, BridgeGlide, BridgeInstrumentDef, BridgeNoteData, BridgeNoteUpdate,
     BridgeParamSet, BridgeParamValue, BridgePatternData, BridgePlacementData, BridgeSongPlacement,
     BridgeTrackData,
 };
@@ -5313,6 +5313,35 @@ impl AppSynthBridge {
     }
 }
 
+/// Resolve a bridge-level glide spec into the sequencer's `Glide` type.
+/// `from_pitch` (absolute) takes precedence; otherwise a relative semitone
+/// offset is used (defaulting to -2 semitones).
+fn glide_from_bridge(g: &BridgeGlide, target: synth_sequencer::Pitch) -> synth_sequencer::Glide {
+    let from = match g.from_pitch {
+        Some(p) => {
+            synth_sequencer::GlideFrom::Pitch(synth_sequencer::Pitch::new(p).unwrap_or(target))
+        }
+        None => synth_sequencer::GlideFrom::Semitones(synth_core::Semitones::new(
+            g.from_semitones.unwrap_or(-2.0),
+        )),
+    };
+    synth_sequencer::Glide {
+        from,
+        time: synth_core::Milliseconds::new(g.time_ms),
+        interp: if g.stepped {
+            synth_sequencer::GlideInterp::Stepped
+        } else {
+            synth_sequencer::GlideInterp::Continuous
+        },
+    }
+}
+
+/// Apply the per-note expression (legato/glide) from `BridgeNoteData` to a note.
+fn apply_bridge_expression(note: &mut synth_sequencer::Note, n: &BridgeNoteData) {
+    note.legato = n.legato;
+    note.glide = n.glide.as_ref().map(|g| glide_from_bridge(g, note.pitch));
+}
+
 /// Try to insert a note from `BridgeNoteData` into a pattern.
 /// Returns the assigned note ID as u64, or an error string if the pitch is invalid.
 fn try_insert_note_into_pattern(
@@ -5324,13 +5353,14 @@ fn try_insert_note_into_pattern(
     let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));
     let vel = synth_core::Velocity::from_midi(n.velocity);
 
-    let note = synth_sequencer::Note::new(
+    let mut note = synth_sequencer::Note::new(
         synth_sequencer::NoteId(0), // reassigned by insert_note
         start,
         pitch,
         vel,
     )
     .with_duration(synth_sequencer::Duration(beats_to_ticks(n.duration_beats)));
+    apply_bridge_expression(&mut note, n);
 
     Ok(pattern.insert_note(note).0)
 }
@@ -5343,13 +5373,14 @@ fn insert_note_into_pattern(pattern: &mut synth_sequencer::Pattern, n: &BridgeNo
     let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));
     let vel = synth_core::Velocity::from_midi(n.velocity);
 
-    let note = synth_sequencer::Note::new(
+    let mut note = synth_sequencer::Note::new(
         synth_sequencer::NoteId(0), // reassigned by insert_note
         start,
         pitch,
         vel,
     )
     .with_duration(synth_sequencer::Duration(beats_to_ticks(n.duration_beats)));
+    apply_bridge_expression(&mut note, n);
 
     pattern.insert_note(note).0
 }
@@ -9957,6 +9988,67 @@ mod automation_target_tests {
 mod mcp_helper_tests {
     use super::*;
     use synth_core::ModuleType;
+
+    #[test]
+    fn add_note_applies_legato_and_relative_glide() {
+        let mut pattern = synth_sequencer::Pattern::new(
+            synth_sequencer::PatternId::new(0),
+            synth_sequencer::Duration(3840),
+        );
+        let data = BridgeNoteData {
+            pitch: 60,
+            start_beat: 0.0,
+            duration_beats: 1.0,
+            velocity: 100,
+            legato: true,
+            glide: Some(BridgeGlide {
+                from_semitones: Some(-12.0),
+                from_pitch: None,
+                time_ms: 80.0,
+                stepped: true,
+            }),
+        };
+        let id = try_insert_note_into_pattern(&mut pattern, &data).unwrap();
+        let note = pattern.note(synth_sequencer::NoteId(id)).unwrap();
+        assert!(note.legato);
+        let g = note.glide.expect("glide applied");
+        assert_eq!(
+            g.from,
+            synth_sequencer::GlideFrom::Semitones(synth_core::Semitones::new(-12.0))
+        );
+        assert!((g.time.as_f32() - 80.0).abs() < f32::EPSILON);
+        assert_eq!(g.interp, synth_sequencer::GlideInterp::Stepped);
+    }
+
+    #[test]
+    fn add_note_absolute_glide_pitch_takes_precedence() {
+        let mut pattern = synth_sequencer::Pattern::new(
+            synth_sequencer::PatternId::new(0),
+            synth_sequencer::Duration(3840),
+        );
+        let data = BridgeNoteData {
+            pitch: 67,
+            start_beat: 0.0,
+            duration_beats: 1.0,
+            velocity: 100,
+            legato: false,
+            glide: Some(BridgeGlide {
+                from_semitones: Some(-2.0), // ignored when from_pitch is set
+                from_pitch: Some(60),
+                time_ms: 100.0,
+                stepped: false,
+            }),
+        };
+        let id = try_insert_note_into_pattern(&mut pattern, &data).unwrap();
+        let note = pattern.note(synth_sequencer::NoteId(id)).unwrap();
+        assert!(!note.legato);
+        let g = note.glide.expect("glide applied");
+        assert_eq!(
+            g.from,
+            synth_sequencer::GlideFrom::Pitch(synth_sequencer::Pitch::new(60).unwrap())
+        );
+        assert_eq!(g.interp, synth_sequencer::GlideInterp::Continuous);
+    }
 
     #[test]
     fn parse_module_type_accepts_prefix_name_display_and_camel() {

@@ -27,6 +27,22 @@ use crate::types::{
 
 // === Bridge-level data structures for batch operations ===
 
+/// Per-note glide (portamento/glissando) for batch note operations.
+///
+/// Primitive fields only — the bridge implementation resolves these into the
+/// sequencer's `Glide`/`GlideFrom`/`GlideInterp` types.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BridgeGlide {
+    /// Glide source as a signed semitone offset relative to the note.
+    pub from_semitones: Option<f32>,
+    /// Glide source as an absolute MIDI pitch (takes precedence over `from_semitones`).
+    pub from_pitch: Option<u8>,
+    /// Glide time in milliseconds.
+    pub time_ms: f32,
+    /// `true` = stepped glissando, `false` = continuous portamento.
+    pub stepped: bool,
+}
+
 /// Note data for batch add/replace operations.
 pub struct BridgeNoteData {
     /// MIDI pitch (0-127).
@@ -37,6 +53,10 @@ pub struct BridgeNoteData {
     pub duration_beats: f32,
     /// Velocity (0-127).
     pub velocity: u8,
+    /// Per-note tie/legato (no retrigger onto the successor).
+    pub legato: bool,
+    /// Optional per-note glide.
+    pub glide: Option<BridgeGlide>,
 }
 
 /// Note update for batch update operations.
