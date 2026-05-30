@@ -339,6 +339,14 @@ impl OfflineEngineSession {
         };
         engine.on_stream_start(&stream_info);
 
+        // The master fader is always in the live output path, so offline
+        // analysis must reflect it — without this, `set_master_volume` has no
+        // effect on `analyze_mix_bus` / `analyze_section` metrics. Sent once;
+        // it persists across `render_range` calls (no Clear command resets it).
+        handle.send_blocking(EngineCommand::SetMasterVolume(synth_core::Gain::new(
+            engine_state.master_volume.load(),
+        )));
+
         Ok((
             Self {
                 engine,

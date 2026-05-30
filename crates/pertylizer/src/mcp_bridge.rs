@@ -22,15 +22,15 @@ use synth_mcp::bridge::{
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
     AnalyzeHarmonyResult, AnalyzeMaskingMatrixResult, AnalyzeMixBusResult, AnalyzePatternResult,
-    AnalyzeSectionResult, ApplyExamplePatchResult, AutomationLaneInfo, AutomationPointInfo,
-    AutomationTargetInfo, AweLfoInfo, AwePresetInfo, AweStateInfo, BandOverlap, BatchItemResult,
-    BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity,
-    EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate,
-    HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo, MixBusMetrics,
-    ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo,
-    PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo,
-    PlacementInfo, ProjectSchemaInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo,
-    UiModuleInfo, UiOverlap, UiSnapshot,
+    AnalyzeSectionResult, ApplyExamplePatchResult, AutoGainStageResult, AutomationLaneInfo,
+    AutomationPointInfo, AutomationTargetInfo, AweLfoInfo, AwePresetInfo, AweStateInfo,
+    BandOverlap, BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionCheckResult,
+    ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
+    HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair,
+    MatrixRoutingInfo, MixBusMetrics, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult,
+    ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue,
+    PatchResourceData, PatternInfo, PlacementInfo, ProjectSchemaInfo, SetSongResult, SongInfo,
+    TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -3888,6 +3888,24 @@ impl SynthBridge for AppSynthBridge {
             end_tick,
             include_per_track,
             scope,
+        )
+    }
+
+    fn auto_gain_stage(
+        &self,
+        target_lufs: f32,
+        true_peak_ceiling_dbtp: f32,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+    ) -> Result<AutoGainStageResult, McpBridgeError> {
+        auto_gain_stage_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            target_lufs,
+            true_peak_ceiling_dbtp,
+            duration_seconds,
+            start_tick,
         )
     }
 
@@ -9063,6 +9081,21 @@ fn mix_metrics_from_analysis(
 
 /// `analyze_mix_bus` bridge implementation. Renders `duration_seconds` of the
 /// master bus offline starting at `start_tick` (default 0).
+/// Human-readable description of the signal chain an offline analysis render
+/// measured: the master fader plus which optional stages were included. Makes
+/// `analyze_mix_bus` / `analyze_section` unambiguous about pre- vs post-master.
+fn describe_signal_chain(scope: synth_mcp::AnalysisScope, master_volume: f32) -> String {
+    let stage = |on: bool| if on { "included" } else { "excluded" };
+    format!(
+        "instruments + track faders + returns, through master fader {master_volume:.3}x; \
+         master effects: {}; return effects: {}; AWE: {}; rendered @ {} Hz",
+        stage(scope.master_effects),
+        stage(scope.return_effects),
+        stage(scope.awe),
+        scope.render_sample_rate,
+    )
+}
+
 fn analyze_mix_bus_impl(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
@@ -9123,8 +9156,99 @@ fn analyze_mix_bus_impl(
         start_tick: rendered.start_tick,
         end_tick: rendered.end_tick,
         metrics,
+        signal_chain: describe_signal_chain(scope, session.state().master_volume.load()),
         warnings: rendered.warnings,
     })
+}
+
+/// `auto_gain_stage` bridge implementation. Renders the full master chain once,
+/// measures integrated LUFS + true peak, and sets the master fader to reach
+/// `target_lufs` without breaching `true_peak_ceiling_dbtp`. Because the master
+/// fader sits after all effects, loudness and peak scale linearly with it, so a
+/// single render is enough — the post-adjustment figures are predicted, not
+/// re-rendered.
+#[allow(clippy::too_many_arguments)]
+fn auto_gain_stage_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    target_lufs: f32,
+    true_peak_ceiling_dbtp: f32,
+    duration_seconds: f32,
+    start_tick: Option<u64>,
+) -> Result<AutoGainStageResult, McpBridgeError> {
+    // Measure the real output: include the master + return effect chains.
+    let scope = synth_mcp::AnalysisScope {
+        master_effects: true,
+        return_effects: true,
+        awe: false,
+        render_sample_rate: 44_100,
+    };
+    let measured = analyze_mix_bus_impl(
+        session,
+        sample_library,
+        shared,
+        duration_seconds,
+        start_tick,
+        scope,
+    )?;
+
+    let measured_lufs = measured.metrics.lufs_integrated;
+    let measured_tp = measured.metrics.true_peak_dbtp;
+    if !measured_lufs.is_finite() || measured_lufs < -100.0 {
+        return Err(McpBridgeError::Other(
+            "mix is silent (no measurable loudness) — nothing to gain-stage".to_string(),
+        ));
+    }
+
+    let current_master = session.state().master_volume.load();
+    if current_master <= 0.0 {
+        return Err(McpBridgeError::Other(
+            "master volume is 0 — raise it before auto gain-staging".to_string(),
+        ));
+    }
+
+    // Gain the target loudness asks for, vs. the headroom the ceiling allows.
+    let gain_for_lufs = target_lufs - measured_lufs;
+    let gain_headroom = true_peak_ceiling_dbtp - measured_tp;
+    let (mut applied_gain_db, mut limited_by) = if gain_for_lufs <= gain_headroom {
+        (gain_for_lufs, "target_lufs")
+    } else {
+        (gain_headroom, "true_peak_ceiling")
+    };
+
+    // Apply to the master fader, clamped to the engine's 0..2 range.
+    let raw_new_master = current_master * 10f32.powf(applied_gain_db / 20.0);
+    let new_master = raw_new_master.clamp(0.0, 2.0);
+    if (new_master - raw_new_master).abs() > f32::EPSILON {
+        limited_by = "master_volume_range";
+        applied_gain_db = 20.0 * (new_master / current_master).log10();
+    }
+
+    if session
+        .command_sender()
+        .send(EngineCommand::SetMasterVolume(synth_core::Gain::new(
+            new_master,
+        )))
+    {
+        Ok(AutoGainStageResult {
+            measured_lufs,
+            measured_true_peak_dbtp: measured_tp,
+            target_lufs,
+            true_peak_ceiling_dbtp,
+            applied_gain_db,
+            previous_master_volume: current_master,
+            new_master_volume: new_master,
+            predicted_lufs: measured_lufs + applied_gain_db,
+            predicted_true_peak_dbtp: measured_tp + applied_gain_db,
+            limited_by: limited_by.to_string(),
+            warnings: measured.warnings,
+        })
+    } else {
+        Err(McpBridgeError::CommandSendFailed {
+            command: "SetMasterVolume",
+        })
+    }
 }
 
 /// `analyze_section` bridge implementation. Renders an explicit
@@ -9184,6 +9308,7 @@ pub fn analyze_section_impl(
         end_tick: rendered.end_tick,
         metrics,
         per_track,
+        signal_chain: describe_signal_chain(scope, session.state().master_volume.load()),
         warnings,
     })
 }

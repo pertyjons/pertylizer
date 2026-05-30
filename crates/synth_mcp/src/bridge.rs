@@ -16,15 +16,16 @@
 
 use crate::error::McpBridgeError;
 use crate::types::{
-    ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo,
-    AutomationSummaryGroup, AutomationSummaryLane, AutomationSummaryResult, AutomationTargetInfo,
-    AwePresetInfo, AweStateInfo, BatchResult, BuildInstrumentResult, ConnectionCheckResult,
-    ConnectionInfo, DetailedSampleInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo,
-    GraphDiagnostic, InputDeviceInfo, InputStateInfo, InsertModuleResult, InstrumentInfo,
-    InstrumentProfileResult, MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo,
-    OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry,
-    ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo,
-    SamplerStateInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    ApplyExamplePatchResult, AudioPreview, AutoGainStageResult, AutomationLaneInfo,
+    AutomationPointInfo, AutomationSummaryGroup, AutomationSummaryLane, AutomationSummaryResult,
+    AutomationTargetInfo, AwePresetInfo, AweStateInfo, BatchResult, BuildInstrumentResult,
+    ChordProgressionStep, ConnectionCheckResult, ConnectionInfo, CreateChordProgressionResult,
+    DetailedSampleInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
+    InputDeviceInfo, InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult,
+    MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo,
+    PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry, ProjectLintReport,
+    ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo, SamplerStateInfo,
+    SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -1602,6 +1603,19 @@ pub trait SynthBridge: Send + Sync + 'static {
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeMixBusResult, McpBridgeError>;
 
+    /// Measure the master mix (post master + return effects) and adjust the
+    /// master fader toward `target_lufs` without pushing the true peak above
+    /// `true_peak_ceiling_dbtp`. The master fader is post-effects, so the
+    /// adjustment scales loudness and peak linearly — one render suffices, no
+    /// iteration. Mutates the project's master volume.
+    fn auto_gain_stage(
+        &self,
+        target_lufs: f32,
+        true_peak_ceiling_dbtp: f32,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+    ) -> Result<AutoGainStageResult, McpBridgeError>;
+
     /// Render an explicit arrangement range `[start_tick, end_tick)` offline
     /// and return the same metrics as `analyze_mix_bus`.
     ///
@@ -1736,6 +1750,76 @@ pub trait SynthBridge: Send + Sync + 'static {
         octave: i32,
         voicing: Option<&str>,
     ) -> Result<crate::types::GenerateChordResult, McpBridgeError>;
+
+    /// Create a new pattern and fill it with a chord progression: each symbol
+    /// in `chords` is voiced via [`generate_chord`] and placed as a block of
+    /// notes spanning `beats_per_chord`, laid end to end. Returns the new
+    /// pattern id and a per-chord breakdown.
+    ///
+    /// Default trait method composed from `create_pattern` + `generate_chord` +
+    /// `add_notes`.
+    fn create_chord_progression_pattern(
+        &self,
+        name: &str,
+        chords: &[String],
+        beats_per_chord: f32,
+        octave: i32,
+        voicing: Option<&str>,
+        velocity: u8,
+    ) -> Result<CreateChordProgressionResult, McpBridgeError> {
+        if chords.is_empty() {
+            return Err(McpBridgeError::Other(
+                "progression has no chords".to_string(),
+            ));
+        }
+        if !(beats_per_chord.is_finite() && beats_per_chord > 0.0) {
+            return Err(McpBridgeError::Other(
+                "beats_per_chord must be a positive number".to_string(),
+            ));
+        }
+
+        let length_beats = chords.len() as f32 * beats_per_chord;
+        let pattern_id = self.create_pattern(name, length_beats)?;
+
+        let mut notes: Vec<BridgeNoteData> = Vec::new();
+        let mut steps: Vec<ChordProgressionStep> = Vec::new();
+        let mut warnings: Vec<String> = Vec::new();
+
+        for (i, symbol) in chords.iter().enumerate() {
+            let start_beat = i as f32 * beats_per_chord;
+            let chord = self.generate_chord(symbol, octave, voicing)?;
+            for w in &chord.warnings {
+                warnings.push(format!("{symbol}: {w}"));
+            }
+            for &pitch in &chord.notes {
+                notes.push(BridgeNoteData {
+                    pitch,
+                    start_beat,
+                    duration_beats: beats_per_chord,
+                    velocity,
+                    legato: false,
+                    glide: None,
+                    expression: None,
+                });
+            }
+            steps.push(ChordProgressionStep {
+                symbol: chord.symbol,
+                start_beat,
+                quality: chord.quality,
+                voicing: chord.voicing,
+                notes: chord.notes,
+            });
+        }
+
+        let added = self.add_notes(pattern_id, &notes)?;
+        Ok(CreateChordProgressionResult {
+            pattern_id,
+            length_beats,
+            notes_added: added.succeeded,
+            chords: steps,
+            warnings,
+        })
+    }
 
     /// Transpose every note in `pattern_id` by `semitones` (signed). When
     /// both `scale_tonic` and `scale_name` are set, any note whose

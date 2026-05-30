@@ -74,24 +74,29 @@ alias, `validate_instrument_audio`, `scale_/offset_/copy_automation_lane`,
 
 ---
 
-## ⬜ Medium (self-contained features) — next batch
+## ✅ Medium (self-contained features) — landed in v0.305.0
 
-### auto_gain_stage / normalize_loudness  ⬜
-Measure integrated LUFS, compute master/track gain to hit `target_lufs`, respect
-`true_peak_ceiling`, optional `preserve_track_balance`. LUFS / true-peak infra
-already exists in `mix_analysis.rs`.
+### auto_gain_stage  ✅
+Measures integrated LUFS + true peak through the master chain and sets the master
+fader toward `target_lufs` without breaching `true_peak_ceiling`. Single render —
+the fader is post-effects so loudness/peak scale linearly; reports measured vs.
+predicted and `limited_by`. Adjusts the master fader only (inherently preserves
+track balance); per-track gain staging not implemented.
+- `mcp_bridge.rs` `auto_gain_stage_impl` + trait method; `types.rs`
+  `AutoGainStageResult`.
 
-### create_chord_progression_pattern  ⬜
-Build on existing `generate_chord` (parses "Gm" etc., voicings close/drop2/drop3/
-open). Take key + progression list + bars-per-chord + voicing → place chords as a
-pattern. For pad / glue tracks.
+### create_chord_progression_pattern  ✅
+Creates a pattern and fills it with a voiced progression (`chords`,
+`beats_per_chord`, `octave`, `voicing`, `velocity`). Default trait method
+composing `create_pattern` + `generate_chord` + `add_notes`. Uses
+`beats_per_chord` (not bars) to avoid a time-signature dependency.
 
-### analyze_mix_bus mode/stage clarity + master-volume bug check  ⬜
-User suspected `set_master_volume` "doesn't affect the analysis". The bridge
-*should* capture master_volume from live state — **needs verification** (possible
-real bug). Also add explicit scope/stage reporting in the response so it's
-unambiguous which chain was measured.
-- ⚠️ Includes an investigation, not just an addition.
+### analyze_mix_bus master-volume bug + signal_chain reporting  ✅
+**Confirmed real bug:** the offline renderer never applied `master_volume`, so
+`set_master_volume` had no effect on `analyze_mix_bus` / `analyze_section`. Fixed
+in `OfflineEngineSession::new_with_scope` (sends the live master volume to the
+offline engine). Regression test `master_volume_scales_offline_render`. Both
+results now carry a `signal_chain` string describing exactly what was measured.
 
 ---
 

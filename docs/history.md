@@ -1,5 +1,22 @@
 # Version History
 
+## [0.305.0] - 2026-05-31
+
+### MCP medium batch — gain staging, chord progressions, master-volume fix
+
+- **Offline render now honours the master fader.** `analyze_mix_bus` /
+  `analyze_section` previously ignored `set_master_volume` (the offline engine
+  was never told the master volume); now `OfflineEngineSession` applies it. Both
+  results gained a `signal_chain` string spelling out exactly what was measured
+  (master fader value + included stages + sample rate).
+- **`auto_gain_stage`** — measures integrated LUFS + true peak through the master
+  chain and sets the master fader toward a target LUFS without breaching a
+  true-peak ceiling. Single render (the fader is post-effects, so loudness/peak
+  scale linearly); reports measured vs. predicted and what bound the result.
+- **`create_chord_progression_pattern`** — creates a pattern and fills it with a
+  voiced chord progression (`['Gm','F','Eb','D']`, beats-per-chord, octave,
+  voicing) in one call, composing generate_chord + create_pattern + add_notes.
+
 ## [0.304.0] - 2026-05-30
 
 ### MCP quick-wins batch — splice, validate, automation editing

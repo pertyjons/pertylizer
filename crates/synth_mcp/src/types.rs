@@ -1624,7 +1624,44 @@ pub struct AnalyzeMixBusResult {
     pub end_tick: u64,
     /// Mix-bus metrics from the rendered window.
     pub metrics: MixBusMetrics,
+    /// Human-readable description of exactly what signal chain was measured —
+    /// the master fader value plus which optional stages (master/return effects,
+    /// AWE) were included and the render sample rate. Removes ambiguity about
+    /// whether the metrics are pre- or post-master.
+    pub signal_chain: String,
     /// Non-fatal warnings emitted during the render.
+    pub warnings: Vec<String>,
+}
+
+/// Result of `auto_gain_stage`: the master fader was adjusted to bring the mix
+/// toward a target loudness without breaching a true-peak ceiling.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutoGainStageResult {
+    /// Integrated LUFS measured at the current master setting (post master +
+    /// return effects).
+    pub measured_lufs: f32,
+    /// True peak (dBTP) measured at the current master setting.
+    pub measured_true_peak_dbtp: f32,
+    /// Requested target integrated loudness (LUFS).
+    pub target_lufs: f32,
+    /// True-peak ceiling that was respected (dBTP).
+    pub true_peak_ceiling_dbtp: f32,
+    /// Gain applied to the master fader, in dB.
+    pub applied_gain_db: f32,
+    /// Master fader value before the adjustment (linear gain).
+    pub previous_master_volume: f32,
+    /// Master fader value after the adjustment (linear gain).
+    pub new_master_volume: f32,
+    /// Predicted integrated LUFS after the adjustment (linear, since the master
+    /// fader is post-effects).
+    pub predicted_lufs: f32,
+    /// Predicted true peak (dBTP) after the adjustment.
+    pub predicted_true_peak_dbtp: f32,
+    /// Which constraint bound the result: `"target_lufs"` (hit the target),
+    /// `"true_peak_ceiling"` (target would clip, peak-limited instead), or
+    /// `"master_volume_range"` (clamped to the 0..2 fader range).
+    pub limited_by: String,
+    /// Non-fatal warnings emitted during the measurement render.
     pub warnings: Vec<String>,
 }
 
@@ -1695,6 +1732,10 @@ pub struct AnalyzeSectionResult {
     /// covering the section.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub per_track: Vec<TrackContribution>,
+    /// Human-readable description of exactly what signal chain was measured
+    /// (master fader + included optional stages + render sample rate). See
+    /// `AnalyzeMixBusResult.signal_chain`.
+    pub signal_chain: String,
     /// Non-fatal warnings emitted during the render.
     pub warnings: Vec<String>,
 }
@@ -2476,6 +2517,37 @@ pub struct GenerateChordResult {
     /// Generated MIDI notes in ascending order.
     pub notes: Vec<u8>,
     /// Non-fatal warnings (voicing fallback, MIDI clamping, …).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub warnings: Vec<String>,
+}
+
+/// One chord placed by `create_chord_progression_pattern`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChordProgressionStep {
+    /// Chord symbol as supplied (e.g. "Gm").
+    pub symbol: String,
+    /// Beat where the chord starts in the pattern.
+    pub start_beat: f32,
+    /// Matched chord quality (e.g. "minor", "major7").
+    pub quality: String,
+    /// Voicing actually applied.
+    pub voicing: String,
+    /// MIDI notes placed for this chord.
+    pub notes: Vec<u8>,
+}
+
+/// Result of `create_chord_progression_pattern`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateChordProgressionResult {
+    /// ID of the newly created pattern.
+    pub pattern_id: u32,
+    /// Total pattern length in beats.
+    pub length_beats: f32,
+    /// Total notes placed across all chords.
+    pub notes_added: usize,
+    /// Per-chord breakdown in playback order.
+    pub chords: Vec<ChordProgressionStep>,
+    /// Non-fatal warnings (voicing fallback, MIDI clamping, …), prefixed by symbol.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub warnings: Vec<String>,
 }

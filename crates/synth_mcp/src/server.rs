@@ -707,6 +707,26 @@ pub struct AnalyzeMixBusParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AutoGainStageParam {
+    #[schemars(
+        description = "Target integrated loudness in LUFS (e.g. -18, -14, -23). The master fader is adjusted to bring the measured loudness to this value."
+    )]
+    pub target_lufs: f32,
+    #[schemars(
+        description = "True-peak ceiling in dBTP that must not be breached (default -1.0). If hitting target_lufs would push the true peak above this, the gain is reduced and `limited_by` reports 'true_peak_ceiling'."
+    )]
+    pub true_peak_ceiling: Option<f32>,
+    #[schemars(
+        description = "How many seconds of the master bus to render and measure (default 10.0, max 300.0). Measured through the master + return effect chains at 44.1 kHz."
+    )]
+    pub duration_seconds: Option<f32>,
+    #[schemars(
+        description = "Absolute tick to start measuring from (default 0 = song beginning)."
+    )]
+    pub start_tick: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeSectionParam {
     #[schemars(description = "Absolute tick where the section starts (inclusive).")]
     pub start_tick: u64,
@@ -864,6 +884,30 @@ pub struct GenerateChordParam {
         description = "Voicing to apply to the close-position chord. One of 'close' (default), 'drop2', 'drop3', 'open'. Voicings that need more notes than the chord has fall back to drop2 with a warning."
     )]
     pub voicing: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CreateChordProgressionPatternParam {
+    #[schemars(description = "Name for the new pattern.")]
+    pub name: String,
+    #[schemars(
+        description = "Chord symbols in playback order, e.g. ['Gm','F','Eb','D']. Each is parsed like generate_chord (synonyms, sharps/flats accepted)."
+    )]
+    pub chords: Vec<String>,
+    #[schemars(
+        description = "Beats each chord lasts, laid end to end (default 4.0 = one 4/4 bar). Pattern length = chords.len() * beats_per_chord."
+    )]
+    pub beats_per_chord: Option<f32>,
+    #[schemars(
+        description = "Octave in scientific pitch notation for the chord roots (default 4 = middle-C octave)."
+    )]
+    pub octave: Option<i32>,
+    #[schemars(
+        description = "Voicing applied to every chord: 'close' (default), 'drop2', 'drop3', 'open'."
+    )]
+    pub voicing: Option<String>,
+    #[schemars(description = "Velocity for all placed notes (0-127, default 80).")]
+    pub velocity: Option<u8>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3079,6 +3123,7 @@ impl SynthMcpServer {
             "analyze_bass_drum_lock" => analyze_bass_drum_lock(AnalyzeBassDrumLockParam),
             "analyze_harmonic_function" => analyze_harmonic_function(AnalyzeHarmonicFunctionParam),
             "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
+            "auto_gain_stage" => auto_gain_stage(AutoGainStageParam),
             "analyze_section" => analyze_section(AnalyzeSectionParam),
             "analyze_masking_matrix" => analyze_masking_matrix(AnalyzeMaskingMatrixParam),
             "analyze_instrument_range" => analyze_instrument_range(AnalyzeInstrumentRangeParam),
@@ -3093,6 +3138,7 @@ impl SynthMcpServer {
 
             // Symbolic composition helpers
             "generate_chord" => generate_chord(GenerateChordParam),
+            "create_chord_progression_pattern" => create_chord_progression_pattern(CreateChordProgressionPatternParam),
             "transpose_notes" => transpose_notes(TransposeNotesParam),
             "quantize_notes_to_scale" => quantize_notes_to_scale(QuantizeNotesToScaleParam),
             "quantize_notes_to_grid" => quantize_notes_to_grid(QuantizeNotesToGridParam),
@@ -3657,6 +3703,29 @@ impl SynthMcpServer {
     }
 
     #[tool(
+        description = "Measure the master mix and set the master fader to reach a target loudness without breaching a true-peak ceiling. \
+                       Renders the song (default 10 s) through the master + return effect chains at 44.1 kHz, measures integrated LUFS \
+                       and true peak, then adjusts the master volume. The fader is post-effects, so loudness and peak scale linearly — \
+                       no iteration. Returns measured vs. predicted LUFS/true-peak, the applied gain, old/new master volume, and \
+                       `limited_by` (whether the target, the true-peak ceiling, or the fader range bound the result). Mutates master volume."
+    )]
+    async fn auto_gain_stage(&self, params: Parameters<AutoGainStageParam>) -> String {
+        let p = params.0;
+        if let Err(e) = validate_range("target_lufs", p.target_lufs, -60.0, 0.0) {
+            return validation_err(e);
+        }
+        let ceiling = p.true_peak_ceiling.unwrap_or(-1.0);
+        if let Err(e) = validate_range("true_peak_ceiling", ceiling, -24.0, 0.0) {
+            return validation_err(e);
+        }
+        let duration = p.duration_seconds.unwrap_or(10.0);
+        run_blocking_json(|| {
+            self.bridge
+                .auto_gain_stage(p.target_lufs, ceiling, duration, p.start_tick)
+        })
+    }
+
+    #[tool(
         description = "Render an explicit arrangement range [start_tick, end_tick) offline and return the same mix-bus metrics as analyze_mix_bus (LUFS-I/S/M, sample peak, true peak in dBTP, RMS, crest, banded energy, stereo correlation, mid/side, mono-compatibility, clipped samples). Use this when you want to A/B verses vs. choruses, compare a buildup to a drop, or inspect a specific musical passage rather than a fixed-duration window from the song start. Pass `include_per_track: true` to also receive a per-track breakdown (one soloed render per audible track) so you can tell which track is responsible for clipping, dominant energy, or sub-bass — costs roughly O(track_count) extra render time. Per-track `metrics.peak`/`metrics.rms` include pan-law attenuation (-3 dB at center pan: a center-panned source with internal peak 1.0 reports ~0.7071). Per-track `pre_master_peak` analytically reverses the instrument's pan + volume attenuation from the per-channel peaks and reports the patch's internal signal peak directly, so you can see internal clipping that would otherwise be hidden by a quiet pan-down."
     )]
     async fn analyze_section(&self, params: Parameters<AnalyzeSectionParam>) -> String {
@@ -3888,6 +3957,34 @@ impl SynthMcpServer {
             &params.0.symbol,
             params.0.octave.unwrap_or(4),
             params.0.voicing.as_deref(),
+        ) {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Create a new pattern and fill it with a chord progression in one call. Each symbol in `chords` is voiced \
+                       like generate_chord and placed as a block of notes spanning `beats_per_chord` (default 4 = one 4/4 bar), \
+                       laid end to end. Returns the new pattern id, total length, and a per-chord breakdown. Saves building \
+                       pad/glue patterns chord-by-chord with generate_chord + add_notes."
+    )]
+    async fn create_chord_progression_pattern(
+        &self,
+        params: Parameters<CreateChordProgressionPatternParam>,
+    ) -> String {
+        let p = params.0;
+        let velocity = p.velocity.unwrap_or(80);
+        if velocity > 127 {
+            return format!("Error: {}", McpBridgeError::InvalidVelocity(velocity));
+        }
+        match self.bridge.create_chord_progression_pattern(
+            &p.name,
+            &p.chords,
+            p.beats_per_chord.unwrap_or(4.0),
+            p.octave.unwrap_or(4),
+            p.voicing.as_deref(),
+            velocity,
         ) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),

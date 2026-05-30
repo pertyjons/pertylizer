@@ -120,6 +120,50 @@ fn renders_audible_arrangement_from_engine_snapshot() {
 }
 
 #[test]
+fn master_volume_scales_offline_render() {
+    // Regression: the offline renderer used to ignore the master fader, so
+    // `set_master_volume` had no effect on `analyze_mix_bus` / `analyze_section`.
+    // `new_with_scope` now sends the live master volume to the offline engine.
+    let rig = setup_with_patch(&sustain_patch());
+    let song = build_arpeggio_song();
+    let shared = McpSharedState::with_song(song);
+    let (start_tick, end_tick) = (0u64, 3840u64);
+
+    rig.session.state().master_volume.store(1.0);
+    let full = render_arrangement_to_buffer(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        start_tick,
+        end_tick,
+    )
+    .expect("full-volume render should succeed");
+    let full_rms = left_rms(&full.samples);
+
+    rig.session.state().master_volume.store(0.5);
+    let half = render_arrangement_to_buffer(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        start_tick,
+        end_tick,
+    )
+    .expect("half-volume render should succeed");
+    let half_rms = left_rms(&half.samples);
+
+    assert!(
+        full_rms > 0.01,
+        "full-volume render should be audible (left RMS = {full_rms})"
+    );
+    // The patch peaks below full scale, so the master gain scales linearly.
+    let ratio = half_rms / full_rms;
+    assert!(
+        (ratio - 0.5).abs() < 0.05,
+        "halving the master fader should ~halve RMS, got ratio {ratio} (full {full_rms}, half {half_rms})"
+    );
+}
+
+#[test]
 fn empty_arrangement_renders_silently_without_error() {
     // Same engine + patch, but the song has no tracks or placements.
     let rig = setup_with_patch(&sustain_patch());
