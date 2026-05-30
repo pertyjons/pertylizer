@@ -385,6 +385,8 @@ fn draw_channel_strip(
     eng_id: Option<InstrumentId>,
     state: &mut MixerViewState,
 ) -> bool {
+    use egui_remixicon::icons as ri;
+
     let t = theme();
     let mut edit_fx = false;
     ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
@@ -413,10 +415,12 @@ fn draw_channel_strip(
                         .color(t.colors.text_dim),
                 );
 
-                // Inserts: edited in the Rack (they live on the instrument).
+                // Inserts: edited in the Rack (they live on the instrument). The
+                // icon signals the button jumps to another view rather than
+                // opening an inline editor like the return-bus strips do.
                 if ui
                     .add(egui::Button::new(
-                        RichText::new("Inserts ▸")
+                        RichText::new(format!("Inserts {}", ri::EXTERNAL_LINK_LINE))
                             .size(t.fonts.size_small)
                             .color(t.colors.text_secondary),
                     ))
