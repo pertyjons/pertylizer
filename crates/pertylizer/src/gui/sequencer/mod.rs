@@ -428,6 +428,35 @@ const GRID_RESOLUTIONS: &[(&str, u32)] = &[
 const AUTOMATION_HIT_RADIUS: f32 = 8.0;
 
 // ============================================================================
+// SHARED TIMELINE RULER
+// ============================================================================
+
+/// Draw the shared timeline-ruler strip: a dark background with a running
+/// per-bar number (1, 2, 3, …). Used by both the arrangement ruler and the
+/// piano-roll ruler so the two "top bars" look identical. Callers overlay
+/// their own grid lines, loop/tempo markers, playhead and bottom border.
+fn draw_ruler_labels(
+    painter: &egui::Painter,
+    t: &crate::gui::theme::Theme,
+    ruler_rect: Rect,
+    total_bars: u32,
+    ticks_per_bar: u64,
+    tick_to_x: impl Fn(u64) -> f32,
+) {
+    painter.rect_filled(ruler_rect, 0.0, t.colors.bg_dark);
+    for bar_idx in 0..total_bars {
+        let x = tick_to_x(u64::from(bar_idx) * ticks_per_bar);
+        painter.text(
+            Pos2::new(x + 4.0, ruler_rect.min.y + 4.0),
+            egui::Align2::LEFT_TOP,
+            format!("{}", bar_idx + 1),
+            egui::FontId::proportional(12.0),
+            t.colors.text_secondary,
+        );
+    }
+}
+
+// ============================================================================
 // TRANSPORT BAR
 // ============================================================================
 
@@ -1661,19 +1690,19 @@ fn draw_arrangement(
                 Pos2::new(tl_x, tl_y),
                 Vec2::new(timeline_width, RULER_HEIGHT),
             );
-            painter.rect_filled(ruler_rect, 0.0, t.colors.bg_dark);
+            draw_ruler_labels(
+                &painter,
+                &t,
+                ruler_rect,
+                total_bars,
+                ticks_per_bar,
+                tick_to_x,
+            );
 
+            // ── Full-height bar/beat grid lines ──
             for bar_idx in 0..total_bars {
                 let bar_tick = bar_idx as u64 * ticks_per_bar;
                 let x = tick_to_x(bar_tick);
-
-                painter.text(
-                    Pos2::new(x + 4.0, tl_y + 4.0),
-                    egui::Align2::LEFT_TOP,
-                    format!("{}", bar_idx + 1),
-                    egui::FontId::proportional(12.0),
-                    t.colors.text_secondary,
-                );
 
                 let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
                 painter.line_segment(
@@ -4353,7 +4382,7 @@ pub(crate) fn draw_piano_roll(
             mouse_wheel: true,
         })
         .show(ui, |ui| {
-            let total_size = Vec2::new(KEY_WIDTH + grid_width, total_content_height);
+            let total_size = Vec2::new(KEY_WIDTH + grid_width, RULER_HEIGHT + total_content_height);
 
             // Use allocate_rect with click_and_drag sense for mouse interaction
             let alloc_rect = Rect::from_min_size(ui.cursor().min, total_size);
@@ -4382,7 +4411,8 @@ pub(crate) fn draw_piano_roll(
 
             let origin = rect.min;
             let grid_x = origin.x + KEY_WIDTH;
-            let grid_y = origin.y;
+            // Reserve a ruler strip at the top; the grid starts below it.
+            let grid_y = origin.y + RULER_HEIGHT;
 
             // Helper: tick to x position
             let tick_to_x = |tick_val: PatternTick| -> f32 {
@@ -4423,9 +4453,38 @@ pub(crate) fn draw_piano_roll(
                 Vec2::new(grid_width, grid_height),
             );
 
+            // ── Timeline ruler (bar numbers) ──
+            // Top-left corner cell above the keyboard column.
+            painter.rect_filled(
+                Rect::from_min_size(origin, Vec2::new(KEY_WIDTH, RULER_HEIGHT)),
+                0.0,
+                t.colors.bg_dark,
+            );
+            let ruler_rect = Rect::from_min_size(
+                Pos2::new(grid_x, origin.y),
+                Vec2::new(grid_width, RULER_HEIGHT),
+            );
+            let ticks_per_bar = u64::from(data.time_sig.ticks_per_bar().max(1));
+            let total_bars = effective_ticks.div_ceil(data.time_sig.ticks_per_bar().max(1)).max(1);
+            draw_ruler_labels(&painter, &t, ruler_rect, total_bars, ticks_per_bar, |tick| {
+                if ticks_per_beat == 0 {
+                    grid_x
+                } else {
+                    grid_x + (tick as f32 / ticks_per_beat as f32) * pr_pixels_per_beat
+                }
+            });
+            // Ruler bottom border.
+            painter.line_segment(
+                [
+                    Pos2::new(grid_x, grid_y),
+                    Pos2::new(grid_x + grid_width, grid_y),
+                ],
+                Stroke::new(1.0, t.colors.border),
+            );
+
             // ── Keyboard (left column) ──
             painter.rect_filled(
-                Rect::from_min_size(origin, Vec2::new(KEY_WIDTH, grid_height)),
+                Rect::from_min_size(Pos2::new(origin.x, grid_y), Vec2::new(KEY_WIDTH, grid_height)),
                 0.0,
                 t.colors.bg_dark,
             );
@@ -4955,13 +5014,25 @@ pub(crate) fn draw_piano_roll(
                 let playhead_x = tick_to_x(pattern_tick);
 
                 if playhead_x >= grid_x && playhead_x <= grid_x + grid_width {
+                    // Line runs from the top of the ruler down through the grid.
                     painter.line_segment(
                         [
-                            Pos2::new(playhead_x, grid_y),
+                            Pos2::new(playhead_x, origin.y),
                             Pos2::new(playhead_x, grid_y + total_content_height),
                         ],
                         Stroke::new(1.5, t.colors.accent_primary),
                     );
+                    // Triangle marker in the ruler strip.
+                    let tri_size = 6.0;
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![
+                            Pos2::new(playhead_x - tri_size, origin.y),
+                            Pos2::new(playhead_x + tri_size, origin.y),
+                            Pos2::new(playhead_x, origin.y + RULER_HEIGHT * 0.6),
+                        ],
+                        t.colors.accent_primary,
+                        Stroke::NONE,
+                    ));
                 }
             }
 
