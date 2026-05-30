@@ -9,6 +9,8 @@
 //! - Brown: -6dB/octave (darker, rumble)
 //! - Blue: +3dB/octave (brighter, hissing)
 //! - Violet: +6dB/octave (very bright, sharp)
+//! - LFSR: deterministic shift-register noise with retro digital texture
+//! - Chip: SID-inspired 23-bit shift-register noise
 
 use std::collections::HashMap;
 
@@ -18,6 +20,10 @@ use synth_core::{
 };
 use synth_core::{FilterState, Gain, MidiNote, SampleRate, Velocity};
 use synth_core::{ModuleType, NoiseParam, NoiseType, Param};
+
+const LFSR_SEED: u16 = 0x7fff;
+const CHIP_LFSR_SEED: u32 = 0x7ffff8;
+const CHIP_LFSR_MASK: u32 = 0x7fffff;
 
 /// Advanced noise generator with spectral coloring.
 #[derive(Clone)]
@@ -38,6 +44,10 @@ pub struct NoiseGenerator {
     blue_prev: FilterState,
     violet_prev: [FilterState; 2],
 
+    // State for clocked digital noise.
+    lfsr_state: u16,
+    chip_lfsr_state: u32,
+
     // Sample rate
     sample_rate: SampleRate,
 
@@ -56,6 +66,8 @@ impl NoiseGenerator {
             brown_state: FilterState::ZERO,
             blue_prev: FilterState::ZERO,
             violet_prev: [FilterState::ZERO; 2],
+            lfsr_state: LFSR_SEED,
+            chip_lfsr_state: CHIP_LFSR_SEED,
             sample_rate: SampleRate::DVD_QUALITY,
             output_buffer: AudioBuffer::new(1024),
         }
@@ -138,6 +150,44 @@ impl NoiseGenerator {
         output * 0.35
     }
 
+    /// Generate deterministic 15-bit LFSR noise.
+    ///
+    /// The byte-shaped output keeps the tone gritty without collapsing to a
+    /// pure one-bit square stream.
+    #[inline]
+    fn lfsr_noise(&mut self) -> f32 {
+        let bit = ((self.lfsr_state >> 14) ^ (self.lfsr_state >> 13)) & 1;
+        self.lfsr_state = ((self.lfsr_state << 1) | bit) & 0x7fff;
+        if self.lfsr_state == 0 {
+            self.lfsr_state = LFSR_SEED;
+        }
+
+        let byte = (self.lfsr_state & 0x00ff) as f32;
+        byte / 127.5 - 1.0
+    }
+
+    /// Generate SID-inspired chip noise from a 23-bit shift register.
+    ///
+    /// This is intentionally a lightweight musical model, not exact SID
+    /// emulation. It uses the commonly referenced SID noise output taps to get
+    /// the sparse metallic character that works well for drums and FX.
+    #[inline]
+    fn chip_noise(&mut self) -> f32 {
+        let bit = ((self.chip_lfsr_state >> 22) ^ (self.chip_lfsr_state >> 17)) & 1;
+        self.chip_lfsr_state = ((self.chip_lfsr_state << 1) | bit) & CHIP_LFSR_MASK;
+        if self.chip_lfsr_state == 0 {
+            self.chip_lfsr_state = CHIP_LFSR_SEED;
+        }
+
+        let taps = [22, 20, 16, 13, 11, 7, 4, 2];
+        let mut byte = 0u8;
+        for (i, tap) in taps.iter().enumerate() {
+            byte |= (((self.chip_lfsr_state >> tap) & 1) as u8) << (7 - i);
+        }
+
+        (f32::from(byte) / 127.5 - 1.0) * 1.05
+    }
+
     /// Generate a single noise sample based on current type.
     #[inline]
     fn generate_sample(&mut self) -> f32 {
@@ -147,6 +197,8 @@ impl NoiseGenerator {
             NoiseType::Brown => self.brown_noise(),
             NoiseType::Blue => self.blue_noise(),
             NoiseType::Violet => self.violet_noise(),
+            NoiseType::Lfsr => self.lfsr_noise(),
+            NoiseType::Chip => self.chip_noise(),
         };
 
         // Soft clip to prevent extreme values
@@ -258,6 +310,8 @@ impl PolyModule for NoiseGenerator {
         self.brown_state = FilterState::ZERO;
         self.blue_prev = FilterState::ZERO;
         self.violet_prev.fill(FilterState::ZERO);
+        self.lfsr_state = LFSR_SEED;
+        self.chip_lfsr_state = CHIP_LFSR_SEED;
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {
@@ -286,7 +340,9 @@ mod tests {
 
     #[test]
     fn test_noise_types_exist() {
-        assert_eq!(NoiseType::ALL.len(), 5);
+        assert_eq!(NoiseType::ALL.len(), 7);
+        assert_eq!(NoiseType::Lfsr.id(), "lfsr");
+        assert_eq!(NoiseType::Chip.id(), "chip");
     }
 
     #[test]
@@ -308,5 +364,31 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_lfsr_noise_resets_deterministically() {
+        let mut noise = NoiseGenerator::new();
+        noise.noise_type = NoiseType::Lfsr;
+        noise.level = Gain::new(1.0);
+
+        let first: Vec<f32> = (0..32).map(|_| noise.generate_sample()).collect();
+        noise.reset();
+        let second: Vec<f32> = (0..32).map(|_| noise.generate_sample()).collect();
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_chip_noise_resets_deterministically() {
+        let mut noise = NoiseGenerator::new();
+        noise.noise_type = NoiseType::Chip;
+        noise.level = Gain::new(1.0);
+
+        let first: Vec<f32> = (0..32).map(|_| noise.generate_sample()).collect();
+        noise.reset();
+        let second: Vec<f32> = (0..32).map(|_| noise.generate_sample()).collect();
+
+        assert_eq!(first, second);
     }
 }

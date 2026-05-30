@@ -22,15 +22,21 @@ pub enum NoiseType {
     Blue,
     /// Violet noise - +6dB/octave
     Violet,
+    /// Clocked linear-feedback shift register noise - retro digital texture
+    Lfsr,
+    /// SID-inspired chip noise from a 23-bit shift register
+    Chip,
 }
 
 impl NoiseType {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::White,
         Self::Pink,
         Self::Brown,
         Self::Blue,
         Self::Violet,
+        Self::Lfsr,
+        Self::Chip,
     ];
 
     pub fn name(&self) -> &'static str {
@@ -40,6 +46,8 @@ impl NoiseType {
             Self::Brown => "Brown",
             Self::Blue => "Blue",
             Self::Violet => "Violet",
+            Self::Lfsr => "LFSR",
+            Self::Chip => "Chip",
         }
     }
 
@@ -50,6 +58,8 @@ impl NoiseType {
             Self::Brown => "brown",
             Self::Blue => "blue",
             Self::Violet => "violet",
+            Self::Lfsr => "lfsr",
+            Self::Chip => "chip",
         }
     }
 

@@ -5557,6 +5557,14 @@
             {
               "id": "violet",
               "name": "Violet"
+            },
+            {
+              "id": "lfsr",
+              "name": "LFSR"
+            },
+            {
+              "id": "chip",
+              "name": "Chip"
             }
           ],
           "default": "white",

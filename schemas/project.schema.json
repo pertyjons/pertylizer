@@ -1549,7 +1549,9 @@
                     "pink",
                     "brown",
                     "blue",
-                    "violet"
+                    "violet",
+                    "lfsr",
+                    "chip"
                   ],
                   "title": "Type",
                   "type": "string"
