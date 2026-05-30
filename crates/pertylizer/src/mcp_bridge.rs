@@ -2523,7 +2523,7 @@ impl SynthBridge for AppSynthBridge {
         let track = song
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
-        track.mute = muted;
+        track.set_mute(muted);
         Ok(())
     }
 
@@ -2533,7 +2533,7 @@ impl SynthBridge for AppSynthBridge {
         let track = song
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
-        track.solo = solo;
+        track.set_solo(solo);
         Ok(())
     }
 

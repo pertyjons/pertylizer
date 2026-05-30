@@ -319,14 +319,58 @@ fn vertical_fader(ui: &mut egui::Ui, value: &mut f32) -> egui::Response {
     resp
 }
 
-/// A small mute/solo toggle button. Returns true if clicked.
-fn toggle_chip(ui: &mut egui::Ui, label: &str, active: bool, on_color: Color32) -> bool {
+/// Mute toggle for a strip header — frameless icon button styled like the
+/// patch module's "Active" toggle, but with a red cue when muted. Returns true
+/// if clicked.
+fn header_mute_button(ui: &mut egui::Ui, muted: bool) -> bool {
+    use egui_remixicon::icons as ri;
     let t = theme();
-    let color = if active { on_color } else { t.colors.text_dim };
+    let (icon, color, tip) = if muted {
+        (
+            ri::VOLUME_MUTE_FILL,
+            t.colors.accent_red,
+            "Muted\nChannel output is silenced.\nClick to unmute.",
+        )
+    } else {
+        (
+            ri::VOLUME_UP_FILL,
+            t.colors.text_secondary,
+            "Audible\nChannel is playing.\nClick to mute.",
+        )
+    };
     ui.add(
-        egui::Button::new(RichText::new(label).size(t.fonts.size_small).color(color))
-            .min_size(egui::vec2(20.0, 18.0)),
+        egui::Button::new(RichText::new(icon).color(color).size(14.0))
+            .frame(false)
+            .min_size(egui::vec2(20.0, 20.0)),
     )
+    .on_hover_text(tip)
+    .clicked()
+}
+
+/// Solo toggle for a strip header — frameless headphone icon, the DAW
+/// convention for solo. Returns true if clicked.
+fn header_solo_button(ui: &mut egui::Ui, soloed: bool) -> bool {
+    use egui_remixicon::icons as ri;
+    let t = theme();
+    let (icon, color, tip) = if soloed {
+        (
+            ri::HEADPHONE_FILL,
+            t.colors.accent_yellow,
+            "Soloed\nOnly soloed channels are heard.\nClick to unsolo.",
+        )
+    } else {
+        (
+            ri::HEADPHONE_LINE,
+            t.colors.text_secondary,
+            "Solo\nIsolate this channel.\nClick to solo.",
+        )
+    };
+    ui.add(
+        egui::Button::new(RichText::new(icon).color(color).size(14.0))
+            .frame(false)
+            .min_size(egui::vec2(20.0, 20.0)),
+    )
+    .on_hover_text(tip)
     .clicked()
 }
 
@@ -390,24 +434,40 @@ fn draw_channel_strip(
             // wrap everything in a vertical layout to stack the header above the
             // controls (and give the column the full strip width).
             ui.vertical(|ui| {
-                // Channel name in the accent-tinted module header.
-                draw_module_header(ui, ch.color, &ch.name, None, |_| {});
-                // Inserts: edited in the Rack (they live on the instrument). The
-                // icon signals the button jumps to another view rather than
-                // opening an inline editor like the return-bus strips do.
-                if ui
-                    .add(egui::Button::new(
-                        RichText::new(format!("Inserts {}", ri::EXTERNAL_LINK_LINE))
-                            .size(t.fonts.size_small)
-                            .color(t.colors.text_secondary),
-                    ))
-                    .on_hover_text("Edit this channel's insert effects in the Rack")
-                    .clicked()
-                {
-                    edit_fx = true;
-                }
-
-                ui.add_space(4.0);
+                // Channel name in the accent-tinted module header, with the
+                // mute/solo toggles living in the header bar the same way the
+                // patch-module "Active" toggle does.
+                draw_module_header(ui, ch.color, &ch.name, None, |ui| {
+                    if header_mute_button(ui, ch.mute)
+                        && let Some(tr) = song.write().track_mut(ch.id)
+                    {
+                        tr.toggle_mute();
+                    }
+                    if header_solo_button(ui, ch.solo)
+                        && let Some(tr) = song.write().track_mut(ch.id)
+                    {
+                        tr.toggle_solo();
+                    }
+                    // Inserts live on the instrument and are edited in the Rack.
+                    // The external-link icon signals the button jumps to another
+                    // view rather than opening an inline editor.
+                    ui.separator();
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(ri::EXTERNAL_LINK_LINE)
+                                    .color(t.colors.text_secondary)
+                                    .size(14.0),
+                            )
+                            .frame(false)
+                            .min_size(egui::vec2(20.0, 20.0)),
+                        )
+                        .on_hover_text("Edit this channel's insert effects in the Rack")
+                        .clicked()
+                    {
+                        edit_fx = true;
+                    }
+                });
 
                 // Sends to each return bus.
                 if !return_ids.is_empty() {
@@ -442,23 +502,6 @@ fn draw_channel_strip(
                 {
                     tr.pan = BipolarValue::new(pan);
                 }
-
-                // Mute / Solo.
-                ui.horizontal(|ui| {
-                    ui.add_space(center_pad(2.0 * 20.0));
-                    if toggle_chip(ui, "M", ch.mute, t.colors.accent_red)
-                        && let Some(tr) = song.write().track_mut(ch.id)
-                    {
-                        tr.toggle_mute();
-                    }
-                    if toggle_chip(ui, "S", ch.solo, t.colors.accent_yellow)
-                        && let Some(tr) = song.write().track_mut(ch.id)
-                    {
-                        tr.toggle_solo();
-                    }
-                });
-
-                ui.add_space(4.0);
 
                 // Level meter + volume fader, side by side.
                 let peak = eng_id.map_or(0.0, |id| handle.channel_peak(id));
@@ -572,6 +615,8 @@ fn draw_return_strip(
     effects: &[EffectInfo],
     state: &mut MixerViewState,
 ) -> bool {
+    use egui_remixicon::icons as ri;
+
     let t = theme();
     let mut delete = false;
     ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
@@ -609,7 +654,30 @@ fn draw_return_strip(
                         t.colors.accent_green,
                         &format!("⮌ {}", rb.name),
                         Some("Click to rename".to_owned()),
-                        |_| {},
+                        |ui| {
+                            if header_mute_button(ui, rb.mute)
+                                && let Some(bus) = song.write().return_bus_mut(rb.id)
+                            {
+                                bus.mute = !bus.mute;
+                            }
+                            // Close button, mirroring the patch module's header.
+                            ui.separator();
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(ri::CLOSE_LINE)
+                                            .color(t.colors.text_dim)
+                                            .size(12.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(egui::vec2(20.0, 20.0)),
+                                )
+                                .on_hover_text("Delete return bus")
+                                .clicked()
+                            {
+                                delete = true;
+                            }
+                        },
                     );
                     if resp.clicked() {
                         state.editing_return_name = Some((rb.id, rb.name.clone()));
@@ -645,29 +713,6 @@ fn draw_return_strip(
                 {
                     bus.pan = BipolarValue::new(pan);
                 }
-
-                // Mute + delete.
-                ui.horizontal(|ui| {
-                    ui.add_space(center_pad(20.0 + 22.0));
-                    if toggle_chip(ui, "M", rb.mute, t.colors.accent_red)
-                        && let Some(bus) = song.write().return_bus_mut(rb.id)
-                    {
-                        bus.mute = !bus.mute;
-                    }
-                    if ui
-                        .add(egui::Button::new(
-                            RichText::new("✖")
-                                .size(t.fonts.size_small)
-                                .color(t.colors.text_dim),
-                        ))
-                        .on_hover_text("Delete return bus")
-                        .clicked()
-                    {
-                        delete = true;
-                    }
-                });
-
-                ui.add_space(4.0);
 
                 // Level meter + volume fader.
                 let level = smoothed(

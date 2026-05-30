@@ -164,14 +164,31 @@ impl SequencerTrack {
         self
     }
 
-    /// Toggle mute state.
-    pub fn toggle_mute(&mut self) {
-        self.mute = !self.mute;
+    /// Set mute state. Muting clears solo: a single channel can't be both
+    /// muted and soloed at once (several channels may still be soloed together).
+    pub fn set_mute(&mut self, mute: bool) {
+        self.mute = mute;
+        if mute {
+            self.solo = false;
+        }
     }
 
-    /// Toggle solo state.
+    /// Set solo state. Soloing clears mute (see [`Self::set_mute`]).
+    pub fn set_solo(&mut self, solo: bool) {
+        self.solo = solo;
+        if solo {
+            self.mute = false;
+        }
+    }
+
+    /// Toggle mute state. Enabling mute clears solo (see [`Self::set_mute`]).
+    pub fn toggle_mute(&mut self) {
+        self.set_mute(!self.mute);
+    }
+
+    /// Toggle solo state. Enabling solo clears mute (see [`Self::set_solo`]).
     pub fn toggle_solo(&mut self) {
-        self.solo = !self.solo;
+        self.set_solo(!self.solo);
     }
 
     /// Check if this track should be audible given solo states.
@@ -376,6 +393,28 @@ mod tests {
         // This track is soloed
         track.solo = true;
         assert!(track.is_audible(true));
+    }
+
+    #[test]
+    fn test_mute_solo_mutually_exclusive() {
+        let mut track = SequencerTrack::new(TrackId(0), "Test");
+
+        // Soloing a muted track clears the mute.
+        track.set_mute(true);
+        track.toggle_solo();
+        assert!(track.solo);
+        assert!(!track.mute);
+
+        // Muting a soloed track clears the solo.
+        track.toggle_mute();
+        assert!(track.mute);
+        assert!(!track.solo);
+
+        // Turning a flag off never touches the other.
+        track.set_solo(true);
+        track.set_solo(false);
+        assert!(!track.solo);
+        assert!(!track.mute);
     }
 
     #[test]
