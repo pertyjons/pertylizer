@@ -578,6 +578,8 @@ pub struct SendInfo {
     pub level: f32,
     /// `true` = pre-fader tap, `false` = post-fader.
     pub pre_fader: bool,
+    /// `true` = active, `false` = bypassed (kept but contributes nothing).
+    pub enabled: bool,
 }
 
 /// Information about a return bus (effect-send destination).
@@ -593,6 +595,58 @@ pub struct ReturnBusInfo {
     pub pan: f32,
     /// Whether the bus is muted.
     pub mute: bool,
+    /// Whether the bus is soloed.
+    pub solo: bool,
+    /// Display color as "#RRGGBB".
+    pub color: String,
+    /// Free-text description / intent — `""` when not set.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Insert effects in processing order (the bus's effect chain). Edited via
+    /// `add_return_effect` / `remove_return_effect` / `set_return_effect_parameter`
+    /// / `set_return_effect_enabled` / `reorder_return_effect`.
+    pub effects: Vec<ReturnEffectInfo>,
+    /// Bus-to-bus send taps from this return into other return busses. Edited via
+    /// `set_return_send` / `remove_return_send`.
+    pub sends: Vec<ReturnSendInfo>,
+}
+
+/// A bus-to-bus send tap (one return feeding another).
+#[derive(Debug, Clone, Serialize)]
+pub struct ReturnSendInfo {
+    /// Destination return-bus ID.
+    pub target: u16,
+    /// Send level (0.0 = none, 1.0 = unity).
+    pub level: f32,
+    /// `true` = active, `false` = bypassed.
+    pub enabled: bool,
+}
+
+/// One insert effect on a return bus's effect chain.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReturnEffectInfo {
+    /// Module-id string (e.g. "rev-1"), unique within the bus's chain. Pass this
+    /// to the per-effect tools (`remove_return_effect`, `set_return_effect_parameter`).
+    pub module_id: String,
+    /// Effect type key (e.g. "rev", "dly") — accepted by `add_return_effect`.
+    pub effect_type: String,
+    /// Whether the effect is currently bypassed.
+    pub bypassed: bool,
+    /// Current parameter values, in descriptor order.
+    pub parameters: Vec<ReturnEffectParamInfo>,
+}
+
+/// One parameter on a return-bus insert effect.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReturnEffectParamInfo {
+    /// Display name (e.g. "Mix").
+    pub name: String,
+    /// Stable type id — pass this as `param_name` to `set_return_effect_parameter`.
+    pub type_id: String,
+    /// Current value in the parameter's native units.
+    pub value: f32,
+    /// Formatted value with unit (e.g. "0.35", "250 ms").
+    pub display: String,
 }
 
 /// Information about a pattern placement in the arrangement.

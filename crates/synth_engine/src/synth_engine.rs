@@ -424,6 +424,22 @@ pub struct SynthEngine {
     /// `track_controls`. Pre-allocated with `MAX_CHANNEL_SENDS` capacity per
     /// instrument so the audio thread never grows a vec. Keyed by engine id.
     channel_sends: std::collections::HashMap<InstrumentId, Vec<ChannelSend>>,
+    /// Resolved bus-to-bus send taps, one inner vec per return-bus index
+    /// (parallel to `return_busses`). Refreshed each block in
+    /// `update_track_controls`; inner vecs are cleared and refilled (no realloc
+    /// in steady state). `target_index` is already resolved into `return_busses`.
+    return_sends: Vec<Vec<ResolvedReturnSend>>,
+    /// Return-bus processing order (indices into `return_busses`) such that every
+    /// source is processed before its bus-to-bus targets. Recomputed each block
+    /// by a Kahn topological sort; falls back to index order for any nodes left
+    /// in a cycle (defensive — cycles are rejected when sends are created).
+    return_order: Vec<usize>,
+    /// Scratch indegree counts for the `return_order` topological sort, kept as a
+    /// field so the sort reuses its allocation each block.
+    return_indegree: Vec<u32>,
+    /// Scratch buffer holding one return's post-fader output while it is summed
+    /// into the master mix and tapped into bus-to-bus targets.
+    return_scratch: AudioBuffer,
 
     // === Metering ===
     metering: MeteringSystem,
@@ -511,6 +527,10 @@ impl SynthEngine {
             track_controls: std::collections::HashMap::new(),
             return_busses: Vec::new(),
             return_index: std::collections::HashMap::new(),
+            return_sends: Vec::new(),
+            return_order: Vec::new(),
+            return_indegree: Vec::new(),
+            return_scratch: AudioBuffer::new(512),
             channel_sends: std::collections::HashMap::new(),
             metering: MeteringSystem::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
@@ -801,6 +821,10 @@ impl SynthEngine {
                 self.return_index.clear();
                 self.update_shared_return_effects();
             }
+            EngineCommand::ClearMasterEffects => {
+                self.master_effects.clear();
+                self.update_shared_master_effects();
+            }
             EngineCommand::AddReturnEffect {
                 return_id,
                 id,
@@ -836,6 +860,23 @@ impl SynthEngine {
                     && let Some(slot) = bus.effect_chain_mut().find_effect_by_id(module_id)
                 {
                     slot.state = crate::effect_chain::EnabledState::from(enabled);
+                }
+                self.update_shared_return_effects();
+            }
+            EngineCommand::ReorderReturnEffect {
+                return_id,
+                module_id,
+                direction,
+            } => {
+                if let Some(bus) = self.return_busses.iter_mut().find(|b| b.id() == return_id) {
+                    match direction {
+                        crate::commands::ReorderDirection::Up => {
+                            bus.effect_chain_mut().move_slot_up(module_id);
+                        }
+                        crate::commands::ReorderDirection::Down => {
+                            bus.effect_chain_mut().move_slot_down(module_id);
+                        }
+                    }
                 }
                 self.update_shared_return_effects();
             }
@@ -1509,6 +1550,28 @@ impl SynthEngine {
         *self.state.return_bus_effects.write() = snapshots;
     }
 
+    /// Publish the master-bus effect chain to shared state (mirrors
+    /// [`Self::update_shared_return_effects`] for the single master chain) so the
+    /// GUI mixer, MCP, and the save path can read it off the audio thread.
+    fn update_shared_master_effects(&self) {
+        use crate::effect_chain::ChainSlot;
+        let effects: Vec<ReturnEffectSnapshot> = self
+            .master_effects
+            .slots()
+            .iter()
+            .filter_map(|slot| match slot {
+                ChainSlot::Effect(es) => Some(ReturnEffectSnapshot {
+                    module_id: es.module_id,
+                    module_type: es.module_type,
+                    parameters: es.effect.get_params(),
+                    bypassed: es.state.is_bypassed(),
+                }),
+                ChainSlot::Visualizer(_) => None,
+            })
+            .collect();
+        *self.state.master_effects.write() = effects;
+    }
+
     fn handle_set_instrument_param(
         &mut self,
         instrument_id: InstrumentId,
@@ -1956,6 +2019,7 @@ impl SynthEngine {
             instrument.rebuild_voices();
         }
         self.master_effects.clear();
+        self.update_shared_master_effects();
         self.module_graph.clear();
         self.use_modular_routing = false;
     }
@@ -2026,6 +2090,9 @@ impl SynthEngine {
         // Mirror the change into shared_graph so offline tooling
         // (e.g. analyze_note) sees the new parameter and bypass state.
         self.update_shared_graph(instrument_id);
+        if instrument_id.is_none() {
+            self.update_shared_master_effects();
+        }
     }
 
     fn handle_set_effect_enabled(
@@ -2050,6 +2117,9 @@ impl SynthEngine {
         // Mirror the change into shared_graph so offline tooling
         // (e.g. analyze_note) sees the new bypass state.
         self.update_shared_graph(instrument_id);
+        if instrument_id.is_none() {
+            self.update_shared_master_effects();
+        }
     }
 
     fn handle_add_visualizer(
@@ -2122,6 +2192,9 @@ impl SynthEngine {
         // Mirror the new effect slot into shared_graph so offline tooling
         // sees the latest chain composition and per-effect parameters.
         self.update_shared_graph(instrument_id);
+        if instrument_id.is_none() {
+            self.update_shared_master_effects();
+        }
     }
 
     fn handle_remove_effect(&mut self, instrument_id: Option<InstrumentId>, id: ModuleId) {
@@ -2141,6 +2214,9 @@ impl SynthEngine {
         // Drop the removed effect slot from shared_graph so offline tooling
         // does not keep rendering with a stale snapshot.
         self.update_shared_graph(instrument_id);
+        if instrument_id.is_none() {
+            self.update_shared_master_effects();
+        }
     }
 
     fn effect_chain_for_mut(
@@ -2176,6 +2252,9 @@ impl SynthEngine {
         }
         self.update_shared_instruments();
         self.update_shared_graph(instrument_id);
+        if instrument_id.is_none() {
+            self.update_shared_master_effects();
+        }
     }
 
     fn handle_set_effect_chain_order(
@@ -2189,6 +2268,9 @@ impl SynthEngine {
         chain.set_slot_order(order);
         self.update_shared_instruments();
         self.update_shared_graph(instrument_id);
+        if instrument_id.is_none() {
+            self.update_shared_master_effects();
+        }
     }
 
     // ========================================================================
@@ -2504,6 +2586,12 @@ impl SynthEngine {
                     if list.len() >= MAX_CHANNEL_SENDS {
                         break;
                     }
+                    // A disabled send is a non-destructive bypass: skip resolving
+                    // it so it contributes nothing this block, while the song keeps
+                    // its level/tap point for when it is re-enabled.
+                    if !send.enabled {
+                        continue;
+                    }
                     let Some(&return_index) = self.return_index.get(&send.target) else {
                         continue;
                     };
@@ -2521,7 +2609,104 @@ impl SynthEngine {
         // keeps its previous fader and simply isn't driven.
         for def in song.return_busses() {
             if let Some(&idx) = self.return_index.get(&def.id) {
-                self.return_busses[idx].set_fader(def.volume, def.pan, def.mute);
+                self.return_busses[idx].set_fader(def.volume, def.pan, def.mute, def.solo);
+            }
+        }
+    }
+
+    /// Resolve each return's bus-to-bus `sends` into index-based taps and compute
+    /// a topological processing order so every source is processed before its
+    /// targets. Allocation-free in steady state: the per-return vecs and the sort
+    /// scratch are cleared and refilled, growing only when return busses are added.
+    ///
+    /// Both the source return and each send target are resolved to a
+    /// `return_busses` index via `return_index`, so this never assumes the song's
+    /// return order matches the engine's. Re-reads the song itself (rather than
+    /// borrowing one from the caller) so it can take `&mut self`; called from
+    /// `process` right after `update_track_controls`.
+    fn resolve_return_routing(&mut self) {
+        let n = self.return_busses.len();
+        // Size the scratch vecs to the return count (grows only when buses added).
+        if self.return_sends.len() < n {
+            self.return_sends.resize_with(n, Vec::new);
+        }
+        if self.return_indegree.len() < n {
+            self.return_indegree.resize(n, 0);
+        }
+        for list in self.return_sends.iter_mut().take(n) {
+            list.clear();
+        }
+        for d in self.return_indegree.iter_mut().take(n) {
+            *d = 0;
+        }
+        // Default to plain index order; the topological sort below replaces it
+        // when the song is readable.
+        self.return_order.clear();
+        for idx in 0..n {
+            self.return_order.push(idx);
+        }
+
+        let Some(song) = self.sequencer.song().try_read() else {
+            // Audio thread couldn't read the song this block: keep the plain
+            // in-order pass (no bus-to-bus routing) rather than skipping returns.
+            return;
+        };
+
+        // Resolve send targets and accumulate indegrees for the topological sort.
+        for def in song.return_busses() {
+            let Some(&src_idx) = self.return_index.get(&def.id) else {
+                continue;
+            };
+            if src_idx >= n {
+                continue;
+            }
+            for send in &def.sends {
+                if !send.enabled {
+                    continue;
+                }
+                let Some(&target_index) = self.return_index.get(&send.target) else {
+                    continue;
+                };
+                if target_index >= n || target_index == src_idx {
+                    continue;
+                }
+                self.return_sends[src_idx].push(ResolvedReturnSend {
+                    target_index,
+                    level: send.level.as_f32(),
+                });
+                self.return_indegree[target_index] += 1;
+            }
+        }
+
+        // Kahn's algorithm: `return_order` doubles as the output list and the
+        // work queue (head pointer `read`). Seed it with every indegree-0 node in
+        // index order (stable), then relax outgoing edges.
+        self.return_order.clear();
+        for (idx, &deg) in self.return_indegree.iter().take(n).enumerate() {
+            if deg == 0 {
+                self.return_order.push(idx);
+            }
+        }
+        let mut read = 0;
+        while read < self.return_order.len() {
+            let node = self.return_order[read];
+            read += 1;
+            for k in 0..self.return_sends[node].len() {
+                let target = self.return_sends[node][k].target_index;
+                self.return_indegree[target] -= 1;
+                if self.return_indegree[target] == 0 {
+                    self.return_order.push(target);
+                }
+            }
+        }
+        // Any nodes left out are in a cycle (should not happen — cycles are
+        // rejected at creation). Append them in index order so they still render;
+        // their back-edge taps into already-processed targets are simply dropped.
+        if self.return_order.len() < n {
+            for idx in 0..n {
+                if !self.return_order.contains(&idx) {
+                    self.return_order.push(idx);
+                }
             }
         }
     }
@@ -2636,14 +2821,48 @@ impl SynthEngine {
             &self.state.channel_meters,
         );
 
-        // Process each return bus's effect chain and sum the wet result back
-        // into the master mix (after the dry channels), publishing each
-        // return's post-fader peak for metering.
-        for (i, bus) in self.return_busses.iter_mut().enumerate() {
-            let peak = bus.mix_into(context, &mut self.mix_buffer);
+        // Return-bus stage with bus-to-bus routing. Process each return in the
+        // dependency order computed by `resolve_return_routing` (every source
+        // before its targets): run its effect chain, render its post-fader output
+        // into `return_scratch`, tap that into any target return busses (which
+        // come later in the order, so their input buffers are still open), then
+        // sum it into the master mix. With no bus-to-bus sends this reduces to the
+        // previous in-order pass.
+        self.return_scratch.resize(buffer_size);
+        // Return solo: when any return is soloed, only soloed returns reach the
+        // master mix. Bus-to-bus taps still flow (routing is solo-independent), so
+        // a soloed return that is fed by other returns still hears them.
+        let any_return_solo = self.return_busses.iter().any(ReturnBusChannel::is_soloed);
+        for oi in 0..self.return_order.len() {
+            let idx = self.return_order[oi];
+            self.return_busses[idx].process_chain(context);
+            let peak = {
+                let scratch = &mut self.return_scratch.as_mut_slice()[..buffer_size];
+                self.return_busses[idx].render_output(scratch)
+            };
+            // Bus-to-bus taps into the (not-yet-processed) target returns.
+            for si in 0..self.return_sends[idx].len() {
+                let send = self.return_sends[idx][si];
+                let scratch = &self.return_scratch.as_slice()[..buffer_size];
+                let dst = self.return_busses[send.target_index].input_mut();
+                let m = dst.len().min(buffer_size);
+                for j in 0..m {
+                    dst[j] += scratch[j] * send.level;
+                }
+            }
+            // Sum into the master mix (scratch is already silent when muted),
+            // unless solo gates this return out of the final mix.
+            if !any_return_solo || self.return_busses[idx].is_soloed() {
+                let scratch = &self.return_scratch.as_slice()[..buffer_size];
+                let dst = self.mix_buffer.as_mut_slice();
+                let m = dst.len().min(buffer_size);
+                for j in 0..m {
+                    dst[j] += scratch[j];
+                }
+            }
             self.state
                 .return_meters
-                .publish(i, u64::from(bus.id().0), peak);
+                .publish(idx, u64::from(self.return_busses[idx].id().0), peak);
         }
         self.state.return_meters.set_count(self.return_busses.len());
 
@@ -2747,6 +2966,16 @@ struct ChannelSend {
     return_index: usize,
     level: f32,
     pre_fader: bool,
+}
+
+/// A resolved bus-to-bus send: the target return-bus *index* (resolved from
+/// `ReturnBusId`) and the send level. Bus-to-bus sends are post-fader (they tap
+/// the source return's post-fader output). Built each block by
+/// `update_track_controls` from each return's `sends`.
+#[derive(Clone, Copy)]
+struct ResolvedReturnSend {
+    target_index: usize,
+    level: f32,
 }
 
 /// Channel-bus stage: mix every instrument's channel into the master buffer.
@@ -3232,6 +3461,9 @@ impl AudioProcessor for SynthEngine {
         // channel-bus stage (inside process_voices) reads them. Track-fader
         // automation is folded in here via SequencerEngine::track_auto.
         self.update_track_controls();
+        // Resolve bus-to-bus send routing + processing order before the return
+        // stage (inside process_voices) consumes it.
+        self.resolve_return_routing();
 
         self.process_voices(&process_context);
 
@@ -3970,6 +4202,70 @@ mod tests {
     }
 
     #[test]
+    fn bus_to_bus_send_resolves_and_orders_source_before_target() {
+        let (mut engine, mut handle) = SynthEngine::new();
+        handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(0) });
+        handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(1) });
+        engine.process_commands();
+
+        // Song: return 0 ("Delay") feeds return 1 ("Reverb").
+        let mut song = Song::default();
+        let a = song.create_return_bus("Delay"); // → ReturnBusId(0)
+        let b = song.create_return_bus("Reverb"); // → ReturnBusId(1)
+        // Before the edge exists, b -> a is not yet a cycle.
+        assert!(!song.return_send_would_cycle(b, a));
+        song.return_bus_mut(a)
+            .unwrap()
+            .sends
+            .push(synth_sequencer::ReturnSend::new(
+                b,
+                NormalizedValue::new(0.5),
+            ));
+        // Now b -> a would close a loop.
+        assert!(song.return_send_would_cycle(b, a));
+        handle.send(EngineCommand::SetSong {
+            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+        });
+        engine.process_commands();
+        engine.update_track_controls();
+        engine.resolve_return_routing();
+
+        let ia = engine.return_index[&a];
+        let ib = engine.return_index[&b];
+        assert_eq!(engine.return_sends[ia].len(), 1, "source has one send");
+        assert_eq!(engine.return_sends[ia][0].target_index, ib);
+        assert!(engine.return_sends[ib].is_empty(), "target has no send");
+        let pos = |idx: usize| engine.return_order.iter().position(|&x| x == idx).unwrap();
+        assert!(
+            pos(ia) < pos(ib),
+            "the source return must be processed before its target"
+        );
+
+        // Disabling the send drops it from the resolved routing.
+        let mut song = Song::default();
+        let _ = song.create_return_bus("Delay");
+        let _ = song.create_return_bus("Reverb");
+        song.return_bus_mut(a)
+            .unwrap()
+            .sends
+            .push(synth_sequencer::ReturnSend {
+                target: b,
+                level: NormalizedValue::new(0.5),
+                enabled: false,
+            });
+        handle.send(EngineCommand::SetSong {
+            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+        });
+        engine.process_commands();
+        engine.update_track_controls();
+        engine.resolve_return_routing();
+        assert!(
+            engine.return_sends[ia].is_empty(),
+            "a disabled bus-to-bus send must not resolve"
+        );
+    }
+
+    #[test]
     fn update_track_controls_resolves_sends_and_drops_missing() {
         let (mut engine, mut handle) = SynthEngine::new();
         add_default_instrument(&mut engine, &mut handle); // FIRST ↔ SeqInstrumentId(0)
@@ -3983,12 +4279,14 @@ mod tests {
             target: ReturnBusId(9),
             level: NormalizedValue::new(0.5),
             pre_fader: true,
+            enabled: true,
         });
         // A send to a non-existent return bus must be dropped, not panic.
         track.sends.push(TrackSend {
             target: ReturnBusId(99),
             level: NormalizedValue::MAX,
             pre_fader: false,
+            enabled: true,
         });
         handle.send(EngineCommand::SetSong {
             song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
@@ -4047,6 +4345,7 @@ mod tests {
                 target: ReturnBusId(0),
                 level: NormalizedValue::MAX,
                 pre_fader: false,
+                enabled: true,
             });
             handle.send(EngineCommand::SetSong {
                 song: std::sync::Arc::new(parking_lot::RwLock::new(song)),

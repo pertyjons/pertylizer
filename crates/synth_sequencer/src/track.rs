@@ -21,16 +21,58 @@ pub struct TrackSend {
     /// Tap point: `true` = pre-fader, `false` = post-fader.
     #[serde(default)]
     pub pre_fader: bool,
+    /// Whether the send is active. A disabled send is kept (with its level and
+    /// tap point) but contributes nothing to the return bus — a non-destructive
+    /// bypass, unlike removing the send. Defaults to `true` so older projects and
+    /// freshly-created sends are enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// Serde default for [`TrackSend::enabled`] — a send with no stored flag (older
+/// project) is treated as enabled.
+fn default_true() -> bool {
+    true
 }
 
 impl TrackSend {
-    /// Create a post-fader send at the given level.
+    /// Create an enabled post-fader send at the given level.
     #[must_use]
     pub fn new(target: ReturnBusId, level: NormalizedValue) -> Self {
         Self {
             target,
             level,
             pre_fader: false,
+            enabled: true,
+        }
+    }
+}
+
+/// A send tap from one return bus into another (bus-to-bus aux routing).
+///
+/// The source return's post-fader output is summed into the `target` return,
+/// scaled by `level`. Used for serial/parallel return chains (e.g. a delay
+/// return feeding a reverb return). The routing must stay acyclic — see
+/// [`super::Song::return_send_would_cycle`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReturnSend {
+    /// Destination return bus.
+    pub target: ReturnBusId,
+    /// Send level (0.0 = no send, 1.0 = unity).
+    pub level: NormalizedValue,
+    /// Whether the send is active (non-destructive bypass when `false`).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl ReturnSend {
+    /// Create an enabled bus-to-bus send at the given level.
+    #[must_use]
+    pub fn new(target: ReturnBusId, level: NormalizedValue) -> Self {
+        Self {
+            target,
+            level,
+            enabled: true,
         }
     }
 }
@@ -56,6 +98,21 @@ pub struct ReturnBus {
     /// Mute (excluded from the master mix).
     #[serde(default)]
     pub mute: bool,
+    /// Solo: when any return is soloed, only soloed returns reach the master mix
+    /// (bus-to-bus routing still flows). Independent of track solo.
+    #[serde(default)]
+    pub solo: bool,
+    /// Display color for the mixer strip.
+    #[serde(default)]
+    pub color: TrackColor,
+    /// Free-text description / intent (e.g. "shared plate reverb"). Empty by
+    /// default; readable/writable via MCP and GUI. Never affects audio.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Bus-to-bus send taps from this return into other return busses. Empty by
+    /// default; must stay acyclic (see [`super::Song::return_send_would_cycle`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sends: Vec<ReturnSend>,
 }
 
 impl ReturnBus {
@@ -68,6 +125,27 @@ impl ReturnBus {
             volume: NormalizedValue::MAX,
             pan: BipolarValue::CENTER,
             mute: false,
+            solo: false,
+            color: TrackColor::default(),
+            description: String::new(),
+            sends: Vec::new(),
+        }
+    }
+
+    /// Set mute state. Muting clears solo (a channel can't be both at once),
+    /// mirroring [`SequencerTrack::set_mute`].
+    pub fn set_mute(&mut self, mute: bool) {
+        self.mute = mute;
+        if mute {
+            self.solo = false;
+        }
+    }
+
+    /// Set solo state. Soloing clears mute (see [`Self::set_mute`]).
+    pub fn set_solo(&mut self, solo: bool) {
+        self.solo = solo;
+        if solo {
+            self.mute = false;
         }
     }
 }

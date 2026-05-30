@@ -22,8 +22,8 @@ use crate::types::{
     ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo, InputStateInfo, InstrumentInfo,
     InstrumentProfileResult, MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo,
     OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry,
-    ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo, SampleInfo, SamplerStateInfo,
-    SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo,
+    SamplerStateInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -163,6 +163,15 @@ pub enum BridgeParamValue {
     Choice(String),
     /// Boolean value.
     Bool(bool),
+}
+
+/// Direction to move an effect within a return-bus effect chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReturnEffectMove {
+    /// Move the effect one slot earlier in the processing order.
+    Up,
+    /// Move the effect one slot later in the processing order.
+    Down,
 }
 
 /// Connection definition using array indices into the modules array.
@@ -707,20 +716,129 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Mute or unmute a return bus.
     fn set_return_bus_mute(&self, return_id: u16, muted: bool) -> Result<(), McpBridgeError>;
 
+    /// Solo or unsolo a return bus. When any return is soloed, only soloed
+    /// returns reach the master mix.
+    fn set_return_bus_solo(&self, return_id: u16, solo: bool) -> Result<(), McpBridgeError>;
+
+    /// Set a return bus's display color from a `"#RRGGBB"` / `"#RRGGBBAA"` hex string.
+    fn set_return_bus_color(&self, return_id: u16, color: &str) -> Result<(), McpBridgeError>;
+
+    /// Set a return bus's free-text description / intent (`""` clears it).
+    fn set_return_bus_description(
+        &self,
+        return_id: u16,
+        description: &str,
+    ) -> Result<(), McpBridgeError>;
+
     /// Rename a return bus.
     fn rename_return_bus(&self, return_id: u16, name: &str) -> Result<(), McpBridgeError>;
 
+    /// Add an insert effect to a return bus's effect chain. `effect_type` is a
+    /// module-type token (e.g. "rev", "delay", "chorus"). Returns the created
+    /// effect's module-id string (e.g. "rev-2"), which is unique within the bus.
+    fn add_return_effect(
+        &self,
+        return_id: u16,
+        effect_type: &str,
+    ) -> Result<String, McpBridgeError>;
+
+    /// Remove an insert effect from a return bus's effect chain by module id.
+    fn remove_return_effect(&self, return_id: u16, module_id: &str) -> Result<(), McpBridgeError>;
+
+    /// Set a parameter on a return-bus insert effect. `param_name` matches the
+    /// effect descriptor's `type_id` or display name; `value` may be a number,
+    /// boolean, or choice string. Returns the resolved parameter info.
+    fn set_return_effect_parameter(
+        &self,
+        return_id: u16,
+        module_id: &str,
+        param_name: &str,
+        value: BridgeParamValue,
+    ) -> Result<ParameterInfo, McpBridgeError>;
+
+    /// Enable or bypass a return-bus insert effect (`true` = active, `false` = bypassed).
+    fn set_return_effect_enabled(
+        &self,
+        return_id: u16,
+        module_id: &str,
+        enabled: bool,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Move a return-bus insert effect one slot up or down in the chain.
+    fn reorder_return_effect(
+        &self,
+        return_id: u16,
+        module_id: &str,
+        direction: ReturnEffectMove,
+    ) -> Result<(), McpBridgeError>;
+
     /// Add or update a track's send to a return bus (upsert by target).
+    /// `enabled = false` bypasses the send non-destructively (keeps its level/tap).
     fn set_track_send(
         &self,
         track_id: u16,
         return_id: u16,
         level: f32,
         pre_fader: bool,
+        enabled: bool,
     ) -> Result<(), McpBridgeError>;
 
     /// Remove a track's send to a return bus.
     fn remove_track_send(&self, track_id: u16, return_id: u16) -> Result<(), McpBridgeError>;
+
+    /// Add or update a bus-to-bus send from one return bus into another (upsert
+    /// by target). Rejected if it would create a routing cycle. `enabled = false`
+    /// bypasses the send non-destructively.
+    fn set_return_send(
+        &self,
+        from_id: u16,
+        to_id: u16,
+        level: f32,
+        enabled: bool,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Remove a bus-to-bus send from one return bus into another.
+    fn remove_return_send(&self, from_id: u16, to_id: u16) -> Result<(), McpBridgeError>;
+
+    // === Master bus ===
+
+    /// Read the master output volume (0.0 = silent, 1.0 = unity; may exceed 1.0).
+    fn get_master_volume(&self) -> Result<f32, McpBridgeError>;
+
+    /// Set the master output volume (0.0 = silent, 1.0 = unity).
+    fn set_master_volume(&self, volume: f32) -> Result<(), McpBridgeError>;
+
+    /// List the master-bus insert effects in processing order.
+    fn list_master_effects(&self) -> Result<Vec<ReturnEffectInfo>, McpBridgeError>;
+
+    /// Add an insert effect to the master-bus effect chain. `effect_type` is a
+    /// module-type token (e.g. "limiter", "eq"). Returns the new module-id string.
+    fn add_master_effect(&self, effect_type: &str) -> Result<String, McpBridgeError>;
+
+    /// Remove an insert effect from the master-bus effect chain by module id.
+    fn remove_master_effect(&self, module_id: &str) -> Result<(), McpBridgeError>;
+
+    /// Set a parameter on a master-bus insert effect. Returns the resolved info.
+    fn set_master_effect_parameter(
+        &self,
+        module_id: &str,
+        param_name: &str,
+        value: BridgeParamValue,
+    ) -> Result<ParameterInfo, McpBridgeError>;
+
+    /// Enable or bypass a master-bus insert effect.
+    fn set_master_effect_enabled(
+        &self,
+        module_id: &str,
+        enabled: bool,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Move a master-bus insert effect one slot up or down in the chain.
+    fn reorder_master_effect(
+        &self,
+        module_id: &str,
+        direction: ReturnEffectMove,
+    ) -> Result<(), McpBridgeError>;
 
     // === Pattern management ===
 

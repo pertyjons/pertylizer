@@ -65,6 +65,10 @@ pub struct GlobalProjectState {
     /// live in the `Song`; only the engine-side effect chain is captured here).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub return_bus_effects: Vec<ReturnBusEffectsState>,
+    /// Master-bus effect chain (the final chain applied to the full mix), in
+    /// processing order. Engine-side runtime state, captured here for save/load.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub master_effects: Vec<ModuleState>,
 }
 
 /// The effect chain on one return bus, in processing order, for persistence.
@@ -90,6 +94,7 @@ impl Default for GlobalProjectState {
             awe_preset: None,
             awe_description: None,
             return_bus_effects: Vec::new(),
+            master_effects: Vec::new(),
         }
     }
 }

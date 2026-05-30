@@ -661,6 +661,7 @@ impl EngineCommand {
             Self::CreateReturnBus { id } => Self::CreateReturnBus { id: *id },
             Self::RemoveReturnBus { id } => Self::RemoveReturnBus { id: *id },
             Self::ClearReturnBusses => Self::ClearReturnBusses,
+            Self::ClearMasterEffects => Self::ClearMasterEffects,
             Self::RemoveReturnEffect { return_id, id } => Self::RemoveReturnEffect {
                 return_id: *return_id,
                 id: *id,
@@ -682,6 +683,15 @@ impl EngineCommand {
                 return_id: *return_id,
                 module_id: *module_id,
                 enabled: *enabled,
+            },
+            Self::ReorderReturnEffect {
+                return_id,
+                module_id,
+                direction,
+            } => Self::ReorderReturnEffect {
+                return_id: *return_id,
+                module_id: *module_id,
+                direction: *direction,
             },
 
             // Non-clonable commands (contain move-only types or Arc data)

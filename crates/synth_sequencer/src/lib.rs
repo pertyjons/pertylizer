@@ -51,7 +51,7 @@ pub use pattern::{Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};
 pub use song::{PatternPlacement, Song, TempoChange, TimeSignatureChange};
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
-pub use track::{ReturnBus, SequencerTrack, TrackColor, TrackMode, TrackSend};
+pub use track::{ReturnBus, ReturnSend, SequencerTrack, TrackColor, TrackMode, TrackSend};
 
 /// Prelude module for convenient imports.
 pub mod prelude {

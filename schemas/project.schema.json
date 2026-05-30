@@ -915,6 +915,13 @@
           "format": "float",
           "type": "number"
         },
+        "master_effects": {
+          "description": "Master-bus effect chain (the final chain applied to the full mix), in\nprocessing order. Engine-side runtime state, captured here for save/load.",
+          "items": {
+            "$ref": "#/$defs/ModuleState"
+          },
+          "type": "array"
+        },
         "master_volume": {
           "default": 0.800000011920929,
           "description": "Master volume (0.0–1.0).",
@@ -7061,6 +7068,19 @@
     "ReturnBus": {
       "description": "Definition of a return bus (effect-send destination) as stored in the song.\n\nThis is the persistent, source-of-truth description — id, name, and fader\n(volume/pan/mute). The engine owns the runtime channel (the effect chain and\naudio buffers) keyed by `id`, and reads this fader live each block, exactly\nas it reads per-track controls (Model C: the song owns channel/routing\ndata). The effect-chain *contents* on a return are engine-side runtime state\nand are not yet persisted here (a follow-up, matching master effects).",
       "properties": {
+        "color": {
+          "$ref": "#/$defs/TrackColor",
+          "default": {
+            "b": 255,
+            "g": 100,
+            "r": 100
+          },
+          "description": "Display color for the mixer strip."
+        },
+        "description": {
+          "description": "Free-text description / intent (e.g. \"shared plate reverb\"). Empty by\ndefault; readable/writable via MCP and GUI. Never affects audio.",
+          "type": "string"
+        },
         "id": {
           "$ref": "#/$defs/ReturnBusId",
           "description": "Unique identifier, referenced by [`TrackSend::target`]."
@@ -7077,6 +7097,18 @@
         "pan": {
           "$ref": "#/$defs/BipolarValue",
           "description": "Output pan (-1.0 = left, 0.0 = centre, 1.0 = right)."
+        },
+        "sends": {
+          "description": "Bus-to-bus send taps from this return into other return busses. Empty by\ndefault; must stay acyclic (see [`super::Song::return_send_would_cycle`]).",
+          "items": {
+            "$ref": "#/$defs/ReturnSend"
+          },
+          "type": "array"
+        },
+        "solo": {
+          "default": false,
+          "description": "Solo: when any return is soloed, only soloed returns reach the master mix\n(bus-to-bus routing still flows). Independent of track solo.",
+          "type": "boolean"
         },
         "volume": {
           "$ref": "#/$defs/NormalizedValue",
@@ -7121,6 +7153,29 @@
       "maximum": 65535,
       "minimum": 0,
       "type": "integer"
+    },
+    "ReturnSend": {
+      "description": "A send tap from one return bus into another (bus-to-bus aux routing).\n\nThe source return's post-fader output is summed into the `target` return,\nscaled by `level`. Used for serial/parallel return chains (e.g. a delay\nreturn feeding a reverb return). The routing must stay acyclic — see\n[`super::Song::return_send_would_cycle`].",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether the send is active (non-destructive bypass when `false`).",
+          "type": "boolean"
+        },
+        "level": {
+          "$ref": "#/$defs/NormalizedValue",
+          "description": "Send level (0.0 = no send, 1.0 = unity)."
+        },
+        "target": {
+          "$ref": "#/$defs/ReturnBusId",
+          "description": "Destination return bus."
+        }
+      },
+      "required": [
+        "target",
+        "level"
+      ],
+      "type": "object"
     },
     "RoomShape": {
       "description": "Shape of the simulated room.",
@@ -7731,6 +7786,11 @@
     "TrackSend": {
       "description": "A send tap from a track's channel to a return bus.\n\nThe channel's signal is summed into the target return bus scaled by `level`.\n`pre_fader` selects whether the tap is taken before (`true`) or after\n(`false`, the default) the channel fader/pan — post-fader is the common case\n(the send follows the fader), pre-fader keeps the send constant regardless of\nthe channel level (e.g. a fully-wet cue/monitor send).",
       "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether the send is active. A disabled send is kept (with its level and\ntap point) but contributes nothing to the return bus — a non-destructive\nbypass, unlike removing the send. Defaults to `true` so older projects and\nfreshly-created sends are enabled.",
+          "type": "boolean"
+        },
         "level": {
           "$ref": "#/$defs/NormalizedValue",
           "description": "Send level (0.0 = no send, 1.0 = unity)."

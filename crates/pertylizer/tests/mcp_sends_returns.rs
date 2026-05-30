@@ -61,7 +61,7 @@ fn return_bus_and_send_round_trip_via_bridge() {
 
     // Send: upsert by target.
     let tid = bridge.create_track("lead", None).expect("create track");
-    bridge.set_track_send(tid, rid, 0.5, true).unwrap();
+    bridge.set_track_send(tid, rid, 0.5, true, true).unwrap();
     let t = bridge
         .list_tracks()
         .unwrap()
@@ -72,8 +72,9 @@ fn return_bus_and_send_round_trip_via_bridge() {
     assert_eq!(t.sends[0].target, rid);
     assert!((t.sends[0].level - 0.5).abs() < 1e-6);
     assert!(t.sends[0].pre_fader);
+    assert!(t.sends[0].enabled, "a fresh send is enabled");
 
-    bridge.set_track_send(tid, rid, 0.2, false).unwrap();
+    bridge.set_track_send(tid, rid, 0.2, false, true).unwrap();
     let t = bridge
         .list_tracks()
         .unwrap()
@@ -88,8 +89,20 @@ fn return_bus_and_send_round_trip_via_bridge() {
     assert!((t.sends[0].level - 0.2).abs() < 1e-6);
     assert!(!t.sends[0].pre_fader);
 
+    // Bypassing keeps the send (and its level/tap) but flips `enabled`.
+    bridge.set_track_send(tid, rid, 0.2, false, false).unwrap();
+    let t = bridge
+        .list_tracks()
+        .unwrap()
+        .into_iter()
+        .find(|t| t.id == tid)
+        .unwrap();
+    assert_eq!(t.sends.len(), 1, "bypass must not remove the send");
+    assert!((t.sends[0].level - 0.2).abs() < 1e-6);
+    assert!(!t.sends[0].enabled, "send is now bypassed");
+
     // A send to a non-existent return bus is rejected.
-    assert!(bridge.set_track_send(tid, 999, 0.5, false).is_err());
+    assert!(bridge.set_track_send(tid, 999, 0.5, false, true).is_err());
 
     // Deleting the return bus strips the targeting send.
     bridge.delete_return_bus(rid).unwrap();
@@ -105,4 +118,56 @@ fn return_bus_and_send_round_trip_via_bridge() {
         "sends to a deleted return bus must be removed"
     );
     assert!(bridge.set_return_bus_volume(rid, 0.5).is_err());
+}
+
+#[test]
+fn return_bus_to_bus_sends_and_metadata_via_bridge() {
+    let bridge = build_bridge();
+    let delay = bridge.create_return_bus("Delay").unwrap();
+    let reverb = bridge.create_return_bus("Reverb").unwrap();
+
+    // Bus-to-bus: delay feeds reverb.
+    bridge.set_return_send(delay, reverb, 0.5, true).unwrap();
+    let busses = bridge.list_return_busses().unwrap();
+    let d = busses.iter().find(|b| b.id == delay).unwrap();
+    assert_eq!(d.sends.len(), 1);
+    assert_eq!(d.sends[0].target, reverb);
+    assert!((d.sends[0].level - 0.5).abs() < 1e-6);
+    assert!(d.sends[0].enabled);
+
+    // A self-send and a cycle (reverb -> delay closes delay -> reverb) are rejected.
+    assert!(bridge.set_return_send(delay, delay, 0.5, true).is_err());
+    assert!(bridge.set_return_send(reverb, delay, 0.5, true).is_err());
+
+    // Bypass keeps the send; removal drops it.
+    bridge.set_return_send(delay, reverb, 0.5, false).unwrap();
+    let busses = bridge.list_return_busses().unwrap();
+    assert!(!busses.iter().find(|b| b.id == delay).unwrap().sends[0].enabled);
+    bridge.remove_return_send(delay, reverb).unwrap();
+    let busses = bridge.list_return_busses().unwrap();
+    assert!(
+        busses
+            .iter()
+            .find(|b| b.id == delay)
+            .unwrap()
+            .sends
+            .is_empty()
+    );
+
+    // Solo / color / description.
+    bridge.set_return_bus_solo(reverb, true).unwrap();
+    bridge.set_return_bus_color(reverb, "#123456").unwrap();
+    bridge
+        .set_return_bus_description(reverb, "shared plate")
+        .unwrap();
+    assert!(bridge.set_return_bus_color(reverb, "nothex").is_err());
+    let busses = bridge.list_return_busses().unwrap();
+    let r = busses.iter().find(|b| b.id == reverb).unwrap();
+    assert!(r.solo);
+    assert_eq!(r.color, "#123456");
+    assert_eq!(r.description, "shared plate");
+
+    // Master volume: set sends a command; get reads the engine atomic.
+    bridge.set_master_volume(0.5).unwrap();
+    assert!(bridge.get_master_volume().is_ok());
 }

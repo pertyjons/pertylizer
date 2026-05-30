@@ -352,6 +352,8 @@ impl EngineHub {
             | EngineCommand::ClearReturnBusses
             | EngineCommand::AddReturnEffect { .. }
             | EngineCommand::RemoveReturnEffect { .. }
+            | EngineCommand::ReorderReturnEffect { .. }
+            | EngineCommand::ClearMasterEffects
             | EngineCommand::ClearAllModules => perms.can_modify_topology,
 
             // Transport control

@@ -346,6 +346,18 @@ pub enum EngineCommand {
         enabled: bool,
     },
 
+    /// Move an effect up or down within a return bus's effect chain.
+    ReorderReturnEffect {
+        return_id: ReturnBusId,
+        module_id: ModuleId,
+        direction: ReorderDirection,
+    },
+
+    /// Remove every master-bus effect. Used before (re)loading a project so the
+    /// master chain starts empty rather than stacking onto the previous project's
+    /// effects (mirrors `ClearReturnBusses`).
+    ClearMasterEffects,
+
     // === Note control ===
     /// Start a note with type-safe velocity.
     NoteOn {
@@ -541,7 +553,7 @@ pub enum EngineCommand {
     /// Add a visualizer module to an instrument's effect chain.
     /// The VisualizationBuffer is shared between engine and GUI via Arc.
     /// - `instrument_id: Some(id)` - Add to a specific instrument's effect chain
-    /// - `instrument_id: None` - (Reserved for future global master bus)
+    /// - `instrument_id: None` - Target the global master effect chain
     AddVisualizer {
         instrument_id: Option<InstrumentId>,
         id: ModuleId,
@@ -551,7 +563,7 @@ pub enum EngineCommand {
 
     /// Remove a visualizer module from an instrument's effect chain.
     /// - `instrument_id: Some(id)` - Remove from a specific instrument's effect chain
-    /// - `instrument_id: None` - (Reserved for future global master bus)
+    /// - `instrument_id: None` - Target the global master effect chain
     RemoveVisualizer {
         instrument_id: Option<InstrumentId>,
         id: ModuleId,
@@ -560,7 +572,7 @@ pub enum EngineCommand {
     /// Add a pre-created effect instance to an instrument's effect chain (real-time safe).
     /// The effect is created in the GUI thread and sent via this command.
     /// - `instrument_id: Some(id)` - Add to a specific instrument's effect chain
-    /// - `instrument_id: None` - (Reserved for future global master bus)
+    /// - `instrument_id: None` - Target the global master effect chain
     AddEffectInstance {
         instrument_id: Option<InstrumentId>,
         id: ModuleId,
@@ -569,7 +581,7 @@ pub enum EngineCommand {
 
     /// Remove an effect from an instrument's effect chain.
     /// - `instrument_id: Some(id)` - Remove from a specific instrument's effect chain
-    /// - `instrument_id: None` - (Reserved for future global master bus)
+    /// - `instrument_id: None` - Target the global master effect chain
     RemoveEffect {
         instrument_id: Option<InstrumentId>,
         id: ModuleId,
@@ -598,7 +610,7 @@ pub enum EngineCommand {
     /// Set an effect parameter using type-safe API.
     /// The Param contains both the parameter type and its value.
     /// - `instrument_id: Some(id)` - Target a specific instrument's effect chain
-    /// - `instrument_id: None` - (Reserved for future global master bus)
+    /// - `instrument_id: None` - Target the global master effect chain
     ///
     /// The effect is identified by its `ModuleId` so that multiple effects
     /// of the same type in a single chain can be targeted independently.
@@ -610,7 +622,7 @@ pub enum EngineCommand {
 
     /// Enable or disable an effect.
     /// - `instrument_id: Some(id)` - Target a specific instrument's effect chain
-    /// - `instrument_id: None` - (Reserved for future global master bus)
+    /// - `instrument_id: None` - Target the global master effect chain
     ///
     /// The effect is identified by its `ModuleId` so that multiple effects
     /// of the same type in a single chain can be targeted independently.
@@ -1332,6 +1344,17 @@ impl std::fmt::Debug for EngineCommand {
                 .field("module_id", module_id)
                 .field("enabled", enabled)
                 .finish(),
+            Self::ReorderReturnEffect {
+                return_id,
+                module_id,
+                direction,
+            } => f
+                .debug_struct("ReorderReturnEffect")
+                .field("return_id", return_id)
+                .field("module_id", module_id)
+                .field("direction", direction)
+                .finish(),
+            Self::ClearMasterEffects => write!(f, "ClearMasterEffects"),
         }
     }
 }

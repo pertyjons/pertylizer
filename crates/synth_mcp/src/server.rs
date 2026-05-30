@@ -1719,11 +1719,40 @@ pub struct SetReturnBusMuteParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetReturnBusSoloParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "Whether the return bus should be soloed")]
+    pub solo: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetReturnBusColorParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "Display color as \"#RRGGBB\" (or \"#RRGGBBAA\", alpha ignored)")]
+    pub color: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetReturnBusDescriptionParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "Free-text description / intent (\"\" clears it)")]
+    pub description: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RenameReturnBusParam {
     #[schemars(description = "Return bus ID")]
     pub return_id: u16,
     #[schemars(description = "New name")]
     pub name: String,
+}
+
+/// Serde default for boolean fields that should default to `true` when omitted.
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1739,6 +1768,11 @@ pub struct SetTrackSendParam {
         description = "Tap point: true = pre-fader, false = post-fader (default). Post-fader follows the channel fader."
     )]
     pub pre_fader: bool,
+    #[serde(default = "default_true")]
+    #[schemars(
+        description = "Whether the send is active (default true). false = non-destructive bypass: keeps the level/tap but contributes nothing to the return bus."
+    )]
+    pub enabled: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1747,6 +1781,131 @@ pub struct RemoveTrackSendParam {
     pub track_id: u16,
     #[schemars(description = "Destination return bus ID to remove the send to")]
     pub return_id: u16,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AddReturnEffectParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(
+        description = "Effect type key (e.g. 'rev', 'delay', 'chorus', 'eq', 'compressor', 'distortion'). Accepts the prefix or display name. Voice modules are rejected."
+    )]
+    pub effect_type: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReturnEffectIdParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "Effect module-id string (e.g. 'rev-1'), from list_return_busses")]
+    pub module_id: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetReturnEffectParameterParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "Effect module-id string (e.g. 'rev-1')")]
+    pub module_id: String,
+    #[schemars(
+        description = "Parameter name (type_id or display name) — see the effect's parameters in list_return_busses"
+    )]
+    pub param_name: String,
+    #[schemars(
+        description = "New value: a number in the parameter's native range, a boolean for on/off, or a string for choice/enum parameters."
+    )]
+    pub value: ParamValueInput,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetReturnEffectEnabledParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "Effect module-id string (e.g. 'rev-1')")]
+    pub module_id: String,
+    #[schemars(description = "true = active, false = bypassed")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReorderReturnEffectParam {
+    #[schemars(description = "Return bus ID")]
+    pub return_id: u16,
+    #[schemars(description = "Effect module-id string (e.g. 'rev-1')")]
+    pub module_id: String,
+    #[schemars(description = "Direction to move: 'up' (earlier in the chain) or 'down' (later)")]
+    pub direction: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetReturnSendParam {
+    #[schemars(description = "Source return bus ID (the one sending)")]
+    pub from_id: u16,
+    #[schemars(description = "Destination return bus ID")]
+    pub to_id: u16,
+    #[schemars(description = "Send level (0.0 = none, 1.0 = unity)")]
+    pub level: f32,
+    #[serde(default = "default_true")]
+    #[schemars(
+        description = "Whether the send is active (default true). false = non-destructive bypass."
+    )]
+    pub enabled: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RemoveReturnSendParam {
+    #[schemars(description = "Source return bus ID")]
+    pub from_id: u16,
+    #[schemars(description = "Destination return bus ID to remove the send to")]
+    pub to_id: u16,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetMasterVolumeParam {
+    #[schemars(description = "Master output volume (0.0 = silent, 1.0 = unity)")]
+    pub volume: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AddMasterEffectParam {
+    #[schemars(
+        description = "Effect type key (e.g. 'limiter', 'eq', 'compressor', 'rev'). Accepts the prefix or display name. Voice modules are rejected."
+    )]
+    pub effect_type: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct MasterEffectIdParam {
+    #[schemars(description = "Effect module-id string (e.g. 'lim-1'), from list_master_effects")]
+    pub module_id: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetMasterEffectParameterParam {
+    #[schemars(description = "Effect module-id string (e.g. 'lim-1')")]
+    pub module_id: String,
+    #[schemars(description = "Parameter name (type_id or display name); see list_master_effects")]
+    pub param_name: String,
+    #[schemars(
+        description = "New value: a number in the parameter's native range, a boolean for on/off, or a string for choice/enum parameters."
+    )]
+    pub value: ParamValueInput,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetMasterEffectEnabledParam {
+    #[schemars(description = "Effect module-id string (e.g. 'lim-1')")]
+    pub module_id: String,
+    #[schemars(description = "true = active, false = bypassed")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReorderMasterEffectParam {
+    #[schemars(description = "Effect module-id string (e.g. 'lim-1')")]
+    pub module_id: String,
+    #[schemars(description = "Direction to move: 'up' (earlier in the chain) or 'down' (later)")]
+    pub direction: String,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2541,9 +2700,27 @@ impl SynthMcpServer {
             "set_return_bus_volume" => set_return_bus_volume(SetReturnBusVolumeParam),
             "set_return_bus_pan" => set_return_bus_pan(SetReturnBusPanParam),
             "set_return_bus_mute" => set_return_bus_mute(SetReturnBusMuteParam),
+            "set_return_bus_solo" => set_return_bus_solo(SetReturnBusSoloParam),
+            "set_return_bus_color" => set_return_bus_color(SetReturnBusColorParam),
+            "set_return_bus_description" => set_return_bus_description(SetReturnBusDescriptionParam),
             "rename_return_bus" => rename_return_bus(RenameReturnBusParam),
             "set_track_send" => set_track_send(SetTrackSendParam),
             "remove_track_send" => remove_track_send(RemoveTrackSendParam),
+            "set_return_send" => set_return_send(SetReturnSendParam),
+            "remove_return_send" => remove_return_send(RemoveReturnSendParam),
+            "add_return_effect" => add_return_effect(AddReturnEffectParam),
+            "remove_return_effect" => remove_return_effect(ReturnEffectIdParam),
+            "set_return_effect_parameter" => set_return_effect_parameter(SetReturnEffectParameterParam),
+            "set_return_effect_enabled" => set_return_effect_enabled(SetReturnEffectEnabledParam),
+            "reorder_return_effect" => reorder_return_effect(ReorderReturnEffectParam),
+            "get_master_volume" => get_master_volume(NoParams),
+            "set_master_volume" => set_master_volume(SetMasterVolumeParam),
+            "list_master_effects" => list_master_effects(NoParams),
+            "add_master_effect" => add_master_effect(AddMasterEffectParam),
+            "remove_master_effect" => remove_master_effect(MasterEffectIdParam),
+            "set_master_effect_parameter" => set_master_effect_parameter(SetMasterEffectParameterParam),
+            "set_master_effect_enabled" => set_master_effect_enabled(SetMasterEffectEnabledParam),
+            "reorder_master_effect" => reorder_master_effect(ReorderMasterEffectParam),
 
             // Arrangement
             "place_pattern" => place_pattern(PlacePatternParam),
@@ -4688,6 +4865,53 @@ impl SynthMcpServer {
         }
     }
 
+    #[tool(
+        description = "Solo or unsolo a return bus. When any return is soloed, only soloed returns reach the master mix (bus-to-bus routing still flows)."
+    )]
+    async fn set_return_bus_solo(&self, params: Parameters<SetReturnBusSoloParam>) -> String {
+        match self
+            .bridge
+            .set_return_bus_solo(params.0.return_id, params.0.solo)
+        {
+            Ok(()) => format!(
+                "OK: return bus {} {}",
+                params.0.return_id,
+                if params.0.solo { "soloed" } else { "unsoloed" }
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Set a return bus's display color from a \"#RRGGBB\" hex string.")]
+    async fn set_return_bus_color(&self, params: Parameters<SetReturnBusColorParam>) -> String {
+        match self
+            .bridge
+            .set_return_bus_color(params.0.return_id, &params.0.color)
+        {
+            Ok(()) => format!(
+                "OK: return bus {} color set to {}",
+                params.0.return_id, params.0.color
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set a return bus's free-text description / intent (\"\" clears it). Never affects audio."
+    )]
+    async fn set_return_bus_description(
+        &self,
+        params: Parameters<SetReturnBusDescriptionParam>,
+    ) -> String {
+        match self
+            .bridge
+            .set_return_bus_description(params.0.return_id, &params.0.description)
+        {
+            Ok(()) => format!("OK: return bus {} description set", params.0.return_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
     #[tool(description = "Rename a return bus.")]
     async fn rename_return_bus(&self, params: Parameters<RenameReturnBusParam>) -> String {
         if let Err(e) = validate_name("return bus", &params.0.name) {
@@ -4718,9 +4942,10 @@ impl SynthMcpServer {
             params.0.return_id,
             params.0.level,
             params.0.pre_fader,
+            params.0.enabled,
         ) {
             Ok(()) => format!(
-                "OK: track {} sends {} to return bus {} ({})",
+                "OK: track {} sends {} to return bus {} ({}, {})",
                 params.0.track_id,
                 params.0.level,
                 params.0.return_id,
@@ -4728,6 +4953,11 @@ impl SynthMcpServer {
                     "pre-fader"
                 } else {
                     "post-fader"
+                },
+                if params.0.enabled {
+                    "enabled"
+                } else {
+                    "bypassed"
                 }
             ),
             Err(e) => format!("Error: {e}"),
@@ -4743,6 +4973,304 @@ impl SynthMcpServer {
             Ok(()) => format!(
                 "OK: removed track {} send to return bus {}",
                 params.0.track_id, params.0.return_id
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Add or update a bus-to-bus send: route one return bus's output into another (e.g. a delay return into a reverb return). Upsert by target; rejected if it would create a routing cycle."
+    )]
+    async fn set_return_send(&self, params: Parameters<SetReturnSendParam>) -> String {
+        if let Err(e) = validate_range("level", params.0.level, 0.0, 1.0) {
+            return validation_err(e);
+        }
+        match self.bridge.set_return_send(
+            params.0.from_id,
+            params.0.to_id,
+            params.0.level,
+            params.0.enabled,
+        ) {
+            Ok(()) => format!(
+                "OK: return bus {} sends {} to return bus {} ({})",
+                params.0.from_id,
+                params.0.level,
+                params.0.to_id,
+                if params.0.enabled {
+                    "enabled"
+                } else {
+                    "bypassed"
+                }
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Remove a bus-to-bus send from one return bus into another.")]
+    async fn remove_return_send(&self, params: Parameters<RemoveReturnSendParam>) -> String {
+        match self
+            .bridge
+            .remove_return_send(params.0.from_id, params.0.to_id)
+        {
+            Ok(()) => format!(
+                "OK: removed return bus {} send to return bus {}",
+                params.0.from_id, params.0.to_id
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // === Return-bus insert effects ===
+
+    #[tool(
+        description = "Add an insert effect to a return bus's effect chain (e.g. put a reverb on a Reverb return). effect_type is a module-type key like 'rev', 'delay', 'chorus', 'eq', 'compressor'. Returns the new effect's module-id (e.g. 'rev-1')."
+    )]
+    async fn add_return_effect(&self, params: Parameters<AddReturnEffectParam>) -> String {
+        match self
+            .bridge
+            .add_return_effect(params.0.return_id, &params.0.effect_type)
+        {
+            Ok(module_id) => format!(
+                "OK: added {} to return bus {} as {}",
+                params.0.effect_type, params.0.return_id, module_id
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Remove an insert effect from a return bus's effect chain by its module-id."
+    )]
+    async fn remove_return_effect(&self, params: Parameters<ReturnEffectIdParam>) -> String {
+        match self
+            .bridge
+            .remove_return_effect(params.0.return_id, &params.0.module_id)
+        {
+            Ok(()) => format!(
+                "OK: removed {} from return bus {}",
+                params.0.module_id, params.0.return_id
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set a parameter on a return-bus insert effect. param_name is the parameter's type_id or display name; value is a number, boolean, or choice string. Use list_return_busses to discover effects and their parameters."
+    )]
+    async fn set_return_effect_parameter(
+        &self,
+        params: Parameters<SetReturnEffectParameterParam>,
+    ) -> String {
+        let p = params.0;
+        let value = match p.value {
+            ParamValueInput::Number(n) => {
+                if !n.is_finite() {
+                    return format!(
+                        "Error: {}",
+                        McpBridgeError::ValueOutOfRange {
+                            name: "value",
+                            value: n as f32,
+                            min: f32::NEG_INFINITY,
+                            max: f32::INFINITY,
+                        }
+                    );
+                }
+                crate::bridge::BridgeParamValue::Number(n)
+            }
+            ParamValueInput::Bool(b) => crate::bridge::BridgeParamValue::Bool(b),
+            ParamValueInput::Choice(s) => crate::bridge::BridgeParamValue::Choice(s),
+        };
+        match self.bridge.set_return_effect_parameter(
+            p.return_id,
+            &p.module_id,
+            &p.param_name,
+            value,
+        ) {
+            Ok(info) => to_json(&info),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Enable or bypass a return-bus insert effect (enabled = false bypasses it)."
+    )]
+    async fn set_return_effect_enabled(
+        &self,
+        params: Parameters<SetReturnEffectEnabledParam>,
+    ) -> String {
+        match self.bridge.set_return_effect_enabled(
+            params.0.return_id,
+            &params.0.module_id,
+            params.0.enabled,
+        ) {
+            Ok(()) => format!(
+                "OK: return bus {} effect {} {}",
+                params.0.return_id,
+                params.0.module_id,
+                if params.0.enabled {
+                    "enabled"
+                } else {
+                    "bypassed"
+                }
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Move a return-bus insert effect up or down within the effect chain (direction: 'up' = earlier, 'down' = later)."
+    )]
+    async fn reorder_return_effect(&self, params: Parameters<ReorderReturnEffectParam>) -> String {
+        let direction = match params.0.direction.trim().to_ascii_lowercase().as_str() {
+            "up" => crate::bridge::ReturnEffectMove::Up,
+            "down" => crate::bridge::ReturnEffectMove::Down,
+            other => {
+                return format!("Error: invalid direction '{other}', expected 'up' or 'down'");
+            }
+        };
+        match self
+            .bridge
+            .reorder_return_effect(params.0.return_id, &params.0.module_id, direction)
+        {
+            Ok(()) => format!(
+                "OK: moved {} {} in return bus {}",
+                params.0.module_id, params.0.direction, params.0.return_id
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    // === Master bus ===
+
+    #[tool(description = "Read the master output volume (0.0 = silent, 1.0 = unity).")]
+    async fn get_master_volume(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.get_master_volume() {
+            Ok(v) => format!("{v}"),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Set the master output volume (0.0 = silent, 1.0 = unity).")]
+    async fn set_master_volume(&self, params: Parameters<SetMasterVolumeParam>) -> String {
+        if let Err(e) = validate_range("volume", params.0.volume, 0.0, 4.0) {
+            return validation_err(e);
+        }
+        match self.bridge.set_master_volume(params.0.volume) {
+            Ok(()) => format!("OK: master volume set to {}", params.0.volume),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "List the master-bus insert effects (the final effect chain applied to the full mix) in processing order, with parameters."
+    )]
+    async fn list_master_effects(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.list_master_effects() {
+            Ok(effects) => to_json(&effects),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Add an insert effect to the master-bus effect chain (applied to the full mix, e.g. a limiter or EQ on the master). effect_type is a module-type key. Returns the new module-id."
+    )]
+    async fn add_master_effect(&self, params: Parameters<AddMasterEffectParam>) -> String {
+        match self.bridge.add_master_effect(&params.0.effect_type) {
+            Ok(module_id) => format!(
+                "OK: added {} to master bus as {}",
+                params.0.effect_type, module_id
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Remove an insert effect from the master-bus effect chain by its module-id."
+    )]
+    async fn remove_master_effect(&self, params: Parameters<MasterEffectIdParam>) -> String {
+        match self.bridge.remove_master_effect(&params.0.module_id) {
+            Ok(()) => format!("OK: removed {} from master bus", params.0.module_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set a parameter on a master-bus insert effect. param_name is the parameter's type_id or display name; value is a number, boolean, or choice string. Use list_master_effects to discover effects and parameters."
+    )]
+    async fn set_master_effect_parameter(
+        &self,
+        params: Parameters<SetMasterEffectParameterParam>,
+    ) -> String {
+        let p = params.0;
+        let value = match p.value {
+            ParamValueInput::Number(n) => {
+                if !n.is_finite() {
+                    return format!(
+                        "Error: {}",
+                        McpBridgeError::ValueOutOfRange {
+                            name: "value",
+                            value: n as f32,
+                            min: f32::NEG_INFINITY,
+                            max: f32::INFINITY,
+                        }
+                    );
+                }
+                crate::bridge::BridgeParamValue::Number(n)
+            }
+            ParamValueInput::Bool(b) => crate::bridge::BridgeParamValue::Bool(b),
+            ParamValueInput::Choice(s) => crate::bridge::BridgeParamValue::Choice(s),
+        };
+        match self
+            .bridge
+            .set_master_effect_parameter(&p.module_id, &p.param_name, value)
+        {
+            Ok(info) => to_json(&info),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Enable or bypass a master-bus insert effect (enabled = false bypasses it)."
+    )]
+    async fn set_master_effect_enabled(
+        &self,
+        params: Parameters<SetMasterEffectEnabledParam>,
+    ) -> String {
+        match self
+            .bridge
+            .set_master_effect_enabled(&params.0.module_id, params.0.enabled)
+        {
+            Ok(()) => format!(
+                "OK: master effect {} {}",
+                params.0.module_id,
+                if params.0.enabled {
+                    "enabled"
+                } else {
+                    "bypassed"
+                }
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Move a master-bus insert effect up or down within the chain (direction: 'up' = earlier, 'down' = later)."
+    )]
+    async fn reorder_master_effect(&self, params: Parameters<ReorderMasterEffectParam>) -> String {
+        let direction = match params.0.direction.trim().to_ascii_lowercase().as_str() {
+            "up" => crate::bridge::ReturnEffectMove::Up,
+            "down" => crate::bridge::ReturnEffectMove::Down,
+            other => {
+                return format!("Error: invalid direction '{other}', expected 'up' or 'down'");
+            }
+        };
+        match self
+            .bridge
+            .reorder_master_effect(&params.0.module_id, direction)
+        {
+            Ok(()) => format!(
+                "OK: moved {} {} in master bus",
+                params.0.module_id, params.0.direction
             ),
             Err(e) => format!("Error: {e}"),
         }

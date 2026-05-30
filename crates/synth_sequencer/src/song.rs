@@ -427,14 +427,53 @@ impl Song {
         id
     }
 
-    /// Delete a return bus and strip every track send that targeted it.
-    /// Returns the removed definition, if any.
+    /// Delete a return bus and strip every track send and bus-to-bus send that
+    /// targeted it. Returns the removed definition, if any.
     pub fn delete_return_bus(&mut self, id: ReturnBusId) -> Option<ReturnBus> {
         let pos = self.return_busses.iter().position(|b| b.id == id)?;
         for track in &mut self.tracks {
             track.sends.retain(|s| s.target != id);
         }
+        for bus in &mut self.return_busses {
+            bus.sends.retain(|s| s.target != id);
+        }
         Some(self.return_busses.remove(pos))
+    }
+
+    /// Would adding a bus-to-bus send from `from` to `to` create a cycle in the
+    /// return-routing graph? A self-send (`from == to`) is always a cycle. Other
+    /// cases are rejected when `to` can already reach `from` through existing
+    /// sends (so the new edge would close a loop). Used by callers (GUI / MCP) to
+    /// refuse routings the engine cannot order acyclically.
+    ///
+    /// Traverses **all** sends, enabled or not: enabling/disabling a send does not
+    /// re-run this check, so the stored send graph is kept acyclic regardless of
+    /// the `enabled` flags. (The engine separately ignores disabled sends when it
+    /// builds the per-block routing.)
+    #[must_use]
+    pub fn return_send_would_cycle(&self, from: ReturnBusId, to: ReturnBusId) -> bool {
+        if from == to {
+            return true;
+        }
+        // DFS from `to`: if we can reach `from`, the new `from -> to` edge closes
+        // a cycle. Bounded by the number of return busses (no infinite loop even
+        // if the existing graph is somehow already cyclic).
+        let mut stack = vec![to];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(node) = stack.pop() {
+            if node == from {
+                return true;
+            }
+            if !seen.insert(node) {
+                continue;
+            }
+            if let Some(bus) = self.return_busses.iter().find(|b| b.id == node) {
+                for send in &bus.sends {
+                    stack.push(send.target);
+                }
+            }
+        }
+        false
     }
 
     /// Check if any track is soloed.
@@ -824,6 +863,7 @@ mod tests {
             target: rid,
             level: NormalizedValue::new(0.4),
             pre_fader: true,
+            enabled: true,
         });
 
         let json = serde_json::to_string(&song).unwrap();

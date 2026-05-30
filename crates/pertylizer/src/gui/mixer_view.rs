@@ -89,17 +89,21 @@ struct ChannelSnapshot {
     pan: f32,
     mute: bool,
     solo: bool,
-    /// Send level (0.0 = no send) per return bus, plus pre-fader flag.
-    sends: Vec<(ReturnBusId, f32, bool)>,
+    /// Per return bus: (id, send level (0.0 = no send), pre-fader flag, enabled flag).
+    sends: Vec<(ReturnBusId, f32, bool, bool)>,
 }
 
 /// A return-bus strip snapshot.
 struct ReturnSnapshot {
     id: ReturnBusId,
     name: String,
+    color: Color32,
     volume: f32,
     pan: f32,
     mute: bool,
+    solo: bool,
+    /// Bus-to-bus sends from this return: (target, level, enabled).
+    sends: Vec<(ReturnBusId, f32, bool)>,
 }
 
 /// One insert effect on a return bus, cloned from the engine snapshot for
@@ -124,6 +128,84 @@ struct MixerSnapshot {
 enum MixerMutation {
     CreateReturn,
     DeleteReturn(ReturnBusId),
+}
+
+/// Where an inline insert-effect editor writes: a specific return bus, or the
+/// master bus. Lets [`draw_effect_module`] / [`add_effect`] build the right
+/// engine command (the `*ReturnEffect*` commands vs the master `*Effect*`
+/// commands, which use `instrument_id: None`).
+#[derive(Clone, Copy)]
+enum EffectTarget {
+    Return(ReturnBusId),
+    Master,
+}
+
+impl EffectTarget {
+    /// A widget-id seed unique per target (master is distinct from any return id).
+    fn id_seed(self) -> u32 {
+        match self {
+            Self::Return(id) => u32::from(id.0),
+            Self::Master => u32::from(u16::MAX) + 1,
+        }
+    }
+
+    fn set_enabled(self, module_id: ModuleId, enabled: bool) -> EngineCommand {
+        match self {
+            Self::Return(return_id) => EngineCommand::SetReturnEffectEnabled {
+                return_id,
+                module_id,
+                enabled,
+            },
+            Self::Master => EngineCommand::SetEffectEnabled {
+                instrument_id: None,
+                module_id,
+                enabled,
+            },
+        }
+    }
+
+    fn remove(self, module_id: ModuleId) -> EngineCommand {
+        match self {
+            Self::Return(return_id) => EngineCommand::RemoveReturnEffect {
+                return_id,
+                id: module_id,
+            },
+            Self::Master => EngineCommand::RemoveEffect {
+                instrument_id: None,
+                id: module_id,
+            },
+        }
+    }
+
+    fn set_param(self, module_id: ModuleId, param: Param) -> EngineCommand {
+        match self {
+            Self::Return(return_id) => EngineCommand::SetReturnEffectParameter {
+                return_id,
+                module_id,
+                param,
+            },
+            Self::Master => EngineCommand::SetEffectParameter {
+                instrument_id: None,
+                module_id,
+                param,
+            },
+        }
+    }
+
+    fn add(self, id: ModuleId, effect: Box<dyn synth_core::AudioEffect>) -> EngineCommand {
+        match self {
+            Self::Return(return_id) => EngineCommand::AddReturnEffect {
+                return_id,
+                id,
+                effect,
+            },
+            Self::Master => EngineCommand::AddEffectInstance {
+                instrument_id: None,
+                id,
+                effect,
+            },
+        }
+    }
 }
 
 /// Draw the mixer view. Returns an action for the host to handle (e.g. jumping
@@ -169,6 +251,20 @@ pub fn draw_mixer_view(
             .collect()
     };
 
+    // Master effect chain, cloned out of shared state for the master strip.
+    let master_effects: Vec<EffectInfo> = handle
+        .state
+        .master_effects
+        .read()
+        .iter()
+        .map(|e| EffectInfo {
+            module_id: e.module_id,
+            module_type: e.module_type,
+            params: e.parameters.clone(),
+            bypassed: e.bypassed,
+        })
+        .collect();
+
     let mut mutation: Option<MixerMutation> = None;
     let mut action: Option<MixerViewAction> = None;
 
@@ -207,14 +303,14 @@ pub fn draw_mixer_view(
 
                 for rb in &snapshot.returns {
                     let fx = return_effects.get(&rb.id).cloned().unwrap_or_default();
-                    if draw_return_strip(ui, rb, song, handle, &fx, state) {
+                    if draw_return_strip(ui, rb, song, handle, &fx, &snapshot.return_ids, state) {
                         mutation = Some(MixerMutation::DeleteReturn(rb.id));
                     }
                 }
 
                 ui.separator();
 
-                draw_master_strip(ui, handle);
+                draw_master_strip(ui, handle, &master_effects);
             });
         });
 
@@ -243,8 +339,8 @@ fn collect_snapshot(song: &Arc<RwLock<Song>>) -> Option<MixerSnapshot> {
                     tr.sends
                         .iter()
                         .find(|s| s.target == *rid)
-                        .map_or((*rid, 0.0, false), |s| {
-                            (*rid, s.level.as_f32(), s.pre_fader)
+                        .map_or((*rid, 0.0, false, true), |s| {
+                            (*rid, s.level.as_f32(), s.pre_fader, s.enabled)
                         })
                 })
                 .collect();
@@ -268,9 +364,16 @@ fn collect_snapshot(song: &Arc<RwLock<Song>>) -> Option<MixerSnapshot> {
         .map(|b| ReturnSnapshot {
             id: b.id,
             name: b.name.clone(),
+            color: crate::gui::sequencer::track_color_to_egui(b.color),
             volume: b.volume.as_f32(),
             pan: b.pan.as_f32(),
             mute: b.mute,
+            solo: b.solo,
+            sends: b
+                .sends
+                .iter()
+                .map(|s| (s.target, s.level.as_f32(), s.enabled))
+                .collect(),
         })
         .collect();
 
@@ -488,13 +591,13 @@ fn draw_channel_strip(
                             .color(t.colors.text_secondary),
                     );
                     for (rid, rname) in return_ids {
-                        let (_, level, pre) = ch
+                        let (_, level, pre, enabled) = ch
                             .sends
                             .iter()
-                            .find(|(id, _, _)| id == rid)
+                            .find(|(id, _, _, _)| id == rid)
                             .copied()
-                            .unwrap_or((*rid, 0.0, false));
-                        draw_send_row(ui, song, ch.id, *rid, rname, level, pre);
+                            .unwrap_or((*rid, 0.0, false, true));
+                        draw_send_row(ui, song, ch.id, *rid, rname, level, pre, enabled);
                     }
                     ui.add_space(4.0);
                 }
@@ -542,6 +645,7 @@ fn draw_channel_strip(
 
 /// One send row: a level slider plus a pre/post toggle. A level of 0 removes the
 /// send entirely; any positive level creates/updates it.
+#[allow(clippy::too_many_arguments)]
 fn draw_send_row(
     ui: &mut egui::Ui,
     song: &Arc<RwLock<Song>>,
@@ -550,14 +654,33 @@ fn draw_send_row(
     name: &str,
     level: f32,
     pre_fader: bool,
+    enabled: bool,
 ) {
     let t = theme();
+    let active = level > 0.0;
     ui.horizontal(|ui| {
+        // Enable / bypass toggle: a non-destructive on/off for an active send
+        // (keeps its level & tap point). Only meaningful once a send exists.
+        let mut on = enabled;
+        if ui
+            .add_enabled(active, egui::Checkbox::without_text(&mut on))
+            .on_hover_text("Enable / bypass this send")
+            .changed()
+        {
+            set_send_enabled(song, track, target, on);
+        }
         let short: String = name.chars().take(4).collect();
+        // Bypassed (active level but disabled) reads in the muted accent so it's
+        // visually distinct from a plain inactive/enabled send.
+        let label_color = if active && !enabled {
+            t.colors.accent_orange
+        } else {
+            t.colors.text_dim
+        };
         ui.label(
             RichText::new(short)
                 .size(t.fonts.size_small)
-                .color(t.colors.text_dim),
+                .color(label_color),
         )
         .on_hover_text(name);
         let mut lvl = level;
@@ -576,7 +699,7 @@ fn draw_send_row(
         let pp = if pre_fader { "Pre" } else { "Post" };
         if ui
             .add_enabled(
-                level > 0.0,
+                active,
                 egui::Button::new(
                     RichText::new(pp)
                         .size(t.fonts.size_small)
@@ -589,6 +712,123 @@ fn draw_send_row(
             apply_send(song, track, target, level, !pre_fader);
         }
     });
+}
+
+/// Toggle a send's non-destructive enable flag. No-op if the send doesn't exist.
+fn set_send_enabled(song: &Arc<RwLock<Song>>, track: TrackId, target: ReturnBusId, enabled: bool) {
+    let mut sw = song.write();
+    if let Some(tr) = sw.track_mut(track)
+        && let Some(send) = tr.sends.iter_mut().find(|s| s.target == target)
+    {
+        send.enabled = enabled;
+    }
+}
+
+/// Draw bus-to-bus send rows for a return strip: one per *other* return bus this
+/// return can legally feed (no self, no cycle), each with a level slider and an
+/// enable toggle. Level 0 removes the send. Cyclic targets are hidden.
+fn draw_return_sends(
+    ui: &mut egui::Ui,
+    song: &Arc<RwLock<Song>>,
+    rb: &ReturnSnapshot,
+    return_ids: &[(ReturnBusId, String)],
+) {
+    let t = theme();
+    let candidates: Vec<(ReturnBusId, String)> = {
+        let s = song.read();
+        return_ids
+            .iter()
+            .filter(|(id, _)| *id != rb.id && !s.return_send_would_cycle(rb.id, *id))
+            .cloned()
+            .collect()
+    };
+    if candidates.is_empty() {
+        return;
+    }
+    ui.label(
+        RichText::new("Bus sends")
+            .size(t.fonts.size_small)
+            .color(t.colors.text_secondary),
+    );
+    for (target, tname) in &candidates {
+        let (level, enabled) = rb
+            .sends
+            .iter()
+            .find(|(id, _, _)| id == target)
+            .map_or((0.0, true), |(_, l, e)| (*l, *e));
+        let active = level > 0.0;
+        ui.horizontal(|ui| {
+            let mut on = enabled;
+            if ui
+                .add_enabled(active, egui::Checkbox::without_text(&mut on))
+                .on_hover_text("Enable / bypass this bus send")
+                .changed()
+            {
+                set_return_send_enabled(song, rb.id, *target, on);
+            }
+            let short: String = tname.chars().take(4).collect();
+            let color = if active && !enabled {
+                t.colors.accent_orange
+            } else {
+                t.colors.text_dim
+            };
+            ui.label(RichText::new(short).size(t.fonts.size_small).color(color))
+                .on_hover_text(tname);
+            let mut lvl = level;
+            if ui
+                .add(
+                    egui::Slider::new(&mut lvl, 0.0..=1.0)
+                        .show_value(false)
+                        .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
+                )
+                .on_hover_text(format!("Send to {tname}"))
+                .changed()
+            {
+                apply_return_send(song, rb.id, *target, lvl);
+            }
+        });
+    }
+}
+
+/// Write a bus-to-bus send to the song: level 0 removes it, positive level
+/// upserts it. Guards against cycles even though the UI hides cyclic targets.
+fn apply_return_send(song: &Arc<RwLock<Song>>, from: ReturnBusId, target: ReturnBusId, level: f32) {
+    let mut sw = song.write();
+    if level <= 0.0 {
+        if let Some(bus) = sw.return_bus_mut(from) {
+            bus.sends.retain(|s| s.target != target);
+        }
+        return;
+    }
+    if sw.return_send_would_cycle(from, target) {
+        return;
+    }
+    if let Some(bus) = sw.return_bus_mut(from) {
+        if let Some(send) = bus.sends.iter_mut().find(|s| s.target == target) {
+            send.level = NormalizedValue::new(level);
+        } else {
+            bus.sends.push(synth_sequencer::ReturnSend {
+                target,
+                level: NormalizedValue::new(level),
+                enabled: true,
+            });
+        }
+    }
+}
+
+/// Toggle a bus-to-bus send's enable flag. No-op if the send doesn't exist.
+fn set_return_send_enabled(
+    song: &Arc<RwLock<Song>>,
+    from: ReturnBusId,
+    target: ReturnBusId,
+    enabled: bool,
+) {
+    let mut sw = song.write();
+    if let Some(bus) = sw.return_bus_mut(from)
+        && let Some(send) = bus.sends.iter_mut().find(|s| s.target == target)
+    {
+        send.enabled = enabled;
+    }
 }
 
 /// Write a send to the song: level 0 removes it, positive level upserts it.
@@ -613,17 +853,20 @@ fn apply_send(
             target,
             level: NormalizedValue::new(level),
             pre_fader,
+            enabled: true,
         });
     }
 }
 
 /// Draw a return-bus strip. Returns true if the user asked to delete it.
+#[allow(clippy::too_many_arguments)]
 fn draw_return_strip(
     ui: &mut egui::Ui,
     rb: &ReturnSnapshot,
     song: &Arc<RwLock<Song>>,
     handle: &mut EngineHandle,
     effects: &[EffectInfo],
+    return_ids: &[(ReturnBusId, String)],
     state: &mut MixerViewState,
 ) -> bool {
     use egui_remixicon::icons as ri;
@@ -678,14 +921,19 @@ fn draw_return_strip(
                         } else {
                             let resp = draw_module_header(
                                 ui,
-                                t.colors.accent_green,
+                                rb.color,
                                 &format!("⮌ {}", rb.name),
                                 Some("Click to rename".to_owned()),
                                 |ui| {
                                     if header_mute_button(ui, rb.mute)
                                         && let Some(bus) = song.write().return_bus_mut(rb.id)
                                     {
-                                        bus.mute = !bus.mute;
+                                        bus.set_mute(!bus.mute);
+                                    }
+                                    if header_solo_button(ui, rb.solo)
+                                        && let Some(bus) = song.write().return_bus_mut(rb.id)
+                                    {
+                                        bus.set_solo(!bus.solo);
                                     }
                                     // Close button, mirroring the patch module's header.
                                     ui.separator();
@@ -728,6 +976,11 @@ fn draw_return_strip(
                             bus.pan = BipolarValue::new(pan);
                         }
 
+                        // Bus-to-bus sends: route this return into other returns
+                        // (acyclic only). Each candidate target gets a level slider
+                        // + enable toggle; cyclic targets are hidden.
+                        draw_return_sends(ui, song, rb, return_ids);
+
                         // Level meter + volume fader.
                         let level = smoothed(
                             &mut state.return_meter_smooth,
@@ -758,7 +1011,7 @@ fn draw_return_strip(
             // appends a new effect.
             for fx in effects {
                 ui.add_space(4.0);
-                draw_return_effect_module(ui, rb.id, fx, handle);
+                draw_effect_module(ui, EffectTarget::Return(rb.id), fx, handle);
             }
             ui.add_space(4.0);
             ui.menu_button(
@@ -768,7 +1021,7 @@ fn draw_return_strip(
                 |ui| {
                     for &mt in RETURN_FX {
                         if ui.button(mt.name()).clicked() {
-                            add_return_effect(handle, rb.id, mt, effects);
+                            add_effect(handle, EffectTarget::Return(rb.id), mt, effects);
                             ui.close();
                         }
                     }
@@ -785,9 +1038,9 @@ fn draw_return_strip(
 /// driven parameter grid (knobs/sliders/dropdowns/toggles — identical to the
 /// patch editor). Bypassed effects are dimmed. Stacked vertically beneath the
 /// return strip by the caller so the inserts read like a patch-module chain.
-fn draw_return_effect_module(
+fn draw_effect_module(
     ui: &mut egui::Ui,
-    return_id: ReturnBusId,
+    target: EffectTarget,
     fx: &EffectInfo,
     handle: &mut EngineHandle,
 ) {
@@ -802,8 +1055,8 @@ fn draw_return_effect_module(
         .build(&ui.global_style());
     frame.show(ui, |ui| {
         // A unique id scope per effect so two inserts of the same type on a bus
-        // (and the same type across busses) don't collide on widget ids.
-        ui.push_id((return_id.0, fx.module_id), |ui| {
+        // (and the same type across busses / master) don't collide on widget ids.
+        ui.push_id((target.id_seed(), fx.module_id), |ui| {
             ui.vertical(|ui| {
                 ui.set_width(INSERT_WIDTH - 12.0);
                 draw_module_header(ui, accent, fx.module_type.name(), None, |ui| {
@@ -813,11 +1066,7 @@ fn draw_return_effect_module(
                         .on_hover_text("Enable / bypass")
                         .changed()
                     {
-                        handle.send(EngineCommand::SetReturnEffectEnabled {
-                            return_id,
-                            module_id: fx.module_id,
-                            enabled,
-                        });
+                        handle.send(target.set_enabled(fx.module_id, enabled));
                     }
                     ui.separator();
                     if ui
@@ -833,10 +1082,7 @@ fn draw_return_effect_module(
                         .on_hover_text("Remove effect")
                         .clicked()
                     {
-                        handle.send(EngineCommand::RemoveReturnEffect {
-                            return_id,
-                            id: fx.module_id,
-                        });
+                        handle.send(target.remove(fx.module_id));
                     }
                 });
 
@@ -858,11 +1104,7 @@ fn draw_return_effect_module(
                         |_, _| true,
                     );
                     for (param, value) in changes {
-                        handle.send(EngineCommand::SetReturnEffectParameter {
-                            return_id,
-                            module_id: fx.module_id,
-                            param: param.id.with_f32(value),
-                        });
+                        handle.send(target.set_param(fx.module_id, param.id.with_f32(value)));
                     }
                 }
             });
@@ -870,11 +1112,11 @@ fn draw_return_effect_module(
     });
 }
 
-/// Create and append a new effect to a return bus's chain. The fresh `ModuleId`
-/// instance is one past the highest existing instance of that type on the bus.
-fn add_return_effect(
+/// Create and append a new effect to a return-bus or master chain. The fresh
+/// `ModuleId` instance is one past the highest existing instance of that type.
+fn add_effect(
     handle: &mut EngineHandle,
-    return_id: ReturnBusId,
+    target: EffectTarget,
     module_type: ModuleType,
     effects: &[EffectInfo],
 ) {
@@ -887,41 +1129,62 @@ fn add_return_effect(
         .map(|fx| fx.module_id.instance)
         .max()
         .map_or(1, |m| m.saturating_add(1));
-    handle.send(EngineCommand::AddReturnEffect {
-        return_id,
-        id: ModuleId::new(module_type, instance),
-        effect,
-    });
+    handle.send(target.add(ModuleId::new(module_type, instance), effect));
 }
 
-/// Draw the master strip. Master volume is engine-owned (atomic + command).
-fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle) {
+/// Draw the master strip with its insert-effect chain. Master volume is
+/// engine-owned (atomic + command); the master effects are an engine-side chain
+/// (`instrument_id: None`), edited inline here like the return inserts.
+fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle, effects: &[EffectInfo]) {
     let t = theme();
     let master = handle.state.master_volume.load();
     let (peak_l, peak_r) = handle.peak_meters();
     let level = peak_l.as_f32().max(peak_r.as_f32());
-    ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
-        ui.set_width(STRIP_WIDTH);
-        strip_frame(ui, t.colors.accent_primary, t.colors.bg_widget).show(ui, |ui| {
-            ui.vertical(|ui| {
-                draw_module_header(ui, t.colors.accent_primary, "Master", None, |_| {});
-                ui.add_space(4.0);
+    ui.vertical(|ui| {
+        ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
+            ui.set_width(STRIP_WIDTH);
+            strip_frame(ui, t.colors.accent_primary, t.colors.bg_widget).show(ui, |ui| {
+                ui.vertical(|ui| {
+                    draw_module_header(ui, t.colors.accent_primary, "Master", None, |_| {});
+                    ui.add_space(4.0);
 
-                ui.horizontal(|ui| {
-                    ui.add_space(center_pad(METER_WIDTH + 24.0));
-                    draw_meter_bar(ui, level);
-                    let mut vol = master;
-                    if vertical_fader(ui, &mut vol).changed() {
-                        handle.send(EngineCommand::SetMasterVolume(Gain::new(vol)));
-                    }
+                    ui.horizontal(|ui| {
+                        ui.add_space(center_pad(METER_WIDTH + 24.0));
+                        draw_meter_bar(ui, level);
+                        let mut vol = master;
+                        if vertical_fader(ui, &mut vol).changed() {
+                            handle.send(EngineCommand::SetMasterVolume(Gain::new(vol)));
+                        }
+                    });
+                    ui.label(
+                        RichText::new(format!("{master:.2}"))
+                            .size(t.fonts.size_small)
+                            .color(t.colors.text_secondary),
+                    );
                 });
-                ui.label(
-                    RichText::new(format!("{master:.2}"))
-                        .size(t.fonts.size_small)
-                        .color(t.colors.text_secondary),
-                );
             });
         });
+
+        // Master insert effects (final chain applied to the full mix), stacked
+        // beneath the fader like the return inserts.
+        for fx in effects {
+            ui.add_space(4.0);
+            draw_effect_module(ui, EffectTarget::Master, fx, handle);
+        }
+        ui.add_space(4.0);
+        ui.menu_button(
+            RichText::new("+ Add FX")
+                .size(t.fonts.size_small)
+                .color(t.colors.accent_green),
+            |ui| {
+                for &mt in RETURN_FX {
+                    if ui.button(mt.name()).clicked() {
+                        add_effect(handle, EffectTarget::Master, mt, effects);
+                        ui.close();
+                    }
+                }
+            },
+        );
     });
 }
 

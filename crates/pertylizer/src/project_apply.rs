@@ -105,6 +105,34 @@ pub fn apply_project(
         }
     }
 
+    // Rebuild the master effect chain (instrument_id: None). Clear first so a
+    // load over a previous project starts from an empty master chain rather than
+    // stacking onto leftover effects.
+    sender.send(EngineCommand::ClearMasterEffects);
+    for fx in &project.global.master_effects {
+        let Ok(module_id) = fx.id.parse::<ModuleId>() else {
+            continue;
+        };
+        let Some((effect, descriptor)) = crate::module_factory::create_effect(fx.module_type)
+        else {
+            continue;
+        };
+        sender.send(EngineCommand::AddEffectInstance {
+            instrument_id: None,
+            id: module_id,
+            effect,
+        });
+        for (type_id, value) in &fx.parameters {
+            if let Some(param_desc) = descriptor.parameters.iter().find(|p| &p.type_id == type_id) {
+                sender.send(EngineCommand::SetEffectParameter {
+                    instrument_id: None,
+                    module_id,
+                    param: value.to_param(param_desc),
+                });
+            }
+        }
+    }
+
     // Bridge the async gap between queued `AddInstrument` commands and the
     // audio thread updating its snapshot — without this, a client calling
     // `load_project` immediately followed by `list_instruments` would see a
@@ -296,6 +324,7 @@ pub fn build_project_from_engine(
     let song_clone = { song.read().clone() };
     let master_volume = synth_core::Gain::new(engine_state.master_volume.load());
     let return_bus_effects = build_return_bus_effects(&engine_state.return_bus_effects.read());
+    let master_effects = build_effect_states(&engine_state.master_effects.read());
     let global = GlobalProjectState {
         master_volume,
         octave_offset: opts.octave_offset.unwrap_or(0),
@@ -304,6 +333,7 @@ pub fn build_project_from_engine(
         awe_preset: None,
         awe_description: opts.awe_description.filter(|s| !s.is_empty()),
         return_bus_effects,
+        master_effects,
     };
 
     let active_instrument_id = snapshots.first().map_or(0, |s| s.id.as_u64());
@@ -432,24 +462,26 @@ fn map_params_to_values(
 fn build_return_bus_effects(snaps: &[ReturnBusSnapshot]) -> Vec<ReturnBusEffectsState> {
     snaps
         .iter()
-        .map(|bus| {
-            let effects = bus
-                .effects
-                .iter()
-                .filter_map(|fx| {
-                    let (_, descriptor) = crate::module_factory::create_effect(fx.module_type)?;
-                    Some(ModuleState {
-                        id: fx.module_id.to_string(),
-                        module_type: fx.module_type,
-                        position: Position::default(),
-                        parameters: map_params_to_values(&descriptor.parameters, &fx.parameters),
-                    })
-                })
-                .collect();
-            ReturnBusEffectsState {
-                id: bus.id.0,
-                effects,
-            }
+        .map(|bus| ReturnBusEffectsState {
+            id: bus.id.0,
+            effects: build_effect_states(&bus.effects),
+        })
+        .collect()
+}
+
+/// Convert a flat engine effect-chain snapshot (return bus or master) into the
+/// serializable `ModuleState` list, mapping params via a type-derived descriptor.
+fn build_effect_states(effects: &[synth_engine::ReturnEffectSnapshot]) -> Vec<ModuleState> {
+    effects
+        .iter()
+        .filter_map(|fx| {
+            let (_, descriptor) = crate::module_factory::create_effect(fx.module_type)?;
+            Some(ModuleState {
+                id: fx.module_id.to_string(),
+                module_type: fx.module_type,
+                position: Position::default(),
+                parameters: map_params_to_values(&descriptor.parameters, &fx.parameters),
+            })
         })
         .collect()
 }

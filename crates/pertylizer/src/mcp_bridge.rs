@@ -58,6 +58,16 @@ pub struct AppSynthBridge {
     session: Arc<SynthSession>,
     shared: Arc<McpSharedState>,
     sample_library: Arc<std::sync::RwLock<synth_sampler::SampleLibrary>>,
+    /// Per-(return bus, effect type) high-water mark for fresh effect instance
+    /// numbers. The engine's `return_bus_effects` snapshot only catches up after
+    /// the audio thread drains its command queue, so a `batch_execute` that adds
+    /// two effects of the same type to one bus would otherwise read a stale
+    /// snapshot and assign both the same `ModuleId`. Bumping a high-water mark on
+    /// every add keeps instance numbers unique without waiting for the audio thread.
+    return_effect_hw: parking_lot::Mutex<HashMap<(u16, ModuleType), u16>>,
+    /// Master-effect counterpart of [`Self::return_effect_hw`] (the master chain
+    /// has no bus id, so it gets its own per-effect-type high-water map).
+    master_effect_hw: parking_lot::Mutex<HashMap<ModuleType, u16>>,
 }
 
 impl AppSynthBridge {
@@ -71,11 +81,160 @@ impl AppSynthBridge {
             session,
             shared,
             sample_library,
+            return_effect_hw: parking_lot::Mutex::new(HashMap::new()),
+            master_effect_hw: parking_lot::Mutex::new(HashMap::new()),
         }
     }
-}
 
-impl AppSynthBridge {
+    /// Allocate a fresh master-effect instance number for `module_type`, unique
+    /// even across same-type adds the audio thread hasn't published yet (the
+    /// master analogue of [`Self::next_return_effect_instance`]).
+    fn next_master_effect_instance(&self, module_type: ModuleType) -> u16 {
+        let snapshot_max = self
+            .session
+            .state()
+            .master_effects
+            .read()
+            .iter()
+            .filter(|e| e.module_type == module_type)
+            .map(|e| e.module_id.instance)
+            .max()
+            .unwrap_or(0);
+        let mut hw = self.master_effect_hw.lock();
+        let next = snapshot_max
+            .max(hw.get(&module_type).copied().unwrap_or(0))
+            .saturating_add(1);
+        hw.insert(module_type, next);
+        next
+    }
+
+    /// Error out unless the song currently owns a return bus with this id.
+    fn require_return_bus(
+        &self,
+        return_id: synth_sequencer::ReturnBusId,
+    ) -> Result<(), McpBridgeError> {
+        if self
+            .shared
+            .song
+            .read()
+            .return_busses()
+            .iter()
+            .any(|b| b.id == return_id)
+        {
+            Ok(())
+        } else {
+            Err(McpBridgeError::ReturnBusNotFound(return_id.0))
+        }
+    }
+
+    /// Allocate a fresh effect instance number for `(return bus, effect type)`,
+    /// unique even across same-type adds the audio thread hasn't published yet.
+    /// Takes the max of the live snapshot's highest instance and a per-key
+    /// high-water mark, then bumps and records the result.
+    fn next_return_effect_instance(
+        &self,
+        return_id: synth_sequencer::ReturnBusId,
+        module_type: ModuleType,
+    ) -> u16 {
+        let snapshot_max = self
+            .session
+            .state()
+            .return_bus_effects
+            .read()
+            .iter()
+            .find(|b| b.id == return_id)
+            .map(|b| {
+                b.effects
+                    .iter()
+                    .filter(|e| e.module_type == module_type)
+                    .map(|e| e.module_id.instance)
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+
+        let mut hw = self.return_effect_hw.lock();
+        let key = (return_id.0, module_type);
+        let next = snapshot_max
+            .max(hw.get(&key).copied().unwrap_or(0))
+            .saturating_add(1);
+        hw.insert(key, next);
+        next
+    }
+
+    /// Resolve a return bus's live effect chain into MCP-facing info, mapping
+    /// each snapshot effect's params through its descriptor for names/units.
+    fn return_bus_effect_infos(
+        &self,
+        return_id: synth_sequencer::ReturnBusId,
+    ) -> Vec<synth_mcp::ReturnEffectInfo> {
+        self.session
+            .state()
+            .return_bus_effects
+            .read()
+            .iter()
+            .find(|b| b.id == return_id)
+            .map(|b| b.effects.iter().map(return_effect_info).collect())
+            .unwrap_or_default()
+    }
+
+    /// Resolve an insert-effect parameter write shared by the return-bus and
+    /// master-bus paths: parse the module id, look the parameter up in the effect
+    /// type's descriptor (by `type_id` then display name), resolve + range-check
+    /// the value, and build both the typed `Param` to send and the `ParameterInfo`
+    /// to return. The caller wraps the `Param` in the appropriate engine command
+    /// (return vs master), which is the only difference between the two paths.
+    fn resolve_effect_param(
+        &self,
+        module_id: &str,
+        param_name: &str,
+        value: BridgeParamValue,
+    ) -> Result<(ModuleId, Param, ParameterInfo), McpBridgeError> {
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+
+        let needle = normalize_param_name(param_name);
+        let descriptor = crate::module_factory::get_descriptor(mid.module_type);
+        let param_desc = descriptor.as_ref().and_then(|desc| {
+            desc.parameters
+                .iter()
+                .find(|pd| normalize_param_name(&pd.type_id) == needle)
+                .or_else(|| {
+                    desc.parameters
+                        .iter()
+                        .find(|pd| normalize_param_name(&pd.name) == needle)
+                })
+        });
+        let Some(pd) = param_desc else {
+            return Err(McpBridgeError::ParameterNotFound(param_name.to_string()));
+        };
+
+        let value = resolve_param_value(&value, Some(pd), param_name)?;
+        pd.validate_f32(value)
+            .map_err(|source| McpBridgeError::InvalidParameterValue {
+                name: pd.name.clone(),
+                source,
+            })?;
+
+        let info = ParameterInfo {
+            name: pd.name.clone(),
+            value,
+            display: pd.unit.format(value),
+            min: Some(pd.range.min),
+            max: Some(pd.range.max),
+            default: Some(pd.range.default),
+            choices: pd
+                .choices
+                .as_ref()
+                .map(|c| c.iter().map(|ch| ch.name.clone()).collect()),
+            type_id: Some(pd.type_id.clone()),
+            is_automatable: Some(pd.is_automatable()),
+            response_curve: Some(format!("{:?}", pd.response_curve)),
+        };
+        Ok((mid, pd.id.with_f32(value), info))
+    }
+
     /// Validate that a module exists and has the given port in the expected direction.
     fn validate_port(
         &self,
@@ -1453,6 +1612,7 @@ impl SynthBridge for AppSynthBridge {
                         target: s.target.0,
                         level: s.level.as_f32(),
                         pre_fader: s.pre_fader,
+                        enabled: s.enabled,
                     })
                     .collect(),
             })
@@ -2605,6 +2765,9 @@ impl SynthBridge for AppSynthBridge {
     // === Return busses (effect sends) ===
 
     fn list_return_busses(&self) -> Result<Vec<synth_mcp::ReturnBusInfo>, McpBridgeError> {
+        // Collect the live effect chains first (separate lock), then merge with
+        // the song-owned fader settings. The effect chain is engine runtime state;
+        // the fader is song state.
         let song = self.shared.song.read();
         Ok(song
             .return_busses()
@@ -2615,6 +2778,19 @@ impl SynthBridge for AppSynthBridge {
                 volume: b.volume.as_f32(),
                 pan: b.pan.as_f32(),
                 mute: b.mute,
+                solo: b.solo,
+                color: b.color.to_hex(),
+                description: b.description.clone(),
+                effects: self.return_bus_effect_infos(b.id),
+                sends: b
+                    .sends
+                    .iter()
+                    .map(|s| synth_mcp::ReturnSendInfo {
+                        target: s.target.0,
+                        level: s.level.as_f32(),
+                        enabled: s.enabled,
+                    })
+                    .collect(),
             })
             .collect())
     }
@@ -2682,7 +2858,41 @@ impl SynthBridge for AppSynthBridge {
         let bus = song
             .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
             .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
-        bus.mute = muted;
+        // Mute clears solo (mutually exclusive), mirroring tracks.
+        bus.set_mute(muted);
+        Ok(())
+    }
+
+    fn set_return_bus_solo(&self, return_id: u16, solo: bool) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let bus = song
+            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
+        bus.set_solo(solo);
+        Ok(())
+    }
+
+    fn set_return_bus_color(&self, return_id: u16, color: &str) -> Result<(), McpBridgeError> {
+        let parsed = synth_sequencer::TrackColor::from_hex(color)
+            .ok_or_else(|| McpBridgeError::Other(format!("invalid color '{color}'")))?;
+        let mut song = self.shared.song.write();
+        let bus = song
+            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
+        bus.color = parsed;
+        Ok(())
+    }
+
+    fn set_return_bus_description(
+        &self,
+        return_id: u16,
+        description: &str,
+    ) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let bus = song
+            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
+        bus.description = description.to_string();
         Ok(())
     }
 
@@ -2701,6 +2911,7 @@ impl SynthBridge for AppSynthBridge {
         return_id: u16,
         level: f32,
         pre_fader: bool,
+        enabled: bool,
     ) -> Result<(), McpBridgeError> {
         let rid = synth_sequencer::ReturnBusId(return_id);
         let mut song = self.shared.song.write();
@@ -2714,11 +2925,13 @@ impl SynthBridge for AppSynthBridge {
         if let Some(send) = track.sends.iter_mut().find(|s| s.target == rid) {
             send.level = level;
             send.pre_fader = pre_fader;
+            send.enabled = enabled;
         } else {
             track.sends.push(synth_sequencer::TrackSend {
                 target: rid,
                 level,
                 pre_fader,
+                enabled,
             });
         }
         Ok(())
@@ -2731,6 +2944,362 @@ impl SynthBridge for AppSynthBridge {
             .track_mut(synth_sequencer::TrackId(track_id))
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
         track.sends.retain(|s| s.target != rid);
+        Ok(())
+    }
+
+    fn set_return_send(
+        &self,
+        from_id: u16,
+        to_id: u16,
+        level: f32,
+        enabled: bool,
+    ) -> Result<(), McpBridgeError> {
+        let from = synth_sequencer::ReturnBusId(from_id);
+        let to = synth_sequencer::ReturnBusId(to_id);
+        let mut song = self.shared.song.write();
+        if !song.return_busses().iter().any(|b| b.id == from) {
+            return Err(McpBridgeError::ReturnBusNotFound(from_id));
+        }
+        if !song.return_busses().iter().any(|b| b.id == to) {
+            return Err(McpBridgeError::ReturnBusNotFound(to_id));
+        }
+        // Refuse self-sends and any routing that would close a cycle (the engine
+        // can only process an acyclic return graph in dependency order).
+        if song.return_send_would_cycle(from, to) {
+            return Err(McpBridgeError::Other(format!(
+                "return send {from_id} -> {to_id} would create a routing cycle"
+            )));
+        }
+        let level = synth_core::NormalizedValue::new(level);
+        let bus = song
+            .return_bus_mut(from)
+            .ok_or(McpBridgeError::ReturnBusNotFound(from_id))?;
+        if let Some(send) = bus.sends.iter_mut().find(|s| s.target == to) {
+            send.level = level;
+            send.enabled = enabled;
+        } else {
+            bus.sends.push(synth_sequencer::ReturnSend {
+                target: to,
+                level,
+                enabled,
+            });
+        }
+        Ok(())
+    }
+
+    fn remove_return_send(&self, from_id: u16, to_id: u16) -> Result<(), McpBridgeError> {
+        let from = synth_sequencer::ReturnBusId(from_id);
+        let to = synth_sequencer::ReturnBusId(to_id);
+        let mut song = self.shared.song.write();
+        let bus = song
+            .return_bus_mut(from)
+            .ok_or(McpBridgeError::ReturnBusNotFound(from_id))?;
+        bus.sends.retain(|s| s.target != to);
+        Ok(())
+    }
+
+    fn get_master_volume(&self) -> Result<f32, McpBridgeError> {
+        Ok(self.session.state().master_volume.load())
+    }
+
+    fn set_master_volume(&self, volume: f32) -> Result<(), McpBridgeError> {
+        // `Gain::new` does not reject NaN/inf; guard at the boundary so a bad
+        // value can't poison the master gain (the MCP tool also range-checks).
+        if !volume.is_finite() {
+            return Err(McpBridgeError::Other(format!(
+                "master volume must be finite, got {volume}"
+            )));
+        }
+        if self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetMasterVolume(synth_core::Gain::new(
+                volume,
+            )))
+        {
+            Ok(())
+        } else {
+            Err(McpBridgeError::CommandSendFailed {
+                command: "SetMasterVolume",
+            })
+        }
+    }
+
+    fn list_master_effects(&self) -> Result<Vec<synth_mcp::ReturnEffectInfo>, McpBridgeError> {
+        Ok(self
+            .session
+            .state()
+            .master_effects
+            .read()
+            .iter()
+            .map(return_effect_info)
+            .collect())
+    }
+
+    fn add_master_effect(&self, effect_type: &str) -> Result<String, McpBridgeError> {
+        let module_type = parse_module_type(effect_type)
+            .ok_or_else(|| McpBridgeError::InvalidModuleType(effect_type.to_string()))?;
+        let Some((effect, _descriptor)) = crate::module_factory::create_effect(module_type) else {
+            return Err(McpBridgeError::InvalidModuleType(format!(
+                "{effect_type} is not an effect"
+            )));
+        };
+        let module_id = ModuleId::new(module_type, self.next_master_effect_instance(module_type));
+        // `instrument_id: None` targets the master effect chain.
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::AddEffectInstance {
+                instrument_id: None,
+                id: module_id,
+                effect,
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "AddEffectInstance",
+            });
+        }
+        Ok(module_id.to_string())
+    }
+
+    fn remove_master_effect(&self, module_id: &str) -> Result<(), McpBridgeError> {
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::RemoveEffect {
+                instrument_id: None,
+                id: mid,
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "RemoveEffect",
+            });
+        }
+        Ok(())
+    }
+
+    fn set_master_effect_parameter(
+        &self,
+        module_id: &str,
+        param_name: &str,
+        value: BridgeParamValue,
+    ) -> Result<ParameterInfo, McpBridgeError> {
+        let (mid, param, info) = self.resolve_effect_param(module_id, param_name, value)?;
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetEffectParameter {
+                instrument_id: None,
+                module_id: mid,
+                param,
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "SetEffectParameter",
+            });
+        }
+        Ok(info)
+    }
+
+    fn set_master_effect_enabled(
+        &self,
+        module_id: &str,
+        enabled: bool,
+    ) -> Result<(), McpBridgeError> {
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetEffectEnabled {
+                instrument_id: None,
+                module_id: mid,
+                enabled,
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "SetEffectEnabled",
+            });
+        }
+        Ok(())
+    }
+
+    fn reorder_master_effect(
+        &self,
+        module_id: &str,
+        direction: synth_mcp::bridge::ReturnEffectMove,
+    ) -> Result<(), McpBridgeError> {
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+        let direction = match direction {
+            synth_mcp::bridge::ReturnEffectMove::Up => synth_engine::commands::ReorderDirection::Up,
+            synth_mcp::bridge::ReturnEffectMove::Down => {
+                synth_engine::commands::ReorderDirection::Down
+            }
+        };
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::ReorderEffect {
+                instrument_id: None,
+                module_id: mid,
+                direction,
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "ReorderEffect",
+            });
+        }
+        Ok(())
+    }
+
+    fn add_return_effect(
+        &self,
+        return_id: u16,
+        effect_type: &str,
+    ) -> Result<String, McpBridgeError> {
+        let rid = synth_sequencer::ReturnBusId(return_id);
+        self.require_return_bus(rid)?;
+
+        let module_type = parse_module_type(effect_type)
+            .ok_or_else(|| McpBridgeError::InvalidModuleType(effect_type.to_string()))?;
+        // `create_effect` returns `None` for voice modules / visualizers — only
+        // real audio effects can live on a return bus.
+        let Some((effect, _descriptor)) = crate::module_factory::create_effect(module_type) else {
+            return Err(McpBridgeError::InvalidModuleType(format!(
+                "{effect_type} is not an effect"
+            )));
+        };
+
+        let module_id = ModuleId::new(
+            module_type,
+            self.next_return_effect_instance(rid, module_type),
+        );
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::AddReturnEffect {
+                return_id: rid,
+                id: module_id,
+                effect,
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "AddReturnEffect",
+            });
+        }
+        Ok(module_id.to_string())
+    }
+
+    fn remove_return_effect(&self, return_id: u16, module_id: &str) -> Result<(), McpBridgeError> {
+        let rid = synth_sequencer::ReturnBusId(return_id);
+        self.require_return_bus(rid)?;
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::RemoveReturnEffect {
+                return_id: rid,
+                id: mid,
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "RemoveReturnEffect",
+            });
+        }
+        Ok(())
+    }
+
+    fn set_return_effect_parameter(
+        &self,
+        return_id: u16,
+        module_id: &str,
+        param_name: &str,
+        value: BridgeParamValue,
+    ) -> Result<ParameterInfo, McpBridgeError> {
+        let rid = synth_sequencer::ReturnBusId(return_id);
+        self.require_return_bus(rid)?;
+        let (mid, param, info) = self.resolve_effect_param(module_id, param_name, value)?;
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetReturnEffectParameter {
+                return_id: rid,
+                module_id: mid,
+                param,
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "SetReturnEffectParameter",
+            });
+        }
+        Ok(info)
+    }
+
+    fn set_return_effect_enabled(
+        &self,
+        return_id: u16,
+        module_id: &str,
+        enabled: bool,
+    ) -> Result<(), McpBridgeError> {
+        let rid = synth_sequencer::ReturnBusId(return_id);
+        self.require_return_bus(rid)?;
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetReturnEffectEnabled {
+                return_id: rid,
+                module_id: mid,
+                enabled,
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "SetReturnEffectEnabled",
+            });
+        }
+        Ok(())
+    }
+
+    fn reorder_return_effect(
+        &self,
+        return_id: u16,
+        module_id: &str,
+        direction: synth_mcp::bridge::ReturnEffectMove,
+    ) -> Result<(), McpBridgeError> {
+        let rid = synth_sequencer::ReturnBusId(return_id);
+        self.require_return_bus(rid)?;
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+        let direction = match direction {
+            synth_mcp::bridge::ReturnEffectMove::Up => synth_engine::commands::ReorderDirection::Up,
+            synth_mcp::bridge::ReturnEffectMove::Down => {
+                synth_engine::commands::ReorderDirection::Down
+            }
+        };
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::ReorderReturnEffect {
+                return_id: rid,
+                module_id: mid,
+                direction,
+            })
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "ReorderReturnEffect",
+            });
+        }
         Ok(())
     }
 
@@ -5664,6 +6233,34 @@ fn resolve_param_value(
                     ),
                 })
         }
+    }
+}
+
+/// Build MCP `ReturnEffectInfo` from an engine return-effect snapshot, resolving
+/// each parameter's name / type-id / unit via the effect type's descriptor.
+fn return_effect_info(effect: &synth_engine::ReturnEffectSnapshot) -> synth_mcp::ReturnEffectInfo {
+    let descriptor = crate::module_factory::get_descriptor(effect.module_type);
+    let parameters = effect
+        .parameters
+        .iter()
+        .map(|p| {
+            let pd = descriptor
+                .as_ref()
+                .and_then(|d| d.parameters.iter().find(|pd| pd.id.same_kind(p)));
+            let value = p.as_f32();
+            synth_mcp::ReturnEffectParamInfo {
+                name: pd.map(|pd| pd.name.clone()).unwrap_or_default(),
+                type_id: pd.map(|pd| pd.type_id.clone()).unwrap_or_default(),
+                value,
+                display: pd.map_or_else(|| format!("{value}"), |pd| pd.unit.format(value)),
+            }
+        })
+        .collect();
+    synth_mcp::ReturnEffectInfo {
+        module_id: effect.module_id.to_string(),
+        effect_type: effect.module_type.prefix().to_string(),
+        bypassed: effect.bypassed,
+        parameters,
     }
 }
 
