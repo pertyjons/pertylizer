@@ -366,6 +366,16 @@ impl ClipMode {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    #[must_use]
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::Off => "No clipping — clean, linear output.",
+            Self::Soft => "Soft tanh saturation — gentle, warm limiting.",
+            Self::Hard => "Hard clip at ±1.0 — abrupt, aggressive limiting.",
+        }
+    }
+
     /// Get the index of this mode.
     #[must_use]
     pub fn index(self) -> usize {
@@ -397,7 +407,10 @@ impl ClipMode {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|m| crate::module_traits::ChoiceOption::new(m.name().to_lowercase(), m.name()))
+            .map(|m| {
+                crate::module_traits::ChoiceOption::new(m.name().to_lowercase(), m.name())
+                    .with_description(m.description())
+            })
             .collect()
     }
 }

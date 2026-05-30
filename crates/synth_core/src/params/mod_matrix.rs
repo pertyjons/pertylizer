@@ -66,6 +66,17 @@ impl ModMatrixGridSize {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    #[must_use]
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::Grid1x1 => "1\u{d7}1 grid — 1 modulation slot.",
+            Self::Grid2x2 => "2\u{d7}2 grid — 4 modulation slots.",
+            Self::Grid3x3 => "3\u{d7}3 grid — 9 modulation slots.",
+            Self::Grid4x4 => "4\u{d7}4 grid — 16 modulation slots.",
+        }
+    }
+
     /// Identifier string.
     #[must_use]
     pub const fn id(self) -> &'static str {
@@ -93,7 +104,10 @@ impl ModMatrixGridSize {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|g| crate::module_traits::ChoiceOption::new(g.id(), g.name()))
+            .map(|g| {
+                crate::module_traits::ChoiceOption::new(g.id(), g.name())
+                    .with_description(g.description())
+            })
             .collect()
     }
 }
@@ -181,6 +195,25 @@ impl ModSource {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::None => "No source — the slot is inactive.",
+            Self::Lfo(_) => "Low-frequency oscillator output.",
+            Self::Envelope(_) => "Envelope generator output.",
+            Self::Velocity => "Note-on velocity — how hard the key was struck.",
+            Self::NoteNumber => "MIDI note number, normalized across the keyboard.",
+            Self::Aftertouch => "Channel pressure applied after the key is held.",
+            Self::ModWheel => "Mod wheel (MIDI CC 1).",
+            Self::PitchBend => "Pitch-bend wheel (bipolar, centered at rest).",
+            Self::PolyAftertouch => "Per-note polyphonic key pressure.",
+            Self::KineticPos => "Kinetic Modulator position output.",
+            Self::KineticVel => "Kinetic Modulator velocity (rate-of-change) output.",
+            Self::KineticAcc => "Kinetic Modulator acceleration output.",
+            Self::EnvFollower(_) => "Envelope-follower output tracking an audio signal's level.",
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::None => "none",
@@ -216,7 +249,10 @@ impl ModSource {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|s| crate::module_traits::ChoiceOption::new(s.id(), s.name()))
+            .map(|s| {
+                crate::module_traits::ChoiceOption::new(s.id(), s.name())
+                    .with_description(s.description())
+            })
             .collect()
     }
 
@@ -329,6 +365,21 @@ impl ModDestination {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::None => "No destination — the slot is inactive.",
+            Self::OscPitch(_) => "Oscillator pitch, in semitones.",
+            Self::OscLevel(_) => "Oscillator output level.",
+            Self::FilterCutoff(_) => "Filter cutoff frequency, in semitones.",
+            Self::FilterResonance(_) => "Filter resonance / Q.",
+            Self::AmpLevel(_) => "Amplifier output level.",
+            Self::AmpPan(_) => "Amplifier stereo pan position.",
+            Self::LfoRate(_) => "LFO rate / speed.",
+            Self::LfoDepth(_) => "LFO modulation depth.",
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::None => "none",
@@ -372,7 +423,10 @@ impl ModDestination {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|d| crate::module_traits::ChoiceOption::new(d.id(), d.name()))
+            .map(|d| {
+                crate::module_traits::ChoiceOption::new(d.id(), d.name())
+                    .with_description(d.description())
+            })
             .collect()
     }
 

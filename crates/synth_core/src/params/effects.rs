@@ -33,6 +33,15 @@ impl DelayMode {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Mono => "Single delay line summed to both channels.",
+            Self::Stereo => "Independent left and right delay times for a wide image.",
+            Self::PingPong => "Echoes bounce alternately between left and right.",
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::Mono => "mono",
@@ -52,7 +61,10 @@ impl DelayMode {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|m| crate::module_traits::ChoiceOption::new(m.id(), m.name()))
+            .map(|m| {
+                crate::module_traits::ChoiceOption::new(m.id(), m.name())
+                    .with_description(m.description())
+            })
             .collect()
     }
 }
@@ -92,6 +104,20 @@ impl DistortionMode {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::SoftClip => "Smooth tanh-style saturation — warm, gentle overdrive.",
+            Self::HardClip => "Abrupt clipping at the ceiling — harsh, buzzy edge.",
+            Self::Tube => "Asymmetric tube-style saturation — warm, even-harmonic grit.",
+            Self::Foldback => "Folds peaks back on themselves — aggressive, ring-mod-like timbres.",
+            Self::Bitcrush => "Reduces bit depth — quantized, lo-fi digital distortion.",
+            Self::VariableClip => {
+                "Arctan clipping with continuously adjustable hardness — soft to hard via Drive."
+            }
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::SoftClip => "soft_clip",
@@ -114,7 +140,10 @@ impl DistortionMode {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|m| crate::module_traits::ChoiceOption::new(m.id(), m.name()))
+            .map(|m| {
+                crate::module_traits::ChoiceOption::new(m.id(), m.name())
+                    .with_description(m.description())
+            })
             .collect()
     }
 }
@@ -1151,6 +1180,17 @@ impl ReverseGateMode {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Reverse => {
+                "Plays the reverb tail backwards — swelling, sucked-in reverse reverb."
+            }
+            Self::Gate => "Cuts the reverb tail abruptly — the classic gated-reverb snare effect.",
+            Self::Stutter => "Re-triggers the captured tail in slices — rhythmic stutter.",
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::Reverse => "reverse",
@@ -1170,7 +1210,10 @@ impl ReverseGateMode {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|m| crate::module_traits::ChoiceOption::new(m.id(), m.name()))
+            .map(|m| {
+                crate::module_traits::ChoiceOption::new(m.id(), m.name())
+                    .with_description(m.description())
+            })
             .collect()
     }
 }
@@ -1193,6 +1236,14 @@ impl ReverseGateTrigger {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Periodic => "Re-captures the buffer at a fixed time interval.",
+            Self::Threshold => "Re-captures when the input level crosses a threshold.",
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::Periodic => "periodic",
@@ -1211,7 +1262,10 @@ impl ReverseGateTrigger {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|m| crate::module_traits::ChoiceOption::new(m.id(), m.name()))
+            .map(|m| {
+                crate::module_traits::ChoiceOption::new(m.id(), m.name())
+                    .with_description(m.description())
+            })
             .collect()
     }
 }

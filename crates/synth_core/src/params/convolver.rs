@@ -37,6 +37,17 @@ impl ImpulseResponse {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    #[must_use]
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Plate => "Plate reverb — dense, bright, smooth tail with no early reflections.",
+            Self::Room => "Small-room ambience — short, natural reflections.",
+            Self::Spring => "Spring reverb — boingy, resonant, vintage character.",
+            Self::Hall => "Concert-hall reverb — long, lush, spacious decay.",
+        }
+    }
+
     #[must_use]
     pub fn from_index(idx: usize) -> Self {
         Self::ALL.get(idx).copied().unwrap_or_default()

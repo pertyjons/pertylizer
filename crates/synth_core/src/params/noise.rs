@@ -51,6 +51,23 @@ impl NoiseType {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::White => "Flat spectrum, equal energy per frequency — bright, full hiss.",
+            Self::Pink => "−3 dB/octave, equal energy per octave — natural, balanced hiss.",
+            Self::Brown => "−6 dB/octave — dark, rumbling low-end noise.",
+            Self::Blue => "+3 dB/octave — bright, airy hiss tilted toward the highs.",
+            Self::Violet => "+6 dB/octave — very bright, sharp high-frequency noise.",
+            Self::Lfsr => {
+                "Deterministic linear-feedback shift register — gritty retro digital noise (NES-style)."
+            }
+            Self::Chip => {
+                "SID-inspired 23-bit shift register — sparse, metallic chip noise, great for drums and FX."
+            }
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::White => "white",
@@ -74,7 +91,10 @@ impl NoiseType {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|t| crate::module_traits::ChoiceOption::new(t.id(), t.name()))
+            .map(|t| {
+                crate::module_traits::ChoiceOption::new(t.id(), t.name())
+                    .with_description(t.description())
+            })
             .collect()
     }
 }

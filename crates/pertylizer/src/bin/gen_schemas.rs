@@ -126,7 +126,15 @@ fn parameter_descriptor(param: &ParameterDescriptor) -> Value {
     if let Some(choices) = &param.choices {
         let options: Vec<Value> = choices
             .iter()
-            .map(|c| json!({ "id": c.id, "name": c.name }))
+            .map(|c| {
+                let mut opt = serde_json::Map::new();
+                opt.insert("id".to_string(), json!(c.id));
+                opt.insert("name".to_string(), json!(c.name));
+                if let Some(desc) = &c.description {
+                    opt.insert("description".to_string(), json!(desc));
+                }
+                Value::Object(opt)
+            })
             .collect();
         // `range.default` holds the default choice index; map it to the id.
         #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]

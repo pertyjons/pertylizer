@@ -58,6 +58,25 @@ impl EasingCurve {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    #[must_use]
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Linear => "Constant-rate ramp — a straight line from start to end.",
+            Self::QuadOut => "Quadratic ease-out — fast start, gentle settle.",
+            Self::CubicOut => "Cubic ease-out — stronger deceleration than quadratic.",
+            Self::QuartOut => "Quartic ease-out — sharp start, long tail.",
+            Self::QuintOut => "Quintic ease-out — very sharp start, very long tail.",
+            Self::ExpoOut => {
+                "Exponential ease-out — near-instant start, smooth exponential settle."
+            }
+            Self::CircOut => "Circular ease-out — a rounded, gradually slowing arc.",
+            Self::BackOut => "Overshoots past the target, then settles back.",
+            Self::ElasticOut => "Springs past the target and oscillates into place.",
+            Self::BounceOut => "Bounces against the target before coming to rest.",
+        }
+    }
+
     #[must_use]
     pub fn id(self) -> &'static str {
         match self {
@@ -87,7 +106,10 @@ impl EasingCurve {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|c| crate::module_traits::ChoiceOption::new(c.id(), c.name()))
+            .map(|c| {
+                crate::module_traits::ChoiceOption::new(c.id(), c.name())
+                    .with_description(c.description())
+            })
             .collect()
     }
 }
@@ -120,6 +142,16 @@ impl KineticLoopMode {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    #[must_use]
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::OneShot => "Plays the curve once and holds at the end value.",
+            Self::Loop => "Restarts from the beginning each time it reaches the end.",
+            Self::PingPong => "Reverses direction at each end for back-and-forth motion.",
+        }
+    }
+
     #[must_use]
     pub fn id(self) -> &'static str {
         match self {
@@ -142,7 +174,10 @@ impl KineticLoopMode {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|m| crate::module_traits::ChoiceOption::new(m.id(), m.name()))
+            .map(|m| {
+                crate::module_traits::ChoiceOption::new(m.id(), m.name())
+                    .with_description(m.description())
+            })
             .collect()
     }
 }

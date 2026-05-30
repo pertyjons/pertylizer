@@ -338,7 +338,9 @@ impl Describable for GranularOsc {
                     "Window",
                     GrainWindow::ALL
                         .iter()
-                        .map(|w| ChoiceOption::new(w.id(), w.name()))
+                        .map(|w| {
+                            ChoiceOption::new(w.id(), w.name()).with_description(w.description())
+                        })
                         .collect(),
                 )
                 .description("Grain envelope shape"),
@@ -350,7 +352,9 @@ impl Describable for GranularOsc {
                     "Source",
                     GrainSource::ALL
                         .iter()
-                        .map(|s| ChoiceOption::new(s.id(), s.name()))
+                        .map(|s| {
+                            ChoiceOption::new(s.id(), s.name()).with_description(s.description())
+                        })
                         .collect(),
                 )
                 .description("Source waveform used to fill the grain buffer"),

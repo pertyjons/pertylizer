@@ -51,6 +51,17 @@ impl FftSizeOption {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    #[must_use]
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Fft512 => "512-sample FFT — low latency and CPU, coarser frequency resolution.",
+            Self::Fft1024 => "1024-sample FFT — a balance of latency and quality.",
+            Self::Fft2048 => "2048-sample FFT — finer frequency resolution, higher latency.",
+            Self::Fft4096 => "4096-sample FFT — the finest resolution, highest latency and CPU.",
+        }
+    }
+
     #[must_use]
     pub fn from_index(idx: usize) -> Self {
         Self::ALL.get(idx).copied().unwrap_or_default()

@@ -345,6 +345,9 @@ pub struct ChoiceInfo {
     pub id: String,
     /// Display name.
     pub name: String,
+    /// What this choice does, for discovery and tooltips.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
 }
 
 /// Information about a module port.

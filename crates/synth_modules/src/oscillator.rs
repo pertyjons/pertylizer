@@ -448,7 +448,10 @@ impl Describable for Oscillator {
                     "Anti-Alias",
                     AntiAliasMode::ALL
                         .iter()
-                        .map(|m| synth_core::module_traits::ChoiceOption::new(m.id(), m.name()))
+                        .map(|m| {
+                            synth_core::module_traits::ChoiceOption::new(m.id(), m.name())
+                                .with_description(m.description())
+                        })
                         .collect(),
                 )
                 .description("Anti-aliasing algorithm"),

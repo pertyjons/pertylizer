@@ -159,6 +159,16 @@ impl MechanicalNoiseType {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::KeyDown => "Key-press mechanical noise — the thud as a key is pressed.",
+            Self::KeyUp => "Key-release mechanical noise — the click as a key returns.",
+            Self::Pedal => "Damper-pedal mechanism noise.",
+            Self::Hammer => "Hammer-strike noise against the string.",
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::KeyDown => "key_down",
@@ -179,7 +189,10 @@ impl MechanicalNoiseType {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|t| crate::module_traits::ChoiceOption::new(t.id(), t.name()))
+            .map(|t| {
+                crate::module_traits::ChoiceOption::new(t.id(), t.name())
+                    .with_description(t.description())
+            })
             .collect()
     }
 }

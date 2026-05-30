@@ -9502,6 +9502,7 @@ fn build_module_type_info(
                         value: i as f32,
                         id: c.id.clone(),
                         name: c.name.clone(),
+                        description: c.description.clone().unwrap_or_default(),
                     })
                     .collect()
             }),

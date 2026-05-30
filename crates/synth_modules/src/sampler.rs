@@ -227,9 +227,12 @@ impl Describable for Sampler {
                     Param::Sampler(SamplerParam::Direction(PlayDirection::Forward)),
                     "Direction",
                     vec![
-                        synth_core::module_traits::ChoiceOption::new("forward", "Forward"),
-                        synth_core::module_traits::ChoiceOption::new("reverse", "Reverse"),
-                        synth_core::module_traits::ChoiceOption::new("ping_pong", "Ping-Pong"),
+                        synth_core::module_traits::ChoiceOption::new("forward", "Forward")
+                            .with_description("Plays the sample from start to end."),
+                        synth_core::module_traits::ChoiceOption::new("reverse", "Reverse")
+                            .with_description("Plays the sample backwards."),
+                        synth_core::module_traits::ChoiceOption::new("ping_pong", "Ping-Pong")
+                            .with_description("Alternates forward and backward each pass."),
                     ],
                 )
                 .description("Playback direction"),

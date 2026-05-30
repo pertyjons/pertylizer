@@ -31,6 +31,15 @@ impl SubOscWaveform {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Sine => "Pure sine — a smooth, clean fundamental for deep bass.",
+            Self::Square => "Square wave — punchy, with full odd harmonics.",
+            Self::Pulse25 => "25% pulse — a hollow, reedy character.",
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::Sine => "sine",
@@ -50,7 +59,10 @@ impl SubOscWaveform {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|w| crate::module_traits::ChoiceOption::new(w.id(), w.name()))
+            .map(|w| {
+                crate::module_traits::ChoiceOption::new(w.id(), w.name())
+                    .with_description(w.description())
+            })
             .collect()
     }
 }
@@ -76,6 +88,14 @@ impl SubOscOctave {
         match self {
             Self::MinusOne => "-1 Oct",
             Self::MinusTwo => "-2 Oct",
+        }
+    }
+
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::MinusOne => "One octave below the main oscillator.",
+            Self::MinusTwo => "Two octaves below the main oscillator.",
         }
     }
 
@@ -107,6 +127,7 @@ impl SubOscOctave {
                     },
                     o.name(),
                 )
+                .with_description(o.description())
             })
             .collect()
     }

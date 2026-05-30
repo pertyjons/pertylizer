@@ -44,6 +44,22 @@ impl Waveform {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Sine => "Pure fundamental with no harmonics — smooth and hollow.",
+            Self::Triangle => "Odd harmonics rolling off steeply — soft and slightly hollow.",
+            Self::Sawtooth => {
+                "Every harmonic present — bright and buzzy, the classic analog lead/bass wave."
+            }
+            Self::Square => "Odd harmonics only — hollow and woody (a 50% pulse).",
+            Self::Pulse => "Rectangular wave with adjustable pulse width — thin and nasal.",
+            Self::DsfSaw => {
+                "Discrete-summation saw with a controllable harmonic count — band-limited and smooth."
+            }
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::Sine => "sine",
@@ -152,6 +168,55 @@ impl MathAlgo {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::SineFM => {
+                "Two-operator FM: a sine carrier modulated by a sine — DX-style metallic and bell tones."
+            }
+            Self::TanChaos => {
+                "Tangent waveshaping pushed toward chaos — harsh, unstable digital timbres."
+            }
+            Self::SuperSaw => "Stack of detuned saws — wide, lush supersaw character.",
+            Self::BitWise => "Bitwise logic on the phase counter — glitchy, aliased digital tones.",
+            Self::WaveFolder => {
+                "Sine driven through a wavefolder — rich West-Coast harmonics that grow with drive."
+            }
+            Self::Formant => {
+                "Sine shaped around a movable formant peak — vocal, vowel-like resonance."
+            }
+            Self::PhaseDist => {
+                "Casio-style phase distortion — morphs a sine toward saw and resonant shapes."
+            }
+            Self::Metallic => "Inharmonic partials — clangorous, bell- and metal-like tones.",
+            Self::Fractal => "Self-similar fractal waveform — complex, evolving spectra.",
+            Self::Chebyshev => {
+                "Chebyshev-polynomial waveshaping — precise control over the harmonic series."
+            }
+            Self::Bytebeat => {
+                "Bytebeat formula (integer math on a sample counter) — lo-fi 8-bit/chiptune textures."
+            }
+            Self::Lorenz => "Lorenz strange attractor — smooth chaotic, noise-like motion.",
+            Self::KarplusStrong => {
+                "Karplus-Strong plucked string — tuned, decaying string and percussion tones."
+            }
+            Self::Walsh => "Walsh functions (square-wave basis) — hard, hollow digital timbres.",
+            Self::Logistic => {
+                "Logistic-map iteration — chaotic noise that sharpens with the control parameter."
+            }
+            Self::Pulsar => {
+                "Pulsar synthesis — trains of band-limited pulses with strong, movable formants."
+            }
+            Self::Shepard => "Shepard tone — the illusion of endlessly rising or falling pitch.",
+            Self::FeedbackFM => {
+                "Single operator feeding back on itself — saw-like, turning noisy as feedback rises."
+            }
+            Self::Vosim => {
+                "VOSIM voice simulation — pulse bursts producing strong formants, vocal and speech-like."
+            }
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::SineFM => "sine_fm",
@@ -212,7 +277,10 @@ impl MathAlgo {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|a| crate::module_traits::ChoiceOption::new(a.id(), a.name()))
+            .map(|a| {
+                crate::module_traits::ChoiceOption::new(a.id(), a.name())
+                    .with_description(a.description())
+            })
             .collect()
     }
 }
@@ -241,6 +309,18 @@ impl FmMode {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Exponential => {
+                "Pitch-tracking FM in musical intervals — modulation stays harmonic across the keyboard."
+            }
+            Self::Linear => {
+                "True linear frequency modulation — can pass through zero for classic DX-style sidebands."
+            }
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::Exponential => "exponential",
@@ -259,7 +339,10 @@ impl FmMode {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|m| crate::module_traits::ChoiceOption::new(m.id(), m.name()))
+            .map(|m| {
+                crate::module_traits::ChoiceOption::new(m.id(), m.name())
+                    .with_description(m.description())
+            })
             .collect()
     }
 }
@@ -297,6 +380,21 @@ impl AntiAliasMode {
             Self::PolyBlep => "polyblep",
             Self::MinBlep => "minblep",
             Self::Raw => "raw",
+        }
+    }
+
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::PolyBlep => {
+                "Polynomial band-limited step — lightweight anti-aliasing with good quality."
+            }
+            Self::MinBlep => {
+                "Minimum-phase band-limited step — higher-quality anti-aliasing via a lookup table."
+            }
+            Self::Raw => {
+                "No band-limiting — the raw, aliased waveform for a gritty lo-fi / SID edge."
+            }
         }
     }
 

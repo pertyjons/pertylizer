@@ -44,6 +44,27 @@ impl FilterMode {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Lowpass => {
+                "Passes frequencies below cutoff and attenuates above — removes brightness."
+            }
+            Self::Highpass => {
+                "Passes frequencies above cutoff and attenuates below — removes body and rumble."
+            }
+            Self::Bandpass => {
+                "Passes a band around cutoff, attenuating both sides — narrow and nasal."
+            }
+            Self::Notch => {
+                "Attenuates a narrow band at cutoff, passing the rest — removes one frequency."
+            }
+            Self::Peak => "Boosts or cuts a band around cutoff — a resonant bell EQ.",
+            Self::LowShelf => "Boosts or cuts everything below cutoff — a bass tilt.",
+            Self::HighShelf => "Boosts or cuts everything above cutoff — a treble tilt.",
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::Lowpass => "lowpass",
@@ -115,6 +136,19 @@ impl FilterModel {
             Self::Screamer => "Screamer",
             Self::Acid => "Acid",
             Self::Karlsen => "Karlsen",
+        }
+    }
+
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Standard => "Clean state-variable filter — neutral, transparent character.",
+            Self::Fluid => "Morphing SVF — crossfades LP→BP→HP→Notch via the Morph control.",
+            Self::Screamer => "Aggressive, overdriven voicing — screaming resonance.",
+            Self::Acid => "TB-303-style ladder voicing — squelchy, acid resonance.",
+            Self::Karlsen => {
+                "Karlsen fast ladder with constant Q — warm, self-oscillating ladder tone."
+            }
         }
     }
 

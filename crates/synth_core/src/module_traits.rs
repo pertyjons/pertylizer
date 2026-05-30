@@ -1186,7 +1186,7 @@ impl Waveform {
     pub fn to_choices() -> Vec<ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|w| ChoiceOption::new(w.id(), w.name()))
+            .map(|w| ChoiceOption::new(w.id(), w.name()).with_description(w.description()))
             .collect()
     }
 }
@@ -1195,7 +1195,7 @@ impl LfoWaveform {
     pub fn to_choices() -> Vec<ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|w| ChoiceOption::new(w.id(), w.name()))
+            .map(|w| ChoiceOption::new(w.id(), w.name()).with_description(w.description()))
             .collect()
     }
 }
@@ -1204,7 +1204,7 @@ impl FilterMode {
     pub fn to_choices() -> Vec<ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|f| ChoiceOption::new(f.id(), f.name()))
+            .map(|f| ChoiceOption::new(f.id(), f.name()).with_description(f.description()))
             .collect()
     }
 }
@@ -1213,7 +1213,7 @@ impl FilterModel {
     pub fn to_choices() -> Vec<ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|m| ChoiceOption::new(m.id(), m.name()))
+            .map(|m| ChoiceOption::new(m.id(), m.name()).with_description(m.description()))
             .collect()
     }
 }
@@ -1222,7 +1222,7 @@ impl ChaoticSystem {
     pub fn to_choices() -> Vec<ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|s| ChoiceOption::new(s.id(), s.name()))
+            .map(|s| ChoiceOption::new(s.id(), s.name()).with_description(s.description()))
             .collect()
     }
 }

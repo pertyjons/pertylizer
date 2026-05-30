@@ -34,6 +34,16 @@ impl GrainWindow {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    #[must_use]
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Hann => "Raised-cosine envelope — smooth grains with low artifacts.",
+            Self::Gaussian => "Bell-shaped envelope — the smoothest, cleanest grains.",
+            Self::Trapezoid => "Flat sustain with short ramps — louder but grittier grains.",
+        }
+    }
+
     #[must_use]
     pub fn from_index(idx: usize) -> Self {
         Self::ALL.get(idx).copied().unwrap_or_default()
@@ -84,6 +94,18 @@ impl GrainSource {
             Self::Square => "square",
             Self::Triangle => "triangle",
             Self::Noise => "noise",
+        }
+    }
+
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    #[must_use]
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Saw => "Sawtooth grains — bright, with full harmonics.",
+            Self::Sine => "Sine grains — pure, smooth tone.",
+            Self::Square => "Square grains — hollow, odd-harmonic character.",
+            Self::Triangle => "Triangle grains — soft, mellow tone.",
+            Self::Noise => "Noise grains — textured, unpitched clouds.",
         }
     }
 

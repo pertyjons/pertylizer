@@ -130,7 +130,10 @@ impl Describable for RingMod {
                     "Carrier Wave",
                     Waveform::ALL
                         .iter()
-                        .map(|w| synth_core::ChoiceOption::new(w.id(), w.name()))
+                        .map(|w| {
+                            synth_core::ChoiceOption::new(w.id(), w.name())
+                                .with_description(w.description())
+                        })
                         .collect(),
                 )
                 .description("Carrier oscillator waveform")

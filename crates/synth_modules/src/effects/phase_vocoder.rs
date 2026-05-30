@@ -213,7 +213,9 @@ impl Describable for PhaseVocoder {
                     "FFT Size",
                     FftSizeOption::ALL
                         .iter()
-                        .map(|f| ChoiceOption::new(f.id(), f.name()))
+                        .map(|f| {
+                            ChoiceOption::new(f.id(), f.name()).with_description(f.description())
+                        })
                         .collect(),
                 )
                 .description("FFT window size (larger = better frequency resolution)"),

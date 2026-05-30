@@ -47,6 +47,18 @@ impl WavetableSelect {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Basic => "Morphs sine → triangle → saw → square across the scan.",
+            Self::Harmonics => "Additive sweep from 1 to 32 harmonics.",
+            Self::Pwm => "Pulse-width morph from 50% down to 5%.",
+            Self::Formant => "Vowel formants a/e/i/o/u for vocal timbres.",
+            Self::Digital => "Mathematical, hard-edged digital waveforms.",
+            Self::Warm => "Soft, analog-style waveform variants.",
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::Basic => "basic",
@@ -81,7 +93,10 @@ impl WavetableSelect {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|t| crate::module_traits::ChoiceOption::new(t.id(), t.name()))
+            .map(|t| {
+                crate::module_traits::ChoiceOption::new(t.id(), t.name())
+                    .with_description(t.description())
+            })
             .collect()
     }
 }

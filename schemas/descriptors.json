@@ -361,10 +361,12 @@
         "system": {
           "choices": [
             {
+              "description": "Rössler attractor — a single-scroll chaotic system with smooth, slowly evolving motion.",
               "id": "rossler",
               "name": "Rössler"
             },
             {
+              "description": "Lorenz attractor — a two-lobe chaotic system with more turbulent motion.",
               "id": "lorenz",
               "name": "Lorenz"
             }
@@ -546,18 +548,22 @@
         "ir_type": {
           "choices": [
             {
+              "description": "Plate reverb — dense, bright, smooth tail with no early reflections.",
               "id": "plate",
               "name": "Plate"
             },
             {
+              "description": "Small-room ambience — short, natural reflections.",
               "id": "room",
               "name": "Room"
             },
             {
+              "description": "Spring reverb — boingy, resonant, vintage character.",
               "id": "spring",
               "name": "Spring"
             },
             {
+              "description": "Concert-hall reverb — long, lush, spacious decay.",
               "id": "hall",
               "name": "Hall"
             }
@@ -663,14 +669,17 @@
         "mode": {
           "choices": [
             {
+              "description": "Single delay line summed to both channels.",
               "id": "mono",
               "name": "Mono"
             },
             {
+              "description": "Independent left and right delay times for a wide image.",
               "id": "stereo",
               "name": "Stereo"
             },
             {
+              "description": "Echoes bounce alternately between left and right.",
               "id": "ping_pong",
               "name": "Ping-Pong"
             }
@@ -750,26 +759,32 @@
         "type": {
           "choices": [
             {
+              "description": "Smooth tanh-style saturation — warm, gentle overdrive.",
               "id": "soft_clip",
               "name": "Soft Clip"
             },
             {
+              "description": "Abrupt clipping at the ceiling — harsh, buzzy edge.",
               "id": "hard_clip",
               "name": "Hard Clip"
             },
             {
+              "description": "Asymmetric tube-style saturation — warm, even-harmonic grit.",
               "id": "tube",
               "name": "Tube"
             },
             {
+              "description": "Folds peaks back on themselves — aggressive, ring-mod-like timbres.",
               "id": "foldback",
               "name": "Foldback"
             },
             {
+              "description": "Reduces bit depth — quantized, lo-fi digital distortion.",
               "id": "bitcrush",
               "name": "Bitcrush"
             },
             {
+              "description": "Arctan clipping with continuously adjustable hardness — soft to hard via Drive.",
               "id": "variable_clip",
               "name": "Variable"
             }
@@ -1215,22 +1230,27 @@
         "model": {
           "choices": [
             {
+              "description": "Clean state-variable filter — neutral, transparent character.",
               "id": "standard",
               "name": "Standard"
             },
             {
+              "description": "Morphing SVF — crossfades LP→BP→HP→Notch via the Morph control.",
               "id": "fluid",
               "name": "Fluid"
             },
             {
+              "description": "Aggressive, overdriven voicing — screaming resonance.",
               "id": "screamer",
               "name": "Screamer"
             },
             {
+              "description": "TB-303-style ladder voicing — squelchy, acid resonance.",
               "id": "acid",
               "name": "Acid"
             },
             {
+              "description": "Karlsen fast ladder with constant Q — warm, self-oscillating ladder tone.",
               "id": "karlsen",
               "name": "Karlsen"
             }
@@ -1264,30 +1284,37 @@
         "type": {
           "choices": [
             {
+              "description": "Passes frequencies below cutoff and attenuates above — removes brightness.",
               "id": "lowpass",
               "name": "Lowpass"
             },
             {
+              "description": "Passes frequencies above cutoff and attenuates below — removes body and rumble.",
               "id": "highpass",
               "name": "Highpass"
             },
             {
+              "description": "Passes a band around cutoff, attenuating both sides — narrow and nasal.",
               "id": "bandpass",
               "name": "Bandpass"
             },
             {
+              "description": "Attenuates a narrow band at cutoff, passing the rest — removes one frequency.",
               "id": "notch",
               "name": "Notch"
             },
             {
+              "description": "Boosts or cuts a band around cutoff — a resonant bell EQ.",
               "id": "peak",
               "name": "Peak"
             },
             {
+              "description": "Boosts or cuts everything below cutoff — a bass tilt.",
               "id": "low_shelf",
               "name": "Low Shelf"
             },
             {
+              "description": "Boosts or cuts everything above cutoff — a treble tilt.",
               "id": "high_shelf",
               "name": "High Shelf"
             }
@@ -1733,22 +1760,27 @@
         "source": {
           "choices": [
             {
+              "description": "Sawtooth grains — bright, with full harmonics.",
               "id": "saw",
               "name": "Saw"
             },
             {
+              "description": "Sine grains — pure, smooth tone.",
               "id": "sine",
               "name": "Sine"
             },
             {
+              "description": "Square grains — hollow, odd-harmonic character.",
               "id": "square",
               "name": "Square"
             },
             {
+              "description": "Triangle grains — soft, mellow tone.",
               "id": "triangle",
               "name": "Triangle"
             },
             {
+              "description": "Noise grains — textured, unpitched clouds.",
               "id": "noise",
               "name": "Noise"
             }
@@ -1762,14 +1794,17 @@
         "window": {
           "choices": [
             {
+              "description": "Raised-cosine envelope — smooth grains with low artifacts.",
               "id": "hann",
               "name": "Hann"
             },
             {
+              "description": "Bell-shaped envelope — the smoothest, cleanest grains.",
               "id": "gaussian",
               "name": "Gaussian"
             },
             {
+              "description": "Flat sustain with short ramps — louder but grittier grains.",
               "id": "trapezoid",
               "name": "Trapezoid"
             }
@@ -1845,42 +1880,52 @@
         "curve": {
           "choices": [
             {
+              "description": "Constant-rate ramp — a straight line from start to end.",
               "id": "linear",
               "name": "Linear"
             },
             {
+              "description": "Quadratic ease-out — fast start, gentle settle.",
               "id": "quad_out",
               "name": "Quad Out"
             },
             {
+              "description": "Cubic ease-out — stronger deceleration than quadratic.",
               "id": "cubic_out",
               "name": "Cubic Out"
             },
             {
+              "description": "Quartic ease-out — sharp start, long tail.",
               "id": "quart_out",
               "name": "Quart Out"
             },
             {
+              "description": "Quintic ease-out — very sharp start, very long tail.",
               "id": "quint_out",
               "name": "Quint Out"
             },
             {
+              "description": "Exponential ease-out — near-instant start, smooth exponential settle.",
               "id": "expo_out",
               "name": "Expo Out"
             },
             {
+              "description": "Circular ease-out — a rounded, gradually slowing arc.",
               "id": "circ_out",
               "name": "Circ Out"
             },
             {
+              "description": "Overshoots past the target, then settles back.",
               "id": "back_out",
               "name": "Back Out"
             },
             {
+              "description": "Springs past the target and oscillates into place.",
               "id": "elastic_out",
               "name": "Elastic Out"
             },
             {
+              "description": "Bounces against the target before coming to rest.",
               "id": "bounce_out",
               "name": "Bounce Out"
             }
@@ -1904,14 +1949,17 @@
         "loop_mode": {
           "choices": [
             {
+              "description": "Plays the curve once and holds at the end value.",
               "id": "one_shot",
               "name": "One Shot"
             },
             {
+              "description": "Restarts from the beginning each time it reaches the end.",
               "id": "loop",
               "name": "Loop"
             },
             {
+              "description": "Reverses direction at each end for back-and-forth motion.",
               "id": "ping_pong",
               "name": "Ping Pong"
             }
@@ -2089,26 +2137,32 @@
         "waveform": {
           "choices": [
             {
+              "description": "Smooth sinusoidal sweep up and down.",
               "id": "sine",
               "name": "Sine"
             },
             {
+              "description": "Linear ramp up then down — even, symmetric motion.",
               "id": "triangle",
               "name": "Triangle"
             },
             {
+              "description": "Linear ramp that resets sharply — ramp-style modulation.",
               "id": "sawtooth",
               "name": "Sawtooth"
             },
             {
+              "description": "Instant switch between two levels — on/off, trill-like.",
               "id": "square",
               "name": "Square"
             },
             {
+              "description": "Random stepped value held each cycle — classic S&H jitter.",
               "id": "sample_and_hold",
               "name": "Sample & Hold"
             },
             {
+              "description": "Continuously interpolated random motion — drifting, with no sudden jumps.",
               "id": "smooth_random",
               "name": "Smooth Random"
             }
@@ -2174,78 +2228,97 @@
         "algorithm": {
           "choices": [
             {
+              "description": "Two-operator FM: a sine carrier modulated by a sine — DX-style metallic and bell tones.",
               "id": "sine_fm",
               "name": "Sine FM"
             },
             {
+              "description": "Tangent waveshaping pushed toward chaos — harsh, unstable digital timbres.",
               "id": "tan_chaos",
               "name": "Tan Chaos"
             },
             {
+              "description": "Stack of detuned saws — wide, lush supersaw character.",
               "id": "super_saw",
               "name": "Super Saw"
             },
             {
+              "description": "Bitwise logic on the phase counter — glitchy, aliased digital tones.",
               "id": "bitwise",
               "name": "BitWise"
             },
             {
+              "description": "Sine driven through a wavefolder — rich West-Coast harmonics that grow with drive.",
               "id": "wave_folder",
               "name": "Wave Folder"
             },
             {
+              "description": "Sine shaped around a movable formant peak — vocal, vowel-like resonance.",
               "id": "formant",
               "name": "Formant"
             },
             {
+              "description": "Casio-style phase distortion — morphs a sine toward saw and resonant shapes.",
               "id": "phase_dist",
               "name": "Phase Dist"
             },
             {
+              "description": "Inharmonic partials — clangorous, bell- and metal-like tones.",
               "id": "metallic",
               "name": "Metallic"
             },
             {
+              "description": "Self-similar fractal waveform — complex, evolving spectra.",
               "id": "fractal",
               "name": "Fractal"
             },
             {
+              "description": "Chebyshev-polynomial waveshaping — precise control over the harmonic series.",
               "id": "chebyshev",
               "name": "Chebyshev"
             },
             {
+              "description": "Bytebeat formula (integer math on a sample counter) — lo-fi 8-bit/chiptune textures.",
               "id": "bytebeat",
               "name": "Bytebeat"
             },
             {
+              "description": "Lorenz strange attractor — smooth chaotic, noise-like motion.",
               "id": "lorenz",
               "name": "Lorenz"
             },
             {
+              "description": "Karplus-Strong plucked string — tuned, decaying string and percussion tones.",
               "id": "karplus_strong",
               "name": "Karplus-Strong"
             },
             {
+              "description": "Walsh functions (square-wave basis) — hard, hollow digital timbres.",
               "id": "walsh",
               "name": "Walsh"
             },
             {
+              "description": "Logistic-map iteration — chaotic noise that sharpens with the control parameter.",
               "id": "logistic",
               "name": "Logistic"
             },
             {
+              "description": "Pulsar synthesis — trains of band-limited pulses with strong, movable formants.",
               "id": "pulsar",
               "name": "Pulsar"
             },
             {
+              "description": "Shepard tone — the illusion of endlessly rising or falling pitch.",
               "id": "shepard",
               "name": "Shepard"
             },
             {
+              "description": "Single operator feeding back on itself — saw-like, turning noisy as feedback rises.",
               "id": "feedback_fm",
               "name": "Feedback FM"
             },
             {
+              "description": "VOSIM voice simulation — pulse bursts producing strong formants, vocal and speech-like.",
               "id": "vosim",
               "name": "VOSIM"
             }
@@ -2345,18 +2418,22 @@
         "type": {
           "choices": [
             {
+              "description": "Key-press mechanical noise — the thud as a key is pressed.",
               "id": "key_down",
               "name": "Key Down"
             },
             {
+              "description": "Key-release mechanical noise — the click as a key returns.",
               "id": "key_up",
               "name": "Key Up"
             },
             {
+              "description": "Damper-pedal mechanism noise.",
               "id": "pedal",
               "name": "Pedal"
             },
             {
+              "description": "Hammer-strike noise against the string.",
               "id": "hammer",
               "name": "Hammer"
             }
@@ -2538,18 +2615,22 @@
         "grid_size": {
           "choices": [
             {
+              "description": "1×1 grid — 1 modulation slot.",
               "id": "1x1",
               "name": "1×1"
             },
             {
+              "description": "2×2 grid — 4 modulation slots.",
               "id": "2x2",
               "name": "2×2"
             },
             {
+              "description": "3×3 grid — 9 modulation slots.",
               "id": "3x3",
               "name": "3×3"
             },
             {
+              "description": "4×4 grid — 16 modulation slots.",
               "id": "4x4",
               "name": "4×4"
             }
@@ -2573,78 +2654,97 @@
         "slot_10_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -2668,66 +2768,82 @@
         "slot_10_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -2751,78 +2867,97 @@
         "slot_11_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -2846,66 +2981,82 @@
         "slot_11_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -2929,78 +3080,97 @@
         "slot_12_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -3024,66 +3194,82 @@
         "slot_12_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -3107,78 +3293,97 @@
         "slot_13_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -3202,66 +3407,82 @@
         "slot_13_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -3285,78 +3506,97 @@
         "slot_14_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -3380,66 +3620,82 @@
         "slot_14_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -3463,78 +3719,97 @@
         "slot_15_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -3558,66 +3833,82 @@
         "slot_15_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -3641,78 +3932,97 @@
         "slot_16_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -3736,66 +4046,82 @@
         "slot_16_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -3819,78 +4145,97 @@
         "slot_1_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -3914,66 +4259,82 @@
         "slot_1_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -3997,78 +4358,97 @@
         "slot_2_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -4092,66 +4472,82 @@
         "slot_2_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -4175,78 +4571,97 @@
         "slot_3_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -4270,66 +4685,82 @@
         "slot_3_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -4353,78 +4784,97 @@
         "slot_4_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -4448,66 +4898,82 @@
         "slot_4_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -4531,78 +4997,97 @@
         "slot_5_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -4626,66 +5111,82 @@
         "slot_5_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -4709,78 +5210,97 @@
         "slot_6_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -4804,66 +5324,82 @@
         "slot_6_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -4887,78 +5423,97 @@
         "slot_7_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -4982,66 +5537,82 @@
         "slot_7_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -5065,78 +5636,97 @@
         "slot_8_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -5160,66 +5750,82 @@
         "slot_8_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -5243,78 +5849,97 @@
         "slot_9_dest": {
           "choices": [
             {
+              "description": "No destination — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc1_pitch",
               "name": "Osc 1 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc1_level",
               "name": "Osc 1 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt1_cutoff",
               "name": "Filter 1 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt1_reso",
               "name": "Filter 1 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp1_level",
               "name": "Amp 1 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp1_pan",
               "name": "Amp 1 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo1_rate",
               "name": "LFO 1 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo1_depth",
               "name": "LFO 1 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc2_pitch",
               "name": "Osc 2 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc2_level",
               "name": "Osc 2 Level"
             },
             {
+              "description": "Filter cutoff frequency, in semitones.",
               "id": "flt2_cutoff",
               "name": "Filter 2 Cutoff"
             },
             {
+              "description": "Filter resonance / Q.",
               "id": "flt2_reso",
               "name": "Filter 2 Reso"
             },
             {
+              "description": "Amplifier output level.",
               "id": "amp2_level",
               "name": "Amp 2 Level"
             },
             {
+              "description": "Amplifier stereo pan position.",
               "id": "amp2_pan",
               "name": "Amp 2 Pan"
             },
             {
+              "description": "LFO rate / speed.",
               "id": "lfo2_rate",
               "name": "LFO 2 Rate"
             },
             {
+              "description": "LFO modulation depth.",
               "id": "lfo2_depth",
               "name": "LFO 2 Depth"
             },
             {
+              "description": "Oscillator pitch, in semitones.",
               "id": "osc3_pitch",
               "name": "Osc 3 Pitch"
             },
             {
+              "description": "Oscillator output level.",
               "id": "osc3_level",
               "name": "Osc 3 Level"
             }
@@ -5338,66 +5963,82 @@
         "slot_9_source": {
           "choices": [
             {
+              "description": "No source — the slot is inactive.",
               "id": "none",
               "name": "None"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo1",
               "name": "LFO 1"
             },
             {
+              "description": "Low-frequency oscillator output.",
               "id": "lfo2",
               "name": "LFO 2"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env1",
               "name": "Env 1"
             },
             {
+              "description": "Envelope generator output.",
               "id": "env2",
               "name": "Env 2"
             },
             {
+              "description": "Note-on velocity — how hard the key was struck.",
               "id": "velocity",
               "name": "Velocity"
             },
             {
+              "description": "MIDI note number, normalized across the keyboard.",
               "id": "note",
               "name": "Note"
             },
             {
+              "description": "Channel pressure applied after the key is held.",
               "id": "aftertouch",
               "name": "Aftertouch"
             },
             {
+              "description": "Mod wheel (MIDI CC 1).",
               "id": "mod_wheel",
               "name": "Mod Wheel"
             },
             {
+              "description": "Pitch-bend wheel (bipolar, centered at rest).",
               "id": "pitch_bend",
               "name": "Pitch Bend"
             },
             {
+              "description": "Per-note polyphonic key pressure.",
               "id": "poly_aftertouch",
               "name": "Poly AT"
             },
             {
+              "description": "Kinetic Modulator position output.",
               "id": "kinetic_pos",
               "name": "Kinetic Pos"
             },
             {
+              "description": "Kinetic Modulator velocity (rate-of-change) output.",
               "id": "kinetic_vel",
               "name": "Kinetic Vel"
             },
             {
+              "description": "Kinetic Modulator acceleration output.",
               "id": "kinetic_acc",
               "name": "Kinetic Acc"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl1",
               "name": "Env Follower 1"
             },
             {
+              "description": "Envelope-follower output tracking an audio signal's level.",
               "id": "efl2",
               "name": "Env Follower 2"
             }
@@ -5539,30 +6180,37 @@
         "type": {
           "choices": [
             {
+              "description": "Flat spectrum, equal energy per frequency — bright, full hiss.",
               "id": "white",
               "name": "White"
             },
             {
+              "description": "−3 dB/octave, equal energy per octave — natural, balanced hiss.",
               "id": "pink",
               "name": "Pink"
             },
             {
+              "description": "−6 dB/octave — dark, rumbling low-end noise.",
               "id": "brown",
               "name": "Brown"
             },
             {
+              "description": "+3 dB/octave — bright, airy hiss tilted toward the highs.",
               "id": "blue",
               "name": "Blue"
             },
             {
+              "description": "+6 dB/octave — very bright, sharp high-frequency noise.",
               "id": "violet",
               "name": "Violet"
             },
             {
+              "description": "Deterministic linear-feedback shift register — gritty retro digital noise (NES-style).",
               "id": "lfsr",
               "name": "LFSR"
             },
             {
+              "description": "SID-inspired 23-bit shift register — sparse, metallic chip noise, great for drums and FX.",
               "id": "chip",
               "name": "Chip"
             }
@@ -5582,14 +6230,17 @@
         "anti_alias": {
           "choices": [
             {
+              "description": "Polynomial band-limited step — lightweight anti-aliasing with good quality.",
               "id": "polyblep",
               "name": "PolyBLEP"
             },
             {
+              "description": "Minimum-phase band-limited step — higher-quality anti-aliasing via a lookup table.",
               "id": "minblep",
               "name": "MinBLEP"
             },
             {
+              "description": "No band-limiting — the raw, aliased waveform for a gritty lo-fi / SID edge.",
               "id": "raw",
               "name": "Raw"
             }
@@ -5623,10 +6274,12 @@
         "fm_mode": {
           "choices": [
             {
+              "description": "Pitch-tracking FM in musical intervals — modulation stays harmonic across the keyboard.",
               "id": "exponential",
               "name": "Exponential"
             },
             {
+              "description": "True linear frequency modulation — can pass through zero for classic DX-style sidebands.",
               "id": "linear",
               "name": "Linear"
             }
@@ -5710,26 +6363,32 @@
         "waveform": {
           "choices": [
             {
+              "description": "Pure fundamental with no harmonics — smooth and hollow.",
               "id": "sine",
               "name": "Sine"
             },
             {
+              "description": "Odd harmonics rolling off steeply — soft and slightly hollow.",
               "id": "triangle",
               "name": "Triangle"
             },
             {
+              "description": "Every harmonic present — bright and buzzy, the classic analog lead/bass wave.",
               "id": "sawtooth",
               "name": "Sawtooth"
             },
             {
+              "description": "Odd harmonics only — hollow and woody (a 50% pulse).",
               "id": "square",
               "name": "Square"
             },
             {
+              "description": "Rectangular wave with adjustable pulse width — thin and nasal.",
               "id": "pulse",
               "name": "Pulse"
             },
             {
+              "description": "Discrete-summation saw with a controllable harmonic count — band-limited and smooth.",
               "id": "dsf_saw",
               "name": "DSF Saw"
             }
@@ -5851,18 +6510,22 @@
         "fft_size": {
           "choices": [
             {
+              "description": "512-sample FFT — low latency and CPU, coarser frequency resolution.",
               "id": "512",
               "name": "512"
             },
             {
+              "description": "1024-sample FFT — a balance of latency and quality.",
               "id": "1024",
               "name": "1024"
             },
             {
+              "description": "2048-sample FFT — finer frequency resolution, higher latency.",
               "id": "2048",
               "name": "2048"
             },
             {
+              "description": "4096-sample FFT — the finest resolution, highest latency and CPU.",
               "id": "4096",
               "name": "4096"
             }
@@ -6166,14 +6829,17 @@
         "mode": {
           "choices": [
             {
+              "description": "Plays the reverb tail backwards — swelling, sucked-in reverse reverb.",
               "id": "reverse",
               "name": "Reverse"
             },
             {
+              "description": "Cuts the reverb tail abruptly — the classic gated-reverb snare effect.",
               "id": "gate",
               "name": "Gate"
             },
             {
+              "description": "Re-triggers the captured tail in slices — rhythmic stutter.",
               "id": "stutter",
               "name": "Stutter"
             }
@@ -6197,10 +6863,12 @@
         "trigger": {
           "choices": [
             {
+              "description": "Re-captures the buffer at a fixed time interval.",
               "id": "periodic",
               "name": "Periodic"
             },
             {
+              "description": "Re-captures when the input level crosses a threshold.",
               "id": "threshold",
               "name": "Threshold"
             }
@@ -6240,26 +6908,32 @@
         "carrier_wave": {
           "choices": [
             {
+              "description": "Pure fundamental with no harmonics — smooth and hollow.",
               "id": "sine",
               "name": "Sine"
             },
             {
+              "description": "Odd harmonics rolling off steeply — soft and slightly hollow.",
               "id": "triangle",
               "name": "Triangle"
             },
             {
+              "description": "Every harmonic present — bright and buzzy, the classic analog lead/bass wave.",
               "id": "sawtooth",
               "name": "Sawtooth"
             },
             {
+              "description": "Odd harmonics only — hollow and woody (a 50% pulse).",
               "id": "square",
               "name": "Square"
             },
             {
+              "description": "Rectangular wave with adjustable pulse width — thin and nasal.",
               "id": "pulse",
               "name": "Pulse"
             },
             {
+              "description": "Discrete-summation saw with a controllable harmonic count — band-limited and smooth.",
               "id": "dsf_saw",
               "name": "DSF Saw"
             }
@@ -6309,14 +6983,17 @@
         "direction": {
           "choices": [
             {
+              "description": "Plays the sample from start to end.",
               "id": "forward",
               "name": "Forward"
             },
             {
+              "description": "Plays the sample backwards.",
               "id": "reverse",
               "name": "Reverse"
             },
             {
+              "description": "Alternates forward and backward each pass.",
               "id": "ping_pong",
               "name": "Ping-Pong"
             }
@@ -6360,14 +7037,17 @@
         "play_mode": {
           "choices": [
             {
+              "description": "Plays the full sample, ignores note-off",
               "id": "one_shot",
               "name": "One-shot"
             },
             {
+              "description": "Plays once, releases on note-off",
               "id": "sustain",
               "name": "Sustain"
             },
             {
+              "description": "Loops the loop region while held",
               "id": "loop",
               "name": "Loop"
             }
@@ -6667,10 +7347,12 @@
         "octave": {
           "choices": [
             {
+              "description": "One octave below the main oscillator.",
               "id": "minus1",
               "name": "-1 Oct"
             },
             {
+              "description": "Two octaves below the main oscillator.",
               "id": "minus2",
               "name": "-2 Oct"
             }
@@ -6684,14 +7366,17 @@
         "waveform": {
           "choices": [
             {
+              "description": "Pure sine — a smooth, clean fundamental for deep bass.",
               "id": "sine",
               "name": "Sine"
             },
             {
+              "description": "Square wave — punchy, with full odd harmonics.",
               "id": "square",
               "name": "Square"
             },
             {
+              "description": "25% pulse — a hollow, reedy character.",
               "id": "pulse25",
               "name": "Pulse 25%"
             }
@@ -6777,18 +7462,22 @@
         "scale": {
           "choices": [
             {
+              "description": "All twelve semitones — unquantized pitch range.",
               "id": "chromatic",
               "name": "Chromatic"
             },
             {
+              "description": "Quantizes generated pitches to the major scale.",
               "id": "major",
               "name": "Major"
             },
             {
+              "description": "Quantizes generated pitches to the natural minor scale.",
               "id": "minor",
               "name": "Minor"
             },
             {
+              "description": "Quantizes to the five-note pentatonic scale — always consonant.",
               "id": "pentatonic",
               "name": "Pentatonic"
             }
@@ -6926,26 +7615,32 @@
         "curve": {
           "choices": [
             {
+              "description": "Smooth saturation — adds warm harmonics without harsh edges.",
               "id": "soft_clip",
               "name": "Soft Clip"
             },
             {
+              "description": "Different shaping for the positive and negative halves — even harmonics, tube-like.",
               "id": "asymmetric",
               "name": "Asymmetric"
             },
             {
+              "description": "Wavefolding — reflects peaks back for complex, bright harmonics.",
               "id": "fold",
               "name": "Fold"
             },
             {
+              "description": "Chebyshev polynomial — generates a specific harmonic series.",
               "id": "chebyshev",
               "name": "Chebyshev"
             },
             {
+              "description": "Sine-based folding — smooth, metallic folded timbres.",
               "id": "sine_fold",
               "name": "Sine Fold"
             },
             {
+              "description": "Steps the signal into discrete levels — bitcrush-style digital grit.",
               "id": "quantize",
               "name": "Quantize"
             }
@@ -7035,26 +7730,32 @@
         "table": {
           "choices": [
             {
+              "description": "Morphs sine → triangle → saw → square across the scan.",
               "id": "basic",
               "name": "Basic"
             },
             {
+              "description": "Additive sweep from 1 to 32 harmonics.",
               "id": "harmonics",
               "name": "Harmonics"
             },
             {
+              "description": "Pulse-width morph from 50% down to 5%.",
               "id": "pwm",
               "name": "PWM"
             },
             {
+              "description": "Vowel formants a/e/i/o/u for vocal timbres.",
               "id": "formant",
               "name": "Formant"
             },
             {
+              "description": "Mathematical, hard-edged digital waveforms.",
               "id": "digital",
               "name": "Digital"
             },
             {
+              "description": "Soft, analog-style waveform variants.",
               "id": "warm",
               "name": "Warm"
             }

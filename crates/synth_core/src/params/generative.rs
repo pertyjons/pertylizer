@@ -84,6 +84,16 @@ impl TuringScale {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Chromatic => "All twelve semitones — unquantized pitch range.",
+            Self::Major => "Quantizes generated pitches to the major scale.",
+            Self::Minor => "Quantizes generated pitches to the natural minor scale.",
+            Self::Pentatonic => "Quantizes to the five-note pentatonic scale — always consonant.",
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::Chromatic => "chromatic",
@@ -104,7 +114,10 @@ impl TuringScale {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|s| crate::module_traits::ChoiceOption::new(s.id(), s.name()))
+            .map(|s| {
+                crate::module_traits::ChoiceOption::new(s.id(), s.name())
+                    .with_description(s.description())
+            })
             .collect()
     }
 }

@@ -253,7 +253,9 @@ impl Describable for Convolver {
                     "IR Type",
                     ImpulseResponse::ALL
                         .iter()
-                        .map(|i| ChoiceOption::new(i.id(), i.name()))
+                        .map(|i| {
+                            ChoiceOption::new(i.id(), i.name()).with_description(i.description())
+                        })
                         .collect(),
                 )
                 .description("Impulse response type (Plate, Room, Spring, Hall)"),

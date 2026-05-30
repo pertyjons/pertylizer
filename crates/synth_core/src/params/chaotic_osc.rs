@@ -25,6 +25,18 @@ impl ChaoticSystem {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Rossler => {
+                "Rössler attractor — a single-scroll chaotic system with smooth, slowly evolving motion."
+            }
+            Self::Lorenz => {
+                "Lorenz attractor — a two-lobe chaotic system with more turbulent motion."
+            }
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::Rossler => "rossler",

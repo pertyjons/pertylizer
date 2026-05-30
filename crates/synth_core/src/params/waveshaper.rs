@@ -41,6 +41,22 @@ impl WaveshaperCurve {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::SoftClip => "Smooth saturation — adds warm harmonics without harsh edges.",
+            Self::Asymmetric => {
+                "Different shaping for the positive and negative halves — even harmonics, tube-like."
+            }
+            Self::Fold => "Wavefolding — reflects peaks back for complex, bright harmonics.",
+            Self::Chebyshev => "Chebyshev polynomial — generates a specific harmonic series.",
+            Self::SineFold => "Sine-based folding — smooth, metallic folded timbres.",
+            Self::Quantize => {
+                "Steps the signal into discrete levels — bitcrush-style digital grit."
+            }
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::SoftClip => "soft_clip",
@@ -63,7 +79,10 @@ impl WaveshaperCurve {
     pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
         Self::ALL
             .iter()
-            .map(|m| crate::module_traits::ChoiceOption::new(m.id(), m.name()))
+            .map(|m| {
+                crate::module_traits::ChoiceOption::new(m.id(), m.name())
+                    .with_description(m.description())
+            })
             .collect()
     }
 }

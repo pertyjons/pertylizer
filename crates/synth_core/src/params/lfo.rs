@@ -43,6 +43,20 @@ impl LfoWaveform {
         }
     }
 
+    /// One-line description for tooltips, JSON schema, and MCP discovery.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::Sine => "Smooth sinusoidal sweep up and down.",
+            Self::Triangle => "Linear ramp up then down — even, symmetric motion.",
+            Self::Sawtooth => "Linear ramp that resets sharply — ramp-style modulation.",
+            Self::Square => "Instant switch between two levels — on/off, trill-like.",
+            Self::SampleAndHold => "Random stepped value held each cycle — classic S&H jitter.",
+            Self::SmoothRandom => {
+                "Continuously interpolated random motion — drifting, with no sudden jumps."
+            }
+        }
+    }
+
     pub fn id(&self) -> &'static str {
         match self {
             Self::Sine => "sine",
