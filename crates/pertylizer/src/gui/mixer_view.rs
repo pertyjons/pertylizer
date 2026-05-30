@@ -26,7 +26,7 @@ use synth_engine::{EngineCommand, EngineHandle, InstrumentId, ModuleId};
 use synth_sequencer::{ReturnBusId, SeqInstrumentId, Song, TrackId, TrackSend};
 
 use crate::gui::theme::theme;
-use crate::gui::widgets::level_color;
+use crate::gui::widgets::{ModuleFrame, draw_module_header, level_color};
 
 /// Width of a single channel strip, in points.
 const STRIP_WIDTH: f32 = 108.0;
@@ -189,16 +189,8 @@ pub fn draw_mixer_view(
                         .iter()
                         .find(|i| i.id.0 == u64::from(ch.instrument.0))
                         .map(|i| i.id);
-                    if draw_channel_strip(
-                        ui,
-                        ch,
-                        &snapshot.return_ids,
-                        instruments,
-                        song,
-                        handle,
-                        eng_id,
-                        state,
-                    ) {
+                    if draw_channel_strip(ui, ch, &snapshot.return_ids, song, handle, eng_id, state)
+                    {
                         action = Some(MixerViewAction::EditChannelFx(ch.instrument));
                     }
                 }
@@ -338,13 +330,16 @@ fn toggle_chip(ui: &mut egui::Ui, label: &str, active: bool, on_color: Color32) 
     .clicked()
 }
 
-/// The styled frame shared by every strip (only fill/border colours differ).
-fn strip_frame(fill: Color32, border: Color32) -> egui::Frame {
-    egui::Frame::new()
-        .fill(fill)
-        .stroke(egui::Stroke::new(1.0, border))
+/// The styled frame shared by every strip — the same rounded, accent-tinted
+/// module look as the patch editor (via [`ModuleFrame`]). `accent` drives the
+/// tint and stroke; `base_fill` is the strip's background tier (track / return
+/// / master). Keeps the strip's tight 6 pt inner margin so `center_pad` stays
+/// accurate.
+fn strip_frame(ui: &egui::Ui, accent: Color32, base_fill: Color32) -> egui::Frame {
+    ModuleFrame::new(accent)
+        .base_fill(base_fill)
         .inner_margin(6.0)
-        .corner_radius(4.0)
+        .build(&ui.global_style())
 }
 
 /// Leading space to centre `content_width` points of controls within a strip
@@ -379,7 +374,6 @@ fn draw_channel_strip(
     ui: &mut egui::Ui,
     ch: &ChannelSnapshot,
     return_ids: &[(ReturnBusId, String)],
-    instruments: &[crate::gui::instrument_rack::InstrumentUiState],
     song: &Arc<RwLock<Song>>,
     handle: &EngineHandle,
     eng_id: Option<InstrumentId>,
@@ -391,30 +385,13 @@ fn draw_channel_strip(
     let mut edit_fx = false;
     ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
         ui.set_width(STRIP_WIDTH);
-        strip_frame(t.colors.bg_module, t.colors.border).show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                // Colour swatch + track name.
-                let (rect, _) = ui
-                    .allocate_exact_size(egui::vec2(STRIP_WIDTH - 16.0, 4.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 1.0, ch.color);
-                ui.label(
-                    RichText::new(&ch.name)
-                        .size(t.fonts.size_small)
-                        .strong()
-                        .color(t.colors.text_primary),
-                );
-
-                // Instrument name (or "(none)" when id maps to nothing).
-                let inst_name = instruments
-                    .iter()
-                    .find(|i| i.id.0 == u64::from(ch.instrument.0))
-                    .map_or_else(|| "— (none) —".to_owned(), |i| i.name.clone());
-                ui.label(
-                    RichText::new(inst_name)
-                        .size(t.fonts.size_small)
-                        .color(t.colors.text_dim),
-                );
-
+        strip_frame(ui, ch.color, t.colors.bg_module).show(ui, |ui| {
+            // The frame inherits the horizontal_top layout of the strip row, so
+            // wrap everything in a vertical layout to stack the header above the
+            // controls (and give the column the full strip width).
+            ui.vertical(|ui| {
+                // Channel name in the accent-tinted module header.
+                draw_module_header(ui, ch.color, &ch.name, None, |_| {});
                 // Inserts: edited in the Rack (they live on the instrument). The
                 // icon signals the button jumps to another view rather than
                 // opening an inline editor like the return-bus strips do.
@@ -599,9 +576,12 @@ fn draw_return_strip(
     let mut delete = false;
     ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
         ui.set_width(STRIP_WIDTH);
-        strip_frame(t.colors.bg_panel, t.colors.border).show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                // Name — click to rename inline.
+        strip_frame(ui, t.colors.accent_green, t.colors.bg_panel).show(ui, |ui| {
+            // The frame inherits the horizontal_top layout of the strip row, so
+            // wrap everything in a vertical layout to stack the header above the
+            // controls (and give the column the full strip width).
+            ui.vertical(|ui| {
+                // Name — click the header to rename inline.
                 let editing = state
                     .editing_return_name
                     .as_ref()
@@ -624,14 +604,13 @@ fn draw_return_strip(
                         }
                     }
                 } else {
-                    let resp = ui
-                        .add(egui::Label::new(
-                            RichText::new(format!("⮌ {}", rb.name))
-                                .size(t.fonts.size_small)
-                                .strong()
-                                .color(t.colors.accent_green),
-                        ))
-                        .on_hover_text("Click to rename");
+                    let resp = draw_module_header(
+                        ui,
+                        t.colors.accent_green,
+                        &format!("⮌ {}", rb.name),
+                        Some("Click to rename".to_owned()),
+                        |_| {},
+                    );
                     if resp.clicked() {
                         state.editing_return_name = Some((rb.id, rb.name.clone()));
                     }
@@ -836,19 +815,9 @@ fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle) {
     let level = peak_l.as_f32().max(peak_r.as_f32());
     ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
         ui.set_width(STRIP_WIDTH);
-        strip_frame(t.colors.bg_widget, t.colors.border_selected).show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.label(
-                    RichText::new("Master")
-                        .size(t.fonts.size_small)
-                        .strong()
-                        .color(t.colors.accent_primary),
-                );
-                ui.label(
-                    RichText::new("Output")
-                        .size(t.fonts.size_small)
-                        .color(t.colors.text_dim),
-                );
+        strip_frame(ui, t.colors.accent_primary, t.colors.bg_widget).show(ui, |ui| {
+            ui.vertical(|ui| {
+                draw_module_header(ui, t.colors.accent_primary, "Master", None, |_| {});
                 ui.add_space(4.0);
 
                 ui.horizontal(|ui| {
@@ -888,5 +857,71 @@ fn apply_mutation(mutation: MixerMutation, handle: &mut EngineHandle, song: &Arc
                 handle.send(EngineCommand::RemoveReturnBus { id });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::STRIP_WIDTH;
+    use crate::gui::widgets::draw_module_header;
+    use eframe::egui::{self, Color32};
+
+    /// Measure the `available_width` of a strip's content column, reproducing the
+    /// real layout nesting: the strip row is `horizontal_top`, so the frame
+    /// inherits a horizontal layout. `wrapped` mirrors the strips, putting the
+    /// header and column inside one `ui.vertical`; the unwrapped variant draws
+    /// the header directly in the (horizontal) frame, which leaves the sibling
+    /// column with ~zero width — the bug the wrapping fixes.
+    fn column_available_width(wrapped: bool) -> f32 {
+        let ctx = egui::Context::default();
+        let mut avail = f32::NAN;
+        // Two passes: the first lays out fonts/sizing, the second is stable.
+        for _ in 0..2 {
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                egui::ScrollArea::horizontal().show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
+                            ui.set_width(STRIP_WIDTH);
+                            egui::Frame::new().inner_margin(6.0).show(ui, |ui| {
+                                let mut body = |ui: &mut egui::Ui| {
+                                    draw_module_header(
+                                        ui,
+                                        Color32::from_rgb(200, 120, 40),
+                                        "V1 pulse",
+                                        None,
+                                        |_| {},
+                                    );
+                                    avail = ui.available_width();
+                                };
+                                if wrapped {
+                                    ui.vertical(body);
+                                } else {
+                                    body(ui);
+                                }
+                            });
+                        });
+                    });
+                });
+            });
+        }
+        avail
+    }
+
+    /// Regression guard for the channel-strip layout: drawing the module header
+    /// directly in the (horizontal) frame leaves the content column with ~zero
+    /// width; wrapping header + content in one `ui.vertical` stacks them and
+    /// restores the full strip content width.
+    #[test]
+    fn wrapping_in_a_vertical_layout_stacks_header_and_content() {
+        let unwrapped = column_available_width(false);
+        let wrapped = column_available_width(true);
+        assert!(
+            unwrapped < 1.0,
+            "header drawn in the horizontal frame collapses the column: got {unwrapped}"
+        );
+        assert!(
+            wrapped > STRIP_WIDTH - 16.0,
+            "wrapping in a vertical layout keeps ~the full strip width: got {wrapped}"
+        );
     }
 }

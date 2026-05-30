@@ -6,6 +6,7 @@
 mod cable;
 mod controls;
 mod envelope;
+mod frame;
 mod knob;
 mod meter;
 mod port;
@@ -27,6 +28,7 @@ pub use controls::{
     toggle_button_colored,
 };
 pub use envelope::{EnvelopeChanges, EnvelopeEditor, draw_adsr_curve};
+pub use frame::{ModuleFrame, blend_rgb, draw_module_header};
 pub use knob::Knob;
 pub use meter::{Meter, draw_level_meter, draw_stereo_meter, level_color};
 pub use port::{PortWidget, WidgetPortDirection, WidgetPortType};

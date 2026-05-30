@@ -24,8 +24,9 @@ use crate::patch::{
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
-    CABLE_SPREAD, WidgetPortDirection, WidgetPortType, cable_color, closest_point_on_cable,
-    draw_cable, draw_cable_dragging, draw_cable_highlighted, draw_flow_particles, point_near_cable,
+    CABLE_SPREAD, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color,
+    closest_point_on_cable, draw_cable, draw_cable_dragging, draw_cable_highlighted,
+    draw_flow_particles, draw_module_header, point_near_cable,
 };
 
 /// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
@@ -49,17 +50,6 @@ fn trim_sweep_to_complete_cycles(samples: &[f32], threshold: f32) -> &[f32] {
         }
     }
     samples
-}
-
-fn blend_rgb(base: Color32, tint: Color32, amount: f32) -> Color32 {
-    let amount = amount.clamp(0.0, 1.0);
-    let inv = 1.0 - amount;
-    Color32::from_rgba_unmultiplied(
-        (f32::from(base.r()) * inv + f32::from(tint.r()) * amount).round() as u8,
-        (f32::from(base.g()) * inv + f32::from(tint.g()) * amount).round() as u8,
-        (f32::from(base.b()) * inv + f32::from(tint.b()) * amount).round() as u8,
-        base.a(),
-    )
 }
 
 /// Snap a position to the nearest grid point.
@@ -1669,25 +1659,11 @@ impl PatchEditor {
             let mut open = true;
             // Include instrument_id in the hash to prevent ID collisions across instruments
             let window_id = egui::Id::new((instrument_id, "module_window", module_id.to_string()));
-            let module_fill = {
-                let colors = theme().colors;
-                let tint_strength = if is_selected { 0.12 } else { 0.06 };
-                blend_rgb(colors.bg_module, dimmed_accent, tint_strength).gamma_multiply(opacity)
-            };
-
             // Create frame with dimming for disconnected modules
-            let frame = egui::Frame::window(&ui.global_style())
-                .corner_radius(6.0)
-                .inner_margin(8.0)
-                .stroke(egui::Stroke::new(
-                    if is_selected { 2.0 } else { 1.0 },
-                    if is_selected {
-                        dimmed_accent
-                    } else {
-                        dimmed_accent.gamma_multiply(0.5)
-                    },
-                ))
-                .fill(module_fill);
+            let frame = ModuleFrame::new(dimmed_accent)
+                .selected(is_selected)
+                .opacity(opacity)
+                .build(&ui.global_style());
 
             // Check if this module needs repositioning (after auto-layout)
             let needs_reposition = self.needs_reposition.contains(&module_id);
@@ -1735,7 +1711,7 @@ impl PatchEditor {
 
                 frame.show(ui, |ui| {
                     // Title bar: name + status icons + close button (single row)
-                    Self::draw_panel_header_row(
+                    draw_module_header(
                         ui,
                         dimmed_accent,
                         &title,
@@ -2442,61 +2418,6 @@ impl PatchEditor {
         ui.request_repaint();
     }
 
-    fn draw_panel_header_row<F>(
-        ui: &mut Ui,
-        accent_color: Color32,
-        title: &str,
-        hover_text: Option<String>,
-        actions: F,
-    ) where
-        F: FnOnce(&mut Ui),
-    {
-        let margin = ui.spacing().window_margin;
-        let module_rect = ui.max_rect();
-        let header_top = ui.cursor().min.y - f32::from(margin.top);
-        let header_rect = egui::Rect::from_min_max(
-            egui::pos2(module_rect.left() - f32::from(margin.left), header_top),
-            egui::pos2(
-                module_rect.right() + f32::from(margin.right),
-                header_top + 34.0,
-            ),
-        );
-        let tint = accent_color.gamma_multiply(0.14);
-        let transparent = Color32::TRANSPARENT;
-        let painter = ui.painter();
-        let mut mesh = egui::Mesh::default();
-        mesh.colored_vertex(header_rect.left_top(), tint);
-        mesh.colored_vertex(header_rect.right_top(), transparent);
-        mesh.colored_vertex(header_rect.right_bottom(), transparent);
-        mesh.colored_vertex(header_rect.left_bottom(), tint.gamma_multiply(0.35));
-        mesh.add_triangle(0, 1, 2);
-        mesh.add_triangle(0, 2, 3);
-        painter.add(egui::Shape::mesh(mesh));
-
-        ui.horizontal(|ui| {
-            // Accent color indicator
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(4.0, 16.0), Sense::hover());
-            ui.painter().rect_filled(rect, 2.0, accent_color);
-
-            // Title
-            let response = ui.label(
-                egui::RichText::new(title)
-                    .strong()
-                    .size(13.0)
-                    .color(accent_color),
-            );
-            if let Some(hover) = hover_text {
-                response.on_hover_text(hover);
-            }
-
-            ui.add_space(4.0);
-            actions(ui);
-        });
-
-        ui.separator();
-        ui.add_space(2.0);
-    }
-
     fn draw_port_column_with<F>(
         ui: &mut Ui,
         direction: WidgetPortDirection,
@@ -3158,7 +3079,7 @@ impl PatchEditor {
                 frame.show(ui, |ui| {
                     let button_min_size = Vec2::new(20.0, 20.0);
                     let t = theme();
-                    Self::draw_panel_header_row(
+                    draw_module_header(
                         ui,
                         base_color.gamma_multiply(0.9),
                         &group.name,
