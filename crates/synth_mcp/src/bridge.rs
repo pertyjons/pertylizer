@@ -204,6 +204,106 @@ pub struct BridgeInstrumentDef {
     pub connections: Vec<BridgeConnectionDef>,
 }
 
+/// Sample rate at which an offline analysis render runs.
+///
+/// `Full` (44.1 kHz) is the default and the only rate at which every metric is
+/// trustworthy — it covers the full audible band (Nyquist 22 kHz). `Draft`
+/// (22.05 kHz) roughly halves render time per buffer, which compounds across the
+/// per-track renders of `analyze_section`/`analyze_masking_matrix`, but its
+/// Nyquist is only 11 kHz, so the `high` energy band is truncated, `true_peak`
+/// is less reliable, LUFS is biased (its K-weighting filters are tuned for
+/// 44.1 kHz), and distortion-heavy patches alias more. Use `Draft` for quick
+/// level/balance/RMS passes; use `Full` when LUFS accuracy, high-band,
+/// true-peak, or saturation behavior matters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RenderQuality {
+    /// 22.05 kHz — ~2× faster per render, full-band metrics unreliable.
+    Draft,
+    /// 44.1 kHz — full audible band, all metrics trustworthy (default).
+    #[default]
+    Full,
+}
+
+impl RenderQuality {
+    /// 22.05 kHz draft rate.
+    pub const DRAFT_SAMPLE_RATE: u32 = 22_050;
+    /// 44.1 kHz full rate (the analysis default).
+    pub const FULL_SAMPLE_RATE: u32 = 44_100;
+
+    /// Render sample rate in Hz for this quality.
+    #[must_use]
+    pub fn sample_rate(self) -> u32 {
+        match self {
+            Self::Draft => Self::DRAFT_SAMPLE_RATE,
+            Self::Full => Self::FULL_SAMPLE_RATE,
+        }
+    }
+
+    /// Parse the MCP string flag. `Some("draft")` → `Draft`; everything else
+    /// (including `None` and unrecognized values) → `Full`, the safe default.
+    #[must_use]
+    pub fn parse(flag: Option<&str>) -> Self {
+        match flag {
+            Some(s) if s.eq_ignore_ascii_case("draft") => Self::Draft,
+            _ => Self::Full,
+        }
+    }
+}
+
+/// Which optional stages of the signal chain an offline analysis render should
+/// reconstruct on top of the dry instrument sum, plus the render sample rate.
+///
+/// The default (`AnalysisScope::default()`) preserves the historical behavior:
+/// instruments and their own effect chains only, return busses summed dry, no
+/// master processing, rendered at the full 44.1 kHz rate. Each effect flag opts
+/// a stage back in; `render_sample_rate` selects the render resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnalysisScope {
+    /// Load the master effect chain (master-bus limiter/EQ/compressor, …).
+    pub master_effects: bool,
+    /// Load each return bus's effect chain (else returns stay dry).
+    pub return_effects: bool,
+    /// Reconstruct AWE room simulation. Not yet implemented — requesting it
+    /// emits a warning on the result and otherwise behaves as `false`.
+    pub awe: bool,
+    /// Sample rate the offline render runs at (see [`RenderQuality`]).
+    pub render_sample_rate: u32,
+}
+
+impl Default for AnalysisScope {
+    fn default() -> Self {
+        Self {
+            master_effects: false,
+            return_effects: false,
+            awe: false,
+            render_sample_rate: RenderQuality::FULL_SAMPLE_RATE,
+        }
+    }
+}
+
+impl AnalysisScope {
+    /// Build a scope from the optional MCP flags. `all` turns on every effect
+    /// stage; the per-stage flags OR in on top of it. Every `None` effect flag
+    /// resolves to `false`, so omitting them yields the dry default. `quality`
+    /// selects the render resolution (`RenderQuality::default()` = full).
+    #[must_use]
+    pub fn from_flags(
+        all: Option<bool>,
+        master_effects: Option<bool>,
+        return_effects: Option<bool>,
+        awe: Option<bool>,
+        quality: RenderQuality,
+    ) -> Self {
+        let all = all.unwrap_or(false);
+        Self {
+            master_effects: all || master_effects.unwrap_or(false),
+            return_effects: all || return_effects.unwrap_or(false),
+            awe: all || awe.unwrap_or(false),
+            render_sample_rate: quality.sample_rate(),
+        }
+    }
+}
+
 /// Bridge between the MCP server and the synth engine.
 ///
 /// All methods use primitive types. Conversion to domain types
@@ -1120,6 +1220,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         duration_seconds: f32,
         start_tick: Option<u64>,
+        scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeMixBusResult, McpBridgeError>;
 
     /// Render an explicit arrangement range `[start_tick, end_tick)` offline
@@ -1135,6 +1236,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         start_tick: u64,
         end_tick: u64,
         include_per_track: Option<bool>,
+        scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeSectionResult, McpBridgeError>;
 
     /// Pairwise spectral-masking report for every audible track that
@@ -1149,6 +1251,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         arrangement_start_tick: Option<u64>,
         arrangement_end_tick: Option<u64>,
         top_pairs: Option<u32>,
+        scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeMaskingMatrixResult, McpBridgeError>;
 
     /// Sweep an instrument across a MIDI note range, render-and-analyze each

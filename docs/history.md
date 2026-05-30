@@ -1,5 +1,30 @@
 # Version History
 
+## [0.303.0] - 2026-05-30
+
+### Analysis speed — engine reuse + render-quality flag
+
+Per-track renders in `analyze_section`/`analyze_masking_matrix` now reuse one
+offline engine per worker thread (`par_chunks`) instead of rebuilding the whole
+engine — including all instrument + sample loading — once per track. Added a
+`render_quality` flag (`draft` = 22.05 kHz, `full` = 44.1 kHz default) on the
+three audio analyses; draft roughly halves per-render time but its 11 kHz Nyquist
+makes the high band, true-peak, and distortion aliasing unreliable (documented in
+the flag). Sample rate is now threaded through `OfflineEngineSession` instead of a
+hard-coded constant.
+
+## [0.302.0] - 2026-05-30
+
+### Analysis scope flags — include master/return effects in offline renders
+
+`analyze_mix_bus`, `analyze_section`, and `analyze_masking_matrix` now take
+`include_master_effects` / `include_return_effects` / `include_awe` / `include_all`
+flags (resolved into an `AnalysisScope`). Previously the offline renderer only summed
+instruments + their own effects, so the metrics ignored the master effect chain and
+heard return busses dry; the new loaders replay the live master/return effect chains
+(read from `EngineState` snapshots) into the offline engine when requested. Default is
+unchanged (dry); `include_awe` is accepted but warns (AWE reconstruction is a follow-up).
+
 ## [0.301.0] - 2026-05-29
 
 ### Channel-strip Phase 7b — mixer view complete (meters, inserts, rename)

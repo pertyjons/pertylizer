@@ -16,9 +16,11 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use synth_core::audio::SampleRate as HwSampleRate;
-use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
+use synth_core::{
+    AudioCallbackContext, AudioProcessor, DistortionParam, ModuleType, NormalizedValue, Param,
+};
 use synth_engine::instrument::InstrumentId;
-use synth_engine::{InstrumentCategory, SynthEngine};
+use synth_engine::{EngineCommand, InstrumentCategory, ModuleId, SynthEngine};
 use synth_sequencer::{
     Duration as SeqDuration, PatternTick, Pitch, SeqInstrumentId, Song, Tick, Velocity,
 };
@@ -626,6 +628,7 @@ fn analyze_section_per_track_breakdown_emits_one_entry_per_track() {
         0,
         3840,
         Some(true),
+        synth_mcp::AnalysisScope::default(),
     )
     .expect("section analysis should succeed");
 
@@ -678,6 +681,7 @@ fn analyze_section_per_track_pre_master_peak_compensates_for_pan_law() {
         0,
         3840,
         Some(true),
+        synth_mcp::AnalysisScope::default(),
     )
     .expect("section analysis should succeed");
 
@@ -718,8 +722,16 @@ fn analyze_section_without_per_track_flag_returns_empty_breakdown() {
     let song = build_two_track_song();
     let shared = McpSharedState::with_song(song);
 
-    let result = analyze_section_impl(&rig.session, &rig.sample_library, &shared, 0, 3840, None)
-        .expect("section analysis should succeed");
+    let result = analyze_section_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        0,
+        3840,
+        None,
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect("section analysis should succeed");
     assert!(
         result.per_track.is_empty(),
         "per_track must default to empty when not requested"
@@ -732,6 +744,7 @@ fn analyze_section_without_per_track_flag_returns_empty_breakdown() {
         0,
         3840,
         Some(false),
+        synth_mcp::AnalysisScope::default(),
     )
     .expect("section analysis should succeed");
     assert!(opt_off.per_track.is_empty());
@@ -756,6 +769,7 @@ fn analyze_section_per_track_is_bit_exact_across_calls() {
         0,
         3840,
         Some(true),
+        synth_mcp::AnalysisScope::default(),
     )
     .expect("first analyze_section");
     let b = analyze_section_impl(
@@ -765,6 +779,7 @@ fn analyze_section_per_track_is_bit_exact_across_calls() {
         0,
         3840,
         Some(true),
+        synth_mcp::AnalysisScope::default(),
     )
     .expect("second analyze_section");
 
@@ -805,6 +820,83 @@ fn analyze_section_per_track_is_bit_exact_across_calls() {
     }
 }
 
+/// `render_quality` selects the offline render sample rate, and the per-track
+/// (engine-reuse) renders inherit the same rate. Also guards that the reused
+/// engine still produces one contribution per audible track.
+#[test]
+fn analyze_section_render_quality_controls_sample_rate() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let full = analyze_section_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        0,
+        3840,
+        Some(true),
+        synth_mcp::AnalysisScope::from_flags(
+            None,
+            None,
+            None,
+            None,
+            synth_mcp::RenderQuality::Full,
+        ),
+    )
+    .expect("full-quality section");
+    assert_eq!(full.metrics.sample_rate, 44_100);
+    assert_eq!(
+        full.per_track.len(),
+        2,
+        "one contribution per audible track"
+    );
+    assert!(
+        full.per_track
+            .iter()
+            .all(|t| t.metrics.sample_rate == 44_100),
+        "per-track renders must inherit the full sample rate"
+    );
+
+    let draft = analyze_section_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        0,
+        3840,
+        Some(true),
+        synth_mcp::AnalysisScope::from_flags(
+            None,
+            None,
+            None,
+            None,
+            synth_mcp::RenderQuality::Draft,
+        ),
+    )
+    .expect("draft-quality section");
+    assert_eq!(draft.metrics.sample_rate, 22_050);
+    assert_eq!(
+        draft.per_track.len(),
+        2,
+        "engine-reuse per-track path must still yield one entry per audible track"
+    );
+    assert!(
+        draft
+            .per_track
+            .iter()
+            .all(|t| t.metrics.sample_rate == 22_050),
+        "per-track renders must inherit the draft sample rate"
+    );
+
+    // Both resolutions must still detect the real signal.
+    assert!(
+        full.metrics.rms > 1e-4 && draft.metrics.rms > 1e-4,
+        "both renders should contain audible signal (full={}, draft={})",
+        full.metrics.rms,
+        draft.metrics.rms
+    );
+}
+
 #[test]
 fn analyze_masking_matrix_emits_pair_with_well_formed_bands() {
     let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
@@ -818,6 +910,7 @@ fn analyze_masking_matrix_emits_pair_with_well_formed_bands() {
         Some(0),
         Some(3840),
         None,
+        synth_mcp::AnalysisScope::default(),
     )
     .expect("masking matrix should succeed");
 
@@ -885,6 +978,7 @@ fn analyze_masking_matrix_is_deterministic_across_calls() {
         Some(0),
         Some(3840),
         None,
+        synth_mcp::AnalysisScope::default(),
     )
     .expect("first call");
     let b = analyze_masking_matrix_impl(
@@ -894,6 +988,7 @@ fn analyze_masking_matrix_is_deterministic_across_calls() {
         Some(0),
         Some(3840),
         None,
+        synth_mcp::AnalysisScope::default(),
     )
     .expect("second call");
 
@@ -939,6 +1034,7 @@ fn analyze_masking_matrix_rejects_inverted_range() {
         Some(3840),
         Some(1920),
         None,
+        synth_mcp::AnalysisScope::default(),
     )
     .expect_err("inverted range must error");
     let msg = err.to_string();
@@ -976,6 +1072,7 @@ fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
         Some(0),
         Some(3840),
         None,
+        synth_mcp::AnalysisScope::default(),
     )
     .expect("single-track masking matrix should succeed (just empty)");
     assert_eq!(result.track_count, 1);
@@ -996,11 +1093,175 @@ fn analyze_masking_matrix_defaults_to_full_arrangement_when_range_omitted() {
     let song = build_two_track_song();
     let shared = McpSharedState::with_song(song);
 
-    let result =
-        analyze_masking_matrix_impl(&rig.session, &rig.sample_library, &shared, None, None, None)
-            .expect("default range should succeed");
+    let result = analyze_masking_matrix_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        None,
+        None,
+        None,
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect("default range should succeed");
     // The two-track fixture spans [0, 3840) — explicit and default ranges agree.
     assert_eq!(result.start_tick, 0);
     assert_eq!(result.end_tick, 3840);
     assert_eq!(result.track_count, 2);
+}
+
+/// `AnalysisScope { master_effects: true, .. }` regression: the offline render
+/// behind `analyze_section` must reconstruct the *live* engine's master effect
+/// chain, not just the dry instrument sum. We render the same section twice —
+/// once with the default DRY scope and once with `master_effects: true` after
+/// loading a heavy Distortion onto the live master bus — and assert the WET
+/// metrics differ meaningfully from the DRY metrics. A no-op scope (the old
+/// behaviour) would yield identical numbers.
+///
+/// Self-contained setup: unlike `setup_two_instruments` the engine is kept
+/// local and mutable so we can pump it after issuing the AddEffectInstance /
+/// SetEffectParameter commands. That pumping is the critical step: the audio
+/// thread only republishes `state.master_effects` (via
+/// `update_shared_master_effects`) once it has drained and processed those
+/// commands, and the offline render reads that published snapshot.
+#[test]
+fn analyze_section_master_effects_scope_reconstructs_live_master_chain() {
+    let (mut engine, handle) = SynthEngine::new();
+    let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+    let sample_library: pertylizer::audio::preview::SharedSampleLibrary = Arc::new(
+        std::sync::RwLock::new(synth_sampler::SampleLibrary::default()),
+    );
+
+    // One sustaining melodic instrument.
+    let pad = InstrumentId::new(0);
+    session
+        .add_instrument_with_id(pad, "Pad")
+        .expect("add pad instrument");
+
+    let stream_info = synth_core::StreamInfo {
+        sample_rate: HwSampleRate(TEST_SR),
+        buffer_size: synth_core::BufferSize(256),
+        channels: synth_core::ChannelCount::Stereo,
+        output_latency: std::time::Duration::ZERO,
+        input_latency: None,
+    };
+    engine.on_stream_start(&stream_info);
+
+    let mut block = vec![0.0f32; 256 * 2];
+    let context = AudioCallbackContext {
+        sample_rate: HwSampleRate(TEST_SR),
+        frames: 256,
+        channels: 2,
+        stream_time: 0.0,
+        sample_position: 0,
+        output_latency: synth_core::Seconds::ZERO,
+    };
+    engine.process(&mut block, &context);
+
+    let _ = session.apply_patch(pad, &sustain_patch("Pad"));
+    for _ in 0..16 {
+        block.fill(0.0);
+        engine.process(&mut block, &context);
+    }
+
+    // One-track song: a sustained C4 for the whole bar.
+    let mut song = Song::new("MasterScope");
+    let bar = 3840u32;
+    let pad_pattern_id = song.create_pattern(SeqDuration(bar));
+    {
+        let pat = song.pattern_mut(pad_pattern_id).expect("pad pattern");
+        let nid = pat.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+        if let Some(n) = pat.note_mut(nid) {
+            n.duration = Some(SeqDuration(bar - 60));
+        }
+    }
+    let pad_track = song.create_track("Pad");
+    if let Some(t) = song.track_mut(pad_track) {
+        t.instrument = SeqInstrumentId(0);
+    }
+    song.place_pattern(pad_pattern_id, pad_track, Tick(0));
+    let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
+
+    // --- DRY render: instruments + their own effects only. ---
+    let dry = analyze_section_impl(
+        &session,
+        &sample_library,
+        &shared,
+        0,
+        3840,
+        None,
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect("dry section analysis should succeed");
+
+    // Sanity: the instrument actually produced sound.
+    assert!(
+        dry.metrics.rms > 1e-4 && dry.metrics.peak > 1e-4,
+        "dry render must be audible, got rms={} peak={}",
+        dry.metrics.rms,
+        dry.metrics.peak
+    );
+
+    // --- Add a heavy Distortion to the LIVE engine's master chain. ---
+    let dist_id = ModuleId::new(ModuleType::Distortion, 1);
+    let (effect, _descriptor) = pertylizer::module_factory::create_effect(ModuleType::Distortion)
+        .expect("Distortion effect should be constructible");
+    let sender = session.command_sender();
+    assert!(
+        sender.send(EngineCommand::AddEffectInstance {
+            instrument_id: None,
+            id: dist_id,
+            effect,
+        }),
+        "AddEffectInstance command should enqueue"
+    );
+    // Crank the drive so the master chain audibly reshapes the signal.
+    assert!(
+        sender.send(EngineCommand::SetEffectParameter {
+            instrument_id: None,
+            module_id: dist_id,
+            param: Param::Distortion(DistortionParam::Drive(NormalizedValue::MAX)),
+        }),
+        "SetEffectParameter command should enqueue"
+    );
+
+    // Pump the live engine so both commands drain AND the audio thread
+    // republishes `state.master_effects`. Without this the shared snapshot
+    // stays empty and the WET render sees no master effect.
+    for _ in 0..16 {
+        block.fill(0.0);
+        engine.process(&mut block, &context);
+    }
+
+    // --- WET render: now also load the live master effect chain. ---
+    let wet = analyze_section_impl(
+        &session,
+        &sample_library,
+        &shared,
+        0,
+        3840,
+        None,
+        synth_mcp::AnalysisScope {
+            master_effects: true,
+            ..Default::default()
+        },
+    )
+    .expect("wet section analysis should succeed");
+
+    // The maxed-drive Distortion is a hard, near-square-wave saturator: it
+    // pushes the peak toward full scale and lifts overall RMS substantially.
+    // Assert on RMS (the most robust mover) with a comfortable margin.
+    let rms_delta = (wet.metrics.rms - dry.metrics.rms).abs();
+    assert!(
+        rms_delta > 1e-3,
+        "master_effects scope must change the rendered RMS: dry={} wet={} (delta={})",
+        dry.metrics.rms,
+        wet.metrics.rms,
+        rms_delta
+    );
+    assert!(
+        wet.metrics.rms > dry.metrics.rms,
+        "maxed-drive distortion should raise RMS: dry={} wet={}",
+        dry.metrics.rms,
+        wet.metrics.rms
+    );
 }

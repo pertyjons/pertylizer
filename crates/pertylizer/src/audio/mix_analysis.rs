@@ -19,9 +19,12 @@
 //! - Mono-compatibility score (how much energy survives an L+R sum).
 //!
 //! All analysis is offline and deterministic. The K-weighting filter
-//! coefficients are hard-wired for 44.1 kHz, which matches the offline render
-//! path. Other sample rates produce slightly biased LUFS readings (typically
-//! within ~0.5 dB) but the rest of the metrics are sample-rate independent.
+//! coefficients are hard-wired for 44.1 kHz, which matches the default
+//! (full-quality) offline render path. Sample rates near 44.1 kHz produce only
+//! slightly biased LUFS readings (typically within ~0.5 dB), but the 22.05 kHz
+//! `draft` render rate shifts the K-weighting knees enough to bias LUFS
+//! noticeably — draft LUFS is documented as unreliable. The rest of the metrics
+//! are sample-rate independent (band edges and oversampling adapt to the rate).
 
 use std::sync::OnceLock;
 

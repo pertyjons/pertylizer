@@ -592,6 +592,26 @@ pub struct AnalyzeMixBusParam {
         description = "Absolute tick to start rendering from (default 0 = song beginning)."
     )]
     pub start_tick: Option<u64>,
+    #[schemars(
+        description = "Include the full signal chain (master effects + return-bus effects + AWE) in the offline render. Shortcut for turning on every include_* flag below. Default false = dry instrument sum (per-instrument effects only), matching what the analysis has historically rendered."
+    )]
+    pub include_all: Option<bool>,
+    #[schemars(
+        description = "Load the master effect chain (master-bus limiter/EQ/compressor, etc.) into the offline render so the metrics reflect the processed master output rather than the raw instrument sum. Default false."
+    )]
+    pub include_master_effects: Option<bool>,
+    #[schemars(
+        description = "Load each return bus's effect chain (send/return reverbs, delays, …) into the offline render. When false the return busses are summed dry. Default false."
+    )]
+    pub include_return_effects: Option<bool>,
+    #[schemars(
+        description = "Reconstruct AWE room simulation in the offline render. NOT YET IMPLEMENTED — requesting it adds a warning to the result and otherwise renders without AWE. Default false."
+    )]
+    pub include_awe: Option<bool>,
+    #[schemars(
+        description = "Render resolution: 'draft' (22.05 kHz, ~2x faster per render) or 'full' (44.1 kHz, default). Draft speeds up the render(s) — which compounds across per-track analyses — but its 11 kHz Nyquist truncates the 'high' energy band, weakens true_peak, biases LUFS (the K-weighting filters are tuned for 44.1 kHz), and aliases distortion-heavy patches. Use 'draft' only for quick level/balance/RMS passes; use 'full' when LUFS accuracy, high-frequency content, true peak, or saturation behavior matters. Unrecognized values fall back to 'full'."
+    )]
+    pub render_quality: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -604,6 +624,26 @@ pub struct AnalyzeSectionParam {
         description = "When true, return a per-track contribution breakdown (peak, RMS, LUFS, banded energy, clipped sample count, and RMS share) for every audible track whose placements overlap the section. Costs one extra offline render per track, so leave off for fast master-only analysis and turn on when investigating which track is clipping, dominating, or masking. Default false."
     )]
     pub include_per_track: Option<bool>,
+    #[schemars(
+        description = "Include the full signal chain (master effects + return-bus effects + AWE) in the offline render. Shortcut for every include_* flag below. Default false = dry instrument sum (per-instrument effects only)."
+    )]
+    pub include_all: Option<bool>,
+    #[schemars(
+        description = "Load the master effect chain into the offline render so the metrics reflect the processed master output. Default false."
+    )]
+    pub include_master_effects: Option<bool>,
+    #[schemars(
+        description = "Load each return bus's effect chain into the offline render. When false the return busses are summed dry. Default false."
+    )]
+    pub include_return_effects: Option<bool>,
+    #[schemars(
+        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning and otherwise renders without AWE. Default false."
+    )]
+    pub include_awe: Option<bool>,
+    #[schemars(
+        description = "Render resolution: 'draft' (22.05 kHz, ~2x faster per render) or 'full' (44.1 kHz, default). Draft speeds up the render(s) — which compounds across per-track analyses — but its 11 kHz Nyquist truncates the 'high' energy band, weakens true_peak, biases LUFS (the K-weighting filters are tuned for 44.1 kHz), and aliases distortion-heavy patches. Use 'draft' only for quick level/balance/RMS passes; use 'full' when LUFS accuracy, high-frequency content, true peak, or saturation behavior matters. Unrecognized values fall back to 'full'."
+    )]
+    pub render_quality: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -620,6 +660,26 @@ pub struct AnalyzeMaskingMatrixParam {
         description = "Maximum pairs to return, sorted by descending conflict_score (default 20, clamped to [1, 200]). The pair matrix is O(N²) in audible-track count, so the full list explodes the response size — only the top conflicts are usually actionable. `total_pair_count` in the result still reflects the full pair count."
     )]
     pub top_pairs: Option<u32>,
+    #[schemars(
+        description = "Include the full signal chain (master effects + return-bus effects + AWE) in the per-track offline renders. Shortcut for every include_* flag below. Default false = dry instrument sum (per-instrument effects only)."
+    )]
+    pub include_all: Option<bool>,
+    #[schemars(
+        description = "Load the master effect chain into the per-track offline renders. Default false."
+    )]
+    pub include_master_effects: Option<bool>,
+    #[schemars(
+        description = "Load each return bus's effect chain into the per-track offline renders. When false the return busses are summed dry. Default false."
+    )]
+    pub include_return_effects: Option<bool>,
+    #[schemars(
+        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning and otherwise renders without AWE. Default false."
+    )]
+    pub include_awe: Option<bool>,
+    #[schemars(
+        description = "Render resolution: 'draft' (22.05 kHz, ~2x faster per render) or 'full' (44.1 kHz, default). Draft speeds up the render(s) — which compounds across per-track analyses — but its 11 kHz Nyquist truncates the 'high' energy band, weakens true_peak, biases LUFS (the K-weighting filters are tuned for 44.1 kHz), and aliases distortion-heavy patches. Use 'draft' only for quick level/balance/RMS passes; use 'full' when LUFS accuracy, high-frequency content, true peak, or saturation behavior matters. Unrecognized values fall back to 'full'."
+    )]
+    pub render_quality: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3389,18 +3449,36 @@ impl SynthMcpServer {
     )]
     async fn analyze_mix_bus(&self, params: Parameters<AnalyzeMixBusParam>) -> String {
         let duration = params.0.duration_seconds.unwrap_or(10.0);
-        run_blocking_json(|| self.bridge.analyze_mix_bus(duration, params.0.start_tick))
+        let scope = crate::bridge::AnalysisScope::from_flags(
+            params.0.include_all,
+            params.0.include_master_effects,
+            params.0.include_return_effects,
+            params.0.include_awe,
+            crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
+        );
+        run_blocking_json(|| {
+            self.bridge
+                .analyze_mix_bus(duration, params.0.start_tick, scope)
+        })
     }
 
     #[tool(
         description = "Render an explicit arrangement range [start_tick, end_tick) offline and return the same mix-bus metrics as analyze_mix_bus (LUFS-I/S/M, sample peak, true peak in dBTP, RMS, crest, banded energy, stereo correlation, mid/side, mono-compatibility, clipped samples). Use this when you want to A/B verses vs. choruses, compare a buildup to a drop, or inspect a specific musical passage rather than a fixed-duration window from the song start. Pass `include_per_track: true` to also receive a per-track breakdown (one soloed render per audible track) so you can tell which track is responsible for clipping, dominant energy, or sub-bass — costs roughly O(track_count) extra render time. Per-track `metrics.peak`/`metrics.rms` include pan-law attenuation (-3 dB at center pan: a center-panned source with internal peak 1.0 reports ~0.7071). Per-track `pre_master_peak` analytically reverses the instrument's pan + volume attenuation from the per-channel peaks and reports the patch's internal signal peak directly, so you can see internal clipping that would otherwise be hidden by a quiet pan-down."
     )]
     async fn analyze_section(&self, params: Parameters<AnalyzeSectionParam>) -> String {
+        let scope = crate::bridge::AnalysisScope::from_flags(
+            params.0.include_all,
+            params.0.include_master_effects,
+            params.0.include_return_effects,
+            params.0.include_awe,
+            crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
+        );
         run_blocking_json(|| {
             self.bridge.analyze_section(
                 params.0.start_tick,
                 params.0.end_tick,
                 params.0.include_per_track,
+                scope,
             )
         })
     }
@@ -3412,11 +3490,19 @@ impl SynthMcpServer {
         &self,
         params: Parameters<AnalyzeMaskingMatrixParam>,
     ) -> String {
+        let scope = crate::bridge::AnalysisScope::from_flags(
+            params.0.include_all,
+            params.0.include_master_effects,
+            params.0.include_return_effects,
+            params.0.include_awe,
+            crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
+        );
         run_blocking_json(|| {
             self.bridge.analyze_masking_matrix(
                 params.0.arrangement_start_tick,
                 params.0.arrangement_end_tick,
                 params.0.top_pairs,
+                scope,
             )
         })
     }

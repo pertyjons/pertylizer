@@ -3765,6 +3765,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         duration_seconds: f32,
         start_tick: Option<u64>,
+        scope: synth_mcp::AnalysisScope,
     ) -> Result<AnalyzeMixBusResult, McpBridgeError> {
         analyze_mix_bus_impl(
             &self.session,
@@ -3772,6 +3773,7 @@ impl SynthBridge for AppSynthBridge {
             &self.shared,
             duration_seconds,
             start_tick,
+            scope,
         )
     }
 
@@ -3780,6 +3782,7 @@ impl SynthBridge for AppSynthBridge {
         start_tick: u64,
         end_tick: u64,
         include_per_track: Option<bool>,
+        scope: synth_mcp::AnalysisScope,
     ) -> Result<AnalyzeSectionResult, McpBridgeError> {
         analyze_section_impl(
             &self.session,
@@ -3788,6 +3791,7 @@ impl SynthBridge for AppSynthBridge {
             start_tick,
             end_tick,
             include_per_track,
+            scope,
         )
     }
 
@@ -3796,6 +3800,7 @@ impl SynthBridge for AppSynthBridge {
         arrangement_start_tick: Option<u64>,
         arrangement_end_tick: Option<u64>,
         top_pairs: Option<u32>,
+        scope: synth_mcp::AnalysisScope,
     ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
         analyze_masking_matrix_impl(
             &self.session,
@@ -3804,6 +3809,7 @@ impl SynthBridge for AppSynthBridge {
             arrangement_start_tick,
             arrangement_end_tick,
             top_pairs,
+            scope,
         )
     }
 
@@ -8857,6 +8863,7 @@ pub fn suggest_music_fixes_impl(
                 shared,
                 dur,
                 Some(scope_data.start_tick),
+                synth_mcp::AnalysisScope::default(),
             ) {
                 Ok(r) => Some(r),
                 Err(e) => {
@@ -8877,6 +8884,7 @@ pub fn suggest_music_fixes_impl(
             Some(scope_data.start_tick),
             Some(scope_data.end_tick),
             None,
+            synth_mcp::AnalysisScope::default(),
         ) {
             Ok(r) => Some(r),
             Err(e) => {
@@ -8957,6 +8965,7 @@ fn analyze_mix_bus_impl(
     shared: &McpSharedState,
     duration_seconds: f32,
     start_tick: Option<u64>,
+    scope: synth_mcp::AnalysisScope,
 ) -> Result<AnalyzeMixBusResult, McpBridgeError> {
     let dur = if duration_seconds.is_nan() || duration_seconds <= 0.0 {
         DEFAULT_MIX_BUS_SECONDS
@@ -8984,12 +8993,13 @@ fn analyze_mix_bus_impl(
         ));
     }
 
-    let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer(
+    let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_scope(
         session,
         sample_library,
         shared,
         start,
         end,
+        scope,
     )?;
     let analysis =
         crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
@@ -9025,13 +9035,15 @@ pub fn analyze_section_impl(
     start_tick: u64,
     end_tick: u64,
     include_per_track: Option<bool>,
+    scope: synth_mcp::AnalysisScope,
 ) -> Result<AnalyzeSectionResult, McpBridgeError> {
-    let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer(
+    let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_scope(
         session,
         sample_library,
         shared,
         start_tick,
         end_tick,
+        scope,
     )?;
     let analysis =
         crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
@@ -9052,6 +9064,7 @@ pub fn analyze_section_impl(
             shared,
             start_tick,
             end_tick,
+            scope,
             &mut warnings,
         )?
     } else {
@@ -9074,12 +9087,16 @@ pub fn analyze_section_impl(
 /// Resolve which tracks have placements overlapping the section and
 /// re-render each one soloed against a cloned song. Warnings from each
 /// soloed render are accumulated into `warnings`.
+/// One soloed-track contribution paired with the warnings its render produced.
+type ContributionWithWarnings = (synth_mcp::types::TrackContribution, Vec<String>);
+
 fn render_per_track_contributions(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     start_tick: u64,
     end_tick: u64,
+    scope: synth_mcp::AnalysisScope,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<synth_mcp::types::TrackContribution>, McpBridgeError> {
     use synth_sequencer::TrackId;
@@ -9137,75 +9154,100 @@ fn render_per_track_contributions(
             .collect()
     };
 
-    // Determinism for the parallel renders rests on the §8.1 Round-2 fixes:
-    // BTreeMap ordering in `synth_engine::graph` + `fastrand` reseed per
-    // `render_range`. Engine-level setup warnings reflect the live session
-    // state (not the target solo flag), so they are identical for every
-    // worker — `enumerate` lets the idx == 0 worker push them and the rest
-    // discard.
+    // Amortize the expensive engine build (which loads every instrument + its
+    // sample data) by reusing ONE offline session across each chunk's tracks
+    // instead of rebuilding per track — ≈`num_threads` builds rather than one
+    // per track. `render_range` fully resets between calls (Stop + voice drain
+    // + `fastrand` reseed + re-attach song + return-bus rebuild), so reusing a
+    // session across solo variants is bit-exact to a fresh one — the
+    // `arrangement_render_determinism` test covers consecutive-render equality.
+    // Chunks still render in parallel across threads; determinism also rests on
+    // the §8.1 Round-2 BTreeMap ordering in `synth_engine::graph`.
     use rayon::prelude::*;
 
-    let render_pairs: Result<
-        Vec<(synth_mcp::types::TrackContribution, Vec<String>)>,
-        McpBridgeError,
-    > = targets
-        .par_iter()
+    let num_threads = rayon::current_num_threads().max(1);
+    let chunk_size = targets.len().div_ceil(num_threads).max(1);
+
+    let chunk_results: Result<Vec<Vec<ContributionWithWarnings>>, McpBridgeError> = targets
+        .par_chunks(chunk_size)
         .enumerate()
-        .map(|(idx, target)| -> Result<_, McpBridgeError> {
+        .map(|(chunk_idx, chunk)| -> Result<Vec<_>, McpBridgeError> {
             let (mut engine_session, setup_warnings) =
-                crate::audio::arrangement_render::OfflineEngineSession::new(
+                crate::audio::arrangement_render::OfflineEngineSession::new_with_scope(
                     session,
                     sample_library,
+                    scope,
                 )?;
 
-            let mut song_clone = base_song.clone();
-            song_clone.set_solo_only(target.track_id);
-            let song_arc = std::sync::Arc::new(parking_lot::RwLock::new(song_clone));
+            // Engine-level setup warnings are identical for every chunk (same
+            // live session), so emit them exactly once — attached to chunk 0's
+            // first track via `mem::take` (empty for all later iterations).
+            let mut pending_setup_warnings = if chunk_idx == 0 {
+                setup_warnings
+            } else {
+                Vec::new()
+            };
 
-            let rendered = engine_session.render_range(&song_arc, start_tick, end_tick)?;
-            let mut per_target_warnings: Vec<String> =
-                if idx == 0 { setup_warnings } else { Vec::new() };
-            for w in &rendered.warnings {
-                per_target_warnings.push(format!("{}({}): {w}", target.name, target.track_id.0));
+            // Clone the (potentially large) song once per chunk, not per track:
+            // the chunk's renders run sequentially on this thread, so we reuse
+            // one `Song` and just flip the solo flags between renders. The
+            // engine read-locks the song only during `render_range`, and we hold
+            // the brief write lock between renders, so there is no contention.
+            let chunk_song = std::sync::Arc::new(parking_lot::RwLock::new(base_song.clone()));
+
+            let mut chunk_out = Vec::with_capacity(chunk.len());
+            for target in chunk {
+                chunk_song.write().set_solo_only(target.track_id);
+
+                let rendered = engine_session.render_range(&chunk_song, start_tick, end_tick)?;
+
+                let mut per_target_warnings = std::mem::take(&mut pending_setup_warnings);
+                for w in &rendered.warnings {
+                    per_target_warnings
+                        .push(format!("{}({}): {w}", target.name, target.track_id.0));
+                }
+
+                let analysis = crate::audio::mix_analysis::analyze_mix_buffer(
+                    &rendered.samples,
+                    rendered.sample_rate,
+                );
+                let metrics = mix_metrics_from_analysis(
+                    &analysis,
+                    rendered.sample_rate,
+                    rendered.duration_seconds,
+                );
+                let (pre_master_peak, pre_master_peak_dbfs) = pre_master_peak_for(
+                    target
+                        .instrument_id
+                        .and_then(|id| instrument_gains.get(&id)),
+                    analysis.peak_left,
+                    analysis.peak_right,
+                );
+
+                chunk_out.push((
+                    synth_mcp::types::TrackContribution {
+                        track_id: target.track_id.0,
+                        track_name: target.name.clone(),
+                        instrument_id: target.instrument_id,
+                        metrics,
+                        pre_master_peak,
+                        pre_master_peak_dbfs,
+                        rms_share: 0.0,
+                    },
+                    per_target_warnings,
+                ));
             }
-
-            let analysis = crate::audio::mix_analysis::analyze_mix_buffer(
-                &rendered.samples,
-                rendered.sample_rate,
-            );
-            let metrics = mix_metrics_from_analysis(
-                &analysis,
-                rendered.sample_rate,
-                rendered.duration_seconds,
-            );
-            let (pre_master_peak, pre_master_peak_dbfs) = pre_master_peak_for(
-                target
-                    .instrument_id
-                    .and_then(|id| instrument_gains.get(&id)),
-                analysis.peak_left,
-                analysis.peak_right,
-            );
-
-            Ok((
-                synth_mcp::types::TrackContribution {
-                    track_id: target.track_id.0,
-                    track_name: target.name.clone(),
-                    instrument_id: target.instrument_id,
-                    metrics,
-                    pre_master_peak,
-                    pre_master_peak_dbfs,
-                    rms_share: 0.0,
-                },
-                per_target_warnings,
-            ))
+            Ok(chunk_out)
         })
         .collect();
 
     let mut contributions: Vec<synth_mcp::types::TrackContribution> =
         Vec::with_capacity(targets.len());
-    for (c, ws) in render_pairs? {
-        contributions.push(c);
-        warnings.extend(ws);
+    for chunk_out in chunk_results? {
+        for (c, ws) in chunk_out {
+            contributions.push(c);
+            warnings.extend(ws);
+        }
     }
 
     let total_rms: f32 = contributions.iter().map(|c| c.metrics.rms).sum();
@@ -9432,6 +9474,7 @@ pub fn analyze_masking_matrix_impl(
     arrangement_start_tick: Option<u64>,
     arrangement_end_tick: Option<u64>,
     top_pairs: Option<u32>,
+    scope: synth_mcp::AnalysisScope,
 ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
     let (start_tick, end_tick) = {
         let song = shared.song.read();
@@ -9445,6 +9488,7 @@ pub fn analyze_masking_matrix_impl(
         shared,
         start_tick,
         end_tick,
+        scope,
         &mut warnings,
     )?;
 

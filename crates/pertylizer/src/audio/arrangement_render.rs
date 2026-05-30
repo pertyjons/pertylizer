@@ -33,13 +33,11 @@ use synth_engine::instrument::MidiChannel;
 use synth_engine::{EngineCommand, SynthEngine};
 use synth_sequencer::{Song, Tick};
 
+use synth_mcp::AnalysisScope;
 use synth_mcp::error::McpBridgeError;
 
 use crate::mcp_shared::McpSharedState;
 use crate::session::SynthSession;
-
-/// Sample rate of the offline render. Matches the single-note preview path.
-const RENDER_SAMPLE_RATE: u32 = 44100;
 
 /// Block size in frames per `engine.process()` call.
 const BUFFER_SIZE: usize = 256;
@@ -91,9 +89,10 @@ fn offline_callback_ctx(
     frames: usize,
     sample_position: u64,
     stream_time: f64,
+    sample_rate: u32,
 ) -> AudioCallbackContext {
     AudioCallbackContext {
-        sample_rate: HwSampleRate(RENDER_SAMPLE_RATE),
+        sample_rate: HwSampleRate(sample_rate),
         frames,
         channels: CHANNELS as u16,
         stream_time,
@@ -140,6 +139,29 @@ pub fn render_arrangement_to_buffer(
         &shared.song,
         start_tick,
         end_tick,
+        AnalysisScope::default(),
+    )
+}
+
+/// Like [`render_arrangement_to_buffer`] but reconstructs the optional signal
+/// stages requested by `scope` (master effects, return-bus effects, …) so the
+/// analysis hears more than the dry instrument sum. `AnalysisScope::default()`
+/// behaves identically to [`render_arrangement_to_buffer`].
+pub fn render_arrangement_to_buffer_with_scope(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    start_tick: u64,
+    end_tick: u64,
+    scope: AnalysisScope,
+) -> Result<RenderedArrangement, McpBridgeError> {
+    render_arrangement_to_buffer_with_song(
+        session,
+        sample_library,
+        &shared.song,
+        start_tick,
+        end_tick,
+        scope,
     )
 }
 
@@ -160,8 +182,10 @@ pub(crate) fn render_arrangement_to_buffer_with_song(
     song: &Arc<RwLock<Song>>,
     start_tick: u64,
     end_tick: u64,
+    scope: AnalysisScope,
 ) -> Result<RenderedArrangement, McpBridgeError> {
-    let (mut sess, setup_warnings) = OfflineEngineSession::new(session, sample_library)?;
+    let (mut sess, setup_warnings) =
+        OfflineEngineSession::new_with_scope(session, sample_library, scope)?;
     let mut rendered = sess.render_range(song, start_tick, end_tick)?;
     // Preserve the pre-§7.1 contract: setup warnings appear in the single
     // render's `warnings` vec. The session API itself returns them separately.
@@ -200,6 +224,23 @@ pub struct OfflineEngineSession {
     /// block AND run the voice-bleed drain instead (a freshly-built engine has
     /// no prior voices to drain).
     first_call_done: bool,
+    /// Which optional signal stages this session reconstructs (master/return
+    /// effects, AWE). Fixed at construction so every `render_range` call on the
+    /// session — including the per-track soloed renders — uses the same scope.
+    scope: AnalysisScope,
+    /// Master effect chain captured from the live engine at construction time.
+    /// Replayed (via `ClearMasterEffects` + re-add) each `render_range` so a
+    /// reused session rebuilds fresh, zero-state master effects per render
+    /// instead of carrying tails across soloed per-track renders. Empty unless
+    /// `scope.master_effects`.
+    master_effect_snapshot: Vec<synth_engine::shared_state::ReturnEffectSnapshot>,
+    /// Return-bus effect chains captured from the live engine at construction
+    /// time. Replayed each `render_range` because `ClearReturnBusses` wipes the
+    /// offline buses' chains. Empty unless `scope.return_effects`.
+    return_effect_snapshots: Vec<synth_engine::shared_state::ReturnBusSnapshot>,
+    /// Render sample rate (from `scope.render_sample_rate`). Baked into the
+    /// engine's stream at construction, so it is fixed for the session's life.
+    sample_rate: u32,
 }
 
 impl OfflineEngineSession {
@@ -216,6 +257,19 @@ impl OfflineEngineSession {
     pub fn new(
         session: &SynthSession,
         sample_library: &crate::audio::preview::SharedSampleLibrary,
+    ) -> Result<(Self, Vec<String>), McpBridgeError> {
+        Self::new_with_scope(session, sample_library, AnalysisScope::default())
+    }
+
+    /// Like [`new`](Self::new) but reconstructs the optional signal stages named
+    /// by `scope`. Master and return effect chains are snapshotted here and
+    /// replayed fresh per [`render_range`](Self::render_range) so a reused
+    /// session never carries effect state across renders. With
+    /// `AnalysisScope::default()` this is identical to [`new`](Self::new).
+    pub fn new_with_scope(
+        session: &SynthSession,
+        sample_library: &crate::audio::preview::SharedSampleLibrary,
+        scope: AnalysisScope,
     ) -> Result<(Self, Vec<String>), McpBridgeError> {
         let engine_state = session.state();
         let live_instruments: Vec<synth_engine::shared_state::InstrumentSnapshot> = engine_state
@@ -257,8 +311,27 @@ impl OfflineEngineSession {
             );
         }
 
+        // Capture the master + return effect chains here, but replay them per
+        // `render_range` (not once) so a session reused across per-track soloed
+        // renders rebuilds *fresh* effect instances each time. Loading master
+        // effects once and leaving them resident would let stateful DSP (reverb
+        // / delay / compressor tails) bleed from one soloed track's render into
+        // the next, making per-track metrics order-dependent.
+        let master_effect_snapshot = if scope.master_effects {
+            engine_state.master_effects.read().clone()
+        } else {
+            Vec::new()
+        };
+
+        let return_effect_snapshots = if scope.return_effects {
+            engine_state.return_bus_effects.read().clone()
+        } else {
+            Vec::new()
+        };
+
+        let sample_rate = scope.render_sample_rate;
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(RENDER_SAMPLE_RATE),
+            sample_rate: HwSampleRate(sample_rate),
             buffer_size: synth_core::BufferSize(BUFFER_SIZE as u32),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
@@ -271,6 +344,10 @@ impl OfflineEngineSession {
                 engine,
                 handle,
                 first_call_done: false,
+                scope,
+                master_effect_snapshot,
+                return_effect_snapshots,
+                sample_rate,
             },
             setup_warnings,
         ))
@@ -344,9 +421,9 @@ impl OfflineEngineSession {
         }
 
         let visible_frames =
-            (f64::from(visible_seconds) * f64::from(RENDER_SAMPLE_RATE)).ceil() as u64;
+            (f64::from(visible_seconds) * f64::from(self.sample_rate)).ceil() as u64;
         let prefix_frames =
-            (f64::from(prefix_seconds) * f64::from(RENDER_SAMPLE_RATE)).round() as u64;
+            (f64::from(prefix_seconds) * f64::from(self.sample_rate)).round() as u64;
         let total_frames = prefix_frames + visible_frames;
         if total_frames == 0 {
             return Err(McpBridgeError::Other(
@@ -374,8 +451,8 @@ impl OfflineEngineSession {
         // renders that `analyze_section` returns are unaffected by sub-ms
         // residual filter state.
         if self.first_call_done {
-            let drain_ctx = offline_callback_ctx(BUFFER_SIZE, u64::MAX, 0.0);
-            let max_blocks = ((VOICE_DRAIN_MAX_MS / 1000.0) * RENDER_SAMPLE_RATE as f32
+            let drain_ctx = offline_callback_ctx(BUFFER_SIZE, u64::MAX, 0.0, self.sample_rate);
+            let max_blocks = ((VOICE_DRAIN_MAX_MS / 1000.0) * self.sample_rate as f32
                 / BUFFER_SIZE as f32)
                 .ceil() as usize;
             for _ in 0..max_blocks {
@@ -399,12 +476,39 @@ impl OfflineEngineSession {
         // Reconstruct the song's return-bus channels so sends route correctly
         // in the offline render. Reset first so channels from a prior render of
         // a different song don't linger (this session is reused across calls).
-        // Faders are read live from the song; effect chains on returns are not
-        // reconstructed here, so offline renders hear the dry-summed returns.
+        // Faders are read live from the song. Return-bus effect chains are
+        // reconstructed only when `scope.return_effects` is set (replayed every
+        // render because `ClearReturnBusses` wipes them); otherwise offline
+        // renders hear the dry-summed returns.
         self.handle.send_blocking(EngineCommand::ClearReturnBusses);
         for bus in song.read().return_busses() {
             self.handle
                 .send_blocking(EngineCommand::CreateReturnBus { id: bus.id });
+        }
+        if self.scope.return_effects {
+            load_return_effects_into_offline(
+                &mut self.handle,
+                &self.return_effect_snapshots,
+                &mut warnings,
+            );
+        }
+        // Rebuild the master chain fresh every render (`load_master_effects_into_offline`
+        // begins with `ClearMasterEffects`), so a reused session starts each
+        // soloed render with zero-state master effects — no tail bleed between
+        // tracks. Cheap relative to the render itself.
+        if self.scope.master_effects {
+            load_master_effects_into_offline(
+                &mut self.handle,
+                &self.master_effect_snapshot,
+                &mut warnings,
+            );
+        }
+        if self.scope.awe {
+            warnings.push(
+                "include_awe requested but AWE room simulation is not yet reconstructed in \
+                 offline analysis renders — the result excludes AWE."
+                    .to_string(),
+            );
         }
 
         // Sentinel sample_position in the warm-up block keeps the engine from
@@ -412,7 +516,7 @@ impl OfflineEngineSession {
         // needed on the first call — subsequent renders inherit the same
         // warmed-up engine.
         if !self.first_call_done {
-            let warmup_ctx = offline_callback_ctx(BUFFER_SIZE, u64::MAX, 0.0);
+            let warmup_ctx = offline_callback_ctx(BUFFER_SIZE, u64::MAX, 0.0, self.sample_rate);
             block.fill(0.0);
             self.engine.process(&mut block, &warmup_ctx);
             self.first_call_done = true;
@@ -442,7 +546,8 @@ impl OfflineEngineSession {
             let context = offline_callback_ctx(
                 this_buffer,
                 frames_written,
-                frames_written as f64 / f64::from(RENDER_SAMPLE_RATE),
+                frames_written as f64 / f64::from(self.sample_rate),
+                self.sample_rate,
             );
 
             self.engine.process(&mut block[..sample_count], &context);
@@ -466,7 +571,7 @@ impl OfflineEngineSession {
 
         Ok(RenderedArrangement {
             samples,
-            sample_rate: RENDER_SAMPLE_RATE,
+            sample_rate: self.sample_rate,
             duration_seconds: visible_seconds,
             channels: CHANNELS as u16,
             start_tick,
@@ -731,4 +836,98 @@ fn load_instrument_into_offline(
         instrument_id,
         param: InstrumentParam::Solo(inst_snap.solo),
     });
+}
+
+/// Replay the live master effect chain into the offline engine.
+///
+/// `instrument_id: None` targets the master chain (mirrors `add_master_effect`).
+/// The snapshot already carries each effect's full parameter set, so no
+/// descriptor walk is needed — the params are forwarded verbatim.
+fn load_master_effects_into_offline(
+    handle: &mut synth_engine::EngineHandle,
+    snapshot: &[synth_engine::shared_state::ReturnEffectSnapshot],
+    warnings: &mut Vec<String>,
+) {
+    handle.send_blocking(EngineCommand::ClearMasterEffects);
+    for eff in snapshot {
+        let Some((effect, _descriptor)) = crate::module_factory::create_effect(eff.module_type)
+        else {
+            warnings.push(format!(
+                "arrangement_render: master effect {:?} is not an effect type — skipped",
+                eff.module_type
+            ));
+            continue;
+        };
+        if !handle.send_blocking(EngineCommand::AddEffectInstance {
+            instrument_id: None,
+            id: eff.module_id,
+            effect,
+        }) {
+            warnings.push(format!(
+                "arrangement_render: failed to add master effect {}",
+                eff.module_id
+            ));
+            continue;
+        }
+        for param in &eff.parameters {
+            handle.send_blocking(EngineCommand::SetEffectParameter {
+                instrument_id: None,
+                module_id: eff.module_id,
+                param: *param,
+            });
+        }
+        if eff.bypassed {
+            handle.send_blocking(EngineCommand::SetEffectEnabled {
+                instrument_id: None,
+                module_id: eff.module_id,
+                enabled: false,
+            });
+        }
+    }
+}
+
+/// Replay the live return-bus effect chains into the offline engine. Must run
+/// after the matching `CreateReturnBus` commands so each `return_id` resolves.
+fn load_return_effects_into_offline(
+    handle: &mut synth_engine::EngineHandle,
+    snapshots: &[synth_engine::shared_state::ReturnBusSnapshot],
+    warnings: &mut Vec<String>,
+) {
+    for bus in snapshots {
+        for eff in &bus.effects {
+            let Some((effect, _descriptor)) = crate::module_factory::create_effect(eff.module_type)
+            else {
+                warnings.push(format!(
+                    "arrangement_render: return effect {:?} is not an effect type — skipped",
+                    eff.module_type
+                ));
+                continue;
+            };
+            if !handle.send_blocking(EngineCommand::AddReturnEffect {
+                return_id: bus.id,
+                id: eff.module_id,
+                effect,
+            }) {
+                warnings.push(format!(
+                    "arrangement_render: failed to add return effect {} on bus {}",
+                    eff.module_id, bus.id.0
+                ));
+                continue;
+            }
+            for param in &eff.parameters {
+                handle.send_blocking(EngineCommand::SetReturnEffectParameter {
+                    return_id: bus.id,
+                    module_id: eff.module_id,
+                    param: *param,
+                });
+            }
+            if eff.bypassed {
+                handle.send_blocking(EngineCommand::SetReturnEffectEnabled {
+                    return_id: bus.id,
+                    module_id: eff.module_id,
+                    enabled: false,
+                });
+            }
+        }
+    }
 }
