@@ -1350,7 +1350,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// (scientific pitch notation, octave 4 = middle-C). `voicing` is one
     /// of `"close"`, `"drop2"`, `"drop3"`, `"open"` (default `"close"`).
     /// Pure symbolic — does not touch the song; the caller plays or places
-    /// the returned notes with `note_on` / `add_notes`.
+    /// the returned notes with `note_on` / `add_note`.
     fn generate_chord(
         &self,
         symbol: &str,

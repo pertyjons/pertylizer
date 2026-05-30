@@ -2373,7 +2373,7 @@ pub struct AnalyzeVelocityResponseResult {
 // ---------------------------------------------------------------------------
 
 /// Output of `generate_chord`. Pure symbolic — returns MIDI notes for a
-/// requested chord symbol so the caller can place them with `add_notes`.
+/// requested chord symbol so the caller can place them with `add_note`.
 #[derive(Debug, Clone, Serialize)]
 pub struct GenerateChordResult {
     /// Chord symbol echoed back.

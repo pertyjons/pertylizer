@@ -93,7 +93,7 @@ This project includes an MCP (Model Context Protocol) server for external contro
 The `synth` MCP server provides a wide range of tools:
 - **Discovery:** `list_module_types`, `get_module_type_info`, `search_modules`, `list_port_types`.
 - **Instruments:** `create_instrument`, `build_instrument`, `list_instruments`, `set_parameter`.
-- **Sequencer:** `create_pattern`, `add_notes`, `create_track`, `place_pattern`.
+- **Sequencer:** `create_pattern`, `add_note`, `create_track`, `place_pattern`.
 - **AWE:** `set_awe_preset`, `set_awe_parameter`, `get_awe_state`.
 - **Analysis:** `analyze_harmony`, `analyze_mix_bus`, `analyze_section`.
 

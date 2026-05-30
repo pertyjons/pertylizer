@@ -170,10 +170,10 @@ Create instruments, wire modules together, set parameters.
 | `create_instrument`, `delete_instrument`, `rename_instrument` | Lifecycle |
 | `set_instrument_category` | Drums/Bass/Lead/Pad/Pluck/Keys/FX/Other |
 | `add_module`, `remove_module` | Modify the graph |
-| `connect`, `connect_multiple`, `disconnect` | Cables |
+| `connect`, `disconnect` | Cables (`connect` takes one or many port pairs) |
 | `clear_graph`, `auto_layout` | Reset / tidy |
-| `set_parameter`, `set_parameters` | One or many params atomically; value may be a number, a choice string (`"sawtooth"`), or a boolean |
-| `build_instrument` | Single call: full instrument from a JSON spec |
+| `set_parameter` | One or many params atomically; value may be a number, a choice string (`"sawtooth"`), or a boolean |
+| `build_instrument` | Single call: one or many full instruments from a JSON spec |
 | `apply_example_patch`, `load_example_patch`, `list_example_patches` | Built-in patch library |
 
 ### Playback & Transport
@@ -200,14 +200,14 @@ Non-realtime composition.
 
 | Tool | Purpose |
 |------|---------|
-| `list_patterns`, `create_pattern`, `create_patterns` | Pattern lifecycle |
+| `list_patterns`, `create_pattern` | Pattern lifecycle (`create_pattern` takes one or many) |
 | `delete_pattern`, `rename_pattern`, `duplicate_pattern` | |
 | `set_pattern_length` | In ticks (960 PPQN) |
-| `list_notes`, `add_note`, `add_notes` | Note entry |
-| `update_note`, `update_notes`, `replace_notes`, `remove_note` | Edits |
+| `list_notes`, `add_note` | Note entry (`add_note` takes one or many) |
+| `update_note`, `replace_notes`, `remove_note` | Edits (`update_note` takes one or many) |
 | `clear_pattern` | Wipe a pattern |
 
-**Per-note expression (`add_notes`).** Each note in `add_notes` accepts two
+**Per-note expression (`add_note`).** Each note in `add_note` accepts two
 optional fields beyond pitch/start/duration/velocity:
 
 - `legato` (bool) — tie into the next note without retriggering the envelope.
@@ -231,10 +231,10 @@ optional fields beyond pitch/start/duration/velocity:
 
 | Tool | Purpose |
 |------|---------|
-| `list_tracks`, `create_track`, `create_tracks` | Track lifecycle |
+| `list_tracks`, `create_track` | Track lifecycle (`create_track` takes one or many) |
 | `rename_track`, `delete_track`, `set_track_instrument` | |
 | `set_track_volume`, `set_track_pan`, `set_track_mute`, `set_track_solo` | Mixing |
-| `list_arrangement`, `place_pattern`, `place_patterns`, `remove_placement` | Song arrangement |
+| `list_arrangement`, `place_pattern`, `remove_placement` | Song arrangement (`place_pattern` takes one or many) |
 
 ### Instrument Mixing
 
@@ -302,7 +302,7 @@ Spatial audio and room simulation.
 
 | Tool | Purpose |
 |------|---------|
-| `build_instruments` | Create many instruments in one call |
+| `batch_execute` | Run up to 50 arbitrary tool calls in one request |
 | `optimize_project` | Remove unused patterns, instruments, samples |
 
 ---
@@ -389,7 +389,7 @@ The tools accept the shapes an agent naturally reaches for:
 - **Module-type tokens** are case-insensitive and accept the short key (`"flt"`),
   the snake_case full name (`"ladder_filter"`), or the display name
   (`"Ladder Filter"`) — in `add_module`, `build_instrument`, and automation targets.
-- **Parameter values** in `set_parameter` / `set_parameters` accept a number in the
+- **Parameter values** in `set_parameter` accept a number in the
   native range, a choice *string* (`"sawtooth"`, matched against the choice id or
   display name), or a boolean for on/off params — not just raw floats.
 - **Canonical param keys.** Parameter listings expose the snake_case `type_id`
@@ -404,12 +404,19 @@ parameter changes by re-running analysis.
 
 ### Batch operations to save tokens
 
-For musical ideas that touch many notes or parameters, prefer the batch variants:
+Most mutating tools accept either a single item or an array, so pass many items in
+one call instead of one call per item:
 
-- `add_notes`, `update_notes`, `replace_notes` instead of one call per note
-- `create_patterns`, `place_patterns`, `create_tracks` for arranger setup
-- `build_instrument` / `build_instruments` for full patch creation in one call
-- `set_parameters` for atomic multi-parameter changes
+- `add_note`, `update_note`, `replace_notes` — many notes at once
+- `create_pattern`, `place_pattern`, `create_track` — arranger setup in one call
+- `build_instrument` — one or many full patches in one call
+- `set_parameter` — atomic multi-parameter changes
+- `add_module` / `remove_module`, `add_return_effect` / `remove_return_effect`,
+  `add_master_effect` / `remove_master_effect` — build or tear down chains in one call
+- `remove_note`, `remove_placement`, `remove_track_send`, `remove_return_send`,
+  `delete_instrument`, `delete_pattern`, `delete_track`, `delete_return_bus`,
+  `delete_sample` — bulk removal by passing many IDs
+- `set_song` — a whole arrangement in one call; `batch_execute` for cross-domain orchestration
 
 ### Structured errors
 
@@ -478,10 +485,10 @@ rendered to a buffer. The live engine is untouched.
 ### "Compose a 16-bar progression in C minor"
 
 1. Agent calls `set_song_tempo(120)`, `set_song_time_signature(4, 4)`.
-2. Agent calls `create_patterns` for verse/chorus.
-3. Agent calls `add_notes` with chord voicings.
+2. Agent calls `create_pattern` for verse/chorus.
+3. Agent calls `add_note` with chord voicings.
 4. Agent calls `analyze_harmony` to verify the progression matches C minor (24 keys auto-detected).
-5. Agent calls `place_patterns` to arrange the song.
+5. Agent calls `place_pattern` to arrange the song.
 
 ### "Mix the song"
 

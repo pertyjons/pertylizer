@@ -103,7 +103,7 @@ fn validate_name(kind: &'static str, name: &str) -> Result<(), McpBridgeError> {
     Ok(())
 }
 
-/// Validate note fields that are always required (add_note, add_notes, etc.).
+/// Validate note fields that are always required (add_note, etc.).
 fn validate_note_fields(
     pitch: u8,
     velocity: u8,
@@ -289,6 +289,22 @@ fn validate_automation_points_input(points: &[AutomationPointInput]) -> Result<(
 /// Format a validation error for string-returning tool handlers.
 fn validation_err(e: McpBridgeError) -> String {
     format!("Error: {e}")
+}
+
+/// Summarise a batch of single-item mutations into one response string.
+/// `noun` describes the items (e.g. "notes removed", "modules added").
+/// `details` (optional, e.g. created module-ids) are listed when present, and
+/// any per-item errors are appended. A whole-batch failure is still reported as
+/// a partial success with the failures listed, so callers see exactly what stuck.
+fn batch_msg(ok_count: usize, noun: &str, details: &[String], errors: &[String]) -> String {
+    let mut out = format!("OK: {ok_count} {noun}");
+    if !details.is_empty() {
+        out.push_str(&format!(" ({})", details.join(", ")));
+    }
+    if !errors.is_empty() {
+        out.push_str(&format!("; {} failed: {}", errors.len(), errors.join("; ")));
+    }
+    out
 }
 
 /// Convert a [`McpBridgeError`] into the MCP [`ErrorData`] type used by tool handlers.
@@ -515,6 +531,14 @@ pub struct InstrumentIdParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct DeleteInstrumentsParam {
+    #[schemars(
+        description = "Instrument IDs to delete (one or many). The default instrument (ID 0) cannot be deleted."
+    )]
+    pub instrument_ids: Vec<u64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ModuleParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
     pub instrument_id: u64,
@@ -530,20 +554,6 @@ pub struct GetParameterParam {
     pub module_id: String,
     #[schemars(description = "Parameter name, e.g. 'frequency', 'resonance'")]
     pub param_name: String,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetParameterParam {
-    #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
-    #[schemars(description = "Module ID string, e.g. 'osc-1'")]
-    pub module_id: String,
-    #[schemars(description = "Parameter name, e.g. 'frequency', 'resonance'")]
-    pub param_name: String,
-    #[schemars(
-        description = "New value. A number in the parameter's native range (e.g. 20.0-20000.0 for cutoff in Hz), a boolean for on/off parameters, or a string for choice/enum parameters (e.g. 'sawtooth', matched against the choice id or display name). Use get_module_info to discover ranges and choices."
-    )]
-    pub value: ParamValueInput,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1111,13 +1121,21 @@ pub struct LoadExamplePatchParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct AddModuleParam {
+pub struct AddModulesParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
     pub instrument_id: u64,
     #[schemars(
-        description = "Module type. Accepts the short type key from list_module_types (e.g. 'osc', 'flt', 'amp'), the full name in snake_case (e.g. 'oscillator', 'ladder_filter'), or the display name (e.g. 'Oscillator', 'Ladder Filter'). Case-insensitive."
+        description = "Module types to add (one or many). Each accepts the short type key from list_module_types (e.g. 'osc', 'flt', 'amp'), the full name in snake_case (e.g. 'oscillator', 'ladder_filter'), or the display name (e.g. 'Oscillator', 'Ladder Filter'). Case-insensitive."
     )]
-    pub module_type: String,
+    pub module_types: Vec<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RemoveModulesParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: u64,
+    #[schemars(description = "Module IDs to remove (one or many), e.g. ['osc-1', 'flt-2']")]
+    pub module_ids: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1350,73 +1368,33 @@ pub struct SetSongNameParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct CreatePatternParam {
-    #[schemars(description = "Pattern name")]
-    pub name: String,
-    #[schemars(description = "Pattern length in beats (e.g. 4.0 for one bar in 4/4)")]
-    pub length_beats: f32,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PatternIdParam {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: u32,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct AddNoteParam {
-    #[schemars(description = "Pattern ID to add the note to")]
-    pub pattern_id: u32,
-    #[schemars(description = "MIDI pitch (0-127, where 60 = middle C)")]
-    pub pitch: u8,
-    #[schemars(description = "Start position in beats (0.0 = beginning of pattern)")]
-    pub start_beat: f32,
-    #[schemars(description = "Duration in beats (1.0 = quarter note, 0.5 = eighth note)")]
-    pub duration_beats: f32,
-    #[schemars(description = "Velocity (0-127, where 127 = maximum)")]
-    pub velocity: u8,
+pub struct DeletePatternsParam {
+    #[schemars(
+        description = "Pattern IDs to delete (one or many). Also removes all placements of each pattern."
+    )]
+    pub pattern_ids: Vec<u32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RemoveNoteParam {
+pub struct RemoveNotesParam {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: u32,
-    #[schemars(description = "Note ID to remove")]
-    pub note_id: u64,
+    #[schemars(description = "Note IDs to remove (one or many)")]
+    pub note_ids: Vec<u64>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct UpdateNoteParam {
-    #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
-    #[schemars(description = "Note ID to update")]
-    pub note_id: u64,
-    #[schemars(description = "New MIDI pitch (0-127), or null to keep current")]
-    pub pitch: Option<u8>,
-    #[schemars(description = "New start position in beats, or null to keep current")]
-    pub start_beat: Option<f32>,
-    #[schemars(description = "New duration in beats, or null to keep current")]
-    pub duration_beats: Option<f32>,
-    #[schemars(description = "New velocity (0-127), or null to keep current")]
-    pub velocity: Option<u8>,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct CreateTrackParam {
-    #[schemars(description = "Track name")]
-    pub name: String,
-    #[schemars(description = "Instrument ID to assign (optional)")]
-    pub instrument_id: Option<u16>,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct PlacePatternParam {
-    #[schemars(description = "Pattern ID to place")]
-    pub pattern_id: u32,
-    #[schemars(description = "Track ID to place on")]
-    pub track_id: u16,
-    #[schemars(description = "Start position in beats")]
-    pub start_beat: f32,
+pub struct RemovePlacementsParam {
+    #[schemars(
+        description = "Placements to remove (one or many), each identified by pattern_id, track_id, and start_beat"
+    )]
+    pub placements: Vec<PlacementInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1749,9 +1727,11 @@ pub struct CreateReturnBusParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ReturnBusIdParam {
-    #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
+pub struct DeleteReturnBusesParam {
+    #[schemars(
+        description = "Return bus IDs to delete (one or many). Also removes every track send that targeted each bus."
+    )]
+    pub return_ids: Vec<u16>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1836,29 +1816,39 @@ pub struct SetTrackSendParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RemoveTrackSendParam {
+pub struct TrackSendRef {
     #[schemars(description = "Track ID")]
     pub track_id: u16,
-    #[schemars(description = "Destination return bus ID to remove the send to")]
+    #[schemars(description = "Destination return bus ID the send targets")]
     pub return_id: u16,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct AddReturnEffectParam {
+pub struct RemoveTrackSendsParam {
+    #[schemars(
+        description = "Track sends to remove (one or many), each a {track_id, return_id} pair"
+    )]
+    pub sends: Vec<TrackSendRef>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AddReturnEffectsParam {
     #[schemars(description = "Return bus ID")]
     pub return_id: u16,
     #[schemars(
-        description = "Effect type key (e.g. 'rev', 'delay', 'chorus', 'eq', 'compressor', 'distortion'). Accepts the prefix or display name. Voice modules are rejected."
+        description = "Effect type keys to add (one or many), in chain order (e.g. ['eq', 'rev']). Each accepts the prefix or display name (e.g. 'rev', 'delay', 'chorus', 'compressor', 'distortion'). Voice modules are rejected."
     )]
-    pub effect_type: String,
+    pub effect_types: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ReturnEffectIdParam {
+pub struct RemoveReturnEffectsParam {
     #[schemars(description = "Return bus ID")]
     pub return_id: u16,
-    #[schemars(description = "Effect module-id string (e.g. 'rev-1'), from list_return_busses")]
-    pub module_id: String,
+    #[schemars(
+        description = "Effect module-id strings to remove (one or many), e.g. ['rev-1'], from list_return_busses"
+    )]
+    pub module_ids: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1913,11 +1903,19 @@ pub struct SetReturnSendParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RemoveReturnSendParam {
+pub struct ReturnSendRef {
     #[schemars(description = "Source return bus ID")]
     pub from_id: u16,
-    #[schemars(description = "Destination return bus ID to remove the send to")]
+    #[schemars(description = "Destination return bus ID the send targets")]
     pub to_id: u16,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RemoveReturnSendsParam {
+    #[schemars(
+        description = "Bus-to-bus sends to remove (one or many), each a {from_id, to_id} pair"
+    )]
+    pub sends: Vec<ReturnSendRef>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1927,17 +1925,19 @@ pub struct SetMasterVolumeParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct AddMasterEffectParam {
+pub struct AddMasterEffectsParam {
     #[schemars(
-        description = "Effect type key (e.g. 'limiter', 'eq', 'compressor', 'rev'). Accepts the prefix or display name. Voice modules are rejected."
+        description = "Effect type keys to add (one or many), in chain order (e.g. ['eq', 'limiter']). Each accepts the prefix or display name (e.g. 'limiter', 'compressor', 'rev'). Voice modules are rejected."
     )]
-    pub effect_type: String,
+    pub effect_types: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct MasterEffectIdParam {
-    #[schemars(description = "Effect module-id string (e.g. 'lim-1'), from list_master_effects")]
-    pub module_id: String,
+pub struct RemoveMasterEffectsParam {
+    #[schemars(
+        description = "Effect module-id strings to remove (one or many), e.g. ['lim-1'], from list_master_effects"
+    )]
+    pub module_ids: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1977,9 +1977,11 @@ pub struct RenameTrackParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct DeleteTrackParam {
-    #[schemars(description = "Track ID")]
-    pub track_id: u16,
+pub struct DeleteTracksParam {
+    #[schemars(
+        description = "Track IDs to delete (one or many). Also removes each track's placements from the arrangement."
+    )]
+    pub track_ids: Vec<u16>,
 }
 
 // === Pattern management parameter structs ===
@@ -2189,30 +2191,6 @@ pub struct ConnectionDefInput {
     pub to_port: String,
 }
 
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct BuildInstrumentParam {
-    #[schemars(
-        description = "Existing instrument ID to update. If provided, clears the instrument's graph and rebuilds it. If omitted, creates a new instrument."
-    )]
-    pub instrument_id: Option<u64>,
-    #[schemars(description = "Instrument name")]
-    pub name: String,
-    #[schemars(description = "MIDI channel (1-16, optional)")]
-    pub midi_channel: Option<u8>,
-    #[schemars(description = "Volume (0.0-2.0, optional, default 1.0)")]
-    pub volume: Option<f32>,
-    #[schemars(description = "Pan (-1.0 to 1.0, optional, default 0.0)")]
-    pub pan: Option<f32>,
-    #[schemars(
-        description = "Modules to create. Order matters — connections reference modules by array index."
-    )]
-    pub modules: Vec<ModuleDefInput>,
-    #[schemars(
-        description = "Connections between modules. Use 'from'/'to' as 0-based indices into the modules array."
-    )]
-    pub connections: Option<Vec<ConnectionDefInput>>,
-}
-
 /// Single instrument definition for batch build.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InstrumentDefInput {
@@ -2370,6 +2348,14 @@ pub struct ImportSampleParam {
 pub struct SampleIdParam {
     #[schemars(description = "Sample ID. Use list_samples to find available IDs.")]
     pub sample_id: u64,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct DeleteSamplesParam {
+    #[schemars(
+        description = "Sample IDs to delete (one or many). Use list_samples to find available IDs."
+    )]
+    pub sample_ids: Vec<u64>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2673,8 +2659,7 @@ impl SynthMcpServer {
             "check_connection" => check_connection(CheckConnectionParam),
 
             // Parameters
-            "set_parameter" => set_parameter(SetParameterParam),
-            "set_parameters" => set_parameters(SetParametersParam),
+            "set_parameter" => set_parameter(SetParametersParam),
 
             // Notes
             "note_on" => note_on(NoteOnParam),
@@ -2686,16 +2671,15 @@ impl SynthMcpServer {
             "auto_layout" => auto_layout(NoParams),
 
             // Module management
-            "add_module" => add_module(AddModuleParam),
-            "remove_module" => remove_module(ModuleParam),
-            "connect" => connect(ConnectParam),
-            "connect_multiple" => connect_multiple(ConnectMultipleParam),
+            "add_module" => add_module(AddModulesParam),
+            "remove_module" => remove_module(RemoveModulesParam),
+            "connect" => connect(ConnectMultipleParam),
             "disconnect" => disconnect(ConnectParam),
             "clear_graph" => clear_graph(InstrumentIdParam),
 
             // Instrument lifecycle
             "create_instrument" => create_instrument(CreateInstrumentParam),
-            "delete_instrument" => delete_instrument(InstrumentIdParam),
+            "delete_instrument" => delete_instrument(DeleteInstrumentsParam),
             "rename_instrument" => rename_instrument(RenameInstrumentParam),
             "set_instrument_description" => set_instrument_description(SetInstrumentDescriptionParam),
             "set_patch_description" => set_patch_description(SetPatchDescriptionParam),
@@ -2721,28 +2705,24 @@ impl SynthMcpServer {
 
             // Patterns
             "list_patterns" => list_patterns(NoParams),
-            "create_pattern" => create_pattern(CreatePatternParam),
-            "delete_pattern" => delete_pattern(PatternIdParam),
+            "delete_pattern" => delete_pattern(DeletePatternsParam),
             "rename_pattern" => rename_pattern(RenamePatternParam),
             "set_pattern_description" => set_pattern_description(SetPatternDescriptionParam),
             "set_pattern_length" => set_pattern_length(SetPatternLengthParam),
             "duplicate_pattern" => duplicate_pattern(DuplicatePatternParam),
-            "create_patterns" => create_patterns(CreatePatternsParam),
+            "create_pattern" => create_pattern(CreatePatternsParam),
 
             // Notes in patterns
             "list_notes" => list_notes(PatternIdParam),
-            "add_note" => add_note(AddNoteParam),
-            "remove_note" => remove_note(RemoveNoteParam),
-            "update_note" => update_note(UpdateNoteParam),
-            "add_notes" => add_notes(AddNotesParam),
-            "update_notes" => update_notes(UpdateNotesParam),
+            "remove_note" => remove_note(RemoveNotesParam),
+            "add_note" => add_note(AddNotesParam),
+            "update_note" => update_note(UpdateNotesParam),
             "replace_notes" => replace_notes(ReplaceNotesParam),
             "clear_pattern" => clear_pattern(ClearPatternParam),
 
             // Tracks
             "list_tracks" => list_tracks(NoParams),
-            "create_track" => create_track(CreateTrackParam),
-            "create_tracks" => create_tracks(CreateTracksParam),
+            "create_track" => create_track(CreateTracksParam),
             "set_track_volume" => set_track_volume(SetTrackVolumeParam),
             "set_track_pan" => set_track_pan(SetTrackPanParam),
             "set_track_mute" => set_track_mute(SetTrackMuteParam),
@@ -2751,12 +2731,12 @@ impl SynthMcpServer {
             "rename_track" => rename_track(RenameTrackParam),
             "set_track_description" => set_track_description(SetTrackDescriptionParam),
             "set_track_color" => set_track_color(SetTrackColorParam),
-            "delete_track" => delete_track(DeleteTrackParam),
+            "delete_track" => delete_track(DeleteTracksParam),
 
             // Return busses (effect sends)
             "list_return_busses" => list_return_busses(NoParams),
             "create_return_bus" => create_return_bus(CreateReturnBusParam),
-            "delete_return_bus" => delete_return_bus(ReturnBusIdParam),
+            "delete_return_bus" => delete_return_bus(DeleteReturnBusesParam),
             "set_return_bus_volume" => set_return_bus_volume(SetReturnBusVolumeParam),
             "set_return_bus_pan" => set_return_bus_pan(SetReturnBusPanParam),
             "set_return_bus_mute" => set_return_bus_mute(SetReturnBusMuteParam),
@@ -2765,28 +2745,27 @@ impl SynthMcpServer {
             "set_return_bus_description" => set_return_bus_description(SetReturnBusDescriptionParam),
             "rename_return_bus" => rename_return_bus(RenameReturnBusParam),
             "set_track_send" => set_track_send(SetTrackSendParam),
-            "remove_track_send" => remove_track_send(RemoveTrackSendParam),
+            "remove_track_send" => remove_track_send(RemoveTrackSendsParam),
             "set_return_send" => set_return_send(SetReturnSendParam),
-            "remove_return_send" => remove_return_send(RemoveReturnSendParam),
-            "add_return_effect" => add_return_effect(AddReturnEffectParam),
-            "remove_return_effect" => remove_return_effect(ReturnEffectIdParam),
+            "remove_return_send" => remove_return_send(RemoveReturnSendsParam),
+            "add_return_effect" => add_return_effect(AddReturnEffectsParam),
+            "remove_return_effect" => remove_return_effect(RemoveReturnEffectsParam),
             "set_return_effect_parameter" => set_return_effect_parameter(SetReturnEffectParameterParam),
             "set_return_effect_enabled" => set_return_effect_enabled(SetReturnEffectEnabledParam),
             "reorder_return_effect" => reorder_return_effect(ReorderReturnEffectParam),
             "get_master_volume" => get_master_volume(NoParams),
             "set_master_volume" => set_master_volume(SetMasterVolumeParam),
             "list_master_effects" => list_master_effects(NoParams),
-            "add_master_effect" => add_master_effect(AddMasterEffectParam),
-            "remove_master_effect" => remove_master_effect(MasterEffectIdParam),
+            "add_master_effect" => add_master_effect(AddMasterEffectsParam),
+            "remove_master_effect" => remove_master_effect(RemoveMasterEffectsParam),
             "set_master_effect_parameter" => set_master_effect_parameter(SetMasterEffectParameterParam),
             "set_master_effect_enabled" => set_master_effect_enabled(SetMasterEffectEnabledParam),
             "reorder_master_effect" => reorder_master_effect(ReorderMasterEffectParam),
 
             // Arrangement
-            "place_pattern" => place_pattern(PlacePatternParam),
-            "remove_placement" => remove_placement(PlacePatternParam),
+            "remove_placement" => remove_placement(RemovePlacementsParam),
             "list_arrangement" => list_arrangement(NoParams),
-            "place_patterns" => place_patterns(PlacePatternsParam),
+            "place_pattern" => place_pattern(PlacePatternsParam),
 
             // Automation
             "add_automation_points" => add_automation_points(AddAutomationPointsParam),
@@ -2802,8 +2781,7 @@ impl SynthMcpServer {
             "seq_seek" => seq_seek(SeqSeekParam),
 
             // Build instruments
-            "build_instrument" => build_instrument(BuildInstrumentParam),
-            "build_instruments" => build_instruments(BuildInstrumentsParam),
+            "build_instrument" => build_instrument(BuildInstrumentsParam),
             "apply_example_patch" => apply_example_patch(ApplyExamplePatchParam),
             "set_song" => set_song(SetSongParam),
 
@@ -2826,7 +2804,7 @@ impl SynthMcpServer {
             // Samples
             "list_samples" => list_samples(ListSamplesParam),
             "import_sample" => import_sample(ImportSampleParam),
-            "delete_sample" => delete_sample(SampleIdParam),
+            "delete_sample" => delete_sample(DeleteSamplesParam),
             "rename_sample" => rename_sample(RenameSampleParam),
             "set_sample_description" => set_sample_description(SetSampleDescriptionParam),
             "set_sample_root_note" => set_sample_root_note(SetSampleRootNoteParam),
@@ -2936,11 +2914,12 @@ impl ServerHandler for SynthMcpServer {
              ## Sequencer\n\
              Songs have **tracks** and **patterns**. Patterns contain notes and automation. \
              Patterns are placed on tracks in the **arrangement** timeline. \
-             Use `create_pattern` → `add_notes` → `create_track` → `place_pattern` to build songs.\n\n\
+             Use `create_pattern` → `add_note` → `create_track` → `place_pattern` to build songs.\n\n\
              ## Batch operations\n\
-             Prefer batch tools for efficiency:\n\
-             - Domain-specific: `build_instrument`, `add_notes`, `connect_multiple`, \
-               `create_patterns`, `place_patterns`, `set_parameters`, `set_song`.\n\
+             Most mutating tools accept either a single item or an array, so you can create or \
+             change many things in one call — prefer that over many single calls:\n\
+             - `set_parameter`, `add_note`, `update_note`, `connect`, `create_pattern`, \
+               `create_track`, `place_pattern`, `build_instrument`, and `set_song` (whole song).\n\
              - Generic: `batch_execute` — run up to 50 tool calls in a single request. \
                Accepts an array of `{tool, params}` objects, executes sequentially, \
                and returns per-item results. Use for cross-domain orchestration \
@@ -3279,38 +3258,6 @@ impl SynthMcpServer {
     async fn lint_project(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.lint_project() {
             Ok(report) => to_json(&report),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Set a module parameter to a new value. Returns the parameter info with the actual value set (may differ from requested due to clamping). Use list_modules and get_module_info to discover available parameters."
-    )]
-    async fn set_parameter(&self, params: Parameters<SetParameterParam>) -> String {
-        let p = params.0;
-        let value = match p.value {
-            ParamValueInput::Number(n) => {
-                if !n.is_finite() {
-                    return format!(
-                        "Error: {}",
-                        McpBridgeError::ValueOutOfRange {
-                            name: "value",
-                            value: n as f32,
-                            min: f32::NEG_INFINITY,
-                            max: f32::INFINITY,
-                        }
-                    );
-                }
-                crate::bridge::BridgeParamValue::Number(n)
-            }
-            ParamValueInput::Bool(b) => crate::bridge::BridgeParamValue::Bool(b),
-            ParamValueInput::Choice(s) => crate::bridge::BridgeParamValue::Choice(s),
-        };
-        match self
-            .bridge
-            .set_parameter(p.instrument_id, &p.module_id, &p.param_name, value)
-        {
-            Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -3687,7 +3634,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Parse a chord symbol (e.g. 'Cm7', 'F#maj7', 'Bbsus4', 'G7sus4', 'C5') and return MIDI notes for the requested voicing rooted at `octave` (default 4 = middle-C octave). Voicings: 'close' (default — notes stacked above the root), 'drop2' (drop the 2nd-highest note an octave), 'drop3' (drop the 3rd-highest), 'open' (drop2+drop3 combined). Pure symbolic — does not touch the song; pair with `add_notes` to place. Saves the AI from re-deriving chord intervals by hand on every progression."
+        description = "Parse a chord symbol (e.g. 'Cm7', 'F#maj7', 'Bbsus4', 'G7sus4', 'C5') and return MIDI notes for the requested voicing rooted at `octave` (default 4 = middle-C octave). Voicings: 'close' (default — notes stacked above the root), 'drop2' (drop the 2nd-highest note an octave), 'drop3' (drop the 3rd-highest), 'open' (drop2+drop3 combined). Pure symbolic — does not touch the song; pair with `add_note` to place. Saves the AI from re-deriving chord intervals by hand on every progression."
     )]
     async fn generate_chord(&self, params: Parameters<GenerateChordParam>) -> String {
         match self.bridge.generate_chord(
@@ -3851,55 +3798,42 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Add a new module to the instrument's voice graph. The module appears in the GUI on the next frame. Use list_modules to discover the assigned module ID."
+        description = "Add one or more modules to the instrument's voice graph. Modules appear in the GUI on the next frame. Returns the assigned module IDs (see also list_modules)."
     )]
-    async fn add_module(&self, params: Parameters<AddModuleParam>) -> String {
-        match self
-            .bridge
-            .add_module(params.0.instrument_id, &params.0.module_type)
-        {
-            Ok(msg) => msg,
-            Err(e) => format!("Error: {e}"),
+    async fn add_module(&self, params: Parameters<AddModulesParam>) -> String {
+        let p = params.0;
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for module_type in &p.module_types {
+            match self.bridge.add_module(p.instrument_id, module_type) {
+                Ok(msg) => oks.push(msg),
+                Err(e) => errors.push(format!("{module_type}: {e}")),
+            }
         }
+        batch_msg(oks.len(), "modules added", &oks, &errors)
     }
 
     #[tool(
-        description = "Remove a module from the instrument's voice graph and disconnect all its cables."
+        description = "Remove one or more modules from the instrument's voice graph and disconnect all their cables."
     )]
-    async fn remove_module(&self, params: Parameters<ModuleParam>) -> String {
-        match self
-            .bridge
-            .remove_module(params.0.instrument_id, &params.0.module_id)
-        {
-            Ok(()) => format!("OK: removed {}", params.0.module_id),
-            Err(e) => format!("Error: {e}"),
+    async fn remove_module(&self, params: Parameters<RemoveModulesParam>) -> String {
+        let p = params.0;
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for module_id in &p.module_ids {
+            match self.bridge.remove_module(p.instrument_id, module_id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{module_id}: {e}")),
+            }
         }
+        batch_msg(ok_count, "modules removed", &[], &errors)
     }
 
     #[tool(
-        description = "Connect two module ports with a cable. Use list_modules or get_module_info to discover port names."
-    )]
-    async fn connect(&self, params: Parameters<ConnectParam>) -> String {
-        match self.bridge.connect(
-            params.0.instrument_id,
-            &params.0.from_module,
-            &params.0.from_port,
-            &params.0.to_module,
-            &params.0.to_port,
-        ) {
-            Ok(()) => format!(
-                "OK: connected {}:{} → {}:{}",
-                params.0.from_module, params.0.from_port, params.0.to_module, params.0.to_port
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Connect multiple module ports in one call. Returns the number of successful connections and any errors. \
+        description = "Connect one or more module port pairs in one call. Returns the number of successful connections and any errors. \
                        Each connection specifies from_module:from_port → to_module:to_port."
     )]
-    async fn connect_multiple(&self, params: Parameters<ConnectMultipleParam>) -> String {
+    async fn connect(&self, params: Parameters<ConnectMultipleParam>) -> String {
         let mut ok_count = 0usize;
         let mut errors = Vec::new();
         for c in &params.0.connections {
@@ -3954,13 +3888,18 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Delete an instrument and all its modules. Cannot delete the default instrument (ID 0)."
+        description = "Delete one or more instruments and all their modules. Cannot delete the default instrument (ID 0)."
     )]
-    async fn delete_instrument(&self, params: Parameters<InstrumentIdParam>) -> String {
-        match self.bridge.delete_instrument(params.0.instrument_id) {
-            Ok(()) => format!("OK: deleted instrument {}", params.0.instrument_id),
-            Err(e) => format!("Error: {e}"),
+    async fn delete_instrument(&self, params: Parameters<DeleteInstrumentsParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for id in &params.0.instrument_ids {
+            match self.bridge.delete_instrument(*id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{id}: {e}")),
+            }
         }
+        batch_msg(ok_count, "instruments deleted", &[], &errors)
     }
 
     #[tool(
@@ -4414,30 +4353,18 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Create a new pattern. length_beats: 4.0 = one bar in 4/4. Returns the pattern ID."
+        description = "Delete one or more patterns by ID. Also removes all placements of each pattern."
     )]
-    async fn create_pattern(&self, params: Parameters<CreatePatternParam>) -> String {
-        if let Err(e) = validate_name("pattern", &params.0.name) {
-            return format!("Error: {e}");
+    async fn delete_pattern(&self, params: Parameters<DeletePatternsParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for id in &params.0.pattern_ids {
+            match self.bridge.delete_pattern(*id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{id}: {e}")),
+            }
         }
-        if let Err(e) = validate_range("length_beats", params.0.length_beats, 0.001, 1024.0) {
-            return format!("Error: {e}");
-        }
-        match self
-            .bridge
-            .create_pattern(&params.0.name, params.0.length_beats)
-        {
-            Ok(id) => format!("OK: created pattern {id} '{}'", params.0.name),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(description = "Delete a pattern by ID. Also removes all placements of this pattern.")]
-    async fn delete_pattern(&self, params: Parameters<PatternIdParam>) -> String {
-        match self.bridge.delete_pattern(params.0.pattern_id) {
-            Ok(()) => format!("OK: deleted pattern {}", params.0.pattern_id),
-            Err(e) => format!("Error: {e}"),
-        }
+        batch_msg(ok_count, "patterns deleted", &[], &errors)
     }
 
     // === Sequencer: Notes ===
@@ -4452,67 +4379,18 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(
-        description = "Add a note to a pattern. pitch: MIDI 0-127 (60=C4). start_beat/duration_beats in beats (1.0=quarter). velocity: 0-127."
-    )]
-    async fn add_note(&self, params: Parameters<AddNoteParam>) -> String {
-        if let Err(e) = validate_note_fields(
-            params.0.pitch,
-            params.0.velocity,
-            params.0.start_beat,
-            params.0.duration_beats,
-        ) {
-            return validation_err(e);
+    #[tool(description = "Remove one or more notes from a pattern by note ID.")]
+    async fn remove_note(&self, params: Parameters<RemoveNotesParam>) -> String {
+        let p = params.0;
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for note_id in &p.note_ids {
+            match self.bridge.remove_note(p.pattern_id, *note_id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("note {note_id}: {e}")),
+            }
         }
-        match self.bridge.add_note(
-            params.0.pattern_id,
-            params.0.pitch,
-            params.0.start_beat,
-            params.0.duration_beats,
-            params.0.velocity,
-        ) {
-            Ok(info) => to_json(&info),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(description = "Remove a note from a pattern by note ID")]
-    async fn remove_note(&self, params: Parameters<RemoveNoteParam>) -> String {
-        match self
-            .bridge
-            .remove_note(params.0.pattern_id, params.0.note_id)
-        {
-            Ok(()) => format!(
-                "OK: removed note {} from pattern {}",
-                params.0.note_id, params.0.pattern_id
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Update a note's properties. Only provided fields are changed; null fields keep their current value."
-    )]
-    async fn update_note(&self, params: Parameters<UpdateNoteParam>) -> String {
-        if let Err(e) = validate_note_update_fields(
-            params.0.pitch,
-            params.0.velocity,
-            params.0.start_beat,
-            params.0.duration_beats,
-        ) {
-            return validation_err(e);
-        }
-        match self.bridge.update_note(
-            params.0.pattern_id,
-            params.0.note_id,
-            params.0.pitch,
-            params.0.start_beat,
-            params.0.duration_beats,
-            params.0.velocity,
-        ) {
-            Ok(info) => to_json(&info),
-            Err(e) => format!("Error: {e}"),
-        }
+        batch_msg(ok_count, "notes removed", &[], &errors)
     }
 
     // === Sequencer: Tracks ===
@@ -4527,58 +4405,27 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(
-        description = "Create a new sequencer track. Optionally assign an instrument and set a name. Returns the track ID."
-    )]
-    async fn create_track(&self, params: Parameters<CreateTrackParam>) -> String {
-        if let Err(e) = validate_name("track", &params.0.name) {
-            return validation_err(e);
-        }
-        match self
-            .bridge
-            .create_track(&params.0.name, params.0.instrument_id)
-        {
-            Ok(id) => format!("OK: created track {id} '{}'", params.0.name),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
     // === Sequencer: Arrangement ===
 
     #[tool(
-        description = "Place a pattern on a track at a beat position in the arrangement timeline"
+        description = "Remove one or more pattern placements from the arrangement. Each placement is identified by its pattern_id, track_id, and start_beat."
     )]
-    async fn place_pattern(&self, params: Parameters<PlacePatternParam>) -> String {
-        if let Err(e) = validate_range("start_beat", params.0.start_beat, 0.0, 9999.0) {
-            return validation_err(e);
+    async fn remove_placement(&self, params: Parameters<RemovePlacementsParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for pl in &params.0.placements {
+            match self
+                .bridge
+                .remove_placement(pl.pattern_id, pl.track_id, pl.start_beat)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!(
+                    "pattern {} on track {} at {}: {e}",
+                    pl.pattern_id, pl.track_id, pl.start_beat
+                )),
+            }
         }
-        match self
-            .bridge
-            .place_pattern(params.0.pattern_id, params.0.track_id, params.0.start_beat)
-        {
-            Ok(()) => format!(
-                "OK: placed pattern {} on track {} at beat {}",
-                params.0.pattern_id, params.0.track_id, params.0.start_beat
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Remove a pattern placement from the arrangement by specifying the pattern_id, track_id, and start_beat of the placement to remove."
-    )]
-    async fn remove_placement(&self, params: Parameters<PlacePatternParam>) -> String {
-        match self.bridge.remove_placement(
-            params.0.pattern_id,
-            params.0.track_id,
-            params.0.start_beat,
-        ) {
-            Ok(()) => format!(
-                "OK: removed placement of pattern {} from track {} at beat {}",
-                params.0.pattern_id, params.0.track_id, params.0.start_beat
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
+        batch_msg(ok_count, "placements removed", &[], &errors)
     }
 
     #[tool(
@@ -4594,9 +4441,9 @@ impl SynthMcpServer {
     // === Sequencer: Batch operations ===
 
     #[tool(
-        description = "Add multiple notes to a pattern in one call. Much faster than calling add_note repeatedly."
+        description = "Add one or more notes to a pattern in one call. Each note: pitch (MIDI 0-127, 60=C4), start_beat/duration_beats in beats, velocity (0-127)."
     )]
-    async fn add_notes(&self, params: Parameters<AddNotesParam>) -> String {
+    async fn add_note(&self, params: Parameters<AddNotesParam>) -> String {
         for n in &params.0.notes {
             if let Err(e) = validate_note_input(n) {
                 return validation_err(e);
@@ -4610,9 +4457,9 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Update multiple notes in a pattern in one call. Only provided fields are changed per note."
+        description = "Update one or more notes in a pattern in one call. Only provided fields are changed per note; null fields keep their current value."
     )]
-    async fn update_notes(&self, params: Parameters<UpdateNotesParam>) -> String {
+    async fn update_note(&self, params: Parameters<UpdateNotesParam>) -> String {
         for u in &params.0.updates {
             if let Err(e) =
                 validate_note_update_fields(u.pitch, u.velocity, u.start_beat, u.duration_beats)
@@ -4860,12 +4707,19 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Delete a track and all its placements from the arrangement.")]
-    async fn delete_track(&self, params: Parameters<DeleteTrackParam>) -> String {
-        match self.bridge.delete_track(params.0.track_id) {
-            Ok(()) => format!("OK: deleted track {}", params.0.track_id),
-            Err(e) => format!("Error: {e}"),
+    #[tool(
+        description = "Delete one or more tracks and all their placements from the arrangement."
+    )]
+    async fn delete_track(&self, params: Parameters<DeleteTracksParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for id in &params.0.track_ids {
+            match self.bridge.delete_track(*id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{id}: {e}")),
+            }
         }
+        batch_msg(ok_count, "tracks deleted", &[], &errors)
     }
 
     // === Return busses (effect sends) ===
@@ -4893,12 +4747,19 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Delete a return bus and remove every track send that targeted it.")]
-    async fn delete_return_bus(&self, params: Parameters<ReturnBusIdParam>) -> String {
-        match self.bridge.delete_return_bus(params.0.return_id) {
-            Ok(()) => format!("OK: deleted return bus {}", params.0.return_id),
-            Err(e) => format!("Error: {e}"),
+    #[tool(
+        description = "Delete one or more return busses and remove every track send that targeted them."
+    )]
+    async fn delete_return_bus(&self, params: Parameters<DeleteReturnBusesParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for id in &params.0.return_ids {
+            match self.bridge.delete_return_bus(*id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{id}: {e}")),
+            }
         }
+        batch_msg(ok_count, "return busses deleted", &[], &errors)
     }
 
     #[tool(description = "Set a return bus's output volume (0.0 = silent, 1.0 = full).")]
@@ -5050,18 +4911,20 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Remove a track's effect send to a return bus.")]
-    async fn remove_track_send(&self, params: Parameters<RemoveTrackSendParam>) -> String {
-        match self
-            .bridge
-            .remove_track_send(params.0.track_id, params.0.return_id)
-        {
-            Ok(()) => format!(
-                "OK: removed track {} send to return bus {}",
-                params.0.track_id, params.0.return_id
-            ),
-            Err(e) => format!("Error: {e}"),
+    #[tool(description = "Remove one or more track effect sends to return busses.")]
+    async fn remove_track_send(&self, params: Parameters<RemoveTrackSendsParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for s in &params.0.sends {
+            match self.bridge.remove_track_send(s.track_id, s.return_id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!(
+                    "track {} → return {}: {e}",
+                    s.track_id, s.return_id
+                )),
+            }
         }
+        batch_msg(ok_count, "track sends removed", &[], &errors)
     }
 
     #[tool(
@@ -5092,52 +4955,61 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Remove a bus-to-bus send from one return bus into another.")]
-    async fn remove_return_send(&self, params: Parameters<RemoveReturnSendParam>) -> String {
-        match self
-            .bridge
-            .remove_return_send(params.0.from_id, params.0.to_id)
-        {
-            Ok(()) => format!(
-                "OK: removed return bus {} send to return bus {}",
-                params.0.from_id, params.0.to_id
-            ),
-            Err(e) => format!("Error: {e}"),
+    #[tool(description = "Remove one or more bus-to-bus sends from one return bus into another.")]
+    async fn remove_return_send(&self, params: Parameters<RemoveReturnSendsParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for s in &params.0.sends {
+            match self.bridge.remove_return_send(s.from_id, s.to_id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("return {} → return {}: {e}", s.from_id, s.to_id)),
+            }
         }
+        batch_msg(ok_count, "return sends removed", &[], &errors)
     }
 
     // === Return-bus insert effects ===
 
     #[tool(
-        description = "Add an insert effect to a return bus's effect chain (e.g. put a reverb on a Reverb return). effect_type is a module-type key like 'rev', 'delay', 'chorus', 'eq', 'compressor'. Returns the new effect's module-id (e.g. 'rev-1')."
+        description = "Add one or more insert effects to a return bus's effect chain, in order (e.g. put a reverb on a Reverb return). Each effect_type is a module-type key like 'rev', 'delay', 'chorus', 'eq', 'compressor'. Returns the new effects' module-ids (e.g. 'rev-1')."
     )]
-    async fn add_return_effect(&self, params: Parameters<AddReturnEffectParam>) -> String {
-        match self
-            .bridge
-            .add_return_effect(params.0.return_id, &params.0.effect_type)
-        {
-            Ok(module_id) => format!(
-                "OK: added {} to return bus {} as {}",
-                params.0.effect_type, params.0.return_id, module_id
-            ),
-            Err(e) => format!("Error: {e}"),
+    async fn add_return_effect(&self, params: Parameters<AddReturnEffectsParam>) -> String {
+        let p = params.0;
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for effect_type in &p.effect_types {
+            match self.bridge.add_return_effect(p.return_id, effect_type) {
+                Ok(module_id) => oks.push(module_id),
+                Err(e) => errors.push(format!("{effect_type}: {e}")),
+            }
         }
+        batch_msg(
+            oks.len(),
+            &format!("effects added to return bus {}", p.return_id),
+            &oks,
+            &errors,
+        )
     }
 
     #[tool(
-        description = "Remove an insert effect from a return bus's effect chain by its module-id."
+        description = "Remove one or more insert effects from a return bus's effect chain by their module-ids."
     )]
-    async fn remove_return_effect(&self, params: Parameters<ReturnEffectIdParam>) -> String {
-        match self
-            .bridge
-            .remove_return_effect(params.0.return_id, &params.0.module_id)
-        {
-            Ok(()) => format!(
-                "OK: removed {} from return bus {}",
-                params.0.module_id, params.0.return_id
-            ),
-            Err(e) => format!("Error: {e}"),
+    async fn remove_return_effect(&self, params: Parameters<RemoveReturnEffectsParam>) -> String {
+        let p = params.0;
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for module_id in &p.module_ids {
+            match self.bridge.remove_return_effect(p.return_id, module_id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{module_id}: {e}")),
+            }
         }
+        batch_msg(
+            ok_count,
+            &format!("effects removed from return bus {}", p.return_id),
+            &[],
+            &errors,
+        )
     }
 
     #[tool(
@@ -5258,26 +5130,33 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Add an insert effect to the master-bus effect chain (applied to the full mix, e.g. a limiter or EQ on the master). effect_type is a module-type key. Returns the new module-id."
+        description = "Add one or more insert effects to the master-bus effect chain, in order (applied to the full mix, e.g. a limiter or EQ on the master). Each effect_type is a module-type key. Returns the new module-ids."
     )]
-    async fn add_master_effect(&self, params: Parameters<AddMasterEffectParam>) -> String {
-        match self.bridge.add_master_effect(&params.0.effect_type) {
-            Ok(module_id) => format!(
-                "OK: added {} to master bus as {}",
-                params.0.effect_type, module_id
-            ),
-            Err(e) => format!("Error: {e}"),
+    async fn add_master_effect(&self, params: Parameters<AddMasterEffectsParam>) -> String {
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for effect_type in &params.0.effect_types {
+            match self.bridge.add_master_effect(effect_type) {
+                Ok(module_id) => oks.push(module_id),
+                Err(e) => errors.push(format!("{effect_type}: {e}")),
+            }
         }
+        batch_msg(oks.len(), "effects added to master bus", &oks, &errors)
     }
 
     #[tool(
-        description = "Remove an insert effect from the master-bus effect chain by its module-id."
+        description = "Remove one or more insert effects from the master-bus effect chain by their module-ids."
     )]
-    async fn remove_master_effect(&self, params: Parameters<MasterEffectIdParam>) -> String {
-        match self.bridge.remove_master_effect(&params.0.module_id) {
-            Ok(()) => format!("OK: removed {} from master bus", params.0.module_id),
-            Err(e) => format!("Error: {e}"),
+    async fn remove_master_effect(&self, params: Parameters<RemoveMasterEffectsParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for module_id in &params.0.module_ids {
+            match self.bridge.remove_master_effect(module_id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{module_id}: {e}")),
+            }
         }
+        batch_msg(ok_count, "effects removed from master bus", &[], &errors)
     }
 
     #[tool(
@@ -5451,9 +5330,9 @@ impl SynthMcpServer {
     // === Batch parameter set ===
 
     #[tool(
-        description = "Set multiple module parameters in one call. Faster than calling set_parameter repeatedly."
+        description = "Set one or more module parameters in one call. Each entry is {module_id, param_name, value}; value is a number in the parameter's native range."
     )]
-    async fn set_parameters(&self, params: Parameters<SetParametersParam>) -> String {
+    async fn set_parameter(&self, params: Parameters<SetParametersParam>) -> String {
         let p = params.0;
         for ps in &p.params {
             if ps.value.is_nan() {
@@ -5479,9 +5358,9 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Create multiple patterns in one call, optionally with inline notes and automation. Returns per-pattern results with assigned IDs."
+        description = "Create one or more patterns in one call, optionally with inline notes and automation. Returns per-pattern results with assigned IDs."
     )]
-    async fn create_patterns(&self, params: Parameters<CreatePatternsParam>) -> String {
+    async fn create_pattern(&self, params: Parameters<CreatePatternsParam>) -> String {
         for (i, pat) in params.0.patterns.iter().enumerate() {
             if let Err(e) = validate_name("pattern", &pat.name) {
                 return validation_err(McpBridgeError::Other(format!("pattern[{i}]: {e}")));
@@ -5529,9 +5408,9 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Create multiple tracks in one call. Returns per-track results with assigned IDs."
+        description = "Create one or more tracks in one call. Optionally assign an instrument per track. Returns per-track results with assigned IDs."
     )]
-    async fn create_tracks(&self, params: Parameters<CreateTracksParam>) -> String {
+    async fn create_track(&self, params: Parameters<CreateTracksParam>) -> String {
         for t in &params.0.tracks {
             if let Err(e) = validate_name("track", &t.name) {
                 return validation_err(e);
@@ -5553,9 +5432,9 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Place multiple patterns in the arrangement in one call. Each placement specifies pattern_id, track_id, and start_beat."
+        description = "Place one or more patterns on tracks in the arrangement in one call. Each placement specifies pattern_id, track_id, and start_beat."
     )]
-    async fn place_patterns(&self, params: Parameters<PlacePatternsParam>) -> String {
+    async fn place_pattern(&self, params: Parameters<PlacePatternsParam>) -> String {
         for p in &params.0.placements {
             if let Err(e) = validate_range("start_beat", p.start_beat, 0.0, 9999.0) {
                 return validation_err(e);
@@ -5708,42 +5587,11 @@ impl SynthMcpServer {
     // === Batch instrument building ===
 
     #[tool(
-        description = "Build a complete instrument in ONE call: creates the instrument, adds all modules, sets parameters, and wires connections. \
-                       Modules are referenced by 0-based array index in connections. Returns instrument_id and module_ids. \
-                       Example: modules=[{module_type:'osc'},{module_type:'amp'},{module_type:'out'}], connections=[{from:0,from_port:'output',to:1,to_port:'input'},{from:1,from_port:'output',to:2,to_port:'input'}]"
+        description = "Build one or more complete instruments in one call. Each instrument has its own modules and connections; \
+                       modules are referenced by 0-based array index in connections. Returns per-instrument results with instrument_id and module_ids. \
+                       Example instrument: modules=[{module_type:'osc'},{module_type:'amp'},{module_type:'out'}], connections=[{from:0,from_port:'output',to:1,to_port:'input'},{from:1,from_port:'output',to:2,to_port:'input'}]"
     )]
-    async fn build_instrument(&self, params: Parameters<BuildInstrumentParam>) -> String {
-        let p = params.0;
-        if let Err(e) = validate_build_instrument_fields(
-            &p.name,
-            p.midi_channel,
-            p.volume,
-            p.pan,
-            &p.modules,
-            p.connections.as_deref(),
-        ) {
-            return validation_err(e);
-        }
-        let spec = convert_instrument_def(
-            p.instrument_id,
-            p.name,
-            p.midi_channel,
-            p.volume,
-            p.pan,
-            p.modules,
-            p.connections,
-        );
-        match self.bridge.build_instrument(&spec) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Build multiple instruments in one call. Each instrument has its own modules and connections. \
-                       Returns an array of results with instrument_id and module_ids per instrument."
-    )]
-    async fn build_instruments(&self, params: Parameters<BuildInstrumentsParam>) -> String {
+    async fn build_instrument(&self, params: Parameters<BuildInstrumentsParam>) -> String {
         for (idx, inst) in params.0.instruments.iter().enumerate() {
             if let Err(e) = validate_build_instrument_fields(
                 &inst.name,
@@ -6023,13 +5871,18 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Delete a sample from the library by ID. Use list_samples to find sample IDs."
+        description = "Delete one or more samples from the library by ID. Use list_samples to find sample IDs."
     )]
-    async fn delete_sample(&self, params: Parameters<SampleIdParam>) -> String {
-        match self.bridge.delete_sample(params.0.sample_id) {
-            Ok(()) => "OK: Sample deleted".to_string(),
-            Err(e) => format!("Error: {e}"),
+    async fn delete_sample(&self, params: Parameters<DeleteSamplesParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for id in &params.0.sample_ids {
+            match self.bridge.delete_sample(*id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{id}: {e}")),
+            }
         }
+        batch_msg(ok_count, "samples deleted", &[], &errors)
     }
 
     #[tool(description = "Rename a sample in the library.")]
