@@ -18,3 +18,6 @@ Thumbs.db
 .ai/
 rec_debug.log
 /visualizer/target/
+
+# Snapshot-test mismatch artifacts (written next to fixtures on failure)
+*.actual.json

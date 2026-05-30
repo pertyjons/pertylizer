@@ -283,7 +283,7 @@ fn apply_project_sidechain_demo_engine_state() {
 #[test]
 fn apply_project_neuro_engine_state() {
     let mut rig = Rig::new();
-    let (project, _lib) = example_project("Neuro F#m 174.json");
+    let (project, _lib) = example_project("Neuro F#m 174-extended.json");
     project_apply::apply_project(&project, &rig.session, &rig.song, &rig.sample_library)
         .expect("apply_project");
     rig.pump(32);
