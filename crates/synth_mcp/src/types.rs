@@ -138,6 +138,18 @@ pub struct ConnectionInfo {
     pub to_port: String,
 }
 
+/// Result of `insert_module_between`: a new module spliced into an existing
+/// audio cable.
+#[derive(Debug, Clone, Serialize)]
+pub struct InsertModuleResult {
+    /// ID of the newly created module (e.g. "flt-2").
+    pub module_id: String,
+    /// The cable that was cut to make room, as `"from:port → to:port"`.
+    pub removed_connection: String,
+    /// The two cables that now route source → new module → destination.
+    pub new_connections: Vec<String>,
+}
+
 /// Engine status information.
 #[derive(Debug, Clone, Serialize)]
 pub struct EngineStatus {
@@ -716,6 +728,48 @@ pub struct AutomationPointInfo {
     pub curve: String,
 }
 
+/// One automation lane in the project-wide `get_automation_summary`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutomationSummaryLane {
+    /// Pattern the lane lives in.
+    pub pattern_id: u32,
+    /// Pattern name (for human-readable reports).
+    pub pattern_name: String,
+    /// Automation target string (e.g. "module:flt:1:cutoff" or "Volume").
+    pub target: String,
+    /// Instrument the lane targets, when instrument-scoped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instrument_id: Option<u16>,
+    /// Number of points in the lane.
+    pub point_count: usize,
+}
+
+/// One group (by instrument / target / pattern) in `get_automation_summary`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutomationSummaryGroup {
+    /// Group key (depends on `group_by`).
+    pub group: String,
+    /// Number of lanes in this group.
+    pub lane_count: usize,
+    /// Total automation points across the group.
+    pub point_count: usize,
+    /// The lanes in this group.
+    pub lanes: Vec<AutomationSummaryLane>,
+}
+
+/// Project-wide automation overview returned by `get_automation_summary`.
+#[derive(Debug, Clone, Serialize)]
+pub struct AutomationSummaryResult {
+    /// How the lanes were grouped ("instrument", "target", or "pattern").
+    pub group_by: String,
+    /// Total automation lanes across all patterns.
+    pub total_lanes: usize,
+    /// Total automation points across all patterns.
+    pub total_points: usize,
+    /// Grouped lanes, sorted by group key.
+    pub groups: Vec<AutomationSummaryGroup>,
+}
+
 /// Full data for an example patch (used by MCP resources).
 #[derive(Debug, Clone, Serialize)]
 pub struct PatchResourceData {
@@ -892,6 +946,38 @@ pub enum AnalysisSignalMode {
     /// to survive anti-phase content. The synthetic signal preserves
     /// each frame's sign from the channel with the larger magnitude.
     MaxAbsStereo,
+}
+
+/// Compact go/no-go verdict on whether an instrument actually produces audio.
+/// Returned by `validate_instrument_audio` — a thin distillation of the full
+/// `analyze_note` render for the common "is this patch alive?" check.
+#[derive(Debug, Clone, Serialize)]
+pub struct ValidateInstrumentAudioResult {
+    /// Whether the rendered note produced audible signal (peak above the
+    /// silence floor, ~-80 dBFS).
+    pub is_audible: bool,
+    /// One-line human-readable verdict.
+    pub verdict: String,
+    /// Peak absolute amplitude across the render (1.0 = full scale).
+    pub peak_amplitude: f32,
+    /// Peak in dBFS (`-inf` rendered as a large negative number for silence).
+    pub peak_dbfs: f32,
+    /// Overall RMS amplitude.
+    pub rms_overall: f32,
+    /// Whether any samples reached the f32 fullscale ceiling.
+    pub clipped: bool,
+    /// Count of clipped samples (>= 0.999).
+    pub clipped_samples: u32,
+    /// Detected fundamental in Hz (0.0 if silent/atonal).
+    pub fundamental_hz: f32,
+    /// Detected fundamental vs concert pitch, in cents (positive = sharp).
+    pub pitch_error_cents: f32,
+    /// Mean sample value (DC offset); non-zero hints at a missing DC blocker.
+    pub dc_offset: f32,
+    /// MIDI note rendered (after the patch's octave offset).
+    pub note_played: u8,
+    /// Non-fatal advisories (very quiet, clipping, DC offset, pitch off, …).
+    pub warnings: Vec<String>,
 }
 
 /// Quantitative analysis of a rendered note. Returned by `analyze_note`.

@@ -2654,6 +2654,102 @@ impl SynthBridge for AppSynthBridge {
         Ok(count)
     }
 
+    fn transform_automation_lane(
+        &self,
+        pattern_id: u32,
+        target: &str,
+        instrument_id: u16,
+        scale: f32,
+        pivot: f32,
+        offset: f32,
+    ) -> Result<usize, McpBridgeError> {
+        use synth_sequencer::AutomationPoint;
+
+        let valid_modules = self.instrument_module_ids(instrument_id);
+        let mut song = self.shared.song.write();
+        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pattern = song
+            .pattern_mut(pat_id)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+
+        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
+        // Require the lane to exist — don't silently create an empty one.
+        let lane = pattern
+            .automation_lane(&auto_target)
+            .ok_or_else(|| McpBridgeError::Other(format!("automation lane not found: {target}")))?;
+
+        let transformed: Vec<AutomationPoint> = lane
+            .points()
+            .iter()
+            .map(|p| {
+                let v = ((p.value.as_f32() - pivot) * scale + pivot + offset).clamp(0.0, 1.0);
+                AutomationPoint::new(p.tick, NormalizedValue::new(v)).with_curve(p.curve)
+            })
+            .collect();
+        let count = transformed.len();
+
+        let lane = pattern.get_or_create_automation(auto_target);
+        lane.clear();
+        for pt in transformed {
+            lane.add_point(pt);
+        }
+        Ok(count)
+    }
+
+    fn copy_automation_lane(
+        &self,
+        from_pattern_id: u32,
+        from_target: &str,
+        from_instrument_id: u16,
+        to_pattern_id: u32,
+        to_target: &str,
+        to_instrument_id: u16,
+        scale: f32,
+        offset: f32,
+        clear_destination: bool,
+    ) -> Result<usize, McpBridgeError> {
+        use synth_sequencer::AutomationPoint;
+
+        let from_valid = self.instrument_module_ids(from_instrument_id);
+        let to_valid = self.instrument_module_ids(to_instrument_id);
+        let mut song = self.shared.song.write();
+        let from_pat = synth_sequencer::PatternId(from_pattern_id);
+        let to_pat = synth_sequencer::PatternId(to_pattern_id);
+        let from_at = build_automation_target(from_target, from_instrument_id, &from_valid)?;
+        let to_at = build_automation_target(to_target, to_instrument_id, &to_valid)?;
+
+        // Read + transform the source points first (owned copy), releasing the
+        // immutable borrow before mutating the destination lane.
+        let src_points: Vec<AutomationPoint> = {
+            let pattern = song
+                .pattern(from_pat)
+                .ok_or(McpBridgeError::PatternNotFound(from_pattern_id))?;
+            let lane = pattern.automation_lane(&from_at).ok_or_else(|| {
+                McpBridgeError::Other(format!("source automation lane not found: {from_target}"))
+            })?;
+            lane.points()
+                .iter()
+                .map(|p| {
+                    let v = (p.value.as_f32() * scale + offset).clamp(0.0, 1.0);
+                    AutomationPoint::new(p.tick, NormalizedValue::new(v)).with_curve(p.curve)
+                })
+                .collect()
+        };
+
+        let dest = song
+            .pattern_mut(to_pat)
+            .ok_or(McpBridgeError::PatternNotFound(to_pattern_id))?;
+        let lane = dest.get_or_create_automation(to_at);
+        if clear_destination {
+            lane.clear();
+        }
+        let count = src_points.len();
+        for pt in src_points {
+            lane.add_point(pt);
+        }
+        Ok(count)
+    }
+
     // === Track control ===
 
     fn set_track_volume(&self, track_id: u16, volume: f32) -> Result<(), McpBridgeError> {
@@ -3968,6 +4064,14 @@ impl SynthBridge for AppSynthBridge {
         use synth_core::{BipolarValue, Hertz, Milliseconds, NormalizedValue};
 
         let v = value as f32;
+
+        // Accept the `get_awe_state` field name as an alias for the setter name
+        // (e.g. `pre_delay_ms` → `pre_delay`), so a value read back from state
+        // can be written straight through without renaming.
+        let name = match name {
+            "pre_delay_ms" => "pre_delay",
+            other => other,
+        };
 
         /// Validate that `v` is within `[min, max]` for parameter `name`.
         fn check(name: &'static str, v: f32, min: f32, max: f32) -> Result<(), McpBridgeError> {

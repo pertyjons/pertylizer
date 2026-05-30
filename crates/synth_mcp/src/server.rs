@@ -312,6 +312,74 @@ fn mcp_err(e: McpBridgeError) -> ErrorData {
     ErrorData::internal_error(e.to_string(), None)
 }
 
+/// Distill a full `analyze_note` render into the compact go/no-go verdict
+/// returned by `validate_instrument_audio`.
+fn distill_audio_validation(
+    r: &crate::types::AnalyzeNoteResult,
+) -> crate::types::ValidateInstrumentAudioResult {
+    // Audible floor ≈ -80 dBFS; "very quiet" advisory below ≈ -40 dBFS.
+    const SILENCE_FLOOR: f32 = 1.0e-4;
+    const QUIET_FLOOR: f32 = 0.01;
+
+    let is_audible = r.peak_amplitude > SILENCE_FLOOR;
+    let peak_dbfs = if r.peak_amplitude > 0.0 {
+        20.0 * r.peak_amplitude.log10()
+    } else {
+        -200.0
+    };
+    let clipped = r.clipped_samples > 0;
+
+    let mut warnings = Vec::new();
+    if !is_audible {
+        warnings.push("patch produced no audible signal (silent)".to_string());
+    } else if r.peak_amplitude < QUIET_FLOOR {
+        warnings.push(format!("very quiet: peak {peak_dbfs:.1} dBFS"));
+    }
+    if clipped {
+        warnings.push(format!(
+            "clipping: {} samples at fullscale",
+            r.clipped_samples
+        ));
+    }
+    if r.dc_offset.abs() > 0.01 {
+        warnings.push(format!(
+            "DC offset {:.3} — patch may lack a DC blocker",
+            r.dc_offset
+        ));
+    }
+    if is_audible && r.fundamental_hz > 0.0 && r.pitch_error_cents.abs() > 50.0 {
+        warnings.push(format!(
+            "pitch off by {:.0} cents from concert pitch",
+            r.pitch_error_cents
+        ));
+    }
+
+    let verdict = if !is_audible {
+        "SILENT — no audio produced".to_string()
+    } else if clipped {
+        format!("audible but CLIPPING (peak {peak_dbfs:.1} dBFS)")
+    } else if warnings.is_empty() {
+        format!("OK — audible, clean (peak {peak_dbfs:.1} dBFS)")
+    } else {
+        format!("audible with advisories (peak {peak_dbfs:.1} dBFS)")
+    };
+
+    crate::types::ValidateInstrumentAudioResult {
+        is_audible,
+        verdict,
+        peak_amplitude: r.peak_amplitude,
+        peak_dbfs,
+        rms_overall: r.rms_overall,
+        clipped,
+        clipped_samples: r.clipped_samples,
+        fundamental_hz: r.fundamental_hz,
+        pitch_error_cents: r.pitch_error_cents,
+        dc_offset: r.dc_offset,
+        note_played: r.note_played,
+        warnings,
+    }
+}
+
 /// Valid port signal type strings.
 const VALID_SIGNAL_TYPES: &[&str] = &["audio", "control", "gate", "midi"];
 
@@ -589,6 +657,20 @@ pub struct PreviewNoteParam {
     #[schemars(
         description = "Tail time in milliseconds after note-off (default 500). Extra time for release/reverb tails."
     )]
+    pub tail_ms: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ValidateInstrumentAudioParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: u64,
+    #[schemars(description = "MIDI note to test (default 60 = middle C)")]
+    pub note: Option<u8>,
+    #[schemars(description = "Velocity (0-127, default 100)")]
+    pub velocity: Option<u8>,
+    #[schemars(description = "Note hold time in milliseconds (default 500)")]
+    pub duration_ms: Option<u32>,
+    #[schemars(description = "Tail time after note-off in milliseconds (default 500)")]
     pub tail_ms: Option<u32>,
 }
 
@@ -1173,6 +1255,97 @@ pub struct ConnectMultipleParam {
     pub connections: Vec<ConnectionInput>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct InsertModuleBetweenParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: u64,
+    #[schemars(
+        description = "Type of module to insert (short key like 'flt', snake_case name, or display name). Must carry audio (have an audio input and output) — a pure modulator like an LFO is rejected."
+    )]
+    pub module_type: String,
+    #[schemars(
+        description = "Anchor: splice the outgoing audio cable of this module id, e.g. 'osc-1'. The new module goes right after it."
+    )]
+    pub after: Option<String>,
+    #[schemars(
+        description = "Anchor: splice the incoming audio cable of this module id, e.g. 'amp-1'. The new module goes right before it."
+    )]
+    pub before: Option<String>,
+    #[schemars(
+        description = "Anchor: like `after`, but addresses the single module of this type (e.g. 'osc'). Robust across instruments with differing instance numbers; errors if the type is ambiguous."
+    )]
+    pub after_type: Option<String>,
+    #[schemars(
+        description = "Anchor: like `before`, but addresses the single module of this type (e.g. 'amp'). Errors if the type is ambiguous."
+    )]
+    pub before_type: Option<String>,
+    #[schemars(
+        description = "Explicit-cable anchor (unambiguous escape hatch when the audio path branches): source module id. Requires from_port/to_module/to_port too."
+    )]
+    pub from_module: Option<String>,
+    #[schemars(description = "Explicit-cable anchor: source port name (with from_module).")]
+    pub from_port: Option<String>,
+    #[schemars(description = "Explicit-cable anchor: destination module id (with from_module).")]
+    pub to_module: Option<String>,
+    #[schemars(description = "Explicit-cable anchor: destination port name (with from_module).")]
+    pub to_port: Option<String>,
+}
+
+impl InsertModuleBetweenParam {
+    /// Resolve the supplied fields into exactly one [`InsertAnchor`]. At most
+    /// one anchor mode may be set; none defaults to "before the output module".
+    fn resolve_anchor(&self) -> Result<crate::bridge::InsertAnchor, String> {
+        use crate::bridge::InsertAnchor;
+
+        let explicit = self.from_module.is_some()
+            || self.from_port.is_some()
+            || self.to_module.is_some()
+            || self.to_port.is_some();
+        let named = [
+            &self.after,
+            &self.before,
+            &self.after_type,
+            &self.before_type,
+        ]
+        .iter()
+        .filter(|a| a.is_some())
+        .count();
+
+        if named + usize::from(explicit) > 1 {
+            return Err(
+                "specify at most one anchor: one of after / before / after_type / before_type, \
+                 or the explicit from_module+from_port+to_module+to_port cable"
+                    .to_string(),
+            );
+        }
+
+        if explicit {
+            match (&self.from_module, &self.from_port, &self.to_module, &self.to_port) {
+                (Some(fm), Some(fp), Some(tm), Some(tp)) => Ok(InsertAnchor::Connection {
+                    from_module: fm.clone(),
+                    from_port: fp.clone(),
+                    to_module: tm.clone(),
+                    to_port: tp.clone(),
+                }),
+                _ => Err(
+                    "the explicit cable anchor needs all four of from_module, from_port, to_module, to_port"
+                        .to_string(),
+                ),
+            }
+        } else if let Some(id) = &self.after {
+            Ok(InsertAnchor::After(id.clone()))
+        } else if let Some(id) = &self.before {
+            Ok(InsertAnchor::Before(id.clone()))
+        } else if let Some(t) = &self.after_type {
+            Ok(InsertAnchor::AfterType(t.clone()))
+        } else if let Some(t) = &self.before_type {
+            Ok(InsertAnchor::BeforeType(t.clone()))
+        } else {
+            Ok(InsertAnchor::BeforeOutput)
+        }
+    }
+}
+
 // === Instrument lifecycle parameter structs ===
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1674,6 +1847,74 @@ pub struct ClearAutomationLaneParam {
     pub target: String,
     #[schemars(description = "Instrument index (default 0)")]
     pub instrument_id: Option<u16>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ScaleAutomationLaneParam {
+    #[schemars(description = "Pattern ID")]
+    pub pattern_id: u32,
+    #[schemars(description = "Target lane (e.g. 'module:flt:1:cutoff' or 'FilterCutoff')")]
+    pub target: String,
+    #[schemars(description = "Instrument index (default 0)")]
+    pub instrument_id: Option<u16>,
+    #[schemars(
+        description = "Multiplier applied to each point's value around the pivot (e.g. 0.8 = 20% less movement, 1.5 = more). Values are clamped to 0..1 afterwards."
+    )]
+    pub scale: f32,
+    #[schemars(
+        description = "Pivot the scaling is applied around, 0..1 (default 0.5 = lane midpoint). Points keep their distance-from-pivot times `scale`."
+    )]
+    pub pivot: Option<f32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct OffsetAutomationLaneParam {
+    #[schemars(description = "Pattern ID")]
+    pub pattern_id: u32,
+    #[schemars(description = "Target lane (e.g. 'module:flt:1:cutoff' or 'FilterCutoff')")]
+    pub target: String,
+    #[schemars(description = "Instrument index (default 0)")]
+    pub instrument_id: Option<u16>,
+    #[schemars(
+        description = "Amount added to every point's value (e.g. -0.05 lowers the whole lane). Values are clamped to 0..1 afterwards."
+    )]
+    pub offset: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CopyAutomationLaneParam {
+    #[schemars(description = "Source pattern ID")]
+    pub from_pattern_id: u32,
+    #[schemars(description = "Source target lane")]
+    pub from_target: String,
+    #[schemars(description = "Source instrument index (default 0)")]
+    pub from_instrument_id: Option<u16>,
+    #[schemars(description = "Destination pattern ID (may equal the source)")]
+    pub to_pattern_id: u32,
+    #[schemars(description = "Destination target lane")]
+    pub to_target: String,
+    #[schemars(description = "Destination instrument index (default 0)")]
+    pub to_instrument_id: Option<u16>,
+    #[schemars(
+        description = "Optional multiplier applied to copied values (default 1.0). Clamped to 0..1."
+    )]
+    pub scale: Option<f32>,
+    #[schemars(
+        description = "Optional amount added to copied values (default 0.0). Clamped to 0..1."
+    )]
+    pub offset: Option<f32>,
+    #[schemars(
+        description = "Clear the destination lane before copying (default false = merge points in)."
+    )]
+    pub clear_destination: Option<bool>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetAutomationSummaryParam {
+    #[schemars(
+        description = "How to group lanes: 'instrument' (default), 'target', or 'pattern'."
+    )]
+    pub group_by: Option<String>,
 }
 
 // === Track control parameter structs ===
@@ -2254,7 +2495,7 @@ pub struct SetAweParameterParam {
                        resonance_boost (0-1, emphasize room modes), \
                        tail_stretch (0.5-4.0, reverb tail length multiplier), \
                        portal_amount (0-1, acoustic portal effect), \
-                       pre_delay (0-200, milliseconds before first reflection), \
+                       pre_delay (0-200, milliseconds before first reflection; alias pre_delay_ms accepted to match get_awe_state), \
                        modulation_depth (0-1, FDN chorus depth), \
                        modulation_rate (0.01-20.0, FDN chorus rate in Hz), \
                        air_absorption (0-1, high-frequency damping over distance), \
@@ -2676,6 +2917,7 @@ impl SynthMcpServer {
             "connect" => connect(ConnectMultipleParam),
             "disconnect" => disconnect(ConnectParam),
             "clear_graph" => clear_graph(InstrumentIdParam),
+            "insert_module_between" => insert_module_between(InsertModuleBetweenParam),
 
             // Instrument lifecycle
             "create_instrument" => create_instrument(CreateInstrumentParam),
@@ -2774,6 +3016,10 @@ impl SynthMcpServer {
             "get_automation_points" => get_automation_points(GetAutomationPointsParam),
             "remove_automation_points" => remove_automation_points(RemoveAutomationPointsParam),
             "clear_automation_lane" => clear_automation_lane(ClearAutomationLaneParam),
+            "scale_automation_lane" => scale_automation_lane(ScaleAutomationLaneParam),
+            "offset_automation_lane" => offset_automation_lane(OffsetAutomationLaneParam),
+            "copy_automation_lane" => copy_automation_lane(CopyAutomationLaneParam),
+            "get_automation_summary" => get_automation_summary(GetAutomationSummaryParam),
 
             // Transport
             "seq_play" => seq_play(NoParams),
@@ -2837,6 +3083,7 @@ impl SynthMcpServer {
             "analyze_masking_matrix" => analyze_masking_matrix(AnalyzeMaskingMatrixParam),
             "analyze_instrument_range" => analyze_instrument_range(AnalyzeInstrumentRangeParam),
             "analyze_velocity_response" => analyze_velocity_response(AnalyzeVelocityResponseParam),
+            "validate_instrument_audio" => validate_instrument_audio(ValidateInstrumentAudioParam),
             "analyze_arrangement" => analyze_arrangement(AnalyzeArrangementParam),
             "analyze_form_map" => analyze_form_map(AnalyzeFormMapParam),
             "find_motifs" => find_motifs(FindMotifsParam),
@@ -3872,6 +4119,59 @@ impl SynthMcpServer {
         }
     }
 
+    #[tool(
+        description = "Splice a new module into an existing audio cable in one call (add + disconnect + reconnect). \
+                       Re-routes source → new module → destination through the new module's audio ports. \
+                       Choose where with one anchor: `after`/`before` (a module id), `after_type`/`before_type` \
+                       (a module type — robust across instruments), or the explicit from_module/from_port/to_module/to_port \
+                       cable when the path branches. With no anchor it inserts at the end of the audio path, just before output. \
+                       The module type must carry audio. On any wiring failure the original cable is restored."
+    )]
+    async fn insert_module_between(&self, params: Parameters<InsertModuleBetweenParam>) -> String {
+        let p = params.0;
+        let anchor = match p.resolve_anchor() {
+            Ok(a) => a,
+            Err(e) => return format!("Error: {e}"),
+        };
+        match self
+            .bridge
+            .insert_module_between(p.instrument_id, &p.module_type, anchor)
+        {
+            Ok(result) => to_json(&result),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Quick go/no-go check that an instrument actually produces audio: renders one test note offline \
+                       and returns a compact verdict (is_audible, peak/RMS, clipping, fundamental, DC offset) plus warnings. \
+                       Use to catch silent or broken patches before wiring them into a song. For full spectral detail use \
+                       analyze_instrument_range or analyze_velocity_response."
+    )]
+    async fn validate_instrument_audio(
+        &self,
+        params: Parameters<ValidateInstrumentAudioParam>,
+    ) -> String {
+        let p = params.0;
+        let note = p.note.unwrap_or(60);
+        let velocity = p.velocity.unwrap_or(100);
+        let duration_ms = p.duration_ms.unwrap_or(500);
+        let tail_ms = p.tail_ms.unwrap_or(500);
+        if note > 127 {
+            return format!("Error: {}", McpBridgeError::InvalidMidiNote(note));
+        }
+        if velocity > 127 {
+            return format!("Error: {}", McpBridgeError::InvalidVelocity(velocity));
+        }
+        match self
+            .bridge
+            .analyze_note(p.instrument_id, note, velocity, duration_ms, tail_ms, None)
+        {
+            Ok(r) => to_json(&distill_audio_validation(&r)),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
     // === Instrument lifecycle ===
 
     #[tool(
@@ -4605,6 +4905,97 @@ impl SynthMcpServer {
             p.instrument_id.unwrap_or(0),
         ) {
             Ok(count) => format!("OK: cleared {count} points from {}", p.target),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Scale an existing automation lane's values around a pivot, in place (tick + curve preserved). \
+                       Makes a filter sweep (or any lane) more or less dramatic without re-entering points. \
+                       value' = clamp((value - pivot) * scale + pivot, 0..1)."
+    )]
+    async fn scale_automation_lane(&self, params: Parameters<ScaleAutomationLaneParam>) -> String {
+        let p = params.0;
+        let pivot = p.pivot.unwrap_or(0.5);
+        match self.bridge.transform_automation_lane(
+            p.pattern_id,
+            &p.target,
+            p.instrument_id.unwrap_or(0),
+            p.scale,
+            pivot,
+            0.0,
+        ) {
+            Ok(count) => format!("OK: scaled {count} points in {}", p.target),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Shift an existing automation lane's values by a constant, in place (tick + curve preserved). \
+                       value' = clamp(value + offset, 0..1)."
+    )]
+    async fn offset_automation_lane(
+        &self,
+        params: Parameters<OffsetAutomationLaneParam>,
+    ) -> String {
+        let p = params.0;
+        match self.bridge.transform_automation_lane(
+            p.pattern_id,
+            &p.target,
+            p.instrument_id.unwrap_or(0),
+            1.0,
+            0.0,
+            p.offset,
+        ) {
+            Ok(count) => format!("OK: offset {count} points in {}", p.target),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Copy an automation lane's points to another pattern/target (tick + curve preserved), \
+                       optionally scaled/offset. Useful for reusing filter motion between similar voices. \
+                       By default points are merged into the destination; set clear_destination to replace."
+    )]
+    async fn copy_automation_lane(&self, params: Parameters<CopyAutomationLaneParam>) -> String {
+        let p = params.0;
+        match self.bridge.copy_automation_lane(
+            p.from_pattern_id,
+            &p.from_target,
+            p.from_instrument_id.unwrap_or(0),
+            p.to_pattern_id,
+            &p.to_target,
+            p.to_instrument_id.unwrap_or(0),
+            p.scale.unwrap_or(1.0),
+            p.offset.unwrap_or(0.0),
+            p.clear_destination.unwrap_or(false),
+        ) {
+            Ok(count) => format!(
+                "OK: copied {count} points from {} to {}",
+                p.from_target, p.to_target
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Project-wide automation overview: every lane in every pattern, grouped by 'instrument' \
+                       (default), 'target', or 'pattern'. Read-only — use to audit where automation lives without \
+                       querying each pattern."
+    )]
+    async fn get_automation_summary(
+        &self,
+        params: Parameters<GetAutomationSummaryParam>,
+    ) -> String {
+        let group_by = params
+            .0
+            .group_by
+            .unwrap_or_else(|| "instrument".to_string());
+        if !matches!(group_by.as_str(), "instrument" | "target" | "pattern") {
+            return "Error: group_by must be 'instrument', 'target', or 'pattern'".to_string();
+        }
+        match self.bridge.get_automation_summary(&group_by) {
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }

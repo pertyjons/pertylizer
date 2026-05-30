@@ -1,5 +1,27 @@
 # Version History
 
+## [0.304.0] - 2026-05-30
+
+### MCP quick-wins batch — splice, validate, automation editing
+
+- **`insert_module_between`** — adds a module and re-routes `source → new →
+  destination` in one call. Position via an anchor (`after`/`before` a module id,
+  `after_type`/`before_type` a module type, or an explicit cable), not a numeric
+  index (the voice graph is a DAG); no anchor inserts just before the output.
+  Rejects audio-less modules; restores the original cable on wiring failure.
+- **`validate_instrument_audio`** — renders one test note and returns a compact
+  go/no-go verdict (is_audible, peak/RMS, clipping, fundamental, DC offset) to
+  catch silent/broken patches up front. Wraps the existing `analyze_note`.
+- **`scale_automation_lane` / `offset_automation_lane`** — transform a lane's
+  values in place (`(v-pivot)*scale+pivot` / `v+offset`, clamped), preserving
+  tick + curve, to make filter sweeps more/less dramatic without re-entering points.
+- **`copy_automation_lane`** — copy a lane to another pattern/target, optionally
+  scaled/offset, merge or replace.
+- **`get_automation_summary`** — project-wide read-only overview of every lane,
+  grouped by instrument / target / pattern.
+- **AWE `pre_delay_ms` alias** — `set_awe_parameter` now accepts the
+  `get_awe_state` field name `pre_delay_ms` as well as `pre_delay`.
+
 ## [0.303.0] - 2026-05-30
 
 ### Analysis speed — engine reuse + render-quality flag

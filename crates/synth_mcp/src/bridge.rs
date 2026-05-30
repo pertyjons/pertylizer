@@ -17,9 +17,10 @@
 use crate::error::McpBridgeError;
 use crate::types::{
     ApplyExamplePatchResult, AudioPreview, AutomationLaneInfo, AutomationPointInfo,
-    AutomationTargetInfo, AwePresetInfo, AweStateInfo, BatchResult, BuildInstrumentResult,
-    ConnectionCheckResult, ConnectionInfo, DetailedSampleInfo, DiagnosticSeverity, EngineStatus,
-    ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo, InputStateInfo, InstrumentInfo,
+    AutomationSummaryGroup, AutomationSummaryLane, AutomationSummaryResult, AutomationTargetInfo,
+    AwePresetInfo, AweStateInfo, BatchResult, BuildInstrumentResult, ConnectionCheckResult,
+    ConnectionInfo, DetailedSampleInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo,
+    GraphDiagnostic, InputDeviceInfo, InputStateInfo, InsertModuleResult, InstrumentInfo,
     InstrumentProfileResult, MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo,
     OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry,
     ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo,
@@ -304,6 +305,123 @@ impl AnalysisScope {
     }
 }
 
+/// Where to splice a new module into an instrument's audio signal path.
+///
+/// The voice graph is a DAG, not a linear chain, so "position" is expressed
+/// relative to existing modules/cables rather than as a numeric index (which
+/// would mean different things on instruments with different topologies).
+#[derive(Debug, Clone)]
+pub enum InsertAnchor {
+    /// Splice the (unique) outgoing audio cable of this module id.
+    After(String),
+    /// Splice the (unique) incoming audio cable of this module id.
+    Before(String),
+    /// Splice the outgoing audio cable of the (unique) module of this type.
+    AfterType(String),
+    /// Splice the incoming audio cable of the (unique) module of this type.
+    BeforeType(String),
+    /// Splice this exact existing connection.
+    Connection {
+        from_module: String,
+        from_port: String,
+        to_module: String,
+        to_port: String,
+    },
+    /// Default: splice the audio cable feeding the instrument's output module
+    /// (i.e. insert at the very end of the audio path, just before output).
+    BeforeOutput,
+}
+
+/// Find the single module whose type display name matches `canonical_name`.
+/// Errors when none or more than one match (the caller must then disambiguate
+/// with an explicit module id).
+fn unique_module_of_type<'a>(
+    canonical_name: &str,
+    modules: &'a [ModuleInfo],
+) -> Result<&'a str, McpBridgeError> {
+    let ids: Vec<&str> = modules
+        .iter()
+        .filter(|m| m.module_type == canonical_name)
+        .map(|m| m.id.as_str())
+        .collect();
+    match ids.as_slice() {
+        [] => Err(McpBridgeError::Other(format!(
+            "no module of type '{canonical_name}' in this instrument"
+        ))),
+        [id] => Ok(id),
+        many => Err(McpBridgeError::Other(format!(
+            "type '{canonical_name}' is ambiguous ({} modules: {}); use `after`/`before` with a specific module id",
+            many.len(),
+            many.join(", ")
+        ))),
+    }
+}
+
+/// Find the single outgoing audio cable from `module_id` (matching one of its
+/// `audio_out_ports`). Errors when there is none, or when the path branches
+/// (more than one) — the caller must then pass an explicit connection.
+fn unique_audio_cable_from(
+    module_id: &str,
+    audio_out_ports: &[String],
+    connections: &[ConnectionInfo],
+) -> Result<ConnectionInfo, McpBridgeError> {
+    let cables: Vec<&ConnectionInfo> = connections
+        .iter()
+        .filter(|c| c.from_module == module_id && audio_out_ports.contains(&c.from_port))
+        .collect();
+    match cables.as_slice() {
+        [] => Err(McpBridgeError::Other(format!(
+            "'{module_id}' has no outgoing audio cable to splice after; connect it first, \
+             or pass an explicit from_module/from_port/to_module/to_port"
+        ))),
+        [c] => Ok((*c).clone()),
+        many => Err(McpBridgeError::Other(format!(
+            "the audio path branches at '{module_id}' ({} outgoing audio cables); disambiguate \
+             with an explicit from_module/from_port/to_module/to_port. Cables: {}",
+            many.len(),
+            many.iter()
+                .map(|c| format!(
+                    "{}:{} → {}:{}",
+                    c.from_module, c.from_port, c.to_module, c.to_port
+                ))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ))),
+    }
+}
+
+/// Find the single incoming audio cable into `module_id` (matching one of its
+/// `audio_in_ports`). Errors when there is none, or when more than one feeds in.
+fn unique_audio_cable_into(
+    module_id: &str,
+    audio_in_ports: &[String],
+    connections: &[ConnectionInfo],
+) -> Result<ConnectionInfo, McpBridgeError> {
+    let cables: Vec<&ConnectionInfo> = connections
+        .iter()
+        .filter(|c| c.to_module == module_id && audio_in_ports.contains(&c.to_port))
+        .collect();
+    match cables.as_slice() {
+        [] => Err(McpBridgeError::Other(format!(
+            "'{module_id}' has no incoming audio cable to splice before; connect it first, \
+             or pass an explicit from_module/from_port/to_module/to_port"
+        ))),
+        [c] => Ok((*c).clone()),
+        many => Err(McpBridgeError::Other(format!(
+            "more than one audio cable feeds '{module_id}' ({}); disambiguate with an explicit \
+             from_module/from_port/to_module/to_port. Cables: {}",
+            many.len(),
+            many.iter()
+                .map(|c| format!(
+                    "{}:{} → {}:{}",
+                    c.from_module, c.from_port, c.to_module, c.to_port
+                ))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ))),
+    }
+}
+
 /// Bridge between the MCP server and the synth engine.
 ///
 /// All methods use primitive types. Conversion to domain types
@@ -535,6 +653,177 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Clear the entire voice graph for an instrument (remove all modules and connections).
     fn clear_graph(&self, instrument_id: u64) -> Result<(), McpBridgeError>;
 
+    /// Splice a new module of `module_type` into an existing audio cable,
+    /// re-routing `source → new module → destination`.
+    ///
+    /// This is a convenience over manual add + disconnect + connect. The new
+    /// module is wired through its first audio input and first audio output, so
+    /// the type must carry audio (a pure modulator like an LFO is rejected).
+    /// `anchor` selects which existing cable to cut; on any wiring failure the
+    /// original cable is restored and the new module removed.
+    ///
+    /// Default trait method composed from the graph primitives — implementors
+    /// get it for free.
+    fn insert_module_between(
+        &self,
+        instrument_id: u64,
+        module_type: &str,
+        anchor: InsertAnchor,
+    ) -> Result<InsertModuleResult, McpBridgeError> {
+        use std::collections::HashMap;
+
+        // The new module must carry audio through: pick its first audio in/out.
+        let new_info = self.get_module_type_info(module_type)?;
+        let audio_in = new_info
+            .input_ports
+            .iter()
+            .find(|p| p.signal_type == "audio")
+            .map(|p| p.name.clone())
+            .ok_or_else(|| {
+                McpBridgeError::Other(format!(
+                    "module type '{module_type}' has no audio input port, so it can't be spliced into the signal path"
+                ))
+            })?;
+        let audio_out = new_info
+            .output_ports
+            .iter()
+            .find(|p| p.signal_type == "audio")
+            .map(|p| p.name.clone())
+            .ok_or_else(|| {
+                McpBridgeError::Other(format!(
+                    "module type '{module_type}' has no audio output port, so it can't be spliced into the signal path"
+                ))
+            })?;
+
+        let modules = self.list_modules(instrument_id)?;
+        let connections = self.get_connections(instrument_id)?;
+
+        // Audio in/out port names per existing module id (cache per type).
+        let mut type_cache: HashMap<String, ModuleTypeInfo> = HashMap::new();
+        let mut audio_ports: HashMap<String, (Vec<String>, Vec<String>)> = HashMap::new();
+        for m in &modules {
+            if !type_cache.contains_key(&m.module_type) {
+                let info = self.get_module_type_info(&m.module_type)?;
+                type_cache.insert(m.module_type.clone(), info);
+            }
+            let info = &type_cache[&m.module_type];
+            let ins = info
+                .input_ports
+                .iter()
+                .filter(|p| p.signal_type == "audio")
+                .map(|p| p.name.clone())
+                .collect();
+            let outs = info
+                .output_ports
+                .iter()
+                .filter(|p| p.signal_type == "audio")
+                .map(|p| p.name.clone())
+                .collect();
+            audio_ports.insert(m.id.clone(), (ins, outs));
+        }
+
+        // Resolve the anchor to the existing cable to splice.
+        let target = match anchor {
+            InsertAnchor::Connection {
+                from_module,
+                from_port,
+                to_module,
+                to_port,
+            } => connections
+                .iter()
+                .find(|c| {
+                    c.from_module == from_module
+                        && c.from_port == from_port
+                        && c.to_module == to_module
+                        && c.to_port == to_port
+                })
+                .cloned()
+                .ok_or_else(|| {
+                    McpBridgeError::Other(format!(
+                        "no existing connection {from_module}:{from_port} → {to_module}:{to_port} to splice"
+                    ))
+                })?,
+            InsertAnchor::After(id) => {
+                let outs = audio_ports
+                    .get(&id)
+                    .map(|(_, o)| o.clone())
+                    .ok_or_else(|| McpBridgeError::ModuleNotFound(id.clone()))?;
+                unique_audio_cable_from(&id, &outs, &connections)?
+            }
+            InsertAnchor::Before(id) => {
+                let ins = audio_ports
+                    .get(&id)
+                    .map(|(i, _)| i.clone())
+                    .ok_or_else(|| McpBridgeError::ModuleNotFound(id.clone()))?;
+                unique_audio_cable_into(&id, &ins, &connections)?
+            }
+            InsertAnchor::AfterType(t) => {
+                let canonical = self.get_module_type_info(&t)?.name;
+                let id = unique_module_of_type(&canonical, &modules)?.to_string();
+                let outs = audio_ports.get(&id).map(|(_, o)| o.clone()).unwrap_or_default();
+                unique_audio_cable_from(&id, &outs, &connections)?
+            }
+            InsertAnchor::BeforeType(t) => {
+                let canonical = self.get_module_type_info(&t)?.name;
+                let id = unique_module_of_type(&canonical, &modules)?.to_string();
+                let ins = audio_ports.get(&id).map(|(i, _)| i.clone()).unwrap_or_default();
+                unique_audio_cable_into(&id, &ins, &connections)?
+            }
+            InsertAnchor::BeforeOutput => {
+                let canonical = self.get_module_type_info("out")?.name;
+                let id = unique_module_of_type(&canonical, &modules)?.to_string();
+                let ins = audio_ports.get(&id).map(|(i, _)| i.clone()).unwrap_or_default();
+                unique_audio_cable_into(&id, &ins, &connections)?
+            }
+        };
+
+        // Create the new module, then discover its id by set-difference (robust
+        // to the confirmation-message format).
+        let before_ids: std::collections::HashSet<String> =
+            modules.iter().map(|m| m.id.clone()).collect();
+        self.add_module(instrument_id, module_type)?;
+        let new_id = self
+            .list_modules(instrument_id)?
+            .into_iter()
+            .map(|m| m.id)
+            .find(|id| !before_ids.contains(id))
+            .ok_or_else(|| {
+                McpBridgeError::Other(
+                    "could not determine the id of the newly added module".to_string(),
+                )
+            })?;
+
+        // Splice: cut the old cable, route source → new → destination. Restore
+        // the original wiring on any failure so a partial splice never lingers.
+        let (fm, fp, tm, tp) = (
+            target.from_module,
+            target.from_port,
+            target.to_module,
+            target.to_port,
+        );
+        self.disconnect(instrument_id, &fm, &fp, &tm, &tp)?;
+        if let Err(e) = self.connect(instrument_id, &fm, &fp, &new_id, &audio_in) {
+            let _ = self.connect(instrument_id, &fm, &fp, &tm, &tp);
+            let _ = self.remove_module(instrument_id, &new_id);
+            return Err(e);
+        }
+        if let Err(e) = self.connect(instrument_id, &new_id, &audio_out, &tm, &tp) {
+            let _ = self.disconnect(instrument_id, &fm, &fp, &new_id, &audio_in);
+            let _ = self.connect(instrument_id, &fm, &fp, &tm, &tp);
+            let _ = self.remove_module(instrument_id, &new_id);
+            return Err(e);
+        }
+
+        Ok(InsertModuleResult {
+            removed_connection: format!("{fm}:{fp} → {tm}:{tp}"),
+            new_connections: vec![
+                format!("{fm}:{fp} → {new_id}:{audio_in}"),
+                format!("{new_id}:{audio_out} → {tm}:{tp}"),
+            ],
+            module_id: new_id,
+        })
+    }
+
     // === Sequencer: Song ===
 
     /// Get song info (name, tempo, length, pattern/track counts).
@@ -761,6 +1050,96 @@ pub trait SynthBridge: Send + Sync + 'static {
         target: &str,
         instrument_id: u16,
     ) -> Result<usize, McpBridgeError>;
+
+    /// Scale and/or offset every point's value in an existing automation lane,
+    /// in place (tick + curve preserved). Each value becomes
+    /// `clamp((value - pivot) * scale + pivot + offset, 0..1)`. Returns the
+    /// number of points transformed. Errors if the lane does not exist.
+    fn transform_automation_lane(
+        &self,
+        pattern_id: u32,
+        target: &str,
+        instrument_id: u16,
+        scale: f32,
+        pivot: f32,
+        offset: f32,
+    ) -> Result<usize, McpBridgeError>;
+
+    /// Copy an automation lane's points to another pattern/target, optionally
+    /// scaled (`clamp(value * scale + offset, 0..1)`); tick + curve preserved.
+    /// When `clear_destination` is set the target lane is emptied first.
+    /// Returns the number of points copied. Errors if the source lane is absent.
+    #[allow(clippy::too_many_arguments)]
+    fn copy_automation_lane(
+        &self,
+        from_pattern_id: u32,
+        from_target: &str,
+        from_instrument_id: u16,
+        to_pattern_id: u32,
+        to_target: &str,
+        to_instrument_id: u16,
+        scale: f32,
+        offset: f32,
+        clear_destination: bool,
+    ) -> Result<usize, McpBridgeError>;
+
+    /// Project-wide automation overview: every lane in every pattern, grouped
+    /// by `"instrument"` (default), `"target"`, or `"pattern"`. Read-only.
+    ///
+    /// Default trait method composed from `list_patterns` + `list_automation_lanes`.
+    fn get_automation_summary(
+        &self,
+        group_by: &str,
+    ) -> Result<AutomationSummaryResult, McpBridgeError> {
+        use std::collections::BTreeMap;
+
+        let patterns = self.list_patterns()?;
+        let mut all: Vec<AutomationSummaryLane> = Vec::new();
+        for p in &patterns {
+            for lane in self.list_automation_lanes(p.id)? {
+                all.push(AutomationSummaryLane {
+                    pattern_id: p.id,
+                    pattern_name: p.name.clone(),
+                    target: lane.target,
+                    instrument_id: lane.instrument_id,
+                    point_count: lane.point_count,
+                });
+            }
+        }
+        let total_lanes = all.len();
+        let total_points: usize = all.iter().map(|l| l.point_count).sum();
+
+        let mut grouped: BTreeMap<String, Vec<AutomationSummaryLane>> = BTreeMap::new();
+        for lane in all {
+            let key = match group_by {
+                "target" => lane.target.clone(),
+                "pattern" => format!("pattern {} ({})", lane.pattern_id, lane.pattern_name),
+                // "instrument" and any other value fall back to instrument grouping.
+                _ => lane.instrument_id.map_or_else(
+                    || "(no instrument)".to_string(),
+                    |id| format!("instrument {id}"),
+                ),
+            };
+            grouped.entry(key).or_default().push(lane);
+        }
+
+        let groups = grouped
+            .into_iter()
+            .map(|(group, lanes)| AutomationSummaryGroup {
+                group,
+                lane_count: lanes.len(),
+                point_count: lanes.iter().map(|l| l.point_count).sum(),
+                lanes,
+            })
+            .collect();
+
+        Ok(AutomationSummaryResult {
+            group_by: group_by.to_string(),
+            total_lanes,
+            total_points,
+            groups,
+        })
+    }
 
     // === Track control ===
 
@@ -1733,5 +2112,98 @@ mod lint_report_tests {
         assert_eq!(report.error_count, 0);
         assert_eq!(report.warning_count, 0);
         assert!(report.entries.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod insert_anchor_tests {
+    use super::{unique_audio_cable_from, unique_audio_cable_into, unique_module_of_type};
+    use crate::types::{ConnectionInfo, ModuleInfo};
+
+    fn module(id: &str, type_name: &str) -> ModuleInfo {
+        ModuleInfo {
+            id: id.to_string(),
+            module_type: type_name.to_string(),
+            name: id.to_string(),
+            bypassed: false,
+            parameters: vec![],
+            input_ports: vec![],
+            output_ports: vec![],
+            mod_matrix_routings: None,
+        }
+    }
+
+    fn cable(fm: &str, fp: &str, tm: &str, tp: &str) -> ConnectionInfo {
+        ConnectionInfo {
+            from_module: fm.to_string(),
+            from_port: fp.to_string(),
+            to_module: tm.to_string(),
+            to_port: tp.to_string(),
+        }
+    }
+
+    // osc-1 → flt-1 → amp-1 → out-1, plus a CV side-cable env-1 → amp-1.
+    fn graph() -> (Vec<ModuleInfo>, Vec<ConnectionInfo>) {
+        let modules = vec![
+            module("osc-1", "Oscillator"),
+            module("flt-1", "Filter"),
+            module("amp-1", "Amplifier"),
+            module("env-1", "Envelope"),
+            module("out-1", "Stereo Output"),
+        ];
+        let conns = vec![
+            cable("osc-1", "output", "flt-1", "input"),
+            cable("flt-1", "output", "amp-1", "input"),
+            cable("amp-1", "output", "out-1", "input"),
+            cable("env-1", "output", "amp-1", "cv_gain"),
+        ];
+        (modules, conns)
+    }
+
+    #[test]
+    fn unique_type_resolves_or_reports_ambiguity() {
+        let (modules, _) = graph();
+        assert_eq!(
+            unique_module_of_type("Amplifier", &modules).unwrap(),
+            "amp-1"
+        );
+        assert!(unique_module_of_type("Mixer", &modules).is_err()); // none
+        let two = vec![module("flt-1", "Filter"), module("flt-2", "Filter")];
+        assert!(unique_module_of_type("Filter", &two).is_err()); // ambiguous
+    }
+
+    #[test]
+    fn cable_after_picks_the_audio_output_cable() {
+        let (_, conns) = graph();
+        let audio_out = vec!["output".to_string()];
+        let c = unique_audio_cable_from("osc-1", &audio_out, &conns).unwrap();
+        assert_eq!(
+            (c.from_module.as_str(), c.to_module.as_str()),
+            ("osc-1", "flt-1")
+        );
+        // A module with no outgoing audio cable errors.
+        assert!(unique_audio_cable_from("out-1", &audio_out, &conns).is_err());
+    }
+
+    #[test]
+    fn cable_before_ignores_cv_inputs() {
+        let (_, conns) = graph();
+        // amp-1 has an audio input ("input") and a CV input ("cv_gain"); only
+        // the audio one is a splice target, so resolution is unambiguous.
+        let audio_in = vec!["input".to_string()];
+        let c = unique_audio_cable_into("amp-1", &audio_in, &conns).unwrap();
+        assert_eq!(
+            (c.from_module.as_str(), c.to_module.as_str()),
+            ("flt-1", "amp-1")
+        );
+    }
+
+    #[test]
+    fn cable_after_reports_branching() {
+        let mut conns = graph().1;
+        // Make osc-1 fan out to a second audio destination → branch.
+        conns.push(cable("osc-1", "output", "amp-1", "input"));
+        let audio_out = vec!["output".to_string()];
+        assert!(unique_audio_cable_from("osc-1", &audio_out, &conns).is_err());
     }
 }
