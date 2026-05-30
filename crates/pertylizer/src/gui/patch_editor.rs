@@ -11,7 +11,7 @@ use egui_remixicon::icons as ri;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use synth_core::{ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource, ModuleType, Param};
-use synth_core::{ModuleCategory, ModuleDescriptor, ParameterDescriptor, PortName, PortType};
+use synth_core::{ModuleCategory, ModuleDescriptor, PortName, PortType};
 use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
 
@@ -4751,50 +4751,6 @@ fn draw_visualizer_display(
     }
 }
 
-fn draw_knob_grid(
-    ui: &mut Ui,
-    state: &mut ModulePanelState,
-    params: &[&ParameterDescriptor],
-    accent_color: Color32,
-    param_changes: &mut Vec<Param>,
-) {
-    use super::widgets::Knob;
-
-    const KNOBS_PER_ROW: usize = 5;
-    let knob_size = theme().sizes.knob_size;
-    let cell_size = Vec2::new((knob_size + 18.0).max(54.0), knob_size + 18.0);
-
-    for chunk in params.chunks(KNOBS_PER_ROW) {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(5.0, 6.0);
-            for param in chunk {
-                ui.allocate_ui_with_layout(
-                    cell_size,
-                    egui::Layout::top_down(egui::Align::Center),
-                    |ui| {
-                        let current = state
-                            .param_values
-                            .get(&param.name)
-                            .copied()
-                            .unwrap_or(param.range.default);
-                        let mut value = current;
-
-                        Knob::from_descriptor(&mut value, param)
-                            .size(knob_size)
-                            .accent_color(accent_color)
-                            .show(ui);
-
-                        if (value - current).abs() > f32::EPSILON {
-                            state.param_values.insert(param.name.clone(), value);
-                            param_changes.push(param.id.with_f32(value));
-                        }
-                    },
-                );
-            }
-        });
-    }
-}
-
 /// Draw only the parameters section of a module panel.
 #[allow(clippy::too_many_arguments)]
 fn draw_module_panel_params(
@@ -4807,7 +4763,7 @@ fn draw_module_panel_params(
     sample_list: &[(u64, String)],
     audio_input_snapshot: &AudioInputSnapshot,
 ) -> PanelParamsResult {
-    use super::widgets::{EnvelopeEditor, WaveformSelector};
+    use super::widgets::EnvelopeEditor;
     use synth_core::WidgetHint;
 
     let mut param_changes = Vec::new();
@@ -4881,7 +4837,17 @@ fn draw_module_panel_params(
             .collect();
 
         if !knob_params.is_empty() {
-            draw_knob_grid(ui, state, &knob_params, accent_color, &mut param_changes);
+            let changes = super::widgets::draw_knobs(ui, &knob_params, accent_color, |p| {
+                state
+                    .param_values
+                    .get(&p.name)
+                    .copied()
+                    .unwrap_or(p.range.default)
+            });
+            for (param, value) in changes {
+                state.param_values.insert(param.name.clone(), value);
+                param_changes.push(param.id.with_f32(value));
+            }
         }
 
         return PanelParamsResult {
@@ -5067,220 +5033,35 @@ fn draw_module_panel_params(
         }
     }
 
-    // Group parameters by widget hint (non-Envelope modules)
-    let waveform_params: Vec<_> = descriptor
-        .parameters
-        .iter()
-        .filter(|p| matches!(p.widget_hint, WidgetHint::WaveformSelector))
-        .collect();
-
-    let knob_params: Vec<_> = descriptor
-        .parameters
-        .iter()
-        .filter(|p| {
-            matches!(
-                p.widget_hint,
-                WidgetHint::Knob | WidgetHint::FrequencySlider
-            )
-        })
-        .collect();
-
-    let slider_params: Vec<_> = descriptor
-        .parameters
-        .iter()
-        .filter(|p| matches!(p.widget_hint, WidgetHint::Slider | WidgetHint::TimeSlider))
-        .collect();
-
-    let dropdown_params: Vec<_> = descriptor
-        .parameters
-        .iter()
-        .filter(|p| matches!(p.widget_hint, WidgetHint::Dropdown))
-        .collect();
-
-    let toggle_params: Vec<_> = descriptor
-        .parameters
-        .iter()
-        .filter(|p| matches!(p.widget_hint, WidgetHint::Toggle))
-        .collect();
-
-    // Draw waveform selectors first (most prominent)
-    for param in &waveform_params {
-        if let Some(ref choices) = param.choices {
-            // Map the descriptor's choices to renderable WaveformType
-            // variants so modules with smaller waveform sets (e.g. SubOsc:
-            // Sine/Square/Pulse25) only show the buttons they actually
-            // support, instead of falling through to the default 6.
-            let waveforms: Vec<super::widgets::WaveformType> = choices
-                .iter()
-                .filter_map(|c| super::widgets::WaveformType::from_id(&c.id))
-                .collect();
-            if waveforms.is_empty() {
-                continue;
-            }
-
-            let current = state
+    // Generic descriptor-driven parameter widgets, shared with the mixer's
+    // return-bus inserts (see `widgets::draw_parameter_grid`). The patch editor
+    // caches values per module and hides mod-matrix targets that aren't wired
+    // up; those two concerns are the getter and choice filter, and the shared
+    // renderer draws the rest.
+    let changes = super::widgets::draw_parameter_grid(
+        ui,
+        descriptor,
+        accent_color,
+        |p| {
+            state
                 .param_values
-                .get(&param.name)
+                .get(&p.name)
                 .copied()
-                .unwrap_or(param.range.default);
-            let mut selected = (current.round() as usize).min(waveforms.len() - 1);
-
-            ui.label(
-                egui::RichText::new(&param.name)
-                    .size(theme().fonts.size_normal)
-                    .color(theme().colors.text_secondary),
-            );
-
-            if WaveformSelector::new(&mut selected)
-                .waveforms(waveforms)
-                .accent_color(accent_color)
-                .show(ui)
-            {
-                state
-                    .param_values
-                    .insert(param.name.clone(), selected as f32);
-                // Create new param with the selected value
-                param_changes.push(param.id.with_f32(selected as f32));
-            }
-
-            // Show selected name
-            if let Some(choice) = choices.get(selected) {
-                ui.label(
-                    egui::RichText::new(&choice.name)
-                        .size(theme().fonts.size_small)
-                        .color(theme().colors.text_dim),
-                );
-            }
-        }
-    }
-
-    // Draw sliders (non-Envelope modules only)
-    for param in &slider_params {
-        let current = state
-            .param_values
-            .get(&param.name)
-            .copied()
-            .unwrap_or(param.range.default);
-        let mut value = current;
-
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(&param.name)
-                    .size(theme().fonts.size_normal)
-                    .color(theme().colors.text_secondary),
-            );
-            ui.add_space(4.0);
-
-            // Use logarithmic slider for time parameters
-            let is_time = matches!(param.widget_hint, WidgetHint::TimeSlider);
-
-            let slider = if is_time && param.range.min > 0.0 {
-                egui::Slider::new(&mut value, param.range.min..=param.range.max)
-                    .logarithmic(true)
-                    .suffix("s")
-                    .min_decimals(3)
-                    .max_decimals(3)
+                .unwrap_or(p.range.default)
+        },
+        |p, choice| {
+            let is_mm_source = matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotSource(..)));
+            let is_mm_dest = matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotDestination(..)));
+            if is_mm_source || is_mm_dest {
+                is_mod_choice_available(&choice.id, is_mm_source, analysis)
             } else {
-                egui::Slider::new(&mut value, param.range.min..=param.range.max)
-                    .min_decimals(2)
-                    .max_decimals(2)
-            };
-
-            if ui.add(slider).changed() {
-                state.param_values.insert(param.name.clone(), value);
-                param_changes.push(param.id.with_f32(value));
+                true
             }
-        });
-    }
-
-    // Draw dropdowns (for non-waveform choices)
-    for param in &dropdown_params {
-        if let Some(ref choices) = param.choices {
-            let current = state
-                .param_values
-                .get(&param.name)
-                .copied()
-                .unwrap_or(param.range.default);
-            let mut selected = current.round() as usize;
-
-            // Detect mod matrix source/destination dropdowns for filtering
-            let is_mm_source = matches!(param.id, Param::ModMatrix(ModMatrixParam::SlotSource(..)));
-            let is_mm_dest = matches!(
-                param.id,
-                Param::ModMatrix(ModMatrixParam::SlotDestination(..))
-            );
-
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new(&param.name)
-                        .size(theme().fonts.size_normal)
-                        .color(theme().colors.text_secondary),
-                );
-                let text = choices
-                    .get(selected)
-                    .map(|c| c.name.clone())
-                    .unwrap_or_else(|| "?".into());
-                let combo = egui::ComboBox::from_id_salt(format!(
-                    "{}-{}",
-                    descriptor.type_id.0, param.name
-                ))
-                .selected_text(text)
-                .show_ui(ui, |ui| {
-                    for (i, choice) in choices.iter().enumerate() {
-                        // Filter mod matrix choices based on available modules
-                        if (is_mm_source || is_mm_dest)
-                            && !is_mod_choice_available(&choice.id, is_mm_source, analysis)
-                        {
-                            continue;
-                        }
-                        let mut resp = ui.selectable_label(selected == i, &choice.name);
-                        if let Some(desc) = &choice.description {
-                            resp = resp.on_hover_text(desc);
-                        }
-                        if resp.clicked() {
-                            selected = i;
-                        }
-                    }
-                });
-                // Hover on the closed combo shows the active choice's description.
-                if let Some(desc) = choices.get(selected).and_then(|c| c.description.as_ref()) {
-                    combo.response.on_hover_text(desc);
-                }
-            });
-
-            if selected as f32 != current.round() {
-                state
-                    .param_values
-                    .insert(param.name.clone(), selected as f32);
-                // Create new param with the selected value
-                param_changes.push(param.id.with_f32(selected as f32));
-            }
-        }
-    }
-
-    // Draw toggles
-    if !toggle_params.is_empty() {
-        ui.horizontal(|ui| {
-            for param in &toggle_params {
-                let current = state
-                    .param_values
-                    .get(&param.name)
-                    .copied()
-                    .unwrap_or(param.range.default);
-                let mut checked = current > 0.5;
-                if ui.checkbox(&mut checked, &param.name).changed() {
-                    let new_val = if checked { 1.0 } else { 0.0 };
-                    state.param_values.insert(param.name.clone(), new_val);
-                    param_changes.push(param.id.with_f32(new_val));
-                }
-            }
-        });
-    }
-
-    // Draw knobs in rows of max 5
-    if !knob_params.is_empty() {
-        ui.add_space(4.0);
-        draw_knob_grid(ui, state, &knob_params, accent_color, &mut param_changes);
+        },
+    );
+    for (param, value) in changes {
+        state.param_values.insert(param.name.clone(), value);
+        param_changes.push(param.id.with_f32(value));
     }
 
     PanelParamsResult {

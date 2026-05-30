@@ -16,6 +16,7 @@
 //! busses have no other editor, so their inserts are edited inline here.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use eframe::egui::{self, Color32, RichText};
@@ -25,11 +26,16 @@ use synth_core::{BipolarValue, Gain, ModuleType, NormalizedValue, Param};
 use synth_engine::{EngineCommand, EngineHandle, InstrumentId, ModuleId};
 use synth_sequencer::{ReturnBusId, SeqInstrumentId, Song, TrackId, TrackSend};
 
+use crate::gui::module_panel::category_color;
 use crate::gui::theme::theme;
 use crate::gui::widgets::{ModuleFrame, draw_module_header, level_color};
 
 /// Width of a single channel strip, in points.
 const STRIP_WIDTH: f32 = 108.0;
+/// Width of a return-bus insert module (and thus the return column), in points.
+/// Wider than a strip so the shared Rack parameter widgets — knobs, labelled
+/// sliders, dropdowns — get the room they need.
+const INSERT_WIDTH: f32 = 200.0;
 /// Height of the big volume fader (and the level meter beside it), in points.
 const FADER_HEIGHT: f32 = 160.0;
 /// Width of the level-meter bar, in points.
@@ -141,8 +147,8 @@ pub fn draw_mixer_view(
         return None;
     };
 
-    // Clone the return-effect chains out of shared state so the popup editor can
-    // read them without holding the lock while we mutably borrow `handle`.
+    // Clone the return-effect chains out of shared state so the inserts editor
+    // can read them without holding the lock while we mutably borrow `handle`.
     let return_effects: HashMap<ReturnBusId, Vec<EffectInfo>> = {
         let guard = handle.state.return_bus_effects.read();
         guard
@@ -394,19 +400,24 @@ fn center_pad(content_width: f32) -> f32 {
 
 /// Descriptor for an effect type, cached per type. `create_effect` builds (and
 /// immediately drops) a full DSP object just to read its descriptor, so caching
-/// avoids that allocation on every frame the inserts popup is open. The GUI is
-/// single-threaded, so a thread-local cache suffices.
-fn cached_descriptor(module_type: ModuleType) -> Option<synth_core::ModuleDescriptor> {
+/// avoids that allocation on every frame an insert is on screen. Returned as an
+/// `Rc` so the per-frame, per-effect lookup is a refcount bump rather than a deep
+/// clone of the descriptor's parameter vector. The GUI is single-threaded, so a
+/// thread-local cache suffices.
+fn cached_descriptor(module_type: ModuleType) -> Option<Rc<synth_core::ModuleDescriptor>> {
     thread_local! {
-        static CACHE: std::cell::RefCell<HashMap<ModuleType, synth_core::ModuleDescriptor>> =
+        static CACHE: std::cell::RefCell<HashMap<ModuleType, Rc<synth_core::ModuleDescriptor>>> =
             std::cell::RefCell::new(HashMap::new());
     }
     CACHE.with(|cache| {
         if let Some(d) = cache.borrow().get(&module_type) {
-            return Some(d.clone());
+            return Some(Rc::clone(d));
         }
         let (_, descriptor) = crate::module_factory::create_effect(module_type)?;
-        cache.borrow_mut().insert(module_type, descriptor.clone());
+        let descriptor = Rc::new(descriptor);
+        cache
+            .borrow_mut()
+            .insert(module_type, Rc::clone(&descriptor));
         Some(descriptor)
     })
 }
@@ -619,148 +630,183 @@ fn draw_return_strip(
 
     let t = theme();
     let mut delete = false;
-    ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
-        ui.set_width(STRIP_WIDTH);
-        strip_frame(ui, t.colors.accent_green, t.colors.bg_panel).show(ui, |ui| {
-            // The frame inherits the horizontal_top layout of the strip row, so
-            // wrap everything in a vertical layout to stack the header above the
-            // controls (and give the column the full strip width).
-            ui.vertical(|ui| {
-                // Name — click the header to rename inline.
-                let editing = state
-                    .editing_return_name
-                    .as_ref()
-                    .is_some_and(|(id, _)| *id == rb.id);
-                if editing {
-                    if let Some((_, buf)) = state.editing_return_name.as_mut() {
-                        let resp = ui.add(
-                            egui::TextEdit::singleline(buf)
-                                .desired_width(STRIP_WIDTH - 16.0)
-                                .hint_text("Name"),
-                        );
-                        if resp.lost_focus() {
-                            let new_name = buf.clone();
-                            if let Some(bus) = song.write().return_bus_mut(rb.id) {
-                                bus.name = new_name;
+    // The column is as wide as its insert modules, but collapses to the plain
+    // strip width when the bus has no inserts so empty returns don't leave a
+    // wide blank gap. The strip itself always keeps the standard strip width and
+    // sits left-aligned at the top.
+    let col_width = if effects.is_empty() {
+        STRIP_WIDTH
+    } else {
+        INSERT_WIDTH
+    };
+    ui.allocate_ui(egui::vec2(col_width, 0.0), |ui| {
+        ui.set_width(col_width);
+        // The strip row is laid out left-to-right, so wrap the strip and its
+        // insert modules in a vertical column: the strip on top, then each
+        // effect stacked below it (the way the Rack stacks an effect chain) so
+        // the chain is always visible without a popup.
+        ui.vertical(|ui| {
+            ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
+                ui.set_width(STRIP_WIDTH);
+                strip_frame(ui, t.colors.accent_green, t.colors.bg_panel).show(ui, |ui| {
+                    // The frame inherits the horizontal_top layout of the strip row, so
+                    // wrap everything in a vertical layout to stack the header above the
+                    // controls (and give the column the full strip width).
+                    ui.vertical(|ui| {
+                        // Name — click the header to rename inline.
+                        let editing = state
+                            .editing_return_name
+                            .as_ref()
+                            .is_some_and(|(id, _)| *id == rb.id);
+                        if editing {
+                            if let Some((_, buf)) = state.editing_return_name.as_mut() {
+                                let resp = ui.add(
+                                    egui::TextEdit::singleline(buf)
+                                        .desired_width(STRIP_WIDTH - 16.0)
+                                        .hint_text("Name"),
+                                );
+                                if resp.lost_focus() {
+                                    let new_name = buf.clone();
+                                    if let Some(bus) = song.write().return_bus_mut(rb.id) {
+                                        bus.name = new_name;
+                                    }
+                                    state.editing_return_name = None;
+                                } else {
+                                    resp.request_focus();
+                                }
                             }
-                            state.editing_return_name = None;
                         } else {
-                            resp.request_focus();
+                            let resp = draw_module_header(
+                                ui,
+                                t.colors.accent_green,
+                                &format!("⮌ {}", rb.name),
+                                Some("Click to rename".to_owned()),
+                                |ui| {
+                                    if header_mute_button(ui, rb.mute)
+                                        && let Some(bus) = song.write().return_bus_mut(rb.id)
+                                    {
+                                        bus.mute = !bus.mute;
+                                    }
+                                    // Close button, mirroring the patch module's header.
+                                    ui.separator();
+                                    if ui
+                                        .add(
+                                            egui::Button::new(
+                                                RichText::new(ri::CLOSE_LINE)
+                                                    .color(t.colors.text_dim)
+                                                    .size(12.0),
+                                            )
+                                            .frame(false)
+                                            .min_size(egui::vec2(20.0, 20.0)),
+                                        )
+                                        .on_hover_text("Delete return bus")
+                                        .clicked()
+                                    {
+                                        delete = true;
+                                    }
+                                },
+                            );
+                            if resp.clicked() {
+                                state.editing_return_name = Some((rb.id, rb.name.clone()));
+                            }
                         }
-                    }
-                } else {
-                    let resp = draw_module_header(
-                        ui,
-                        t.colors.accent_green,
-                        &format!("⮌ {}", rb.name),
-                        Some("Click to rename".to_owned()),
-                        |ui| {
-                            if header_mute_button(ui, rb.mute)
+
+                        ui.add_space(4.0);
+
+                        // Pan.
+                        let mut pan = rb.pan;
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut pan, -1.0..=1.0)
+                                    .show_value(true)
+                                    .fixed_decimals(2)
+                                    .text("Pan"),
+                            )
+                            .changed()
+                            && let Some(bus) = song.write().return_bus_mut(rb.id)
+                        {
+                            bus.pan = BipolarValue::new(pan);
+                        }
+
+                        // Level meter + volume fader.
+                        let level = smoothed(
+                            &mut state.return_meter_smooth,
+                            u64::from(rb.id.0),
+                            handle.return_peak(rb.id),
+                        );
+                        ui.horizontal(|ui| {
+                            ui.add_space(center_pad(METER_WIDTH + 24.0));
+                            draw_meter_bar(ui, level);
+                            let mut vol = rb.volume;
+                            if vertical_fader(ui, &mut vol).changed()
                                 && let Some(bus) = song.write().return_bus_mut(rb.id)
                             {
-                                bus.mute = !bus.mute;
+                                bus.volume = NormalizedValue::new(vol);
                             }
-                            // Close button, mirroring the patch module's header.
-                            ui.separator();
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        RichText::new(ri::CLOSE_LINE)
-                                            .color(t.colors.text_dim)
-                                            .size(12.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(egui::vec2(20.0, 20.0)),
-                                )
-                                .on_hover_text("Delete return bus")
-                                .clicked()
-                            {
-                                delete = true;
-                            }
-                        },
-                    );
-                    if resp.clicked() {
-                        state.editing_return_name = Some((rb.id, rb.name.clone()));
-                    }
-                }
-
-                // Inserts editor (returns have no other effect editor).
-                let fx_btn = ui
-                    .button(
-                        RichText::new(format!("Inserts ({})", effects.len()))
-                            .size(t.fonts.size_small)
-                            .color(t.colors.text_secondary),
-                    )
-                    .on_hover_text("Edit this return bus's effect chain");
-                egui::Popup::from_toggle_button_response(&fx_btn).show(|ui| {
-                    ui.set_min_width(280.0);
-                    draw_return_inserts(ui, rb.id, effects, handle);
+                        });
+                        ui.label(
+                            RichText::new(format!("{:.2}", rb.volume))
+                                .size(t.fonts.size_small)
+                                .color(t.colors.text_secondary),
+                        );
+                    });
                 });
-
-                ui.add_space(4.0);
-
-                // Pan.
-                let mut pan = rb.pan;
-                if ui
-                    .add(
-                        egui::Slider::new(&mut pan, -1.0..=1.0)
-                            .show_value(true)
-                            .fixed_decimals(2)
-                            .text("Pan"),
-                    )
-                    .changed()
-                    && let Some(bus) = song.write().return_bus_mut(rb.id)
-                {
-                    bus.pan = BipolarValue::new(pan);
-                }
-
-                // Level meter + volume fader.
-                let level = smoothed(
-                    &mut state.return_meter_smooth,
-                    u64::from(rb.id.0),
-                    handle.return_peak(rb.id),
-                );
-                ui.horizontal(|ui| {
-                    ui.add_space(center_pad(METER_WIDTH + 24.0));
-                    draw_meter_bar(ui, level);
-                    let mut vol = rb.volume;
-                    if vertical_fader(ui, &mut vol).changed()
-                        && let Some(bus) = song.write().return_bus_mut(rb.id)
-                    {
-                        bus.volume = NormalizedValue::new(vol);
-                    }
-                });
-                ui.label(
-                    RichText::new(format!("{:.2}", rb.volume))
-                        .size(t.fonts.size_small)
-                        .color(t.colors.text_secondary),
-                );
             });
+
+            // Insert effects (Rack-width modules), stacked vertically beneath the
+            // strip the way the Rack stacks an effect chain. A compact menu
+            // appends a new effect.
+            for fx in effects {
+                ui.add_space(4.0);
+                draw_return_effect_module(ui, rb.id, fx, handle);
+            }
+            ui.add_space(4.0);
+            ui.menu_button(
+                RichText::new("+ Add FX")
+                    .size(t.fonts.size_small)
+                    .color(t.colors.accent_green),
+                |ui| {
+                    for &mt in RETURN_FX {
+                        if ui.button(mt.name()).clicked() {
+                            add_return_effect(handle, rb.id, mt, effects);
+                            ui.close();
+                        }
+                    }
+                },
+            );
         });
     });
     delete
 }
 
-/// Render the return-bus inserts editor inside the popup: list each effect with
-/// bypass + remove + parameter sliders, plus an "add effect" picker.
-fn draw_return_inserts(
+/// Draw one return-bus effect as a Rack-style module box: the shared
+/// [`ModuleFrame`] tinted by the effect's category, a [`draw_module_header`]
+/// carrying the bypass toggle and remove button, then the shared descriptor-
+/// driven parameter grid (knobs/sliders/dropdowns/toggles — identical to the
+/// patch editor). Bypassed effects are dimmed. Stacked vertically beneath the
+/// return strip by the caller so the inserts read like a patch-module chain.
+fn draw_return_effect_module(
     ui: &mut egui::Ui,
     return_id: ReturnBusId,
-    effects: &[EffectInfo],
+    fx: &EffectInfo,
     handle: &mut EngineHandle,
 ) {
     let t = theme();
-    ui.label(RichText::new("Return inserts").strong());
-    ui.separator();
-
-    egui::ScrollArea::vertical()
-        .max_height(320.0)
-        .show(ui, |ui| {
-            if effects.is_empty() {
-                ui.label(RichText::new("No effects").color(t.colors.text_dim));
-            }
-            for fx in effects {
-                ui.horizontal(|ui| {
+    let descriptor = cached_descriptor(fx.module_type);
+    let accent = descriptor
+        .as_ref()
+        .map_or(t.colors.accent_cyan, |d| category_color(d.category));
+    let frame = ModuleFrame::new(accent)
+        .opacity(if fx.bypassed { 0.55 } else { 1.0 })
+        .inner_margin(6.0)
+        .build(&ui.global_style());
+    frame.show(ui, |ui| {
+        // A unique id scope per effect so two inserts of the same type on a bus
+        // (and the same type across busses) don't collide on widget ids.
+        ui.push_id((return_id.0, fx.module_id), |ui| {
+            ui.vertical(|ui| {
+                ui.set_width(INSERT_WIDTH - 12.0);
+                draw_module_header(ui, accent, fx.module_type.name(), None, |ui| {
                     let mut enabled = !fx.bypassed;
                     if ui
                         .checkbox(&mut enabled, "")
@@ -773,12 +819,16 @@ fn draw_return_inserts(
                             enabled,
                         });
                     }
-                    ui.label(RichText::new(fx.module_type.name()).strong());
+                    ui.separator();
                     if ui
-                        .button(
-                            RichText::new("✖")
-                                .size(t.fonts.size_small)
-                                .color(t.colors.text_dim),
+                        .add(
+                            egui::Button::new(
+                                RichText::new("✖")
+                                    .size(t.fonts.size_small)
+                                    .color(t.colors.text_dim),
+                            )
+                            .frame(false)
+                            .min_size(egui::vec2(20.0, 20.0)),
                         )
                         .on_hover_text("Remove effect")
                         .clicked()
@@ -790,42 +840,34 @@ fn draw_return_inserts(
                     }
                 });
 
-                // Parameter sliders, driven by the effect's descriptor.
-                if let Some(descriptor) = cached_descriptor(fx.module_type) {
-                    for desc in &descriptor.parameters {
-                        let current = fx
-                            .params
-                            .iter()
-                            .find(|p| p.same_kind(&desc.id))
-                            .map_or(desc.range.default, Param::as_f32);
-                        let mut value = current;
-                        let resp = ui.add(
-                            egui::Slider::new(&mut value, desc.range.min..=desc.range.max)
-                                .text(RichText::new(&desc.name).size(t.fonts.size_small)),
-                        );
-                        if resp.changed() {
-                            handle.send(EngineCommand::SetReturnEffectParameter {
-                                return_id,
-                                module_id: fx.module_id,
-                                param: desc.id.with_f32(value),
-                            });
-                        }
+                // Parameter widgets rendered by the shared, descriptor-driven
+                // grid (knobs, sliders, dropdowns, toggles) — the same code the
+                // Rack uses. Values come from the engine snapshot; every choice
+                // is shown (no mod-matrix filtering on an effect).
+                if let Some(descriptor) = descriptor.as_deref() {
+                    let changes = crate::gui::widgets::draw_parameter_grid(
+                        ui,
+                        descriptor,
+                        accent,
+                        |p| {
+                            fx.params
+                                .iter()
+                                .find(|pp| pp.same_kind(&p.id))
+                                .map_or(p.range.default, Param::as_f32)
+                        },
+                        |_, _| true,
+                    );
+                    for (param, value) in changes {
+                        handle.send(EngineCommand::SetReturnEffectParameter {
+                            return_id,
+                            module_id: fx.module_id,
+                            param: param.id.with_f32(value),
+                        });
                     }
                 }
-                ui.separator();
-            }
+            });
         });
-
-    // Add-effect picker.
-    egui::ComboBox::from_id_salt(("add_return_fx", return_id.0))
-        .selected_text(RichText::new("+ Add effect").color(t.colors.accent_green))
-        .show_ui(ui, |ui| {
-            for &mt in RETURN_FX {
-                if ui.selectable_label(false, mt.name()).clicked() {
-                    add_return_effect(handle, return_id, mt, effects);
-                }
-            }
-        });
+    });
 }
 
 /// Create and append a new effect to a return bus's chain. The fresh `ModuleId`
