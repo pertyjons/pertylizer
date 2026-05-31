@@ -54,11 +54,13 @@ alias for `pre_delay`. `mcp_bridge.rs` set_awe_parameter + server.rs param doc.
 
 ## ♻️ Already exists (verify usage, maybe small extension)
 
-### analyze_track_contributions  ♻️ / ⬜ (thin wrapper)
+### analyze_track_contributions  ✅
 `analyze_section` already supports `include_per_track: true` → per-track RMS/LUFS/
 peak + `pre_master_peak` + `rms_share`, soloed & parallelized.
-- **Remaining (optional):** expose the same per-track mode on `analyze_mix_bus`
-  so a full-song breakdown doesn't require passing an explicit tick range.
+- **Done:** `analyze_mix_bus` now also accepts `include_per_track` (same breakdown,
+  keyed off a duration window rather than an explicit tick range). Reuses
+  `render_per_track_contributions`; per-track renders align with the master
+  render window. Test `analyze_mix_bus_per_track_breakdown_emits_one_entry_per_track`.
 
 ### batch_execute continue_on_error  ♻️
 Already present as `stop_on_error` (inverse) with per-step `succeeded/failed/
