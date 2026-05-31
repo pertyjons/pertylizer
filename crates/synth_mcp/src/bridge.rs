@@ -995,6 +995,24 @@ pub trait SynthBridge: Send + Sync + 'static {
         specs: &[BridgeInstrumentDef],
     ) -> Result<Vec<BuildInstrumentResult>, McpBridgeError>;
 
+    /// Rebuild an existing instrument's voice graph from `spec` while keeping
+    /// its pattern automation pointed at the right modules. The instance
+    /// counters are reset before the rebuild so the new graph numbers modules
+    /// deterministically (1.. per type, in add order); wherever the module set
+    /// is unchanged the ids match the old graph and the automation lanes stay
+    /// valid. Lanes whose target module no longer exists are reported as
+    /// orphaned and, if `drop_orphaned`, removed. Requires `spec.instrument_id`.
+    /// The default impl errors — only bridges able to rebuild override it.
+    fn rebuild_instrument_preserve_automation(
+        &self,
+        _spec: &BridgeInstrumentDef,
+        _drop_orphaned: bool,
+    ) -> Result<crate::types::RebuildInstrumentResult, McpBridgeError> {
+        Err(McpBridgeError::Other(
+            "instrument rebuild is not supported by this bridge".to_string(),
+        ))
+    }
+
     /// Apply a named example patch directly (bypassing GUI queue).
     /// If `instrument_id` is None, creates a new instrument.
     fn apply_example_patch(

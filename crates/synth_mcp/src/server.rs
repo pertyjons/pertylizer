@@ -2600,6 +2600,28 @@ pub struct BuildInstrumentsParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RebuildInstrumentParam {
+    #[schemars(description = "Existing instrument ID to rebuild (required).")]
+    pub instrument_id: u64,
+    #[schemars(description = "Instrument name")]
+    pub name: String,
+    #[schemars(description = "MIDI channel (1-16, optional)")]
+    pub midi_channel: Option<u8>,
+    #[schemars(description = "Volume (0.0-2.0, optional)")]
+    pub volume: Option<f32>,
+    #[schemars(description = "Pan (-1.0 to 1.0, optional)")]
+    pub pan: Option<f32>,
+    #[schemars(description = "Modules of the rebuilt voice graph")]
+    pub modules: Vec<ModuleDefInput>,
+    #[schemars(description = "Connections between modules (array indices)")]
+    pub connections: Option<Vec<ConnectionDefInput>>,
+    #[schemars(
+        description = "If true, delete automation lanes orphaned by the rebuild (their target module no longer exists). If false (default), keep them and just report them — they stay dangling until the module is recreated or the lane is cleared."
+    )]
+    pub drop_orphaned: Option<bool>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ApplyExamplePatchParam {
     #[schemars(
         description = "Instrument ID to apply the patch to. If omitted, creates a new instrument."
@@ -3191,6 +3213,7 @@ impl SynthMcpServer {
 
             // Build instruments
             "build_instrument" => build_instrument(BuildInstrumentsParam),
+            "rebuild_instrument_preserve_automation" => rebuild_instrument_preserve_automation(RebuildInstrumentParam),
             "apply_example_patch" => apply_example_patch(ApplyExamplePatchParam),
             "set_song" => set_song(SetSongParam),
 
@@ -6298,6 +6321,43 @@ impl SynthMcpServer {
             .collect();
         match self.bridge.build_instruments(&specs) {
             Ok(results) => to_json(&results),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Rebuild an existing instrument's voice graph (new modules/params/connections) while keeping its pattern automation working. Instance counters are reset before the rebuild so modules are numbered deterministically (1.. per type, in add order) — wherever the new module set matches the old, the module ids line up and their automation lanes stay valid automatically. Lanes whose target module no longer exists are reported as `orphaned_lanes`; set `drop_orphaned: true` to delete them, otherwise they are left dangling. Returns the rebuilt module ids, preserved-lane count, and the orphaned lanes. Use this instead of build_instrument when the instrument already has automation you don't want to lose. Note: matching is by module type + add-order, so reordering same-type modules can still re-point a lane."
+    )]
+    async fn rebuild_instrument_preserve_automation(
+        &self,
+        params: Parameters<RebuildInstrumentParam>,
+    ) -> String {
+        let p = params.0;
+        if let Err(e) = validate_build_instrument_fields(
+            &p.name,
+            p.midi_channel,
+            p.volume,
+            p.pan,
+            &p.modules,
+            p.connections.as_deref(),
+        ) {
+            return validation_err(e);
+        }
+        let drop_orphaned = p.drop_orphaned.unwrap_or(false);
+        let spec = convert_instrument_def(
+            Some(p.instrument_id),
+            p.name,
+            p.midi_channel,
+            p.volume,
+            p.pan,
+            p.modules,
+            p.connections,
+        );
+        match self
+            .bridge
+            .rebuild_instrument_preserve_automation(&spec, drop_orphaned)
+        {
+            Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
         }
     }

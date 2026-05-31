@@ -470,6 +470,41 @@ pub struct BuildInstrumentResult {
     pub hint: Option<String>,
 }
 
+/// An automation lane orphaned by `rebuild_instrument_preserve_automation`:
+/// its target module no longer exists in the rebuilt graph.
+#[derive(Debug, Clone, Serialize)]
+pub struct OrphanedAutomationLane {
+    /// Pattern the lane lives in.
+    pub pattern_id: u32,
+    /// The dangling target string (e.g. `module:flt:2:cutoff`).
+    pub target: String,
+}
+
+/// Result of `rebuild_instrument_preserve_automation`. Extends the
+/// `build_instrument` result with an accounting of what happened to the
+/// instrument's automation lanes across the rebuild.
+#[derive(Debug, Clone, Serialize)]
+pub struct RebuildInstrumentResult {
+    /// The rebuilt instrument's ID.
+    pub instrument_id: u64,
+    /// Module IDs in the rebuilt graph, in input order.
+    pub module_ids: Vec<String>,
+    /// Number of connections successfully created.
+    pub connection_count: usize,
+    /// Count of module-scoped automation lanes (`module:<type>:<inst>:<param>`)
+    /// for this instrument whose target module still exists in the rebuilt graph
+    /// (the counter reset keeps same-composition modules at the same ids, so
+    /// their lanes keep working). Instrument-/track-/global-level lanes are
+    /// unaffected by a graph rebuild and are not counted here.
+    pub preserved_lanes: u32,
+    /// Lanes whose target module no longer exists after the rebuild.
+    pub orphaned_lanes: Vec<OrphanedAutomationLane>,
+    /// Whether the orphaned lanes were removed (`drop_orphaned`) or only reported.
+    pub dropped_orphaned: bool,
+    /// Non-fatal errors from the rebuild.
+    pub errors: Vec<String>,
+}
+
 /// Result of applying an example patch via `apply_example_patch`.
 #[derive(Debug, Clone, Serialize)]
 pub struct ApplyExamplePatchResult {

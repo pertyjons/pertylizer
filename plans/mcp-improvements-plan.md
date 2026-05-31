@@ -104,9 +104,17 @@ results now carry a `signal_chain` string describing exactly what was measured.
 
 ## ⏸️ Large / trickier (scope carefully, design before coding)
 
-### rebuild_instrument_preserve_automation  ⏸️
-Automation is pattern-scoped via target strings (`module:flt:1:cutoff`); a rebuild
-changes instance numbers → orphaned lanes. Needs snapshot + remap logic.
+### rebuild_instrument_preserve_automation  ✅
+Resets the instrument's per-type instance counters before rebuilding via
+`build_instrument`, so the new graph numbers modules deterministically (1.. per
+type, in add order) — wherever the module set is unchanged the ids line up and
+the `module:<type>:<inst>:<param>` automation lanes stay valid automatically (no
+explicit remap needed). Module-scoped lanes whose target is gone are reported as
+`orphaned_lanes` and, with `drop_orphaned`, removed (via `pattern.automation`
+retain, since `clear_automation_lane` can't address a non-resolving target).
+Dropping is suppressed when the rebuild reports errors (a transiently-missing
+module isn't mistaken for a removed one). Tests in
+`mcp_rebuild_preserve_automation.rs`.
 
 ### analyze_master_chain  ✅
 Per-master-effect breakdown via incremental chain rendering. New

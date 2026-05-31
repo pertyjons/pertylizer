@@ -30,8 +30,8 @@ use synth_mcp::types::{
     HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo,
     MixBusMetrics, MixDelta, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo,
     ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
-    PatternInfo, PlacementInfo, ProjectSchemaInfo, SetSongResult, SongInfo, TrackInfo,
-    UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    PatternInfo, PlacementInfo, ProjectSchemaInfo, RebuildInstrumentResult, SetSongResult,
+    SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -2350,6 +2350,102 @@ impl SynthBridge for AppSynthBridge {
             results.push(self.build_instrument(spec)?);
         }
         Ok(results)
+    }
+
+    fn rebuild_instrument_preserve_automation(
+        &self,
+        spec: &BridgeInstrumentDef,
+        drop_orphaned: bool,
+    ) -> Result<RebuildInstrumentResult, McpBridgeError> {
+        let id = spec.instrument_id.ok_or_else(|| {
+            McpBridgeError::Other(
+                "rebuild_instrument_preserve_automation requires instrument_id".to_string(),
+            )
+        })?;
+        let iid = InstrumentId::new(id);
+        if !self.session.instrument_exists(iid) {
+            return Err(McpBridgeError::InstrumentNotFound(id));
+        }
+        let inst_u16 = u16::try_from(id).map_err(|_| {
+            McpBridgeError::Other(format!(
+                "instrument id {id} too large for automation targeting"
+            ))
+        })?;
+
+        // Reset per-(type) instance counters so the rebuilt graph numbers
+        // modules deterministically from 1 in add order. Wherever the new
+        // module set matches the old, modules keep their ids and their
+        // automation lanes stay valid; only genuinely-removed modules orphan.
+        self.session.reset_counters_for_instrument(iid);
+
+        let built = self.build_instrument(spec)?;
+
+        // Classify the instrument's automation lanes against the rebuilt graph.
+        let valid_modules = self.instrument_module_ids(inst_u16);
+        let patterns = self.list_patterns()?;
+        let mut preserved_lanes = 0u32;
+        let mut orphaned_lanes = Vec::new();
+        for pat in &patterns {
+            for lane in self.list_automation_lanes(pat.id)? {
+                // Only module-scoped lanes can be orphaned by a graph rebuild.
+                // Gate on the unambiguous `module:` prefix: the bare
+                // `instrument_id` can't distinguish a `Track` lane that happens
+                // to share this instrument's numeric id, and instrument-/track-/
+                // global-level automation is unaffected by the rebuild anyway.
+                if lane.instrument_id != Some(inst_u16) || !lane.target.starts_with("module:") {
+                    continue;
+                }
+                if build_automation_target(&lane.target, inst_u16, &valid_modules).is_ok() {
+                    preserved_lanes += 1;
+                } else {
+                    orphaned_lanes.push(synth_mcp::types::OrphanedAutomationLane {
+                        pattern_id: pat.id,
+                        target: lane.target,
+                    });
+                }
+            }
+        }
+
+        // Don't delete lanes when the rebuild itself failed partway: a module
+        // that failed to add (bad type, send failure) is absent from the graph
+        // and so looks orphaned, but it's recoverable by fixing the spec and
+        // rebuilding — dropping here would destroy still-wanted automation.
+        let mut errors = built.errors;
+        let dropped = drop_orphaned && errors.is_empty();
+        if drop_orphaned && !errors.is_empty() {
+            errors.push(
+                "orphaned lanes were NOT dropped because the rebuild reported errors — fix the \
+                 spec and rebuild so a transiently-missing module isn't mistaken for a removed one"
+                    .to_string(),
+            );
+        }
+
+        // Drop the orphaned lanes. Their targets no longer resolve, so
+        // `clear_automation_lane` can't address them (it validates + would
+        // recreate an empty lane) — retain them out by rendered target instead.
+        if dropped && !orphaned_lanes.is_empty() {
+            let mut song = self.shared.song.write();
+            for orphan in &orphaned_lanes {
+                if let Some(pattern) =
+                    song.pattern_mut(synth_sequencer::PatternId(orphan.pattern_id))
+                {
+                    pattern.automation.retain(|lane| {
+                        let (target, lane_inst) = automation_target_info(&lane.target);
+                        !(lane_inst == Some(inst_u16) && target == orphan.target)
+                    });
+                }
+            }
+        }
+
+        Ok(RebuildInstrumentResult {
+            instrument_id: built.instrument_id,
+            module_ids: built.module_ids,
+            connection_count: built.connection_count,
+            preserved_lanes,
+            orphaned_lanes,
+            dropped_orphaned: dropped,
+            errors,
+        })
     }
 
     fn apply_example_patch(
