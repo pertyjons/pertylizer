@@ -1650,6 +1650,31 @@ pub trait SynthBridge: Send + Sync + 'static {
         scope: AnalysisScope,
     ) -> Result<crate::types::CompareMixResult, McpBridgeError>;
 
+    /// Capture the current project state (instruments, modules, connections,
+    /// effects, song — whatever is reflected in the latest published engine
+    /// state) into an internal slot for a later
+    /// [`restore_snapshot`](Self::restore_snapshot). Used by `batch_execute`
+    /// rollback. Errors if a snapshot is already pending (concurrent rollback
+    /// batches are unsupported). The default impl errors — only bridges able to
+    /// snapshot the project override it.
+    fn capture_snapshot(&self) -> Result<(), McpBridgeError> {
+        Err(McpBridgeError::Other(
+            "project snapshots are not supported by this bridge".to_string(),
+        ))
+    }
+
+    /// Restore the project from the snapshot taken by
+    /// [`capture_snapshot`](Self::capture_snapshot), clearing the slot. Errors
+    /// if no snapshot was captured.
+    fn restore_snapshot(&self) -> Result<(), McpBridgeError> {
+        Err(McpBridgeError::Other(
+            "project snapshots are not supported by this bridge".to_string(),
+        ))
+    }
+
+    /// Discard any captured snapshot without restoring. No-op if none exists.
+    fn clear_snapshot(&self) {}
+
     /// Measure the master mix (post master + return effects) and adjust the
     /// master fader toward `target_lufs` without pushing the true peak above
     /// `true_peak_ceiling_dbtp`. The master fader is post-effects, so the

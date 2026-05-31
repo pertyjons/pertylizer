@@ -590,6 +590,14 @@ pub struct BatchExecuteParam {
         description = "If true, stop on the first error. If false (default), continue and report all errors."
     )]
     pub stop_on_error: Option<bool>,
+    #[schemars(
+        description = "If true, validate every operation (tool name known + params parse) WITHOUT executing any of them, then report per-op validity. Nothing is mutated. Use this to pre-flight a batch before running it. Default false. dry_run takes precedence over rollback."
+    )]
+    pub dry_run: Option<bool>,
+    #[schemars(
+        description = "If true, snapshot the project before the batch and, if ANY operation fails, restore that snapshot so a failed batch is undone. Implies stop-on-error. Restore covers instruments, modules, connections, effects, and the song; it does NOT restore transport/playhead position, and sample data deleted mid-batch cannot be restored. Concurrent rollback batches are not supported (a second one errors). Default false. Ignored when dry_run is set."
+    )]
+    pub rollback: Option<bool>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2894,14 +2902,21 @@ impl SynthMcpServer {
 /// Each arm deserializes the JSON params into the appropriate type and calls
 /// the corresponding tool method, unwrapping the `Parameters` wrapper.
 macro_rules! dispatch_tools {
-    ($self:expr, $tool:expr, $params:expr, [
+    ($self:expr, $tool:expr, $params:expr, $validate_only:expr, [
         $( $name:literal => $method:ident ( $ptype:ty ) ),* $(,)?
     ]) => {
         match $tool {
             $(
                 $name => {
                     match serde_json::from_value::<$ptype>($params) {
-                        Ok(p) => Ok($self.$method(Parameters(p)).await),
+                        // In validate-only (dry_run) mode the params parsed, so
+                        // report the op as valid without invoking the handler —
+                        // no state is touched.
+                        Ok(p) => if $validate_only {
+                            Ok(format!("dry_run OK: '{}' params valid", $name))
+                        } else {
+                            Ok($self.$method(Parameters(p)).await)
+                        },
                         Err(e) => Err(format!("Error: invalid params for '{}': {}", $name, e)),
                     }
                 }
@@ -2932,9 +2947,14 @@ fn is_bridge_error(msg: &str) -> bool {
 impl SynthMcpServer {
     /// Dispatch a tool call by name with JSON params.
     /// Used by `batch_execute` to run arbitrary tool calls.
-    async fn dispatch_tool(&self, tool: &str, params: serde_json::Value) -> Result<String, String> {
+    async fn dispatch_tool(
+        &self,
+        tool: &str,
+        params: serde_json::Value,
+        validate_only: bool,
+    ) -> Result<String, String> {
         let started = Instant::now();
-        let result = self.dispatch_tool_inner(tool, params).await;
+        let result = self.dispatch_tool_inner(tool, params, validate_only).await;
         let elapsed_ms = started.elapsed().as_millis();
         match &result {
             Err(msg) => tracing::warn!(
@@ -3000,15 +3020,26 @@ impl SynthMcpServer {
         tool: &str,
         params: serde_json::Value,
     ) -> Result<String, String> {
-        self.dispatch_tool_inner(tool, params).await
+        self.dispatch_tool_inner(tool, params, false).await
+    }
+
+    /// Run `batch_execute` exactly as a client would, from a JSON param value —
+    /// for tests of the dry_run / rollback orchestration.
+    #[doc(hidden)]
+    pub async fn batch_execute_for_test(&self, params: serde_json::Value) -> String {
+        match serde_json::from_value::<BatchExecuteParam>(params) {
+            Ok(p) => self.batch_execute(Parameters(p)).await,
+            Err(e) => format!("Error: invalid batch params: {e}"),
+        }
     }
 
     async fn dispatch_tool_inner(
         &self,
         tool: &str,
         params: serde_json::Value,
+        validate_only: bool,
     ) -> Result<String, String> {
-        dispatch_tools!(self, tool, params, [
+        dispatch_tools!(self, tool, params, validate_only, [
             // Read operations
             "list_instruments" => list_instruments(NoParams),
             "get_instrument_profiles" => get_instrument_profiles(NoParams),
@@ -6892,13 +6923,20 @@ impl SynthMcpServer {
     #[tool(
         description = "Execute multiple tool calls in a single request to reduce round-trip latency. \
                        Operations run sequentially. Max 50 operations per batch. \
-                       Cannot nest batch_execute inside a batch."
+                       Cannot nest batch_execute inside a batch. \
+                       Set `dry_run: true` to validate every operation (tool name + params) without \
+                       executing any — nothing is mutated. Set `rollback: true` to make the batch \
+                       all-or-nothing: the project is snapshotted first and restored if any operation fails."
     )]
     async fn batch_execute(&self, params: Parameters<BatchExecuteParam>) -> String {
         use crate::types::{BatchExecItemResult, BatchExecResult};
 
         let p = params.0;
-        let stop_on_error = p.stop_on_error.unwrap_or(false);
+        let dry_run = p.dry_run.unwrap_or(false);
+        let rollback = p.rollback.unwrap_or(false) && !dry_run;
+        // Rollback restores on the first failure, so executing past it is wasted
+        // work that would only be undone — stop at the first error.
+        let stop_on_error = p.stop_on_error.unwrap_or(false) || rollback;
 
         if p.operations.is_empty() {
             return "Error: operations array is empty".to_string();
@@ -6908,6 +6946,12 @@ impl SynthMcpServer {
                 "Error: too many operations ({}). Maximum is 50 per batch.",
                 p.operations.len()
             );
+        }
+
+        // Snapshot the project before mutating anything so a failed rollback
+        // batch can be undone. Skipped for dry_run (nothing executes).
+        if rollback && let Err(e) = self.bridge.capture_snapshot() {
+            return format!("Error: could not capture rollback snapshot: {e}");
         }
 
         let capacity = p.operations.len();
@@ -6930,7 +6974,7 @@ impl SynthMcpServer {
                 continue;
             }
 
-            match self.dispatch_tool(&op.tool, op.params).await {
+            match self.dispatch_tool(&op.tool, op.params, dry_run).await {
                 Ok(result) => {
                     let is_error = result.starts_with("Error:");
                     results.push(BatchExecItemResult {
@@ -6963,10 +7007,32 @@ impl SynthMcpServer {
             }
         }
 
+        // Resolve the rollback snapshot: restore on any failure, else discard.
+        let mut rolled_back = false;
+        if rollback {
+            if failed > 0 {
+                match self.bridge.restore_snapshot() {
+                    Ok(()) => rolled_back = true,
+                    Err(e) => {
+                        results.push(BatchExecItemResult {
+                            index: results.len(),
+                            tool: "<rollback>".to_string(),
+                            success: false,
+                            result: format!("Error: rollback failed: {e}"),
+                        });
+                    }
+                }
+            } else {
+                self.bridge.clear_snapshot();
+            }
+        }
+
         to_json(&BatchExecResult {
             total: succeeded + failed,
             succeeded,
             failed,
+            dry_run,
+            rolled_back,
             results,
         })
     }

@@ -1394,6 +1394,12 @@ pub struct BatchExecResult {
     pub succeeded: usize,
     /// Number of operations that failed.
     pub failed: usize,
+    /// True when this was a `dry_run`: every operation was validated (tool name
+    /// known + params parse) but none executed, so no state changed.
+    pub dry_run: bool,
+    /// True when this was a `rollback` batch that hit an error and the project
+    /// was restored to its pre-batch snapshot.
+    pub rolled_back: bool,
     /// Per-operation results.
     pub results: Vec<BatchExecItemResult>,
 }

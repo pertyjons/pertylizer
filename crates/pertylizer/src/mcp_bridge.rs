@@ -69,6 +69,10 @@ pub struct AppSynthBridge {
     /// Master-effect counterpart of [`Self::return_effect_hw`] (the master chain
     /// has no bus id, so it gets its own per-effect-type high-water map).
     master_effect_hw: parking_lot::Mutex<HashMap<ModuleType, u16>>,
+    /// Pre-batch project snapshot held while a `batch_execute` with
+    /// `rollback: true` runs. Captured before the first op, applied back if any
+    /// op fails, then cleared. `None` outside a rollback batch.
+    rollback_snapshot: parking_lot::Mutex<Option<Box<crate::project::ProjectFile>>>,
 }
 
 impl AppSynthBridge {
@@ -84,6 +88,7 @@ impl AppSynthBridge {
             sample_library,
             return_effect_hw: parking_lot::Mutex::new(HashMap::new()),
             master_effect_hw: parking_lot::Mutex::new(HashMap::new()),
+            rollback_snapshot: parking_lot::Mutex::new(None),
         }
     }
 
@@ -3926,6 +3931,51 @@ impl SynthBridge for AppSynthBridge {
             label,
             scope,
         )
+    }
+
+    fn capture_snapshot(&self) -> Result<(), McpBridgeError> {
+        let mut slot = self.rollback_snapshot.lock();
+        // Refuse rather than overwrite: an occupied slot means another rollback
+        // batch is mid-flight, and overwriting it would let one batch restore
+        // the other's snapshot. Concurrent rollback batches are unsupported.
+        if slot.is_some() {
+            return Err(McpBridgeError::Other(
+                "a rollback batch is already in progress — concurrent rollback batches are \
+                 not supported"
+                    .to_string(),
+            ));
+        }
+        let opts = self.build_save_options();
+        let project = crate::project_apply::build_project_from_engine(
+            &self.session,
+            &self.shared.song,
+            &self.sample_library,
+            opts,
+        );
+        *slot = Some(Box::new(project));
+        Ok(())
+    }
+
+    fn restore_snapshot(&self) -> Result<(), McpBridgeError> {
+        let project =
+            self.rollback_snapshot.lock().take().ok_or_else(|| {
+                McpBridgeError::Other("no project snapshot to restore".to_string())
+            })?;
+        crate::project_apply::apply_project(
+            &project,
+            &self.session,
+            &self.shared.song,
+            &self.sample_library,
+        )
+        .map_err(McpBridgeError::Other)?;
+        // Rebuild the GUI mirrors against the restored project, mirroring a
+        // project load — otherwise the GUI keeps showing the failed-batch state.
+        self.stash_refresh(crate::mcp_shared::ProjectRefresh::Loaded(project));
+        Ok(())
+    }
+
+    fn clear_snapshot(&self) {
+        *self.rollback_snapshot.lock() = None;
     }
 
     fn analyze_section(

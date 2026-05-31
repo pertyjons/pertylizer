@@ -125,9 +125,19 @@ deltas non-independent. Shares the `render_range_to_metrics` helper with
 analyze_master_chain. Tests: `analyze_return_busses_reports_per_return_contribution`,
 `analyze_return_busses_without_busses_warns`.
 
-### batch_execute dry_run + rollback_on_error  ⏸️
-`dry_run` = validate params without executing (needs a per-tool validate path).
-`rollback` = transaction support (engine has `TransactionId` — investigate).
+### batch_execute dry_run + rollback_on_error  ✅
+`dry_run` = validate every op (tool name known + params deserialize) without
+executing — threaded as a `validate_only` flag through the `dispatch_tools!`
+macro, so it stays a single source of truth (no per-tool validate code).
+`rollback` = snapshot the project (`build_project_from_engine`) before the batch
+and restore it (`apply_project`) if any op fails; implies stop-on-error.
+Snapshot held in a per-bridge slot (`SynthBridge::capture/restore/clear_snapshot`,
+default-erroring trait methods); a second concurrent rollback batch errors rather
+than corrupting the slot. The engine's `TransactionId`/`CommandBatch` infra is
+command-level (manual reverse commands) and not wired to tool-level dispatch, so
+project snapshot/restore is the correct mechanism. Restore covers
+instruments/modules/connections/effects/song, not transport position or
+mid-batch sample deletion. Tests in `mcp_batch_dry_run_rollback.rs`.
 
 ### compare_mix_before_after  ✅
 `action=capture` renders the mix and stores its metrics + render settings in
