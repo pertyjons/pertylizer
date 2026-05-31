@@ -759,6 +759,42 @@ pub struct AnalyzeReturnBussesParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CompareMixBeforeAfterParam {
+    #[schemars(
+        description = "Either 'capture' (render the mix now and store it as the baseline) or 'compare' (re-render and report current − baseline deltas). Capture first, make your change, then compare."
+    )]
+    pub action: String,
+    #[schemars(
+        description = "Capture only: how many seconds of the master bus to render (default 10.0, max 300.0). Ignored on compare, which reuses the baseline's window."
+    )]
+    pub duration_seconds: Option<f32>,
+    #[schemars(
+        description = "Capture only: absolute tick to start rendering from (default 0). Ignored on compare."
+    )]
+    pub start_tick: Option<u64>,
+    #[schemars(
+        description = "Capture only: a label for the baseline (e.g. 'before EQ'). Defaults to 'baseline'. Ignored on compare."
+    )]
+    pub label: Option<String>,
+    #[schemars(
+        description = "Capture only: include the full signal chain (master + return effects + AWE) in the render. Shortcut for every include_* flag. Default false. The scope is stored and reused on compare."
+    )]
+    pub include_all: Option<bool>,
+    #[schemars(description = "Capture only: load the master effect chain. Default false.")]
+    pub include_master_effects: Option<bool>,
+    #[schemars(description = "Capture only: load each return bus's effect chain. Default false.")]
+    pub include_return_effects: Option<bool>,
+    #[schemars(
+        description = "Capture only: reconstruct AWE room simulation. NOT YET IMPLEMENTED. Default false."
+    )]
+    pub include_awe: Option<bool>,
+    #[schemars(
+        description = "Capture only: render resolution, 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Unrecognized values fall back to 'full'."
+    )]
+    pub render_quality: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AutoGainStageParam {
     #[schemars(
         description = "Target integrated loudness in LUFS (e.g. -18, -14, -23). The master fader is adjusted to bring the measured loudness to this value."
@@ -3177,6 +3213,7 @@ impl SynthMcpServer {
             "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
             "analyze_master_chain" => analyze_master_chain(AnalyzeMasterChainParam),
             "analyze_return_busses" => analyze_return_busses(AnalyzeReturnBussesParam),
+            "compare_mix_before_after" => compare_mix_before_after(CompareMixBeforeAfterParam),
             "auto_gain_stage" => auto_gain_stage(AutoGainStageParam),
             "analyze_section" => analyze_section(AnalyzeSectionParam),
             "analyze_masking_matrix" => analyze_masking_matrix(AnalyzeMaskingMatrixParam),
@@ -3797,6 +3834,28 @@ impl SynthMcpServer {
         run_blocking_json(|| {
             self.bridge
                 .analyze_return_busses(duration, params.0.start_tick, scope)
+        })
+    }
+
+    #[tool(
+        description = "A/B a mix change. Call with action='capture' to render the current master mix and store it as a baseline, make your change (EQ, levels, effects, …), then call action='compare' to re-render and get the deltas: lufs_delta, peak/true-peak/rms delta in dB, crest_delta_db (positive = more dynamic), stereo_width_delta (positive = wider), mono_compat_delta. Compare re-renders with the exact same window and signal chain the baseline used, so the deltas reflect only your change. The baseline is per-session and is never written to the project; capturing again overwrites it. Use this to confirm a tweak did what you intended (e.g. 'did adding the limiter actually lower the true peak without crushing dynamics?')."
+    )]
+    async fn compare_mix_before_after(
+        &self,
+        params: Parameters<CompareMixBeforeAfterParam>,
+    ) -> String {
+        let p = params.0;
+        let duration = p.duration_seconds.unwrap_or(10.0);
+        let scope = crate::bridge::AnalysisScope::from_flags(
+            p.include_all,
+            p.include_master_effects,
+            p.include_return_effects,
+            p.include_awe,
+            crate::bridge::RenderQuality::parse(p.render_quality.as_deref()),
+        );
+        run_blocking_json(|| {
+            self.bridge
+                .compare_mix_before_after(&p.action, duration, p.start_tick, p.label, scope)
         })
     }
 

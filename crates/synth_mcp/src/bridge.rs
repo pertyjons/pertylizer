@@ -1635,6 +1635,21 @@ pub trait SynthBridge: Send + Sync + 'static {
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeReturnBussesResult, McpBridgeError>;
 
+    /// Capture or compare a mix-bus baseline. `action = "capture"` renders the
+    /// mix and stores its metrics (plus the render window + scope) in-session;
+    /// `action = "compare"` re-renders with the stored settings and returns the
+    /// `current − baseline` deltas. Lets a caller A/B a change ("did this make
+    /// the mix louder / peakier / wider?"). The baseline is transient — it
+    /// lives only for the session and is never written to the project.
+    fn compare_mix_before_after(
+        &self,
+        action: &str,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+        label: Option<String>,
+        scope: AnalysisScope,
+    ) -> Result<crate::types::CompareMixResult, McpBridgeError>;
+
     /// Measure the master mix (post master + return effects) and adjust the
     /// master fader toward `target_lufs` without pushing the true peak above
     /// `true_peak_ceiling_dbtp`. The master fader is post-effects, so the

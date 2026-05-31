@@ -1882,6 +1882,56 @@ pub struct AnalyzeReturnBussesResult {
     pub warnings: Vec<String>,
 }
 
+/// Mix-bus metric deltas between two renders, `current − baseline`. Positive
+/// values mean the current mix is louder / peakier / wider / more dynamic than
+/// the baseline. Returned in `CompareMixResult` for the `compare` action.
+#[derive(Debug, Clone, Serialize)]
+pub struct MixDelta {
+    /// Integrated-LUFS change (current − baseline).
+    pub lufs_delta: f32,
+    /// Sample-peak change in dB.
+    pub peak_delta_db: f32,
+    /// True-peak change in dBTP.
+    pub true_peak_delta_db: f32,
+    /// RMS change in dB.
+    pub rms_delta_db: f32,
+    /// Crest-factor change in dB (positive = more dynamic range).
+    pub crest_delta_db: f32,
+    /// Stereo-width change (positive = wider).
+    pub stereo_width_delta: f32,
+    /// Mono-compatibility change (positive = sums to mono better).
+    pub mono_compat_delta: f32,
+}
+
+/// Output of `compare_mix_before_after`.
+///
+/// For `action = "capture"`: `baseline_metrics` holds the just-captured mix and
+/// `current_metrics` / `deltas` are absent. For `action = "compare"`:
+/// `baseline_metrics` is the stored baseline, `current_metrics` is the fresh
+/// render (same window + scope as the baseline), and `deltas` is
+/// `current − baseline`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CompareMixResult {
+    /// Which action ran: `"capture"` or `"compare"`.
+    pub action: String,
+    /// Label identifying the baseline.
+    pub label: String,
+    /// Human-readable summary of what happened.
+    pub message: String,
+    /// The baseline mix metrics (just captured, or the stored baseline).
+    pub baseline_metrics: MixBusMetrics,
+    /// The current mix metrics — only present for `compare`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_metrics: Option<MixBusMetrics>,
+    /// `current − baseline` deltas — only present for `compare`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deltas: Option<MixDelta>,
+    /// Human-readable description of the signal chain that was measured.
+    pub signal_chain: String,
+    /// Non-fatal warnings emitted during the render.
+    pub warnings: Vec<String>,
+}
+
 /// Per-band overlap report between two tracks. One entry per
 /// `AnalyzeEnergyBands` band; values are linear RMS amplitudes pulled from
 /// each track's soloed render.

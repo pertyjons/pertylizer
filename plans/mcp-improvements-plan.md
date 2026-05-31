@@ -129,9 +129,15 @@ analyze_master_chain. Tests: `analyze_return_busses_reports_per_return_contribut
 `dry_run` = validate params without executing (needs a per-tool validate path).
 `rollback` = transaction support (engine has `TransactionId` — investigate).
 
-### compare_mix_before_after  ⏸️
-Store a baseline metric snapshot, then show delta (LUFS, true peak, width, masking
-top pairs). Needs baseline state held somewhere.
+### compare_mix_before_after  ✅
+`action=capture` renders the mix and stores its metrics + render settings in
+`McpSharedState.mix_baseline` (transient session state); `action=compare`
+re-renders with the stored window/scope and returns `current − baseline` deltas
+(lufs/peak/true-peak/rms/crest/width/mono-compat). Reuses `analyze_mix_bus_impl`.
+Baseline is cleared on load/new project; warns when a side is silent. Masking-pair
+diffing not included (mix-bus metrics only). Tests:
+`compare_mix_before_after_capture_then_compare_reports_deltas`,
+`compare_mix_before_after_without_baseline_errors`.
 
 ### suggest_patch_changes (applicable)  ⏸️
 Concrete per-instrument parameter suggestions toward a goal (e.g. "modern_sid",

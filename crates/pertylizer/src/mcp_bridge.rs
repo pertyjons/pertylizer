@@ -25,13 +25,13 @@ use synth_mcp::types::{
     AnalyzeMixBusResult, AnalyzePatternResult, AnalyzeReturnBussesResult, AnalyzeSectionResult,
     ApplyExamplePatchResult, AutoGainStageResult, AutomationLaneInfo, AutomationPointInfo,
     AutomationTargetInfo, AweLfoInfo, AwePresetInfo, AweStateInfo, BandOverlap, BatchItemResult,
-    BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity,
-    EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate,
-    HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo, MixBusMetrics,
-    ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo,
-    PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo,
-    PlacementInfo, ProjectSchemaInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo,
-    UiModuleInfo, UiOverlap, UiSnapshot,
+    BatchResult, BuildInstrumentResult, CompareMixResult, ConnectionCheckResult, ConnectionInfo,
+    DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent,
+    HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo,
+    MixBusMetrics, MixDelta, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo,
+    ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
+    PatternInfo, PlacementInfo, ProjectSchemaInfo, SetSongResult, SongInfo, TrackInfo,
+    UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -3908,6 +3908,26 @@ impl SynthBridge for AppSynthBridge {
         )
     }
 
+    fn compare_mix_before_after(
+        &self,
+        action: &str,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+        label: Option<String>,
+        scope: synth_mcp::AnalysisScope,
+    ) -> Result<CompareMixResult, McpBridgeError> {
+        compare_mix_before_after_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            action,
+            duration_seconds,
+            start_tick,
+            label,
+            scope,
+        )
+    }
+
     fn analyze_section(
         &self,
         start_tick: u64,
@@ -5971,6 +5991,7 @@ impl AppSynthBridge {
                 self.set_shared_author(project.author.clone());
                 self.stash_refresh(ProjectRefresh::Loaded(project));
                 self.set_last_loaded_path(Some(path));
+                self.clear_mix_baseline();
                 self.record_io_status(Ok(msg.clone()));
                 Ok(msg)
             }
@@ -6085,6 +6106,7 @@ impl AppSynthBridge {
                 self.set_shared_author(None);
                 self.stash_refresh(ProjectRefresh::Reset);
                 self.set_last_loaded_path(None);
+                self.clear_mix_baseline();
                 self.record_io_status(Ok(msg.clone()));
                 Ok(msg)
             }
@@ -6172,6 +6194,17 @@ impl AppSynthBridge {
             .last_loaded_project_path
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = path;
+    }
+
+    /// Drop any captured `compare_mix_before_after` baseline. Called when the
+    /// project changes (load / new) so a later `compare` can't silently A/B
+    /// against an unrelated song.
+    fn clear_mix_baseline(&self) {
+        *self
+            .shared
+            .mix_baseline
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     fn set_shared_author(&self, author: Option<crate::patch::Author>) {
@@ -9468,6 +9501,126 @@ pub fn analyze_return_busses_impl(
         signal_chain: describe_signal_chain(chain_scope, session.state().master_volume.load()),
         warnings,
     })
+}
+
+/// `compare_mix_before_after` bridge implementation. `capture` renders the mix
+/// and stores its metrics + render settings in the session's `mix_baseline`;
+/// `compare` re-renders with the stored settings (so the A/B is apples-to-apples)
+/// and reports `current − baseline` deltas. The baseline is transient session
+/// state, never persisted to the project.
+#[allow(clippy::too_many_arguments)]
+#[doc(hidden)]
+pub fn compare_mix_before_after_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    action: &str,
+    duration_seconds: f32,
+    start_tick: Option<u64>,
+    label: Option<String>,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<CompareMixResult, McpBridgeError> {
+    match action {
+        "capture" => {
+            let rendered = analyze_mix_bus_impl(
+                session,
+                sample_library,
+                shared,
+                duration_seconds,
+                start_tick,
+                None,
+                scope,
+            )?;
+            let label = label.unwrap_or_else(|| "baseline".to_string());
+            *shared
+                .mix_baseline
+                .lock()
+                .map_err(|_| McpBridgeError::Other("mix-baseline lock poisoned".to_string()))? =
+                Some(crate::mcp_shared::MixBaseline {
+                    label: label.clone(),
+                    metrics: rendered.metrics,
+                    duration_seconds,
+                    start_tick,
+                    scope,
+                });
+            Ok(CompareMixResult {
+                action: "capture".to_string(),
+                label,
+                message: "Mix baseline captured. Make your change, then call \
+                          compare_mix_before_after with action=compare."
+                    .to_string(),
+                baseline_metrics: rendered.metrics,
+                current_metrics: None,
+                deltas: None,
+                signal_chain: rendered.signal_chain,
+                warnings: rendered.warnings,
+            })
+        }
+        "compare" => {
+            // Snapshot the baseline, then release the lock before rendering.
+            let baseline = shared
+                .mix_baseline
+                .lock()
+                .map_err(|_| McpBridgeError::Other("mix-baseline lock poisoned".to_string()))?
+                .clone();
+            let Some(baseline) = baseline else {
+                return Err(McpBridgeError::Other(
+                    "No mix baseline captured — call compare_mix_before_after with \
+                     action=capture first."
+                        .to_string(),
+                ));
+            };
+
+            // Re-render with the baseline's settings so the comparison is exact.
+            let current = analyze_mix_bus_impl(
+                session,
+                sample_library,
+                shared,
+                baseline.duration_seconds,
+                baseline.start_tick,
+                None,
+                baseline.scope,
+            )?;
+            let b = &baseline.metrics;
+            let c = &current.metrics;
+            let deltas = MixDelta {
+                lufs_delta: c.lufs_integrated - b.lufs_integrated,
+                peak_delta_db: c.peak_dbfs - b.peak_dbfs,
+                true_peak_delta_db: c.true_peak_dbtp - b.true_peak_dbtp,
+                rms_delta_db: c.rms_dbfs - b.rms_dbfs,
+                crest_delta_db: c.crest_factor_db - b.crest_factor_db,
+                stereo_width_delta: c.stereo_width - b.stereo_width,
+                mono_compat_delta: c.mono_compat - b.mono_compat,
+            };
+            // The dBFS fields floor at -200 for silence; a delta against a
+            // silent side is a floor artifact, not a real loudness change.
+            const SILENCE_FLOOR_DBFS: f32 = -190.0;
+            let mut warnings = current.warnings;
+            if b.lufs_integrated <= SILENCE_FLOOR_DBFS || c.lufs_integrated <= SILENCE_FLOOR_DBFS {
+                warnings.push(
+                    "baseline or current mix is effectively silent — the dB deltas reflect the \
+                     -200 dBFS floor, not a real loudness change."
+                        .to_string(),
+                );
+            }
+            Ok(CompareMixResult {
+                action: "compare".to_string(),
+                label: baseline.label.clone(),
+                message: format!(
+                    "Compared current mix against baseline '{}': {:+.1} LUFS, {:+.1} dB true peak.",
+                    baseline.label, deltas.lufs_delta, deltas.true_peak_delta_db
+                ),
+                baseline_metrics: baseline.metrics,
+                current_metrics: Some(current.metrics),
+                deltas: Some(deltas),
+                signal_chain: current.signal_chain,
+                warnings,
+            })
+        }
+        other => Err(McpBridgeError::Other(format!(
+            "Unknown action '{other}' — expected 'capture' or 'compare'."
+        ))),
+    }
 }
 
 /// `auto_gain_stage` bridge implementation. Renders the full master chain once,

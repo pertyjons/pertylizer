@@ -29,6 +29,24 @@ pub enum ProjectRefresh {
     Reset,
 }
 
+/// Captured mix-bus baseline for `compare_mix_before_after`. Held in-session
+/// (not persisted to the project) so a later `compare` call can A/B against it.
+/// The render settings are stored alongside the metrics so the comparison
+/// re-renders the same window + signal chain.
+#[derive(Clone)]
+pub struct MixBaseline {
+    /// Caller-supplied label identifying what the baseline represents.
+    pub label: String,
+    /// Mix-bus metrics captured at baseline time.
+    pub metrics: synth_mcp::MixBusMetrics,
+    /// Render duration the baseline was captured with.
+    pub duration_seconds: f32,
+    /// Start tick the baseline was captured from.
+    pub start_tick: Option<u64>,
+    /// Signal-chain scope the baseline was captured with (reused on compare).
+    pub scope: synth_mcp::AnalysisScope,
+}
+
 /// Shared state for communication between MCP bridge and GUI.
 pub struct McpSharedState {
     /// Patch queued for loading by MCP (consumed by GUI each frame).
@@ -87,6 +105,10 @@ pub struct McpSharedState {
     /// this directly. `None` when not set — file-save then emits a
     /// missing `author` field.
     pub author: Arc<Mutex<Option<Author>>>,
+    /// In-session mix-bus baseline captured by `compare_mix_before_after`.
+    /// `None` until a `capture` call stores one; a later `compare` call reads
+    /// it to compute deltas. Transient — never written to the project file.
+    pub mix_baseline: Mutex<Option<MixBaseline>>,
 }
 
 impl McpSharedState {
@@ -115,6 +137,7 @@ impl McpSharedState {
             pending_awe_state: Mutex::new(None),
             awe_description: Arc::new(Mutex::new(String::new())),
             author: Arc::new(Mutex::new(None)),
+            mix_baseline: Mutex::new(None),
         }
     }
 

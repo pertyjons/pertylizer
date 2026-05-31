@@ -28,6 +28,7 @@ use synth_sequencer::{
 use pertylizer::mcp_bridge::{
     analyze_masking_matrix_impl, analyze_master_chain_impl, analyze_mix_bus_impl,
     analyze_return_busses_impl, analyze_section_impl, analyze_song_harmony,
+    compare_mix_before_after_impl,
 };
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
@@ -803,6 +804,92 @@ fn analyze_return_busses_reports_per_return_contribution() {
         "the send routes signal into the return, so muting it should lower the \
          mix (positive rms_delta_db), got {}",
         c.rms_delta_db
+    );
+}
+
+/// `compare_mix_before_after` captures a baseline, and a later `compare` after
+/// muting every track reports a negative RMS delta (the mix got quieter).
+#[test]
+fn compare_mix_before_after_capture_then_compare_reports_deltas() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let cap = compare_mix_before_after_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        "capture",
+        1.0,
+        Some(0),
+        Some("before".to_string()),
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect("capture should succeed");
+    assert_eq!(cap.action, "capture");
+    assert_eq!(cap.label, "before");
+    assert!(cap.deltas.is_none(), "capture has no deltas");
+
+    // Mute every track → the compare render is silent.
+    {
+        let mut s = shared.song.write();
+        let ids: Vec<_> = s.tracks().map(|t| t.id).collect();
+        for id in ids {
+            if let Some(t) = s.track_mut(id) {
+                t.mute = true;
+            }
+        }
+    }
+
+    let cmp = compare_mix_before_after_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        "compare",
+        1.0,
+        Some(0),
+        None,
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect("compare should succeed");
+    assert_eq!(cmp.action, "compare");
+    assert_eq!(cmp.label, "before", "compare reuses the baseline label");
+    let d = cmp.deltas.expect("compare reports deltas");
+    assert!(
+        d.rms_delta_db < 0.0,
+        "muting every track should lower RMS (negative delta), got {}",
+        d.rms_delta_db
+    );
+    assert!(cmp.current_metrics.is_some());
+    // The muted (silent) current render trips the silence-floor warning.
+    assert!(
+        cmp.warnings.iter().any(|w| w.contains("silent")),
+        "a silent current mix should warn about the dBFS floor, got {:?}",
+        cmp.warnings
+    );
+}
+
+/// `compare` without a captured baseline is an error.
+#[test]
+fn compare_mix_before_after_without_baseline_errors() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let err = compare_mix_before_after_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        "compare",
+        1.0,
+        Some(0),
+        None,
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect_err("compare without a baseline should error");
+    assert!(
+        err.to_string().contains("No mix baseline"),
+        "expected a no-baseline error, got {err}"
     );
 }
 
