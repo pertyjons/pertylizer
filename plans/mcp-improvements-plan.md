@@ -117,10 +117,13 @@ reports per-stage metrics + deltas (lufs/peak/true-peak/rms/width/crest) and
 `analyze_mix_bus`. Tests: `analyze_master_chain_empty_chain_has_no_stages`,
 `analyze_master_chain_isolates_single_effect_contribution`.
 
-### analyze_return_busses  ⏸️
-Per-return-bus contribution to the master (peak/RMS/LUFS/width). Needs an
-isolation approach (mute-A/B per return, or send tap) — split from
-analyze_master_chain into its own step.
+### analyze_return_busses  ✅
+Per-return-bus marginal contribution to the master via mute-A/B: render the full
+mix, then re-render with each return muted (on a clone) and report full−muted
+deltas (lufs/peak/true-peak/rms/width). Warns when bus-to-bus sends make the
+deltas non-independent. Shares the `render_range_to_metrics` helper with
+analyze_master_chain. Tests: `analyze_return_busses_reports_per_return_contribution`,
+`analyze_return_busses_without_busses_warns`.
 
 ### batch_execute dry_run + rollback_on_error  ⏸️
 `dry_run` = validate params without executing (needs a per-tool validate path).

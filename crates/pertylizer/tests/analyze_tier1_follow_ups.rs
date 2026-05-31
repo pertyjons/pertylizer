@@ -22,12 +22,12 @@ use synth_core::{
 use synth_engine::instrument::InstrumentId;
 use synth_engine::{EngineCommand, InstrumentCategory, ModuleId, SynthEngine};
 use synth_sequencer::{
-    Duration as SeqDuration, PatternTick, Pitch, SeqInstrumentId, Song, Tick, Velocity,
+    Duration as SeqDuration, PatternTick, Pitch, SeqInstrumentId, Song, Tick, TrackSend, Velocity,
 };
 
 use pertylizer::mcp_bridge::{
     analyze_masking_matrix_impl, analyze_master_chain_impl, analyze_mix_bus_impl,
-    analyze_section_impl, analyze_song_harmony,
+    analyze_return_busses_impl, analyze_section_impl, analyze_song_harmony,
 };
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
@@ -748,6 +748,88 @@ fn analyze_master_chain_empty_chain_has_no_stages() {
     assert!(
         result.warnings.iter().any(|w| w.contains("no effects")),
         "expected an empty-chain warning, got {:?}",
+        result.warnings
+    );
+}
+
+/// `analyze_return_busses` reports each return's marginal contribution: a track
+/// sending into a return bus means muting that return lowers the mix, so the
+/// reported `rms_delta_db` (full − muted) is positive.
+#[test]
+fn analyze_return_busses_reports_per_return_contribution() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+
+    let mut song = Song::new("Returns");
+    let bar = 3840u32;
+    let pad_pattern_id = song.create_pattern(SeqDuration(bar));
+    {
+        let pat = song.pattern_mut(pad_pattern_id).expect("pad pattern");
+        let nid = pat.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+        if let Some(n) = pat.note_mut(nid) {
+            n.duration = Some(SeqDuration(bar - 60));
+        }
+    }
+    let pad_track = song.create_track("Pad");
+    if let Some(t) = song.track_mut(pad_track) {
+        t.instrument = SeqInstrumentId(0);
+    }
+    song.place_pattern(pad_pattern_id, pad_track, Tick(0));
+
+    // Route the pad into a return bus at full send level.
+    let rid = song.create_return_bus("Reverb");
+    song.track_mut(pad_track)
+        .expect("pad track")
+        .sends
+        .push(TrackSend::new(rid, NormalizedValue::MAX));
+
+    let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
+
+    let result = analyze_return_busses_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        1.0,
+        Some(0),
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect("return-bus analysis should succeed");
+
+    assert_eq!(result.returns.len(), 1, "one return bus → one contribution");
+    let c = &result.returns[0];
+    assert_eq!(c.return_id, rid.0);
+    assert_eq!(c.return_name, "Reverb");
+    assert!(
+        c.rms_delta_db > 0.0,
+        "the send routes signal into the return, so muting it should lower the \
+         mix (positive rms_delta_db), got {}",
+        c.rms_delta_db
+    );
+}
+
+/// A song with no return busses yields an empty `returns` list plus a warning.
+#[test]
+fn analyze_return_busses_without_busses_warns() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let result = analyze_return_busses_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        1.0,
+        Some(0),
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect("return-bus analysis should succeed");
+
+    assert!(result.returns.is_empty());
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("no return busses")),
+        "expected a no-return-busses warning, got {:?}",
         result.warnings
     );
 }

@@ -22,15 +22,16 @@ use synth_mcp::bridge::{
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
     AnalyzeHarmonyResult, AnalyzeMaskingMatrixResult, AnalyzeMasterChainResult,
-    AnalyzeMixBusResult, AnalyzePatternResult, AnalyzeSectionResult, ApplyExamplePatchResult,
-    AutoGainStageResult, AutomationLaneInfo, AutomationPointInfo, AutomationTargetInfo, AweLfoInfo,
-    AwePresetInfo, AweStateInfo, BandOverlap, BatchItemResult, BatchResult, BuildInstrumentResult,
-    ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo,
-    GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope, HarmonyStats,
-    InstrumentInfo, MaskingPair, MatrixRoutingInfo, MixBusMetrics, ModuleInfo, ModuleTypeInfo,
-    NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo,
-    PatchParamValue, PatchResourceData, PatternInfo, PlacementInfo, ProjectSchemaInfo,
-    SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    AnalyzeMixBusResult, AnalyzePatternResult, AnalyzeReturnBussesResult, AnalyzeSectionResult,
+    ApplyExamplePatchResult, AutoGainStageResult, AutomationLaneInfo, AutomationPointInfo,
+    AutomationTargetInfo, AweLfoInfo, AwePresetInfo, AweStateInfo, BandOverlap, BatchItemResult,
+    BatchResult, BuildInstrumentResult, ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity,
+    EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate,
+    HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo, MixBusMetrics,
+    ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo,
+    PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo,
+    PlacementInfo, ProjectSchemaInfo, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo,
+    UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -3882,6 +3883,22 @@ impl SynthBridge for AppSynthBridge {
         scope: synth_mcp::AnalysisScope,
     ) -> Result<AnalyzeMasterChainResult, McpBridgeError> {
         analyze_master_chain_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            duration_seconds,
+            start_tick,
+            scope,
+        )
+    }
+
+    fn analyze_return_busses(
+        &self,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+        scope: synth_mcp::AnalysisScope,
+    ) -> Result<AnalyzeReturnBussesResult, McpBridgeError> {
+        analyze_return_busses_impl(
             &self.session,
             &self.sample_library,
             &self.shared,
@@ -9152,6 +9169,32 @@ fn resolve_duration_window(
     Ok((start, end))
 }
 
+/// Render one `[start, end)` range against `song` on a prepared offline session
+/// and reduce the result to mix-bus metrics, folding any non-duplicate render
+/// warnings into `warnings`. Returns the metrics plus the actual rendered tick
+/// range. Shared by the incremental analyzers (`analyze_master_chain`,
+/// `analyze_return_busses`) so the render→analyze→reduce→dedup sequence stays in
+/// one place.
+fn render_range_to_metrics(
+    engine_session: &mut crate::audio::arrangement_render::OfflineEngineSession,
+    song: &Arc<parking_lot::RwLock<synth_sequencer::Song>>,
+    start: u64,
+    end: u64,
+    warnings: &mut Vec<String>,
+) -> Result<(MixBusMetrics, u64, u64), McpBridgeError> {
+    let rendered = engine_session.render_range(song, start, end)?;
+    let analysis =
+        crate::audio::mix_analysis::analyze_mix_buffer(&rendered.samples, rendered.sample_rate);
+    let metrics =
+        mix_metrics_from_analysis(&analysis, rendered.sample_rate, rendered.duration_seconds);
+    for w in rendered.warnings {
+        if !warnings.contains(&w) {
+            warnings.push(w);
+        }
+    }
+    Ok((metrics, rendered.start_tick, rendered.end_tick))
+}
+
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
 pub fn analyze_mix_bus_impl(
@@ -9255,35 +9298,10 @@ pub fn analyze_master_chain_impl(
         )?;
     let mut warnings = setup_warnings;
 
-    // Render a given chain prefix and reduce it to mix-bus metrics, returning
-    // the actual rendered tick range alongside.
-    let render_metrics =
-        |engine_session: &mut crate::audio::arrangement_render::OfflineEngineSession,
-         prefix: usize,
-         warnings: &mut Vec<String>|
-         -> Result<(MixBusMetrics, u64, u64), McpBridgeError> {
-            engine_session.set_master_effect_prefix(Some(prefix));
-            let rendered = engine_session.render_range(&shared.song, start, end)?;
-            let analysis = crate::audio::mix_analysis::analyze_mix_buffer(
-                &rendered.samples,
-                rendered.sample_rate,
-            );
-            let metrics = mix_metrics_from_analysis(
-                &analysis,
-                rendered.sample_rate,
-                rendered.duration_seconds,
-            );
-            for w in rendered.warnings {
-                if !warnings.contains(&w) {
-                    warnings.push(w);
-                }
-            }
-            Ok((metrics, rendered.start_tick, rendered.end_tick))
-        };
-
     // Prefix 0 = the chain input (post-return mix, before any master effect).
+    engine_session.set_master_effect_prefix(Some(0));
     let (input_metrics, rendered_start, rendered_end) =
-        render_metrics(&mut engine_session, 0, &mut warnings)?;
+        render_range_to_metrics(&mut engine_session, &shared.song, start, end, &mut warnings)?;
 
     let ts = shared
         .song
@@ -9295,7 +9313,9 @@ pub fn analyze_master_chain_impl(
     let mut stages = Vec::with_capacity(master_effects.len());
     let mut prev = input_metrics;
     for (idx, eff) in master_effects.iter().enumerate() {
-        let (metrics, _, _) = render_metrics(&mut engine_session, idx + 1, &mut warnings)?;
+        engine_session.set_master_effect_prefix(Some(idx + 1));
+        let (metrics, _, _) =
+            render_range_to_metrics(&mut engine_session, &shared.song, start, end, &mut warnings)?;
         stages.push(synth_mcp::types::MasterEffectStage {
             module_id: eff.module_id.to_string(),
             effect_type: eff.module_type.prefix().to_string(),
@@ -9330,6 +9350,121 @@ pub fn analyze_master_chain_impl(
         input_metrics,
         output_metrics,
         stages,
+        signal_chain: describe_signal_chain(chain_scope, session.state().master_volume.load()),
+        warnings,
+    })
+}
+
+/// `analyze_return_busses` bridge implementation. Renders the full master mix
+/// once, then re-renders with each return bus muted in turn (against a cloned
+/// song so the live project is untouched) and reports the full−muted deltas as
+/// each return's marginal contribution. Return-bus effect chains are always
+/// reconstructed; `scope` only governs the master chain, sample rate, and AWE.
+#[doc(hidden)]
+pub fn analyze_return_busses_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    duration_seconds: f32,
+    start_tick: Option<u64>,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<AnalyzeReturnBussesResult, McpBridgeError> {
+    let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
+
+    // Enumerate return busses (id + name) in declared order.
+    let (return_busses, has_bus_to_bus): (Vec<(u16, String)>, bool) = {
+        let song = shared.song.read();
+        let busses: Vec<(u16, String)> = song
+            .return_busses()
+            .iter()
+            .map(|b| (b.id.0, b.name.clone()))
+            .collect();
+        // Bus-to-bus sends break the parallel-contribution model: muting a
+        // return that feeds another also removes its downstream-routed signal.
+        let has_bus_to_bus = song
+            .return_busses()
+            .iter()
+            .any(|b| b.sends.iter().any(|s| s.enabled));
+        (busses, has_bus_to_bus)
+    };
+
+    // Return-bus effect chains are the subject of the analysis, so always load
+    // them. `scope` only selects the surrounding stages.
+    let chain_scope = synth_mcp::AnalysisScope {
+        master_effects: scope.master_effects,
+        return_effects: true,
+        awe: scope.awe,
+        render_sample_rate: scope.render_sample_rate,
+    };
+
+    let (mut engine_session, setup_warnings) =
+        crate::audio::arrangement_render::OfflineEngineSession::new_with_scope(
+            session,
+            sample_library,
+            chain_scope,
+        )?;
+    let mut warnings = setup_warnings;
+    if has_bus_to_bus {
+        warnings.push(
+            "bus-to-bus sends present: a return's delta includes the signal it routes \
+             into other returns, so the per-return contributions are not independent and \
+             do not sum to the full mix."
+                .to_string(),
+        );
+    }
+
+    // Full mix (every return active) — rendered against the live song directly.
+    let (full_metrics, rendered_start, rendered_end) =
+        render_range_to_metrics(&mut engine_session, &shared.song, start, end, &mut warnings)?;
+
+    let ts = shared
+        .song
+        .read()
+        .time_signature_at(synth_sequencer::Tick(rendered_start));
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(rendered_start, ts);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(rendered_end, ts);
+
+    let mut returns = Vec::with_capacity(return_busses.len());
+    if return_busses.is_empty() {
+        warnings.push("song has no return busses — nothing to analyze".to_string());
+    } else {
+        // Clone the song once; each variant re-clones from this base and mutes
+        // exactly one return so the user's project is never mutated.
+        let base_song = shared.song.read().clone();
+        for (rid, rname) in &return_busses {
+            let mut variant = base_song.clone();
+            if let Some(bus) = variant.return_bus_mut(synth_sequencer::ReturnBusId(*rid)) {
+                bus.mute = true;
+            }
+            let muted_song = Arc::new(parking_lot::RwLock::new(variant));
+            let (muted, _, _) = render_range_to_metrics(
+                &mut engine_session,
+                &muted_song,
+                start,
+                end,
+                &mut warnings,
+            )?;
+            returns.push(synth_mcp::types::ReturnBusContribution {
+                return_id: *rid,
+                return_name: rname.clone(),
+                lufs_delta: full_metrics.lufs_integrated - muted.lufs_integrated,
+                peak_delta_db: full_metrics.peak_dbfs - muted.peak_dbfs,
+                true_peak_delta_db: full_metrics.true_peak_dbtp - muted.true_peak_dbtp,
+                rms_delta_db: full_metrics.rms_dbfs - muted.rms_dbfs,
+                stereo_width_delta: full_metrics.stereo_width - muted.stereo_width,
+            });
+        }
+    }
+
+    Ok(AnalyzeReturnBussesResult {
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
+        start_tick: rendered_start,
+        end_tick: rendered_end,
+        full_metrics,
+        returns,
         signal_chain: describe_signal_chain(chain_scope, session.state().master_volume.load()),
         warnings,
     })

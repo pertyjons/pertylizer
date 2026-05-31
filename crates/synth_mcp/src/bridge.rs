@@ -1622,6 +1622,19 @@ pub trait SynthBridge: Send + Sync + 'static {
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeMasterChainResult, McpBridgeError>;
 
+    /// Per-return-bus contribution to the master mix. Renders the full mix once,
+    /// then re-renders with each return bus muted in turn; the deltas report
+    /// what each return adds (loudness/peak/width). Return-bus effect chains are
+    /// always reconstructed regardless of `scope`; `scope` only controls whether
+    /// the master effect chain processes the sum, the render sample rate, and
+    /// AWE. Cost is O(return_count) renders.
+    fn analyze_return_busses(
+        &self,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+        scope: AnalysisScope,
+    ) -> Result<crate::types::AnalyzeReturnBussesResult, McpBridgeError>;
+
     /// Measure the master mix (post master + return effects) and adjust the
     /// master fader toward `target_lufs` without pushing the true peak above
     /// `true_peak_ceiling_dbtp`. The master fader is post-effects, so the

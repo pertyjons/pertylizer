@@ -1819,6 +1819,69 @@ pub struct AnalyzeMasterChainResult {
     pub warnings: Vec<String>,
 }
 
+/// One return bus's contribution to the master mix, measured by A/B: the master
+/// is rendered with every return active, then again with this one return muted.
+/// The `*_delta` fields are `full − muted`, so a positive value means the
+/// return makes the mix louder / wider / peakier.
+///
+/// A return's wet signal cannot be cleanly soloed away from the dry track sum
+/// (master = dry track outputs + return wet outputs, and muting all tracks
+/// would also starve the sends feeding the return), so this muted-difference is
+/// the honest measure of what the return adds.
+///
+/// Each delta is the bus's *marginal* contribution: the change from removing it
+/// entirely. Without bus-to-bus sends the returns sum in parallel and the
+/// deltas are independent. With bus-to-bus sends they are NOT — muting a return
+/// that feeds another also removes the signal it routed downstream, so its
+/// delta absorbs that downstream contribution and the per-return deltas no
+/// longer sum to the full mix (the result carries a warning when this applies).
+#[derive(Debug, Clone, Serialize)]
+pub struct ReturnBusContribution {
+    /// Return bus id.
+    pub return_id: u16,
+    /// Return bus name.
+    pub return_name: String,
+    /// Integrated-LUFS the return adds to the master (full − muted).
+    pub lufs_delta: f32,
+    /// Sample-peak change in dB the return adds (full − muted).
+    pub peak_delta_db: f32,
+    /// True-peak change in dBTP the return adds (full − muted).
+    pub true_peak_delta_db: f32,
+    /// RMS change in dB the return adds (full − muted).
+    pub rms_delta_db: f32,
+    /// Stereo-width change the return adds (full − muted); positive = wider.
+    pub stereo_width_delta: f32,
+}
+
+/// Output of `analyze_return_busses`: the full master mix plus each return
+/// bus's marginal contribution, measured by muting one return at a time. Costs
+/// one offline render for the full mix plus one per return bus —
+/// O(return_count).
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeReturnBussesResult {
+    /// 1-indexed bar number at `start_tick`.
+    pub start_bar: u32,
+    /// 1-indexed beat within `start_bar`.
+    pub start_beat: u32,
+    /// 1-indexed bar number at `end_tick`.
+    pub end_bar: u32,
+    /// 1-indexed beat within `end_bar`.
+    pub end_beat: u32,
+    /// Tick where the render started.
+    pub start_tick: u64,
+    /// Tick where the render ended (exclusive).
+    pub end_tick: u64,
+    /// Full master mix metrics with every return bus active.
+    pub full_metrics: MixBusMetrics,
+    /// One entry per return bus, in declared order.
+    pub returns: Vec<ReturnBusContribution>,
+    /// Human-readable description of exactly what signal chain was measured.
+    /// See `AnalyzeMixBusResult.signal_chain`.
+    pub signal_chain: String,
+    /// Non-fatal warnings emitted during the renders.
+    pub warnings: Vec<String>,
+}
+
 /// Per-band overlap report between two tracks. One entry per
 /// `AnalyzeEnergyBands` band; values are linear RMS amplitudes pulled from
 /// each track's soloed render.
