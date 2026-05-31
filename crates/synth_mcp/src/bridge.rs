@@ -1596,10 +1596,15 @@ pub trait SynthBridge: Send + Sync + 'static {
     ///
     /// Rendering starts at `start_tick` (defaults to 0). Duration is clamped
     /// by the renderer to an internal upper bound.
+    /// When `include_per_track` is `Some(true)`, the bridge does N additional
+    /// soloed renders (one per audible track that overlaps the rendered window)
+    /// and returns a `TrackContribution` for each — same semantics as
+    /// `analyze_section`. Cost scales linearly with the track count.
     fn analyze_mix_bus(
         &self,
         duration_seconds: f32,
         start_tick: Option<u64>,
+        include_per_track: Option<bool>,
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeMixBusResult, McpBridgeError>;
 

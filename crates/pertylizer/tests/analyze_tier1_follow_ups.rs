@@ -26,7 +26,7 @@ use synth_sequencer::{
 };
 
 use pertylizer::mcp_bridge::{
-    analyze_masking_matrix_impl, analyze_section_impl, analyze_song_harmony,
+    analyze_masking_matrix_impl, analyze_mix_bus_impl, analyze_section_impl, analyze_song_harmony,
 };
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
@@ -662,6 +662,55 @@ fn analyze_section_per_track_breakdown_emits_one_entry_per_track() {
     assert!(
         (total_share - 1.0).abs() < 1e-4,
         "rms_share should sum to ~1.0, got {total_share}"
+    );
+}
+
+/// `analyze_mix_bus` reuses the same per-track path as `analyze_section`, keyed
+/// off a duration window. With `include_per_track = true` it should emit one
+/// contribution per audible track; without the flag the breakdown stays empty.
+#[test]
+fn analyze_mix_bus_per_track_breakdown_emits_one_entry_per_track() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let result = analyze_mix_bus_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        10.0,
+        Some(0),
+        Some(true),
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect("mix-bus analysis should succeed");
+
+    assert_eq!(
+        result.per_track.len(),
+        2,
+        "expected one contribution per audible track, got {}",
+        result.per_track.len()
+    );
+    let total_share: f32 = result.per_track.iter().map(|t| t.rms_share).sum();
+    assert!(
+        (total_share - 1.0).abs() < 1e-4,
+        "rms_share should sum to ~1.0, got {total_share}"
+    );
+
+    // Without the flag, no breakdown is produced.
+    let no_breakdown = analyze_mix_bus_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        10.0,
+        Some(0),
+        None,
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect("mix-bus analysis should succeed");
+    assert!(
+        no_breakdown.per_track.is_empty(),
+        "per_track should be empty when include_per_track is not set"
     );
 }
 

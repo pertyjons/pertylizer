@@ -685,6 +685,10 @@ pub struct AnalyzeMixBusParam {
     )]
     pub start_tick: Option<u64>,
     #[schemars(
+        description = "When true, return a per-track contribution breakdown (peak, RMS, LUFS, banded energy, clipped sample count, and RMS share) for every audible track whose placements overlap the rendered window — the same breakdown analyze_section provides, but for a duration window from start_tick rather than an explicit [start,end) range. Costs one extra offline render per track, so leave off for fast master-only analysis. Default false."
+    )]
+    pub include_per_track: Option<bool>,
+    #[schemars(
         description = "Include the full signal chain (master effects + return-bus effects + AWE) in the offline render. Shortcut for turning on every include_* flag below. Default false = dry instrument sum (per-instrument effects only), matching what the analysis has historically rendered."
     )]
     pub include_all: Option<bool>,
@@ -3685,7 +3689,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Render N seconds of the master bus offline and return mix-level metrics: integrated/short-term-max/momentary-max LUFS (ITU-R BS.1770-4), sample peak in dBFS, true peak in dBTP (4× oversampled per BS.1770-4 Annex 2 — catches inter-sample overshoots that emerge after DA conversion), RMS in dBFS, crest factor, 4-band frequency-balance RMS energies (sub/low/mid/high), stereo correlation, mid/side RMS, stereo width, mono-compatibility score (0..1 — how well L+R survive a mono sum), and a clipped-sample count. Use this to judge whether a mix is balanced, too quiet/loud, narrow, anti-phase, or clipping (sample or inter-sample). LUFS-S requires ≥ 3 s of audio; shorter renders report -200.0 for that field. Renders the song from `start_tick` (default 0) for `duration_seconds` (default 10, max 300) using the engine snapshot — deterministic and offline."
+        description = "Render N seconds of the master bus offline and return mix-level metrics: integrated/short-term-max/momentary-max LUFS (ITU-R BS.1770-4), sample peak in dBFS, true peak in dBTP (4× oversampled per BS.1770-4 Annex 2 — catches inter-sample overshoots that emerge after DA conversion), RMS in dBFS, crest factor, 4-band frequency-balance RMS energies (sub/low/mid/high), stereo correlation, mid/side RMS, stereo width, mono-compatibility score (0..1 — how well L+R survive a mono sum), and a clipped-sample count. Use this to judge whether a mix is balanced, too quiet/loud, narrow, anti-phase, or clipping (sample or inter-sample). LUFS-S requires ≥ 3 s of audio; shorter renders report -200.0 for that field. Renders the song from `start_tick` (default 0) for `duration_seconds` (default 10, max 300) using the engine snapshot — deterministic and offline. Pass `include_per_track: true` to also receive a per-track breakdown (one soloed render per audible track) so you can tell which track is responsible for clipping, dominant energy, or sub-bass — costs roughly O(track_count) extra render time. This is the same breakdown as analyze_section's, but keyed off a duration window rather than an explicit tick range."
     )]
     async fn analyze_mix_bus(&self, params: Parameters<AnalyzeMixBusParam>) -> String {
         let duration = params.0.duration_seconds.unwrap_or(10.0);
@@ -3697,8 +3701,12 @@ impl SynthMcpServer {
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
         run_blocking_json(|| {
-            self.bridge
-                .analyze_mix_bus(duration, params.0.start_tick, scope)
+            self.bridge.analyze_mix_bus(
+                duration,
+                params.0.start_tick,
+                params.0.include_per_track,
+                scope,
+            )
         })
     }
 

@@ -3861,6 +3861,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         duration_seconds: f32,
         start_tick: Option<u64>,
+        include_per_track: Option<bool>,
         scope: synth_mcp::AnalysisScope,
     ) -> Result<AnalyzeMixBusResult, McpBridgeError> {
         analyze_mix_bus_impl(
@@ -3869,6 +3870,7 @@ impl SynthBridge for AppSynthBridge {
             &self.shared,
             duration_seconds,
             start_tick,
+            include_per_track,
             scope,
         )
     }
@@ -8985,6 +8987,7 @@ pub fn suggest_music_fixes_impl(
                 shared,
                 dur,
                 Some(scope_data.start_tick),
+                None,
                 synth_mcp::AnalysisScope::default(),
             ) {
                 Ok(r) => Some(r),
@@ -9096,12 +9099,15 @@ fn describe_signal_chain(scope: synth_mcp::AnalysisScope, master_volume: f32) ->
     )
 }
 
-fn analyze_mix_bus_impl(
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_mix_bus_impl(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     duration_seconds: f32,
     start_tick: Option<u64>,
+    include_per_track: Option<bool>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<AnalyzeMixBusResult, McpBridgeError> {
     let dur = if duration_seconds.is_nan() || duration_seconds <= 0.0 {
@@ -9148,6 +9154,22 @@ fn analyze_mix_bus_impl(
         .time_signature_at(synth_sequencer::Tick(rendered.start_tick));
     let (start_bar, start_beat) = tick_to_bar_beat_1based(rendered.start_tick, ts);
     let (end_bar, end_beat) = tick_to_bar_beat_1based(rendered.end_tick, ts);
+
+    let mut warnings = rendered.warnings;
+    let per_track = if include_per_track.unwrap_or(false) {
+        render_per_track_contributions(
+            session,
+            sample_library,
+            shared,
+            rendered.start_tick,
+            rendered.end_tick,
+            scope,
+            &mut warnings,
+        )?
+    } else {
+        Vec::new()
+    };
+
     Ok(AnalyzeMixBusResult {
         start_bar,
         start_beat,
@@ -9156,8 +9178,9 @@ fn analyze_mix_bus_impl(
         start_tick: rendered.start_tick,
         end_tick: rendered.end_tick,
         metrics,
+        per_track,
         signal_chain: describe_signal_chain(scope, session.state().master_volume.load()),
-        warnings: rendered.warnings,
+        warnings,
     })
 }
 
@@ -9190,6 +9213,7 @@ fn auto_gain_stage_impl(
         shared,
         duration_seconds,
         start_tick,
+        None,
         scope,
     )?;
 

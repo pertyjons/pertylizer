@@ -844,6 +844,7 @@ mod tests {
                 mono_compat: 0.95,
                 clipped_samples: 0,
             },
+            per_track: Vec::new(),
             signal_chain: String::new(),
             warnings: Vec::new(),
         }

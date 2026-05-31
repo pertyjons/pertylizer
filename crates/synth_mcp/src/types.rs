@@ -1624,6 +1624,14 @@ pub struct AnalyzeMixBusResult {
     pub end_tick: u64,
     /// Mix-bus metrics from the rendered window.
     pub metrics: MixBusMetrics,
+    /// Per-track contribution breakdown, one entry per audible track whose
+    /// placements overlap the rendered window. Empty when the caller did not
+    /// request a breakdown. Each entry comes from a separate offline render
+    /// with only that track soloed; the cost is therefore O(N) in the number
+    /// of tracks covering the window. Same semantics as
+    /// `AnalyzeSectionResult.per_track`.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub per_track: Vec<TrackContribution>,
     /// Human-readable description of exactly what signal chain was measured —
     /// the master fader value plus which optional stages (master/return effects,
     /// AWE) were included and the render sample rate. Removes ambiguity about
