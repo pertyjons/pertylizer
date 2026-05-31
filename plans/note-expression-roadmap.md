@@ -22,22 +22,25 @@ first, richness second.
 - [x] **Phase A2** — `AutomationTarget::Module { instrument, module_id, param }` (generic, additive)
 - [x] **Phase B** — Per-note legato/tie + glide fields, driving the existing allocator machinery
 - [x] **Phase C** — Per-note vibrato depth + a small per-note expression block (note expression in miniature)
-- [ ] **Phase D** — Shared/bus filter with automatable cutoff (rides on channel-strip Phase 7)
-- [ ] **Phase E** — Full Note Expression: per-note custom curves + generic per-note targets + MPE
-- [x] **Parallel track** — `get_project_schema` MCP tool + file-level load-lint (export robustness)
+- [x] **Track F** — A1/A2 deferred cross-cutting follow-ups (param-id RT-safety, combine order, offline parity, stable id)
+- [x] **Parallel track (P)** — `get_project_schema` MCP tool + file-level load-lint (export robustness)
+- [ ] **Phase D** — Shared/bus filter with automatable cutoff — **now UNBLOCKED** (channel-strip Phase 7 landed)
+- [ ] **Phase E** — Full Note Expression: per-note custom curves + generic per-note targets + MPE (needs E0 UX plan)
 
 Mark each `- [ ]` as `- [x]` and flip the per-phase **Status** line when it lands.
 Keep `docs/history.md` updated against each ship date.
 
-> **Phases B & C have a commit-sized execution plan:**
-> `docs/note-expression-b-c-execution.md` (one logical commit per step,
-> `/code-review` + build gate before each). Use it when working B/C in a loop.
+> **History (shipped):** Phases A1/A2/B/C (v0.292.0–0.294.0), Track F (the A1/A2
+> deferred follow-ups, v0.296.0), and the Parallel track (P — export robustness,
+> v0.297.0) are all done; see `docs/history.md`. Their commit-sized execution logs
+> (`note-expression-b-c-execution.md`, `note-expression-remaining-execution.md`)
+> were retired once complete and live in git history.
 >
-> **The remaining work (the A1/A2 deferred follow-ups, Phase D, Phase E, and the
-> Parallel track) has its own commit-sized plan:**
-> `docs/note-expression-remaining-execution.md`. Loop-able now: the deferred
-> follow-ups (Track F) + export robustness (Track P); Phase D and Phase E are
-> gated (channel-strip Phase 7 / a UX plan) and the loop stops at those gates.
+> **Remaining: Phase D and Phase E** (sections below). **Phase D is now unblocked**
+> — it was gated on channel-strip Phase 7, which shipped (v0.298.0–0.301.0: sends,
+> return busses, mixer view). Phase E still needs its **E0 UX plan** before any
+> code. The detailed D1–D3 / E0–E8 step sketches are in git history
+> (the retired `note-expression-remaining-execution.md`).
 
 ## Context — verified engine state (2026-05-28)
 
@@ -327,11 +330,14 @@ per-note and seeds the expression model.
   replace it.
 
 ## Phase D — Shared / bus filter with automatable cutoff
-**Status:** ☐ Not started · **Effort:** L · **Axis:** blander → broken (sweep-centric tunes) · **Schema:** additive · **Depends on:** channel-strip Phase 7
+**Status:** ☐ Not started · **UNBLOCKED** (channel-strip Phase 7 shipped) · **Effort:** L · **Axis:** blander → broken (sweep-centric tunes) · **Schema:** additive
 
 The structurally correct model for SID's single global filter. Largely deferred —
 Phase A2 already makes a per-instrument filter cutoff automatable, which removes
-the "static filter sounds broken" artifact for most tunes without this.
+the "static filter sounds broken" artifact for most tunes without this. The
+prerequisite (a bus effect chain) now exists, so D is buildable when a tune
+genuinely needs a *shared* SID-style global-filter sweep; re-plan D1–D3 against
+the shipped return-bus / mixer API rather than the old fader-only bus stage.
 
 - [ ] Extend the bus stage (`synth_engine.rs:2515-2555`) from fader-only to a bus
   effect chain (this is channel-strip Phase 7 — sends/returns).

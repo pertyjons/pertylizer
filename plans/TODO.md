@@ -4,7 +4,11 @@
 
 ### 0.1 Misc findings
 
-- [ ] **★ HIGH: `SequencerTrack.pan` and `.volume` are stored but never
+- [x] **★ HIGH — RESOLVED (channel-strip Phases 1–2): `SequencerTrack.pan`/`.volume`
+  now reach audio.** A per-channel bus stage applies the track fader (composed with
+  instrument vol/pan) post-FX; Track Volume/Pan/Mute automation is wired too. See
+  `docs/history.md`. The design discussion below is historical (kept for context).
+  Original text: **`SequencerTrack.pan` and `.volume` are stored but never
   applied to audio output.** Discovered while migrating `track.pan` to
   `BipolarValue` (commit `61e46e1`). The audio thread (`sequencer_engine.rs`)
   only reads `track.is_audible(any_solo)` for mute/solo gating and routes
@@ -33,7 +37,7 @@
   audit_dormant_fields` style check — or just a grep for every `pub` field on
   a domain struct and a hand-trace into the audio path — would surface these.
 
-  **Design findings (2026-05-27, pre-implementation — deferred pending decision).**
+  **Design findings (2026-05-27 — "model A" below was the one IMPLEMENTED).**
   Traced the full path before touching code. Notes route to *instruments* by
   `SeqInstrumentId`; the instrument is the audio-producing/mixing entity, and its
   `volume`/`pan` are applied **post-effect-chain** at the output mix
@@ -95,7 +99,10 @@
     instrument) as idiomatic, document shared-instrument as last-wins. This fixes
     the bug and gives the automation hook. (2) *Later, separate session:* the full
     struct merge above. The two are independent — A does not require the merge.
-- [ ] **★ HIGH: most pattern automation targets are GUI-editable but silently no-op.**
+- [x] **★ HIGH — mostly RESOLVED: pattern automation targets now reach the engine.**
+  Instrument macros (Automation A1), generic `AutomationTarget::Module` (A2), and Track
+  Volume/Pan/Mute + Global MasterVolume (channel-strip Phase 2) all sound now. Still
+  open: `Global(Tempo)`/`Global(Swing)`/`Track(Solo)` → see §2.1. Historical detail:
   Resolves the audit follow-up above ("automation lanes — do they all reach the engine?").
   The automation system (`synth_sequencer/src/automation.rs`) defines
   `AutomationTarget::{Instrument, Track, Global}` covering 8 instrument params
@@ -393,8 +400,8 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
 
 ### 1.4 Mixer view
 
-- [ ] Dedicated mixer view with faders, pan, sends, and inserts
-- [ ] Send/return effect busses — shared effects instead of per-instrument chains only
+- [x] Dedicated mixer view with faders, pan, sends, and inserts (channel-strip Phase 7b, v0.300–0.301)
+- [x] Send/return effect busses — shared effects instead of per-instrument chains only (channel-strip Phase 7a, v0.298–0.299)
 
 ### 1.5 Settings & utilities
 
@@ -559,17 +566,13 @@ from that first cut and are the remaining open work:
   source lane was removed mid-playback. Strict improvement over the prior `String`
   (which freed on every drop). Full fix: route cleared/replaced targets through the
   engine's `return_producer` off-thread drop channel. Low priority (bounded, rare).
-- [ ] **Mod-matrix vs. automation combine ordering ("two controllers").** When a
-  mod-matrix offset *and* an automation override target the same param, the
-  precedence/combine rule is unspecified. The first cut applies the override as an
-  absolute *replace* of the base, with mod-matrix offsets still added additively on
-  top — but the "two controllers drive one param" case needs a defined, documented
-  rule (and possibly a user-facing choice).
-- [ ] **Offline-render parity for `analyze_*`.** The offline render path behind the
-  `analyze_*` tools does not apply automation override state, so analysis can see a
-  value the live audio engine never produced. Same bug class as the analyze_*
-  offline-render snapshot issue (see `docs/history.md` 74d18da) — extend the offline
-  reader to honour the automation overrides.
+- [x] **Mod-matrix vs. automation combine ordering ("two controllers") — RESOLVED (F3).**
+  Ratified + documented on the `PolyModule::set_param_override` contract:
+  `effective = override.unwrap_or(base) + mod_offset` (override replaces base, mod offset
+  adds on top). Locked by `filter::test_automation_override_then_mod_offset_combine_order`.
+- [x] **Offline-render parity for `analyze_*` — RESOLVED (F4, already satisfied).**
+  `OfflineEngineSession::render_range` runs the same engine `process()` as live, so
+  automation overrides apply offline identically. Locked by `module_param_automation_ramps_down`.
 
 The two bullets below are **Phase E** of that roadmap.
 
@@ -618,6 +621,10 @@ via Mod Matrix slot 1 with amount 0.9, zero cables, and looks dead.
 - [ ] **GUI: ghost cables for Mod Matrix routings.** In the cable view, draw faint dashed lines
   (different colour) from matrix sources to their destinations (e.g. `env-2` → `flt-1.cutoff`),
   togglable in the View menu. Both routing paradigms become visible in one canvas.
+- [ ] **GUI (optional polish): click a Mod Matrix slot source/dest to focus + pulse that module.**
+  Two-way matrix↔graph navigation — was Phase 4 of the (now-completed, removed)
+  mod-matrix-routing-visibility plan; Phases 1–3 (MCP surface, framed zone, header badges)
+  shipped in v0.289.0.
 - [x] **MCP: surface Mod Matrix routings in `get_connections`.** Done in 0.289.0 —
   new `get_mod_matrix_routings` tool returns `[{source, source_name, destination,
   destination_name, amount, enabled, slot}]` with positional `ModSource` /
