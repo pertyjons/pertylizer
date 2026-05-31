@@ -21,16 +21,16 @@ use synth_mcp::bridge::{
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
-    AnalyzeHarmonyResult, AnalyzeMaskingMatrixResult, AnalyzeMixBusResult, AnalyzePatternResult,
-    AnalyzeSectionResult, ApplyExamplePatchResult, AutoGainStageResult, AutomationLaneInfo,
-    AutomationPointInfo, AutomationTargetInfo, AweLfoInfo, AwePresetInfo, AweStateInfo,
-    BandOverlap, BatchItemResult, BatchResult, BuildInstrumentResult, ConnectionCheckResult,
-    ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
-    HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair,
-    MatrixRoutingInfo, MixBusMetrics, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult,
-    ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue,
-    PatchResourceData, PatternInfo, PlacementInfo, ProjectSchemaInfo, SetSongResult, SongInfo,
-    TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    AnalyzeHarmonyResult, AnalyzeMaskingMatrixResult, AnalyzeMasterChainResult,
+    AnalyzeMixBusResult, AnalyzePatternResult, AnalyzeSectionResult, ApplyExamplePatchResult,
+    AutoGainStageResult, AutomationLaneInfo, AutomationPointInfo, AutomationTargetInfo, AweLfoInfo,
+    AwePresetInfo, AweStateInfo, BandOverlap, BatchItemResult, BatchResult, BuildInstrumentResult,
+    ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo,
+    GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope, HarmonyStats,
+    InstrumentInfo, MaskingPair, MatrixRoutingInfo, MixBusMetrics, ModuleInfo, ModuleTypeInfo,
+    NoteInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo,
+    PatchParamValue, PatchResourceData, PatternInfo, PlacementInfo, ProjectSchemaInfo,
+    SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -3871,6 +3871,22 @@ impl SynthBridge for AppSynthBridge {
             duration_seconds,
             start_tick,
             include_per_track,
+            scope,
+        )
+    }
+
+    fn analyze_master_chain(
+        &self,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+        scope: synth_mcp::AnalysisScope,
+    ) -> Result<AnalyzeMasterChainResult, McpBridgeError> {
+        analyze_master_chain_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            duration_seconds,
+            start_tick,
             scope,
         )
     }
@@ -9099,17 +9115,16 @@ fn describe_signal_chain(scope: synth_mcp::AnalysisScope, master_volume: f32) ->
     )
 }
 
-#[doc(hidden)]
-#[allow(clippy::too_many_arguments)]
-pub fn analyze_mix_bus_impl(
-    session: &SynthSession,
-    sample_library: &crate::audio::preview::SharedSampleLibrary,
+/// Resolve a duration-window analysis request to an absolute `[start, end)`
+/// tick range. Applies the shared NaN/non-positive default and 300-second cap,
+/// then converts the duration to ticks via the song tempo. Shared by the
+/// duration-window analyzers (`analyze_mix_bus`, `analyze_master_chain`) so the
+/// validation and tempo math stay in one place.
+fn resolve_duration_window(
     shared: &McpSharedState,
     duration_seconds: f32,
     start_tick: Option<u64>,
-    include_per_track: Option<bool>,
-    scope: synth_mcp::AnalysisScope,
-) -> Result<AnalyzeMixBusResult, McpBridgeError> {
+) -> Result<(u64, u64), McpBridgeError> {
     let dur = if duration_seconds.is_nan() || duration_seconds <= 0.0 {
         DEFAULT_MIX_BUS_SECONDS
     } else {
@@ -9121,9 +9136,8 @@ pub fn analyze_mix_bus_impl(
         )));
     }
     let start = start_tick.unwrap_or(0);
-
-    // Convert the requested duration into a tick offset using the song's
-    // tempo so the renderer can do its own tick-range render.
+    // Convert the requested duration into a tick offset using the song's tempo
+    // so the renderer can do its own tick-range render.
     let end = {
         let song = shared.song.read();
         let start_seconds = song.tick_to_seconds(synth_sequencer::Tick(start));
@@ -9135,6 +9149,21 @@ pub fn analyze_mix_bus_impl(
             "Requested duration resolves to zero song ticks — check tempo".to_string(),
         ));
     }
+    Ok((start, end))
+}
+
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_mix_bus_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    duration_seconds: f32,
+    start_tick: Option<u64>,
+    include_per_track: Option<bool>,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<AnalyzeMixBusResult, McpBridgeError> {
+    let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
 
     let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_scope(
         session,
@@ -9180,6 +9209,128 @@ pub fn analyze_mix_bus_impl(
         metrics,
         per_track,
         signal_chain: describe_signal_chain(scope, session.state().master_volume.load()),
+        warnings,
+    })
+}
+
+/// `analyze_master_chain` bridge implementation. Reconstructs the live master
+/// effect chain in one reused offline session, then renders the master output
+/// repeatedly with the chain truncated to successive prefixes: prefix 0 is the
+/// chain input (post-return mix, no master effects), prefix `k` is the output
+/// after the first `k` effects. Each effect's stage metrics are the prefix-`k`
+/// render; its deltas are versus the prefix-`(k-1)` render. The master chain is
+/// always loaded regardless of the incoming `scope`; `scope` only governs the
+/// return-bus wet signal, render sample rate, and AWE.
+#[doc(hidden)]
+pub fn analyze_master_chain_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    duration_seconds: f32,
+    start_tick: Option<u64>,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<AnalyzeMasterChainResult, McpBridgeError> {
+    let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
+
+    // Label data for each stage. Read the live master chain in its declared
+    // order; this is the same order `load_master_effects_into_offline` replays.
+    let master_effects: Vec<synth_engine::shared_state::ReturnEffectSnapshot> =
+        session.state().master_effects.read().clone();
+
+    // The master chain must always be reconstructed — it is the subject of the
+    // analysis. `scope` only selects the surrounding stages (return wet signal,
+    // sample rate, AWE).
+    let chain_scope = synth_mcp::AnalysisScope {
+        master_effects: true,
+        return_effects: scope.return_effects,
+        awe: scope.awe,
+        render_sample_rate: scope.render_sample_rate,
+    };
+
+    let (mut engine_session, setup_warnings) =
+        crate::audio::arrangement_render::OfflineEngineSession::new_with_scope(
+            session,
+            sample_library,
+            chain_scope,
+        )?;
+    let mut warnings = setup_warnings;
+
+    // Render a given chain prefix and reduce it to mix-bus metrics, returning
+    // the actual rendered tick range alongside.
+    let render_metrics =
+        |engine_session: &mut crate::audio::arrangement_render::OfflineEngineSession,
+         prefix: usize,
+         warnings: &mut Vec<String>|
+         -> Result<(MixBusMetrics, u64, u64), McpBridgeError> {
+            engine_session.set_master_effect_prefix(Some(prefix));
+            let rendered = engine_session.render_range(&shared.song, start, end)?;
+            let analysis = crate::audio::mix_analysis::analyze_mix_buffer(
+                &rendered.samples,
+                rendered.sample_rate,
+            );
+            let metrics = mix_metrics_from_analysis(
+                &analysis,
+                rendered.sample_rate,
+                rendered.duration_seconds,
+            );
+            for w in rendered.warnings {
+                if !warnings.contains(&w) {
+                    warnings.push(w);
+                }
+            }
+            Ok((metrics, rendered.start_tick, rendered.end_tick))
+        };
+
+    // Prefix 0 = the chain input (post-return mix, before any master effect).
+    let (input_metrics, rendered_start, rendered_end) =
+        render_metrics(&mut engine_session, 0, &mut warnings)?;
+
+    let ts = shared
+        .song
+        .read()
+        .time_signature_at(synth_sequencer::Tick(rendered_start));
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(rendered_start, ts);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(rendered_end, ts);
+
+    let mut stages = Vec::with_capacity(master_effects.len());
+    let mut prev = input_metrics;
+    for (idx, eff) in master_effects.iter().enumerate() {
+        let (metrics, _, _) = render_metrics(&mut engine_session, idx + 1, &mut warnings)?;
+        stages.push(synth_mcp::types::MasterEffectStage {
+            module_id: eff.module_id.to_string(),
+            effect_type: eff.module_type.prefix().to_string(),
+            bypassed: eff.bypassed,
+            lufs_delta: metrics.lufs_integrated - prev.lufs_integrated,
+            peak_delta_db: metrics.peak_dbfs - prev.peak_dbfs,
+            true_peak_delta_db: metrics.true_peak_dbtp - prev.true_peak_dbtp,
+            rms_delta_db: metrics.rms_dbfs - prev.rms_dbfs,
+            stereo_width_delta: metrics.stereo_width - prev.stereo_width,
+            crest_delta_db: metrics.crest_factor_db - prev.crest_factor_db,
+            gain_reduction_db: prev.rms_dbfs - metrics.rms_dbfs,
+            metrics,
+        });
+        prev = metrics;
+    }
+
+    if stages.is_empty() {
+        warnings.push("master chain has no effects — output equals input".to_string());
+    }
+
+    // `prev` holds the last stage's metrics, or the input metrics when the
+    // chain is empty — either way the true master output.
+    let output_metrics = prev;
+
+    Ok(AnalyzeMasterChainResult {
+        start_bar,
+        start_beat,
+        end_bar,
+        end_beat,
+        start_tick: rendered_start,
+        end_tick: rendered_end,
+        input_metrics,
+        output_metrics,
+        stages,
+        signal_chain: describe_signal_chain(chain_scope, session.state().master_volume.load()),
         warnings,
     })
 }

@@ -1748,6 +1748,77 @@ pub struct AnalyzeSectionResult {
     pub warnings: Vec<String>,
 }
 
+/// One stage of the master effect chain, measured at that effect's output.
+/// Returned in `AnalyzeMasterChainResult.stages` in chain order.
+///
+/// `metrics` is the master bus measured with the chain truncated *after* this
+/// effect. The `*_delta` fields are the change this effect introduced versus
+/// the previous stage's output (the chain input for the first effect), so a
+/// limiter shows a negative `peak_delta_db`, an EQ boost a positive
+/// `rms_delta_db`, and a widener a positive `stereo_width_delta`.
+#[derive(Debug, Clone, Serialize)]
+pub struct MasterEffectStage {
+    /// Effect module id (type prefix + instance, e.g. `lim:1`).
+    pub module_id: String,
+    /// Effect type prefix (e.g. `lim`, `eq`, `comp`).
+    pub effect_type: String,
+    /// Whether the effect was bypassed (disabled) in the live chain. A bypassed
+    /// effect passes signal through unchanged, so its deltas are ~0.
+    pub bypassed: bool,
+    /// Master-bus metrics measured at this effect's output.
+    pub metrics: MixBusMetrics,
+    /// Integrated-LUFS change this effect introduced (post − pre).
+    pub lufs_delta: f32,
+    /// Sample-peak change in dB (post − pre). Negative = the effect lowered the peak.
+    pub peak_delta_db: f32,
+    /// True-peak change in dBTP (post − pre).
+    pub true_peak_delta_db: f32,
+    /// RMS change in dB (post − pre).
+    pub rms_delta_db: f32,
+    /// Stereo-width change (post − pre); positive = wider.
+    pub stereo_width_delta: f32,
+    /// Crest-factor change in dB (post − pre); negative = more compressed dynamics.
+    pub crest_delta_db: f32,
+    /// Net RMS attenuation in dB (pre − post): positive when the effect reduced
+    /// level (dynamics/limiting), negative when it added gain. Convenience
+    /// inverse of `rms_delta_db`.
+    pub gain_reduction_db: f32,
+}
+
+/// Output of `analyze_master_chain`: an incremental, per-effect breakdown of
+/// the master bus. The chain input (post-return mix, before any master effect)
+/// is measured once, then the chain is rendered truncated after each effect so
+/// every stage's contribution can be isolated. Costs one offline render per
+/// master effect plus one for the input — O(effect_count).
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeMasterChainResult {
+    /// 1-indexed bar number at `start_tick`.
+    pub start_bar: u32,
+    /// 1-indexed beat within `start_bar`.
+    pub start_beat: u32,
+    /// 1-indexed bar number at `end_tick`.
+    pub end_bar: u32,
+    /// 1-indexed beat within `end_bar`.
+    pub end_beat: u32,
+    /// Tick where the render started.
+    pub start_tick: u64,
+    /// Tick where the render ended (exclusive).
+    pub end_tick: u64,
+    /// Master-chain input metrics: the post-return mix before any master effect.
+    pub input_metrics: MixBusMetrics,
+    /// Final master output metrics (full chain). Equals `input_metrics` when the
+    /// chain is empty.
+    pub output_metrics: MixBusMetrics,
+    /// One entry per master effect, in chain order. Empty when the master chain
+    /// has no effects.
+    pub stages: Vec<MasterEffectStage>,
+    /// Human-readable description of exactly what signal chain was measured.
+    /// See `AnalyzeMixBusResult.signal_chain`.
+    pub signal_chain: String,
+    /// Non-fatal warnings emitted during the renders.
+    pub warnings: Vec<String>,
+}
+
 /// Per-band overlap report between two tracks. One entry per
 /// `AnalyzeEnergyBands` band; values are linear RMS amplitudes pulled from
 /// each track's soloed render.

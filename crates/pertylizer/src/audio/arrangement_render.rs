@@ -238,6 +238,11 @@ pub struct OfflineEngineSession {
     /// time. Replayed each `render_range` because `ClearReturnBusses` wipes the
     /// offline buses' chains. Empty unless `scope.return_effects`.
     return_effect_snapshots: Vec<synth_engine::shared_state::ReturnBusSnapshot>,
+    /// Optional cap on how many leading master effects `render_range` loads.
+    /// `None` (default) loads the full chain. Used by `analyze_master_chain` to
+    /// measure the master output after each effect by rendering successive
+    /// chain prefixes. Only meaningful with `scope.master_effects`.
+    master_effect_prefix: Option<usize>,
     /// Render sample rate (from `scope.render_sample_rate`). Baked into the
     /// engine's stream at construction, so it is fixed for the session's life.
     sample_rate: u32,
@@ -355,10 +360,20 @@ impl OfflineEngineSession {
                 scope,
                 master_effect_snapshot,
                 return_effect_snapshots,
+                master_effect_prefix: None,
                 sample_rate,
             },
             setup_warnings,
         ))
+    }
+
+    /// Limit how many leading master effects the next `render_range` calls load,
+    /// so a caller can measure the master output after a chain prefix. `Some(k)`
+    /// loads the first `k` effects (clamped to the chain length); `None` (the
+    /// default) restores the full chain. No effect unless the session was built
+    /// with `scope.master_effects`.
+    pub fn set_master_effect_prefix(&mut self, prefix: Option<usize>) {
+        self.master_effect_prefix = prefix;
     }
 
     /// Render one `[start_tick, end_tick)` range against `song`. Safe to call
@@ -505,9 +520,11 @@ impl OfflineEngineSession {
         // soloed render with zero-state master effects — no tail bleed between
         // tracks. Cheap relative to the render itself.
         if self.scope.master_effects {
+            let len = self.master_effect_snapshot.len();
+            let prefix = self.master_effect_prefix.unwrap_or(len).min(len);
             load_master_effects_into_offline(
                 &mut self.handle,
-                &self.master_effect_snapshot,
+                &self.master_effect_snapshot[..prefix],
                 &mut warnings,
             );
         }

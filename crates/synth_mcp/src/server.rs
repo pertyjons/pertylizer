@@ -711,6 +711,30 @@ pub struct AnalyzeMixBusParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeMasterChainParam {
+    #[schemars(
+        description = "How many seconds of the master bus to render and analyze per stage (default 10.0, max 300.0)."
+    )]
+    pub duration_seconds: Option<f32>,
+    #[schemars(
+        description = "Absolute tick to start rendering from (default 0 = song beginning)."
+    )]
+    pub start_tick: Option<u64>,
+    #[schemars(
+        description = "Feed the return-bus wet signal (send/return reverbs, delays, …) into the master-chain input. When false the return busses are summed dry. The master effect chain itself is ALWAYS measured regardless of this flag — it is the subject of the analysis. Default false."
+    )]
+    pub include_return_effects: Option<bool>,
+    #[schemars(
+        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning and otherwise renders without AWE. Default false."
+    )]
+    pub include_awe: Option<bool>,
+    #[schemars(
+        description = "Render resolution: 'draft' (22.05 kHz, ~2x faster per render) or 'full' (44.1 kHz, default). Draft compounds across the per-effect renders but truncates the 'high' band, weakens true_peak, and biases LUFS. Use 'full' when loudness/peak/saturation accuracy matters. Unrecognized values fall back to 'full'."
+    )]
+    pub render_quality: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AutoGainStageParam {
     #[schemars(
         description = "Target integrated loudness in LUFS (e.g. -18, -14, -23). The master fader is adjusted to bring the measured loudness to this value."
@@ -3127,6 +3151,7 @@ impl SynthMcpServer {
             "analyze_bass_drum_lock" => analyze_bass_drum_lock(AnalyzeBassDrumLockParam),
             "analyze_harmonic_function" => analyze_harmonic_function(AnalyzeHarmonicFunctionParam),
             "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
+            "analyze_master_chain" => analyze_master_chain(AnalyzeMasterChainParam),
             "auto_gain_stage" => auto_gain_stage(AutoGainStageParam),
             "analyze_section" => analyze_section(AnalyzeSectionParam),
             "analyze_masking_matrix" => analyze_masking_matrix(AnalyzeMaskingMatrixParam),
@@ -3707,6 +3732,26 @@ impl SynthMcpServer {
                 params.0.include_per_track,
                 scope,
             )
+        })
+    }
+
+    #[tool(
+        description = "Incremental per-effect breakdown of the master bus. Renders the chain input (post-return mix, before any master effect) once, then re-renders the master output with the chain truncated after each effect — so you can see exactly what each master effect does to the mix. Each stage reports the full mix metrics at that point plus the delta the effect introduced: lufs_delta, peak/true-peak/rms delta in dB, stereo_width_delta, crest_delta_db (negative = more compressed dynamics), and gain_reduction_db (positive = the effect attenuated level, e.g. a limiter). Use this to verify a master limiter is catching peaks, an EQ is shaping balance, or to find the effect that is crushing your dynamics or narrowing the image. The master effect chain is always reconstructed; pass `include_return_effects: true` to feed the return wet signal into the chain input. Costs one offline render per master effect plus one for the input — O(effect_count). Renders from `start_tick` (default 0) for `duration_seconds` (default 10, max 300), deterministic and offline."
+    )]
+    async fn analyze_master_chain(&self, params: Parameters<AnalyzeMasterChainParam>) -> String {
+        let duration = params.0.duration_seconds.unwrap_or(10.0);
+        // The master chain is always measured; only the surrounding stages are
+        // optional. `from_flags` with master_effects=Some(true) forces it on.
+        let scope = crate::bridge::AnalysisScope::from_flags(
+            None,
+            Some(true),
+            params.0.include_return_effects,
+            params.0.include_awe,
+            crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
+        );
+        run_blocking_json(|| {
+            self.bridge
+                .analyze_master_chain(duration, params.0.start_tick, scope)
         })
     }
 

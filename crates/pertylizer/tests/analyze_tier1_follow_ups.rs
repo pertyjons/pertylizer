@@ -26,7 +26,8 @@ use synth_sequencer::{
 };
 
 use pertylizer::mcp_bridge::{
-    analyze_masking_matrix_impl, analyze_mix_bus_impl, analyze_section_impl, analyze_song_harmony,
+    analyze_masking_matrix_impl, analyze_master_chain_impl, analyze_mix_bus_impl,
+    analyze_section_impl, analyze_song_harmony,
 };
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
@@ -714,6 +715,43 @@ fn analyze_mix_bus_per_track_breakdown_emits_one_entry_per_track() {
     );
 }
 
+/// With no master effects loaded, `analyze_master_chain` returns no stages and
+/// the output mix equals the input mix (plus an explanatory warning).
+#[test]
+fn analyze_master_chain_empty_chain_has_no_stages() {
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+    let song = build_two_track_song();
+    let shared = McpSharedState::with_song(song);
+
+    let result = analyze_master_chain_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        10.0,
+        Some(0),
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect("master-chain analysis should succeed");
+
+    assert!(
+        result.stages.is_empty(),
+        "no master effects → no stages, got {}",
+        result.stages.len()
+    );
+    // Input and output describe the same render, so the metrics must match.
+    assert!(
+        (result.input_metrics.rms - result.output_metrics.rms).abs() < 1e-6,
+        "empty chain: output RMS ({}) should equal input RMS ({})",
+        result.output_metrics.rms,
+        result.input_metrics.rms
+    );
+    assert!(
+        result.warnings.iter().any(|w| w.contains("no effects")),
+        "expected an empty-chain warning, got {:?}",
+        result.warnings
+    );
+}
+
 /// Regression: per-track contributions include `pre_master_peak`, the
 /// pan/volume-compensated patch peak. For a center-panned, full-volume track
 /// the unattenuated peak should be ≈ sqrt(2) × the master-contribution peak.
@@ -1312,5 +1350,133 @@ fn analyze_section_master_effects_scope_reconstructs_live_master_chain() {
         "maxed-drive distortion should raise RMS: dry={} wet={}",
         dry.metrics.rms,
         wet.metrics.rms
+    );
+}
+
+/// `analyze_master_chain` isolates each master effect's contribution: the chain
+/// input (no master effect) vs. the output after a maxed-drive Distortion. The
+/// single stage must report a positive RMS delta and its output metrics must
+/// equal the result's `output_metrics`.
+#[test]
+fn analyze_master_chain_isolates_single_effect_contribution() {
+    let (mut engine, handle) = SynthEngine::new();
+    let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+    let sample_library: pertylizer::audio::preview::SharedSampleLibrary = Arc::new(
+        std::sync::RwLock::new(synth_sampler::SampleLibrary::default()),
+    );
+
+    let pad = InstrumentId::new(0);
+    session
+        .add_instrument_with_id(pad, "Pad")
+        .expect("add pad instrument");
+
+    let stream_info = synth_core::StreamInfo {
+        sample_rate: HwSampleRate(TEST_SR),
+        buffer_size: synth_core::BufferSize(256),
+        channels: synth_core::ChannelCount::Stereo,
+        output_latency: std::time::Duration::ZERO,
+        input_latency: None,
+    };
+    engine.on_stream_start(&stream_info);
+
+    let mut block = vec![0.0f32; 256 * 2];
+    let context = AudioCallbackContext {
+        sample_rate: HwSampleRate(TEST_SR),
+        frames: 256,
+        channels: 2,
+        stream_time: 0.0,
+        sample_position: 0,
+        output_latency: synth_core::Seconds::ZERO,
+    };
+    engine.process(&mut block, &context);
+
+    let _ = session.apply_patch(pad, &sustain_patch("Pad"));
+    for _ in 0..16 {
+        block.fill(0.0);
+        engine.process(&mut block, &context);
+    }
+
+    let mut song = Song::new("MasterChain");
+    let bar = 3840u32;
+    let pad_pattern_id = song.create_pattern(SeqDuration(bar));
+    {
+        let pat = song.pattern_mut(pad_pattern_id).expect("pad pattern");
+        let nid = pat.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+        if let Some(n) = pat.note_mut(nid) {
+            n.duration = Some(SeqDuration(bar - 60));
+        }
+    }
+    let pad_track = song.create_track("Pad");
+    if let Some(t) = song.track_mut(pad_track) {
+        t.instrument = SeqInstrumentId(0);
+    }
+    song.place_pattern(pad_pattern_id, pad_track, Tick(0));
+    let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
+
+    // Add a maxed-drive Distortion to the live master chain and pump so the
+    // shared `master_effects` snapshot republishes.
+    let dist_id = ModuleId::new(ModuleType::Distortion, 1);
+    let (effect, _descriptor) = pertylizer::module_factory::create_effect(ModuleType::Distortion)
+        .expect("Distortion effect should be constructible");
+    let sender = session.command_sender();
+    assert!(sender.send(EngineCommand::AddEffectInstance {
+        instrument_id: None,
+        id: dist_id,
+        effect,
+    }));
+    assert!(sender.send(EngineCommand::SetEffectParameter {
+        instrument_id: None,
+        module_id: dist_id,
+        param: Param::Distortion(DistortionParam::Drive(NormalizedValue::MAX)),
+    }));
+    for _ in 0..16 {
+        block.fill(0.0);
+        engine.process(&mut block, &context);
+    }
+
+    let result = analyze_master_chain_impl(
+        &session,
+        &sample_library,
+        &shared,
+        1.0,
+        Some(0),
+        synth_mcp::AnalysisScope::default(),
+    )
+    .expect("master-chain analysis should succeed");
+
+    assert_eq!(result.stages.len(), 1, "one master effect → one stage");
+    let stage = &result.stages[0];
+    assert_eq!(stage.effect_type, "dst");
+    assert!(
+        !stage.bypassed,
+        "the distortion is enabled, so it should not be reported bypassed"
+    );
+
+    // The chain input has no master effect; the output went through maxed
+    // distortion, which lifts RMS — so the stage's delta is positive and the
+    // gain_reduction (its inverse) is negative.
+    assert!(
+        result.output_metrics.rms > result.input_metrics.rms,
+        "distortion should raise output RMS: input={} output={}",
+        result.input_metrics.rms,
+        result.output_metrics.rms
+    );
+    assert!(
+        stage.rms_delta_db > 0.0,
+        "stage rms_delta_db should be positive, got {}",
+        stage.rms_delta_db
+    );
+    assert!(
+        (stage.gain_reduction_db + stage.rms_delta_db).abs() < 1e-3,
+        "gain_reduction_db ({}) should be the inverse of rms_delta_db ({})",
+        stage.gain_reduction_db,
+        stage.rms_delta_db
+    );
+    // The only stage's output IS the master output.
+    assert!(
+        (stage.metrics.rms - result.output_metrics.rms).abs() < 1e-6,
+        "last stage metrics.rms ({}) should equal output_metrics.rms ({})",
+        stage.metrics.rms,
+        result.output_metrics.rms
     );
 }

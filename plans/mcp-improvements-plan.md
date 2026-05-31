@@ -108,10 +108,19 @@ results now carry a `signal_chain` string describing exactly what was measured.
 Automation is pattern-scoped via target strings (`module:flt:1:cutoff`); a rebuild
 changes instance numbers → orphaned lanes. Needs snapshot + remap logic.
 
-### analyze_return_busses / analyze_master_chain  ⏸️
-Per-return-bus and per-master-effect breakdown (peak/RMS/LUFS/width, gain
-reduction, masking). Today only A/B via scope flags. Needs incremental-chain
-rendering (measure before/after each effect).
+### analyze_master_chain  ✅
+Per-master-effect breakdown via incremental chain rendering. New
+`OfflineEngineSession::set_master_effect_prefix` truncates the master chain to a
+prefix; the impl renders prefix 0 (chain input) then after each effect, and
+reports per-stage metrics + deltas (lufs/peak/true-peak/rms/width/crest) and
+`gain_reduction_db`. Shared `resolve_duration_window` helper extracted from
+`analyze_mix_bus`. Tests: `analyze_master_chain_empty_chain_has_no_stages`,
+`analyze_master_chain_isolates_single_effect_contribution`.
+
+### analyze_return_busses  ⏸️
+Per-return-bus contribution to the master (peak/RMS/LUFS/width). Needs an
+isolation approach (mute-A/B per return, or send tap) — split from
+analyze_master_chain into its own step.
 
 ### batch_execute dry_run + rollback_on_error  ⏸️
 `dry_run` = validate params without executing (needs a per-tool validate path).

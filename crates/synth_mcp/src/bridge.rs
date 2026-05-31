@@ -1608,6 +1608,20 @@ pub trait SynthBridge: Send + Sync + 'static {
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeMixBusResult, McpBridgeError>;
 
+    /// Incremental per-effect breakdown of the master bus. Renders the chain
+    /// input (post-return mix, no master effects) once, then re-renders the
+    /// master output with the chain truncated after each effect, so each
+    /// effect's contribution (loudness/peak/width/dynamics delta) is isolated.
+    /// The master effect chain is always reconstructed regardless of `scope`;
+    /// `scope` only controls whether the return-bus wet signal feeds the chain
+    /// input, the render sample rate, and AWE. Cost is O(effect_count) renders.
+    fn analyze_master_chain(
+        &self,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+        scope: AnalysisScope,
+    ) -> Result<crate::types::AnalyzeMasterChainResult, McpBridgeError>;
+
     /// Measure the master mix (post master + return effects) and adjust the
     /// master fader toward `target_lufs` without pushing the true peak above
     /// `true_peak_ceiling_dbtp`. The master fader is post-effects, so the
