@@ -35,6 +35,30 @@ const GROUP_HEADER_HEIGHT: f32 = 24.0;
 const GROUP_PORT_MARGIN: f32 = 12.0;
 const GROUP_PADDING: f32 = 16.0;
 
+// --- Patch editor palette ---
+/// Status: source module / routed-to-output (green "ok").
+const STATUS_OK_GREEN: Color32 = Color32::from_rgb(100, 200, 100);
+/// Status: sink module (red).
+const STATUS_SINK_RED: Color32 = Color32::from_rgb(200, 100, 100);
+/// Status: automation lane targets this module (amber).
+const STATUS_AUTOMATED_AMBER: Color32 = Color32::from_rgb(220, 170, 90);
+/// Status: internal routing / global module (blue).
+const STATUS_ROUTING_BLUE: Color32 = Color32::from_rgb(100, 180, 220);
+/// Status: orphaned — has connections but signal doesn't reach output (yellow).
+const STATUS_ORPHANED_YELLOW: Color32 = Color32::from_rgb(200, 200, 100);
+/// Status: disconnected — no cables (gray).
+const STATUS_DISCONNECTED_GRAY: Color32 = Color32::from_rgb(100, 100, 100);
+/// Effect-chain accent (warm amber) — reorder buttons, badge, chain cables.
+const EFFECT_CHAIN_AMBER: Color32 = Color32::from_rgb(230, 160, 50);
+/// Close button when hovered (red).
+const CLOSE_BUTTON_HOVER_RED: Color32 = Color32::from_rgb(255, 100, 100);
+/// Close button at rest (translucent light gray).
+const CLOSE_BUTTON_IDLE: Color32 = Color32::from_rgba_premultiplied(200, 200, 200, 150);
+/// Background grid line color (faint blue-gray).
+const GRID_LINE_COLOR: Color32 = Color32::from_rgba_unmultiplied_const(60, 65, 75, 50);
+/// Fully transparent fill (group outline rects).
+const TRANSPARENT_FILL: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 0);
+
 /// Trim sweep data to the last rising-edge crossing so the display
 /// always shows complete waveform cycles (no visual gap at the end).
 ///
@@ -1725,7 +1749,7 @@ impl PatchEditor {
                                 ui.add(
                                     egui::Button::new(
                                         egui::RichText::new(ri::UPLOAD_2_FILL)
-                                            .color(Color32::from_rgb(100, 200, 100))
+                                            .color(STATUS_OK_GREEN)
                                             .size(10.0),
                                     )
                                     .frame(false)
@@ -1739,7 +1763,7 @@ impl PatchEditor {
                                 ui.add(
                                     egui::Button::new(
                                         egui::RichText::new(ri::DOWNLOAD_2_FILL)
-                                            .color(Color32::from_rgb(200, 100, 100))
+                                            .color(STATUS_SINK_RED)
                                             .size(10.0),
                                     )
                                     .frame(false)
@@ -1754,7 +1778,7 @@ impl PatchEditor {
                                 ui.add(
                                     egui::Button::new(
                                         egui::RichText::new(ri::PULSE_FILL)
-                                            .color(Color32::from_rgb(220, 170, 90))
+                                            .color(STATUS_AUTOMATED_AMBER)
                                             .size(10.0),
                                     )
                                     .frame(false)
@@ -1766,25 +1790,25 @@ impl PatchEditor {
                             // Connectivity status indicator
                             let (conn_icon, conn_color, conn_tooltip): (_, _, &str) = if is_global_module {
                                 if descriptor.category == ModuleCategory::Utility {
-                                    (ri::FLASHLIGHT_FILL, Color32::from_rgb(100, 180, 220), "Internal Routing\nRoutes modulation internally — no cables needed.")
+                                    (ri::FLASHLIGHT_FILL, STATUS_ROUTING_BLUE, "Internal Routing\nRoutes modulation internally — no cables needed.")
                                 } else {
-                                    (ri::FLASHLIGHT_FILL, Color32::from_rgb(100, 180, 220), "Global Module\nProcessed automatically via effect chain.")
+                                    (ri::FLASHLIGHT_FILL, STATUS_ROUTING_BLUE, "Global Module\nProcessed automatically via effect chain.")
                                 }
                             } else {
                                 match connectivity_status {
                                     ModuleConnectivity::Connected => (
                                         ri::LINK,
-                                        Color32::from_rgb(100, 200, 100),
+                                        STATUS_OK_GREEN,
                                         "Routed to Output\nAudio from this module reaches the output.",
                                     ),
                                     ModuleConnectivity::Orphaned => (
                                         ri::ERROR_WARNING_LINE,
-                                        Color32::from_rgb(200, 200, 100),
+                                        STATUS_ORPHANED_YELLOW,
                                         "Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
                                     ),
                                     ModuleConnectivity::Disconnected => (
                                         ri::LINK_UNLINK,
-                                        Color32::from_rgb(100, 100, 100),
+                                        STATUS_DISCONNECTED_GRAY,
                                         "Disconnected\nNo cables connected.\nDrag from ports to create connections.",
                                     ),
                                 }
@@ -1867,7 +1891,7 @@ impl PatchEditor {
                                 let can_move_up = chain_pos > 0;
                                 let can_move_down =
                                     chain_pos + 1 < effect_chain_order.len();
-                                let chain_color = Color32::from_rgb(230, 160, 50);
+                                let chain_color = EFFECT_CHAIN_AMBER;
 
                                 // Up arrow
                                 let up_color = if can_move_up {
@@ -1966,7 +1990,7 @@ impl PatchEditor {
                                     ui.label(
                                         egui::RichText::new(chain_label)
                                             .size(10.0)
-                                            .color(Color32::from_rgb(230, 160, 50)),
+                                            .color(EFFECT_CHAIN_AMBER),
                                     );
                                 }
                             });
@@ -2397,9 +2421,9 @@ impl PatchEditor {
             let close_rect = Rect::from_min_size(close_pos, close_size);
             let close_resp = ui.allocate_rect(close_rect, Sense::click());
             let close_color = if close_resp.hovered() {
-                Color32::from_rgb(255, 100, 100)
+                CLOSE_BUTTON_HOVER_RED
             } else {
-                Color32::from_rgba_premultiplied(200, 200, 200, 150)
+                CLOSE_BUTTON_IDLE
             };
             ui.painter().text(
                 close_rect.center(),
@@ -2594,7 +2618,7 @@ impl PatchEditor {
         // Grid lines
         let grid_size = GRID_SIZE;
 
-        let grid_color = Color32::from_rgba_unmultiplied(60, 65, 75, 50);
+        let grid_color = GRID_LINE_COLOR;
 
         // Vertical lines
         let mut x = rect.left();
@@ -2687,7 +2711,7 @@ impl PatchEditor {
         let painter = eframe::egui::Painter::new(ui.ctx().clone(), bg_layer, clip_rect);
 
         // Warm amber color for chain cables
-        let chain_color = Color32::from_rgb(230, 160, 50);
+        let chain_color = EFFECT_CHAIN_AMBER;
         let chain_stroke = egui::Stroke::new(2.5, chain_color.gamma_multiply(0.7));
         let arrow_color = chain_color.gamma_multiply(0.85);
 
@@ -2964,7 +2988,7 @@ impl PatchEditor {
             painter.rect(
                 *rect,
                 6.0,
-                Color32::from_rgba_unmultiplied(0, 0, 0, 0),
+                TRANSPARENT_FILL,
                 stroke,
                 egui::StrokeKind::Inside,
             );

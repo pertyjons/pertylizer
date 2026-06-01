@@ -23,6 +23,12 @@ use synth_awe::{
 use synth_core::{BipolarValue, Hertz, MidiNote, Milliseconds, NormalizedValue};
 use synth_engine::{EngineCommand, EngineHandle};
 
+// --- AWE view palette ---
+/// Arrow from source to listener.
+const ARROW_GREY: egui::Color32 = egui::Color32::from_rgba_premultiplied(140, 140, 140, 180);
+/// Per-voice spatial mapping dots.
+const SOURCE_DOT_PURPLE: egui::Color32 = egui::Color32::from_rgba_premultiplied(180, 120, 255, 60);
+
 /// Room shape kind for the UI selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoomShapeKind {
@@ -1287,7 +1293,7 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     }
 
     // --- Arrow from source to listener ---
-    let arrow_color = egui::Color32::from_rgba_premultiplied(140, 140, 140, 180);
+    let arrow_color = ARROW_GREY;
     let dir = listener_pos - source_pos;
     let dir_len = dir.length();
     if dir_len > 1.0 {
@@ -1333,7 +1339,7 @@ fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut Awe
     // --- Per-voice spatial mapping dots ---
     let mapping = mapping_from_index(state.note_mapping_idx);
     if state.spatial_enabled && mapping != NotePositionMapping::Off {
-        let dot_color = egui::Color32::from_rgba_premultiplied(180, 120, 255, 60);
+        let dot_color = SOURCE_DOT_PURPLE;
         for octave in 1..=7u8 {
             let note = MidiNote::new(octave * 12);
             let eff_height = state.current_room_shape().height();

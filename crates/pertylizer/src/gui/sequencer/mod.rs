@@ -377,6 +377,79 @@ pub(crate) fn commit_pattern_description(
 // CONSTANTS
 // ============================================================================
 
+// --- Sequencer palette ---
+/// Accent colour for the transport-loop ruler markers and status badge.
+const LOOP_COLOR: Color32 = Color32::from_rgb(120, 220, 180);
+/// Dimmed red used for the disabled/idle record button.
+const DIM_RED: Color32 = Color32::from_rgb(120, 40, 40);
+/// Red used for the "ARM" status label.
+const ARM_RED: Color32 = Color32::from_rgb(180, 60, 60);
+/// Fill for the selected track header.
+const TRACK_HEADER_SELECTED_FILL: Color32 = Color32::from_rgba_premultiplied(80, 140, 220, 50);
+/// Fill for a highlighted (non-selected) track header / row.
+const TRACK_HIGHLIGHT_FILL: Color32 = Color32::from_rgba_premultiplied(80, 120, 200, 40);
+/// Background for even arrangement track rows.
+const TRACK_ROW_BG_EVEN: Color32 = Color32::from_rgba_premultiplied(40, 42, 46, 80);
+/// Fallback colour for placement note miniatures.
+const MINIATURE_FALLBACK: Color32 = Color32::from_rgb(180, 200, 230);
+/// Stroke for the placement resize ghost.
+const RESIZE_GHOST_STROKE: Color32 = Color32::from_rgb(255, 200, 120);
+/// Fill for the placement drag ghost.
+const DRAG_GHOST_FILL: Color32 = Color32::from_rgba_unmultiplied_const(120, 180, 255, 60);
+/// Stroke for the placement drag ghost.
+const DRAG_GHOST_STROKE: Color32 = Color32::from_rgb(120, 180, 255);
+/// Colour for tempo-change markers on the ruler.
+const TEMPO_MARKER: Color32 = Color32::from_rgb(255, 180, 80);
+/// Fill for the step-entry mode banner.
+const STEP_ENTRY_BANNER_FILL: Color32 = Color32::from_rgba_unmultiplied_const(255, 100, 255, 28);
+/// Text colour for the step-entry banner label.
+const STEP_ENTRY_TEXT: Color32 = Color32::from_rgb(255, 160, 255);
+/// Piano-roll black-key background.
+const PIANO_KEY_BLACK: Color32 = Color32::from_rgb(30, 30, 35);
+/// Piano-roll white-key background.
+const PIANO_KEY_WHITE: Color32 = Color32::from_rgb(55, 58, 65);
+/// Grid background for C rows.
+const GRID_BG_C: Color32 = Color32::from_rgba_premultiplied(50, 55, 65, 80);
+/// Grid background for black-key rows.
+const GRID_BG_BLACK: Color32 = Color32::from_rgba_premultiplied(25, 27, 30, 80);
+/// Grid background for white-key rows.
+const GRID_BG_WHITE: Color32 = Color32::from_rgba_premultiplied(35, 38, 42, 80);
+/// Default colour for notes without an instrument colour.
+const DEFAULT_NOTE_BLUE: Color32 = Color32::from_rgb(100, 180, 255);
+/// Soft glow halo behind selected notes.
+const NOTE_SELECTED_GLOW: Color32 = Color32::from_rgba_unmultiplied_const(140, 220, 255, 60);
+/// Orange for recording-preview notes.
+const RECORDING_PREVIEW_ORANGE: Color32 = Color32::from_rgb(255, 160, 60);
+/// Fill for held recording-preview notes.
+const RECORDING_PREVIEW_HELD_FILL: Color32 =
+    Color32::from_rgba_unmultiplied_const(255, 160, 60, 140);
+/// Fill for the note move-drag ghost.
+const MOVE_GHOST_FILL: Color32 = Color32::from_rgba_unmultiplied_const(140, 210, 255, 100);
+/// Stroke for the note move-drag ghost.
+const MOVE_GHOST_STROKE: Color32 = Color32::from_rgba_unmultiplied_const(140, 210, 255, 180);
+/// Fill for the draw-note preview.
+const DRAW_NOTE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(100, 220, 140, 120);
+/// Stroke for the draw-note preview.
+const DRAW_NOTE_STROKE: Color32 = Color32::from_rgba_unmultiplied_const(100, 220, 140, 200);
+/// Fill for the rubber-band selection rectangle.
+const SELECTION_RECT_FILL: Color32 = Color32::from_rgba_unmultiplied_const(100, 180, 255, 30);
+/// Stroke for the rubber-band selection rectangle.
+const SELECTION_RECT_STROKE: Color32 = Color32::from_rgba_unmultiplied_const(100, 180, 255, 150);
+/// Background for the velocity-bar zone.
+const VELOCITY_ZONE_BG: Color32 = Color32::from_rgba_premultiplied(20, 22, 26, 200);
+/// Velocity-bar colour for selected notes.
+const VELOCITY_BAR_SELECTED: Color32 = Color32::from_rgb(180, 230, 255);
+/// Colour for the step-entry cursor line.
+const STEP_CURSOR: Color32 = Color32::from_rgb(255, 100, 255);
+/// Subtle white outline for hovered notes.
+const NOTE_HOVER_OUTLINE: Color32 = Color32::from_rgba_unmultiplied_const(255, 255, 255, 60);
+/// Orange accent for the automation lane.
+const AUTOMATION_ORANGE: Color32 = Color32::from_rgb(255, 160, 50);
+/// Background for the automation zone.
+const AUTOMATION_ZONE_BG: Color32 = Color32::from_rgba_premultiplied(18, 20, 24, 220);
+/// Fill for the dragged automation point.
+const AUTOMATION_ORANGE_FILL: Color32 = Color32::from_rgba_unmultiplied_const(255, 160, 50, 120);
+
 /// Width of the track header panel (left side).
 const TRACK_HEADER_WIDTH: f32 = 150.0;
 /// Height of each track row in the arrangement.
@@ -395,9 +468,6 @@ const MIN_ZOOM: f32 = 0.25;
 const MAX_ZOOM: f32 = 4.0;
 /// Maximum number of note miniatures per placement.
 const MAX_MINIATURE_NOTES: usize = 200;
-/// Accent colour for the transport-loop ruler markers and status badge.
-const LOOP_COLOR: Color32 = Color32::from_rgb(120, 220, 180);
-
 // Piano roll constants
 /// Minimum default height for the piano roll bottom panel.
 const MIN_PIANO_ROLL_HEIGHT: f32 = 400.0;
@@ -539,7 +609,7 @@ fn draw_transport_bar(
 
         // Record button
         let has_pattern = view_state.opened_pattern.is_some();
-        let dim_red = Color32::from_rgb(120, 40, 40);
+        let dim_red = DIM_RED;
         let rec_color = match rec_state {
             RecordingState::Capturing => t.colors.accent_red,
             RecordingState::CountIn => {
@@ -811,7 +881,7 @@ fn draw_transport_bar(
                 );
             }
             RecordingState::Armed => {
-                ui.label(RichText::new("ARM").color(Color32::from_rgb(180, 60, 60)));
+                ui.label(RichText::new("ARM").color(ARM_RED));
             }
             RecordingState::Idle => {
                 if is_playing {
@@ -1185,9 +1255,9 @@ fn draw_arrangement(
                         let is_selected = view_state.selected_track == Some(track.id);
                         let is_highlighted = view_state.highlighted_track == Some(track.id);
                         let bg = if is_selected {
-                            Color32::from_rgba_premultiplied(80, 140, 220, 50)
+                            TRACK_HEADER_SELECTED_FILL
                         } else if is_highlighted {
-                            Color32::from_rgba_premultiplied(80, 120, 200, 40)
+                            TRACK_HIGHLIGHT_FILL
                         } else if i % 2 == 0 {
                             t.colors.bg_module
                         } else {
@@ -1728,9 +1798,9 @@ fn draw_arrangement(
                 let row_y = tl_y + RULER_HEIGHT + i as f32 * TRACK_ROW_HEIGHT;
                 let is_highlighted = view_state.highlighted_track == Some(data.tracks[i].id);
                 let bg = if is_highlighted {
-                    Color32::from_rgba_premultiplied(80, 120, 200, 40)
+                    TRACK_HIGHLIGHT_FILL
                 } else if i % 2 == 0 {
-                    Color32::from_rgba_premultiplied(40, 42, 46, 80)
+                    TRACK_ROW_BG_EVEN
                 } else {
                     Color32::TRANSPARENT
                 };
@@ -1833,7 +1903,7 @@ fn draw_arrangement(
                     let mini_height = rect.max.y - mini_top - 2.0;
                     if mini_height > 4.0 {
                         let mini_width = rect.width() - 4.0;
-                        let fallback = Color32::from_rgb(180, 200, 230);
+                        let fallback = MINIATURE_FALLBACK;
                         let clipped = painter.with_clip_rect(rect);
                         // All notes in a placement play the placement's track instrument.
                         let inst_color = cached_instrument_color(
@@ -2149,7 +2219,7 @@ fn draw_arrangement(
                 painter.rect_stroke(
                     ghost_rect,
                     3.0,
-                    Stroke::new(2.0, Color32::from_rgb(255, 200, 120)),
+                    Stroke::new(2.0, RESIZE_GHOST_STROKE),
                     egui::StrokeKind::Outside,
                 );
             }
@@ -2183,15 +2253,11 @@ fn draw_arrangement(
                                 TRACK_ROW_HEIGHT - PLACEMENT_PADDING * 2.0,
                             ),
                         );
-                        painter.rect_filled(
-                            ghost_rect,
-                            3.0,
-                            Color32::from_rgba_unmultiplied(120, 180, 255, 60),
-                        );
+                        painter.rect_filled(ghost_rect, 3.0, DRAG_GHOST_FILL);
                         painter.rect_stroke(
                             ghost_rect,
                             3.0,
-                            Stroke::new(1.5, Color32::from_rgb(120, 180, 255)),
+                            Stroke::new(1.5, DRAG_GHOST_STROKE),
                             egui::StrokeKind::Inside,
                         );
                     }
@@ -2569,7 +2635,7 @@ fn draw_arrangement(
 
             // ── Tempo change markers on the ruler ──
             if !data.tempo_changes.is_empty() {
-                let tempo_color = Color32::from_rgb(255, 180, 80);
+                let tempo_color = TEMPO_MARKER;
                 for (tick, bpm) in &data.tempo_changes {
                     let x = tick_to_x(*tick);
                     // Small flag: vertical tick + label "120.0".
@@ -3728,7 +3794,7 @@ pub(crate) fn draw_piano_roll(
             // arm/disarm behaviour so the user does not have to reach
             // back up while editing in the piano roll.
             let mini_rec_state = handle.state.transport.recording_state();
-            let dim_red = Color32::from_rgb(120, 40, 40);
+            let dim_red = DIM_RED;
             let mini_rec_color = match mini_rec_state {
                 RecordingState::Capturing => t.colors.accent_red,
                 RecordingState::CountIn | RecordingState::Armed => {
@@ -4260,7 +4326,7 @@ pub(crate) fn draw_piano_roll(
 
     // ── Step entry banner ──
     if view_state.step_entry_mode {
-        let banner_color = Color32::from_rgba_unmultiplied(255, 100, 255, 28);
+        let banner_color = STEP_ENTRY_BANNER_FILL;
         egui::Frame::new()
             .fill(banner_color)
             .inner_margin(egui::Margin::symmetric(6, 4))
@@ -4270,7 +4336,7 @@ pub(crate) fn draw_piano_roll(
                     ui.label(
                         RichText::new("STEP ENTRY")
                             .strong()
-                            .color(Color32::from_rgb(255, 160, 255)),
+                            .color(STEP_ENTRY_TEXT),
                     );
                     ui.label(
                         RichText::new(
@@ -4497,9 +4563,9 @@ pub(crate) fn draw_piano_roll(
 
                 // Key background
                 let key_color = if is_black {
-                    Color32::from_rgb(30, 30, 35)
+                    PIANO_KEY_BLACK
                 } else {
-                    Color32::from_rgb(55, 58, 65)
+                    PIANO_KEY_WHITE
                 };
                 painter.rect_filled(
                     Rect::from_min_size(
@@ -4541,11 +4607,11 @@ pub(crate) fn draw_piano_roll(
                 let is_c = p % 12 == 0;
 
                 let bg = if is_c {
-                    Color32::from_rgba_premultiplied(50, 55, 65, 80)
+                    GRID_BG_C
                 } else if is_black {
-                    Color32::from_rgba_premultiplied(25, 27, 30, 80)
+                    GRID_BG_BLACK
                 } else {
-                    Color32::from_rgba_premultiplied(35, 38, 42, 80)
+                    GRID_BG_WHITE
                 };
 
                 painter.rect_filled(
@@ -4612,7 +4678,7 @@ pub(crate) fn draw_piano_roll(
             }
 
             // ── Notes ──
-            let default_note_color = Color32::from_rgb(100, 180, 255);
+            let default_note_color = DEFAULT_NOTE_BLUE;
             // One-shot per-frame colour cache so each note's lookup is O(1).
             let note_color_cache = build_instrument_colour_cache(instruments);
 
@@ -4685,7 +4751,7 @@ pub(crate) fn draw_piano_roll(
                     painter.rect_filled(
                         glow_rect,
                         3.0,
-                        Color32::from_rgba_unmultiplied(140, 220, 255, 60),
+                        NOTE_SELECTED_GLOW,
                     );
                 }
 
@@ -4771,7 +4837,7 @@ pub(crate) fn draw_piano_roll(
             if !view_state.recording_preview_completed.is_empty()
                 || !view_state.recording_preview_held.is_empty()
             {
-                let preview_color = Color32::from_rgb(255, 160, 60);
+                let preview_color = RECORDING_PREVIEW_ORANGE;
 
                 // Draw completed preview notes
                 for note in &view_state.recording_preview_completed {
@@ -4833,7 +4899,7 @@ pub(crate) fn draw_piano_roll(
                         painter.rect_filled(
                             held_rect,
                             2.0,
-                            Color32::from_rgba_unmultiplied(255, 160, 60, 140),
+                            RECORDING_PREVIEW_HELD_FILL,
                         );
                         painter.rect_stroke(
                             held_rect,
@@ -4876,12 +4942,12 @@ pub(crate) fn draw_piano_roll(
                     painter.rect_filled(
                         ghost_rect,
                         2.0,
-                        Color32::from_rgba_unmultiplied(140, 210, 255, 100),
+                        MOVE_GHOST_FILL,
                     );
                     painter.rect_stroke(
                         ghost_rect,
                         2.0,
-                        Stroke::new(1.0, Color32::from_rgba_unmultiplied(140, 210, 255, 180)),
+                        Stroke::new(1.0, MOVE_GHOST_STROKE),
                         egui::StrokeKind::Inside,
                     );
                 }
@@ -4906,12 +4972,12 @@ pub(crate) fn draw_piano_roll(
                 painter.rect_filled(
                     draw_rect,
                     2.0,
-                    Color32::from_rgba_unmultiplied(100, 220, 140, 120),
+                    DRAW_NOTE_FILL,
                 );
                 painter.rect_stroke(
                     draw_rect,
                     2.0,
-                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(100, 220, 140, 200)),
+                    Stroke::new(1.0, DRAW_NOTE_STROKE),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -4926,12 +4992,12 @@ pub(crate) fn draw_piano_roll(
                 painter.rect_filled(
                     sel_rect,
                     0.0,
-                    Color32::from_rgba_unmultiplied(100, 180, 255, 30),
+                    SELECTION_RECT_FILL,
                 );
                 painter.rect_stroke(
                     sel_rect,
                     0.0,
-                    Stroke::new(1.0, Color32::from_rgba_unmultiplied(100, 180, 255, 150)),
+                    Stroke::new(1.0, SELECTION_RECT_STROKE),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -4945,7 +5011,7 @@ pub(crate) fn draw_piano_roll(
                     Vec2::new(grid_width, VELOCITY_ZONE_HEIGHT),
                 ),
                 0.0,
-                Color32::from_rgba_premultiplied(20, 22, 26, 200),
+                VELOCITY_ZONE_BG,
             );
 
             // Separator line
@@ -4974,7 +5040,7 @@ pub(crate) fn draw_piano_roll(
 
                 let is_selected = view_state.selected_notes.contains(&note.note_id);
                 let (vel_color, bar_w) = if is_selected {
-                    (Color32::from_rgb(180, 230, 255), 5.0)
+                    (VELOCITY_BAR_SELECTED, 5.0)
                 } else {
                     (velocity_color(note.velocity.as_f32()), 3.0)
                 };
@@ -5045,7 +5111,7 @@ pub(crate) fn draw_piano_roll(
                             Pos2::new(cursor_x, grid_y),
                             Pos2::new(cursor_x, grid_y + grid_height),
                         ],
-                        Stroke::new(2.0, Color32::from_rgb(255, 100, 255)),
+                        Stroke::new(2.0, STEP_CURSOR),
                     );
                 }
             }
@@ -5110,10 +5176,7 @@ pub(crate) fn draw_piano_roll(
                                 painter.rect_stroke(
                                     hover_rect,
                                     2.0,
-                                    Stroke::new(
-                                        1.0,
-                                        Color32::from_rgba_unmultiplied(255, 255, 255, 60),
-                                    ),
+                                    Stroke::new(1.0, NOTE_HOVER_OUTLINE),
                                     egui::StrokeKind::Outside,
                                 );
 
@@ -5994,7 +6057,7 @@ fn draw_automation_zone(
     tick_to_x: &dyn Fn(PatternTick) -> f32,
     t: &crate::gui::theme::Theme,
 ) {
-    let auto_color = Color32::from_rgb(255, 160, 50); // Orange
+    let auto_color = AUTOMATION_ORANGE; // Orange
 
     // Background
     painter.rect_filled(
@@ -6003,7 +6066,7 @@ fn draw_automation_zone(
             Vec2::new(grid_width, AUTOMATION_ZONE_HEIGHT),
         ),
         0.0,
-        Color32::from_rgba_premultiplied(18, 20, 24, 220),
+        AUTOMATION_ZONE_BG,
     );
 
     // Separator line
@@ -6125,7 +6188,7 @@ fn draw_automation_zone(
         painter.circle_filled(
             Pos2::new(px, py),
             AUTOMATION_POINT_RADIUS + 1.0,
-            Color32::from_rgba_unmultiplied(255, 160, 50, 120),
+            AUTOMATION_ORANGE_FILL,
         );
         painter.circle_stroke(
             Pos2::new(px, py),

@@ -10,6 +10,10 @@ use eframe::egui::{Color32, Pos2, Stroke, Vec2};
 use super::port::WidgetPortType;
 use crate::gui::theme::theme;
 
+// --- Cable palette ---
+/// Drop shadow behind cables.
+const CABLE_SHADOW: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 40);
+
 /// Horizontal clearance from port before turning vertical.
 const CLEARANCE: f32 = 25.0;
 
@@ -214,7 +218,7 @@ pub fn draw_cable(
     // Shadow
     let shadow_offset = Vec2::new(1.0, 2.0);
     let shadow_points: Vec<Pos2> = points.iter().map(|p| *p + shadow_offset).collect();
-    let shadow_color = Color32::from_rgba_unmultiplied(0, 0, 0, 40);
+    let shadow_color = CABLE_SHADOW;
     draw_segments(
         painter,
         &shadow_points,

@@ -28,6 +28,11 @@ use synth_sequencer::{ReturnBusId, SeqInstrumentId, Song, TrackId, TrackSend};
 
 use crate::gui::module_panel::category_color;
 use crate::gui::theme::theme;
+
+// --- Mixer view palette ---
+/// Clip-warning header tint (used by the layout-measurement tests).
+#[cfg(test)]
+const CLIP_WARN_ORANGE: Color32 = Color32::from_rgb(200, 120, 40);
 use crate::gui::widgets::{ModuleFrame, draw_module_header, level_color};
 
 /// Width of a single channel strip, in points.
@@ -1214,7 +1219,7 @@ fn apply_mutation(mutation: MixerMutation, handle: &mut EngineHandle, song: &Arc
 mod layout_tests {
     use super::STRIP_WIDTH;
     use crate::gui::widgets::draw_module_header;
-    use eframe::egui::{self, Color32};
+    use eframe::egui;
 
     /// Measure the `available_width` of a strip's content column, reproducing the
     /// real layout nesting: the strip row is `horizontal_top`, so the frame
@@ -1236,7 +1241,7 @@ mod layout_tests {
                                 let mut body = |ui: &mut egui::Ui| {
                                     draw_module_header(
                                         ui,
-                                        Color32::from_rgb(200, 120, 40),
+                                        super::CLIP_WARN_ORANGE,
                                         "V1 pulse",
                                         None,
                                         |_| {},

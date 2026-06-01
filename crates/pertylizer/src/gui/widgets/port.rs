@@ -10,6 +10,10 @@ use eframe::egui::{self, Color32, Pos2, Response, Sense, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
 
+// --- Port palette ---
+/// Backdrop behind the floating port label.
+const PORT_LABEL_BACKDROP: Color32 = Color32::from_black_alpha(200);
+
 /// A port widget for connections.
 pub struct PortWidget {
     port_type: WidgetPortType,
@@ -155,7 +159,7 @@ impl PortWidget {
                 let galley = top_painter.layout_no_wrap(label_text.clone(), font.clone(), color);
                 let text_rect = anchor.anchor_size(label_pos, galley.size());
                 let bg_rect = text_rect.expand(3.0);
-                top_painter.rect_filled(bg_rect, 3.0, Color32::from_black_alpha(200));
+                top_painter.rect_filled(bg_rect, 3.0, PORT_LABEL_BACKDROP);
 
                 top_painter.text(label_pos, anchor, label_text, font, color);
             }

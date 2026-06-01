@@ -9,6 +9,34 @@ use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use std::collections::HashMap;
 use synth_core::{MidiNote, Velocity};
 
+// --- Keyboard palette ---
+/// Background well behind the keys.
+const KEYBOARD_WELL_BG: Color32 = Color32::from_rgb(15, 16, 20);
+/// White key resting gradient: shadowed top → lit bottom edge.
+const KEY_WHITE_TOP: Color32 = Color32::from_rgb(221, 223, 230);
+const KEY_WHITE_BOTTOM: Color32 = Color32::from_rgb(252, 252, 254);
+/// White key hovered gradient.
+const KEY_WHITE_HOVER_TOP: Color32 = Color32::from_rgb(228, 230, 236);
+const KEY_WHITE_HOVER_BOTTOM: Color32 = Color32::from_rgb(255, 255, 255);
+/// Drop-shadow line at the top edge of a white key.
+const KEY_WHITE_TOP_SHADOW: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 28);
+/// White key outline.
+const KEY_WHITE_BORDER: Color32 = Color32::from_rgb(176, 179, 188);
+/// "C" note-name label text.
+const KEY_LABEL_TEXT: Color32 = Color32::from_rgb(100, 100, 110);
+/// Black key resting profile: dark top → mid body → lit front lip.
+const KEY_BLACK_TOP: Color32 = Color32::from_rgb(14, 15, 19);
+const KEY_BLACK_BOTTOM: Color32 = Color32::from_rgb(50, 52, 60);
+const KEY_BLACK_LIP: Color32 = Color32::from_rgb(82, 85, 96);
+/// Black key hovered profile: top → body → lip.
+const KEY_BLACK_HOVER_TOP: Color32 = Color32::from_rgb(30, 31, 38);
+const KEY_BLACK_HOVER_BOTTOM: Color32 = Color32::from_rgb(70, 72, 82);
+const KEY_BLACK_HOVER_LIP: Color32 = Color32::from_rgb(100, 103, 116);
+/// Gloss highlight along the top edge of a black key.
+const KEY_BLACK_GLOSS: Color32 = Color32::from_rgba_unmultiplied_const(255, 255, 255, 18);
+/// Black key outline.
+const KEY_BLACK_BORDER: Color32 = Color32::from_rgb(8, 8, 11);
+
 /// Width of a single white key in pixels.
 const WHITE_KEY_WIDTH: f32 = 24.0;
 /// Number of white keys per octave (C D E F G A B).
@@ -214,11 +242,9 @@ impl PianoKeyboard {
 
         let painter = ui.painter();
         painter.rect_filled(outer_rect, 4.0, theme().colors.bg_dark);
-        painter.with_clip_rect(inner_rect).rect_filled(
-            inner_rect,
-            2.0,
-            Color32::from_rgb(15, 16, 20),
-        );
+        painter
+            .with_clip_rect(inner_rect)
+            .rect_filled(inner_rect, 2.0, KEYBOARD_WELL_BG);
 
         let mut clicked_note: Option<u8> = None;
         let mut hovered_black_key: Option<u8> = None;
@@ -274,8 +300,8 @@ impl PianoKeyboard {
 
             // Vertical shading: a soft shadow at the top (where the key meets
             // the fallboard) brightening toward the lit front edge.
-            let normal_top = Color32::from_rgb(221, 223, 230);
-            let normal_bottom = Color32::from_rgb(252, 252, 254);
+            let normal_top = KEY_WHITE_TOP;
+            let normal_bottom = KEY_WHITE_BOTTOM;
             let (top_color, bottom_color) = if let Some(vel) = velocity {
                 // Played note: wash the key toward the theme accent (never a
                 // hardcoded colour), more saturated with velocity. The floor is
@@ -287,10 +313,7 @@ impl PianoKeyboard {
                     mix(normal_bottom, accent, t),
                 )
             } else if is_hovered {
-                (
-                    Color32::from_rgb(228, 230, 236),
-                    Color32::from_rgb(255, 255, 255),
-                )
+                (KEY_WHITE_HOVER_TOP, KEY_WHITE_HOVER_BOTTOM)
             } else {
                 (normal_top, normal_bottom)
             };
@@ -308,7 +331,7 @@ impl PianoKeyboard {
             painter.with_clip_rect(inner_rect).rect_filled(
                 Rect::from_min_size(key_rect.min, Vec2::new(key_rect.width(), 2.0)),
                 0.0,
-                Color32::from_rgba_unmultiplied(0, 0, 0, 28),
+                KEY_WHITE_TOP_SHADOW,
             );
 
             // Active computer-keyboard octave range: a translucent theme-accent
@@ -351,7 +374,7 @@ impl PianoKeyboard {
                     sw: WHITE_KEY_RADIUS,
                     se: WHITE_KEY_RADIUS,
                 },
-                Stroke::new(1.0, Color32::from_rgb(176, 179, 188)),
+                Stroke::new(1.0, KEY_WHITE_BORDER),
                 egui::StrokeKind::Inside,
             );
 
@@ -365,7 +388,7 @@ impl PianoKeyboard {
                     egui::Align2::LEFT_TOP,
                     label,
                     egui::FontId::proportional(9.0),
-                    Color32::from_rgb(100, 100, 110),
+                    KEY_LABEL_TEXT,
                 );
             }
 
@@ -392,11 +415,7 @@ impl PianoKeyboard {
 
             // Glossy profile: darkest at the top, easing to a lit front face
             // (`lip`) along the bottom chamfer.
-            let rest = (
-                Color32::from_rgb(14, 15, 19),
-                Color32::from_rgb(50, 52, 60),
-                Color32::from_rgb(82, 85, 96),
-            );
+            let rest = (KEY_BLACK_TOP, KEY_BLACK_BOTTOM, KEY_BLACK_LIP);
             let (top_color, bottom_color, lip_color) = if let Some(vel) = velocity {
                 // Played note lights up toward the theme accent, brighter with
                 // velocity. `mix` keeps the colour opaque (unlike gamma_multiply,
@@ -410,9 +429,9 @@ impl PianoKeyboard {
                 )
             } else if is_hovered {
                 (
-                    Color32::from_rgb(30, 31, 38),
-                    Color32::from_rgb(70, 72, 82),
-                    Color32::from_rgb(100, 103, 116),
+                    KEY_BLACK_HOVER_TOP,
+                    KEY_BLACK_HOVER_BOTTOM,
+                    KEY_BLACK_HOVER_LIP,
                 )
             } else {
                 rest
@@ -448,7 +467,7 @@ impl PianoKeyboard {
             painter.with_clip_rect(inner_rect).rect_filled(
                 Rect::from_min_size(key_rect.min, Vec2::new(black_key_width, 1.5)),
                 0.0,
-                Color32::from_rgba_unmultiplied(255, 255, 255, 18),
+                KEY_BLACK_GLOSS,
             );
 
             // Active octave range: theme-accent wash + front-edge bar. Skipped
@@ -490,7 +509,7 @@ impl PianoKeyboard {
                     sw: BLACK_KEY_RADIUS,
                     se: BLACK_KEY_RADIUS,
                 },
-                Stroke::new(1.0, Color32::from_rgb(8, 8, 11)),
+                Stroke::new(1.0, KEY_BLACK_BORDER),
                 egui::StrokeKind::Inside,
             );
 

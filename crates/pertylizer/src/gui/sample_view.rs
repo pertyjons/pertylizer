@@ -15,6 +15,12 @@ use crate::gui::theme::theme;
 use synth_core::SampleCount;
 use synth_sampler::{CropRegion, FrameIndex, LoopRegion, SampleId, SampleLibrary};
 
+// --- Sample view palette ---
+/// Dim overlay over cropped-out (inactive) waveform regions.
+const DIM_OVERLAY: Color32 = Color32::from_black_alpha(100);
+/// Loop region overlay tint.
+const LOOP_REGION_GREEN: Color32 = Color32::from_rgba_unmultiplied_const(100, 200, 100, 30);
+
 // ============================================================================
 // PEAK CACHE
 // ============================================================================
@@ -692,7 +698,7 @@ fn draw_waveform(ui: &mut egui::Ui, state: &mut SampleViewState, sample: &synth_
                         rect.left_top(),
                         egui::pos2(crop_x.min(rect.right()), rect.bottom()),
                     );
-                    painter.rect_filled(dim_rect, 0.0, Color32::from_black_alpha(100));
+                    painter.rect_filled(dim_rect, 0.0, DIM_OVERLAY);
                 }
             }
 
@@ -704,7 +710,7 @@ fn draw_waveform(ui: &mut egui::Ui, state: &mut SampleViewState, sample: &synth_
                         egui::pos2(crop_x.max(rect.left()), rect.top()),
                         rect.right_bottom(),
                     );
-                    painter.rect_filled(dim_rect, 0.0, Color32::from_black_alpha(100));
+                    painter.rect_filled(dim_rect, 0.0, DIM_OVERLAY);
                 }
             }
         }
@@ -728,11 +734,7 @@ fn draw_waveform(ui: &mut egui::Ui, state: &mut SampleViewState, sample: &synth_
                     egui::pos2(clamped_start, rect.top()),
                     egui::pos2(clamped_end, rect.bottom()),
                 );
-                painter.rect_filled(
-                    loop_rect,
-                    0.0,
-                    Color32::from_rgba_unmultiplied(100, 200, 100, 30),
-                );
+                painter.rect_filled(loop_rect, 0.0, LOOP_REGION_GREEN);
             }
 
             // Loop start/end lines (only if visible)
