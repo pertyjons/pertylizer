@@ -173,8 +173,12 @@
   Effect-chain order matters but is only a symptom: vocoder first → narrowband input
   → poles cluster at formant → 25× gain; vocoder after chorus+reverb → broader
   input → poles spread → modest gain.
-- When saving a project with samples, the save should always be in zip-format and file extention .zip, and all other
-  should be saved in json with file extention .json
+- [x] **Project save format follows sample content.** A project with samples always saves
+  as a `.zip` bundle; otherwise plain `.json`. Enforced by `project_extension` /
+  `normalize_project_path` (which forces the extension regardless of what the user typed) at
+  every save path — GUI File-menu save and MCP `do_save_project` both branch on
+  `has_samples` → `save_bundle` vs JSON. Locked by unit tests in `project.rs` (verified
+  2026-06-01; the helpers and call sites were already correct, the tests were the gap).
 - [ ] **Follow-up: stale `list_instruments` readback inside one `batch_execute`.** The primary
   bridge-race (set/get validation failing with `"instrument not found"` right after
   `apply_example_patch`) was fixed by adding a synchronous `alive_instruments` mirror on

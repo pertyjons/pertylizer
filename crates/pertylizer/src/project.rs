@@ -269,4 +269,37 @@ mod tests {
         assert!((state.glide_time.as_f32()).abs() < f32::EPSILON);
         assert!(state.awe.is_none());
     }
+
+    #[test]
+    fn project_extension_picks_zip_for_samples_json_otherwise() {
+        assert_eq!(project_extension(true), "zip");
+        assert_eq!(project_extension(false), "json");
+    }
+
+    #[test]
+    fn normalize_project_path_forces_the_format_extension() {
+        // Samples present → always `.zip`, whatever the user typed.
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track.json"), true),
+            PathBuf::from("/songs/track.zip")
+        );
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track"), true),
+            PathBuf::from("/songs/track.zip")
+        );
+        // No samples → always `.json`, even if the user typed `.zip`.
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track.zip"), false),
+            PathBuf::from("/songs/track.json")
+        );
+    }
+
+    #[test]
+    fn normalize_project_path_is_idempotent() {
+        for has_samples in [true, false] {
+            let once = normalize_project_path(Path::new("/songs/track.bin"), has_samples);
+            let twice = normalize_project_path(&once, has_samples);
+            assert_eq!(once, twice);
+        }
+    }
 }
