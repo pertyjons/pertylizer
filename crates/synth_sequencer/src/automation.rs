@@ -363,9 +363,14 @@ pub enum TrackParam {
 }
 
 /// Automatable global parameters.
+///
+/// Tempo is deliberately **not** here: it changes the playback time grid itself
+/// rather than a per-block value, so it lives in the song's dedicated tempo map
+/// (`Song::set_tempo_at` / `tempo_at`) — the single source of truth that drives
+/// the sequencer's tick rate — instead of a generic automation lane that would
+/// compete with it. `Swing` has no engine implementation yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum GlobalParam {
-    Tempo,
     MasterVolume,
     Swing,
 }
@@ -423,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_automation_lane_value_at() {
-        let mut lane = AutomationLane::new(AutomationTarget::Global(GlobalParam::Tempo));
+        let mut lane = AutomationLane::new(AutomationTarget::Global(GlobalParam::MasterVolume));
 
         lane.add_point(AutomationPoint::new(
             PatternTick(0),

@@ -869,9 +869,8 @@
       ]
     },
     "GlobalParam": {
-      "description": "Automatable global parameters.",
+      "description": "Automatable global parameters.\n\nTempo is deliberately **not** here: it changes the playback time grid itself\nrather than a per-block value, so it lives in the song's dedicated tempo map\n(`Song::set_tempo_at` / `tempo_at`) — the single source of truth that drives\nthe sequencer's tick rate — instead of a generic automation lane that would\ncompete with it. `Swing` has no engine implementation yet.",
       "enum": [
-        "Tempo",
         "MasterVolume",
         "Swing"
       ],

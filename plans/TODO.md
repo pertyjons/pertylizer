@@ -101,14 +101,15 @@
     struct merge above. The two are independent — A does not require the merge.
 - [x] **★ HIGH — mostly RESOLVED: pattern automation targets now reach the engine.**
   Instrument macros (Automation A1), generic `AutomationTarget::Module` (A2), and Track
-  Volume/Pan/Mute + Global MasterVolume (channel-strip Phase 2) all sound now. Still
-  open: `Global(Tempo)`/`Global(Swing)`/`Track(Solo)` → see §2.1. Historical detail:
+  Volume/Pan/Mute + Global MasterVolume (channel-strip Phase 2) all sound now.
+  `Global(Tempo)` was removed (use the tempo map — see §2.1). Still open:
+  `Global(Swing)`/`Track(Solo)` (no engine implementation). Historical detail:
   Resolves the audit follow-up above ("automation lanes — do they all reach the engine?").
   The automation system (`synth_sequencer/src/automation.rs`) defines
   `AutomationTarget::{Instrument, Track, Global}` covering 8 instrument params
   (`AutoInstrumentParam::ALL` — Volume, Pan, FilterCutoff, FilterResonance, Attack, Decay,
-  Sustain, Release), 4 track params (Volume, Pan, Mute, Solo) and 3 global params (Tempo,
-  MasterVolume, Swing). The sequencer reads every lane per tick
+  Sustain, Release), 4 track params (Volume, Pan, Mute, Solo) and (at the time) 3 global
+  params (Tempo — since removed, see §2.1; MasterVolume; Swing). The sequencer reads every lane per tick
   (`sequencer_engine.rs:379` / `:454` via `lane.value_at`), deduplicates, and emits
   `SequencerEvent::Parameter` (`sequencer_engine.rs:504`). But the engine handler
   (`synth_engine.rs:2469`) only matches `AutomationTarget::Instrument`, and within it only
@@ -120,10 +121,10 @@
   (a) route the non-Volume/Pan instrument params through the same per-module parameter path
   `set_parameter` uses (map `AutoInstrumentParam::FilterCutoff` → the instrument's filter
   module cutoff param, etc.) — this needs the module routing the comment defers;
-  (b) add match arms for `Global(Tempo)` → `transport.set_tempo`, `Global(MasterVolume)`,
-  `Global(Swing)`, and `Track { .. }` — though track automation shares the same missing
-  per-track output bus as the static `track.pan`/`.volume` item above, so land that
-  plumbing first. See §2.1 (tempo) — that entry assumed tempo automation was already applied.
+  (b) add match arms for `Global(MasterVolume)` and `Track { .. }` — though track automation
+  shares the same missing per-track output bus as the static `track.pan`/`.volume` item above,
+  so land that plumbing first. (`Global(Tempo)` was later removed rather than wired — tempo
+  lives in the song tempo map; see §2.1. `Global(Swing)` remains unimplemented.)
 - [ ] **★ HIGH: expand Sub Oscillator waveform set from 3 to 6.** `SubOscWaveform`
   (`crates/synth_core/src/params/sub_osc.rs:13`) currently exposes only
   `Sine / Square / Pulse25`, while the main `Oscillator` exposes 6
@@ -472,12 +473,17 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
 
 ### 2.1 Tempo automation
 
-- [ ] **Wire `Global(Tempo)` automation into the engine at all** (see the §0.1 HIGH item on
-  unwired automation targets). A tempo lane currently emits an unhandled
-  `SequencerEvent::Parameter` and does nothing — the "step changes only" note below assumed
-  it was already applied. Drive `transport.set_tempo` from the lane value first.
-- [ ] Tempo curve interpolation (once wired, currently would be step changes only — accelerando
-  ramps would smooth between two adjacent points)
+- [x] **`Global(Tempo)` automation removed (not wired).** Decided 2026-06-01: tempo
+  changes the playback time grid itself, not a per-block value, so it doesn't fit the
+  generic automation-lane model and a `Global(Tempo)` lane would be a *second* source of
+  truth competing with the song's tempo map (`Song::set_tempo_at` / `tempo_at`), which is
+  what actually drives the sequencer tick rate. The lane was a silent no-op (never built by
+  GUI/MCP, only reachable from hand-edited JSON), so the `GlobalParam::Tempo` variant was
+  removed. The tempo map is the canonical mechanism.
+- [ ] **Expose + edit the tempo map** (`Song::set_tempo_at` / `tempo_changes`): MCP tools
+  and a GUI tempo-track/curve editor, with interpolation between adjacent tempo points
+  (accelerando/ritardando ramps) rather than the current step changes. This is the real
+  "tempo automation" feature — built on the tempo map, not a generic lane.
 
 ### 2.2 Section markers
 
