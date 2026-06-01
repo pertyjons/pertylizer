@@ -30,20 +30,13 @@ jobs:
         run: cargo fmt --check
       - name: Build visualizer
         run: cargo build --release --manifest-path visualizer/Cargo.toml
-      - name: Binary size
-        run: |
-          ls -lh target/release/pertylizer | awk '{print "Pertylizer size:", $5}'
-          ls -lh visualizer/target/release/pertylizer-visualizer | awk '{print "Visualizer size:", $5}'
-      - name: Upload pertylizer binary
+      - name: Assemble package
+        run: bash packaging/assemble.sh linux x86_64
+      - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: pertylizer-ubuntu
-          path: target/release/pertylizer
-      - name: Upload visualizer binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: visualizer-ubuntu
-          path: visualizer/target/release/pertylizer-visualizer
+          name: package-linux
+          path: ${{ env.PKG_NAME }}.zip
 
   macos:
     name: macOS
@@ -64,20 +57,13 @@ jobs:
         run: cargo fmt --check
       - name: Build visualizer
         run: cargo build --release --manifest-path visualizer/Cargo.toml
-      - name: Binary size
-        run: |
-          ls -lh target/release/pertylizer | awk '{print "Pertylizer size:", $5}'
-          ls -lh visualizer/target/release/pertylizer-visualizer | awk '{print "Visualizer size:", $5}'
-      - name: Upload pertylizer binary
+      - name: Assemble package
+        run: bash packaging/assemble.sh macos aarch64
+      - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: pertylizer-macos
-          path: target/release/pertylizer
-      - name: Upload visualizer binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: visualizer-macos
-          path: visualizer/target/release/pertylizer-visualizer
+          name: package-macos
+          path: ${{ env.PKG_NAME }}.zip
 
   windows:
     name: Windows
@@ -98,23 +84,14 @@ jobs:
         run: cargo fmt --check
       - name: Build visualizer
         run: cargo build --release --manifest-path visualizer/Cargo.toml
-      - name: Binary size
+      - name: Assemble package
         shell: pwsh
-        run: |
-          $size = (Get-Item target\release\pertylizer.exe).Length / 1MB
-          Write-Host ("Pertylizer size: {0:N1} MB" -f $size)
-          $vsize = (Get-Item visualizer\target\release\pertylizer-visualizer.exe).Length / 1MB
-          Write-Host ("Visualizer size: {0:N1} MB" -f $vsize)
-      - name: Upload pertylizer binary
+        run: ./packaging/assemble.ps1 -Os windows -Arch x86_64
+      - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: pertylizer-windows
-          path: target/release/pertylizer.exe
-      - name: Upload visualizer binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: visualizer-windows
-          path: visualizer/target/release/pertylizer-visualizer.exe
+          name: package-windows
+          path: ${{ env.PKG_NAME }}.zip
 
   release:
     name: Release
@@ -144,42 +121,40 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract changelog
+      - name: Build release notes
         if: steps.check.outputs.exists == 'false'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          awk "/^## \[$VERSION\]/{found=1; next} /^## \[/{if(found) exit} found{print}" docs/history.md > /tmp/changelog.md
+          {
+            # Curated highlights for this version from docs/history.md.
+            awk "/^## \[$VERSION\]/{found=1; next} /^## \[/{if(found) exit} found{print}" docs/history.md
+            echo
+            echo "## Downloads"
+            echo
+            echo "| Platform | File |"
+            echo "|----------|------|"
+            echo "| Linux (x86_64) | \`pertylizer-$VERSION-linux-x86_64.zip\` |"
+            echo "| macOS (Apple Silicon) | \`pertylizer-$VERSION-macos-aarch64.zip\` |"
+            echo "| Windows (x86_64) | \`pertylizer-$VERSION-windows-x86_64.zip\` |"
+            echo
+            echo "Each archive bundles both apps, example projects, AI-CLI MCP configs, and an editable \`pertylizer.toml\`. See the bundled \`README.md\` to get started."
+          } > /tmp/notes.md
 
-      - name: Download artifacts
+      - name: Download packages
         if: steps.check.outputs.exists == 'false'
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: Prepare release assets
-        if: steps.check.outputs.exists == 'false'
-        run: |
-          cd artifacts
-          mv pertylizer-ubuntu/pertylizer pertylizer-linux-x86_64
-          mv pertylizer-macos/pertylizer pertylizer-macos-aarch64
-          mv pertylizer-windows/pertylizer.exe pertylizer-windows-x86_64.exe
-          mv visualizer-ubuntu/pertylizer-visualizer pertylizer-visualizer-linux-x86_64
-          mv visualizer-macos/pertylizer-visualizer pertylizer-visualizer-macos-aarch64
-          mv visualizer-windows/pertylizer-visualizer.exe pertylizer-visualizer-windows-x86_64.exe
-          chmod +x pertylizer-linux-x86_64 pertylizer-macos-aarch64
-          chmod +x pertylizer-visualizer-linux-x86_64 pertylizer-visualizer-macos-aarch64
 
       - name: Create release
         if: steps.check.outputs.exists == 'false'
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
             --title "Pertylizer ${{ steps.version.outputs.tag }}" \
-            --notes-file /tmp/changelog.md \
-            artifacts/pertylizer-linux-x86_64 \
-            artifacts/pertylizer-macos-aarch64 \
-            artifacts/pertylizer-windows-x86_64.exe \
-            artifacts/pertylizer-visualizer-linux-x86_64 \
-            artifacts/pertylizer-visualizer-macos-aarch64 \
-            artifacts/pertylizer-visualizer-windows-x86_64.exe
+            --notes-file /tmp/notes.md \
+            --generate-notes \
+            artifacts/package-linux/*.zip \
+            artifacts/package-macos/*.zip \
+            artifacts/package-windows/*.zip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

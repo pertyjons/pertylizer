@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "synth": {
+      "timeout": 5000,
+      "type": "http",
+      "serverURL": "http://127.0.0.1:9850/mcp"
+    }
+  }
+}

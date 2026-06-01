@@ -1,6 +1,6 @@
 //! OSC telemetry configuration.
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 
 /// OSC telemetry sender configuration.
 #[derive(Debug, Clone)]
@@ -13,6 +13,19 @@ pub struct OscConfig {
     pub meta_interval_secs: f32,
     /// Seconds without `/viz/pong` before entering idle mode (skip FFT, reduce rate).
     pub idle_timeout_secs: f32,
+}
+
+impl OscConfig {
+    /// Build a config from the network parts loaded from `pertylizer.toml`,
+    /// keeping the remaining intervals at their protocol defaults.
+    #[must_use]
+    pub fn from_parts(multicast_group: Ipv4Addr, port: u16, update_rate_hz: f32) -> Self {
+        Self {
+            target: SocketAddr::from((multicast_group, port)),
+            update_rate_hz,
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for OscConfig {

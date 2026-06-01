@@ -1,0 +1,19 @@
+# Pertylizer runtime configuration.
+#
+# This file is read at startup from the directory next to the executable
+# (and, failing that, the current working directory). Every field is optional —
+# delete a line to fall back to its built-in default. Both `pertylizer` and
+# `pertylizer-visualizer` read this same file, so they stay in sync.
+
+[mcp]
+# HTTP port for the MCP server: http://127.0.0.1:<port>/mcp
+# If you change this, update the matching AI-CLI configs in the `mcp/` folder.
+port = 9850
+
+[osc]
+# UDP port for OSC telemetry sent to the visualizer.
+port = 9000
+# Multicast group the telemetry is sent to / received from.
+multicast_group = "239.0.0.1"
+# Telemetry update rate in Hz.
+update_rate_hz = 30.0

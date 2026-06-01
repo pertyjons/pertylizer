@@ -19,6 +19,7 @@ osc = ["dep:synth_osc"]
 
 [dependencies]
 synth_core = { path = "../synth_core" }
+synth_config = { path = "../synth_config" }
 synth_dsp = { path = "../synth_dsp" }
 synth_sequencer = { path = "../synth_sequencer" }
 synth_modules = { path = "../synth_modules" }

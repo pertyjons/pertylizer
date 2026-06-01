@@ -1,0 +1,9 @@
+# Codex CLI MCP server entry.
+#
+# Merge this into ~/.codex/config.toml (Codex reads MCP servers from there;
+# it has no project-local config). Streamable-HTTP transport requires a recent
+# Codex CLI — enable it with `experimental_use_rmcp_client = true` if your
+# version needs it.
+
+[mcp_servers.synth]
+url = "http://127.0.0.1:9850/mcp"

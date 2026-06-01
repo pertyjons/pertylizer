@@ -127,8 +127,11 @@ impl Plugin for OscReceiverPlugin {
 }
 
 fn setup_osc_socket(mut commands: Commands) {
-    let port = synth_osc_protocol::DEFAULT_OSC_PORT;
-    let multicast_group = synth_osc_protocol::DEFAULT_MULTICAST_GROUP;
+    // Read the OSC port / multicast group from pertylizer.toml (next to the
+    // executable) so the visualizer matches the synth's telemetry settings.
+    let config = synth_config::RuntimeConfig::load();
+    let port = config.osc.port;
+    let multicast_group = config.osc.multicast_group;
 
     // Use socket2 to set SO_REUSEADDR before binding, allowing multiple
     // visualizer instances to share the same port.

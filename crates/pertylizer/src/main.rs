@@ -3,7 +3,8 @@
 //! # Usage
 //!
 //! ```bash
-//! # Run with GUI (MCP on port 9850 + OSC telemetry enabled by default)
+//! # Run with GUI (MCP + OSC telemetry enabled by default; ports from
+//! # pertylizer.toml next to the executable, defaults 9850 / 9000)
 //! cargo run
 //!
 //! # Run headless (no GUI, MCP server on stdio)
@@ -19,10 +20,6 @@ use pertylizer::audio::{self, AudioHostTrait, BufferSize, ChannelCount, SampleRa
 use pertylizer::gui::{SynthGuiConfig, create_backend};
 use pertylizer::synth_core::VoiceCount;
 use pertylizer::synth_engine::{AllocationMode, AllocatorConfig, SynthEngine};
-
-/// Default MCP HTTP port.
-#[cfg(feature = "mcp")]
-const MCP_PORT: u16 = 9850;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialise tracing FIRST. Writer is locked to stderr so --headless mode
@@ -76,6 +73,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     // Load persistent settings
     let settings = pertylizer::io::AppSettings::load();
 
+    // Load the runtime config (MCP / OSC ports) from pertylizer.toml next to
+    // the executable; falls back to defaults when the file is absent.
+    #[cfg(any(feature = "mcp", feature = "osc"))]
+    let config = synth_config::RuntimeConfig::load();
+
     // Create the synth engine with 8-voice polyphony
     let allocator_config = AllocatorConfig {
         max_voices: VoiceCount::OCTO,
@@ -89,7 +91,11 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
     let (_osc_telemetry, osc_shared) = if args.iter().any(|a| a == "--no-osc") {
         (None, None)
     } else {
-        let mut osc = synth_osc::OscTelemetry::new(synth_osc::OscConfig::default());
+        let mut osc = synth_osc::OscTelemetry::new(synth_osc::OscConfig::from_parts(
+            config.osc.multicast_group,
+            config.osc.port,
+            config.osc.update_rate_hz,
+        ));
         let shared = osc.shared_state();
         if let Some(consumer) = handle.take_note_event_consumer() {
             osc.start(std::sync::Arc::clone(&handle.state), consumer);
@@ -132,6 +138,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         ));
         let registry = shared.mcp_sessions.clone();
         let shared_for_flag = std::sync::Arc::clone(&shared);
+        let mcp_port = config.mcp.port;
         std::thread::spawn(move || {
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
@@ -144,8 +151,8 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
                 shared_for_flag
                     .mcp_listening
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                if let Err(e) = synth_mcp::serve_http(bridge, MCP_PORT, Some(registry)).await {
-                    tracing::error!(error = %e, port = MCP_PORT, "MCP HTTP server stopped");
+                if let Err(e) = synth_mcp::serve_http(bridge, mcp_port, Some(registry)).await {
+                    tracing::error!(error = %e, port = mcp_port, "MCP HTTP server stopped");
                     shared_for_flag
                         .mcp_listening
                         .store(false, std::sync::atomic::Ordering::Relaxed);

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/synth_core",
+    "crates/synth_config",
     "crates/synth_dsp",
     "crates/synth_sequencer",
     "crates/synth_modules",
@@ -36,6 +37,8 @@ serde = { version = "1.0.228", features = ["derive", "rc"] }
 # verbatim (Box<RawValue>) instead of parsing it into a Value tree and
 # re-serializing on every call.
 serde_json = { version = "1.0.150", features = ["raw_value"] }
+# TOML parsing for the runtime config file (pertylizer.toml).
+toml = "0.9.5"
 thiserror = "2.0.18"
 
 # Audio I/O
