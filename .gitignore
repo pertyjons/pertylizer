@@ -11,9 +11,7 @@ Thumbs.db
 .env
 
 # AI tool local config
-.claude/settings.json
-.claude/settings.local.json
-.claude/worktrees/
+.claude/
 .gemini/settings.json
 .ai/
 rec_debug.log
