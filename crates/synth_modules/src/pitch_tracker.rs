@@ -26,11 +26,11 @@ const ANALYSIS_HOP: usize = 512;
 ///
 /// # Spectral analysis via LPC
 ///
-/// `crate::math::lpc_analysis` is available for offline/non-RT spectral envelope
-/// extraction (e.g., formant detection, spectral matching). It returns `Vec<f32>`
-/// which allocates on the heap, so it must NOT be called from `process()` or any
-/// audio-thread code path. Suitable for UI-driven analysis, preset generation, or
-/// background worker threads.
+/// `crate::math::lpc_analysis_fixed` is available for spectral envelope
+/// extraction (e.g., formant detection, spectral matching). It is RT-safe
+/// (fixed-size buffers, no allocation) and returns the synthesis gain alongside
+/// the coefficients, with the reflection-coefficient clamp and non-finite guard
+/// that keep the all-pole model stable.
 #[derive(Clone)]
 pub struct PitchTracker {
     // Parameters

@@ -13,7 +13,7 @@ use synth_core::{
     SampleRate, StereoSample, VocoderParam, WidgetHint,
 };
 
-use crate::math::{MAX_LPC_ORDER, lpc_analysis_fixed};
+use crate::math::{MAX_LPC_ORDER, envelope_coeff, lpc_analysis_fixed, smooth_value};
 
 /// Analysis buffer size (max window, ~46ms at 48kHz).
 const MAX_WINDOW_SAMPLES: usize = 2048;
@@ -35,6 +35,22 @@ pub struct Vocoder {
     // LPC coefficients
     coeffs: [f32; MAX_LPC_ORDER],
 
+    // Synthesis gain `G = sqrt(∏(1 - kᵢ²))` from the last analysis. Drives the
+    // all-pole filter (`G·x[n] − Σ aₖ·y[n−k]`) so it doesn't apply the full
+    // resonance boost of the modelled envelope. Unity until the first analysis.
+    gain: f32,
+
+    // Output level-match (loudness preservation) envelope followers. `G` cancels
+    // the *average* prediction-gain boost, but this auto-vocoder still resonates
+    // at its own formants (it filters the input through `1/A(z)` built from that
+    // same input — the positive-feedback case), which can still boost some inputs.
+    // Following the dry and wet envelopes and scaling the wet so it never exceeds
+    // the dry level is the standard LPC gain-matching stage that bounds the output
+    // to the input loudness regardless of input. Smoothed → no zipper noise.
+    dry_env: f32,
+    wet_env: f32,
+    env_coeff: f32,
+
     // All-pole filter state
     filter_state: [f32; MAX_LPC_ORDER],
 
@@ -53,6 +69,12 @@ impl Vocoder {
             analysis_pos: 0,
             analysis_len: 960, // 20ms at 48kHz
             coeffs: [0.0; MAX_LPC_ORDER],
+            gain: 1.0,
+            dry_env: 0.0,
+            wet_env: 0.0,
+            // 10 ms loudness-follower time constant at the default rate; refreshed
+            // by `update_window_len` whenever the sample rate changes.
+            env_coeff: envelope_coeff(0.010, SampleRate::DVD_QUALITY.as_f32()),
             filter_state: [0.0; MAX_LPC_ORDER],
             sample_rate: SampleRate::DVD_QUALITY,
         }
@@ -63,10 +85,12 @@ impl Vocoder {
         (4.0 + v.as_f32() * 28.0) as usize
     }
 
-    /// Update analysis window length from milliseconds.
+    /// Update analysis window length (and the loudness-follower coefficient)
+    /// from the current sample rate.
     fn update_window_len(&mut self) {
         let samples = (self.window_size_ms.as_f32() * 0.001 * self.sample_rate.as_f32()) as usize;
         self.analysis_len = samples.clamp(64, MAX_WINDOW_SAMPLES);
+        self.env_coeff = envelope_coeff(0.010, self.sample_rate.as_f32());
     }
 
     /// Apply all-pole filter to a single sample using current LPC coefficients.
@@ -78,13 +102,16 @@ impl Vocoder {
     #[inline]
     fn filter_sample(&mut self, input: f32) -> f32 {
         let order = self.cached_order;
-        let mut output = input;
+        // `y[n] = G·x[n] − Σ aₖ·y[n−k]`: the synthesis gain `G` compensates the
+        // all-pole filter's resonance boost so the output tracks the input level.
+        let mut output = self.gain * input;
         for i in 0..order {
             output -= self.coeffs[i] * self.filter_state[i];
         }
         if !output.is_finite() {
             self.filter_state.fill(0.0);
             self.coeffs.fill(0.0);
+            self.gain = 1.0;
             return input;
         }
         for i in (1..order).rev() {
@@ -168,7 +195,7 @@ impl AudioEffect for Vocoder {
 
             if self.analysis_pos >= self.analysis_len {
                 self.analysis_pos = 0;
-                lpc_analysis_fixed(
+                self.gain = lpc_analysis_fixed(
                     &self.analysis_buf[..self.analysis_len],
                     self.cached_order,
                     &mut self.coeffs,
@@ -176,7 +203,21 @@ impl AudioEffect for Vocoder {
             }
 
             let filtered = self.filter_sample(mono);
-            let wet = StereoSample::new(filtered, filtered);
+
+            // Loudness-match: follow the dry and wet envelopes and scale the wet
+            // so it never exceeds the dry level. Bounds the auto-vocoder's
+            // self-resonance to the input loudness for any input (the LPC gain
+            // alone only compensates the average boost).
+            self.dry_env = smooth_value(self.dry_env, mono.abs(), self.env_coeff);
+            self.wet_env = smooth_value(self.wet_env, filtered.abs(), self.env_coeff);
+            let level_match = if self.wet_env > 1e-4 {
+                (self.dry_env / self.wet_env).min(1.0)
+            } else {
+                1.0
+            };
+            let matched = filtered * level_match;
+
+            let wet = StereoSample::new(matched, matched);
             let result = dry.blend(wet, mix);
             StereoSample::write_frame(output, frame, result);
         }
@@ -226,6 +267,9 @@ impl AudioEffect for Vocoder {
         self.analysis_buf.fill(0.0);
         self.analysis_pos = 0;
         self.coeffs.fill(0.0);
+        self.gain = 1.0;
+        self.dry_env = 0.0;
+        self.wet_env = 0.0;
         self.filter_state.fill(0.0);
     }
 
@@ -262,6 +306,34 @@ mod tests {
         assert_eq!(v.cached_order, 18); // 4 + 0.5*28 = 18
     }
 
+    #[test]
+    fn lpc_gain_attenuates_resonant_input() {
+        // A near-periodic (highly predictable) signal yields a strong LPC
+        // model → small residual energy → synthesis gain well below 1.0, which
+        // is what cancels the all-pole filter's resonance boost.
+        let n = 512;
+        let sig: Vec<f32> = (0..n)
+            .map(|i| (std::f32::consts::TAU * 8.0 * i as f32 / n as f32).sin() * 0.7)
+            .collect();
+        let mut coeffs = [0.0f32; MAX_LPC_ORDER];
+        let gain = lpc_analysis_fixed(&sig, 18, &mut coeffs);
+        assert!(gain.is_finite());
+        assert!(
+            (0.0..1.0).contains(&gain),
+            "resonant input should give attenuating gain in (0,1), got {gain}"
+        );
+    }
+
+    #[test]
+    fn lpc_gain_is_unity_on_degenerate_input() {
+        // Silence has no energy → no usable prediction → unity gain so the
+        // filter is a clean passthrough rather than a divide-by-zero.
+        let mut coeffs = [0.0f32; MAX_LPC_ORDER];
+        let gain = lpc_analysis_fixed(&[0.0f32; 256], 18, &mut coeffs);
+        assert_eq!(gain, 1.0);
+        assert!(coeffs.iter().all(|&c| c == 0.0));
+    }
+
     /// Regression: Vocoder + non-stationary input (impulse-like or
     /// formant-style decaying carriers) used to feed Levinson-Durbin a
     /// degenerate autocorrelation matrix → reflection coefficients with
@@ -277,34 +349,74 @@ mod tests {
         // MathOscillator "formant" algorithm that originally exposed this).
         let frames = 256;
         let mut input = vec![0.0f32; frames * 2];
+        let mut in_peak = 0.0f32;
         for f in 0..frames {
             let t = (f % 200) as f32 / 200.0;
             let s = (std::f32::consts::TAU * t * 11.0).sin() * (-t * 7.0).exp();
             input[f * 2] = s;
             input[f * 2 + 1] = s;
+            in_peak = in_peak.max(s.abs());
         }
         let mut output = vec![0.0f32; frames * 2];
         let context = ctx_with_rate(44100, frames);
 
+        let mut out_peak = 0.0f32;
+        for _ in 0..200 {
+            v.process(&input, &mut output, &context);
+            for sample in &output {
+                assert!(
+                    sample.is_finite(),
+                    "Vocoder output non-finite on decaying carrier: {sample}"
+                );
+                out_peak = out_peak.max(sample.abs());
+            }
+        }
+
+        // Before the fix this peaky carrier drove the all-pole filter to ~25×
+        // the input (clipping at 0 dB / going NaN). The synthesis gain `G`
+        // cancels the average prediction-gain boost and the output loudness-match
+        // pins the wet level to the dry envelope, so the output now tracks the
+        // input level (~1.8× peak here, allowing for envelope-follower lag).
+        // 2.5× is the musical bound from the original bug report; it still fails
+        // hard on any return of the old explosion.
+        assert!(
+            out_peak < 2.5 * in_peak,
+            "Vocoder resonance not tamed: out_peak {out_peak} ≥ 2.5× in_peak {in_peak}"
+        );
+    }
+
+    /// A sustained periodic tone (the common vocoder carrier) must come out at
+    /// roughly the input loudness — not the +19 dB boost the raw all-pole filter
+    /// applied before the output loudness-match was added.
+    #[test]
+    fn vocoder_preserves_loudness_on_sustained_tone() {
+        let mut v = Vocoder::new();
+        v.set_sample_rate(SampleRate::new(44100.0));
+
+        let frames = 256;
+        let mut input = vec![0.0f32; frames * 2];
+        let mut in_sq = 0.0f32;
+        for f in 0..frames {
+            let phase = (110.0 * f as f32 / 44100.0).fract();
+            let s = (2.0 * phase - 1.0) * 0.5; // sawtooth
+            input[f * 2] = s;
+            input[f * 2 + 1] = s;
+            in_sq += s * s;
+        }
+        let in_rms = (in_sq / frames as f32).sqrt();
+
+        let mut output = vec![0.0f32; frames * 2];
+        let context = ctx_with_rate(44100, frames);
         for _ in 0..200 {
             v.process(&input, &mut output, &context);
         }
 
-        for sample in &output {
-            assert!(
-                sample.is_finite(),
-                "Vocoder output non-finite on decaying carrier: {sample}"
-            );
-            // The clamped Levinson-Durbin keeps the filter strictly stable
-            // (poles inside the unit circle), but a high-Q resonator on a
-            // peaky carrier can still ring loud. We just want to catch
-            // unbounded growth — anything finite within ~50× input is fine,
-            // anything truly exploding will hit the NaN guard.
-            assert!(
-                sample.abs() < 50.0,
-                "Vocoder output exploded on decaying carrier: |{sample}| ≥ 50"
-            );
-        }
+        let out_rms = (output.iter().step_by(2).map(|s| s * s).sum::<f32>() / frames as f32).sqrt();
+        let ratio = out_rms / in_rms;
+        assert!(
+            (0.3..=1.5).contains(&ratio),
+            "Vocoder output loudness off: out/in RMS ratio {ratio} not in [0.3, 1.5]"
+        );
     }
 
     /// Make sure a clean sine wave still passes through stably across both

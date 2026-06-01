@@ -713,79 +713,14 @@ pub fn noise_shaped_dither(sample: f32, bits: u32, error_state: &mut f32) -> f32
     quantized / scale
 }
 
-// ── LPC Analysis ─────────────────────────────────────────────────────────
-
-/// Compute autocorrelation of a signal for LPC analysis.
-///
-/// Returns `order + 1` autocorrelation coefficients.
-///
-/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst>
-/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
-pub fn autocorrelation(samples: &[f32], order: usize) -> Vec<f32> {
-    let mut r = vec![0.0f32; order + 1];
-    for lag in 0..=order {
-        let mut sum = 0.0;
-        for i in 0..samples.len() - lag {
-            sum += samples[i] * samples[i + lag];
-        }
-        r[lag] = sum;
-    }
-    r
-}
-
-/// Levinson-Durbin recursion for LPC coefficient extraction.
-///
-/// Given autocorrelation coefficients `r` of length `order + 1`,
-/// returns LPC filter coefficients `a` of length `order`.
-///
-/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst>
-/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
-pub fn levinson_durbin(r: &[f32], order: usize) -> Vec<f32> {
-    if order == 0 || r.is_empty() || r[0].abs() < 1e-10 {
-        return vec![0.0; order];
-    }
-
-    let mut a = vec![0.0f32; order];
-    let mut a_prev = vec![0.0f32; order];
-    let mut error = r[0];
-
-    for i in 0..order {
-        // Calculate reflection coefficient
-        let mut sum = 0.0;
-        for j in 0..i {
-            sum += a_prev[j] * r[i - j];
-        }
-        let k = -(r[i + 1] + sum) / error;
-
-        // Update coefficients
-        a[i] = k;
-        for j in 0..i {
-            a[j] = a_prev[j] + k * a_prev[i - 1 - j];
-        }
-
-        // Update error
-        error *= 1.0 - k * k;
-        if error.abs() < 1e-10 {
-            break;
-        }
-
-        // Copy for next iteration
-        a_prev[..=i].copy_from_slice(&a[..=i]);
-    }
-
-    a
-}
-
-/// Compute LPC spectral envelope from audio samples.
-///
-/// Returns `order` LPC coefficients that represent the spectral envelope.
-/// Typical order: 10-16 for speech, 20-40 for music.
-pub fn lpc_analysis(samples: &[f32], order: usize) -> Vec<f32> {
-    let r = autocorrelation(samples, order);
-    levinson_durbin(&r, order)
-}
-
 // ── RT-safe LPC Analysis ────────────────────────────────────────────────
+//
+// Note: the earlier `Vec`-based `autocorrelation` / `levinson_durbin` /
+// `lpc_analysis` helpers were removed — they had no callers, allocated (so
+// they were never RT-safe), and lacked the reflection-coefficient clamp,
+// non-finite guard, and synthesis-gain return of the `_fixed` versions below
+// (i.e. they were an unstable, unfixed copy of exactly the LPC Vocoder bug).
+// Use the `_fixed` functions for both RT and offline analysis.
 
 /// Maximum LPC order for RT-safe analysis.
 pub const MAX_LPC_ORDER: usize = 32;
@@ -821,13 +756,23 @@ pub fn autocorrelation_fixed(samples: &[f32], order: usize, out: &mut [f32; MAX_
 /// ultimately NaN, and the offline render saturated. The 0.95 threshold
 /// is the same conservative value used in well-known LPC implementations
 /// (e.g. Praat) for the same numerical-conditioning reasons.
+///
+/// Returns the final residual (prediction-error) energy. With the un-normalized
+/// [`autocorrelation_fixed`] this starts at `r[0]` (the windowed signal energy)
+/// and is multiplied by `1 - kᵢ²` each step, so the return value equals
+/// `r[0] · ∏(1 - kᵢ²)`. The ratio `error / r[0] = ∏(1 - kᵢ²)` is the inverse of
+/// the LPC prediction gain — the synthesis filter `1/A(z)` boosts energy by
+/// exactly `r[0] / error`, so `sqrt(error / r[0])` is the gain that compensates
+/// it (see [`lpc_analysis_fixed`]). Degenerate inputs that produce no usable
+/// prediction return `r[0]` (→ unity compensation gain, i.e. passthrough).
 #[inline]
-pub fn levinson_durbin_fixed(r: &[f32], order: usize, out: &mut [f32; MAX_LPC_ORDER]) {
+pub fn levinson_durbin_fixed(r: &[f32], order: usize, out: &mut [f32; MAX_LPC_ORDER]) -> f32 {
     let order = order.min(MAX_LPC_ORDER);
     out.fill(0.0);
 
+    let r0 = if r.is_empty() { 0.0 } else { r[0] };
     if order == 0 || r.is_empty() || r[0].abs() < 1e-10 || !r[0].is_finite() {
-        return;
+        return r0;
     }
 
     let mut a_prev = [0.0f32; MAX_LPC_ORDER];
@@ -841,9 +786,10 @@ pub fn levinson_durbin_fixed(r: &[f32], order: usize, out: &mut [f32; MAX_LPC_OR
         let k_raw = -(r[i + 1] + sum) / error;
         // Clamp to stability range; bail entirely if the recursion produced a
         // non-finite value (autocorrelation matrix is too degenerate to model).
+        // Coefficients are zeroed → passthrough, so report `r0` for unity gain.
         if !k_raw.is_finite() {
             out.fill(0.0);
-            return;
+            return r0;
         }
         let k = k_raw.clamp(-0.95, 0.95);
 
@@ -859,17 +805,36 @@ pub fn levinson_durbin_fixed(r: &[f32], order: usize, out: &mut [f32; MAX_LPC_OR
 
         a_prev[..=i].copy_from_slice(&out[..=i]);
     }
+
+    error
 }
 
 /// RT-safe LPC analysis combining autocorrelation and Levinson-Durbin.
 ///
+/// Returns the **synthesis gain** `G` to drive the all-pole filter `1/A(z)`:
+/// `G = sqrt(error / r[0]) = sqrt(∏(1 - kᵢ²)) ∈ (0, 1]`. Without this gain the
+/// all-pole filter applies the full resonance boost of the modelled spectral
+/// envelope (the LPC Vocoder amplified resonant inputs by ~25×); `G` is the
+/// inverse of the prediction gain and cancels that boost so the filtered output
+/// tracks the input level. Returns `1.0` for degenerate inputs (passthrough).
+///
+/// Note: the gain is normalized by `r[0]` precisely because
+/// [`autocorrelation_fixed`] is un-normalized — `sqrt(error)` alone would scale
+/// with the window length and *amplify* rather than compensate.
+///
 /// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst>
 /// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 #[inline]
-pub fn lpc_analysis_fixed(samples: &[f32], order: usize, coeffs: &mut [f32; MAX_LPC_ORDER]) {
+pub fn lpc_analysis_fixed(samples: &[f32], order: usize, coeffs: &mut [f32; MAX_LPC_ORDER]) -> f32 {
     let mut r = [0.0f32; MAX_LPC_ORDER + 1];
     autocorrelation_fixed(samples, order, &mut r);
-    levinson_durbin_fixed(&r, order, coeffs);
+    let error = levinson_durbin_fixed(&r, order, coeffs);
+    let r0 = r[0];
+    if r0 > 1e-10 && error.is_finite() && error >= 0.0 {
+        (error / r0).sqrt().clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
 }
 
 // ── Dynamic Convolution ──────────────────────────────────────────────────
