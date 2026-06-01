@@ -1,5 +1,24 @@
 # Version History
 
+## [0.306.0] - 2026-06-01
+
+### Documentation sync — corrected counts + AI-workflow guide
+
+- **Aligned all READMEs to ground truth.** Module/effect counts, MCP tool count,
+  and the crate list were out of sync across docs; corrected everywhere to 67
+  module types (incl. 25 effects), 180+ MCP tools, and the full 12-crate
+  workspace (`synth_config` was missing). The stale "35 voice modules, 21
+  effects" line is gone from `packaging/README.md` and the workspace
+  `Cargo.toml` description.
+- **Refreshed the example-projects list** in `README.md` to match the actual
+  `assets/examples/projects/` folder (Finnish tango, neurofunk, Amiga tributes, …).
+- **Added a "Working with AI (MCP)" guide** to `packaging/README.md` with two
+  worked example workflows: analyze→diagnose→fix→verify a mix, and shaping a
+  performance via note expression (glide/vibrato) and effect-parameter automation.
+- **Refreshed project-load snapshot fixtures** for the 5 example songs whose
+  descriptions were updated in 3fc803b but whose fixtures were never regenerated,
+  fixing a red `every_example_project_matches_snapshot` test.
+
 ## [0.305.0] - 2026-05-31
 
 ### MCP medium batch — gain staging, chord progressions, master-volume fix

@@ -1,7 +1,7 @@
 # Pertylizer × MCP — AI Agent Integration Guide
 
 Pertylizer ships with a built-in [Model Context Protocol](https://modelcontextprotocol.io) server that exposes
-**~150 tools** for full remote control of the synth, sequencer, sample library, and Acoustic World Engine. Any
+**180+ tools** for full remote control of the synth, sequencer, sample library, and Acoustic World Engine. Any
 MCP-capable client — Claude Code, Claude Desktop, custom agents — can use it to build instruments, compose songs,
 edit patterns, render audio, and analyze the result, all while the synth keeps running.
 
@@ -440,7 +440,7 @@ mod-matrix slot-source mismatches. Run it after any patch edit to catch broken g
                          ▼
 ┌─────────────────────────────────────────────────────────┐
 │  synth_mcp::server (rmcp + axum)                        │
-│  • ~150 #[tool] handlers                                │
+│  • 180+ #[tool] handlers                                │
 │  • Validates JSON params, serializes results            │
 └────────────────────────┬────────────────────────────────┘
                          │  SynthBridge trait (primitive types only)

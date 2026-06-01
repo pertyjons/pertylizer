@@ -42,8 +42,8 @@ exploratory encounter — poke at things, see what happens, and discover how it 
 
 A quick tour of what's inside — each item is described in more detail in its own section below.
 
-- **Modular synthesis** — 67 module types and 25 effects, patched freely over a DAG-based audio graph with live cable
-  visualization, plus 60 built-in patches to start from
+- **Modular synthesis** — 67 module types (including 25 effects), patched freely over a DAG-based audio graph with live
+  cable visualization, plus 60 built-in patches to start from
 - **Real-time GUI** — an immediate-mode egui interface for building instruments, wiring modules, and tweaking
   parameters while everything keeps playing
 - **MIDI** — hardware MIDI input with velocity, pitch bend, mod wheel, and aftertouch
@@ -58,15 +58,17 @@ A quick tour of what's inside — each item is described in more detail in its o
   44.1/48/96 kHz, with adjustable duration and reverb/delay tail
 - **3D visualizer** — a separate Bevy app driven by OSC telemetry, with 27 audio-reactive effects, 11 scene presets,
   and 8 themes
-- **AI integration** — ~120 MCP tools that let agents like Claude build, compose, and analyze right alongside you
+- **AI integration** — 180+ MCP tools that let agents like Claude build, compose, and analyze right alongside you
 
 ## Examples
 
 A good place to start poking around is [`assets/examples/`](assets/examples/), which ships with a handful of things
 to load and pull apart:
 
-- **`projects/`** — full songs you can open and play, from `Oxygene Dreams` and `Neon Horizon` to `Escape from
-  Stockholm`, `Synth Pop a la Codex`, and a `Sidechain Demo`
+- **`projects/`** — full songs you can open and play, spanning genres: `Oxygene Dreams (80s Techno)` and
+  `Neon Horizon`, the Carpenter-style `Escape from Stockholm`, the Finnish tango `Karu Sydän — Suomalainen Tango`,
+  the neurofunk `Neuro F#m 174-extended`, a `Synth Pop a la Codex`, two Amiga-tracker tributes (`Classic Amiga
+  module` and the sample-bundled `echoing`), and a `Sidechain Demo`
 - **`patches/`** — individual instrument sounds, such as `moog_resonant_sweep`, `hybrid_resonator`, and a
   `robot-from-hell-audio-input` patch that runs live audio input through the voice graph
 - **`awe/`** — Acoustic World Engine room presets (e.g. `cave_perty`)
@@ -83,9 +85,9 @@ At its core, Pertylizer is a modular synthesizer. Every instrument is a voice gr
 feeding a per-instrument effect chain. You can start from one of the built-in patches or from an empty graph and build
 up from scratch.
 
-- **67 module types** — oscillators (standard, wavetable, additive, granular, fractal, FM/math, sub, LA synth, vector,
-  pad synth, chaotic), filters (ladder, SVF, biquad, formant), envelopes, LFOs, MSEG, mod matrix, ring mod, drift
-  generator, sampler, audio input, and more
+- **67 module types** (39 voice & synthesis modules, 25 effects, 3 inline visualizers) — oscillators (standard,
+  wavetable, additive, granular, fractal, FM/math, sub, LA synth, vector, pad synth, chaotic), filters (ladder, SVF,
+  biquad, formant), envelopes, LFOs, MSEG, mod matrix, ring mod, drift generator, sampler, audio input, and more
 - **25 effects** — delay, BBD delay, reverb, shimmer reverb, reverse gate reverb, chorus, ensemble chorus, flanger,
   phaser, univibe, distortion, waveshaper, compressor, limiter, EQ, tilt EQ, mid/side, crossover splitter, convolver,
   phase vocoder, vocoder, frequency shifter, granular FX, spectral blur, modal resonator
@@ -139,7 +141,7 @@ input.
 
 ## AI Integration via MCP
 
-Pertylizer exposes **~120 MCP tools** that let AI agents (Claude Code, Claude Desktop, or any MCP-capable client)
+Pertylizer exposes **180+ MCP tools** that let AI agents (Claude Code, Claude Desktop, or any MCP-capable client)
 build instruments, compose songs, edit patterns, set parameters, render and analyze audio, and play notes in real time
 — all while the synth keeps running.
 
@@ -287,13 +289,14 @@ cargo test && cargo clippy --all-targets && cargo fmt --check
 | Crate                | Description                                                  |
 |----------------------|--------------------------------------------------------------|
 | `synth_core`         | Domain types, module traits, audio abstractions              |
+| `synth_config`       | Runtime config (`pertylizer.toml`) shared by app & visualizer |
 | `synth_dsp`          | DSP primitives: oscillators, filters, delay lines, FFT       |
 | `synth_awe`          | Acoustic World Engine — spatial audio & room simulation      |
 | `synth_sampler`      | Sample loading, playback, and waveform analysis              |
 | `synth_sequencer`    | Pattern and song sequencing                                  |
 | `synth_modules`      | 67 module types including 25 effects                         |
 | `synth_engine`       | Audio engine: voice allocation, modular graph, mixing        |
-| `synth_mcp`          | MCP server with ~120 tools for AI agent integration          |
+| `synth_mcp`          | MCP server with 180+ tools for AI agent integration          |
 | `synth_osc`          | OSC telemetry sender (spectrum, notes, transport over UDP)   |
 | `synth_osc_protocol` | Shared OSC protocol definitions for synth and visualizer     |
 | `pertylizer`         | Main application: GUI, audio I/O, MIDI                       |
