@@ -56,8 +56,6 @@ const CLOSE_BUTTON_HOVER_RED: Color32 = Color32::from_rgb(255, 100, 100);
 const CLOSE_BUTTON_IDLE: Color32 = Color32::from_rgba_premultiplied(200, 200, 200, 150);
 /// Background grid line color (faint blue-gray).
 const GRID_LINE_COLOR: Color32 = Color32::from_rgba_unmultiplied_const(60, 65, 75, 50);
-/// Fully transparent fill (group outline rects).
-const TRANSPARENT_FILL: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 0);
 
 /// Trim sweep data to the last rising-edge crossing so the display
 /// always shows complete waveform cycles (no visual gap at the end).
@@ -2988,7 +2986,7 @@ impl PatchEditor {
             painter.rect(
                 *rect,
                 6.0,
-                TRANSPARENT_FILL,
+                Color32::TRANSPARENT,
                 stroke,
                 egui::StrokeKind::Inside,
             );
