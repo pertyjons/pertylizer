@@ -2,10 +2,12 @@
 //!
 //! Defines tool handlers that delegate to the SynthBridge trait.
 
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use futures_util::FutureExt;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
@@ -40,6 +42,48 @@ fn validate_file_path(path: &str) -> Result<(), String> {
 /// Serialize a value to pretty-printed JSON, returning an error string on failure.
 fn to_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|e| format!("Serialization error: {e}"))
+}
+
+/// Extract a human-readable message from a caught panic payload
+/// (`Box<dyn Any + Send>`), covering the common `&str` / `String` cases.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
+/// Poll a tool future, converting any panic into `Err(panic message)` instead
+/// of letting it unwind into — and kill — the tokio worker thread (which would
+/// drop the whole MCP session, surfacing as `404 Session not found` on the
+/// next request). A panic inside a synchronous `block_in_place` bridge call
+/// unwinds during this poll, so it is caught here. parking_lot locks don't
+/// poison, so the bridge stays usable after a recovered panic.
+///
+/// On a caught panic the recovery is logged once here (so both the direct and
+/// the batch entry points share one log site) and the panic message is returned
+/// to the caller, which maps it onto its own error type.
+async fn run_catching_panic<R>(
+    session_id: u64,
+    tool: &str,
+    fut: impl std::future::Future<Output = R>,
+) -> Result<R, String> {
+    match AssertUnwindSafe(fut).catch_unwind().await {
+        Ok(output) => Ok(output),
+        Err(payload) => {
+            let msg = panic_message(payload.as_ref());
+            tracing::error!(
+                session_id,
+                tool,
+                panic = %msg,
+                "MCP tool handler panicked (recovered)"
+            );
+            Err(msg)
+        }
+    }
 }
 
 /// Run a blocking bridge call on a dedicated worker so the tokio executor
@@ -2976,7 +3020,19 @@ impl SynthMcpServer {
         validate_only: bool,
     ) -> Result<String, String> {
         let started = Instant::now();
-        let result = self.dispatch_tool_inner(tool, params, validate_only).await;
+        // Isolate a panicking sub-op (e.g. a panic inside a `block_in_place`
+        // bridge call) so one bad op surfaces as an error instead of killing
+        // the tokio worker and dropping the session.
+        let result = match run_catching_panic(
+            self.session_id,
+            tool,
+            self.dispatch_tool_inner(tool, params, validate_only),
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(msg) => Err(format!("Error: tool '{tool}' panicked: {msg}")),
+        };
         let elapsed_ms = started.elapsed().as_millis();
         match &result {
             Err(msg) => tracing::warn!(
@@ -3307,6 +3363,28 @@ impl Drop for SynthMcpServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for SynthMcpServer {
+    /// Override the macro-generated `call_tool` to isolate panics. A tool body
+    /// that panics (e.g. inside a `block_in_place` bridge call) would otherwise
+    /// unwind into the tokio worker thread and kill it, taking the whole MCP
+    /// session with it (observed as `404 Session not found` on the next
+    /// request). Catching the unwind here turns it into a normal tool error.
+    /// parking_lot locks don't poison, so the bridge stays usable afterwards.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let tool_name = request.name.clone();
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        match run_catching_panic(self.session_id, &tool_name, self.tool_router.call(tcc)).await {
+            Ok(result) => result,
+            Err(msg) => Err(ErrorData::internal_error(
+                format!("tool '{tool_name}' panicked: {msg}"),
+                None,
+            )),
+        }
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
@@ -7229,5 +7307,42 @@ mod automation_target_input_tests {
     fn validate_automation_point_requires_a_target() {
         assert!(validate_automation_point(&point(None, None)).is_err());
         assert!(validate_automation_point(&point(Some("Volume"), None)).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod panic_isolation_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn passes_through_a_non_panicking_result() {
+        let out = run_catching_panic(0, "test_tool", async { 42_u32 }).await;
+        assert_eq!(out, Ok(42));
+    }
+
+    #[tokio::test]
+    async fn recovers_a_str_panic_into_an_err_with_the_message() {
+        let out: Result<(), String> =
+            run_catching_panic(0, "test_tool", async { panic!("boom") }).await;
+        assert_eq!(out, Err("boom".to_string()));
+    }
+
+    #[tokio::test]
+    async fn recovers_a_string_panic_with_formatted_message() {
+        let out: Result<(), String> =
+            run_catching_panic(0, "test_tool", async { panic!("bad value {}", 7) }).await;
+        assert_eq!(out, Err("bad value 7".to_string()));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn recovers_a_panic_from_inside_block_in_place() {
+        // The real failure mode: a panic raised inside a synchronous
+        // `block_in_place` closure must unwind into this poll and be caught,
+        // not propagate up to the worker thread.
+        let out: Result<(), String> = run_catching_panic(0, "test_tool", async {
+            tokio::task::block_in_place(|| panic!("inside block_in_place"));
+        })
+        .await;
+        assert_eq!(out, Err("inside block_in_place".to_string()));
     }
 }
