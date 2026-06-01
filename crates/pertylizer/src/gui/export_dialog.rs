@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use egui::{Align, Layout, ProgressBar, RichText};
 
 use crate::audio::export::{BitDepth, ExportConfig, ExportProgress, start_export};
+use crate::gui::theme::theme;
 use crate::project::ProjectFile;
 
 /// Persistent state for the export dialog.
@@ -122,7 +123,7 @@ pub fn show_export_dialog(
 
             // --- Settings ---
             ui.heading("Export Settings");
-            ui.add_space(4.0);
+            ui.add_space(theme().spacing.xs);
 
             egui::Grid::new("export_settings_grid")
                 .num_columns(2)
@@ -187,7 +188,7 @@ pub fn show_export_dialog(
                     ui.end_row();
                 });
 
-            ui.add_space(8.0);
+            ui.add_space(theme().spacing.md);
 
             // Estimated file info
             let total_secs = state.duration_seconds + f64::from(state.tail_seconds);
@@ -208,9 +209,9 @@ pub fn show_export_dialog(
                 .weak(),
             );
 
-            ui.add_space(8.0);
+            ui.add_space(theme().spacing.md);
             ui.separator();
-            ui.add_space(4.0);
+            ui.add_space(theme().spacing.xs);
 
             // Buttons
             ui.with_layout(Layout::right_to_left(Align::TOP), |ui| {
@@ -235,7 +236,7 @@ pub fn show_export_dialog(
 /// Show progress bar and cancel button during export.
 fn show_progress_ui(ui: &mut egui::Ui, progress: &ExportProgress) {
     ui.heading("Exporting...");
-    ui.add_space(8.0);
+    ui.add_space(theme().spacing.md);
 
     let fraction = progress.fraction();
     ui.add(
@@ -258,7 +259,7 @@ fn show_progress_ui(ui: &mut egui::Ui, progress: &ExportProgress) {
         .weak(),
     );
 
-    ui.add_space(8.0);
+    ui.add_space(theme().spacing.md);
 
     if ui.button("Cancel").clicked() {
         progress.cancel();

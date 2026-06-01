@@ -271,7 +271,7 @@ pub fn draw_mixer_view(
     // ── Toolbar ──
     ui.horizontal(|ui| {
         ui.heading(RichText::new("Mixer").color(t.colors.text_primary));
-        ui.add_space(12.0);
+        ui.add_space(t.spacing.lg);
         if ui
             .button(RichText::new("+ Return Bus").color(t.colors.accent_green))
             .on_hover_text("Create a new effect-send return bus")
@@ -599,7 +599,7 @@ fn draw_channel_strip(
                             .unwrap_or((*rid, 0.0, false, true));
                         draw_send_row(ui, song, ch.id, *rid, rname, level, pre, enabled);
                     }
-                    ui.add_space(4.0);
+                    ui.add_space(t.spacing.xs);
                 }
 
                 // Pan.
@@ -959,7 +959,7 @@ fn draw_return_strip(
                             }
                         }
 
-                        ui.add_space(4.0);
+                        ui.add_space(t.spacing.xs);
 
                         // Pan.
                         let mut pan = rb.pan;
@@ -1010,10 +1010,10 @@ fn draw_return_strip(
             // strip the way the Rack stacks an effect chain. A compact menu
             // appends a new effect.
             for fx in effects {
-                ui.add_space(4.0);
+                ui.add_space(t.spacing.xs);
                 draw_effect_module(ui, EffectTarget::Return(rb.id), fx, handle);
             }
-            ui.add_space(4.0);
+            ui.add_space(t.spacing.xs);
             ui.menu_button(
                 RichText::new("+ Add FX")
                     .size(t.fonts.size_small)
@@ -1146,7 +1146,7 @@ fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle, effects: &[Ef
             strip_frame(ui, t.colors.accent_primary, t.colors.bg_widget).show(ui, |ui| {
                 ui.vertical(|ui| {
                     draw_module_header(ui, t.colors.accent_primary, "Master", None, |_| {});
-                    ui.add_space(4.0);
+                    ui.add_space(t.spacing.xs);
 
                     ui.horizontal(|ui| {
                         ui.add_space(center_pad(METER_WIDTH + 24.0));
@@ -1168,10 +1168,10 @@ fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle, effects: &[Ef
         // Master insert effects (final chain applied to the full mix), stacked
         // beneath the fader like the return inserts.
         for fx in effects {
-            ui.add_space(4.0);
+            ui.add_space(t.spacing.xs);
             draw_effect_module(ui, EffectTarget::Master, fx, handle);
         }
-        ui.add_space(4.0);
+        ui.add_space(t.spacing.xs);
         ui.menu_button(
             RichText::new("+ Add FX")
                 .size(t.fonts.size_small)

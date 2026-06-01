@@ -4791,7 +4791,7 @@ fn draw_module_panel_params(
         let envelope_pos = state.envelope_position.as_ref().map(|buf| buf.get());
 
         // Draw the interactive envelope editor
-        ui.add_space(4.0);
+        ui.add_space(theme().spacing.xs);
         let width = ui.available_width().clamp(150.0, 250.0);
         let height = (width * 0.5).clamp(80.0, 120.0);
 
@@ -4827,7 +4827,7 @@ fn draw_module_panel_params(
             }
         }
 
-        ui.add_space(4.0);
+        ui.add_space(theme().spacing.xs);
 
         // Only show knob parameters for Envelope (Vel Sens, curves etc)
         let knob_params: Vec<_> = descriptor
@@ -4864,7 +4864,7 @@ fn draw_module_panel_params(
         let is_recording = input_state == InputState::Recording;
 
         // Monitor toggle button
-        ui.add_space(4.0);
+        ui.add_space(t.spacing.xs);
         let monitor_icon = if is_monitoring {
             ri::MIC_FILL
         } else {
@@ -4957,7 +4957,7 @@ fn draw_module_panel_params(
             );
         }
 
-        ui.add_space(4.0);
+        ui.add_space(t.spacing.xs);
     }
 
     // Special handling for Sampler — sample selector dropdown
@@ -4985,7 +4985,7 @@ fn draw_module_panel_params(
                     }
                 });
         });
-        ui.add_space(4.0);
+        ui.add_space(theme().spacing.xs);
     }
 
     // Special handling for Mod Matrix — custom grid rendering
@@ -5134,7 +5134,7 @@ fn draw_mod_matrix_grid(
     let dim = grid_size.grid_dimension();
     let slot_count = grid_size.slot_count();
 
-    ui.add_space(4.0);
+    ui.add_space(theme().spacing.xs);
 
     // Fixed slot width — avoid ui.available_width() which is unbounded in auto-sized Areas
     let grid_spacing = 4.0;
@@ -5360,7 +5360,7 @@ fn draw_mod_matrix_grid(
                                 }
                             }
                         });
-                        ui.add_space(2.0);
+                        ui.add_space(theme().spacing.xxs);
                     });
                 });
 

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui::{self, Color32, RichText};
 use egui_remixicon::icons as ri;
 
-use crate::gui::theme::Theme;
+use crate::gui::theme::{Theme, theme};
 
 /// Action the user picked from the welcome screen.
 pub enum WelcomeAction {
@@ -41,7 +41,7 @@ pub fn show(ui: &mut egui::Ui, t: &Theme, recent_projects: &[PathBuf]) -> Option
                 .fit_to_exact_size(egui::vec2(640.0, 640.0)),
         );
 
-        ui.add_space(8.0);
+        ui.add_space(theme().spacing.md);
         ui.label(
             RichText::new(format!(
                 "v{}  ·  {}",
@@ -67,7 +67,7 @@ pub fn show(ui: &mut egui::Ui, t: &Theme, recent_projects: &[PathBuf]) -> Option
             if primary_button(ui, t, ri::ADD_LINE, "New Instrument", t.colors.accent_green) {
                 action = Some(WelcomeAction::NewInstrument);
             }
-            ui.add_space(8.0);
+            ui.add_space(theme().spacing.md);
             if primary_button(
                 ui,
                 t,
@@ -77,7 +77,7 @@ pub fn show(ui: &mut egui::Ui, t: &Theme, recent_projects: &[PathBuf]) -> Option
             ) {
                 action = Some(WelcomeAction::OpenProject);
             }
-            ui.add_space(8.0);
+            ui.add_space(theme().spacing.md);
             if primary_button(
                 ui,
                 t,
@@ -97,7 +97,7 @@ pub fn show(ui: &mut egui::Ui, t: &Theme, recent_projects: &[PathBuf]) -> Option
             if secondary_button(ui, t, ri::FILE_LIST_LINE, "Load Built-in Patch…") {
                 action = Some(WelcomeAction::LoadBuiltinPatch);
             }
-            ui.add_space(8.0);
+            ui.add_space(theme().spacing.md);
             if secondary_button(ui, t, ri::MUSIC_FILL, "Import Sample…") {
                 action = Some(WelcomeAction::ImportSample);
             }
@@ -111,7 +111,7 @@ pub fn show(ui: &mut egui::Ui, t: &Theme, recent_projects: &[PathBuf]) -> Option
                     .color(t.colors.text_secondary)
                     .strong(),
             );
-            ui.add_space(6.0);
+            ui.add_space(theme().spacing.sm);
 
             for path in recent_projects.iter().take(5) {
                 if recent_button(ui, t, path) {

@@ -2120,7 +2120,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
     );
     state.description_edit_in_progress = desc_resp.has_focus();
 
-    ui.add_space(8.0);
+    ui.add_space(t.spacing.md);
 
     // --- Room Shape & Dimensions ---
     ui.heading(
@@ -2128,7 +2128,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .color(t.colors.accent_cyan)
             .size(16.0),
     );
-    ui.add_space(4.0);
+    ui.add_space(t.spacing.xs);
 
     // Shape selector
     let prev_shape = state.shape_kind;
@@ -2327,7 +2327,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .color(t.colors.accent_cyan)
             .size(16.0),
     );
-    ui.add_space(4.0);
+    ui.add_space(t.spacing.xs);
 
     let prev_material = state.material_idx;
     let prev_diffusion = state.material_diffusion;
@@ -2379,7 +2379,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .size(10.0)
             .color(t.colors.text_dim),
     );
-    ui.add_space(4.0);
+    ui.add_space(t.spacing.xs);
 
     ui.horizontal(|ui| {
         ui.label("Dry/Wet:");
@@ -2446,7 +2446,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
             .size(10.0)
             .color(t.colors.text_dim),
     );
-    ui.add_space(4.0);
+    ui.add_space(t.spacing.xs);
 
     ui.horizontal(|ui| {
         ui.label("Freq Warp:");
@@ -2642,7 +2642,7 @@ fn draw_spatial_section(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mu
             .color(t.colors.accent_purple)
             .size(16.0),
     );
-    ui.add_space(4.0);
+    ui.add_space(t.spacing.xs);
 
     // Toggle
     let prev_enabled = state.spatial_enabled;
@@ -2699,7 +2699,7 @@ fn draw_lfo_section(
     )
     .default_open(false)
     .show(ui, |ui| {
-        ui.add_space(2.0);
+        ui.add_space(t.spacing.xxs);
 
         ui.horizontal(|ui| {
             ui.label("Rate:");

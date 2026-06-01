@@ -713,17 +713,17 @@ impl AnalyzeWindow {
 
     fn render_time_domain_panes(&mut self, ui: &mut egui::Ui, plot_h: f32, pt: &PaneTheme) {
         self.render_waveform_pane(ui, plot_h, pt);
-        ui.add_space(4.0);
+        ui.add_space(theme().spacing.xs);
         self.render_envelope_pane(ui, plot_h, pt);
-        ui.add_space(4.0);
+        ui.add_space(theme().spacing.xs);
         self.render_pitch_pane(ui, plot_h, pt);
     }
 
     fn render_frequency_domain_panes(&mut self, ui: &mut egui::Ui, plot_h: f32, pt: &PaneTheme) {
         self.render_spectrum_pane(ui, plot_h, pt);
-        ui.add_space(4.0);
+        ui.add_space(theme().spacing.xs);
         self.render_harmonics_pane(ui, plot_h, pt);
-        ui.add_space(4.0);
+        ui.add_space(theme().spacing.xs);
         self.render_stereo_pane(ui, plot_h, pt);
     }
 

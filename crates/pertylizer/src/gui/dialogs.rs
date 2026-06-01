@@ -408,7 +408,7 @@ pub fn show_settings_dialog(
         .show(ctx, |ui| {
             // --- Theme ---
             ui.heading("Theme");
-            ui.add_space(4.0);
+            ui.add_space(theme().spacing.xs);
 
             egui::Grid::new("theme_grid")
                 .num_columns(4)
@@ -434,12 +434,12 @@ pub fn show_settings_dialog(
                     }
                 });
 
-            ui.add_space(12.0);
+            ui.add_space(theme().spacing.lg);
             ui.separator();
 
             // --- Author / Composer ---
             ui.heading("Author");
-            ui.add_space(4.0);
+            ui.add_space(theme().spacing.xs);
 
             egui::Grid::new("author_grid")
                 .num_columns(2)
@@ -499,12 +499,12 @@ pub fn show_settings_dialog(
                     ui.end_row();
                 });
 
-            ui.add_space(12.0);
+            ui.add_space(theme().spacing.lg);
             ui.separator();
 
             // --- Directories ---
             ui.heading("Directories");
-            ui.add_space(4.0);
+            ui.add_space(theme().spacing.xs);
 
             egui::Grid::new("directories_grid")
                 .num_columns(2)
@@ -581,7 +581,7 @@ pub fn show_settings_dialog(
                     ui.end_row();
                 });
 
-            ui.add_space(12.0);
+            ui.add_space(theme().spacing.lg);
             ui.separator();
 
             // --- Keyboard ---
@@ -590,7 +590,7 @@ pub fn show_settings_dialog(
             ui.label("Upper row (Q-I): C4-C5");
             ui.label("-/+ keys: Change octave");
 
-            ui.add_space(16.0);
+            ui.add_space(theme().spacing.xl);
             ui.horizontal(|ui| {
                 if ui.button("Save & Close").clicked() {
                     action = SettingsAction::SaveAndClose;
@@ -621,9 +621,9 @@ pub fn show_about_dialog(ctx: &egui::Context, open: &mut bool) {
         .show(ctx, |ui| {
             ui.heading("Pertylizer");
             ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-            ui.add_space(8.0);
+            ui.add_space(theme().spacing.md);
             ui.label("A modular synthesizer written in Rust.");
-            ui.add_space(8.0);
+            ui.add_space(theme().spacing.md);
 
             ui.separator();
             ui.label(RichText::new("Keyboard Controls").strong());
@@ -632,7 +632,7 @@ pub fn show_about_dialog(ctx: &egui::Context, open: &mut bool) {
             ui.label("  -/+: Change octave");
             ui.label("  Space: Panic (all notes off)");
 
-            ui.add_space(8.0);
+            ui.add_space(theme().spacing.md);
             ui.separator();
             ui.label(RichText::new("Features").strong());
             ui.label("• Modular synthesis with patch cables");
@@ -641,7 +641,7 @@ pub fn show_about_dialog(ctx: &egui::Context, open: &mut bool) {
             ui.label("• MIDI support");
             ui.label("• Save/Load patches");
 
-            ui.add_space(16.0);
+            ui.add_space(theme().spacing.xl);
             if ui.button("Close").clicked() {
                 *open = false;
             }
@@ -681,7 +681,7 @@ pub fn show_load_patch_dialog(
                     response.request_focus();
                 }
             });
-            ui.add_space(4.0);
+            ui.add_space(theme().spacing.xs);
 
             let query = search.trim().to_ascii_lowercase();
             let categories = categorized_patches();
@@ -721,7 +721,7 @@ pub fn show_load_patch_dialog(
                         }
                         any_match = true;
 
-                        ui.add_space(4.0);
+                        ui.add_space(theme().spacing.xs);
                         ui.label(RichText::new(category).strong());
                         ui.separator();
 
@@ -740,12 +740,12 @@ pub fn show_load_patch_dialog(
                     }
 
                     if !any_match {
-                        ui.add_space(16.0);
+                        ui.add_space(theme().spacing.xl);
                         ui.label(RichText::new("No patches match your search.").color(dim));
                     }
                 });
 
-            ui.add_space(8.0);
+            ui.add_space(theme().spacing.md);
             if ui.button("Cancel").clicked() {
                 result = LoadPatchResult::Cancelled;
                 *open = false;
@@ -783,7 +783,7 @@ pub fn show_group_template_browser(
                     search.clear();
                 }
             });
-            ui.add_space(8.0);
+            ui.add_space(theme().spacing.md);
 
             let needle = search.to_lowercase();
             let mut shown = 0;
@@ -815,9 +815,9 @@ pub fn show_group_template_browser(
                             continue;
                         }
 
-                        ui.add_space(4.0);
+                        ui.add_space(theme().spacing.xs);
                         ui.label(RichText::new(category.label()).strong());
-                        ui.add_space(2.0);
+                        ui.add_space(theme().spacing.xxs);
 
                         for template in &category_templates {
                             shown += 1;
@@ -862,9 +862,9 @@ pub fn show_group_template_browser(
                         .collect();
 
                     if !uncategorized.is_empty() {
-                        ui.add_space(4.0);
+                        ui.add_space(theme().spacing.xs);
                         ui.label(RichText::new("Other").strong());
-                        ui.add_space(2.0);
+                        ui.add_space(theme().spacing.xxs);
 
                         for template in &uncategorized {
                             shown += 1;
@@ -892,7 +892,7 @@ pub fn show_group_template_browser(
                 );
             }
 
-            ui.add_space(12.0);
+            ui.add_space(theme().spacing.lg);
             ui.horizontal(|ui| {
                 let can_load = selected.is_some();
                 if ui
@@ -935,7 +935,7 @@ pub fn show_save_group_template_dialog(
         ui.label("Template name");
         ui.text_edit_singleline(name);
 
-        ui.add_space(6.0);
+        ui.add_space(theme().spacing.sm);
         ui.label("Category");
         egui::ComboBox::from_id_salt("group_template_category")
             .selected_text(category.label())
@@ -945,11 +945,11 @@ pub fn show_save_group_template_dialog(
                 }
             });
 
-        ui.add_space(6.0);
+        ui.add_space(theme().spacing.sm);
         ui.label("Description");
         ui.text_edit_multiline(description);
 
-        ui.add_space(12.0);
+        ui.add_space(theme().spacing.lg);
         match dialog_button_row(ui, "Save", !name.trim().is_empty()) {
             DialogButton::Cancel => {
                 result = SaveGroupTemplateResult::Cancelled;
@@ -995,15 +995,15 @@ pub fn show_save_awe_preset_dialog(
         ui.label("Preset name");
         ui.text_edit_singleline(name);
 
-        ui.add_space(6.0);
+        ui.add_space(theme().spacing.sm);
         ui.label("Description");
         ui.text_edit_multiline(description);
 
-        ui.add_space(6.0);
+        ui.add_space(theme().spacing.sm);
         ui.label("Tags (comma-separated)");
         ui.text_edit_singleline(tags);
 
-        ui.add_space(6.0);
+        ui.add_space(theme().spacing.sm);
         ui.separator();
         ui.label(
             RichText::new("Author")
@@ -1024,7 +1024,7 @@ pub fn show_save_awe_preset_dialog(
             );
         }
 
-        ui.add_space(12.0);
+        ui.add_space(theme().spacing.lg);
         match dialog_button_row(ui, "Save", !name.trim().is_empty()) {
             DialogButton::Cancel => {
                 result = SaveAwePresetResult::Cancelled;
@@ -1072,7 +1072,7 @@ pub fn show_confirm_dialog(
 
     modal_window(ctx, title, |ui| {
         ui.label(message);
-        ui.add_space(16.0);
+        ui.add_space(theme().spacing.xl);
         ui.horizontal(|ui| {
             if ui.button("OK").clicked() {
                 result = Some(true);

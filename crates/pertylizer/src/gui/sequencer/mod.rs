@@ -713,7 +713,7 @@ fn draw_transport_bar(
         egui::Popup::from_toggle_button_response(&ts_btn).show(|ui| {
             ui.set_min_width(180.0);
             ui.label(RichText::new("Time signature").strong());
-            ui.add_space(4.0);
+            ui.add_space(t.spacing.xs);
             let mut num = time_sig.numerator as i32;
             let mut den = time_sig.denominator as i32;
             let mut changed = false;
@@ -1121,7 +1121,7 @@ fn draw_arrangement(
                     .size(16.0)
                     .color(t.colors.text_dim),
             );
-            ui.add_space(8.0);
+            ui.add_space(t.spacing.md);
             if ui
                 .button(
                     RichText::new(format!("{} Add Track", ri::ADD_LINE))
@@ -1443,7 +1443,7 @@ fn draw_arrangement(
                                                 ui.label(
                                                     RichText::new("Track properties").strong(),
                                                 );
-                                                ui.add_space(4.0);
+                                                ui.add_space(t.spacing.xs);
 
                                                 // Volume
                                                 let mut vol = track.volume.as_f32();
@@ -1494,7 +1494,7 @@ fn draw_arrangement(
                                                 // Description (utility metadata, no undo).
                                                 // Buffered so edits survive the per-frame
                                                 // snapshot rebuild; committed on lost focus.
-                                                ui.add_space(4.0);
+                                                ui.add_space(t.spacing.xs);
                                                 ui.label(
                                                     RichText::new("Description")
                                                         .color(t.colors.text_dim),
@@ -1558,7 +1558,7 @@ fn draw_arrangement(
                                                     }
                                                 }
 
-                                                ui.add_space(4.0);
+                                                ui.add_space(t.spacing.xs);
                                                 ui.label(
                                                     RichText::new("Colour")
                                                         .color(t.colors.text_dim),
@@ -1605,7 +1605,7 @@ fn draw_arrangement(
                     }
 
                     // "+" button to add track
-                    ui.add_space(4.0);
+                    ui.add_space(t.spacing.xs);
                     if ui
                         .button(
                             RichText::new(format!("{} Add Track", ri::ADD_LINE))
@@ -3825,7 +3825,7 @@ pub(crate) fn draw_piano_roll(
             egui::Popup::from_toggle_button_response(&help_btn).show(|ui| {
                 ui.set_min_width(320.0);
                 ui.label(RichText::new("Piano-roll keyboard shortcuts").strong());
-                ui.add_space(4.0);
+                ui.add_space(t.spacing.xs);
                 egui::Grid::new("pr_shortcuts_grid")
                     .num_columns(2)
                     .spacing([16.0, 4.0])
@@ -3858,7 +3858,7 @@ pub(crate) fn draw_piano_roll(
         });
     });
 
-    ui.add_space(2.0);
+    ui.add_space(t.spacing.xxs);
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;

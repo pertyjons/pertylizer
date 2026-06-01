@@ -707,6 +707,21 @@ pub struct Spacing {
     pub section_spacing: f32,
     /// Space between label and widget.
     pub label_spacing: f32,
+
+    // --- Generic t-shirt gap scale for explicit `add_space` / layout gaps. ---
+    /// 2 px — hairline gap.
+    pub xxs: f32,
+    /// 4 px — tight gap between closely related items.
+    pub xs: f32,
+    /// 6 px — small gap.
+    pub sm: f32,
+    /// 8 px — standard gap between groups.
+    pub md: f32,
+    /// 12 px — gap between sections.
+    pub lg: f32,
+    /// 16 px — large separation.
+    pub xl: f32,
+
     /// Module grid spacing for auto-layout.
     pub module_grid_x: f32,
     pub module_grid_y: f32,
@@ -720,6 +735,12 @@ impl Spacing {
             knob_spacing: 6.0,
             section_spacing: 12.0,
             label_spacing: 4.0,
+            xxs: 2.0,
+            xs: 4.0,
+            sm: 6.0,
+            md: 8.0,
+            lg: 12.0,
+            xl: 16.0,
             module_grid_x: 210.0,
             module_grid_y: 320.0,
         }

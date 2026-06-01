@@ -162,13 +162,13 @@ where
                 response = response.on_hover_text(hover);
             }
 
-            ui.add_space(4.0);
+            ui.add_space(theme().spacing.xs);
             actions(ui);
             response
         })
         .inner;
 
     ui.separator();
-    ui.add_space(2.0);
+    ui.add_space(theme().spacing.xxs);
     title_response
 }

@@ -2520,7 +2520,7 @@ impl SynthApp {
                     self.instrument_edit_target = Some(id);
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(t.spacing.md);
                 if ui
                     .button(
                         RichText::new(format!("{} New Instrument", ri::ADD_LINE))
@@ -3144,14 +3144,14 @@ impl SynthApp {
                         song_changed = true;
                     }
 
-                    ui.add_space(8.0);
+                    ui.add_space(t.spacing.md);
 
                     ui.label(RichText::new("Song author").color(t.colors.text_dim));
                     if ui.text_edit_singleline(&mut song_author).changed() {
                         song_changed = true;
                     }
 
-                    ui.add_space(8.0);
+                    ui.add_space(t.spacing.md);
 
                     ui.label(RichText::new("Description").color(t.colors.text_dim));
                     if ui
@@ -3165,7 +3165,7 @@ impl SynthApp {
                         song_changed = true;
                     }
 
-                    ui.add_space(8.0);
+                    ui.add_space(t.spacing.md);
 
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Tempo (BPM)").color(t.colors.text_dim));
@@ -3184,7 +3184,7 @@ impl SynthApp {
                         }
                     });
 
-                    ui.add_space(8.0);
+                    ui.add_space(t.spacing.md);
 
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Time signature").color(t.colors.text_dim));
@@ -3224,11 +3224,11 @@ impl SynthApp {
 
                 ui.add_space(10.0);
                 ui.separator();
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 // Project author (Author struct) --------------------------------------
                 ui.label(RichText::new("Project Author").color(t.colors.text_primary));
-                ui.add_space(4.0);
+                ui.add_space(t.spacing.xs);
 
                 ui.label(RichText::new("Name").color(t.colors.text_dim));
                 if ui
@@ -3238,7 +3238,7 @@ impl SynthApp {
                     author_changed = true;
                 }
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 ui.label(RichText::new("Email").color(t.colors.text_dim));
                 if ui
@@ -3248,7 +3248,7 @@ impl SynthApp {
                     author_changed = true;
                 }
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 ui.label(RichText::new("Website").color(t.colors.text_dim));
                 if ui
@@ -3258,7 +3258,7 @@ impl SynthApp {
                     author_changed = true;
                 }
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 ui.label(RichText::new("License").color(t.colors.text_dim));
                 if ui
@@ -3315,7 +3315,7 @@ impl SynthApp {
                     "Delete \"{name}\"? Notes referencing it remain on tracks but go silent until \
                      reassigned. This cannot be undone."
                 ));
-                ui.add_space(8.0);
+                ui.add_space(t.spacing.md);
                 ui.horizontal(|ui| {
                     if ui.button("Cancel").clicked() {
                         decision = Some(false);
@@ -3404,7 +3404,7 @@ impl SynthApp {
                     name_changed = true;
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(t.spacing.md);
 
                 ui.label(RichText::new("Category").color(t.colors.text_dim));
                 let mut cat = inst.category;
@@ -3429,7 +3429,7 @@ impl SynthApp {
                     category_changed = true;
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(t.spacing.md);
 
                 ui.label(RichText::new("Description").color(t.colors.text_dim))
                     .on_hover_text(
@@ -3448,7 +3448,7 @@ impl SynthApp {
                     send_description = true;
                 }
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 ui.label(RichText::new("Patch description").color(t.colors.text_dim))
                     .on_hover_text(
@@ -3467,7 +3467,7 @@ impl SynthApp {
                     send_patch_description = true;
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(t.spacing.md);
 
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Color").color(t.colors.text_dim));
@@ -3494,7 +3494,7 @@ impl SynthApp {
 
                 ui.add_space(10.0);
                 ui.separator();
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 // ── Performance controls (mirrors the strip above the keyboard) ──
 
@@ -3532,7 +3532,7 @@ impl SynthApp {
                         });
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 // Volume + Mute + Solo on one row
                 let muted = inst.muted;
@@ -3552,7 +3552,7 @@ impl SynthApp {
                     }
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 // Pan slider
                 ui.horizontal(|ui| {
@@ -3579,7 +3579,7 @@ impl SynthApp {
                     }
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 // Transpose
                 ui.horizontal(|ui| {
@@ -3601,7 +3601,7 @@ impl SynthApp {
                     }
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 // Oversampling
                 ui.horizontal(|ui| {
@@ -3625,7 +3625,7 @@ impl SynthApp {
                         .on_hover_text("Oversampling factor (reduces aliasing)");
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 // Polyphony / voice count. Changing this only takes effect
                 // after the project is reloaded — the engine can't resize
@@ -3644,7 +3644,7 @@ impl SynthApp {
                     }
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 // Allocation mode
                 ui.horizontal(|ui| {
@@ -3671,7 +3671,7 @@ impl SynthApp {
                         });
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 // Velocity → amp sensitivity
                 ui.horizontal(|ui| {
@@ -3696,7 +3696,7 @@ impl SynthApp {
                     }
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 // Velocity → filter sensitivity
                 ui.horizontal(|ui| {
@@ -3723,7 +3723,7 @@ impl SynthApp {
                     }
                 });
 
-                ui.add_space(6.0);
+                ui.add_space(t.spacing.sm);
 
                 // Sidechain source
                 ui.horizontal(|ui| {
@@ -5809,7 +5809,7 @@ impl SynthApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.label("You have unsaved changes. Save before continuing?");
-                ui.add_space(8.0);
+                ui.add_space(theme().spacing.md);
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
                         let saved = self.save_current_project();

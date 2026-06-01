@@ -396,7 +396,7 @@ pub fn draw_sample_view(
                 }
             }
 
-            ui.add_space(8.0);
+            ui.add_space(t.spacing.md);
             if ui
                 .button(
                     egui::RichText::new(format!("{} Import", ri::ADD_LINE))
@@ -548,9 +548,9 @@ pub fn draw_sample_view(
                     // Waveform display
                     draw_waveform(ui, state, sample);
 
-                    ui.add_space(8.0);
+                    ui.add_space(t.spacing.md);
                     ui.separator();
-                    ui.add_space(4.0);
+                    ui.add_space(t.spacing.xs);
 
                     // Properties panel
                     let meta = sample.meta.clone();

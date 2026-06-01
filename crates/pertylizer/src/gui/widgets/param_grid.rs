@@ -133,7 +133,7 @@ pub fn draw_parameter_grid<'d>(
                     .size(theme().fonts.size_normal)
                     .color(theme().colors.text_secondary),
             );
-            ui.add_space(4.0);
+            ui.add_space(theme().spacing.xs);
             let is_time = matches!(param.widget_hint, WidgetHint::TimeSlider);
             let slider = if is_time && param.range.min > 0.0 {
                 egui::Slider::new(&mut value, param.range.min..=param.range.max)
@@ -210,7 +210,7 @@ pub fn draw_parameter_grid<'d>(
 
     // Knobs, in rows.
     if !knob_params.is_empty() {
-        ui.add_space(4.0);
+        ui.add_space(theme().spacing.xs);
         changes.extend(draw_knobs(ui, &knob_params, accent, &get));
     }
 

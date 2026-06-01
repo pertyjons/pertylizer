@@ -233,7 +233,7 @@ fn draw_pattern_browser(
                     .hint_text("Search…")
                     .desired_width(f32::INFINITY),
             );
-            ui.add_space(4.0);
+            ui.add_space(t.spacing.xs);
 
             let Some(data) = collect_pattern_browser_data(song, &pattern_view_state.search_query)
             else {
