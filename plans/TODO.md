@@ -540,44 +540,55 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
 
 ### 3.3 Expression & articulation
 
-**Roadmap:** `docs/note-expression-roadmap.md` — staged plan toward per-note
-expression that also retires the `sid-analyzer` export gaps. Covers generic
-sequencer→module automation (Phase A1 bugfix: the 6 GUI-exposed but dead
-FilterCutoff/ADSR instrument macros; A2: `AutomationTarget::Module`), per-note
-legato/glide (B), per-note vibrato (C), shared/bus filter (D, rides on
-channel-strip Phase 7), and the full Note Expression + MPE system (E).
+**History.** The staged note-expression roadmap (`plans/note-expression-roadmap.md`,
+now retired) shipped almost in full: generic sequencer→module automation (Phase A1
+bugfix — the 6 dead FilterCutoff/ADSR macros now sound; A2 — `AutomationTarget::Module`),
+per-note legato/glide (B), per-note vibrato + expression block (C), the A1/A2 deferred
+cross-cutting follow-ups (Track F — F2/F3/F4 resolved), and export-robustness tooling
+(Parallel track P). See `docs/history.md` (v0.292.0–0.297.0). Phase D's *routing* half
+was delivered by the mixer/return-bus work (per-instrument/return/master effect chains,
+any of which can carry a `Filter`). What remains of that roadmap is the three items below
+plus the Note Processors plan; the roadmap doc itself was deleted once these were
+extracted here.
 
-**Phase A1/A2 deferred follow-ups (first cut shipped v0.292.0).** The generic
-sequencer→module automation landed (the 6 dead FilterCutoff/ADSR macros now sound,
-plus the generic `AutomationTarget::Module`). These three were explicitly deferred
-from that first cut and are the remaining open work:
+**Remaining open work from the retired roadmap:**
 
-- [x] **Stable (non-positional) ModuleId identity — verified unnecessary (F2).**
-  `AutomationTarget::Module` keys on `module_type` + `instance`. Verified the worry
-  (a lane "silently re-points" when modules are added/removed) does not occur: instance
-  numbers are monotonic and never reused, `remove_module` does not renumber survivors,
-  and load preserves instances via `add_module_with_id`. Removing a same-type sibling
-  never re-points a surviving lane; worst case is a harmless orphaned lane (dispatch
-  no-ops on an absent module). No stable-id migration needed. Locked by
-  `graph::module_instance_identity_is_stable_across_removal`.
+- [ ] **Phase D residual — automate master/return effect params.** A `Filter` can be
+  placed on the master or a return bus and set today (`set_master_effect_parameter` /
+  `set_return_effect_parameter`), but its cutoff **cannot be swept by an automation
+  lane**: `AutomationTarget::Module` resolves only against instrument-owned modules
+  (`synth_engine.rs:~3293`, `instruments.iter_mut().find(...)`). Add a target variant
+  (e.g. `AutomationTarget::{MasterEffect, ReturnEffect}` keyed by slot + `param_id`)
+  dispatched through the same override layer as A2. Delivers exact *shared* SID-style
+  filter sweeps. **S** task — build only when a tune genuinely needs a shared (not
+  per-instrument) automated sweep; per-instrument sweeps are already covered by A2.
 - [ ] **`ParamId(Arc<str>)` off-thread drop (F1 residual).** Cloning a `Module`
   automation target is now alloc-free, but the engine's cached clone can become the
   last `Arc` reference and so *drop* (free) on the audio thread — but only if the
   source lane was removed mid-playback. Strict improvement over the prior `String`
   (which freed on every drop). Full fix: route cleared/replaced targets through the
   engine's `return_producer` off-thread drop channel. Low priority (bounded, rare).
-- [x] **Mod-matrix vs. automation combine ordering ("two controllers") — RESOLVED (F3).**
-  Ratified + documented on the `PolyModule::set_param_override` contract:
-  `effective = override.unwrap_or(base) + mod_offset` (override replaces base, mod offset
-  adds on top). Locked by `filter::test_automation_override_then_mod_offset_combine_order`.
-- [x] **Offline-render parity for `analyze_*` — RESOLVED (F4, already satisfied).**
-  `OfflineEngineSession::render_range` runs the same engine `process()` as live, so
-  automation overrides apply offline identically. Locked by `module_param_automation_ramps_down`.
 
-The two bullets below are **Phase E** of that roadmap.
+**Note Processors (generative articulation):** lifted into its own fleshed-out plan —
+`plans/note-processors-plan.md` (arpeggiator, ornaments, strum, chord, scale-quantize,
+humanize). This was the one broadly-useful slice of the old Phase E. The arpeggiator is
+the flagship; trill/mordent/turn are presets of it, and flam/drag/roll/grace are one
+timed-repeat generator.
+
+**Iceboxed — the rest of Phase E (build on demand only).** The expensive,
+narrow-audience remainder of the old north-star phase. No plan doc; pick up only when a
+concrete need appears:
 
 - [ ] MPE support — MIDI Polyphonic Expression for per-note pitch bend, pressure, slide
-- [ ] Polyphonic aftertouch routing to module parameters
+  (needs MPE hardware to be worth it; the Phase C expression block already defaults to
+  the MPE dimension set — bend/pressure/timbre/velocity/release-velocity — so input
+  mapping is the missing piece).
+- [ ] Polyphonic aftertouch routing to module parameters.
+- [ ] Per-note hand-drawn expression curves + the **piano-roll per-note curve editor**
+  (the real cost center that gated the whole phase).
+- [ ] Per-note **spatial via AWE** — primitive 1 with an AWE room param as the target
+  (per-note position in the simulated room). Genuine differentiator; no equivalent in
+  other synths — worth keeping on the list even though it is niche.
 
 ### 3.5 Polyphony settings
 
