@@ -17,6 +17,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Synthesized kick drum driving the four-on-the-floor pulse of this 80s techno track (tracks \"Kick\" and \"Syncopated Kick\"). The foundational rhythmic anchor at 126 BPM.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -25,6 +26,7 @@
       "patch": {
         "name": "Kick Drum",
         "version": "1.0",
+        "description": "Single sine oscillator through a Standard low-pass filter at 1 kHz with no resonance, into a VCA. Two snappy ADSR envelopes (attack 1 ms, decay 50 ms, zero sustain) give the punchy click-and-thump body with no tail.",
         "modules": [
           {
             "id": "osc-1",
@@ -222,6 +224,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Snare drum for the backbeat (track \"Snare\"), providing the 2-and-4 accent that propels the 80s techno groove.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -230,6 +233,7 @@
       "patch": {
         "name": "Snare Drum",
         "version": "1.0",
+        "description": "A tonal triangle oscillator and a white-noise generator mixed together, then through a Standard low-pass filter at 5 kHz with moderate resonance (0.3). Two short ADSR envelopes (attack 1 ms, decay 30 to 120 ms, zero sustain) shape the tuned body and the noisy crack.",
         "modules": [
           {
             "id": "osc-1",
@@ -478,6 +482,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Hi-hat used for the driving sixteenth-note top end and ticking percussion (tracks \"Hats\" and \"Percussion/Sticks\"), keeping the high-frequency motion in this 80s techno arrangement.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -486,6 +491,7 @@
       "patch": {
         "name": "Hi-Hat",
         "version": "1.0",
+        "description": "Pure white noise through a Standard low-pass filter at 7.5 kHz with resonance 0.4, into a VCA at 0.5. A very fast ADSR (attack 1 ms, decay 50 ms, release 30 ms, zero sustain) produces the tight, bright tick.",
         "modules": [
           {
             "id": "nse-1",
@@ -644,6 +650,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Aggressive lead bass carrying the main bassline (track \"Bass\"), the punchy mid-forward groove element that locks with the kick in this 80s techno track.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -652,6 +659,7 @@
       "patch": {
         "name": "Aggressive Bass",
         "version": "1.0",
+        "description": "A square oscillator plus a sine Sub Oscillator one octave down for weight, through a Standard low-pass filter at 300 Hz with resonance 0.4. Two ADSR envelopes (attack ~3 ms, decay 200 to 300 ms, sustain 20 to 70 percent) shape the aggressive, plucky-yet-sustained tone.",
         "modules": [
           {
             "id": "osc-1",
@@ -872,6 +880,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Main monophonic-style synth lead for the \"Lead\" track, carrying the song's primary Jarre-style melodic hook over the 80s techno groove. Bright, slightly hollow vintage analog lead with subtle vibrato for an expressive retro-electro top line.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -880,6 +889,7 @@
       "patch": {
         "name": "Vintage Lead",
         "version": "1.0",
+        "description": "Two oscillators mixed: a sawtooth (level 0.6) plus a 30% pulse-width pulse (level 0.4) for a hollow vintage tone. Standard-model lowpass filter at 2 kHz with moderate resonance (0.4), shaped by a fast-attack ADSR (2 ms attack, 0.2 s decay, 40% sustain). LFO 1 is a 5.5 Hz sine at tiny depth (0.015) for gentle vibrato, and LFO 2 is a slow 0.4 Hz triangle (depth 0.35) for a drifting pulse-width/tone movement.",
         "modules": [
           {
             "id": "osc-1",
@@ -1187,6 +1197,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Lush evolving pad for the \"Pad\" track, providing the warm sustained harmonic bed underneath the 80s techno arrangement in classic Jean-Michel Jarre fashion. Slow-swelling, detuned analog pad that fills the background and glues the chords together.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -1195,6 +1206,7 @@
       "patch": {
         "name": "Analog Dream Machine",
         "version": "1.0",
+        "description": "Two sawtooth oscillators mixed with the second detuned +8 ct for a wide, warm analog beating. Standard-model lowpass filter at 800 Hz with moderate resonance (0.5) keeps it soft and dark. A very slow ADSR (0.8 s attack, 1.0 s decay, 75% sustain, 2.0 s release) gives the gentle swell and long tail, and a looping 6-segment MSEG modulator adds slow evolving movement over the sustained tone.",
         "modules": [
           {
             "id": "osc-1",
@@ -1450,6 +1462,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Sub bass holding the low-frequency harmonic foundation (track \"Sub Bass (Harmony)\"), reinforcing the root notes beneath the main bass in this 80s techno track.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -1458,6 +1471,7 @@
       "patch": {
         "name": "Sub Bass",
         "version": "1.0",
+        "description": "A sawtooth oscillator combined with a sine Sub Oscillator one octave down, through a Standard low-pass filter at 400 Hz with resonance 0.6. A sustaining ADSR (attack 2 ms, decay 150 ms, sustain 60 percent, release 100 ms) keeps the deep, steady low end.",
         "modules": [
           {
             "id": "osc-1",
@@ -1708,6 +1722,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Wide unison supersaw lead variation on the \"Unison Supersaw (Lead Var)\" track, used as a thicker, detuned alternative voicing of the main lead for big retro-electro lead moments and choruses in this 80s techno track.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -1716,6 +1731,7 @@
       "patch": {
         "name": "Unison Supersaw",
         "version": "1.0",
+        "description": "Single sawtooth oscillator running 7-voice unison with 25 ct detune and full stereo spread (1.0) for a classic wide supersaw. Standard-model lowpass filter open at 1.8 kHz with low resonance (0.15) keeps it bright, and a sustained ADSR (5 ms attack, 0.4 s decay, 70% sustain, 0.3 s release) lets chords and lead notes ring. No LFO modulation; the movement comes entirely from the unison detune.",
         "modules": [
           {
             "id": "osc-1",
@@ -1895,6 +1911,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Noise Sweep (SFX): a slow filtered-noise riser/whoosh used as a transitional sweep between sections of this 80s techno track, building tension into drops and breakdowns Jarre-style.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -1903,6 +1920,7 @@
       "patch": {
         "name": "Noise Sweep",
         "version": "1.0",
+        "description": "Pink noise source into a Standard low-pass filter (cutoff 1.5 kHz, resonance 0.7) for a focused colored sweep. A slow sine LFO (0.2 Hz, depth 0.8) modulates to animate the sweep, and a long ADSR (0.5 s attack, 1 s release) gives a smooth swelling whoosh.",
         "modules": [
           {
             "id": "nse-1",
@@ -2085,6 +2103,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Shepard Riser (SFX): an endlessly-rising tone used as a build-up effect to create perpetual upward motion and tension before drops in this 80s techno arrangement.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -2093,6 +2112,7 @@
       "patch": {
         "name": "Shepard Riser",
         "version": "1.0",
+        "description": "Math Oscillator set to the Shepard algorithm (Param A 0.5, Param B 0.7) for the classic illusion of infinite ascent. Routed through a Standard low-pass filter (cutoff 4 kHz, low resonance 0.1) to soften the top, with a slow ADSR (1 s attack, 2 s release) for a gradual swell.",
         "modules": [
           {
             "id": "mth-1",
@@ -2255,6 +2275,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Short plucky synth for the \"Arpeggio\" track, driving the song's rhythmic arpeggiated 16th-note motion in the classic Jarre / 80s techno style. Tight, percussive note attacks that keep the arpeggio crisp and rhythmic.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -2263,6 +2284,7 @@
       "patch": {
         "name": "Pluck Synth",
         "version": "1.0",
+        "description": "Single sawtooth oscillator into a Standard-model lowpass filter at 1 kHz with moderate resonance (0.45). The plucky character comes from the ADSR: 2 ms attack, 0.2 s decay, 0% sustain and 0.15 s release, so each note decays to silence for a staccato arpeggio. No unison or LFO modulation.",
         "modules": [
           {
             "id": "osc-1",
@@ -2460,6 +2482,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Resonant percussion hit for accents and transitions (track \"Impact FX\"), adding metallic Jarre-style impacts that punctuate sections of the 80s techno arrangement.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -2468,6 +2491,7 @@
       "patch": {
         "name": "Resonant Percussion",
         "version": "1.0",
+        "description": "A Mechanical Noise generator in Hammer mode (15 ms duration, 5 kHz cutoff, high velocity sensitivity) into a VCA. A medium ADSR (attack 1 ms, decay 300 ms, release 200 ms, zero sustain) gives the resonant, ringing impact tail.",
         "modules": [
           {
             "id": "env-1",
@@ -2600,6 +2624,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Euclidean Texture (Intro Textures): a self-generating rhythmic/melodic texture that supplies evolving intro atmosphere and arpeggiated movement, a Jarre-flavoured generative backdrop for this 80s techno piece.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -2608,6 +2633,7 @@
       "patch": {
         "name": "Euclidean Texture",
         "version": "1.0",
+        "description": "Generative voice: a Euclidean sequencer (16 steps, 5 pulses, rotation 2, light swing) drives gates while a Turing Machine (Pentatonic scale, length 16) supplies evolving pitch, with Random Gates (density 0.25) adding variation. A Sawtooth Oscillator plus a Math Oscillator feed a Standard low-pass filter (cutoff 2 kHz, resonance 0.25) with a triangle LFO (1.5 Hz) for motion, plucky ADSR (1 ms attack, 0.5 s release), and a Phase Vocoder effect for spectral smearing.",
         "modules": [
           {
             "id": "osc-1",
@@ -2920,6 +2946,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Aggressive screaming power lead for the \"Screamer Power Lead\" track, used for high-energy lead stabs and climactic lines that cut through the 80s techno mix with a hard, resonant edge.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -2928,6 +2955,7 @@
       "patch": {
         "name": "Screamer Lead",
         "version": "1.0",
+        "description": "Single sawtooth oscillator through the Screamer filter model at 800 Hz with high resonance (0.72) and heavy drive (2.5) for a screaming, distorted edge. A fast plucky ADSR (1 ms attack, 0.18 s decay, 10% sustain, 0.1 s release) gives sharp stabs, and the Mod Matrix routes Envelope 2 into filter cutoff at amount 0.8 for an aggressive per-note filter sweep.",
         "modules": [
           {
             "id": "osc-1",
@@ -3190,6 +3218,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Wave Folder Bass (Wavefolder Pressure Bass): an aggressive, harmonically dense bass that anchors the low end of this 80s techno track with gritty, pressurized weight and bite.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -3198,6 +3227,7 @@
       "patch": {
         "name": "Wave Folder Bass",
         "version": "1.0",
+        "description": "Math Oscillator on the Wave Folder algorithm (Param A 0.4, Param B 0.3) generates rich folded harmonics, with a CV input on Param A for fold modulation. A Standard low-pass filter (cutoff 600 Hz, resonance 0.4) keeps it sub-focused, driven by a snappy ADSR (1 ms attack, 20% sustain, 0.1 s release). A Distortion effect (drive 0.5, tone 0.8, full mix) adds grit and bite.",
         "modules": [
           {
             "id": "mth-1",
@@ -3416,6 +3446,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Hybrid Resonator (Harmonic Echo Resonator): a complex multi-oscillator lead/pad hybrid providing the shimmering, metallic-resonant melodic centerpiece of this 80s techno track, rich and Jarre-esque in character.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -3424,6 +3455,7 @@
       "patch": {
         "name": "Hybrid Resonator",
         "version": "1.0",
+        "description": "A 16-module hybrid: a Sawtooth Oscillator (4-voice unison, 18 ct detune), a Sub Oscillator (square, -1 oct), a Math Oscillator on the BitWise algorithm, a Wavetable (Basic table, position 0.25) and a touch of White Noise are blended through two Mixers. The sum runs into a Ring Mod (220 Hz carrier, 45% mix, key tracking) and a Body Resonance (280 Hz, 70% resonance) for the metallic echo character, then a Standard low-pass filter (cutoff 1.2 kHz, resonance 0.35, drive 1.2). A 4 Hz triangle LFO adds movement, a Keyboard Panner spreads notes across the stereo field, and two ADSR envelopes shape amp and tone.",
         "modules": [
           {
             "id": "osc-1",
@@ -3893,6 +3925,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
+      "description": "Moog Resonant Sweep: an empty/unused patch with no modules. Not assigned to any track; kept as a placeholder.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -3901,6 +3934,7 @@
       "patch": {
         "name": "Moog Resonant Sweep",
         "version": "1.0",
+        "description": "Empty patch: currently contains no modules. Reserved as a placeholder for a future Moog-style resonant filter sweep but presently has no oscillators, filters, envelopes, or effects and produces no sound.",
         "modules": [],
         "connections": [],
         "settings": {
@@ -3916,7 +3950,7 @@
       }
     }
   ],
-  "active_instrument_id": 0,
+  "active_instrument_id": 12,
   "author": {
     "name": "Per Jonsson",
     "email": "pertyjons@gmail.com"
@@ -3924,10 +3958,12 @@
   "song": {
     "name": "Oxygene Dreams (80s Techno)",
     "author": "",
+    "description": "\"Oxygene Dreams (80s Techno)\" - an instrumental retro-electro / 80s techno track at 126 BPM, 4/4, about 3:03, with a Jean-Michel Jarre style synth flavour. A four-on-the-floor electronic kit (kick, snare, hi-hats, plus a syncopated kick and stick percussion) drives the groove under an aggressive synth bass and a harmonic sub bass. Melodic content comes from a vintage analog lead, a unison supersaw lead variation, a plucky arpeggio and a wide analog pad, with more experimental voices adding colour (a screamer power lead, a wavefolder pressure bass, a hybrid echo resonator and a euclidean intro texture). Sound-design and transition FX (noise sweeps, a shepard riser, resonant impacts) mark the section changes and build energy. Mood: nostalgic, hypnotic and driving, classic analog-synth nostalgia with a modern techno pulse.",
     "patterns": [
       {
         "id": 0,
         "name": "Kick Loop",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -3936,8 +3972,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 7,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -3945,8 +3983,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 7,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -3954,8 +3994,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 7,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -3963,8 +4005,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 7,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -3973,6 +4017,7 @@
       {
         "id": 1,
         "name": "Snare Loop",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -3981,8 +4026,10 @@
             "duration": 240,
             "pitch": 38,
             "velocity": 0.78740156,
-            "instrument": 8,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -3990,8 +4037,10 @@
             "duration": 240,
             "pitch": 38,
             "velocity": 0.78740156,
-            "instrument": 8,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4000,6 +4049,7 @@
       {
         "id": 2,
         "name": "Hats Loop",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -4008,8 +4058,10 @@
             "duration": 96,
             "pitch": 42,
             "velocity": 0.70866144,
-            "instrument": 9,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4017,8 +4069,10 @@
             "duration": 96,
             "pitch": 42,
             "velocity": 0.70866144,
-            "instrument": 9,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4026,8 +4080,10 @@
             "duration": 96,
             "pitch": 42,
             "velocity": 0.70866144,
-            "instrument": 9,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4035,8 +4091,10 @@
             "duration": 96,
             "pitch": 42,
             "velocity": 0.70866144,
-            "instrument": 9,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4045,6 +4103,7 @@
       {
         "id": 3,
         "name": "Bass Main",
+        "description": "",
         "length": 7680,
         "notes": [
           {
@@ -4053,8 +4112,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4062,8 +4123,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4071,8 +4134,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4080,8 +4145,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -4089,8 +4156,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -4098,8 +4167,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -4107,8 +4178,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 7,
@@ -4116,8 +4189,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 8,
@@ -4125,8 +4200,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 9,
@@ -4134,8 +4211,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 10,
@@ -4143,8 +4222,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 11,
@@ -4152,8 +4233,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 12,
@@ -4161,8 +4244,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 13,
@@ -4170,8 +4255,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 14,
@@ -4179,8 +4266,10 @@
             "duration": 480,
             "pitch": 31,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 15,
@@ -4188,8 +4277,10 @@
             "duration": 480,
             "pitch": 34,
             "velocity": 0.78740156,
-            "instrument": 10,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4198,6 +4289,7 @@
       {
         "id": 4,
         "name": "Lead Theme",
+        "description": "",
         "length": 15360,
         "notes": [
           {
@@ -4206,8 +4298,10 @@
             "duration": 240,
             "pitch": 60,
             "velocity": 0.78740156,
-            "instrument": 11,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4215,8 +4309,10 @@
             "duration": 240,
             "pitch": 63,
             "velocity": 0.78740156,
-            "instrument": 11,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4224,8 +4320,10 @@
             "duration": 240,
             "pitch": 65,
             "velocity": 0.78740156,
-            "instrument": 11,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4233,8 +4331,10 @@
             "duration": 240,
             "pitch": 67,
             "velocity": 0.78740156,
-            "instrument": 11,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -4242,8 +4342,10 @@
             "duration": 240,
             "pitch": 60,
             "velocity": 0.78740156,
-            "instrument": 11,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -4251,8 +4353,10 @@
             "duration": 240,
             "pitch": 63,
             "velocity": 0.78740156,
-            "instrument": 11,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -4260,8 +4364,10 @@
             "duration": 240,
             "pitch": 65,
             "velocity": 0.78740156,
-            "instrument": 11,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 7,
@@ -4269,8 +4375,10 @@
             "duration": 240,
             "pitch": 67,
             "velocity": 0.78740156,
-            "instrument": 11,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4279,6 +4387,7 @@
       {
         "id": 5,
         "name": "Pad Chords",
+        "description": "",
         "length": 30720,
         "notes": [
           {
@@ -4287,8 +4396,10 @@
             "duration": 15360,
             "pitch": 48,
             "velocity": 0.62992126,
-            "instrument": 12,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4296,8 +4407,10 @@
             "duration": 15360,
             "pitch": 52,
             "velocity": 0.62992126,
-            "instrument": 12,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4305,8 +4418,10 @@
             "duration": 15360,
             "pitch": 55,
             "velocity": 0.62992126,
-            "instrument": 12,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4314,8 +4429,10 @@
             "duration": 15360,
             "pitch": 46,
             "velocity": 0.62992126,
-            "instrument": 12,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -4323,8 +4440,10 @@
             "duration": 15360,
             "pitch": 50,
             "velocity": 0.62992126,
-            "instrument": 12,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -4332,8 +4451,10 @@
             "duration": 15360,
             "pitch": 53,
             "velocity": 0.62992126,
-            "instrument": 12,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4342,6 +4463,7 @@
       {
         "id": 6,
         "name": "Bass Harmony (G/A#)",
+        "description": "",
         "length": 7680,
         "notes": [
           {
@@ -4350,8 +4472,10 @@
             "duration": 480,
             "pitch": 31,
             "velocity": 0.62992126,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4359,8 +4483,10 @@
             "duration": 480,
             "pitch": 34,
             "velocity": 0.62992126,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4369,6 +4495,7 @@
       {
         "id": 7,
         "name": "Lead Var (High)",
+        "description": "",
         "length": 15360,
         "notes": [
           {
@@ -4377,8 +4504,10 @@
             "duration": 240,
             "pitch": 72,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4386,8 +4515,10 @@
             "duration": 240,
             "pitch": 75,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4395,8 +4526,10 @@
             "duration": 240,
             "pitch": 72,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4404,8 +4537,10 @@
             "duration": 240,
             "pitch": 79,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -4413,8 +4548,10 @@
             "duration": 240,
             "pitch": 72,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -4422,8 +4559,10 @@
             "duration": 240,
             "pitch": 75,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -4431,8 +4570,10 @@
             "duration": 240,
             "pitch": 72,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 7,
@@ -4440,8 +4581,10 @@
             "duration": 240,
             "pitch": 79,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4450,6 +4593,7 @@
       {
         "id": 8,
         "name": "Drum Fill (Snare Roll)",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -4458,8 +4602,10 @@
             "duration": 120,
             "pitch": 38,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4467,8 +4613,10 @@
             "duration": 120,
             "pitch": 38,
             "velocity": 0.8267717,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4476,8 +4624,10 @@
             "duration": 120,
             "pitch": 38,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4485,8 +4635,10 @@
             "duration": 120,
             "pitch": 38,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -4494,8 +4646,10 @@
             "duration": 120,
             "pitch": 38,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -4503,8 +4657,10 @@
             "duration": 120,
             "pitch": 38,
             "velocity": 0.984252,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -4512,8 +4668,10 @@
             "duration": 120,
             "pitch": 38,
             "velocity": 1.0,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4522,6 +4680,7 @@
       {
         "id": 9,
         "name": "SFX Intro Sweep",
+        "description": "",
         "length": 30720,
         "notes": [
           {
@@ -4530,8 +4689,10 @@
             "duration": 30720,
             "pitch": 60,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4540,6 +4701,7 @@
       {
         "id": 10,
         "name": "SFX Riser Build",
+        "description": "",
         "length": 30720,
         "notes": [
           {
@@ -4548,8 +4710,10 @@
             "duration": 30720,
             "pitch": 60,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4558,6 +4722,7 @@
       {
         "id": 11,
         "name": "Lead Counterpoint",
+        "description": "",
         "length": 15360,
         "notes": [
           {
@@ -4566,8 +4731,10 @@
             "duration": 480,
             "pitch": 67,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4575,8 +4742,10 @@
             "duration": 480,
             "pitch": 68,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4584,8 +4753,10 @@
             "duration": 960,
             "pitch": 70,
             "velocity": 0.7480315,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4593,8 +4764,10 @@
             "duration": 480,
             "pitch": 67,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -4602,8 +4775,10 @@
             "duration": 480,
             "pitch": 68,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -4611,8 +4786,10 @@
             "duration": 960,
             "pitch": 63,
             "velocity": 0.7480315,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4621,6 +4798,7 @@
       {
         "id": 12,
         "name": "Syncopated Bass",
+        "description": "",
         "length": 7680,
         "notes": [
           {
@@ -4629,8 +4807,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4638,8 +4818,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4647,8 +4829,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4656,8 +4840,10 @@
             "duration": 240,
             "pitch": 31,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -4665,8 +4851,10 @@
             "duration": 240,
             "pitch": 34,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4675,6 +4863,7 @@
       {
         "id": 13,
         "name": "Ghost Kick Pattern",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -4683,8 +4872,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.5511811,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4692,8 +4883,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.62992126,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4702,6 +4895,7 @@
       {
         "id": 14,
         "name": "Sticks & Percussion",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -4710,8 +4904,10 @@
             "duration": 240,
             "pitch": 42,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4719,8 +4915,10 @@
             "duration": 240,
             "pitch": 42,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4728,8 +4926,10 @@
             "duration": 240,
             "pitch": 42,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4737,8 +4937,10 @@
             "duration": 240,
             "pitch": 42,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4747,6 +4949,7 @@
       {
         "id": 15,
         "name": "Kick Double Pulse",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -4755,8 +4958,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4764,8 +4969,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4773,8 +4980,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.8267717,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4782,8 +4991,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -4791,8 +5002,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.8267717,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4801,6 +5014,7 @@
       {
         "id": 16,
         "name": "Kick Break/Syncopated",
+        "description": "",
         "length": 7680,
         "notes": [
           {
@@ -4809,8 +5023,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4818,8 +5034,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4827,8 +5045,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4836,8 +5056,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -4845,8 +5067,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -4854,8 +5078,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -4863,8 +5089,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 7,
@@ -4872,8 +5100,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.7480315,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4882,6 +5112,7 @@
       {
         "id": 17,
         "name": "Kick Heavy Accent",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -4890,8 +5121,10 @@
             "duration": 480,
             "pitch": 36,
             "velocity": 1.0,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4899,8 +5132,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4908,8 +5143,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4917,8 +5154,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -4927,6 +5166,7 @@
       {
         "id": 18,
         "name": "Arp 16th Drive",
+        "description": "",
         "length": 7680,
         "notes": [
           {
@@ -4935,8 +5175,10 @@
             "duration": 120,
             "pitch": 48,
             "velocity": 0.62992126,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -4944,8 +5186,10 @@
             "duration": 120,
             "pitch": 51,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -4953,8 +5197,10 @@
             "duration": 120,
             "pitch": 55,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -4962,8 +5208,10 @@
             "duration": 120,
             "pitch": 48,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -4971,8 +5219,10 @@
             "duration": 120,
             "pitch": 51,
             "velocity": 0.62992126,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -4980,8 +5230,10 @@
             "duration": 120,
             "pitch": 55,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -4989,8 +5241,10 @@
             "duration": 120,
             "pitch": 48,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 7,
@@ -4998,8 +5252,10 @@
             "duration": 120,
             "pitch": 51,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 8,
@@ -5007,8 +5263,10 @@
             "duration": 120,
             "pitch": 55,
             "velocity": 0.62992126,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 9,
@@ -5016,8 +5274,10 @@
             "duration": 120,
             "pitch": 48,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 10,
@@ -5025,8 +5285,10 @@
             "duration": 120,
             "pitch": 51,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 11,
@@ -5034,8 +5296,10 @@
             "duration": 120,
             "pitch": 55,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 12,
@@ -5043,8 +5307,10 @@
             "duration": 120,
             "pitch": 48,
             "velocity": 0.62992126,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 13,
@@ -5052,8 +5318,10 @@
             "duration": 120,
             "pitch": 51,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 14,
@@ -5061,8 +5329,10 @@
             "duration": 120,
             "pitch": 55,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 15,
@@ -5070,8 +5340,10 @@
             "duration": 120,
             "pitch": 48,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5080,6 +5352,7 @@
       {
         "id": 19,
         "name": "Hats 16th Shuffle",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -5088,8 +5361,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -5097,8 +5372,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.47244096,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -5106,8 +5383,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 1.0,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -5115,8 +5394,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.511811,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -5124,8 +5405,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -5133,8 +5416,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.47244096,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -5142,8 +5427,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 1.0,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 7,
@@ -5151,8 +5438,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.511811,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 8,
@@ -5160,8 +5449,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 9,
@@ -5169,8 +5460,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.47244096,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 10,
@@ -5178,8 +5471,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 1.0,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 11,
@@ -5187,8 +5482,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.511811,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 12,
@@ -5196,8 +5493,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 13,
@@ -5205,8 +5504,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.47244096,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 14,
@@ -5214,8 +5515,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 1.0,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 15,
@@ -5223,8 +5526,10 @@
             "duration": 120,
             "pitch": 42,
             "velocity": 0.511811,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5233,6 +5538,7 @@
       {
         "id": 20,
         "name": "Tom Fill Roll",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -5241,8 +5547,10 @@
             "duration": 240,
             "pitch": 45,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -5250,8 +5558,10 @@
             "duration": 240,
             "pitch": 43,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -5259,8 +5569,10 @@
             "duration": 240,
             "pitch": 41,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -5268,8 +5580,10 @@
             "duration": 240,
             "pitch": 39,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5278,6 +5592,7 @@
       {
         "id": 21,
         "name": "Impact Crash",
+        "description": "",
         "length": 15360,
         "notes": [
           {
@@ -5286,8 +5601,10 @@
             "duration": 3840,
             "pitch": 60,
             "velocity": 1.0,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5296,6 +5613,7 @@
       {
         "id": 22,
         "name": "Intro Texture Loop",
+        "description": "",
         "length": 30720,
         "notes": [
           {
@@ -5304,8 +5622,10 @@
             "duration": 30720,
             "pitch": 60,
             "velocity": 0.47244096,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5314,6 +5634,7 @@
       {
         "id": 23,
         "name": "Ghost Snares Intro",
+        "description": "",
         "length": 15360,
         "notes": [
           {
@@ -5322,8 +5643,10 @@
             "duration": 960,
             "pitch": 38,
             "velocity": 0.31496063,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5332,6 +5655,7 @@
       {
         "id": 24,
         "name": "Kick Melodic Minor Harmony",
+        "description": "",
         "length": 15360,
         "notes": [
           {
@@ -5340,8 +5664,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -5349,8 +5675,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -5358,8 +5686,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -5367,8 +5697,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -5376,8 +5708,10 @@
             "duration": 240,
             "pitch": 39,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -5385,8 +5719,10 @@
             "duration": 240,
             "pitch": 39,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -5394,8 +5730,10 @@
             "duration": 240,
             "pitch": 39,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 7,
@@ -5403,8 +5741,10 @@
             "duration": 240,
             "pitch": 39,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 8,
@@ -5412,8 +5752,10 @@
             "duration": 240,
             "pitch": 43,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 9,
@@ -5421,8 +5763,10 @@
             "duration": 240,
             "pitch": 43,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 10,
@@ -5430,8 +5774,10 @@
             "duration": 240,
             "pitch": 43,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 11,
@@ -5439,8 +5785,10 @@
             "duration": 240,
             "pitch": 43,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 12,
@@ -5448,8 +5796,10 @@
             "duration": 240,
             "pitch": 34,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 13,
@@ -5457,8 +5807,10 @@
             "duration": 240,
             "pitch": 34,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 14,
@@ -5466,8 +5818,10 @@
             "duration": 240,
             "pitch": 31,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 15,
@@ -5475,8 +5829,10 @@
             "duration": 240,
             "pitch": 34,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5485,6 +5841,7 @@
       {
         "id": 25,
         "name": "Kick Ghost Accents (moll)",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -5493,8 +5850,10 @@
             "duration": 120,
             "pitch": 48,
             "velocity": 0.5511811,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -5502,8 +5861,10 @@
             "duration": 120,
             "pitch": 51,
             "velocity": 0.62992126,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5512,6 +5873,7 @@
       {
         "id": 26,
         "name": "Kick Stutter Fill",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -5520,8 +5882,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -5529,8 +5893,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -5538,8 +5904,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -5547,8 +5915,10 @@
             "duration": 120,
             "pitch": 36,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -5556,8 +5926,10 @@
             "duration": 60,
             "pitch": 36,
             "velocity": 0.984252,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -5565,8 +5937,10 @@
             "duration": 60,
             "pitch": 36,
             "velocity": 0.984252,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -5574,8 +5948,10 @@
             "duration": 60,
             "pitch": 36,
             "velocity": 1.0,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 7,
@@ -5583,8 +5959,10 @@
             "duration": 60,
             "pitch": 36,
             "velocity": 1.0,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5593,6 +5971,7 @@
       {
         "id": 27,
         "name": "Kick Polyrhythmic 3/4",
+        "description": "",
         "length": 7680,
         "notes": [
           {
@@ -5601,8 +5980,10 @@
             "duration": 317,
             "pitch": 36,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -5610,8 +5991,10 @@
             "duration": 317,
             "pitch": 36,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -5619,8 +6002,10 @@
             "duration": 317,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -5628,8 +6013,10 @@
             "duration": 317,
             "pitch": 36,
             "velocity": 0.9055118,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -5637,8 +6024,10 @@
             "duration": 317,
             "pitch": 36,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -5646,8 +6035,10 @@
             "duration": 317,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -5655,8 +6046,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 7,
@@ -5664,8 +6057,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 8,
@@ -5673,8 +6068,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 9,
@@ -5682,8 +6079,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5692,6 +6091,7 @@
       {
         "id": 28,
         "name": "Kick Big Drop Rest",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -5700,8 +6100,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -5709,8 +6111,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -5718,8 +6122,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5728,6 +6134,7 @@
       {
         "id": 29,
         "name": "Power Lead Accents",
+        "description": "",
         "length": 15360,
         "notes": [
           {
@@ -5736,8 +6143,10 @@
             "duration": 960,
             "pitch": 72,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -5745,8 +6154,10 @@
             "duration": 480,
             "pitch": 75,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -5754,8 +6165,10 @@
             "duration": 480,
             "pitch": 72,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -5763,8 +6176,10 @@
             "duration": 1920,
             "pitch": 79,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -5772,8 +6187,10 @@
             "duration": 960,
             "pitch": 72,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -5781,8 +6198,10 @@
             "duration": 480,
             "pitch": 75,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -5790,8 +6209,10 @@
             "duration": 480,
             "pitch": 72,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 7,
@@ -5799,8 +6220,10 @@
             "duration": 1920,
             "pitch": 84,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5809,6 +6232,7 @@
       {
         "id": 30,
         "name": "Pressure Bass Pulse",
+        "description": "",
         "length": 7680,
         "notes": [
           {
@@ -5817,8 +6241,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -5826,8 +6252,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -5835,8 +6263,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -5844,8 +6274,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 4,
@@ -5853,8 +6285,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 5,
@@ -5862,8 +6296,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 6,
@@ -5871,8 +6307,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 7,
@@ -5880,8 +6318,10 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.86614174,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5890,6 +6330,7 @@
       {
         "id": 31,
         "name": "Harmonic Resonator Echos",
+        "description": "",
         "length": 30720,
         "notes": [
           {
@@ -5898,8 +6339,10 @@
             "duration": 7680,
             "pitch": 48,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 1,
@@ -5907,8 +6350,10 @@
             "duration": 7680,
             "pitch": 51,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 2,
@@ -5916,8 +6361,10 @@
             "duration": 7680,
             "pitch": 55,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           },
           {
             "id": 3,
@@ -5925,8 +6372,10 @@
             "duration": 7680,
             "pitch": 43,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null
           }
         ],
         "automation": [],
@@ -5938,6 +6387,7 @@
       {
         "id": 0,
         "name": "Kick",
+        "description": "",
         "instrument": 7,
         "volume": 1.0,
         "pan": 0.0,
@@ -5953,6 +6403,7 @@
       {
         "id": 1,
         "name": "Snare",
+        "description": "",
         "instrument": 8,
         "volume": 1.0,
         "pan": 0.0,
@@ -5968,6 +6419,7 @@
       {
         "id": 2,
         "name": "Hats",
+        "description": "",
         "instrument": 9,
         "volume": 1.0,
         "pan": 0.0,
@@ -5983,6 +6435,7 @@
       {
         "id": 3,
         "name": "Bass",
+        "description": "",
         "instrument": 10,
         "volume": 1.0,
         "pan": 0.0,
@@ -5998,6 +6451,7 @@
       {
         "id": 4,
         "name": "Lead",
+        "description": "",
         "instrument": 11,
         "volume": 1.0,
         "pan": 0.0,
@@ -6013,6 +6467,7 @@
       {
         "id": 5,
         "name": "Pad",
+        "description": "",
         "instrument": 12,
         "volume": 1.0,
         "pan": 0.0,
@@ -6028,6 +6483,7 @@
       {
         "id": 6,
         "name": "Sub Bass (Harmony)",
+        "description": "",
         "instrument": 13,
         "volume": 1.0,
         "pan": 0.0,
@@ -6043,6 +6499,7 @@
       {
         "id": 7,
         "name": "Unison Supersaw (Lead Var)",
+        "description": "",
         "instrument": 14,
         "volume": 1.0,
         "pan": 0.0,
@@ -6058,6 +6515,7 @@
       {
         "id": 8,
         "name": "Noise Sweep (SFX)",
+        "description": "",
         "instrument": 15,
         "volume": 1.0,
         "pan": 0.0,
@@ -6073,6 +6531,7 @@
       {
         "id": 9,
         "name": "Shepard Riser (SFX)",
+        "description": "",
         "instrument": 16,
         "volume": 1.0,
         "pan": 0.0,
@@ -6088,6 +6547,7 @@
       {
         "id": 10,
         "name": "Syncopated Kick",
+        "description": "",
         "instrument": 7,
         "volume": 1.0,
         "pan": 0.0,
@@ -6103,6 +6563,7 @@
       {
         "id": 11,
         "name": "Percussion/Sticks",
+        "description": "",
         "instrument": 9,
         "volume": 1.0,
         "pan": 0.0,
@@ -6118,6 +6579,7 @@
       {
         "id": 12,
         "name": "Arpeggio",
+        "description": "",
         "instrument": 17,
         "volume": 1.0,
         "pan": 0.0,
@@ -6133,6 +6595,7 @@
       {
         "id": 13,
         "name": "Impact FX",
+        "description": "",
         "instrument": 18,
         "volume": 1.0,
         "pan": 0.0,
@@ -6148,6 +6611,7 @@
       {
         "id": 14,
         "name": "Intro Textures",
+        "description": "",
         "instrument": 19,
         "volume": 1.0,
         "pan": 0.0,
@@ -6163,6 +6627,7 @@
       {
         "id": 15,
         "name": "Screamer Power Lead",
+        "description": "",
         "instrument": 20,
         "volume": 1.0,
         "pan": 0.0,
@@ -6178,6 +6643,7 @@
       {
         "id": 16,
         "name": "Wavefolder Pressure Bass",
+        "description": "",
         "instrument": 21,
         "volume": 1.0,
         "pan": 0.0,
@@ -6193,6 +6659,7 @@
       {
         "id": 17,
         "name": "Harmonic Echo Resonator",
+        "description": "",
         "instrument": 22,
         "volume": 1.0,
         "pan": 0.0,
@@ -9635,7 +10102,8 @@
     "row_resolution": {
       "rows": 64,
       "ticks_per_row": 240
-    }
+    },
+    "next_return_bus_id": 0
   },
   "global": {
     "master_volume": 0.8,

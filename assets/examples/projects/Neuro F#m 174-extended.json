@@ -3799,7 +3799,7 @@
             "id": "amp-1",
             "type": "amplifier",
             "position": {
-              "x": 736.0,
+              "x": 704.0,
               "y": 32.0
             },
             "parameters": {
@@ -3812,7 +3812,7 @@
             "id": "amp-2",
             "type": "amplifier",
             "position": {
-              "x": 736.0,
+              "x": 704.0,
               "y": 288.0
             },
             "parameters": {
@@ -3825,7 +3825,7 @@
             "id": "out-1",
             "type": "stereo_output",
             "position": {
-              "x": 1088.0,
+              "x": 1056.0,
               "y": 32.0
             },
             "parameters": {
@@ -3840,7 +3840,7 @@
             "id": "rev-1",
             "type": "reverb",
             "position": {
-              "x": 1440.0,
+              "x": 1408.0,
               "y": 544.0
             },
             "parameters": {
@@ -3858,7 +3858,7 @@
             "id": "dst-1",
             "type": "distortion",
             "position": {
-              "x": 1440.0,
+              "x": 1408.0,
               "y": 32.0
             },
             "parameters": {
@@ -3873,7 +3873,7 @@
             "id": "enc-1",
             "type": "ensemble_chorus",
             "position": {
-              "x": 1440.0,
+              "x": 1408.0,
               "y": 288.0
             },
             "parameters": {
@@ -3996,7 +3996,7 @@
           "octave_offset": 0,
           "glide_time": 0.0,
           "canvas_size": {
-            "width": 1890.0,
+            "width": 1858.0,
             "height": 1108.0
           },
           "effect_chain_order": [
@@ -4493,7 +4493,7 @@
       }
     }
   ],
-  "active_instrument_id": 13,
+  "active_instrument_id": 12,
   "author": {
     "name": "Per Jonsson",
     "email": "pertyjons@gmail.com"
@@ -4501,7 +4501,7 @@
   "song": {
     "name": "Neuro F#m 174",
     "author": "",
-    "description": "",
+    "description": "\"Neuro F#m 174\" - a neurofunk / drum & bass track in F# minor, 174 BPM, 4/4, about 2:23. Dark, technical and high-energy: a dual-saw Reese bass that is sidechain-pumped by an 808-style F#1 kick forms the drop engine, backed by a tight break kit (snare on the three, 16th-note hi-hats, a clap layer, rim and off-beat accents). Stereo width is built throughout via L/R-desynced parallel filters on the Reese bass, the pad, the arps and the lead. The pad and the Arp Echo ring through the whole track as texture and counterpoint over an F# minor to A and back to F# minor progression, with slow cutoff automation. A 16th-note Arp Lead drives the drops, and a melancholic, singable synth lead carries the break, build and outro. An FX layer of pink-noise risers and upward sweeps marks the section changes, and sub impacts mark the drops. Structure: intro and build-up, then pre-drop, drop 1 (bars 25 to 48), break, build 2, drop 2 (bar 65) and a closing outro. Mood: nocturnal, menacing, high drop energy.",
     "patterns": [
       {
         "id": 0,

@@ -6,7 +6,7 @@
       "id": 0,
       "name": "Fractal Pad",
       "channel": 1,
-      "volume": 0.46229166,
+      "volume": 0.63875,
       "pan": -0.4,
       "muted": false,
       "solo": false,
@@ -17,6 +17,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 3,
+      "description": "Foundational harmonic pad — sustains the Em–C / G–D chord bed under the entire arrangement. Panned left, low register; the warm bed every other voice sits on.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -25,6 +26,7 @@
       "patch": {
         "name": "Fractal Pad",
         "version": "1.0",
+        "description": "Lush evolving polyphonic pad. Slow-attack sustained envelope under a soft low-pass with built-in movement, fed to reverb + delay sends for a wide, glassy 'fractal' bloom. Good for ambient chord beds.",
         "modules": [
           {
             "id": "flt-1",
@@ -346,6 +348,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 5,
+      "description": "Lead arpeggiator — the driving 16th-note arp figure (Arp Em-C / G-D) that carries the song's forward momentum. Panned right, mid register.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -354,6 +357,7 @@
       "patch": {
         "name": "Pluck Synth",
         "version": "1.0",
+        "description": "Short plucked subtractive synth: fast attack, quick decay, no sustain — a tight pluck that reads clearly at 16th-note speeds. Light delay for a rhythmic tail.",
         "modules": [
           {
             "id": "osc-1",
@@ -558,7 +562,7 @@
       "id": 2,
       "name": "Spacey Bass",
       "channel": 1,
-      "volume": 0.72,
+      "volume": 0.52991664,
       "pan": 0.0,
       "muted": false,
       "solo": false,
@@ -569,6 +573,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 2,
+      "description": "Main bassline — monophonic sub/low foundation, sidechained to the kick (ducks on each kick hit) for a pumping Oxygène-style groove.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -578,6 +583,7 @@
       "patch": {
         "name": "Spacey Bass",
         "version": "1.0",
+        "description": "Monophonic sustained synth bass with a smooth low-pass; round and spacious. Sidechain-ready, sits in the sub/low band to anchor the harmony.",
         "modules": [
           {
             "id": "osc-1",
@@ -831,7 +837,7 @@
       "id": 3,
       "name": "Moog Resonant Sweep",
       "channel": 1,
-      "volume": 0.7268437,
+      "volume": 0.7206563,
       "pan": 0.0,
       "muted": false,
       "solo": false,
@@ -842,6 +848,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 4,
+      "description": "Lead melody (Lead Melody A/B) entering in the later sections — monophonic, high register, the expressive top-line voice.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -850,6 +857,7 @@
       "patch": {
         "name": "Moog Resonant Sweep",
         "version": "1.0",
+        "description": "Classic Moog-style monophonic lead: a resonant ladder low-pass sweep with audible resonance, built for singing, filter-modulated lead lines.",
         "modules": [
           {
             "id": "osc-1",
@@ -1181,7 +1189,7 @@
       "id": 4,
       "name": "Ethereal Shimmer Pad",
       "channel": 1,
-      "volume": 0.39176822,
+      "volume": 0.59930986,
       "pan": -0.5,
       "muted": false,
       "solo": false,
@@ -1192,6 +1200,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 3,
+      "description": "Shimmer/string pad layer — airy width and sparkle above the main pad. Heavily reverberant, panned left.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -1200,6 +1209,7 @@
       "patch": {
         "name": "Ethereal Shimmer Pad",
         "version": "1.0",
+        "description": "Ethereal polyphonic shimmer pad: sustained and bright, drenched in reverb/modulation (4 effects) for an octave-shimmer, choir-like sheen. Atmospheric layering voice.",
         "modules": [
           {
             "id": "flt-1",
@@ -1460,6 +1470,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 1,
+      "description": "Driving four-on-the-floor kick — the rhythmic anchor and the sidechain source for the bass.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -1468,6 +1479,7 @@
       "patch": {
         "name": "Kick Drum",
         "version": "1.0",
+        "description": "Synthesized kick: pitch-swept sine oscillator (fast pitch envelope) plus a short noise transient for click, shaped by separate amp/pitch/click envelopes and two VCAs. Punchy electronic kick. Main output VCA trimmed to 0.64 for headroom.",
         "modules": [
           {
             "id": "osc-2",
@@ -1580,7 +1592,7 @@
             },
             "parameters": {
               "cv_bipolar": 0.0,
-              "level": 0.9,
+              "level": 0.64,
               "pan": 0.0
             }
           },
@@ -1698,7 +1710,7 @@
       "id": 6,
       "name": "Hi-Hat",
       "channel": 1,
-      "volume": 0.55,
+      "volume": 0.72,
       "pan": 0.0,
       "muted": false,
       "solo": false,
@@ -1709,6 +1721,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 1,
+      "description": "8th-note hi-hats — keeps the high-end rhythmic pulse going.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -1717,6 +1730,7 @@
       "patch": {
         "name": "Hi-Hat",
         "version": "1.0",
+        "description": "Noise-based hi-hat: filtered noise with a fast percussive decay. Crisp top-end ticks.",
         "modules": [
           {
             "id": "nse-1",
@@ -1864,7 +1878,7 @@
       "id": 7,
       "name": "FM Bell",
       "channel": 1,
-      "volume": 0.63825,
+      "volume": 0.550082,
       "pan": 0.5,
       "muted": false,
       "solo": false,
@@ -1875,6 +1889,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 6,
+      "description": "Bell melody / counter-line (Bells Em-C / G-D, cascade). High register, panned right; adds melodic sparkle.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -1883,6 +1898,7 @@
       "patch": {
         "name": "FM Bell",
         "version": "1.0",
+        "description": "FM bell: a frequency-modulated operator pair giving an inharmonic metallic bell timbre with a plucked envelope, plus delay for ringing tails.",
         "modules": [
           {
             "id": "osc-1",
@@ -2128,6 +2144,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 3,
+      "description": "Vocal-like pad — a breathy choir layer adding human warmth to the chords. Panned left, slowly evolving.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -2136,6 +2153,7 @@
       "patch": {
         "name": "Vocal Pad",
         "version": "1.0",
+        "description": "Formant/vocal pad: an evolving filtered tone shaped toward vowel-like resonances with slow movement; soft and breathy. A choir-substitute layer.",
         "modules": [
           {
             "id": "flt-1",
@@ -2342,6 +2360,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 5,
+      "description": "Harmony arpeggio — a bright high counter-arp that interlocks with the main arp. Panned right.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -2350,6 +2369,7 @@
       "patch": {
         "name": "Crystal Arp",
         "version": "1.0",
+        "description": "Crystalline plucked arp: bright high-register pluck, fast decay, glassy tone with reverb/delay for shimmer. Reads as sparkle on top of the mix.",
         "modules": [
           {
             "id": "osc-1",
@@ -2583,6 +2603,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 3,
+      "description": "Moog-style harmony pad — mid-register chordal support beneath the leads. Panned left.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -2591,6 +2612,7 @@
       "patch": {
         "name": "Moog Pad",
         "version": "1.0",
+        "description": "Warm Moog-flavoured polyphonic pad: detuned oscillators through a resonant low-pass, sustained and analog-thick. Harmonic glue under the leads.",
         "modules": [
           {
             "id": "osc-1",
@@ -2897,6 +2919,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 1,
+      "description": "Backbeat snare plus build fills — drives the chorus/drop sections.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -2905,6 +2928,7 @@
       "patch": {
         "name": "Snare",
         "version": "1.0",
+        "description": "Synth snare: a tone body plus a noise burst with a fast percussive envelope. Tight, electronic snare/clap character.",
         "modules": [
           {
             "id": "osc-1",
@@ -3142,7 +3166,7 @@
       "id": 23,
       "name": "Harmonic Lead",
       "channel": 1,
-      "volume": 0.67020833,
+      "volume": 0.65841144,
       "pan": 0.3,
       "muted": false,
       "solo": false,
@@ -3153,6 +3177,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 4,
+      "description": "Celestial counter-melody lead — sustained high-register top-line floating above the main lead.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -3161,6 +3186,7 @@
       "patch": {
         "name": "Harmonic Lead",
         "version": "1.0",
+        "description": "Sustained harmonic lead: a bright, harmonic-rich tone with smooth sustain that sits high. Good for airy counter-melodies.",
         "modules": [
           {
             "id": "flt-1",
@@ -3378,6 +3404,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 3,
+      "description": "Lush wide harmony pad — thickens the chorus chords with stereo width.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -3386,6 +3413,7 @@
       "patch": {
         "name": "Stereo Unison Pad",
         "version": "1.0",
+        "description": "Stereo unison pad: multiple detuned voices spread across the stereo field for a wide, thick bed. Sustained and slowly evolving.",
         "modules": [
           {
             "id": "osc-1",
@@ -3581,6 +3609,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 6,
+      "description": "Echoing bell sparkles — decorative high accents (Sparkling Bell Echoes). Panned hard left.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -3589,6 +3618,7 @@
       "patch": {
         "name": "Sparkling Bells",
         "version": "1.0",
+        "description": "Bright plucked bell with prominent delay echoes; high register, glassy and rhythmic. Ear-candy accent voice.",
         "modules": [
           {
             "id": "osc-1",
@@ -3834,6 +3864,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 7,
+      "description": "Rhythmic glitch FX texture — atonal movement and percussive interest layered into the busier sections.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -3842,6 +3873,7 @@
       "patch": {
         "name": "Glitch Pad",
         "version": "1.0",
+        "description": "Glitch FX texture: atonal, gated/modulated noisy material used for rhythmic stutter and motion. Pure texture, not pitched.",
         "modules": [
           {
             "id": "osc-1",
@@ -4118,6 +4150,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 3,
+      "description": "Orchestral string-swell layer — big cinematic swells in the build/drop sections. Level was reduced (track 1.0→0.4) during the clipping fix because the patch runs hot.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -4126,6 +4159,7 @@
       "patch": {
         "name": "String Ensemble",
         "version": "1.0",
+        "description": "Polyphonic string ensemble: a slow, evolving bowed-string emulation with reverb for orchestral depth. Outputs hot — its internal peak runs ~+7 dB, so keep its track/instrument level low.",
         "modules": [
           {
             "id": "osc-1",
@@ -4226,7 +4260,7 @@
             "type": "lfo",
             "position": {
               "x": 32.0,
-              "y": 576.0
+              "y": 640.0
             },
             "parameters": {
               "depth": 0.03,
@@ -4239,7 +4273,7 @@
             "id": "amp-1",
             "type": "amplifier",
             "position": {
-              "x": 1216.0,
+              "x": 1184.0,
               "y": 32.0
             },
             "parameters": {
@@ -4271,7 +4305,7 @@
             "id": "out-1",
             "type": "stereo_output",
             "position": {
-              "x": 1568.0,
+              "x": 1536.0,
               "y": 32.0
             },
             "parameters": {
@@ -4286,7 +4320,7 @@
             "id": "rev-1",
             "type": "reverb",
             "position": {
-              "x": 1920.0,
+              "x": 1888.0,
               "y": 32.0
             },
             "parameters": {
@@ -4304,7 +4338,7 @@
             "id": "chr-1",
             "type": "chorus",
             "position": {
-              "x": 1920.0,
+              "x": 1888.0,
               "y": 320.0
             },
             "parameters": {
@@ -4423,8 +4457,8 @@
           "octave_offset": 0,
           "glide_time": 0.0,
           "canvas_size": {
-            "width": 2370.0,
-            "height": 1076.0
+            "width": 2338.0,
+            "height": 1140.0
           },
           "effect_chain_order": [
             "rev-1",
@@ -4448,6 +4482,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 6,
+      "description": "Digital counter-arp — chiming counter-rhythm against the main arps. Panned right, mid register.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -4456,6 +4491,7 @@
       "patch": {
         "name": "Digital Chime",
         "version": "1.0",
+        "description": "Digital chime: a short metallic/plucked digital tone with delay; bright and rhythmic. Counter-melodic sparkle.",
         "modules": [
           {
             "id": "flt-1",
@@ -4670,7 +4706,7 @@
       "id": 29,
       "name": "Unison Supersaw",
       "channel": 1,
-      "volume": 0.5920547,
+      "volume": 0.5006094,
       "pan": 0.0,
       "muted": false,
       "solo": false,
@@ -4681,6 +4717,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 4,
+      "description": "Power supersaw layer — the big detuned-saw energy lift in the drop/chorus sections.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -4689,6 +4726,7 @@
       "patch": {
         "name": "Unison Supersaw",
         "version": "1.0",
+        "description": "Classic supersaw: many detuned saw voices in unison for a huge, wide trance/EDM lead-stack. Drives chorus/drop energy.",
         "modules": [
           {
             "id": "osc-1",
@@ -4957,7 +4995,7 @@
       "id": 30,
       "name": "Noise Sweep",
       "channel": 1,
-      "volume": 0.38292968,
+      "volume": 0.120859385,
       "pan": 0.0,
       "muted": false,
       "solo": false,
@@ -4968,6 +5006,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 7,
+      "description": "Build-up FX sweep — noise riser used for transitions into the big sections.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "max_voices": 8,
@@ -4976,6 +5015,7 @@
       "patch": {
         "name": "Noise Sweep",
         "version": "1.0",
+        "description": "Filtered noise sweep/riser: white noise through a rising filter plus reverb/delay, automated to build tension into drops. Transition FX.",
         "modules": [
           {
             "id": "nse-1",
@@ -5181,7 +5221,7 @@
       }
     }
   ],
-  "active_instrument_id": 4,
+  "active_instrument_id": 25,
   "author": {
     "name": "Per Jonsson",
     "email": "pertyjons@gmail.com"
@@ -11659,7 +11699,7 @@
         "name": "Moog Harmony",
         "description": "",
         "instrument": 10,
-        "volume": 1.0,
+        "volume": 0.6,
         "pan": -0.18,
         "mute": false,
         "solo": false,
@@ -11809,7 +11849,7 @@
         "name": "Orchestral Strings Layer",
         "description": "",
         "instrument": 27,
-        "volume": 1.0,
+        "volume": 0.4,
         "pan": 0.22,
         "mute": false,
         "solo": false,
@@ -13226,7 +13266,7 @@
     "next_return_bus_id": 2
   },
   "global": {
-    "master_volume": 2.0,
+    "master_volume": 1.7,
     "octave_offset": 0,
     "glide_time": 1.3,
     "return_bus_effects": [
@@ -13352,7 +13392,7 @@
         },
         "parameters": {
           "attack": 25.0,
-          "makeup": 6.5,
+          "makeup": 1.5,
           "mix": 0.55,
           "ratio": 2.0,
           "release": 180.0,
