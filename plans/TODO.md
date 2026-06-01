@@ -221,17 +221,16 @@
   the session"). After either lands, also extend the §1 tracing with a
   `std::panic::set_hook` that logs `tracing::error!("MCP task panicked", message, location, ...)`
   so operators see panics without needing `strace`.
-- [ ] **`WidgetHint::PanKnob` parameters are never rendered in the auto-renderer.** The shared
-  descriptor-driven parameter grid (`gui/widgets/param_grid.rs::draw_parameter_grid`, used by both
-  the Rack patch editor and the mixer's return inserts) groups parameters by hint into
-  WaveformSelector / Slider+TimeSlider / Dropdown / Toggle / Knob+FrequencySlider — `PanKnob` (and
-  the other unused hints `XYPad`, `PercentSlider`, `DecibelSlider`) is in none of them, so any such
-  param silently disappears from the UI. Currently only `amplifier.rs` and `output.rs` set `PanKnob`
-  (neither is a return-insert effect), and this was already the behavior before the param-grid
-  extraction, so it's latent rather than a regression. Fix: fold `PanKnob` into the knob group (it
-  is semantically a knob) — or add a catch-all so no descriptor hint can drop a parameter — and
-  decide intended widgets for `PercentSlider`/`DecibelSlider`/`XYPad` while there. Note this will
-  start rendering the amp/output Pan knobs that are currently invisible in the Rack.
+- [x] **`WidgetHint::PanKnob` parameters now render in the auto-renderer.** The grid grouped
+  params by hint with no group for `PanKnob` / `XYPad` / `PercentSlider` / `DecibelSlider`, so
+  those params silently vanished (the amp/output Pan knobs were invisible in the Rack). Replaced
+  the scattered `by_hint` lists with a single exhaustive `render_group(hint) -> Option<RenderGroup>`
+  mapping (no wildcard → a new `WidgetHint` is a compile error until classified): PanKnob/XYPad →
+  Knob (descriptor-driven, so bipolar pan renders), Percent/DecibelSlider → Slider, and the
+  module-supplied/Hidden hints → not auto-rendered. Locked by unit tests in `param_grid.rs`.
+  Follow-ups (latent, no module uses them yet): Percent/DecibelSlider don't show a `%`/`dB` suffix
+  (would need a unit-aware slider, touches all sliders), and `XYPad` collapses to one knob (needs a
+  real 2D widget before any module adopts it).
 
 --- 
 

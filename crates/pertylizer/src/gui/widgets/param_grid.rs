@@ -21,6 +21,46 @@ use crate::gui::theme::theme;
 /// parameters); apply it with `descriptor.id.with_f32(value)`.
 pub type ParamChange<'d> = (&'d ParameterDescriptor, f32);
 
+/// Which widget group the auto-renderer draws a parameter in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderGroup {
+    Waveform,
+    Slider,
+    Dropdown,
+    Toggle,
+    Knob,
+}
+
+/// Map a [`WidgetHint`] to its auto-render group, or `None` when the module
+/// draws the parameter itself (`EnvelopeEditor` / `PianoKeyboard` / `WaveEditor`)
+/// or it is explicitly `Hidden`.
+///
+/// The `match` is intentionally exhaustive with no wildcard: every value hint
+/// must map to a group so it can never silently vanish from the grid (the
+/// `PanKnob` / `XYPad` bug), and adding a new `WidgetHint` becomes a *compile
+/// error* here until it is classified. Hints without a bespoke widget fall back
+/// to a knob (a descriptor-driven `Knob` already honours range/curve/unit, so a
+/// bipolar `PanKnob` renders correctly).
+fn render_group(hint: WidgetHint) -> Option<RenderGroup> {
+    match hint {
+        WidgetHint::WaveformSelector => Some(RenderGroup::Waveform),
+        WidgetHint::Slider
+        | WidgetHint::TimeSlider
+        | WidgetHint::PercentSlider
+        | WidgetHint::DecibelSlider => Some(RenderGroup::Slider),
+        WidgetHint::Dropdown => Some(RenderGroup::Dropdown),
+        WidgetHint::Toggle => Some(RenderGroup::Toggle),
+        WidgetHint::Knob
+        | WidgetHint::FrequencySlider
+        | WidgetHint::PanKnob
+        | WidgetHint::XYPad => Some(RenderGroup::Knob),
+        WidgetHint::EnvelopeEditor
+        | WidgetHint::PianoKeyboard
+        | WidgetHint::WaveEditor
+        | WidgetHint::Hidden => None,
+    }
+}
+
 /// Render every parameter of `descriptor` as the widget its [`WidgetHint`] asks
 /// for, and return the ones the user changed this frame.
 ///
@@ -36,18 +76,18 @@ pub fn draw_parameter_grid<'d>(
 ) -> Vec<ParamChange<'d>> {
     let mut changes = Vec::new();
 
-    let by_hint = |hints: &[WidgetHint]| -> Vec<&'d ParameterDescriptor> {
+    let by_group = |group: RenderGroup| -> Vec<&'d ParameterDescriptor> {
         descriptor
             .parameters
             .iter()
-            .filter(|p| hints.contains(&p.widget_hint))
+            .filter(|p| render_group(p.widget_hint) == Some(group))
             .collect()
     };
-    let waveform_params = by_hint(&[WidgetHint::WaveformSelector]);
-    let slider_params = by_hint(&[WidgetHint::Slider, WidgetHint::TimeSlider]);
-    let dropdown_params = by_hint(&[WidgetHint::Dropdown]);
-    let toggle_params = by_hint(&[WidgetHint::Toggle]);
-    let knob_params = by_hint(&[WidgetHint::Knob, WidgetHint::FrequencySlider]);
+    let waveform_params = by_group(RenderGroup::Waveform);
+    let slider_params = by_group(RenderGroup::Slider);
+    let dropdown_params = by_group(RenderGroup::Dropdown);
+    let toggle_params = by_group(RenderGroup::Toggle);
+    let knob_params = by_group(RenderGroup::Knob);
 
     // Waveform selectors first (most prominent).
     for param in &waveform_params {
@@ -225,4 +265,62 @@ pub fn draw_knobs<'d>(
     }
 
     changes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RenderGroup, render_group};
+    use synth_core::WidgetHint;
+
+    #[test]
+    fn previously_dropped_hints_now_render() {
+        // Regression: these hints mapped to no group and silently vanished from
+        // the auto-renderer. PanKnob/XYPad render as knobs, the unit sliders as
+        // sliders.
+        assert_eq!(render_group(WidgetHint::PanKnob), Some(RenderGroup::Knob));
+        assert_eq!(render_group(WidgetHint::XYPad), Some(RenderGroup::Knob));
+        assert_eq!(
+            render_group(WidgetHint::PercentSlider),
+            Some(RenderGroup::Slider)
+        );
+        assert_eq!(
+            render_group(WidgetHint::DecibelSlider),
+            Some(RenderGroup::Slider)
+        );
+    }
+
+    #[test]
+    fn module_supplied_and_hidden_hints_are_not_auto_rendered() {
+        for hint in [
+            WidgetHint::EnvelopeEditor,
+            WidgetHint::PianoKeyboard,
+            WidgetHint::WaveEditor,
+            WidgetHint::Hidden,
+        ] {
+            assert_eq!(render_group(hint), None, "{hint:?} should not auto-render");
+        }
+    }
+
+    #[test]
+    fn standard_value_hints_map_to_their_widget() {
+        assert_eq!(
+            render_group(WidgetHint::WaveformSelector),
+            Some(RenderGroup::Waveform)
+        );
+        assert_eq!(render_group(WidgetHint::Slider), Some(RenderGroup::Slider));
+        assert_eq!(
+            render_group(WidgetHint::TimeSlider),
+            Some(RenderGroup::Slider)
+        );
+        assert_eq!(
+            render_group(WidgetHint::Dropdown),
+            Some(RenderGroup::Dropdown)
+        );
+        assert_eq!(render_group(WidgetHint::Toggle), Some(RenderGroup::Toggle));
+        assert_eq!(render_group(WidgetHint::Knob), Some(RenderGroup::Knob));
+        assert_eq!(
+            render_group(WidgetHint::FrequencySlider),
+            Some(RenderGroup::Knob)
+        );
+    }
 }
