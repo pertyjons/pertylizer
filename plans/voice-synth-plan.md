@@ -1,6 +1,7 @@
 # Voice Synth — Physically-Inspired Singing/Choir Module Plan
 
-Status: **proposed** (not started). One phase per session, in order.
+Status: **Phases 1–5 implemented** (v0.307.0, 2026-06-02). Phase 6 (true FOF /
+Kelly–Lochbaum waveguide) remains an optional stretch. One phase per session.
 
 ## Goal
 

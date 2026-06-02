@@ -1,5 +1,31 @@
 # Version History
 
+## [0.307.0] - 2026-06-02
+
+### Voice Synth — physically-inspired singing-voice / choir module
+
+- **New `VoiceSynth` voice module (source–filter singing voice).** A Rosenberg/LF
+  glottal pulse excites a parallel formant resonator bank tuned to a morphable
+  A→E→I→O→U vowel, with a Formant Shift (vocal-tract length) control; registered
+  across the module/param system, factory and schemas.
+- **Expressivity controls.** Added breath/aspiration noise, glottal Open Quotient,
+  spectral Tilt (one-pole source lowpass, true bypass at 0) and internal vibrato,
+  plus `pitch_cv` / `vowel_cv` / `breath_cv` modulation inputs.
+- **Built-in choir / unison.** Up to 16 decorrelated sub-voices (per-voice detune,
+  vibrato, formant jitter, onset stagger, equal-power pan) summed to mono `out`
+  plus stereo `out_l`/`out_r`; all voices are phase-decorrelated at note-on so
+  raising Unison Voices mid-note stays decorrelated rather than phase-aligned.
+- **Example patches.** Added "Solo Voice" and "Choir" under a new "Vocal & Choir"
+  category; both document Formant Shift as the SATB voice-type control. Design and
+  phased roadmap live in `plans/voice-synth-plan.md`.
+
+### GUI / CI housekeeping
+
+- **Tokenized GUI spacing and colors.** `add_space` spacing literals folded into a
+  theme scale, hardcoded view colors extracted into named const palettes, and a
+  redundant transparent-color const replaced with `Color32::TRANSPARENT`.
+- **CI on Node 24.** Bumped the GitHub Actions `setup-node` majors to Node 24.
+
 ## [0.306.0] - 2026-06-01
 
 ### Documentation sync — corrected counts + AI-workflow guide

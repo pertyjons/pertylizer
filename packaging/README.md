@@ -1,6 +1,6 @@
 # Pertylizer
 
-A modular synthesizer with 67 module types (including 25 effects), a sequencer,
+A modular synthesizer with 68 module types (including 25 effects), a sequencer,
 an acoustic room engine, and MCP integration for driving it from an AI CLI.
 
 This package contains everything you need to run Pertylizer and its 3D
