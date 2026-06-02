@@ -7599,7 +7599,7 @@
       }
     },
     "voice_synth": {
-      "description": "Physically-inspired singing voice (glottal source → formants)",
+      "description": "Physically-inspired singing voice / choir (glottal source → formants)",
       "name": "Voice Synth",
       "parameters": {
         "breathiness": {
@@ -7649,6 +7649,36 @@
           "min": 0.0,
           "modulatable": true,
           "name": "Tilt",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "unison_detune": {
+          "default": 15.0,
+          "description": "Pitch spread across unison voices",
+          "max": 50.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Unison Detune",
+          "response_curve": "linear",
+          "unit": "cents"
+        },
+        "unison_spread": {
+          "default": 0.699999988079071,
+          "description": "Stereo width of the choir (0 = mono, 1 = full)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Unison Spread",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "unison_voices": {
+          "default": 0.0,
+          "description": "Choir size: 1 (solo) to 16 decorrelated voices",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Unison Voices",
           "response_curve": "linear",
           "unit": "none"
         },

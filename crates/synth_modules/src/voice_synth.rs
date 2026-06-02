@@ -1,4 +1,4 @@
-//! Voice Synth — physically-inspired singing-voice module.
+//! Voice Synth — physically-inspired singing-voice / choir module.
 //!
 //! Source–filter model: a glottal pulse (Rosenberg/LF family) excites a bank of
 //! parallel formant resonators tuned to a morphable vowel (A→E→I→O→U). A
@@ -8,6 +8,12 @@
 //! Expressivity (Phase 2): breath/aspiration noise, glottal open quotient,
 //! spectral tilt, internal vibrato, and `pitch_cv` / `vowel_cv` / `breath_cv`
 //! modulation inputs.
+//!
+//! Choir (Phase 3): an internal bank of up to `MAX_UNISON` decorrelated
+//! sub-voices — each with its own detune, vibrato phase/rate, formant jitter,
+//! onset stagger and stereo pan. The pseudo-random amplitude beating between
+//! sub-voices is what the ear hears as an ensemble. Mono `out` is the
+//! un-panned sum; `out_l`/`out_r` carry the stereo spread.
 //!
 //! See `plans/voice-synth-plan.md` for the full design and phased roadmap.
 //! The formant tables and bandpass below are copied from `formant_filter` /
@@ -27,6 +33,8 @@ use synth_core::{ModuleType, Param, VoiceSynthParam};
 const NUM_BANDS: usize = 3;
 /// Number of vowels (A, E, I, O, U).
 const NUM_VOWELS: usize = 5;
+/// Maximum number of unison sub-voices (fixed array — no heap in `process()`).
+const MAX_UNISON: usize = 16;
 
 /// Relative position of the glottal flow peak within the open phase.
 const GLOTTAL_TP: f32 = 0.6;
@@ -34,6 +42,8 @@ const GLOTTAL_TP: f32 = 0.6;
 const NOISE_GAIN: f32 = 2.0;
 /// Non-zero PRNG seed (golden-ratio constant) for the breath-noise generator.
 const RNG_SEED: u32 = 0x9E37_79B9;
+/// Maximum per-voice onset stagger, in seconds, for choir attack decorrelation.
+const ONSET_MAX_SECS: f32 = 0.004;
 
 /// Formant frequencies for each vowel [vowel][band] in Hz.
 const FORMANT_FREQ: [[f32; NUM_BANDS]; NUM_VOWELS] = [
@@ -128,7 +138,103 @@ fn glottal_flow(phase: f32, oq: f32) -> f32 {
     }
 }
 
-/// Voice Synth module (glottal source → formant bank, with expressivity).
+/// Deterministic decorrelation hash in [0, 1) from (voice index, note, salt).
+/// Reproducible and allocation-free — used instead of `Math.random`.
+#[inline]
+fn decorr_hash(voice: usize, note: f32, salt: f32) -> f32 {
+    let x = voice as f32 * 0.618_034 + note * 0.019_3 + salt;
+    let h = (x.sin() * 43758.547).abs();
+    h - h.floor()
+}
+
+/// One decorrelated unison sub-voice: an independent glottal source + formant
+/// bank with its own detune, vibrato, formant jitter, onset and pan.
+#[derive(Clone)]
+struct SubVoice {
+    glottal_phase: Phase,
+    prev_flow: f32,
+    vibrato_phase: Phase,
+    tilt_state: f32,
+    rng_state: u32,
+    states: [BandpassState; NUM_BANDS],
+    coeffs: [BandpassCoeffs; NUM_BANDS],
+    gains: [f32; NUM_BANDS],
+
+    // Per-voice decorrelation (recomputed at block start).
+    detune_cents: f32,
+    vib_rate_mult: f32,
+    formant_jitter: f32,
+    pan_l: f32,
+    pan_r: f32,
+    onset_countdown: u32,
+}
+
+impl SubVoice {
+    fn new() -> Self {
+        Self {
+            glottal_phase: Phase::ZERO,
+            prev_flow: 0.0,
+            vibrato_phase: Phase::ZERO,
+            tilt_state: 0.0,
+            rng_state: RNG_SEED,
+            states: [BandpassState::default(); NUM_BANDS],
+            coeffs: [BandpassCoeffs::default(); NUM_BANDS],
+            gains: [1.0, 0.5, 0.25],
+            detune_cents: 0.0,
+            vib_rate_mult: 1.0,
+            formant_jitter: 1.0,
+            pan_l: std::f32::consts::FRAC_1_SQRT_2,
+            pan_r: std::f32::consts::FRAC_1_SQRT_2,
+            onset_countdown: 0,
+        }
+    }
+
+    /// Re-arm phases/state for a new note. `glottal_phase`/`vib_phase`
+    /// decorrelate this voice from the others.
+    fn restart(&mut self, seed: u32, glottal_phase: f32, vib_phase: f32, onset: u32) {
+        self.glottal_phase = Phase::new_unchecked(glottal_phase);
+        self.prev_flow = 0.0;
+        self.vibrato_phase = Phase::new_unchecked(vib_phase);
+        self.tilt_state = 0.0;
+        self.rng_state = seed;
+        self.onset_countdown = onset;
+        for s in &mut self.states {
+            s.reset();
+        }
+    }
+
+    /// One white-noise sample in [-1, 1] via xorshift32.
+    #[inline]
+    fn next_noise(&mut self) -> f32 {
+        let mut x = self.rng_state;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.rng_state = x;
+        (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+    }
+
+    /// Recompute formant coefficients for the current vowel position, applying
+    /// this voice's formant jitter and the shared formant shift.
+    fn update_coeffs(&mut self, vowel_pos: f32, shift: f32, sample_rate: f32) {
+        let pos = vowel_pos * (NUM_VOWELS - 1) as f32;
+        let idx = (pos as usize).min(NUM_VOWELS - 2);
+        let frac = pos - idx as f32;
+        let scale = shift * self.formant_jitter;
+
+        for band in 0..NUM_BANDS {
+            let freq = FORMANT_FREQ[idx][band] * (1.0 - frac) + FORMANT_FREQ[idx + 1][band] * frac;
+            let bw = FORMANT_BW[idx][band] * (1.0 - frac) + FORMANT_BW[idx + 1][band] * frac;
+            let gain = FORMANT_GAIN[idx][band] * (1.0 - frac) + FORMANT_GAIN[idx + 1][band] * frac;
+
+            let scaled_freq = (freq * scale).clamp(20.0, sample_rate * 0.45);
+            self.coeffs[band] = BandpassCoeffs::new(scaled_freq, bw.max(10.0), sample_rate);
+            self.gains[band] = gain;
+        }
+    }
+}
+
+/// Voice Synth module (glottal source → formant bank, with expressivity + choir).
 #[derive(Clone)]
 pub struct VoiceSynth {
     // Parameters
@@ -139,31 +245,26 @@ pub struct VoiceSynth {
     tilt: NormalizedValue,
     vibrato_rate: Hertz,
     vibrato_depth: Cents,
+    unison_voices: NormalizedValue,
+    unison_detune: Cents,
+    unison_spread: NormalizedValue,
     level: NormalizedValue,
 
-    // Glottal source state
-    glottal_phase: Phase,
-    prev_flow: f32,
-    vibrato_phase: Phase,
-    rng_state: u32,
-    tilt_state: f32,
-
-    // Formant bank state
+    // Shared state
     /// Effective (CV-modulated) vowel position in 0..1, drives `update_coeffs`.
     current_vowel: f32,
-    states: [BandpassState; NUM_BANDS],
-    coeffs: [BandpassCoeffs; NUM_BANDS],
-    gains: [f32; NUM_BANDS],
-
-    // Note tracking
+    voices: [SubVoice; MAX_UNISON],
+    active_voices: usize,
     note_freq: Hertz,
 
     // Cached
     sample_rate: SampleRate,
     inv_sample_rate: f32,
 
-    // Pre-allocated output buffer
-    output_buffer: AudioBuffer,
+    // Pre-allocated output buffers
+    out_buffer: AudioBuffer,
+    out_l_buffer: AudioBuffer,
+    out_r_buffer: AudioBuffer,
 }
 
 impl VoiceSynth {
@@ -176,22 +277,22 @@ impl VoiceSynth {
             tilt: NormalizedValue::MIN,
             vibrato_rate: Hertz::new(5.5),
             vibrato_depth: Cents::ZERO,
+            unison_voices: NormalizedValue::MIN,
+            unison_detune: Cents::new(15.0),
+            unison_spread: NormalizedValue::new(0.7),
             level: NormalizedValue::new(0.8),
-            glottal_phase: Phase::ZERO,
-            prev_flow: 0.0,
-            vibrato_phase: Phase::ZERO,
-            rng_state: RNG_SEED,
-            tilt_state: 0.0,
             current_vowel: 0.0,
-            states: [BandpassState::default(); NUM_BANDS],
-            coeffs: [BandpassCoeffs::default(); NUM_BANDS],
-            gains: [1.0, 0.5, 0.25],
+            voices: std::array::from_fn(|_| SubVoice::new()),
+            active_voices: 1,
             note_freq: Hertz::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
-            output_buffer: AudioBuffer::new(1024),
+            out_buffer: AudioBuffer::new(1024),
+            out_l_buffer: AudioBuffer::new(1024),
+            out_r_buffer: AudioBuffer::new(1024),
         };
-        v.update_coeffs();
+        v.derive_decorrelation();
+        v.voices[0].update_coeffs(v.current_vowel, v.shift_factor(), v.sample_rate.as_f32());
         v
     }
 
@@ -208,35 +309,38 @@ impl VoiceSynth {
         0.3 + self.open_quotient.as_f32() * 0.6
     }
 
-    /// One white-noise sample in [-1, 1] via xorshift32 (allocation-free).
+    /// Number of active unison sub-voices (1..=MAX_UNISON).
     #[inline]
-    fn next_noise(&mut self) -> f32 {
-        let mut x = self.rng_state;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        self.rng_state = x;
-        (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+    fn unison_count(&self) -> usize {
+        let n = 1 + (self.unison_voices.as_f32() * (MAX_UNISON - 1) as f32).round() as usize;
+        n.clamp(1, MAX_UNISON)
     }
 
-    /// Recompute formant coefficients from `current_vowel`, shift and rate.
-    /// Cheap (3 biquads) — called at block start and when `vowel_cv` moves.
-    fn update_coeffs(&mut self) {
-        let pos = self.current_vowel * (NUM_VOWELS - 1) as f32;
-        let idx = (pos as usize).min(NUM_VOWELS - 2);
-        let frac = pos - idx as f32;
+    /// Recompute per-voice decorrelation (detune, vibrato rate, formant jitter,
+    /// pan) for the active sub-voices. Deterministic from voice index + note,
+    /// so it is idempotent and cheap to call every block.
+    fn derive_decorrelation(&mut self) {
+        let active = self.active_voices;
+        let detune = self.unison_detune.as_f32();
+        let spread = self.unison_spread.as_f32();
+        let note = self.note_freq.as_f32();
 
-        let shift = self.shift_factor();
-        let sr = self.sample_rate.as_f32();
-
-        for band in 0..NUM_BANDS {
-            let freq = FORMANT_FREQ[idx][band] * (1.0 - frac) + FORMANT_FREQ[idx + 1][band] * frac;
-            let bw = FORMANT_BW[idx][band] * (1.0 - frac) + FORMANT_BW[idx + 1][band] * frac;
-            let gain = FORMANT_GAIN[idx][band] * (1.0 - frac) + FORMANT_GAIN[idx + 1][band] * frac;
-
-            let scaled_freq = (freq * shift).clamp(20.0, sr * 0.45);
-            self.coeffs[band] = BandpassCoeffs::new(scaled_freq, bw.max(10.0), sr);
-            self.gains[band] = gain;
+        for (v, voice) in self.voices[..active].iter_mut().enumerate() {
+            if active == 1 {
+                voice.detune_cents = 0.0;
+                voice.vib_rate_mult = 1.0;
+                voice.formant_jitter = 1.0;
+                voice.pan_l = std::f32::consts::FRAC_1_SQRT_2;
+                voice.pan_r = std::f32::consts::FRAC_1_SQRT_2;
+                continue;
+            }
+            voice.detune_cents = (decorr_hash(v, note, 1.0) * 2.0 - 1.0) * detune;
+            voice.vib_rate_mult = 1.0 + (decorr_hash(v, note, 2.0) * 2.0 - 1.0) * 0.08;
+            voice.formant_jitter = 1.0 + (decorr_hash(v, note, 3.0) * 2.0 - 1.0) * 0.03;
+            let pos = (v as f32 / (active - 1) as f32) * 2.0 - 1.0;
+            let (l, r) = crate::math::equal_power_pan(pos * spread);
+            voice.pan_l = l;
+            voice.pan_r = r;
         }
     }
 }
@@ -250,11 +354,12 @@ impl Default for VoiceSynth {
 impl Describable for VoiceSynth {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("voice_synth", "Voice Synth")
-            .description("Physically-inspired singing voice (glottal source → formants)")
+            .description("Physically-inspired singing voice / choir (glottal source → formants)")
             .category(ModuleCategory::Oscillator)
             .tag("voice")
             .tag("vocal")
             .tag("formant")
+            .tag("choir")
             .tag("synthesis")
             .parameter(
                 ParameterDescriptor::float(
@@ -337,6 +442,40 @@ impl Describable for VoiceSynth {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "unison_voices",
+                    Param::VoiceSynth(VoiceSynthParam::UnisonVoices(NormalizedValue::MIN)),
+                    "Unison Voices",
+                )
+                .description("Choir size: 1 (solo) to 16 decorrelated voices")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "unison_detune",
+                    Param::VoiceSynth(VoiceSynthParam::UnisonDetune(Cents::new(15.0))),
+                    "Unison Detune",
+                )
+                .description("Pitch spread across unison voices")
+                .range(0.0, 50.0)
+                .default(15.0)
+                .unit(ParameterUnit::Cents)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "unison_spread",
+                    Param::VoiceSynth(VoiceSynthParam::UnisonSpread(NormalizedValue::new(0.7))),
+                    "Unison Spread",
+                )
+                .description("Stereo width of the choir (0 = mono, 1 = full)")
+                .range(0.0, 1.0)
+                .default(0.7)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "level",
                     Param::VoiceSynth(VoiceSynthParam::Level(NormalizedValue::new(0.8))),
                     "Level",
@@ -358,7 +497,9 @@ impl Describable for VoiceSynth {
                 PortDescriptor::control_input("breath_cv", "Breath CV")
                     .description("Modulate breathiness. Connect: LFO, Envelope"),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description("Voice output"))
+            .port(PortDescriptor::audio_output("out", "Out").description("Voice output (mono sum)"))
+            .port(PortDescriptor::audio_output("out_l", "Out L").description("Stereo left output"))
+            .port(PortDescriptor::audio_output("out_r", "Out R").description("Stereo right output"))
     }
 }
 
@@ -372,16 +513,18 @@ impl PolyModule for VoiceSynth {
         self.sample_rate = context.sample_rate;
         self.inv_sample_rate = 1.0 / context.sample_rate.as_f32();
         let num_samples = context.samples.as_usize();
-        self.output_buffer.resize(num_samples);
+        self.out_buffer.resize(num_samples);
+        self.out_l_buffer.resize(num_samples);
+        self.out_r_buffer.resize(num_samples);
 
-        // No note playing — output silence.
+        // No note playing — output silence on all three ports.
         if self.note_freq.as_f32() <= 0.0 {
             for i in 0..num_samples {
-                self.output_buffer[i] = 0.0;
+                self.out_buffer[i] = 0.0;
+                self.out_l_buffer[i] = 0.0;
+                self.out_r_buffer[i] = 0.0;
             }
-            if let Some(out) = outputs.get_mut(&PortName::OUT) {
-                out.copy_from(&self.output_buffer);
-            }
+            self.write_outputs(outputs);
             return;
         }
 
@@ -390,89 +533,117 @@ impl PolyModule for VoiceSynth {
         let breath_cv = inputs.reader(PortName::intern("breath_cv"), 0.0);
         let vowel_cv_connected = vowel_cv.is_connected();
 
-        // Refresh formant coefficients for this block (vowel/shift/rate may change).
+        // Recompute active count + decorrelation for this block.
+        self.active_voices = self.unison_count();
+        self.derive_decorrelation();
+        let active = self.active_voices;
+
         if !vowel_cv_connected {
             self.current_vowel = self.vowel.as_f32();
         }
-        self.update_coeffs();
 
         let inv_sr = self.inv_sample_rate;
+        let sr = self.sample_rate.as_f32();
+        let shift = self.shift_factor();
         let level = self.level.as_f32();
         let oq = self.open_quotient();
         let base_freq = self.note_freq.as_f32();
         let breath_base = self.breathiness.as_f32();
         let vib_depth_cents = self.vibrato_depth.as_f32();
         let vib_inc = self.vibrato_rate.as_f32() * inv_sr;
+        let unison_norm = 1.0 / (active as f32).sqrt();
 
-        let gain_sum: f32 = self.gains.iter().sum();
-        let norm = if gain_sum > 1e-7 { 1.0 / gain_sum } else { 1.0 };
-
-        // Spectral tilt: one-pole lowpass, cutoff darkens as tilt rises.
-        // tilt == 0 is a true bypass (bright, sample-rate independent); above
-        // that the cutoff sweeps down from ~10 kHz to ~1.2 kHz.
+        // Spectral tilt: one-pole lowpass; tilt == 0 is a true bypass.
         let tilt_amt = self.tilt.as_f32();
         let tilt_active = tilt_amt > 0.0;
         let tilt_fc = 10000.0 * (1.0 - tilt_amt) + 1200.0 * tilt_amt;
         let tilt_coef =
             (1.0 - (-2.0 * std::f32::consts::PI * tilt_fc * inv_sr).exp()).clamp(0.0, 1.0);
 
+        // Initial coefficients for this block.
+        for voice in self.voices[..active].iter_mut() {
+            voice.update_coeffs(self.current_vowel, shift, sr);
+        }
+        let gain_sum: f32 = self.voices[0].gains.iter().sum();
+        let norm = if gain_sum > 1e-7 { 1.0 / gain_sum } else { 1.0 };
+
         for i in 0..num_samples {
-            // Vowel CV modulation (gated coefficient recompute, like FormantFilter).
+            // Vowel CV modulation (shared, gated coefficient recompute).
             if vowel_cv_connected {
                 let target = (self.vowel.as_f32() + vowel_cv[i] * 0.5).clamp(0.0, 1.0);
                 if (target - self.current_vowel).abs() > 0.001 {
                     self.current_vowel = target;
-                    self.update_coeffs();
+                    for voice in self.voices[..active].iter_mut() {
+                        voice.update_coeffs(target, shift, sr);
+                    }
                 }
             }
 
-            // Pitch: base ± vibrato (cents) ± pitch_cv (semitones).
-            let vib_cents =
-                vib_depth_cents * crate::math::fast_sin_turns(self.vibrato_phase.as_f32());
-            let semis = pitch_cv[i] + vib_cents / 100.0;
-            let freq = base_freq * (2.0_f32).powf(semis / 12.0);
-            let inc = (freq * inv_sr).max(1e-5);
-
-            // Glottal flow derivative w.r.t. phase — pitch-independent amplitude,
-            // and the closure corner supplies the harmonic-rich excitation.
-            let flow = glottal_flow(self.glottal_phase.as_f32(), oq);
-            let mut excitation = (flow - self.prev_flow) / inc;
-            self.prev_flow = flow;
-
-            // Breath / aspiration noise, shaped by the formant bank alongside the
-            // glottal source.
+            let pcv = pitch_cv[i];
             let breath = (breath_base + breath_cv[i]).clamp(0.0, 1.0);
-            if breath > 0.0 {
-                excitation += self.next_noise() * breath * NOISE_GAIN;
+
+            let mut raw = 0.0_f32;
+            let mut sum_l = 0.0_f32;
+            let mut sum_r = 0.0_f32;
+
+            for voice in self.voices[..active].iter_mut() {
+                // Staggered onset: stay silent (phases frozen) until armed.
+                if voice.onset_countdown > 0 {
+                    voice.onset_countdown -= 1;
+                    continue;
+                }
+
+                // Pitch: base ± detune/vibrato (cents) ± pitch_cv (semitones).
+                let vib_cents =
+                    vib_depth_cents * crate::math::fast_sin_turns(voice.vibrato_phase.as_f32());
+                let semis = pcv + (voice.detune_cents + vib_cents) / 100.0;
+                let freq = base_freq * (2.0_f32).powf(semis / 12.0);
+                let inc = (freq * inv_sr).max(1e-5);
+
+                // Glottal flow derivative (pitch-independent amplitude).
+                let flow = glottal_flow(voice.glottal_phase.as_f32(), oq);
+                let mut excitation = (flow - voice.prev_flow) / inc;
+                voice.prev_flow = flow;
+
+                // Breath / aspiration noise.
+                if breath > 0.0 {
+                    excitation += voice.next_noise() * breath * NOISE_GAIN;
+                }
+
+                // Spectral tilt (one-pole lowpass on the source); bypass at 0.
+                let source = if tilt_active {
+                    voice.tilt_state += tilt_coef * (excitation - voice.tilt_state);
+                    voice.tilt_state
+                } else {
+                    excitation
+                };
+
+                // Sum parallel formant resonators.
+                let mut voiced = 0.0_f32;
+                for band in 0..NUM_BANDS {
+                    voiced += voice.coeffs[band].process(source, &mut voice.states[band])
+                        * voice.gains[band];
+                }
+                voiced *= norm;
+
+                raw += voiced;
+                sum_l += voiced * voice.pan_l;
+                sum_r += voiced * voice.pan_r;
+
+                // Advance phases, wrapping at their period boundaries.
+                voice.glottal_phase =
+                    Phase::new_unchecked((voice.glottal_phase.as_f32() + inc).fract());
+                voice.vibrato_phase = Phase::new_unchecked(
+                    (voice.vibrato_phase.as_f32() + vib_inc * voice.vib_rate_mult).fract(),
+                );
             }
 
-            // Spectral tilt (one-pole lowpass on the source); bypassed at tilt 0.
-            let source = if tilt_active {
-                self.tilt_state += tilt_coef * (excitation - self.tilt_state);
-                self.tilt_state
-            } else {
-                excitation
-            };
-
-            // Sum parallel formant resonators.
-            let mut voiced = 0.0_f32;
-            for band in 0..NUM_BANDS {
-                voiced +=
-                    self.coeffs[band].process(source, &mut self.states[band]) * self.gains[band];
-            }
-            voiced *= norm;
-
-            self.output_buffer[i] = crate::math::soft_clip(voiced * level);
-
-            // Advance phases, wrapping at their period boundaries.
-            self.glottal_phase = Phase::new_unchecked((self.glottal_phase.as_f32() + inc).fract());
-            self.vibrato_phase =
-                Phase::new_unchecked((self.vibrato_phase.as_f32() + vib_inc).fract());
+            self.out_buffer[i] = crate::math::soft_clip(raw * unison_norm * level);
+            self.out_l_buffer[i] = crate::math::soft_clip(sum_l * unison_norm * level);
+            self.out_r_buffer[i] = crate::math::soft_clip(sum_r * unison_norm * level);
         }
 
-        if let Some(out) = outputs.get_mut(&PortName::OUT) {
-            out.copy_from(&self.output_buffer);
-        }
+        self.write_outputs(outputs);
     }
 
     fn set_param(&mut self, param: Param) {
@@ -488,6 +659,9 @@ impl PolyModule for VoiceSynth {
                 VoiceSynthParam::Tilt(v) => self.tilt = v,
                 VoiceSynthParam::VibratoRate(hz) => self.vibrato_rate = hz,
                 VoiceSynthParam::VibratoDepth(c) => self.vibrato_depth = c,
+                VoiceSynthParam::UnisonVoices(v) => self.unison_voices = v,
+                VoiceSynthParam::UnisonDetune(c) => self.unison_detune = c,
+                VoiceSynthParam::UnisonSpread(v) => self.unison_spread = v,
                 VoiceSynthParam::Level(v) => self.level = v,
             }
         }
@@ -503,6 +677,9 @@ impl PolyModule for VoiceSynth {
                 VoiceSynthParam::Tilt(_) => self.tilt.as_f32(),
                 VoiceSynthParam::VibratoRate(_) => self.vibrato_rate.as_f32(),
                 VoiceSynthParam::VibratoDepth(_) => self.vibrato_depth.as_f32(),
+                VoiceSynthParam::UnisonVoices(_) => self.unison_voices.as_f32(),
+                VoiceSynthParam::UnisonDetune(_) => self.unison_detune.as_f32(),
+                VoiceSynthParam::UnisonSpread(_) => self.unison_spread.as_f32(),
                 VoiceSynthParam::Level(_) => self.level.as_f32(),
             })
         } else {
@@ -519,6 +696,9 @@ impl PolyModule for VoiceSynth {
             Param::VoiceSynth(VoiceSynthParam::Tilt(self.tilt)),
             Param::VoiceSynth(VoiceSynthParam::VibratoRate(self.vibrato_rate)),
             Param::VoiceSynth(VoiceSynthParam::VibratoDepth(self.vibrato_depth)),
+            Param::VoiceSynth(VoiceSynthParam::UnisonVoices(self.unison_voices)),
+            Param::VoiceSynth(VoiceSynthParam::UnisonDetune(self.unison_detune)),
+            Param::VoiceSynth(VoiceSynthParam::UnisonSpread(self.unison_spread)),
             Param::VoiceSynth(VoiceSynthParam::Level(self.level)),
         ]
     }
@@ -528,20 +708,40 @@ impl PolyModule for VoiceSynth {
     }
 
     fn reset(&mut self) {
-        self.glottal_phase = Phase::ZERO;
-        self.prev_flow = 0.0;
-        self.vibrato_phase = Phase::ZERO;
-        self.rng_state = RNG_SEED;
-        self.tilt_state = 0.0;
         self.current_vowel = self.vowel.as_f32();
-        for state in &mut self.states {
-            state.reset();
+        for voice in &mut self.voices {
+            *voice = SubVoice::new();
         }
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.note_freq = note.to_frequency();
-        self.reset();
+        self.active_voices = self.unison_count();
+        self.current_vowel = self.vowel.as_f32();
+        let active = self.active_voices;
+        let note_hz = self.note_freq.as_f32();
+        let onset_max = (ONSET_MAX_SECS * self.sample_rate.as_f32()).max(0.0);
+
+        // Decorrelate the phases of EVERY voice (not just the currently active
+        // ones), so raising UnisonVoices mid-note still finds the newly
+        // activated voices phase-staggered. Voice 0 stays the clean reference
+        // so a solo voice exactly matches the single-voice signal path. Onset
+        // stagger only applies to voices active from this note's attack.
+        for (v, voice) in self.voices.iter_mut().enumerate() {
+            let (glottal_phase, vib_phase) = if v == 0 {
+                (0.0, 0.0)
+            } else {
+                (decorr_hash(v, note_hz, 6.0), decorr_hash(v, note_hz, 4.0))
+            };
+            let onset = if v == 0 || v >= active {
+                0
+            } else {
+                (decorr_hash(v, note_hz, 5.0) * onset_max) as u32
+            };
+            let seed = RNG_SEED ^ (v as u32 + 1).wrapping_mul(0x9E37_79B9);
+            voice.restart(seed.max(1), glottal_phase, vib_phase, onset);
+        }
+        self.derive_decorrelation();
     }
 
     fn note_off(&mut self) {
@@ -551,11 +751,25 @@ impl PolyModule for VoiceSynth {
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
         self.inv_sample_rate = 1.0 / sample_rate.as_f32();
-        self.update_coeffs();
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
+    }
+}
+
+impl VoiceSynth {
+    /// Copy the internal buffers to whichever output ports are connected.
+    fn write_outputs(&self, outputs: &mut HashMap<PortName, AudioBuffer>) {
+        if let Some(out) = outputs.get_mut(&PortName::OUT) {
+            out.copy_from(&self.out_buffer);
+        }
+        if let Some(out_l) = outputs.get_mut(&PortName::OUT_L) {
+            out_l.copy_from(&self.out_l_buffer);
+        }
+        if let Some(out_r) = outputs.get_mut(&PortName::OUT_R) {
+            out_r.copy_from(&self.out_r_buffer);
+        }
     }
 }
 
@@ -571,20 +785,26 @@ mod tests {
         }
     }
 
+    fn outputs_stereo(n: usize) -> HashMap<PortName, AudioBuffer> {
+        let mut m = HashMap::new();
+        m.insert(PortName::OUT, AudioBuffer::new(n));
+        m.insert(PortName::OUT_L, AudioBuffer::new(n));
+        m.insert(PortName::OUT_R, AudioBuffer::new(n));
+        m
+    }
+
     #[test]
     fn test_voice_synth_creation() {
         let v = VoiceSynth::new();
         assert!((v.note_freq.as_f32() - 0.0).abs() < f32::EPSILON);
-        assert_eq!(v.glottal_phase, Phase::ZERO);
+        assert_eq!(v.active_voices, 1);
     }
 
     #[test]
     fn test_voice_synth_produces_sound() {
         let mut v = VoiceSynth::new();
         v.note_on(MidiNote::new(57), Velocity::new(0.8));
-
-        let mut outputs = HashMap::new();
-        outputs.insert(PortName::OUT, AudioBuffer::new(512));
+        let mut outputs = outputs_stereo(512);
         v.process(InputPorts::empty(), &mut outputs, &ctx(512));
 
         let out = &outputs[&PortName::OUT];
@@ -595,8 +815,7 @@ mod tests {
     #[test]
     fn test_voice_synth_silence_without_note() {
         let mut v = VoiceSynth::new();
-        let mut outputs = HashMap::new();
-        outputs.insert(PortName::OUT, AudioBuffer::new(64));
+        let mut outputs = outputs_stereo(64);
         v.process(InputPorts::empty(), &mut outputs, &ctx(64));
 
         let out = &outputs[&PortName::OUT];
@@ -612,8 +831,7 @@ mod tests {
         v.set_param(Param::VoiceSynth(VoiceSynthParam::Vowel(
             NormalizedValue::MIN,
         )));
-        let mut out_a = HashMap::new();
-        out_a.insert(PortName::OUT, AudioBuffer::new(1024));
+        let mut out_a = outputs_stereo(1024);
         v.process(InputPorts::empty(), &mut out_a, &ctx(1024));
         let sum_a: f32 = (0..1024).map(|i| out_a[&PortName::OUT][i].abs()).sum();
 
@@ -621,8 +839,7 @@ mod tests {
         v.set_param(Param::VoiceSynth(VoiceSynthParam::Vowel(
             NormalizedValue::MAX,
         )));
-        let mut out_u = HashMap::new();
-        out_u.insert(PortName::OUT, AudioBuffer::new(1024));
+        let mut out_u = outputs_stereo(1024);
         v.process(InputPorts::empty(), &mut out_u, &ctx(1024));
         let sum_u: f32 = (0..1024).map(|i| out_u[&PortName::OUT][i].abs()).sum();
 
@@ -639,7 +856,6 @@ mod tests {
         v.set_param(Param::VoiceSynth(VoiceSynthParam::Level(
             NormalizedValue::MAX,
         )));
-        // Drive every expressivity path hard.
         v.set_param(Param::VoiceSynth(VoiceSynthParam::Breathiness(
             NormalizedValue::MAX,
         )));
@@ -649,17 +865,19 @@ mod tests {
         v.set_param(Param::VoiceSynth(VoiceSynthParam::Tilt(
             NormalizedValue::MAX,
         )));
+        v.set_param(Param::VoiceSynth(VoiceSynthParam::UnisonVoices(
+            NormalizedValue::MAX,
+        )));
+        v.note_on(MidiNote::new(60), Velocity::new(1.0));
 
-        let mut outputs = HashMap::new();
-        outputs.insert(PortName::OUT, AudioBuffer::new(512));
+        let mut outputs = outputs_stereo(512);
         v.process(InputPorts::empty(), &mut outputs, &ctx(512));
 
-        let out = &outputs[&PortName::OUT];
-        let max = (0..512).map(|i| out[i].abs()).fold(0.0_f32, f32::max);
-        assert!(
-            max.is_finite() && max <= 1.5,
-            "Output should be bounded, max={max}"
-        );
+        for port in [PortName::OUT, PortName::OUT_L, PortName::OUT_R] {
+            let out = &outputs[&port];
+            let max = (0..512).map(|i| out[i].abs()).fold(0.0_f32, f32::max);
+            assert!(max.is_finite() && max <= 1.5, "Output bounded, max={max}");
+        }
     }
 
     #[test]
@@ -670,8 +888,7 @@ mod tests {
             v.set_param(Param::VoiceSynth(VoiceSynthParam::Breathiness(
                 NormalizedValue::new(breath),
             )));
-            let mut outputs = HashMap::new();
-            outputs.insert(PortName::OUT, AudioBuffer::new(1024));
+            let mut outputs = outputs_stereo(1024);
             v.process(InputPorts::empty(), &mut outputs, &ctx(1024));
             (0..1024)
                 .map(|i| outputs[&PortName::OUT][i].abs())
@@ -683,6 +900,78 @@ mod tests {
             (dry - breathy).abs() > 0.01,
             "Breathiness should change output: dry={dry}, breathy={breathy}"
         );
+    }
+
+    /// A solo voice pans to center (L == R). A unison choir with spread
+    /// decorrelates the channels, so |L - R| energy must grow.
+    #[test]
+    fn test_voice_synth_unison_widens_stereo() {
+        let stereo_diff = |voices: f32, spread: f32| {
+            let mut v = VoiceSynth::new();
+            v.set_param(Param::VoiceSynth(VoiceSynthParam::UnisonVoices(
+                NormalizedValue::new(voices),
+            )));
+            v.set_param(Param::VoiceSynth(VoiceSynthParam::UnisonSpread(
+                NormalizedValue::new(spread),
+            )));
+            v.set_param(Param::VoiceSynth(VoiceSynthParam::UnisonDetune(
+                Cents::new(30.0),
+            )));
+            v.note_on(MidiNote::new(55), Velocity::new(1.0));
+            let mut outputs = outputs_stereo(2048);
+            v.process(InputPorts::empty(), &mut outputs, &ctx(2048));
+            (0..2048)
+                .map(|i| (outputs[&PortName::OUT_L][i] - outputs[&PortName::OUT_R][i]).abs())
+                .sum::<f32>()
+        };
+        let solo = stereo_diff(0.0, 0.7);
+        let choir = stereo_diff(1.0, 1.0);
+        assert!(
+            solo < 1e-3,
+            "Solo voice should be centered (L==R), got {solo}"
+        );
+        assert!(
+            choir > solo + 0.1,
+            "Unison choir should widen stereo: solo={solo}, choir={choir}"
+        );
+    }
+
+    /// Raising UnisonVoices mid-note must still yield a decorrelated (wide)
+    /// choir, not a phase-aligned coherent block. Regression test for the
+    /// mid-note activation bug.
+    #[test]
+    fn test_voice_synth_unison_increase_mid_note() {
+        let mut v = VoiceSynth::new();
+        v.set_param(Param::VoiceSynth(VoiceSynthParam::UnisonSpread(
+            NormalizedValue::MAX,
+        )));
+        v.set_param(Param::VoiceSynth(VoiceSynthParam::UnisonDetune(
+            Cents::new(30.0),
+        )));
+        v.note_on(MidiNote::new(55), Velocity::new(1.0));
+
+        // First block: solo (centered).
+        let mut solo = outputs_stereo(512);
+        v.process(InputPorts::empty(), &mut solo, &ctx(512));
+
+        // Raise to full choir mid-note (no new note_on).
+        v.set_param(Param::VoiceSynth(VoiceSynthParam::UnisonVoices(
+            NormalizedValue::MAX,
+        )));
+        let mut choir = outputs_stereo(512);
+        v.process(InputPorts::empty(), &mut choir, &ctx(512));
+
+        let diff: f32 = (0..512)
+            .map(|i| (choir[&PortName::OUT_L][i] - choir[&PortName::OUT_R][i]).abs())
+            .sum();
+        let max = (0..512)
+            .map(|i| choir[&PortName::OUT][i].abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            diff > 0.1,
+            "Mid-note unison increase should decorrelate channels, diff={diff}"
+        );
+        assert!(max.is_finite() && max <= 1.5, "Output bounded, max={max}");
     }
 
     #[test]
@@ -698,14 +987,14 @@ mod tests {
             .unwrap_or(0.0);
         assert!((got - 0.7).abs() < 0.001);
 
-        v.set_param(Param::VoiceSynth(VoiceSynthParam::VibratoRate(Hertz::new(
-            6.0,
-        ))));
-        let rate = v
-            .get_param(&Param::VoiceSynth(VoiceSynthParam::VibratoRate(
-                Hertz::ZERO,
+        v.set_param(Param::VoiceSynth(VoiceSynthParam::UnisonDetune(
+            Cents::new(25.0),
+        )));
+        let det = v
+            .get_param(&Param::VoiceSynth(VoiceSynthParam::UnisonDetune(
+                Cents::ZERO,
             )))
             .unwrap_or(0.0);
-        assert!((rate - 6.0).abs() < 0.001);
+        assert!((det - 25.0).abs() < 0.001);
     }
 }
