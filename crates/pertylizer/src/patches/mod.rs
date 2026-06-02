@@ -61,6 +61,7 @@ mod velocity_pad;
 mod vintage_electric_piano;
 mod vintage_lead;
 mod vocal_pad;
+mod vocal_tract;
 mod warm_evolving;
 mod wave_folder_bass;
 mod waveshaper_lead;
@@ -124,6 +125,7 @@ pub use velocity_pad::patch_velocity_pad;
 pub use vintage_electric_piano::patch_vintage_electric_piano;
 pub use vintage_lead::patch_vintage_lead;
 pub use vocal_pad::patch_vocal_pad;
+pub use vocal_tract::patch_vocal_tract;
 pub use warm_evolving::patch_warm_evolving;
 pub use wave_folder_bass::patch_wave_folder_bass;
 pub use waveshaper_lead::patch_waveshaper_lead;
@@ -237,7 +239,7 @@ pub fn categorized_patches() -> Vec<(String, Vec<Patch>)> {
         ),
         (
             format!("{} Vocal & Choir", ri::USER_VOICE_FILL),
-            vec![patch_solo_voice(), patch_choir()],
+            vec![patch_solo_voice(), patch_choir(), patch_vocal_tract()],
         ),
         (
             format!("{} Ambient & Texture", ri::MIST_FILL),
