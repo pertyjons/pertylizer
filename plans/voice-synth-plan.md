@@ -197,11 +197,19 @@ wider than N=1.
 **Phase 5 — Polish.** MCP descriptions, tags (`vocal`, `voice`, `choir`),
 `docs/history.md` entry, mark TODO. Optional `get_module_type_info` hints.
 
-**Phase 6 (stretch, optional) — True FOF and/or Kelly–Lochbaum variant.** Swap
-the biquad bank for genuine FOF grain generators, or add a separate
-`ModuleType::VocalTract` Kelly–Lochbaum waveguide (LF source + ~44 scattering
-junctions, area-controlled) for *speech*-grade realism. Needs new DSP
-primitives (bidirectional delay-line scattering) — scope separately.
+**Phase 6 — separate `VocalTract` (Kelly–Lochbaum) module.** Design decision
+(2026-06-03): the second engine is a **standalone module**, not an in-place
+swap. `VoiceSynth` stays exactly as is (source–filter / formant — the proven
+singing & choir engine); a new `ModuleType::VocalTract` adds a Kelly–Lochbaum
+waveguide (LF/glottal source → ~44 area-controlled scattering junctions, plus a
+nasal side-branch) for *speech*-grade / articulatory realism. The user picks the
+engine per instrument — one module per approach, neither tries to do everything.
+
+This needs new `synth_dsp` primitives (bidirectional delay-line scattering
+junctions) and is a multi-phase effort in its own right — scoped as 6a DSP
+primitive + single-tube prototype, 6b full multi-section tract + area control,
+6c glottal coupling + nasal branch + presets/patches. (A genuine-FOF generator
+could later become a *third* module if wanted; not in this phase.)
 
 ---
 
