@@ -45,6 +45,7 @@ mod signal_monitor;
 mod spectrum_analyzer;
 mod sub_osc;
 mod vector_mixer;
+mod vocal_tract;
 mod voice_synth;
 mod waveshaper;
 mod wavetable;
@@ -101,6 +102,7 @@ pub use signal_monitor::SignalMonitorParam;
 pub use spectrum_analyzer::SpectrumAnalyzerParam;
 pub use sub_osc::{SubOscOctave, SubOscParam, SubOscWaveform};
 pub use vector_mixer::VectorMixerParam;
+pub use vocal_tract::VocalTractParam;
 pub use voice_synth::VoiceSynthParam;
 pub use waveshaper::{WaveshaperCurve, WaveshaperParam};
 pub use wavetable::{WavetableParam, WavetableSelect};
@@ -222,6 +224,7 @@ pub enum ModuleType {
     Vocoder,
     // Synthesis (voice)
     VoiceSynth,
+    VocalTract,
 }
 
 impl ModuleType {
@@ -289,6 +292,7 @@ impl ModuleType {
                 | Self::PadSynth
                 | Self::AmFormant
                 | Self::VoiceSynth
+                | Self::VocalTract
         )
     }
 
@@ -429,6 +433,7 @@ impl ModuleType {
             Self::CrossoverSplitter => "Crossover Splitter",
             Self::Vocoder => "LPC Vocoder",
             Self::VoiceSynth => "Voice Synth",
+            Self::VocalTract => "Vocal Tract",
         }
     }
 
@@ -508,6 +513,7 @@ impl ModuleType {
             Self::CrossoverSplitter => "cxo",
             Self::Vocoder => "vcd",
             Self::VoiceSynth => "vox",
+            Self::VocalTract => "vtr",
         }
     }
 
@@ -587,6 +593,7 @@ impl ModuleType {
             "cxo" => Some(Self::CrossoverSplitter),
             "vcd" => Some(Self::Vocoder),
             "vox" => Some(Self::VoiceSynth),
+            "vtr" => Some(Self::VocalTract),
             _ => None,
         }
     }
@@ -716,6 +723,7 @@ pub enum Param {
     Vocoder(VocoderParam),
     // Synthesis (voice)
     VoiceSynth(VoiceSynthParam),
+    VocalTract(VocalTractParam),
 }
 
 impl Param {
@@ -801,6 +809,7 @@ impl Param {
             (Self::Crossover(a), Self::Crossover(b)) => a.same_kind(b),
             (Self::Vocoder(a), Self::Vocoder(b)) => a.same_kind(b),
             (Self::VoiceSynth(a), Self::VoiceSynth(b)) => a.same_kind(b),
+            (Self::VocalTract(a), Self::VocalTract(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -878,6 +887,7 @@ impl Param {
             Self::Crossover(_) => ModuleType::CrossoverSplitter,
             Self::Vocoder(_) => ModuleType::Vocoder,
             Self::VoiceSynth(_) => ModuleType::VoiceSynth,
+            Self::VocalTract(_) => ModuleType::VocalTract,
         }
     }
 
@@ -954,6 +964,7 @@ impl Param {
             Self::Crossover(p) => p.name(),
             Self::Vocoder(p) => p.name(),
             Self::VoiceSynth(p) => p.name(),
+            Self::VocalTract(p) => p.name(),
         }
     }
 
@@ -1030,6 +1041,7 @@ impl Param {
             Self::Crossover(p) => p.as_f32(),
             Self::Vocoder(p) => p.as_f32(),
             Self::VoiceSynth(p) => p.as_f32(),
+            Self::VocalTract(p) => p.as_f32(),
         }
     }
 
@@ -1106,6 +1118,7 @@ impl Param {
             Self::Crossover(p) => Self::Crossover(p.with_f32(value)),
             Self::Vocoder(p) => Self::Vocoder(p.with_f32(value)),
             Self::VoiceSynth(p) => Self::VoiceSynth(p.with_f32(value)),
+            Self::VocalTract(p) => Self::VocalTract(p.with_f32(value)),
         }
     }
 }

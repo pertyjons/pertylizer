@@ -19,6 +19,7 @@ pub mod filters;
 pub mod oscillators;
 pub mod oversampling;
 pub mod spectral;
+pub mod waveguide;
 
 pub use delay::{DelayLine, InterpolatedDelayLine};
 pub use fdn::{FdnCore, FdnStereoOutput};
@@ -29,6 +30,7 @@ pub use filters::{
 pub use oscillators::poly_blep;
 pub use oversampling::{Downsampler, OversamplingFactor};
 pub use spectral::{FftProcessor, PartitionedConvolver, StftProcessor, WindowType, fill_window};
+pub use waveguide::KellyLochbaumTract;
 
 // Re-export Complex for use by downstream crates (e.g. phase vocoder)
 pub use realfft::num_complex::Complex;

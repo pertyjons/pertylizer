@@ -7562,6 +7562,52 @@
         }
       }
     },
+    "vocal_tract": {
+      "description": "Articulatory Kelly–Lochbaum waveguide voice (speech-grade)",
+      "name": "Vocal Tract",
+      "parameters": {
+        "breathiness": {
+          "default": 0.10000000149011612,
+          "description": "Aspiration / breath noise at the glottis",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Breathiness",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "constriction": {
+          "default": 0.30000001192092896,
+          "description": "Constriction amount (0 = open tube, 1 = tight)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Constriction",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "level": {
+          "default": 0.800000011920929,
+          "description": "Output level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "tongue": {
+          "default": 0.5,
+          "description": "Constriction position (0 = throat, 1 = lips)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Tongue",
+          "response_curve": "linear",
+          "unit": "none"
+        }
+      }
+    },
     "vocoder": {
       "description": "LPC spectral envelope vocoder effect",
       "name": "LPC Vocoder",

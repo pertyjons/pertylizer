@@ -3963,6 +3963,70 @@
           "type": "object"
         },
         {
+          "description": "Vocal Tract (vocal_tract) — Articulatory Kelly–Lochbaum waveguide voice (speech-grade)",
+          "properties": {
+            "id": {
+              "description": "Module instance ID, e.g. `vtr-1`.",
+              "pattern": "^vtr-\\d+$",
+              "type": "string"
+            },
+            "parameters": {
+              "additionalProperties": false,
+              "default": {},
+              "description": "Parameter values for this module.",
+              "properties": {
+                "breathiness": {
+                  "default": 0.10000000149011612,
+                  "description": "Aspiration / breath noise at the glottis",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Breathiness",
+                  "type": "number"
+                },
+                "constriction": {
+                  "default": 0.30000001192092896,
+                  "description": "Constriction amount (0 = open tube, 1 = tight)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Constriction",
+                  "type": "number"
+                },
+                "level": {
+                  "default": 0.800000011920929,
+                  "description": "Output level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Level",
+                  "type": "number"
+                },
+                "tongue": {
+                  "default": 0.5,
+                  "description": "Constriction position (0 = throat, 1 = lips)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Tongue",
+                  "type": "number"
+                }
+              },
+              "type": "object"
+            },
+            "position": {
+              "$ref": "#/$defs/Position"
+            },
+            "type": {
+              "const": "vocal_tract",
+              "description": "Module type discriminator."
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "position"
+          ],
+          "title": "Vocal Tract",
+          "type": "object"
+        },
+        {
           "description": "Delay (delay) — Stereo delay with ping-pong mode",
           "properties": {
             "id": {
@@ -6094,7 +6158,8 @@
         "univibe",
         "crossover_splitter",
         "vocoder",
-        "voice_synth"
+        "voice_synth",
+        "vocal_tract"
       ],
       "type": "string"
     },
