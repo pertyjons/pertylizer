@@ -1,4 +1,4 @@
-//! Vocal Tract — articulatory Kelly–Lochbaum waveguide voice (Phase 6b).
+//! Vocal Tract — articulatory Kelly–Lochbaum waveguide voice (Phase 6c).
 //!
 //! A glottal pulse drives a `KellyLochbaumTract` waveguide whose area profile is
 //! shaped by an articulatory area function; the formants fall out of the tube
@@ -10,9 +10,10 @@
 //! section area function with three independently-controlled regions — a
 //! tapered throat at rest, a Gaussian tongue constriction (position + amount),
 //! and a lip aperture (rounding) — each addressable from a knob or CV. Phase 6c
-//! adds source–tract (glottal) coupling: the glottal-end boundary stiffens as
-//! the glottis closes, giving the formant ripple a fixed reflector can't. The
-//! nasal side-branch and SATB presets follow later in 6c.
+//! adds source–tract (glottal) coupling (the glottal-end boundary stiffens as
+//! the glottis closes, giving formant ripple a fixed reflector can't) and a
+//! nasal side-branch: a velum-coupled nasal cavity opened by `Nasality` for
+//! nasal consonants /m n ŋ/ and nasalised vowels. SATB presets follow in 6c.
 
 use std::collections::HashMap;
 
@@ -70,6 +71,17 @@ const CV_DEPTH: f32 = 0.5;
 /// Articulator change below this (0..1 units) skips a profile rebuild.
 const ARTIC_EPS: f32 = 0.005;
 
+// --- Nasal branch ---
+/// Number of nasal-cavity waveguide sections.
+const NOSE_SECTIONS: usize = 28;
+/// Main-tract junction (the velum / soft palate) where the nose taps in.
+const VELUM_INDEX: usize = 24;
+/// Rest diameter of the nasal cavity at its widest (mid-cavity).
+const NOSE_BASE: f32 = 1.6;
+/// Nasal diameter at the velar and nostril ends (a gentle taper at both ends
+/// gives the cavity its anti-resonant character).
+const NOSE_END: f32 = 0.9;
+
 /// Hermite smoothstep on `t`, clamped to [0, 1].
 #[inline]
 fn smoothstep(t: f32) -> f32 {
@@ -99,6 +111,7 @@ pub struct VocalTract {
     tongue: NormalizedValue,
     constriction: NormalizedValue,
     lips: NormalizedValue,
+    nasality: NormalizedValue,
     breathiness: NormalizedValue,
     level: NormalizedValue,
 
@@ -111,6 +124,7 @@ pub struct VocalTract {
     // knobs, so connected CVs can't drift the stored values.
     current_tongue: f32,
     current_lips: f32,
+    current_nasality: f32,
 
     // Waveguide
     tract: KellyLochbaumTract,
@@ -131,6 +145,7 @@ impl VocalTract {
             tongue: NormalizedValue::new(0.5),
             constriction: NormalizedValue::new(0.3),
             lips: NormalizedValue::new(0.5),
+            nasality: NormalizedValue::new(0.0),
             breathiness: NormalizedValue::new(0.1),
             level: NormalizedValue::new(0.8),
             glottal_phase: Phase::ZERO,
@@ -138,13 +153,30 @@ impl VocalTract {
             rng_state: RNG_SEED,
             current_tongue: 0.5,
             current_lips: 0.5,
+            current_nasality: 0.0,
             tract: KellyLochbaumTract::new(N_SECTIONS),
             note_freq: Hertz::ZERO,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
             output_buffer: AudioBuffer::new(1024),
         };
+        v.build_nose();
         v.rebuild_profile();
         v
+    }
+
+    /// Attach the nasal cavity and give it a fixed tapered area profile. The
+    /// branch stays sealed (velum closed) until `Nasality` opens it.
+    fn build_nose(&mut self) {
+        self.tract.enable_nose(NOSE_SECTIONS, VELUM_INDEX);
+        for i in 0..NOSE_SECTIONS {
+            let x = i as f32 / (NOSE_SECTIONS - 1) as f32;
+            // Widest mid-cavity, tapering toward the velar and nostril ends.
+            let taper = 1.0 - (2.0 * x - 1.0) * (2.0 * x - 1.0);
+            self.tract
+                .set_nose_diameter(i, NOSE_END + (NOSE_BASE - NOSE_END) * taper);
+        }
+        self.tract.update_nose_reflections();
+        self.tract.set_velum(0.0);
     }
 
     /// One white-noise sample in [-1, 1] via xorshift32.
@@ -237,6 +269,17 @@ impl Describable for VocalTract {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "nasality",
+                    Param::VocalTract(VocalTractParam::Nasality(NormalizedValue::new(0.0))),
+                    "Nasality",
+                )
+                .description("Velar port opening (0 = oral, 1 = nasal /m n ŋ/)")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "breathiness",
                     Param::VocalTract(VocalTractParam::Breathiness(NormalizedValue::new(0.1))),
                     "Breathiness",
@@ -264,6 +307,10 @@ impl Describable for VocalTract {
             .port(
                 PortDescriptor::control_input("lips_cv", "Lips CV")
                     .description("Modulate lip aperture / rounding. Connect: LFO, Envelope"),
+            )
+            .port(
+                PortDescriptor::control_input("nasality_cv", "Nasality CV")
+                    .description("Modulate the velar (nasal) opening. Connect: LFO, Envelope"),
             )
             .port(PortDescriptor::audio_output("out", "Out").description("Vocal tract output"))
     }
@@ -293,8 +340,10 @@ impl PolyModule for VocalTract {
 
         let tongue_cv = inputs.reader(PortName::intern("tongue_cv"), 0.0);
         let lips_cv = inputs.reader(PortName::intern("lips_cv"), 0.0);
+        let nasality_cv = inputs.reader(PortName::intern("nasality_cv"), 0.0);
         let tongue_cv_connected = tongue_cv.is_connected();
         let lips_cv_connected = lips_cv.is_connected();
+        let nasality_cv_connected = nasality_cv.is_connected();
 
         // Without CV an articulator tracks its knob; rebuild once for this block.
         if !tongue_cv_connected {
@@ -303,7 +352,11 @@ impl PolyModule for VocalTract {
         if !lips_cv_connected {
             self.current_lips = self.lips.as_f32();
         }
+        if !nasality_cv_connected {
+            self.current_nasality = self.nasality.as_f32();
+        }
         self.rebuild_profile();
+        self.tract.set_velum(self.current_nasality);
 
         let inv_sr = self.inv_sample_rate;
         let inc = (self.note_freq.as_f32() * inv_sr).max(1e-5);
@@ -311,6 +364,7 @@ impl PolyModule for VocalTract {
         let breath = self.breathiness.as_f32();
         let base_tongue = self.tongue.as_f32();
         let base_lips = self.lips.as_f32();
+        let base_nasality = self.nasality.as_f32();
 
         for i in 0..num_samples {
             // CVs move the articulators; rebuild only on a real change, and
@@ -334,6 +388,13 @@ impl PolyModule for VocalTract {
                 if dirty {
                     self.rebuild_profile();
                 }
+            }
+
+            // The velum opening is cheap to set (no profile rebuild), so a
+            // connected CV can drive it every sample.
+            if nasality_cv_connected {
+                self.current_nasality = (base_nasality + nasality_cv[i] * CV_DEPTH).clamp(0.0, 1.0);
+                self.tract.set_velum(self.current_nasality);
             }
 
             // Glottal flow derivative (pitch-independent amplitude).
@@ -383,6 +444,10 @@ impl PolyModule for VocalTract {
                     self.lips = v;
                     self.current_lips = v.as_f32();
                 }
+                VocalTractParam::Nasality(v) => {
+                    self.nasality = v;
+                    self.current_nasality = v.as_f32();
+                }
                 VocalTractParam::Breathiness(v) => self.breathiness = v,
                 VocalTractParam::Level(v) => self.level = v,
             }
@@ -395,6 +460,7 @@ impl PolyModule for VocalTract {
                 VocalTractParam::Tongue(_) => self.tongue.as_f32(),
                 VocalTractParam::Constriction(_) => self.constriction.as_f32(),
                 VocalTractParam::Lips(_) => self.lips.as_f32(),
+                VocalTractParam::Nasality(_) => self.nasality.as_f32(),
                 VocalTractParam::Breathiness(_) => self.breathiness.as_f32(),
                 VocalTractParam::Level(_) => self.level.as_f32(),
             })
@@ -408,6 +474,7 @@ impl PolyModule for VocalTract {
             Param::VocalTract(VocalTractParam::Tongue(self.tongue)),
             Param::VocalTract(VocalTractParam::Constriction(self.constriction)),
             Param::VocalTract(VocalTractParam::Lips(self.lips)),
+            Param::VocalTract(VocalTractParam::Nasality(self.nasality)),
             Param::VocalTract(VocalTractParam::Breathiness(self.breathiness)),
             Param::VocalTract(VocalTractParam::Level(self.level)),
         ]
@@ -423,6 +490,7 @@ impl PolyModule for VocalTract {
         self.rng_state = RNG_SEED;
         self.current_tongue = self.tongue.as_f32();
         self.current_lips = self.lips.as_f32();
+        self.current_nasality = self.nasality.as_f32();
         self.tract.reset();
     }
 
@@ -537,6 +605,34 @@ mod tests {
         assert!(
             (rounded - spread).abs() > 0.01,
             "Lip rounding should change output: rounded={rounded}, spread={spread}"
+        );
+    }
+
+    #[test]
+    fn test_vocal_tract_nasality_changes_output() {
+        // Opening the velar port couples the nasal cavity → different timbre,
+        // and the output must stay bounded.
+        let energy = |nasality: f32| -> f32 {
+            let out = render(
+                |v| {
+                    v.set_param(Param::VocalTract(VocalTractParam::Nasality(
+                        NormalizedValue::new(nasality),
+                    )))
+                },
+                4096,
+            );
+            let max = out.iter().fold(0.0_f32, |m, &x| m.max(x.abs()));
+            assert!(
+                max.is_finite() && max <= 1.5,
+                "nasal output unbounded: {max}"
+            );
+            out.iter().map(|x| x.abs()).sum()
+        };
+        let oral = energy(0.0);
+        let nasal = energy(1.0);
+        assert!(
+            (oral - nasal).abs() > 0.01,
+            "Nasality should change output: oral={oral}, nasal={nasal}"
         );
     }
 

@@ -7606,6 +7606,16 @@
           "response_curve": "linear",
           "unit": "none"
         },
+        "nasality": {
+          "default": 0.0,
+          "description": "Velar port opening (0 = oral, 1 = nasal /m n ŋ/)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Nasality",
+          "response_curve": "linear",
+          "unit": "none"
+        },
         "tongue": {
           "default": 0.5,
           "description": "Constriction position (0 = throat, 1 = lips)",
