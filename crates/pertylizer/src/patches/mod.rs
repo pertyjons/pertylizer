@@ -10,6 +10,7 @@ mod auto_wah_bass;
 mod brown_drone;
 mod bytebeat_glitch;
 mod chaos_drone;
+mod choir;
 mod deep_space_pad;
 mod digital_chime;
 mod drum_hihat;
@@ -45,6 +46,7 @@ mod resonant_percussion;
 mod ring_mod_drone;
 mod screamer_lead;
 mod shepard_riser;
+mod solo_voice;
 mod spacey_bass;
 mod spectral_drone;
 mod spectral_freeze_pad;
@@ -71,6 +73,7 @@ pub use auto_wah_bass::patch_auto_wah_bass;
 pub use brown_drone::patch_brown_drone;
 pub use bytebeat_glitch::patch_bytebeat_glitch;
 pub use chaos_drone::patch_chaos_drone;
+pub use choir::patch_choir;
 pub use deep_space_pad::patch_deep_space_pad;
 pub use digital_chime::patch_digital_chime;
 pub use drum_hihat::patch_drum_hihat;
@@ -106,6 +109,7 @@ pub use resonant_percussion::patch_resonant_percussion;
 pub use ring_mod_drone::patch_ring_mod_drone;
 pub use screamer_lead::patch_screamer_lead;
 pub use shepard_riser::patch_shepard_riser;
+pub use solo_voice::patch_solo_voice;
 pub use spacey_bass::patch_spacey_bass;
 pub use spectral_drone::patch_spectral_drone;
 pub use spectral_freeze_pad::patch_spectral_freeze_pad;
@@ -230,6 +234,10 @@ pub fn categorized_patches() -> Vec<(String, Vec<Patch>)> {
                 patch_euclidean_texture(),
                 patch_pitch_following_drone(),
             ],
+        ),
+        (
+            format!("{} Vocal & Choir", ri::USER_VOICE_FILL),
+            vec![patch_solo_voice(), patch_choir()],
         ),
         (
             format!("{} Ambient & Texture", ri::MIST_FILL),
