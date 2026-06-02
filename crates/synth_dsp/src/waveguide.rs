@@ -100,6 +100,14 @@ impl KellyLochbaumTract {
         self.damping = damping.clamp(0.0, 1.0);
     }
 
+    /// Set only the glottal-end reflection (clamped to a stable magnitude < 1).
+    /// Cheap enough to call per sample, for source–tract (glottal) coupling
+    /// where the boundary stiffens as the glottis closes.
+    #[inline]
+    pub fn set_glottal_reflection(&mut self, reflection: f32) {
+        self.glottal_reflection = reflection.clamp(-0.999, 0.999);
+    }
+
     /// Recompute junction reflection coefficients from the area profile.
     pub fn update_reflections(&mut self) {
         for i in 1..self.n {
@@ -201,6 +209,35 @@ mod tests {
         assert!(
             (open - constricted).abs() > 1e-3,
             "constriction had no effect: open={open}, constricted={constricted}"
+        );
+    }
+
+    /// The glottal-reflection setter clamps to the stable range and a different
+    /// glottal boundary produces a different response (source–tract coupling).
+    #[test]
+    fn glottal_reflection_setter_clamps_and_couples() {
+        let mut t = KellyLochbaumTract::new(20);
+        t.set_glottal_reflection(5.0);
+        assert!((t.glottal_reflection - 0.999).abs() < 1e-6);
+        t.set_glottal_reflection(-5.0);
+        assert!((t.glottal_reflection + 0.999).abs() < 1e-6);
+
+        let render = |reflection: f32| {
+            let mut t = KellyLochbaumTract::new(20);
+            let mut sum = 0.0_f32;
+            for n in 0..4_000 {
+                t.set_glottal_reflection(reflection);
+                let drive = if n % 200 == 0 { 1.0 } else { 0.0 };
+                t.step(drive);
+                sum += t.step(0.0).abs();
+            }
+            sum
+        };
+        let stiff = render(0.97);
+        let open = render(0.6);
+        assert!(
+            (stiff - open).abs() > 1e-3,
+            "glottal coupling had no effect: stiff={stiff}, open={open}"
         );
     }
 

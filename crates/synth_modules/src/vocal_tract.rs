@@ -9,8 +9,10 @@
 //! See `plans/voice-synth-plan.md` (Phase 6). Phase 6b builds a full multi-
 //! section area function with three independently-controlled regions — a
 //! tapered throat at rest, a Gaussian tongue constriction (position + amount),
-//! and a lip aperture (rounding) — each addressable from a knob or CV. The
-//! nasal side-branch and SATB presets follow in 6c.
+//! and a lip aperture (rounding) — each addressable from a knob or CV. Phase 6c
+//! adds source–tract (glottal) coupling: the glottal-end boundary stiffens as
+//! the glottis closes, giving the formant ripple a fixed reflector can't. The
+//! nasal side-branch and SATB presets follow later in 6c.
 
 use std::collections::HashMap;
 
@@ -38,6 +40,13 @@ const OUTPUT_GAIN: f32 = 6.0;
 const NOISE_GAIN: f32 = 1.5;
 /// Non-zero xorshift seed.
 const RNG_SEED: u32 = 0x9E37_79B9;
+
+// --- Source–tract (glottal) coupling ---
+/// Glottal-end reflection during the closed phase (near-rigid wall).
+const GLOTTAL_R_CLOSED: f32 = 0.97;
+/// Glottal-end reflection at peak opening (lossy coupling to the subglottal
+/// tract). Lower than closed → the boundary "opens" as the glottis does.
+const GLOTTAL_R_OPEN: f32 = 0.65;
 
 // --- Area-function shape (diameters, arbitrary tract units) ---
 /// Rest diameter of the wide oral cavity.
@@ -331,6 +340,14 @@ impl PolyModule for VocalTract {
             let flow = glottal_flow(self.glottal_phase.as_f32(), GLOTTAL_OQ);
             let mut excitation = (flow - self.prev_flow) / inc;
             self.prev_flow = flow;
+
+            // Source–tract coupling: the glottis is a near-rigid wall when shut
+            // and a lossy opening to the subglottal tract when open, so its
+            // reflection tracks the instantaneous opening (flow ∈ [0, 1]).
+            let openness = flow.clamp(0.0, 1.0);
+            self.tract.set_glottal_reflection(
+                GLOTTAL_R_CLOSED + (GLOTTAL_R_OPEN - GLOTTAL_R_CLOSED) * openness,
+            );
 
             if breath > 0.0 {
                 excitation += self.next_noise() * breath * NOISE_GAIN;
