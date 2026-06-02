@@ -7596,6 +7596,16 @@
           "response_curve": "linear",
           "unit": "none"
         },
+        "lips": {
+          "default": 0.5,
+          "description": "Lip aperture (0 = rounded /o u/, 1 = spread /i e/)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Lips",
+          "response_curve": "linear",
+          "unit": "none"
+        },
         "tongue": {
           "default": 0.5,
           "description": "Constriction position (0 = throat, 1 = lips)",

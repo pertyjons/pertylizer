@@ -15,6 +15,8 @@ pub enum VocalTractParam {
     Tongue(NormalizedValue),
     /// Constriction amount (0 = open tube, 1 = tight constriction)
     Constriction(NormalizedValue),
+    /// Lip aperture / rounding (0 = rounded/closed, 1 = spread/open)
+    Lips(NormalizedValue),
     /// Aspiration / breath noise at the glottis (0 = none)
     Breathiness(NormalizedValue),
     /// Output level
@@ -30,6 +32,7 @@ impl VocalTractParam {
         match self {
             Self::Tongue(_) => "Tongue",
             Self::Constriction(_) => "Constriction",
+            Self::Lips(_) => "Lips",
             Self::Breathiness(_) => "Breathiness",
             Self::Level(_) => "Level",
         }
@@ -37,9 +40,11 @@ impl VocalTractParam {
 
     pub fn as_f32(&self) -> f32 {
         match self {
-            Self::Tongue(v) | Self::Constriction(v) | Self::Breathiness(v) | Self::Level(v) => {
-                v.as_f32()
-            }
+            Self::Tongue(v)
+            | Self::Constriction(v)
+            | Self::Lips(v)
+            | Self::Breathiness(v)
+            | Self::Level(v) => v.as_f32(),
         }
     }
 
@@ -47,6 +52,7 @@ impl VocalTractParam {
         match self {
             Self::Tongue(_) => Self::Tongue(NormalizedValue::new(value)),
             Self::Constriction(_) => Self::Constriction(NormalizedValue::new(value)),
+            Self::Lips(_) => Self::Lips(NormalizedValue::new(value)),
             Self::Breathiness(_) => Self::Breathiness(NormalizedValue::new(value)),
             Self::Level(_) => Self::Level(NormalizedValue::new(value)),
         }

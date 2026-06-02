@@ -1,14 +1,16 @@
-//! Vocal Tract — articulatory Kelly–Lochbaum waveguide voice (Phase 6a).
+//! Vocal Tract — articulatory Kelly–Lochbaum waveguide voice (Phase 6b).
 //!
 //! A glottal pulse drives a `KellyLochbaumTract` waveguide whose area profile is
-//! shaped by a tongue constriction; the formants fall out of the tube physics
-//! rather than from a fixed filter bank. This is the *speech/articulatory*
-//! engine — the complementary `VoiceSynth` module is the source–filter
-//! singing/choir engine. Pick whichever fits per instrument.
+//! shaped by an articulatory area function; the formants fall out of the tube
+//! physics rather than from a fixed filter bank. This is the *speech/
+//! articulatory* engine — the complementary `VoiceSynth` module is the
+//! source–filter singing/choir engine. Pick whichever fits per instrument.
 //!
-//! See `plans/voice-synth-plan.md` (Phase 6). Phase 6a is a working single-tract
-//! prototype (tongue constriction + breath); lips, nasal branch and presets
-//! follow in 6b/6c.
+//! See `plans/voice-synth-plan.md` (Phase 6). Phase 6b builds a full multi-
+//! section area function with three independently-controlled regions — a
+//! tapered throat at rest, a Gaussian tongue constriction (position + amount),
+//! and a lip aperture (rounding) — each addressable from a knob or CV. The
+//! nasal side-branch and SATB presets follow in 6c.
 
 use std::collections::HashMap;
 
@@ -37,6 +39,35 @@ const NOISE_GAIN: f32 = 1.5;
 /// Non-zero xorshift seed.
 const RNG_SEED: u32 = 0x9E37_79B9;
 
+// --- Area-function shape (diameters, arbitrary tract units) ---
+/// Rest diameter of the wide oral cavity.
+const REST_BASE: f32 = 1.6;
+/// Rest diameter at the glottis end of the throat taper.
+const REST_THROAT: f32 = 0.7;
+/// Fraction of the tract (from the glottis) over which the throat opens up.
+const THROAT_FRAC: f32 = 0.18;
+/// Spatial width of the tongue constriction (larger = tighter/narrower hump).
+const TONGUE_WIDTH: f32 = 6.0;
+/// Maximum depth the tongue constriction subtracts from the rest diameter.
+const TONGUE_DEPTH: f32 = 1.3;
+/// Fraction of the tract (toward the lips) that the lip aperture controls.
+const LIP_REGION: f32 = 0.85;
+/// Diameter scale at the lips when fully rounded (0 lips param).
+const LIP_ROUND: f32 = 0.25;
+/// Smallest section diameter, so the tube never closes completely.
+const MIN_DIAMETER: f32 = 0.05;
+/// CV depth: how far ±full-scale CV moves an articulator (in 0..1 units).
+const CV_DEPTH: f32 = 0.5;
+/// Articulator change below this (0..1 units) skips a profile rebuild.
+const ARTIC_EPS: f32 = 0.005;
+
+/// Hermite smoothstep on `t`, clamped to [0, 1].
+#[inline]
+fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// Glottal flow over one normalized period `phase` ∈ [0, 1), open for `oq`.
 /// Rosenberg-style two-piece pulse (shared shape with `VoiceSynth`).
 #[inline]
@@ -58,6 +89,7 @@ pub struct VocalTract {
     // Parameters
     tongue: NormalizedValue,
     constriction: NormalizedValue,
+    lips: NormalizedValue,
     breathiness: NormalizedValue,
     level: NormalizedValue,
 
@@ -66,9 +98,10 @@ pub struct VocalTract {
     prev_flow: f32,
     rng_state: u32,
 
-    // Effective (CV-modulated) tongue position — never written back to the
-    // `tongue` knob, so a connected tongue_cv can't drift the stored value.
+    // Effective (CV-modulated) articulator values — never written back to the
+    // knobs, so connected CVs can't drift the stored values.
     current_tongue: f32,
+    current_lips: f32,
 
     // Waveguide
     tract: KellyLochbaumTract,
@@ -88,12 +121,14 @@ impl VocalTract {
         let mut v = Self {
             tongue: NormalizedValue::new(0.5),
             constriction: NormalizedValue::new(0.3),
+            lips: NormalizedValue::new(0.5),
             breathiness: NormalizedValue::new(0.1),
             level: NormalizedValue::new(0.8),
             glottal_phase: Phase::ZERO,
             prev_flow: 0.0,
             rng_state: RNG_SEED,
             current_tongue: 0.5,
+            current_lips: 0.5,
             tract: KellyLochbaumTract::new(N_SECTIONS),
             note_freq: Hertz::ZERO,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
@@ -114,18 +149,30 @@ impl VocalTract {
         (x as f32 / u32::MAX as f32) * 2.0 - 1.0
     }
 
-    /// Rebuild the tract area profile: a wide rest tube with a tongue
-    /// constriction whose position and depth come from the parameters.
+    /// Rebuild the tract area profile from the three articulatory regions:
+    /// a tapered throat at rest, a Gaussian tongue constriction (position +
+    /// amount), and a lip aperture (rounding) at the mouth end.
     fn rebuild_profile(&mut self) {
         let tongue = self.current_tongue;
         let constriction = self.constriction.as_f32();
+        // Lip aperture: 1 = spread (no narrowing), 0 = fully rounded.
+        let lip_scale = LIP_ROUND + (1.0 - LIP_ROUND) * self.current_lips;
         let n = self.tract.sections();
         for i in 0..n {
             let x = i as f32 / (n - 1) as f32;
-            let base = 1.5;
-            let dist = (x - tongue) * 6.0;
-            let bump = constriction * 1.3 * (-(dist * dist)).exp();
-            self.tract.set_diameter(i, (base - bump).max(0.05));
+
+            // Rest area: narrow throat near the glottis opening into the cavity.
+            let rest = REST_THROAT + (REST_BASE - REST_THROAT) * smoothstep(x / THROAT_FRAC);
+
+            // Tongue constriction: a Gaussian dip at the tongue position.
+            let dist = (x - tongue) * TONGUE_WIDTH;
+            let dip = constriction * TONGUE_DEPTH * (-(dist * dist)).exp();
+
+            // Lip aperture: scale the mouth-end sections down when rounded.
+            let lip_weight = smoothstep((x - LIP_REGION) / (1.0 - LIP_REGION));
+            let d = (rest - dip) * (1.0 - lip_weight * (1.0 - lip_scale));
+
+            self.tract.set_diameter(i, d.max(MIN_DIAMETER));
         }
         self.tract.update_reflections();
     }
@@ -170,6 +217,17 @@ impl Describable for VocalTract {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "lips",
+                    Param::VocalTract(VocalTractParam::Lips(NormalizedValue::new(0.5))),
+                    "Lips",
+                )
+                .description("Lip aperture (0 = rounded /o u/, 1 = spread /i e/)")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "breathiness",
                     Param::VocalTract(VocalTractParam::Breathiness(NormalizedValue::new(0.1))),
                     "Breathiness",
@@ -193,6 +251,10 @@ impl Describable for VocalTract {
             .port(
                 PortDescriptor::control_input("tongue_cv", "Tongue CV")
                     .description("Modulate constriction position. Connect: LFO, Envelope"),
+            )
+            .port(
+                PortDescriptor::control_input("lips_cv", "Lips CV")
+                    .description("Modulate lip aperture / rounding. Connect: LFO, Envelope"),
             )
             .port(PortDescriptor::audio_output("out", "Out").description("Vocal tract output"))
     }
@@ -221,11 +283,16 @@ impl PolyModule for VocalTract {
         }
 
         let tongue_cv = inputs.reader(PortName::intern("tongue_cv"), 0.0);
+        let lips_cv = inputs.reader(PortName::intern("lips_cv"), 0.0);
         let tongue_cv_connected = tongue_cv.is_connected();
+        let lips_cv_connected = lips_cv.is_connected();
 
-        // Without CV the effective tongue tracks the knob; rebuild for this block.
+        // Without CV an articulator tracks its knob; rebuild once for this block.
         if !tongue_cv_connected {
             self.current_tongue = self.tongue.as_f32();
+        }
+        if !lips_cv_connected {
+            self.current_lips = self.lips.as_f32();
         }
         self.rebuild_profile();
 
@@ -234,14 +301,28 @@ impl PolyModule for VocalTract {
         let level = self.level.as_f32();
         let breath = self.breathiness.as_f32();
         let base_tongue = self.tongue.as_f32();
+        let base_lips = self.lips.as_f32();
 
         for i in 0..num_samples {
-            // Tongue CV moves the constriction; rebuild only on a real change.
-            // Drives `current_tongue`, never the stored `tongue` knob.
-            if tongue_cv_connected {
-                let target = (base_tongue + tongue_cv[i] * 0.5).clamp(0.0, 1.0);
-                if (target - self.current_tongue).abs() > 0.005 {
-                    self.current_tongue = target;
+            // CVs move the articulators; rebuild only on a real change, and
+            // drive the transient `current_*` values, never the stored knobs.
+            if tongue_cv_connected || lips_cv_connected {
+                let mut dirty = false;
+                if tongue_cv_connected {
+                    let target = (base_tongue + tongue_cv[i] * CV_DEPTH).clamp(0.0, 1.0);
+                    if (target - self.current_tongue).abs() > ARTIC_EPS {
+                        self.current_tongue = target;
+                        dirty = true;
+                    }
+                }
+                if lips_cv_connected {
+                    let target = (base_lips + lips_cv[i] * CV_DEPTH).clamp(0.0, 1.0);
+                    if (target - self.current_lips).abs() > ARTIC_EPS {
+                        self.current_lips = target;
+                        dirty = true;
+                    }
+                }
+                if dirty {
                     self.rebuild_profile();
                 }
             }
@@ -281,6 +362,10 @@ impl PolyModule for VocalTract {
                     self.current_tongue = v.as_f32();
                 }
                 VocalTractParam::Constriction(v) => self.constriction = v,
+                VocalTractParam::Lips(v) => {
+                    self.lips = v;
+                    self.current_lips = v.as_f32();
+                }
                 VocalTractParam::Breathiness(v) => self.breathiness = v,
                 VocalTractParam::Level(v) => self.level = v,
             }
@@ -292,6 +377,7 @@ impl PolyModule for VocalTract {
             Some(match p {
                 VocalTractParam::Tongue(_) => self.tongue.as_f32(),
                 VocalTractParam::Constriction(_) => self.constriction.as_f32(),
+                VocalTractParam::Lips(_) => self.lips.as_f32(),
                 VocalTractParam::Breathiness(_) => self.breathiness.as_f32(),
                 VocalTractParam::Level(_) => self.level.as_f32(),
             })
@@ -304,6 +390,7 @@ impl PolyModule for VocalTract {
         vec![
             Param::VocalTract(VocalTractParam::Tongue(self.tongue)),
             Param::VocalTract(VocalTractParam::Constriction(self.constriction)),
+            Param::VocalTract(VocalTractParam::Lips(self.lips)),
             Param::VocalTract(VocalTractParam::Breathiness(self.breathiness)),
             Param::VocalTract(VocalTractParam::Level(self.level)),
         ]
@@ -318,6 +405,7 @@ impl PolyModule for VocalTract {
         self.prev_flow = 0.0;
         self.rng_state = RNG_SEED;
         self.current_tongue = self.tongue.as_f32();
+        self.current_lips = self.lips.as_f32();
         self.tract.reset();
     }
 
@@ -408,6 +496,30 @@ mod tests {
         assert!(
             (front - back).abs() > 0.01,
             "Tongue position should change output: front={front}, back={back}"
+        );
+    }
+
+    #[test]
+    fn test_vocal_tract_lip_rounding_changes_output() {
+        // Rounded vs spread lips reshape the mouth aperture → different formants.
+        let energy = |lips: f32| -> f32 {
+            render(
+                |v| {
+                    v.set_param(Param::VocalTract(VocalTractParam::Lips(
+                        NormalizedValue::new(lips),
+                    )))
+                },
+                4096,
+            )
+            .iter()
+            .map(|x| x.abs())
+            .sum()
+        };
+        let rounded = energy(0.0);
+        let spread = energy(1.0);
+        assert!(
+            (rounded - spread).abs() > 0.01,
+            "Lip rounding should change output: rounded={rounded}, spread={spread}"
         );
     }
 

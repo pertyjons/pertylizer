@@ -3999,6 +3999,14 @@
                   "title": "Level",
                   "type": "number"
                 },
+                "lips": {
+                  "default": 0.5,
+                  "description": "Lip aperture (0 = rounded /o u/, 1 = spread /i e/)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Lips",
+                  "type": "number"
+                },
                 "tongue": {
                   "default": 0.5,
                   "description": "Constriction position (0 = throat, 1 = lips)",
