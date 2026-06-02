@@ -53,6 +53,7 @@ pub mod signal_monitor;
 pub mod sub_osc;
 pub mod turing_machine;
 pub mod vector_mixer;
+pub mod voice_synth;
 pub mod wavetable_data;
 pub mod wavetable_osc;
 
@@ -98,6 +99,7 @@ pub use signal_monitor::SignalMonitor;
 pub use sub_osc::SubOscillator;
 pub use turing_machine::TuringMachine;
 pub use vector_mixer::VectorMixer;
+pub use voice_synth::VoiceSynth;
 pub use wavetable_osc::WavetableOsc;
 
 // Physical modeling exports

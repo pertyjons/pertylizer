@@ -45,6 +45,7 @@ mod signal_monitor;
 mod spectrum_analyzer;
 mod sub_osc;
 mod vector_mixer;
+mod voice_synth;
 mod waveshaper;
 mod wavetable;
 
@@ -100,6 +101,7 @@ pub use signal_monitor::SignalMonitorParam;
 pub use spectrum_analyzer::SpectrumAnalyzerParam;
 pub use sub_osc::{SubOscOctave, SubOscParam, SubOscWaveform};
 pub use vector_mixer::VectorMixerParam;
+pub use voice_synth::VoiceSynthParam;
 pub use waveshaper::{WaveshaperCurve, WaveshaperParam};
 pub use wavetable::{WavetableParam, WavetableSelect};
 
@@ -218,6 +220,8 @@ pub enum ModuleType {
     Univibe,
     CrossoverSplitter,
     Vocoder,
+    // Synthesis (voice)
+    VoiceSynth,
 }
 
 impl ModuleType {
@@ -284,6 +288,7 @@ impl ModuleType {
                 | Self::BeatDetector
                 | Self::PadSynth
                 | Self::AmFormant
+                | Self::VoiceSynth
         )
     }
 
@@ -423,6 +428,7 @@ impl ModuleType {
             Self::Univibe => "Univibe",
             Self::CrossoverSplitter => "Crossover Splitter",
             Self::Vocoder => "LPC Vocoder",
+            Self::VoiceSynth => "Voice Synth",
         }
     }
 
@@ -501,6 +507,7 @@ impl ModuleType {
             Self::Univibe => "uvb",
             Self::CrossoverSplitter => "cxo",
             Self::Vocoder => "vcd",
+            Self::VoiceSynth => "vox",
         }
     }
 
@@ -579,6 +586,7 @@ impl ModuleType {
             "uvb" => Some(Self::Univibe),
             "cxo" => Some(Self::CrossoverSplitter),
             "vcd" => Some(Self::Vocoder),
+            "vox" => Some(Self::VoiceSynth),
             _ => None,
         }
     }
@@ -706,6 +714,8 @@ pub enum Param {
     Univibe(UnivibeParam),
     Crossover(CrossoverParam),
     Vocoder(VocoderParam),
+    // Synthesis (voice)
+    VoiceSynth(VoiceSynthParam),
 }
 
 impl Param {
@@ -790,6 +800,7 @@ impl Param {
             (Self::Univibe(a), Self::Univibe(b)) => a.same_kind(b),
             (Self::Crossover(a), Self::Crossover(b)) => a.same_kind(b),
             (Self::Vocoder(a), Self::Vocoder(b)) => a.same_kind(b),
+            (Self::VoiceSynth(a), Self::VoiceSynth(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -866,6 +877,7 @@ impl Param {
             Self::Univibe(_) => ModuleType::Univibe,
             Self::Crossover(_) => ModuleType::CrossoverSplitter,
             Self::Vocoder(_) => ModuleType::Vocoder,
+            Self::VoiceSynth(_) => ModuleType::VoiceSynth,
         }
     }
 
@@ -941,6 +953,7 @@ impl Param {
             Self::Univibe(p) => p.name(),
             Self::Crossover(p) => p.name(),
             Self::Vocoder(p) => p.name(),
+            Self::VoiceSynth(p) => p.name(),
         }
     }
 
@@ -1016,6 +1029,7 @@ impl Param {
             Self::Univibe(p) => p.as_f32(),
             Self::Crossover(p) => p.as_f32(),
             Self::Vocoder(p) => p.as_f32(),
+            Self::VoiceSynth(p) => p.as_f32(),
         }
     }
 
@@ -1091,6 +1105,7 @@ impl Param {
             Self::Univibe(p) => Self::Univibe(p.with_f32(value)),
             Self::Crossover(p) => Self::Crossover(p.with_f32(value)),
             Self::Vocoder(p) => Self::Vocoder(p.with_f32(value)),
+            Self::VoiceSynth(p) => Self::VoiceSynth(p.with_f32(value)),
         }
     }
 }

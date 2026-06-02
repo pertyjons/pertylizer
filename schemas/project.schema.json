@@ -4435,6 +4435,62 @@
           "type": "object"
         },
         {
+          "description": "Voice Synth (voice_synth) — Physically-inspired singing voice (glottal source → formants)",
+          "properties": {
+            "id": {
+              "description": "Module instance ID, e.g. `vox-1`.",
+              "pattern": "^vox-\\d+$",
+              "type": "string"
+            },
+            "parameters": {
+              "additionalProperties": false,
+              "default": {},
+              "description": "Parameter values for this module.",
+              "properties": {
+                "formant_shift": {
+                  "default": 0.5,
+                  "description": "Vocal-tract length: <0.5 longer/darker, >0.5 shorter/brighter",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Formant Shift",
+                  "type": "number"
+                },
+                "level": {
+                  "default": 0.800000011920929,
+                  "description": "Output level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Level",
+                  "type": "number"
+                },
+                "vowel": {
+                  "default": 0.0,
+                  "description": "Vowel morph (A → E → I → O → U)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Vowel",
+                  "type": "number"
+                }
+              },
+              "type": "object"
+            },
+            "position": {
+              "$ref": "#/$defs/Position"
+            },
+            "type": {
+              "const": "voice_synth",
+              "description": "Module type discriminator."
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "position"
+          ],
+          "title": "Voice Synth",
+          "type": "object"
+        },
+        {
           "description": "Delay (delay) — Stereo delay with ping-pong mode",
           "properties": {
             "id": {
@@ -6565,7 +6621,8 @@
         "tilt_eq",
         "univibe",
         "crossover_splitter",
-        "vocoder"
+        "vocoder",
+        "voice_synth"
       ],
       "type": "string"
     },

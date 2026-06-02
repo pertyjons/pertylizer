@@ -7598,6 +7598,42 @@
         }
       }
     },
+    "voice_synth": {
+      "description": "Physically-inspired singing voice (glottal source → formants)",
+      "name": "Voice Synth",
+      "parameters": {
+        "formant_shift": {
+          "default": 0.5,
+          "description": "Vocal-tract length: <0.5 longer/darker, >0.5 shorter/brighter",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Formant Shift",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "level": {
+          "default": 0.800000011920929,
+          "description": "Output level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "vowel": {
+          "default": 0.0,
+          "description": "Vowel morph (A → E → I → O → U)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Vowel",
+          "response_curve": "linear",
+          "unit": "none"
+        }
+      }
+    },
     "waveshaper": {
       "description": "Creative waveshaping effect with selectable curves",
       "name": "Waveshaper",
