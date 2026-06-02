@@ -4447,6 +4447,14 @@
               "default": {},
               "description": "Parameter values for this module.",
               "properties": {
+                "breathiness": {
+                  "default": 0.0,
+                  "description": "Aspiration / breath noise amount",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Breathiness",
+                  "type": "number"
+                },
                 "formant_shift": {
                   "default": 0.5,
                   "description": "Vocal-tract length: <0.5 longer/darker, >0.5 shorter/brighter",
@@ -4461,6 +4469,38 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Level",
+                  "type": "number"
+                },
+                "open_quotient": {
+                  "default": 0.5,
+                  "description": "Glottal open quotient: low = pressed, high = soft/breathy",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Open Quotient",
+                  "type": "number"
+                },
+                "tilt": {
+                  "default": 0.0,
+                  "description": "Spectral tilt: 0 bright, 1 dark (soft glottal closure)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Tilt",
+                  "type": "number"
+                },
+                "vibrato_depth": {
+                  "default": 0.0,
+                  "description": "Vibrato depth in cents — unit: ct",
+                  "maximum": 100.0,
+                  "minimum": 0.0,
+                  "title": "Vibrato Depth",
+                  "type": "number"
+                },
+                "vibrato_rate": {
+                  "default": 5.5,
+                  "description": "Vibrato LFO rate — unit: Hz",
+                  "maximum": 12.0,
+                  "minimum": 0.0,
+                  "title": "Vibrato Rate",
                   "type": "number"
                 },
                 "vowel": {

@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::NormalizedValue;
+use crate::types::{Cents, Hertz, NormalizedValue};
 
 /// Voice Synth parameter with typed value.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -16,6 +16,16 @@ pub enum VoiceSynthParam {
     /// Formant shift / vocal-tract length (0.5=down an octave, 0.5→1.0 center, 1.0=up).
     /// Maps 0..1 to a 0.5..2.0 frequency scale; 0.5 = no shift.
     FormantShift(NormalizedValue),
+    /// Aspiration / breath noise amount (0.0 = none)
+    Breathiness(NormalizedValue),
+    /// Glottal open quotient — soft/breathy (low) ↔ pressed (high)
+    OpenQuotient(NormalizedValue),
+    /// Spectral tilt — 0.0 bright, 1.0 dark (soft glottal closure)
+    Tilt(NormalizedValue),
+    /// Vibrato rate
+    VibratoRate(Hertz),
+    /// Vibrato depth in cents
+    VibratoDepth(Cents),
     /// Output level
     Level(NormalizedValue),
 }
@@ -29,13 +39,25 @@ impl VoiceSynthParam {
         match self {
             Self::Vowel(_) => "Vowel",
             Self::FormantShift(_) => "Formant Shift",
+            Self::Breathiness(_) => "Breathiness",
+            Self::OpenQuotient(_) => "Open Quotient",
+            Self::Tilt(_) => "Tilt",
+            Self::VibratoRate(_) => "Vibrato Rate",
+            Self::VibratoDepth(_) => "Vibrato Depth",
             Self::Level(_) => "Level",
         }
     }
 
     pub fn as_f32(&self) -> f32 {
         match self {
-            Self::Vowel(v) | Self::FormantShift(v) | Self::Level(v) => v.as_f32(),
+            Self::Vowel(v)
+            | Self::FormantShift(v)
+            | Self::Breathiness(v)
+            | Self::OpenQuotient(v)
+            | Self::Tilt(v)
+            | Self::Level(v) => v.as_f32(),
+            Self::VibratoRate(hz) => hz.as_f32(),
+            Self::VibratoDepth(c) => c.as_f32(),
         }
     }
 
@@ -43,6 +65,11 @@ impl VoiceSynthParam {
         match self {
             Self::Vowel(_) => Self::Vowel(NormalizedValue::new(value)),
             Self::FormantShift(_) => Self::FormantShift(NormalizedValue::new(value)),
+            Self::Breathiness(_) => Self::Breathiness(NormalizedValue::new(value)),
+            Self::OpenQuotient(_) => Self::OpenQuotient(NormalizedValue::new(value)),
+            Self::Tilt(_) => Self::Tilt(NormalizedValue::new(value)),
+            Self::VibratoRate(_) => Self::VibratoRate(Hertz::new(value)),
+            Self::VibratoDepth(_) => Self::VibratoDepth(Cents::new(value)),
             Self::Level(_) => Self::Level(NormalizedValue::new(value)),
         }
     }

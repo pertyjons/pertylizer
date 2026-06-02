@@ -7602,6 +7602,16 @@
       "description": "Physically-inspired singing voice (glottal source → formants)",
       "name": "Voice Synth",
       "parameters": {
+        "breathiness": {
+          "default": 0.0,
+          "description": "Aspiration / breath noise amount",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Breathiness",
+          "response_curve": "linear",
+          "unit": "none"
+        },
         "formant_shift": {
           "default": 0.5,
           "description": "Vocal-tract length: <0.5 longer/darker, >0.5 shorter/brighter",
@@ -7621,6 +7631,46 @@
           "name": "Level",
           "response_curve": "linear",
           "unit": "none"
+        },
+        "open_quotient": {
+          "default": 0.5,
+          "description": "Glottal open quotient: low = pressed, high = soft/breathy",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Open Quotient",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "tilt": {
+          "default": 0.0,
+          "description": "Spectral tilt: 0 bright, 1 dark (soft glottal closure)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Tilt",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "vibrato_depth": {
+          "default": 0.0,
+          "description": "Vibrato depth in cents",
+          "max": 100.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Vibrato Depth",
+          "response_curve": "linear",
+          "unit": "cents"
+        },
+        "vibrato_rate": {
+          "default": 5.5,
+          "description": "Vibrato LFO rate",
+          "max": 12.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Vibrato Rate",
+          "response_curve": "linear",
+          "unit": "hertz"
         },
         "vowel": {
           "default": 0.0,
