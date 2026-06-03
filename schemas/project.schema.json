@@ -25,6 +25,177 @@
         }
       ]
     },
+    "ArpMode": {
+      "description": "Arpeggiator step order over the held chord.",
+      "oneOf": [
+        {
+          "const": "Up",
+          "description": "Ascending pitch order.",
+          "type": "string"
+        },
+        {
+          "const": "Down",
+          "description": "Descending pitch order.",
+          "type": "string"
+        },
+        {
+          "const": "UpDown",
+          "description": "Ascending then descending, endpoints not repeated.",
+          "type": "string"
+        },
+        {
+          "const": "DownUp",
+          "description": "Descending then ascending, endpoints not repeated.",
+          "type": "string"
+        },
+        {
+          "const": "AsPlayed",
+          "description": "In the order the source notes start (scan order).",
+          "type": "string"
+        },
+        {
+          "const": "Random",
+          "description": "Deterministic pseudo-random member per step (seeded by step index, so a\ngiven playback position always picks the same note — reproducible\noffline renders).",
+          "type": "string"
+        },
+        {
+          "const": "Chord",
+          "description": "The whole chord re-triggered every step (octave cycles per step).",
+          "type": "string"
+        }
+      ]
+    },
+    "ArpRate": {
+      "description": "Tempo-synced arpeggiator rate, as a division of the 960-PPQN grid.",
+      "oneOf": [
+        {
+          "const": "Quarter",
+          "description": "1/4 note (960 ticks).",
+          "type": "string"
+        },
+        {
+          "const": "QuarterDotted",
+          "description": "Dotted 1/4 (1440 ticks).",
+          "type": "string"
+        },
+        {
+          "const": "QuarterTriplet",
+          "description": "1/4 triplet (640 ticks).",
+          "type": "string"
+        },
+        {
+          "const": "Eighth",
+          "description": "1/8 note (480 ticks).",
+          "type": "string"
+        },
+        {
+          "const": "EighthDotted",
+          "description": "Dotted 1/8 (720 ticks).",
+          "type": "string"
+        },
+        {
+          "const": "EighthTriplet",
+          "description": "1/8 triplet (320 ticks).",
+          "type": "string"
+        },
+        {
+          "const": "Sixteenth",
+          "description": "1/16 note (240 ticks).",
+          "type": "string"
+        },
+        {
+          "const": "SixteenthDotted",
+          "description": "Dotted 1/16 (360 ticks).",
+          "type": "string"
+        },
+        {
+          "const": "SixteenthTriplet",
+          "description": "1/16 triplet (160 ticks).",
+          "type": "string"
+        },
+        {
+          "const": "ThirtySecond",
+          "description": "1/32 note (120 ticks).",
+          "type": "string"
+        },
+        {
+          "const": "ThirtySecondDotted",
+          "description": "Dotted 1/32 (180 ticks).",
+          "type": "string"
+        },
+        {
+          "const": "ThirtySecondTriplet",
+          "description": "1/32 triplet (80 ticks).",
+          "type": "string"
+        }
+      ]
+    },
+    "ArpVelocity": {
+      "description": "How the arpeggiator assigns step velocities.",
+      "oneOf": [
+        {
+          "const": "AsPlayed",
+          "description": "Each step uses its source note's velocity.",
+          "type": "string"
+        },
+        {
+          "const": "RampUp",
+          "description": "Crescendo across each cycle (scaled from the source velocity).",
+          "type": "string"
+        },
+        {
+          "const": "RampDown",
+          "description": "Decrescendo across each cycle.",
+          "type": "string"
+        }
+      ]
+    },
+    "Arpeggiator": {
+      "description": "Arpeggiator (chain stage 2) — the flagship stream generator.\n\nReplaces the source stream: at each step-grid onset it emits one member of\nthe currently *held* chord (every source note sounding at that tick, viewed\nthrough the upstream chain's pitch transforms), and suppresses the source\nchord onsets themselves. Step phase counts from the held chord's earliest\nstart, so the figure restarts on each new chord block. Stateless and\ndeterministic per the rack contract.\n\nTrill / mordent / turn are constrained presets of this generator (NP3/NP6\nexpose them via the per-note ornament menu); they are not separate code.",
+      "properties": {
+        "gate": {
+          "$ref": "#/$defs/NormalizedValue",
+          "description": "Step gate as a fraction of the step length (≥1 tick). A 1.0 gate on\nrepeated pitches ties via the engine's boundary coalesce."
+        },
+        "latch": {
+          "description": "Hold the last chord through gaps (keeps arpeggiating after the source\nnotes end, using the chord that sounded just before the gap).",
+          "type": "boolean"
+        },
+        "mode": {
+          "$ref": "#/$defs/ArpMode",
+          "description": "Step order over the held chord."
+        },
+        "octaves": {
+          "description": "Octave range (1–4; values outside are clamped at use).",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rate": {
+          "$ref": "#/$defs/ArpRate",
+          "description": "Tempo-synced step length."
+        },
+        "swing": {
+          "$ref": "#/$defs/NormalizedValue",
+          "description": "Swing: odd steps are delayed by `swing × step/2`."
+        },
+        "velocity": {
+          "$ref": "#/$defs/ArpVelocity",
+          "description": "Step velocity behavior."
+        }
+      },
+      "required": [
+        "mode",
+        "rate",
+        "octaves",
+        "gate",
+        "swing",
+        "velocity",
+        "latch"
+      ],
+      "type": "object"
+    },
     "Author": {
       "description": "Author information embedded in patch, project, and preset files.",
       "examples": [
@@ -6972,6 +7143,19 @@
           },
           "required": [
             "ScaleQuantize"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Arpeggiate the held chord (chain stage 2).",
+          "properties": {
+            "Arpeggiator": {
+              "$ref": "#/$defs/Arpeggiator"
+            }
+          },
+          "required": [
+            "Arpeggiator"
           ],
           "type": "object"
         }

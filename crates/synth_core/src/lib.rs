@@ -18,6 +18,7 @@
 #![allow(clippy::float_cmp)]
 
 pub mod audio;
+pub mod hash;
 pub mod module_traits;
 pub mod params;
 pub mod tuning;

@@ -25,6 +25,8 @@
 //! drop count is the (non-RT) caller's job; the audio thread must not log.
 
 use serde::{Deserialize, Serialize};
+use synth_core::hash::splitmix64;
+use synth_core::{NormalizedValue, Semitones};
 
 use super::ids::NoteId;
 use super::note::{Glide, Note, NoteExpression};
@@ -170,6 +172,387 @@ impl ScaleQuantize {
     }
 }
 
+/// Arpeggiator step order over the held chord.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum ArpMode {
+    /// Ascending pitch order.
+    #[default]
+    Up,
+    /// Descending pitch order.
+    Down,
+    /// Ascending then descending, endpoints not repeated.
+    UpDown,
+    /// Descending then ascending, endpoints not repeated.
+    DownUp,
+    /// In the order the source notes start (scan order).
+    AsPlayed,
+    /// Deterministic pseudo-random member per step (seeded by step index, so a
+    /// given playback position always picks the same note — reproducible
+    /// offline renders).
+    Random,
+    /// The whole chord re-triggered every step (octave cycles per step).
+    Chord,
+}
+
+/// Tempo-synced arpeggiator rate, as a division of the 960-PPQN grid.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum ArpRate {
+    /// 1/4 note (960 ticks).
+    Quarter,
+    /// Dotted 1/4 (1440 ticks).
+    QuarterDotted,
+    /// 1/4 triplet (640 ticks).
+    QuarterTriplet,
+    /// 1/8 note (480 ticks).
+    Eighth,
+    /// Dotted 1/8 (720 ticks).
+    EighthDotted,
+    /// 1/8 triplet (320 ticks).
+    EighthTriplet,
+    /// 1/16 note (240 ticks).
+    #[default]
+    Sixteenth,
+    /// Dotted 1/16 (360 ticks).
+    SixteenthDotted,
+    /// 1/16 triplet (160 ticks).
+    SixteenthTriplet,
+    /// 1/32 note (120 ticks).
+    ThirtySecond,
+    /// Dotted 1/32 (180 ticks).
+    ThirtySecondDotted,
+    /// 1/32 triplet (80 ticks).
+    ThirtySecondTriplet,
+}
+
+impl ArpRate {
+    /// Step length in ticks (all divisions are exact on the 960-PPQN grid).
+    pub fn ticks(self) -> Duration {
+        match self {
+            Self::Quarter => Duration::QUARTER,
+            Self::QuarterDotted => Duration::QUARTER.dotted(),
+            Self::QuarterTriplet => Duration::TRIPLET_QUARTER,
+            Self::Eighth => Duration::EIGHTH,
+            Self::EighthDotted => Duration::EIGHTH.dotted(),
+            Self::EighthTriplet => Duration::TRIPLET_EIGHTH,
+            Self::Sixteenth => Duration::SIXTEENTH,
+            Self::SixteenthDotted => Duration::SIXTEENTH.dotted(),
+            Self::SixteenthTriplet => Duration::TRIPLET_SIXTEENTH,
+            Self::ThirtySecond => Duration::THIRTY_SECOND,
+            Self::ThirtySecondDotted => Duration::THIRTY_SECOND.dotted(),
+            Self::ThirtySecondTriplet => Duration::TRIPLET_THIRTY_SECOND,
+        }
+    }
+}
+
+/// How the arpeggiator assigns step velocities.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum ArpVelocity {
+    /// Each step uses its source note's velocity.
+    #[default]
+    AsPlayed,
+    /// Crescendo across each cycle (scaled from the source velocity).
+    RampUp,
+    /// Decrescendo across each cycle.
+    RampDown,
+}
+
+/// Most held notes the arpeggiator reads per tick. Excess notes (scan order =
+/// start order) are ignored — a 16-note chord × 4 octaves already saturates a
+/// cycle musically, and the bound keeps the audio-thread scratch array fixed.
+pub const MAX_ARP_HELD: usize = 16;
+
+/// Velocity-ramp floor: a cycle ramps between this fraction of the source
+/// velocity and the full source velocity.
+const ARP_RAMP_FLOOR: f32 = 0.4;
+
+/// Arpeggiator (chain stage 2) — the flagship stream generator.
+///
+/// Replaces the source stream: at each step-grid onset it emits one member of
+/// the currently *held* chord (every source note sounding at that tick, viewed
+/// through the upstream chain's pitch transforms), and suppresses the source
+/// chord onsets themselves. Step phase counts from the held chord's earliest
+/// start, so the figure restarts on each new chord block. Stateless and
+/// deterministic per the rack contract.
+///
+/// Trill / mordent / turn are constrained presets of this generator (NP3/NP6
+/// expose them via the per-note ornament menu); they are not separate code.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Arpeggiator {
+    /// Step order over the held chord.
+    pub mode: ArpMode,
+    /// Tempo-synced step length.
+    pub rate: ArpRate,
+    /// Octave range (1–4; values outside are clamped at use).
+    pub octaves: u8,
+    /// Step gate as a fraction of the step length (≥1 tick). A 1.0 gate on
+    /// repeated pitches ties via the engine's boundary coalesce.
+    pub gate: NormalizedValue,
+    /// Swing: odd steps are delayed by `swing × step/2`.
+    pub swing: NormalizedValue,
+    /// Step velocity behavior.
+    pub velocity: ArpVelocity,
+    /// Hold the last chord through gaps (keeps arpeggiating after the source
+    /// notes end, using the chord that sounded just before the gap).
+    pub latch: bool,
+}
+
+impl Default for Arpeggiator {
+    fn default() -> Self {
+        Self {
+            mode: ArpMode::Up,
+            rate: ArpRate::Sixteenth,
+            octaves: 1,
+            gate: NormalizedValue::new(0.75),
+            swing: NormalizedValue::new(0.0),
+            velocity: ArpVelocity::AsPlayed,
+            latch: false,
+        }
+    }
+}
+
+/// One held source note, as the arpeggiator sees it (post upstream pitch
+/// transforms). `Copy` so it lives in a fixed scratch array.
+#[derive(Debug, Clone, Copy)]
+struct HeldArpNote {
+    pitch: Pitch,
+    velocity: Velocity,
+}
+
+impl Arpeggiator {
+    /// Phase-1 query (cheap, runs every tick): the source tick whose chord the
+    /// arp plays at `tick`, plus the step anchor (the chord block's earliest
+    /// start). No pitch mapping happens here — the upstream chain is only
+    /// consulted on actual step onsets (phase 2).
+    ///
+    /// When nothing is held and `latch` is on, falls back to the tick just
+    /// before the most recent note end — "hold the last chord", derived
+    /// statelessly from the pattern.
+    ///
+    /// NB: membership is `is_playing_at` on the raw source notes — the arp
+    /// *replaces* the stream, so per-note trigger probability (an onset-domain
+    /// feature) deliberately has no effect under an arp. The anchor likewise
+    /// reads raw source starts, which makes the locked chain order (humanize
+    /// strictly after the arp) load-bearing: an upstream start-shifting
+    /// transform could not move this grid.
+    fn chord_source(&self, pattern: &Pattern, tick: PatternTick) -> Option<(PatternTick, u32)> {
+        if let Some(anchor) = Self::anchor_at(pattern, tick) {
+            return Some((tick, anchor));
+        }
+        if self.latch {
+            // Latest note end at or before `tick`; the chord playing on the
+            // tick just before that end is the latched chord.
+            let last_end = pattern
+                .notes()
+                .iter()
+                .filter_map(Note::end)
+                .filter(|e| *e <= tick)
+                .max();
+            if let Some(end) = last_end
+                && end.0 > 0
+            {
+                let source = PatternTick(end.0 - 1);
+                if let Some(anchor) = Self::anchor_at(pattern, source) {
+                    return Some((source, anchor));
+                }
+            }
+        }
+        None
+    }
+
+    /// Earliest start among the notes sounding at `tick` (`None` when silent).
+    fn anchor_at(pattern: &Pattern, tick: PatternTick) -> Option<u32> {
+        pattern
+            .notes()
+            .iter()
+            .filter(|n| n.is_playing_at(tick))
+            .map(|n| n.start.0)
+            .min()
+    }
+
+    /// Phase-2 (step onsets only): the chord at `tick`, pitch-mapped through
+    /// `upstream`, in scan (start) order. Excess beyond [`MAX_ARP_HELD`] is
+    /// truncated in scan order — *not* pitch order — so a >16-note cluster
+    /// keeps its earliest-starting 16 notes and Up/Down may miss the extremes.
+    fn held_at(
+        pattern: &Pattern,
+        tick: PatternTick,
+        upstream: &[NoteProcessor],
+        held: &mut [HeldArpNote; MAX_ARP_HELD],
+    ) -> usize {
+        let mut n = 0;
+        for note in pattern.notes() {
+            if !note.is_playing_at(tick) {
+                continue;
+            }
+            if n == MAX_ARP_HELD {
+                break;
+            }
+            let pitch = upstream
+                .iter()
+                .fold(note.pitch, |p, proc| proc.map_pitch(p));
+            held[n] = HeldArpNote {
+                pitch,
+                velocity: note.velocity,
+            };
+            n += 1;
+        }
+        n
+    }
+
+    /// Per-tick arp evaluation. Suppresses the upstream note stream and, when
+    /// `tick` lands on a step onset (including the swung onset of odd steps),
+    /// emits that step's chord member(s).
+    ///
+    /// The arp **replaces** the source stream: chord onsets never pass
+    /// through, and per-note expression/glide on the source notes is not
+    /// carried onto the generated steps. A consequence: two stream generators
+    /// in one rack behave as "last one wins" — the later generator clears the
+    /// earlier one's output and re-reads the source pattern.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
+    fn process_at_tick(
+        &self,
+        pattern: &Pattern,
+        tick: PatternTick,
+        upstream: &[NoteProcessor],
+        buf: &mut ExpansionBuffer,
+    ) {
+        // The arp replaces the source stream: chord onsets never pass through.
+        buf.clear_notes();
+
+        // Phase 1 (every tick, cheap): locate the step grid. Phase counts from
+        // the chord block's earliest start, so the figure restarts on each new
+        // chord. Odd steps are swing-delayed.
+        let Some((source_tick, anchor)) = self.chord_source(pattern, tick) else {
+            return;
+        };
+        let step_len = self.rate.ticks().0;
+        let rel = tick.0.saturating_sub(anchor);
+        let step = rel / step_len;
+        let swing_ticks = (step_len as f32 / 2.0 * self.swing.as_f32()) as u32;
+        let onset = step * step_len + if step % 2 == 1 { swing_ticks } else { 0 };
+        if rel != onset {
+            return;
+        }
+
+        // Phase 2 (step onsets only): resolve the chord through the upstream
+        // chain and emit. The expensive per-note pitch mapping never runs on
+        // the ~⌀239 of 240 non-onset ticks.
+        const DUMMY: HeldArpNote = HeldArpNote {
+            pitch: Pitch::MIDDLE_C,
+            velocity: Velocity::MF,
+        };
+        let mut held = [DUMMY; MAX_ARP_HELD];
+        let n = Self::held_at(pattern, source_tick, upstream, &mut held);
+        if n == 0 {
+            return;
+        }
+        let held = &mut held[..n];
+
+        // Sort per mode (in-place on the fixed scratch — alloc-free).
+        match self.mode {
+            ArpMode::Up | ArpMode::UpDown => {
+                held.sort_unstable_by_key(|h| h.pitch.as_midi());
+            }
+            ArpMode::Down | ArpMode::DownUp => {
+                held.sort_unstable_by_key(|h| core::cmp::Reverse(h.pitch.as_midi()));
+            }
+            // Scan order is start order — exactly "as played".
+            ArpMode::AsPlayed | ArpMode::Random | ArpMode::Chord => {}
+        }
+
+        let octaves = u32::from(self.octaves.clamp(1, 4));
+        let n32 = n as u32;
+        let total = n32 * octaves;
+        // Step gate, clamped to the gap to the next (swung) onset so a long
+        // gate on a swung grid can never overlap the following step — an
+        // overlap of the same pitch would otherwise confuse the engine's
+        // NoteOff bookkeeping (two active voices, first NoteOff cuts both).
+        let gap = if step.is_multiple_of(2) {
+            step_len + swing_ticks
+        } else {
+            step_len - swing_ticks
+        };
+        let duration = ((step_len as f32 * self.gate.as_f32()) as u32).clamp(1, gap.max(1));
+
+        if self.mode == ArpMode::Chord {
+            // Whole chord per step; the octave cycles step-by-step, and the
+            // velocity ramp spans that octave cycle.
+            let oct = step % octaves;
+            for h in held.iter() {
+                if let Some(pitch) = h.pitch.transpose(Semitones::new(12.0 * oct as f32)) {
+                    let velocity = self.step_velocity(h.velocity, oct, octaves);
+                    let _ = buf.push(Self::step_note(pitch, velocity, duration));
+                }
+            }
+            return;
+        }
+
+        // Cycle position → member index. Up/Down/AsPlayed walk 0..total;
+        // UpDown/DownUp mirror without repeating endpoints; Random hashes the
+        // step index (deterministic).
+        let cycle_len = match self.mode {
+            ArpMode::UpDown | ArpMode::DownUp if total > 1 => 2 * total - 2,
+            _ => total,
+        };
+        let pos = step % cycle_len;
+        let idx = match self.mode {
+            ArpMode::UpDown | ArpMode::DownUp if pos >= total => 2 * total - 2 - pos,
+            ArpMode::Random => {
+                (splitmix64(u64::from(step) ^ (u64::from(anchor) << 32)) % u64::from(total)) as u32
+            }
+            _ => pos,
+        };
+
+        let member = &held[(idx % n32) as usize];
+        let octave = idx / n32;
+        let Some(pitch) = member.pitch.transpose(Semitones::new(12.0 * octave as f32)) else {
+            return; // transposed off the MIDI range — skip this step
+        };
+        let velocity = self.step_velocity(member.velocity, pos, cycle_len);
+        let _ = buf.push(Self::step_note(pitch, velocity, duration));
+    }
+
+    /// Apply the velocity mode to one step (ramps span a cycle). A one-step
+    /// cycle has nothing to ramp over and passes the source velocity through
+    /// — without this, a degenerate ramp would pin every step to its floor.
+    #[allow(clippy::cast_precision_loss)]
+    fn step_velocity(&self, base: Velocity, pos: u32, cycle_len: u32) -> Velocity {
+        if cycle_len <= 1 {
+            return base;
+        }
+        let span = (cycle_len - 1) as f32;
+        let t = pos as f32 / span;
+        let factor = match self.velocity {
+            ArpVelocity::AsPlayed => return base,
+            ArpVelocity::RampUp => ARP_RAMP_FLOOR + (1.0 - ARP_RAMP_FLOOR) * t,
+            ArpVelocity::RampDown => 1.0 - (1.0 - ARP_RAMP_FLOOR) * t,
+        };
+        Velocity::new(base.as_f32() * factor)
+    }
+
+    fn step_note(pitch: Pitch, velocity: Velocity, duration_ticks: u32) -> ExpandedNote {
+        ExpandedNote {
+            duration: Some(Duration(duration_ticks)),
+            pitch,
+            velocity,
+            legato: false,
+            glide: None,
+            expression: None,
+        }
+    }
+}
+
 // ============================================================================
 // The processor rack
 // ============================================================================
@@ -181,6 +564,8 @@ impl ScaleQuantize {
 pub enum NoteProcessor {
     /// Snap pitches to a scale (chain stage 0).
     ScaleQuantize(ScaleQuantize),
+    /// Arpeggiate the held chord (chain stage 2).
+    Arpeggiator(Arpeggiator),
 }
 
 impl NoteProcessor {
@@ -191,6 +576,23 @@ impl NoteProcessor {
     pub fn chain_stage(&self) -> u8 {
         match self {
             Self::ScaleQuantize(_) => 0,
+            Self::Arpeggiator(_) => 2,
+        }
+    }
+
+    /// The single-pitch transform this processor applies, used by downstream
+    /// generators to view source material *through* the upstream chain (e.g.
+    /// the arp reading held notes through a preceding scale-quantize).
+    /// Identity for generators.
+    ///
+    /// NB (NP4): a chord *generator* multiplies one note into several and
+    /// cannot be expressed as a pitch map — when it lands, widen this seam
+    /// into an upstream held-notes view (1→N) so `chord → arp` composes;
+    /// do not bolt chord expansion into the arp itself.
+    fn map_pitch(&self, pitch: Pitch) -> Pitch {
+        match self {
+            Self::ScaleQuantize(q) => q.snap(pitch),
+            Self::Arpeggiator(_) => pitch,
         }
     }
 
@@ -207,13 +609,20 @@ impl NoteProcessor {
     /// held chord derived from `pattern`, randomness via a seeded hash of
     /// stable ids). That is what keeps the audio path lock-free and offline
     /// renders reproducible.
-    fn process_at_tick(&self, _pattern: &Pattern, _tick: PatternTick, buf: &mut ExpansionBuffer) {
+    fn process_at_tick(
+        &self,
+        pattern: &Pattern,
+        tick: PatternTick,
+        upstream: &[NoteProcessor],
+        buf: &mut ExpansionBuffer,
+    ) {
         match self {
             Self::ScaleQuantize(q) => {
                 for note in buf.notes_mut() {
                     note.pitch = q.snap(note.pitch);
                 }
             }
+            Self::Arpeggiator(a) => a.process_at_tick(pattern, tick, upstream, buf),
         }
     }
 }
@@ -275,6 +684,13 @@ impl ExpansionBuffer {
     pub fn clear(&mut self) {
         self.notes.clear();
         self.dropped = 0;
+    }
+
+    /// Discard the collected notes but keep the drop counter — used by
+    /// generators that replace the upstream stream mid-rack (the arp), where
+    /// resetting `dropped` would lose this tick's overflow count.
+    fn clear_notes(&mut self) {
+        self.notes.clear();
     }
 
     /// Push a note; on overflow, drop it and count (never reallocate).
@@ -358,8 +774,11 @@ impl Pattern {
                 let _ = buf.push(ExpandedNote::from_note(note));
             }
         }
-        for processor in &self.processors {
-            processor.process_at_tick(self, tick, buf);
+        for i in 0..self.processors.len() {
+            // Each processor sees its upstream slice so generators can view
+            // source material through the preceding transforms (`map_pitch`).
+            let (upstream, rest) = self.processors.split_at(i);
+            rest[0].process_at_tick(self, tick, upstream, buf);
         }
     }
 
@@ -626,6 +1045,284 @@ mod tests {
         // defensive normalization point.
         let raw: PitchClass = serde_json::from_str("13").unwrap();
         assert_eq!(raw.as_u8(), 1);
+    }
+
+    // --- Arpeggiator (NP2) --------------------------------------------------
+
+    /// C major triad (C4 E4 G4) held for `hold` ticks from tick 0, in a
+    /// 4-bar pattern.
+    fn chord_pattern(hold: u32) -> Pattern {
+        let mut p = Pattern::new(PatternId(0), Duration(3840));
+        for &m in &[60u8, 64, 67] {
+            let id = p.add_note(PatternTick(0), Pitch::new(m).unwrap(), Velocity::MF);
+            let _ = p.resize_note(id, Duration(hold));
+        }
+        p
+    }
+
+    fn arp(mode: ArpMode, octaves: u8) -> Arpeggiator {
+        Arpeggiator {
+            mode,
+            octaves,
+            ..Arpeggiator::default()
+        }
+    }
+
+    /// Expand a pattern over `ticks` and collect (tick, midi) of emitted notes.
+    fn expand_all(p: &Pattern, ticks: u32) -> Vec<(u32, u8)> {
+        let mut buf = ExpansionBuffer::new();
+        let mut out = Vec::new();
+        for t in 0..ticks {
+            p.expand_at_tick(PatternTick(t), |_| true, &mut buf);
+            for n in buf.notes() {
+                out.push((t, n.pitch.as_midi()));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn arp_up_emits_ascending_cycle_on_step_grid() {
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
+        // 16th steps = 240 ticks; cycle C E G repeating, chord onset suppressed.
+        let got = expand_all(&p, 960);
+        assert_eq!(
+            got,
+            vec![(0, 60), (240, 64), (480, 67), (720, 60)],
+            "ascending 16th-note cycle expected"
+        );
+    }
+
+    #[test]
+    fn arp_suppresses_source_chord() {
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        assert_eq!(
+            buf.notes().len(),
+            1,
+            "only the arp step, never the source chord: {:?}",
+            buf.notes()
+        );
+    }
+
+    #[test]
+    fn arp_down_and_octave_range() {
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Down, 2)));
+        // Descending over 2 octaves: G E C then the upper octave G+12 E+12 C+12?
+        // No — Down sorts members descending (67 64 60), octave index rises
+        // with the cycle: 67,64,60,79,76,72.
+        let got: Vec<u8> = expand_all(&p, 1440).into_iter().map(|(_, m)| m).collect();
+        assert_eq!(got, vec![67, 64, 60, 79, 76, 72]);
+    }
+
+    #[test]
+    fn arp_updown_does_not_repeat_endpoints() {
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::UpDown, 1)));
+        // Cycle: C E G E | C E G E ... (endpoints C and G not doubled).
+        let got: Vec<u8> = expand_all(&p, 1920).into_iter().map(|(_, m)| m).collect();
+        assert_eq!(got, vec![60, 64, 67, 64, 60, 64, 67, 64]);
+    }
+
+    #[test]
+    fn arp_gate_sets_step_duration() {
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(Arpeggiator {
+            gate: NormalizedValue::new(0.5),
+            ..arp(ArpMode::Up, 1)
+        }));
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        assert_eq!(buf.notes()[0].duration, Some(Duration(120)));
+    }
+
+    #[test]
+    fn arp_swing_delays_odd_steps() {
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(Arpeggiator {
+            swing: NormalizedValue::new(0.5),
+            ..arp(ArpMode::Up, 1)
+        }));
+        // Odd steps delayed by 0.5 * 240/2 = 60 ticks: onsets 0, 300, 480, 780.
+        let ticks: Vec<u32> = expand_all(&p, 960).into_iter().map(|(t, _)| t).collect();
+        assert_eq!(ticks, vec![0, 300, 480, 780]);
+    }
+
+    #[test]
+    fn arp_latch_holds_last_chord_through_gap() {
+        // Chord held only 480 ticks; latch keeps arpeggiating it after.
+        let mut p = chord_pattern(480);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(Arpeggiator {
+            latch: true,
+            ..arp(ArpMode::Up, 1)
+        }));
+        let got = expand_all(&p, 1200);
+        assert_eq!(
+            got,
+            vec![(0, 60), (240, 64), (480, 67), (720, 60), (960, 64)],
+            "latch must continue the figure past the chord's end"
+        );
+
+        // Without latch the figure stops when the chord ends.
+        let mut p2 = chord_pattern(480);
+        let _ = p2.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
+        let got2 = expand_all(&p2, 1200);
+        assert_eq!(got2, vec![(0, 60), (240, 64)]);
+    }
+
+    #[test]
+    fn arp_random_is_deterministic_and_in_set() {
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Random, 1)));
+        let a = expand_all(&p, 3840);
+        let b = expand_all(&p, 3840);
+        assert_eq!(a, b, "random mode must be deterministic per position");
+        assert!(a.iter().all(|(_, m)| [60, 64, 67].contains(m)));
+        assert_eq!(a.len(), 16, "one note per 16th step over 4 beats × 4");
+    }
+
+    #[test]
+    fn arp_chord_mode_retriggers_whole_chord() {
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Chord, 1)));
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(240), |_| true, &mut buf);
+        let pitches: Vec<u8> = buf.notes().iter().map(|n| n.pitch.as_midi()).collect();
+        assert_eq!(pitches, vec![60, 64, 67]);
+    }
+
+    #[test]
+    fn arp_velocity_ramp_up_is_monotonic_over_cycle() {
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(Arpeggiator {
+            velocity: ArpVelocity::RampUp,
+            ..arp(ArpMode::Up, 1)
+        }));
+        let mut buf = ExpansionBuffer::new();
+        let mut vels = Vec::new();
+        for t in [0u32, 240, 480] {
+            p.expand_at_tick(PatternTick(t), |_| true, &mut buf);
+            vels.push(buf.notes()[0].velocity.as_f32());
+        }
+        assert!(
+            vels[0] < vels[1] && vels[1] < vels[2],
+            "ramp-up must rise across the cycle: {vels:?}"
+        );
+    }
+
+    #[test]
+    fn arp_sees_held_notes_through_upstream_quantize() {
+        // Held C#-F-G# through C-major quantize: the arp must arpeggiate the
+        // SNAPPED pitches (D F A... C# -> D, F in scale, G# -> A).
+        let mut p = Pattern::new(PatternId(0), Duration(3840));
+        for &m in &[61u8, 65, 68] {
+            let id = p.add_note(PatternTick(0), Pitch::new(m).unwrap(), Velocity::MF);
+            let _ = p.resize_note(id, Duration(3840));
+        }
+        let _ = p.add_processor(NoteProcessor::ScaleQuantize(c_major()));
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
+        // Canonical insertion: quantize (stage 0) before arp (stage 2).
+        assert_eq!(p.processors()[0].chain_stage(), 0);
+
+        let got: Vec<u8> = expand_all(&p, 720).into_iter().map(|(_, m)| m).collect();
+        assert_eq!(got, vec![62, 65, 69], "arp must see quantized pitches");
+    }
+
+    #[test]
+    fn arp_step_phase_restarts_on_new_chord_block() {
+        // First chord C-E-G for 480 ticks, then D-F-A from 480: the figure
+        // restarts at the new block's first member.
+        let mut p = Pattern::new(PatternId(0), Duration(3840));
+        for &m in &[60u8, 64, 67] {
+            let id = p.add_note(PatternTick(0), Pitch::new(m).unwrap(), Velocity::MF);
+            let _ = p.resize_note(id, Duration(480));
+        }
+        for &m in &[62u8, 65, 69] {
+            let id = p.add_note(PatternTick(480), Pitch::new(m).unwrap(), Velocity::MF);
+            let _ = p.resize_note(id, Duration(480));
+        }
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
+        let got = expand_all(&p, 960);
+        assert_eq!(
+            got,
+            vec![(0, 60), (240, 64), (480, 62), (720, 65)],
+            "step phase must re-anchor at the new chord block"
+        );
+    }
+
+    #[test]
+    fn arp_chord_mode_velocity_ramp_passes_through_at_one_octave() {
+        // Regression: a one-step ramp cycle (Chord mode, octaves=1) must NOT
+        // pin every step at the ramp floor — it passes the source velocity.
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(Arpeggiator {
+            velocity: ArpVelocity::RampUp,
+            ..arp(ArpMode::Chord, 1)
+        }));
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        assert!(
+            buf.notes()
+                .iter()
+                .all(|n| (n.velocity.as_f32() - Velocity::MF.as_f32()).abs() < 1e-6),
+            "degenerate ramp must pass velocity through: {:?}",
+            buf.notes()
+        );
+    }
+
+    #[test]
+    fn arp_swung_step_duration_never_crosses_next_onset() {
+        // Regression: gate 1.0 + swing 1.0 — odd (swung) steps have only
+        // step/2 ticks to the next onset; duration must clamp to that gap.
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(Arpeggiator {
+            gate: NormalizedValue::new(1.0),
+            swing: NormalizedValue::new(1.0),
+            ..arp(ArpMode::Up, 1)
+        }));
+        let mut buf = ExpansionBuffer::new();
+        // Step 1 (odd) is swung to tick 240 + 120 = 360; the next onset is
+        // step 2 at 480, so the gap is 120 ticks.
+        p.expand_at_tick(PatternTick(360), |_| true, &mut buf);
+        assert_eq!(buf.notes().len(), 1);
+        assert_eq!(
+            buf.notes()[0].duration,
+            Some(Duration(120)),
+            "swung step must clamp to the gap before the next onset"
+        );
+    }
+
+    #[test]
+    fn arp_freeze_bakes_concrete_steps() {
+        let mut p = chord_pattern(960);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
+        let count = p.freeze_processors();
+        assert_eq!(count, 4, "4 steps over 960 ticks at 16th rate");
+        assert!(p.processors().is_empty());
+        let starts: Vec<u32> = p.notes().iter().map(|n| n.start.0).collect();
+        assert_eq!(starts, vec![0, 240, 480, 720]);
+        assert!(p.notes().iter().all(|n| n.duration == Some(Duration(180))));
+    }
+
+    #[test]
+    fn arp_serde_roundtrip() {
+        let mut p = chord_pattern(960);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(Arpeggiator {
+            mode: ArpMode::DownUp,
+            rate: ArpRate::EighthTriplet,
+            octaves: 3,
+            gate: NormalizedValue::new(0.6),
+            swing: NormalizedValue::new(0.25),
+            velocity: ArpVelocity::RampDown,
+            latch: true,
+        }));
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Pattern = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.processors(), p.processors());
     }
 
     #[test]

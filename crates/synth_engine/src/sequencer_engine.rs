@@ -83,27 +83,15 @@ struct PendingNote {
     expression: Option<NoteExpression>,
 }
 
-/// Golden-ratio odd constant — the SplitMix64 increment (same role as the
-/// mixers in `synth_modules::math`; kept local because this is a stateless
-/// sequencer-side hash, not the streaming `xorshift32` RNG).
-const SPLITMIX_GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
-
 /// Deterministic pseudo-random value in `[0, 1)` from a 64-bit seed.
 ///
-/// SplitMix64 finalizer — pure arithmetic, RT-safe (no RNG state, no syscall,
-/// no allocation), and reproducible for a given seed. Used to resolve per-note
-/// trigger probability at emission so the audio thread never calls an RNG (the
-/// project's no-`Math.random` posture). The finalizer mixes structured input
-/// thoroughly, so callers may feed a plain xor of their key fields.
-#[allow(clippy::cast_precision_loss)]
-fn deterministic_unit(seed: u64) -> f32 {
-    let mut z = seed.wrapping_add(SPLITMIX_GAMMA);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^= z >> 31;
-    // Top 24 bits → [0, 1); 2^24 = 16_777_216 (exactly representable in f32).
-    ((z >> 40) as f32) / 16_777_216.0
-}
+/// `synth_core::hash::splitmix64_unit` — pure arithmetic, RT-safe (no RNG
+/// state, no syscall, no allocation), and reproducible for a given seed. Used
+/// to resolve per-note trigger probability at emission so the audio thread
+/// never calls an RNG (the project's no-`Math.random` posture). The finalizer
+/// mixes structured input thoroughly, so callers may feed a plain xor of their
+/// key fields.
+use synth_core::hash::splitmix64_unit as deterministic_unit;
 
 /// Ghost-note velocity scale (forced-soft articulation).
 const GHOST_VELOCITY_SCALE: f32 = 0.4;
@@ -1374,6 +1362,50 @@ mod tests {
             note_on_pitches(&events).contains(&67),
             "preview must apply the rack: {events:?}"
         );
+    }
+
+    #[test]
+    fn arpeggiator_expands_chord_into_steps_in_playback() {
+        use synth_sequencer::{ArpMode, Arpeggiator, NoteProcessor};
+        // One held C-major chord + an arp rack: playback must emit a stream of
+        // single step notes (the "one chord + arp processor" authoring payoff),
+        // never the block chord itself.
+        let mut song = Song::new("Arp").with_tempo(Bpm::new(120.0));
+        let pattern_id = song.create_pattern(Duration::WHOLE);
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            for &m in &[60u8, 64, 67] {
+                let id = pattern.add_note(PatternTick(0), Pitch::new(m).unwrap(), Velocity::MF);
+                let _ = pattern.resize_note(id, Duration::WHOLE);
+            }
+            let _ = pattern.add_processor(NoteProcessor::Arpeggiator(Arpeggiator {
+                mode: ArpMode::Up,
+                ..Arpeggiator::default()
+            }));
+        }
+        let track_id = song.create_track("T");
+        song.place_pattern(pattern_id, track_id, Tick::ZERO);
+
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+        seq.play();
+        let mut events = Vec::new();
+        // 1 second at 120 BPM = 2 beats = 8 sixteenth steps.
+        let frames = (SampleRate::DVD_QUALITY.as_f32() * 1.0).round() as usize;
+        seq.process(SampleCount::new(frames), &mut events);
+
+        let pitches = note_on_pitches(&events);
+        assert!(pitches.len() >= 4, "expected ≥4 arp steps: {pitches:?}");
+        assert_eq!(
+            &pitches[..4],
+            &[60, 64, 67, 60],
+            "ascending 16th cycle expected: {pitches:?}"
+        );
+        // Steps are sequential single notes — no simultaneous chord onset.
+        let ons_at_zero = events
+            .iter()
+            .filter(|e| matches!(e, SequencerEvent::NoteOn { tick, .. } if tick.0 == 0))
+            .count();
+        assert_eq!(ons_at_zero, 1, "source chord must be suppressed");
     }
 
     #[test]

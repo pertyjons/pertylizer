@@ -49,8 +49,8 @@ pub use ids::{
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use note::{Glide, GlideFrom, GlideInterp, Note, NoteExpression, Vibrato, VibratoShape};
 pub use note_processor::{
-    ExpandedNote, ExpansionBuffer, MAX_EXPANSION_EVENTS_PER_TICK, NoteProcessor, PitchClass,
-    ScaleMask, ScaleQuantize,
+    ArpMode, ArpRate, ArpVelocity, Arpeggiator, ExpandedNote, ExpansionBuffer, MAX_ARP_HELD,
+    MAX_EXPANSION_EVENTS_PER_TICK, NoteProcessor, PitchClass, ScaleMask, ScaleQuantize,
 };
 pub use pattern::{Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};

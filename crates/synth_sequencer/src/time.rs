@@ -191,6 +191,10 @@ impl Duration {
     pub const TRIPLET_QUARTER: Self = Self(640);
     /// Triplet eighth note.
     pub const TRIPLET_EIGHTH: Self = Self(320);
+    /// Triplet sixteenth note.
+    pub const TRIPLET_SIXTEENTH: Self = Self(160);
+    /// Triplet 32nd note.
+    pub const TRIPLET_THIRTY_SECOND: Self = Self(80);
 
     /// Create a dotted duration (1.5x length).
     pub fn dotted(self) -> Self {
