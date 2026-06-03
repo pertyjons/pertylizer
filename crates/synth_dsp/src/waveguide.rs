@@ -115,11 +115,20 @@ impl KellyLochbaumTract {
     /// Set the active section count (the tract length), clamped to
     /// `[2, sections()]`. Cheap and real-time safe — no allocation. Fewer
     /// sections = a shorter tract = higher formants (soprano/child); more =
-    /// lower (bass). Sections beyond the active length are left inert; a length
-    /// change does not clear the wave state, so it is meant as a structural
-    /// per-voice control rather than a smooth per-sample modulation.
+    /// lower (bass).
+    ///
+    /// When the tract grows, the newly-revealed sections are zeroed so a
+    /// previously-shorter tract's frozen wave state can't re-couple and pop when
+    /// the length later increases again (e.g. a non-monotonic length
+    /// automation). Shrinking leaves the still-active region untouched. The loop
+    /// is empty when the length is constant or shrinking — the common case.
     pub fn set_active_len(&mut self, len: usize) {
-        self.active = len.clamp(2, self.n);
+        let new_active = len.clamp(2, self.n);
+        for i in self.active..new_active {
+            self.right[i] = 0.0;
+            self.left[i] = 0.0;
+        }
+        self.active = new_active;
         if self.nose_len >= 2 {
             self.velum_index = self.velum_index.clamp(1, self.active - 1);
         }
@@ -637,6 +646,43 @@ mod tests {
         assert!(
             short > long,
             "shorter tract should resonate higher: short={short}, long={long}"
+        );
+    }
+
+    /// Growing the active length must zero the newly-revealed sections, so a
+    /// previously-energized-then-frozen region can't re-inject stale energy (a
+    /// pop) when the tract lengthens again. Shrinking leaves the active region
+    /// untouched.
+    #[test]
+    fn growing_active_len_clears_revealed_sections() {
+        let mut t = KellyLochbaumTract::new(54);
+        // Energize the full-length tract, then freeze the upper half by shrinking.
+        for n in 0..2_000 {
+            let drive = if n % 200 == 0 { 1.0 } else { 0.0 };
+            t.step(drive);
+        }
+        t.set_active_len(30);
+        // The frozen sections [30, 54) still hold energy at this point.
+        let frozen_energy: f32 = t.right[30..54]
+            .iter()
+            .chain(t.left[30..54].iter())
+            .map(|x| x.abs())
+            .sum();
+        assert!(
+            frozen_energy > 0.0,
+            "test setup: upper sections should be energized"
+        );
+
+        // Grow back: the revealed range [30, 50) must be zeroed.
+        t.set_active_len(50);
+        let revealed_energy: f32 = t.right[30..50]
+            .iter()
+            .chain(t.left[30..50].iter())
+            .map(|x| x.abs())
+            .sum();
+        assert_eq!(
+            revealed_energy, 0.0,
+            "revealed sections must be cleared on growth, got {revealed_energy}"
         );
     }
 
