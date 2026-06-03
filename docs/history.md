@@ -1,5 +1,41 @@
 # Version History
 
+## [0.309.0] - 2026-06-03
+
+### Voice — SATB tract-length control, singer's formant, shared formant tables
+
+- **Shared formant tables + singer's formant.** Extracted the duplicated
+  A→E→I→O→U formant tables from `voice_synth`/`formant_filter`/`am_formant` into
+  one `synth_modules::formant_tables`; VoiceSynth gained a 4th band — a
+  singer's-formant resonance (~3.3–3.7 kHz ring) — while the 3-band speech/effect
+  consumers read the first three unchanged.
+- **VocalTract tract-length / voice-type control.** A runtime active section
+  count on the Kelly–Lochbaum waveguide scales all formants ∝ 1/length (short =
+  soprano/child, long = bass); default 0.5 is bit-identical to the old fixed
+  44-section tract. Real-time safe — no reallocation.
+- **No pop on length growth.** `set_active_len` zeroes the newly-revealed
+  sections so a non-monotonic mid-note Length automation can't re-couple frozen
+  wave state and pop.
+- **SATB section presets.** Four new Vocal & Choir presets (Soprano/Alto/Tenor/
+  Bass) — the same VocalTract patch at four Lengths. The Vocal Tract demo now
+  sets Length explicitly, Solo Voice/Choir cross-reference the section voices,
+  the README patch count went 63→67, and an integration test renders every
+  Vocal & Choir patch (and checks SATB lengths increase soprano→bass).
+
+### Fixes
+
+- **Graph diagnostics falsely flagged voice patches as silent.**
+  `get_graph_diagnostics` now derives "sound source" from `ModuleCategory`
+  (Oscillator/Sampler, plus `MechanicalNoise`) instead of a hand-maintained
+  whitelist that omitted VoiceSynth/VocalTract/AmFormant/PadSynth/Fooglers — so
+  every voice instrument no longer shows a bogus "instrument will be silent".
+
+### Docs
+
+- The `new version` procedure enumerates commits from the last release commit,
+  not a git tag (tags lag `history.md`); voice-synth plan open questions
+  (formant count, shared tables) and the tract-length follow-up marked resolved.
+
 ## [0.308.0] - 2026-06-03
 
 ### Vocal Tract — articulatory Kelly–Lochbaum speech/singing voice
