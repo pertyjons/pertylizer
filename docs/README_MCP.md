@@ -148,7 +148,7 @@ Read the current state of instruments, modules, ports, parameters, and the audio
 | `get_instrument_profiles` | Auto-inferred role (drums/bass/lead/pad/pluck/FX) with confidence + signal trail |
 | `get_instrument_automation_targets` | Valid automation targets for an instrument: every automatable per-module parameter (ready-to-use target string, range, unit, response curve) plus the instrument macros |
 | `list_modules` | All modules in an instrument; each parameter carries `type_id`, `unit`, `is_automatable`, and `response_curve` |
-| `list_module_types` | All 68 module types with categories |
+| `list_module_types` | All 69 module types with categories |
 | `get_module_type_info` | Ports, parameters, defaults, and ranges for a module type |
 | `search_modules` | Fuzzy search by name across all module types |
 | `list_port_types` | All port types (Audio, Cv, Gate, Pitch, Clock, …) |

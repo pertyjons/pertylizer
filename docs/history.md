@@ -1,5 +1,28 @@
 # Version History
 
+## [0.308.0] - 2026-06-03
+
+### Vocal Tract — articulatory Kelly–Lochbaum speech/singing voice
+
+- **New `VocalTract` voice module (Phase 6a).** A standalone articulatory engine
+  alongside VoiceSynth (design decision: two separate engines, not one): a glottal
+  pulse driven through a new `synth_dsp` `KellyLochbaumTract` waveguide with
+  area-derived scattering junctions, denormal-flushed and unconditionally stable;
+  registered across the module/param system, factory and schemas.
+- **Full articulatory area function (Phase 6b).** Replaced the flat rest tube with
+  a tapered throat + Gaussian tongue constriction + a lip-aperture region, and
+  added a Lips (rounding) articulator with `lips_cv`.
+- **Source–tract glottal coupling (Phase 6c-1).** The glottal-end reflection now
+  tracks the instantaneous glottal opening (near-rigid when shut, lossy when open),
+  giving source–tract formant ripple a fixed reflector can't.
+- **Nasal side-branch (Phase 6c-2).** Added a velum-coupled nasal cavity opened by
+  a new Nasality control + `nasality_cv`; the whole waveguide moved to one lossless
+  area-weighted pressure-junction convention so a closed velum is bit-exact to the
+  oral path and the nasal coupling is unconditionally stable at any opening.
+- **Example patch + docs (Phase 6c-3).** Added a "Vocal Tract" example patch (an
+  LFO-swept vowel morph) under Vocal & Choir; corrected the module count to 69 and
+  the patch count to 63 across the READMEs and workspace description.
+
 ## [0.307.0] - 2026-06-02
 
 ### Voice Synth — physically-inspired singing-voice / choir module
