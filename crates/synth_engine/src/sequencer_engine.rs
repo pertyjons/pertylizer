@@ -8,10 +8,11 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use synth_core::{BipolarValue, Bpm, NormalizedValue, SampleCount, SampleRate};
+use synth_core::{BipolarValue, Bpm, NormalizedValue, SampleCount, SampleRate, Semitones};
 use synth_sequencer::{
-    AutomationTarget, Glide, GlideFrom, NoteExpression, PatternId, PatternTick, Pitch,
-    SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity,
+    AutomationTarget, ExpandedNote, ExpansionBuffer, Glide, GlideFrom, NoteExpression, PatternId,
+    PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId,
+    TrackParam, Velocity,
 };
 
 /// Minimum change threshold for automation value deduplication.
@@ -150,6 +151,53 @@ fn shaped_duration_ticks(duration_ticks: u32, expr: Option<NoteExpression>, lega
     }
 }
 
+/// Shape one expanded note into the engine-side pending note — the single
+/// post-expansion path shared by the preview and arrangement branches so note
+/// shaping can never diverge between audition and playback. Applies the
+/// placement transpose (zero in preview) to the pitch and to any absolute
+/// glide source (a relative-semitone glide is key-independent and passes
+/// through; an absolute source that would leave MIDI range under transpose
+/// drops the glide rather than emit a desynced source/target pair), the
+/// gate/legato duration shaping anchored at `start_tick` (the absolute song
+/// tick of the note's onset), and the accent/ghost velocity shaping.
+fn make_pending_note(
+    expanded: ExpandedNote,
+    instrument: SeqInstrumentId,
+    transpose: Semitones,
+    start_tick: u64,
+) -> PendingNote {
+    let pitch = expanded
+        .pitch
+        .transpose(transpose)
+        .unwrap_or(expanded.pitch);
+    let end_tick = expanded.duration.map(|d| {
+        Tick(
+            start_tick
+                + u64::from(shaped_duration_ticks(
+                    d.0,
+                    expanded.expression,
+                    expanded.legato,
+                )),
+        )
+    });
+    let glide = expanded.glide.and_then(|g| match g.from {
+        GlideFrom::Pitch(p) => p.transpose(transpose).map(|tp| Glide {
+            from: GlideFrom::Pitch(tp),
+            ..g
+        }),
+        GlideFrom::Semitones(_) => Some(g),
+    });
+    PendingNote {
+        pitch,
+        velocity: shaped_velocity(expanded.velocity, expanded.expression),
+        instrument,
+        end_tick,
+        legato: expanded.legato,
+        glide,
+        expression: expanded.expression,
+    }
+}
+
 /// Decide whether a note plays this occurrence, given its per-note probability.
 ///
 /// `None` probability → always plays. The roll is seeded by the song tick, the
@@ -212,6 +260,15 @@ pub struct SequencerEngine {
     scratch_notes: Vec<PendingNote>,
     /// Pre-allocated scratch buffer for automation collection (avoids per-tick allocation).
     scratch_automation: Vec<(AutomationTarget, NormalizedValue)>,
+    /// Pre-allocated bounded buffer for note-processor expansion (Model B).
+    /// Every pattern's per-tick notes flow through this, rack or not, so there
+    /// is a single collection path. Hard-capped; see the overflow policy on
+    /// `synth_sequencer::ExpansionBuffer`.
+    scratch_expansion: ExpansionBuffer,
+    /// Total expanded note events dropped by the overflow cap since the last
+    /// transport reset. The audio thread only counts (it must not log);
+    /// diagnostics layers read this via `expansion_drops()`.
+    expansion_drops: u64,
     /// When set, only emit notes from placements whose pattern id matches.
     /// Used by the piano-roll preview to audition a single pattern in isolation.
     /// Cleared by global `Play`/`Stop` and by the GUI when the piano roll closes.
@@ -251,8 +308,10 @@ impl SequencerEngine {
             loop_end: Tick::ZERO,
             last_automation_values: HashMap::with_capacity(32),
             track_auto: HashMap::with_capacity(32),
-            scratch_notes: Vec::with_capacity(64),
+            scratch_notes: Vec::with_capacity(synth_sequencer::MAX_EXPANSION_EVENTS_PER_TICK),
             scratch_automation: Vec::with_capacity(16),
+            scratch_expansion: ExpansionBuffer::new(),
+            expansion_drops: 0,
             solo_pattern: None,
             preview_pattern: None,
             preview_instrument: SeqInstrumentId(0),
@@ -282,8 +341,10 @@ impl SequencerEngine {
             loop_end: Tick::ZERO,
             last_automation_values: HashMap::with_capacity(32),
             track_auto: HashMap::with_capacity(32),
-            scratch_notes: Vec::with_capacity(64),
+            scratch_notes: Vec::with_capacity(synth_sequencer::MAX_EXPANSION_EVENTS_PER_TICK),
             scratch_automation: Vec::with_capacity(16),
+            scratch_expansion: ExpansionBuffer::new(),
+            expansion_drops: 0,
             solo_pattern: None,
             preview_pattern: None,
             preview_instrument: SeqInstrumentId(0),
@@ -386,6 +447,7 @@ impl SequencerEngine {
         }
         self.tick_accumulator = 0.0;
         self.roll_nonce = 0;
+        self.expansion_drops = 0;
 
         // Generate NoteOff events for all active notes
         let events = self.release_all_notes();
@@ -406,6 +468,7 @@ impl SequencerEngine {
         self.tick_accumulator = 0.0;
         // Reset the probability roll nonce so a seek-then-play is reproducible.
         self.roll_nonce = 0;
+        self.expansion_drops = 0;
         self.update_cached_state();
         events
     }
@@ -561,35 +624,28 @@ impl SequencerEngine {
                 let length_ticks = u64::from(pattern.length.0.max(1));
                 #[allow(clippy::cast_possible_truncation)]
                 let pattern_tick = (self.current_tick.0 % length_ticks) as u32;
-                for note in pattern.notes() {
-                    if note.start.0 != pattern_tick {
-                        continue;
-                    }
-                    // NB: preview/audition deliberately does NOT apply per-note
-                    // probability — auditioning a pattern should always sound the
-                    // note so the user can hear/edit it; probability is a
-                    // performance feature, applied only in arrangement playback.
-                    let end_tick = note.duration.map(|d| {
-                        Tick(
-                            self.current_tick.0
-                                + u64::from(shaped_duration_ticks(
-                                    d.0,
-                                    note.expression,
-                                    note.legato,
-                                )),
-                        )
-                    });
-                    // Preview has no placement transpose, so glide source pitch
-                    // needs no adjustment.
-                    self.scratch_notes.push(PendingNote {
-                        pitch: note.pitch,
-                        velocity: shaped_velocity(note.velocity, note.expression),
-                        instrument: self.preview_instrument,
-                        end_tick,
-                        legato: note.legato,
-                        glide: note.glide,
-                        expression: note.expression,
-                    });
+                // NB: preview/audition deliberately does NOT apply per-note
+                // probability (gate `|_| true`) — auditioning a pattern should
+                // always sound the note so the user can hear/edit it;
+                // probability is a performance feature, applied only in
+                // arrangement playback. The processor rack DOES apply, so the
+                // preview sounds like playback will.
+                pattern.expand_at_tick(
+                    PatternTick(pattern_tick),
+                    |_| true,
+                    &mut self.scratch_expansion,
+                );
+                self.expansion_drops += u64::from(self.scratch_expansion.dropped());
+                // Preview has no placement, so transpose is zero (a no-op for
+                // pitch and glide alike).
+                for i in 0..self.scratch_expansion.notes().len() {
+                    let expanded = self.scratch_expansion.notes()[i];
+                    self.scratch_notes.push(make_pending_note(
+                        expanded,
+                        self.preview_instrument,
+                        Semitones::new(0.0),
+                        self.current_tick.0,
+                    ));
                 }
                 for lane in &pattern.automation {
                     if let Some(value) = lane.value_at(PatternTick(pattern_tick)) {
@@ -641,60 +697,30 @@ impl SequencerEngine {
                 // source (per-note `note.instrument` is vestigial — Phase 4).
                 let track_instrument = track.instrument;
 
-                // Collect notes that start at this pattern tick
-                for note in pattern.notes() {
-                    if note.start.0 != pattern_tick {
-                        continue;
-                    }
-                    // Resolve per-note trigger probability here (sequencer-side,
-                    // deterministic), so a losing roll simply omits the note — the
-                    // audio thread never runs an RNG. Absolute song tick seeds it,
-                    // so a looped section varies roll-to-roll yet stays reproducible.
-                    if !note_passes_probability(note, self.current_tick, self.roll_nonce) {
-                        continue;
-                    }
+                // Collect (and Model-B expand) notes that start at this pattern
+                // tick. The gate resolves per-note trigger probability here
+                // (sequencer-side, deterministic), so a losing roll simply omits
+                // the note — the audio thread never runs an RNG. Absolute song
+                // tick seeds it, so a looped section varies roll-to-roll yet
+                // stays reproducible. The pattern's processor rack then runs in
+                // pattern space (placement transpose applies after).
+                let current_tick = self.current_tick;
+                let roll_nonce = self.roll_nonce;
+                pattern.expand_at_tick(
+                    PatternTick(pattern_tick),
+                    |note| note_passes_probability(note, current_tick, roll_nonce),
+                    &mut self.scratch_expansion,
+                );
+                self.expansion_drops += u64::from(self.scratch_expansion.dropped());
 
-                    let transposed_pitch = note
-                        .pitch
-                        .transpose(placement.transpose)
-                        .unwrap_or(note.pitch);
-
-                    let end_tick = note.duration.map(|d| {
-                        Tick(
-                            placement.start.0
-                                + note.start.0 as u64
-                                + u64::from(shaped_duration_ticks(
-                                    d.0,
-                                    note.expression,
-                                    note.legato,
-                                )),
-                        )
-                    });
-
-                    let effective_instrument = track_instrument;
-
-                    // Transpose an absolute glide source into the placement key so
-                    // the emitted event is self-contained (relative semitones are
-                    // key-independent and pass through unchanged). If the absolute
-                    // source would leave MIDI range under transpose, drop the glide
-                    // rather than emit a desynced source/target pair.
-                    let glide = note.glide.and_then(|g| match g.from {
-                        GlideFrom::Pitch(p) => p.transpose(placement.transpose).map(|tp| Glide {
-                            from: GlideFrom::Pitch(tp),
-                            ..g
-                        }),
-                        GlideFrom::Semitones(_) => Some(g),
-                    });
-
-                    self.scratch_notes.push(PendingNote {
-                        pitch: transposed_pitch,
-                        velocity: shaped_velocity(note.velocity, note.expression),
-                        instrument: effective_instrument,
-                        end_tick,
-                        legato: note.legato,
-                        glide,
-                        expression: note.expression,
-                    });
+                for i in 0..self.scratch_expansion.notes().len() {
+                    let expanded = self.scratch_expansion.notes()[i];
+                    self.scratch_notes.push(make_pending_note(
+                        expanded,
+                        track_instrument,
+                        placement.transpose,
+                        placement.start.0 + u64::from(pattern_tick),
+                    ));
                 }
 
                 // Collect automation values at this tick
@@ -847,6 +873,13 @@ impl SequencerEngine {
     /// automation — use the stored track value".
     pub fn track_auto(&self) -> &HashMap<TrackId, TrackAutoOverride> {
         &self.track_auto
+    }
+
+    /// Note-processor expansion events dropped by the per-tick overflow cap
+    /// since the last transport reset (stop/seek). The audio thread only
+    /// counts; surfacing/logging is the diagnostics layer's job.
+    pub fn expansion_drops(&self) -> u64 {
+        self.expansion_drops
     }
 
     /// Set a new song.
@@ -1272,5 +1305,105 @@ mod tests {
         let mut events = Vec::new();
         // Must return without panicking (div-by-zero / out-of-range modulo).
         seq.process(SampleCount::new(480), &mut events);
+    }
+
+    // --- Note-processor expansion (NP1) -------------------------------------
+
+    fn note_on_pitches(events: &[SequencerEvent]) -> Vec<u8> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                SequencerEvent::NoteOn { pitch, .. } => Some(pitch.as_midi()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn processor_rack_expands_in_arrangement_playback() {
+        use synth_sequencer::{NoteProcessor, PitchClass, ScaleMask, ScaleQuantize};
+        // A C#4 note through a C-major ScaleQuantize rack must emit D4.
+        let mut song = Song::new("Rack").with_tempo(Bpm::new(120.0));
+        let pattern_id = song.create_pattern(Duration::WHOLE);
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            let _ = pattern.add_note(PatternTick(0), Pitch::new(61).unwrap(), Velocity::MF);
+            let _ = pattern.add_processor(NoteProcessor::ScaleQuantize(ScaleQuantize {
+                root: PitchClass::new(0),
+                mask: ScaleMask::MAJOR,
+            }));
+        }
+        let track_id = song.create_track("T");
+        song.place_pattern(pattern_id, track_id, Tick::ZERO);
+
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+        seq.play();
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
+
+        assert_eq!(
+            note_on_pitches(&events),
+            vec![62],
+            "C#4 must be snapped to D4 by the rack: {events:?}"
+        );
+        assert_eq!(seq.expansion_drops(), 0);
+    }
+
+    #[test]
+    fn processor_rack_applies_in_orphan_preview() {
+        use synth_sequencer::{NoteProcessor, PitchClass, ScaleMask, ScaleQuantize};
+        // Preview must sound like playback will: the rack applies there too.
+        let (mut song, pattern_id) = create_orphan_song();
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            pattern.clear_notes();
+            let _ = pattern.add_note(PatternTick(0), Pitch::new(66).unwrap(), Velocity::MF);
+            let _ = pattern.add_processor(NoteProcessor::ScaleQuantize(ScaleQuantize {
+                root: PitchClass::new(0),
+                mask: ScaleMask::MAJOR,
+            }));
+        }
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+        seq.set_preview_pattern(Some((pattern_id, SeqInstrumentId(1))));
+        seq.play();
+
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
+        // F#4 (66) snaps up to G4 (67) in C major.
+        assert!(
+            note_on_pitches(&events).contains(&67),
+            "preview must apply the rack: {events:?}"
+        );
+    }
+
+    #[test]
+    fn expansion_overflow_drops_and_counts() {
+        use synth_sequencer::MAX_EXPANSION_EVENTS_PER_TICK;
+        // More simultaneous note-ons than the per-tick cap: the overflow policy
+        // drops the newest and counts them — no panic, no allocation growth.
+        let excess = 10_usize;
+        let mut song = Song::new("Overflow").with_tempo(Bpm::new(120.0));
+        let pattern_id = song.create_pattern(Duration::WHOLE);
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            for i in 0..(MAX_EXPANSION_EVENTS_PER_TICK + excess) {
+                #[allow(clippy::cast_possible_truncation)]
+                let pitch = Pitch::new((i % 120) as u8).unwrap();
+                let _ = pattern.add_note(PatternTick(0), pitch, Velocity::MF);
+            }
+        }
+        let track_id = song.create_track("T");
+        song.place_pattern(pattern_id, track_id, Tick::ZERO);
+
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+        seq.play();
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
+
+        // Same-pitch duplicates coalesce via the legato extend, so count the
+        // drop counter rather than emitted events.
+        assert_eq!(seq.expansion_drops(), excess as u64);
+        let _ = seq.stop();
+        assert_eq!(seq.expansion_drops(), 0, "stop resets the drop counter");
     }
 }

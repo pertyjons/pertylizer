@@ -312,8 +312,9 @@ impl Song {
             let _ = new_pattern.insert_note(note.clone());
         }
 
-        // Copy automation lanes
+        // Copy automation lanes and the note-processor rack
         new_pattern.automation = source.automation.clone();
+        new_pattern.processors = source.processors.clone();
 
         self.patterns.push(new_pattern);
         Some(new_id)

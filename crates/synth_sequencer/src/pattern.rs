@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::automation::AutomationLane;
 use super::ids::{NoteId, PatternId, RowCount, RowIndex, TicksPerRow};
 use super::note::Note;
+use super::note_processor::NoteProcessor;
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
 use synth_core::{NormalizedValue, Semitones};
@@ -115,6 +116,10 @@ pub struct Pattern {
     notes: Vec<Note>,
     /// Automation lanes.
     pub automation: Vec<AutomationLane>,
+    /// Note-processor rack (Model B generative articulation), in execution
+    /// order. Accessors live in [`crate::note_processor`].
+    #[serde(default)]
+    pub(crate) processors: Vec<NoteProcessor>,
     /// Next note ID counter.
     next_note_id: u64,
 }
@@ -130,6 +135,7 @@ impl Pattern {
             length,
             notes: Vec::new(),
             automation: Vec::new(),
+            processors: Vec::new(),
             next_note_id: 0,
         }
     }
@@ -430,10 +436,14 @@ impl Pattern {
         self.notes.len()
     }
 
-    /// Check if pattern is empty.
+    /// Check if pattern is empty. A pattern with a note-processor rack is not
+    /// empty — future generators (arp/chord) can produce notes from an empty
+    /// source set, so cleanup paths must not prune it.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.notes.is_empty() && self.automation.iter().all(|l| l.is_empty())
+        self.notes.is_empty()
+            && self.processors.is_empty()
+            && self.automation.iter().all(|l| l.is_empty())
     }
 
     /// Get a mutable note by its index.

@@ -2,6 +2,12 @@
 //!
 //! The scale table is shared with [`crate::harmony`] so chord identification
 //! and scale-snap stay in lock-step (the same `"dorian"` template name).
+//!
+//! NB: `synth_sequencer::note_processor::ScaleQuantize::snap` carries a second
+//! copy of this ±6-semitone prefer-up snap (the sequencer crate cannot depend
+//! on this app crate). A behavioral change here (search radius, tie-break)
+//! must be mirrored there — or, better, delegate this module to the
+//! sequencer-side `ScaleQuantize` once a name→`ScaleMask` bridge exists.
 
 use crate::harmony::{ScaleTemplate, scale_by_name};
 

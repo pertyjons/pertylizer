@@ -31,6 +31,7 @@ pub mod events;
 pub mod ids;
 pub mod input;
 pub mod note;
+pub mod note_processor;
 pub mod pattern;
 pub mod pitch;
 pub mod song;
@@ -47,6 +48,10 @@ pub use ids::{
 };
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use note::{Glide, GlideFrom, GlideInterp, Note, NoteExpression, Vibrato, VibratoShape};
+pub use note_processor::{
+    ExpandedNote, ExpansionBuffer, MAX_EXPANSION_EVENTS_PER_TICK, NoteProcessor, PitchClass,
+    ScaleMask, ScaleQuantize,
+};
 pub use pattern::{Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};
 pub use song::{PatternPlacement, Song, TempoChange, TimeSignatureChange};

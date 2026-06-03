@@ -6959,6 +6959,24 @@
         }
       ]
     },
+    "NoteProcessor": {
+      "description": "One processor in a pattern's rack — pure *config* (Model B), never baked\noutput. Serialized with the pattern, so it round-trips save/load with the\nsame path as notes and automation.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Snap pitches to a scale (chain stage 0).",
+          "properties": {
+            "ScaleQuantize": {
+              "$ref": "#/$defs/ScaleQuantize"
+            }
+          },
+          "required": [
+            "ScaleQuantize"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ParamId": {
       "description": "Interned-by-`Arc` parameter id for [`AutomationTarget::Module`].\n\nWraps `Arc<str>` so cloning the target on the audio thread (the per-tick\nautomation collection / event emission in `sequencer_engine`) is an atomic\nrefcount bump — RT-safe (no heap allocation, no lock), unlike the previous\n`String` which allocated on every clone.\n\nChosen over a global intern pool + `Copy` handle (the roadmap's original\nsketch): the engine dispatch matches the param id against each descriptor's\n`type_id` **string**, so an intern handle would force a lock-taking\n`as_str()` on the audio thread — trading an allocation for a lock. `Arc<str>`\nkeeps the dispatch's lock-free `&str` compare while making the clone cheap.\nSerializes transparently as the id string, so existing projects load unchanged.\n\n**Drop caveat (tracked follow-up):** dropping a clone on the audio thread is a\nrefcount *decrement*; only if the source lane was removed mid-playback (so the\nengine's cached clone in `last_automation_values` / the event buffer is the\nlast ref) does the next `clear()` free on the audio thread. This is a strict\nimprovement over the prior `String` (which freed on *every* drop) but not yet\nfully eliminated — the robust fix is to route cleared targets through the\nengine's existing off-thread drop channel (`return_producer`), deferred here.",
       "type": "string"
@@ -7171,6 +7189,14 @@
             "$ref": "#/$defs/Note"
           },
           "type": "array"
+        },
+        "processors": {
+          "default": [],
+          "description": "Note-processor rack (Model B generative articulation), in execution\norder. Accessors live in [`crate::note_processor`].",
+          "items": {
+            "$ref": "#/$defs/NoteProcessor"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -7242,6 +7268,13 @@
     },
     "Pitch": {
       "description": "MIDI-compatible pitch (0-127).",
+      "format": "uint8",
+      "maximum": 255,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "PitchClass": {
+      "description": "A pitch class (0–11, C = 0). Constructor wraps modulo 12.",
       "format": "uint8",
       "maximum": 255,
       "minimum": 0,
@@ -7599,6 +7632,31 @@
       "required": [
         "rows",
         "ticks_per_row"
+      ],
+      "type": "object"
+    },
+    "ScaleMask": {
+      "description": "A 12-bit pitch-class set relative to a root (bit 0 = the root itself).\n\nThe persisted, RT-cheap scale representation: membership is one shift and\nmask, no name lookup. Name → mask mapping for GUI/MCP lives at those\nboundaries (the app crate's harmony tables cannot be a dependency here).",
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "ScaleQuantize": {
+      "description": "Scale-quantize: snap every pitch to the nearest member of `root` + `mask`.\n\nFirst stage of the locked chain so randomized / interval-built notes from\ndownstream generators stay in key. Equidistant candidates prefer the upper\npitch (the melody side of dyads, matching the app-side scale snapper).",
+      "properties": {
+        "mask": {
+          "$ref": "#/$defs/ScaleMask",
+          "description": "Scale membership relative to the root."
+        },
+        "root": {
+          "$ref": "#/$defs/PitchClass",
+          "description": "Tonic pitch class."
+        }
+      },
+      "required": [
+        "root",
+        "mask"
       ],
       "type": "object"
     },
