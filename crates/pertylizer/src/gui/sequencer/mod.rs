@@ -329,6 +329,14 @@ impl SequencerViewState {
         self.drag = None;
         self.recording_pattern = None;
     }
+
+    /// Re-enable playhead follow and open the settle window so an off-screen
+    /// marker is scrolled into view even while the transport is stopped.
+    /// Every transport action that moves the playhead should call this.
+    fn reveal_playhead(&mut self) {
+        self.auto_follow_playhead = true;
+        self.follow_settle_frames = FOLLOW_SETTLE_FRAMES;
+    }
 }
 
 impl Default for SequencerViewState {
@@ -478,8 +486,10 @@ const PLACEMENT_PADDING: f32 = 2.0;
 const MIN_ZOOM: f32 = 0.25;
 /// Maximum zoom level for arrangement timeline.
 const MAX_ZOOM: f32 = 4.0;
-/// Maximum number of note miniatures per placement.
-const MAX_MINIATURE_NOTES: usize = 200;
+/// Maximum miniature notes drawn per horizontal pixel of placement width.
+/// More than ~2 notes per pixel is indistinguishable, so the draw loop
+/// decimates evenly (notes are sorted by start tick) past this density.
+const MINIATURE_NOTES_PER_PIXEL: f32 = 2.0;
 // Piano roll constants
 /// Minimum default height for the piano roll bottom panel.
 const MIN_PIANO_ROLL_HEIGHT: f32 = 400.0;
@@ -636,8 +646,7 @@ fn draw_transport_bar(
                     .unwrap_or(0)
             };
             handle.send(EngineCommand::Seek { tick: Tick(prev) });
-            view_state.auto_follow_playhead = true;
-            view_state.follow_settle_frames = FOLLOW_SETTLE_FRAMES;
+            view_state.reveal_playhead();
         }
 
         // Play / Pause toggle. Play starts from the cursor (or resumes in
@@ -677,8 +686,7 @@ fn draw_transport_bar(
                     .unwrap_or(current_ticks)
             };
             handle.send(EngineCommand::Seek { tick: Tick(next) });
-            view_state.auto_follow_playhead = true;
-            view_state.follow_settle_frames = FOLLOW_SETTLE_FRAMES;
+            view_state.reveal_playhead();
         }
 
         // Stop returns the playhead to the cursor; a second press once it is
@@ -698,8 +706,7 @@ fn draw_transport_bar(
             .clicked()
         {
             handle.send(EngineCommand::Stop);
-            view_state.auto_follow_playhead = true;
-            view_state.follow_settle_frames = FOLLOW_SETTLE_FRAMES;
+            view_state.reveal_playhead();
         }
 
         // Record button
@@ -1117,9 +1124,22 @@ fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData>
                 });
                 let pitch_range = (max_pitch - min_pitch).max(1) as f32;
 
+                // Bound the snapshot at what the draw loop could ever use:
+                // a placement is at most length_beats × PIXELS_PER_BEAT ×
+                // MAX_ZOOM pixels wide, and past MINIATURE_NOTES_PER_PIXEL
+                // notes per pixel drawing is invisible. Decimate evenly past
+                // that (notes are sorted by start tick) so a pathologically
+                // dense pattern cannot blow up the per-frame snapshot cost.
+                #[allow(clippy::cast_sign_loss)]
+                let budget =
+                    ((length_beats * PIXELS_PER_BEAT * MAX_ZOOM * MINIATURE_NOTES_PER_PIXEL)
+                        as usize)
+                        .max(1);
+                let step = notes.len().div_ceil(budget).max(1);
+
                 notes
                     .iter()
-                    .take(MAX_MINIATURE_NOTES)
+                    .step_by(step)
                     .map(|n| {
                         let dur = n.duration.map_or(len * 0.02, |d| d.0 as f32);
                         NoteMiniature {
@@ -1236,14 +1256,19 @@ fn draw_arrangement_toolbar(
             .on_hover_text("Auto-scroll to keep the playhead visible")
             .clicked()
         {
-            view_state.auto_follow_playhead = !view_state.auto_follow_playhead;
+            if view_state.auto_follow_playhead {
+                view_state.auto_follow_playhead = false;
+            } else {
+                // Bring an off-screen marker into view even while stopped.
+                view_state.reveal_playhead();
+            }
         }
         if ui
             .small_button("Go to playhead")
             .on_hover_text("Scroll the timeline to the current playhead position")
             .clicked()
         {
-            view_state.auto_follow_playhead = true;
+            view_state.reveal_playhead();
         }
     });
     ui.separator();
@@ -1791,9 +1816,10 @@ fn draw_arrangement(
 
     // Pre-set scroll offset for auto-follow before showing the scroll area.
     // While playing we continuously keep the playhead ~30% from the right edge.
-    // While stopped we only scroll when the playhead has landed outside the
-    // visible viewport (after a ◀◀/▶▶ jump, a ruler seek, or stop-to-cursor),
-    // bringing the marker back into view without fighting manual scrolling.
+    // While stopped we only scroll inside the settle window right after a
+    // transport action (◀◀/▶▶ jump, ruler seek, stop-to-cursor, Go to
+    // playhead), and only if the marker landed off-screen — outside that
+    // window manual scrolling is never fought.
     if view_state.auto_follow_playhead && ticks_per_beat > 0 {
         let playhead_x_offset = current_tick as f32 / ticks_per_beat as f32 * pixels_per_beat;
         let visible_width = ui.available_width();
@@ -1804,14 +1830,18 @@ fn draw_arrangement(
         let target_offset = if is_playing {
             // Continuous follow: keep the playhead ~30% from the right edge.
             Some((playhead_x_offset - visible_width * 0.7).max(0.0))
-        } else {
-            // Stopped: act only when the marker is off-screen, then re-center it
-            // ~30% from the left so the music ahead of it stays visible. A small
+        } else if view_state.follow_settle_frames > 0 {
+            // Settle window: if the marker is off-screen, re-center it ~30%
+            // from the left so the music ahead of it stays visible. A small
             // slack keeps it from hugging the edge.
             let margin = pixels_per_beat;
             let off_screen = playhead_x_offset < current_offset + margin
                 || playhead_x_offset > current_offset + visible_width - margin;
             off_screen.then(|| (playhead_x_offset - visible_width * 0.3).max(0.0))
+        } else {
+            // Stopped with no recent transport action: leave the user's
+            // scroll position alone.
+            None
         };
 
         if let Some(target_offset) = target_offset {
@@ -2023,13 +2053,20 @@ fn draw_arrangement(
                             placement.instrument,
                             fallback,
                         );
-                        for mini in &placement.note_miniatures {
-                            let note_color = Color32::from_rgba_unmultiplied(
-                                inst_color.r(),
-                                inst_color.g(),
-                                inst_color.b(),
-                                200,
-                            );
+                        // Pixel budget: drawing more notes than the box has
+                        // horizontal pixels is invisible, so decimate evenly
+                        // (notes are sorted by start tick, so every Nth note
+                        // preserves the pattern's shape over its full length).
+                        #[allow(clippy::cast_sign_loss)]
+                        let budget = ((mini_width * MINIATURE_NOTES_PER_PIXEL) as usize).max(1);
+                        let step = placement.note_miniatures.len().div_ceil(budget).max(1);
+                        let note_color = Color32::from_rgba_unmultiplied(
+                            inst_color.r(),
+                            inst_color.g(),
+                            inst_color.b(),
+                            200,
+                        );
+                        for mini in placement.note_miniatures.iter().step_by(step) {
                             let nx = rect.min.x + 2.0 + mini.start_frac * mini_width;
                             let nw = (mini.duration_frac * mini_width).max(1.0);
                             let ny = mini_top + (1.0 - mini.pitch_frac) * (mini_height - 2.0);
@@ -2136,8 +2173,7 @@ fn draw_arrangement(
                         tick: Tick(seek_tick),
                     });
                     // Re-enable auto-follow on ruler click
-                    view_state.auto_follow_playhead = true;
-                    view_state.follow_settle_frames = FOLLOW_SETTLE_FRAMES;
+                    view_state.reveal_playhead();
                 } else {
                     view_state.highlighted_track = None;
                 }
