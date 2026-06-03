@@ -19,3 +19,6 @@ rec_debug.log
 
 # Snapshot-test mismatch artifacts (written next to fixtures on failure)
 *.actual.json
+
+# Merged-doctest compilation artifact (Rust 1.96 cargo test)
+/librust_out.rlib
