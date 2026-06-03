@@ -22,6 +22,7 @@ use synth_sequencer::{Duration as SeqDuration, PatternId, PatternTick, Song, Tic
 use crate::gui::instrument_rack::InstrumentUiState;
 use crate::gui::sequencer::{
     SequencerViewState, collect_piano_roll_data, commit_pattern_rename, draw_piano_roll,
+    draw_tracker,
 };
 use crate::gui::theme::theme;
 use crate::undo::UndoManager;
@@ -30,15 +31,26 @@ use crate::undo::UndoManager;
 // VIEW STATE
 // ============================================================================
 
+/// Which editor renders the opened pattern in the Pattern tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PatternEditorMode {
+    /// Horizontal piano roll (the default).
+    #[default]
+    PianoRoll,
+    /// Vertical, step/row-based tracker (read-only in T1).
+    Tracker,
+}
+
 /// UI state owned by `SynthApp` for the Pattern tab.
 ///
 /// The currently-opened pattern lives on
 /// [`SequencerViewState::opened_pattern`]; egui persists the Used/Orphans
 /// `CollapsingHeader` open state internally, so this struct only carries the
-/// search query.
+/// search query and the editor mode toggle.
 #[derive(Default)]
 pub struct PatternViewState {
     pub search_query: String,
+    pub editor_mode: PatternEditorMode,
 }
 
 // ============================================================================
@@ -164,20 +176,51 @@ pub(crate) fn draw_pattern_view(
                     .and_then(|s| s.pattern_playhead_for(pattern_id, current_tick))
             };
 
-            if !draw_piano_roll(
-                ui,
-                &data,
-                pattern_playhead_tick,
-                is_playing,
-                handle,
-                song,
-                seq_view_state,
-                instruments,
-                undo_manager,
-            ) {
-                seq_view_state.close_piano_roll();
-                handle.send(EngineCommand::SetSoloPattern(None));
-                handle.send(EngineCommand::SetPreviewPattern(None));
+            // Editor-mode toggle: piano roll vs tracker (read-only in T1).
+            ui.horizontal(|ui| {
+                ui.selectable_value(
+                    &mut pattern_view_state.editor_mode,
+                    PatternEditorMode::PianoRoll,
+                    "Piano roll",
+                );
+                ui.selectable_value(
+                    &mut pattern_view_state.editor_mode,
+                    PatternEditorMode::Tracker,
+                    "Tracker",
+                );
+            });
+            ui.separator();
+
+            match pattern_view_state.editor_mode {
+                PatternEditorMode::Tracker => {
+                    draw_tracker(
+                        ui,
+                        &data,
+                        pattern_playhead_tick,
+                        is_playing,
+                        handle,
+                        song,
+                        seq_view_state,
+                        instruments,
+                    );
+                }
+                PatternEditorMode::PianoRoll => {
+                    if !draw_piano_roll(
+                        ui,
+                        &data,
+                        pattern_playhead_tick,
+                        is_playing,
+                        handle,
+                        song,
+                        seq_view_state,
+                        instruments,
+                        undo_manager,
+                    ) {
+                        seq_view_state.close_piano_roll();
+                        handle.send(EngineCommand::SetSoloPattern(None));
+                        handle.send(EngineCommand::SetPreviewPattern(None));
+                    }
+                }
             }
         });
 }

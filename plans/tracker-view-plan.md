@@ -103,8 +103,9 @@ which path T1 actually used.
 
 ## Status at a glance
 
-- [ ] **T1** — Read-only tracker render (MVP): toggle + note lanes + automation lanes
+- [x] **T1** — Read-only tracker render (MVP): toggle + note lanes + automation lanes
   with per-row values **and curve-behind-grid** + off-grid markers. No editing.
+  IMPLEMENTED 2026-06-03 (full gate green; awaits visual confirmation).
 - [ ] **T2** — Editing + column management: add/remove note lanes, add/remove +
   remove-empty automation lanes, step-entry note input, velocity, delete. Quantized
   writes + undo. (Resolve the lane-storage decision first.)
@@ -116,33 +117,54 @@ change.** Stop after T1 if that's enough; T2/T3 as appetite allows.
 
 ---
 
-## T1 — Read-only tracker render (MVP)
+## T1 — Read-only tracker render (MVP) — IMPLEMENTED 2026-06-03 (full gate green)
 
 The headline deliverable: see all voice lanes, all automation values per step, and the
 automation curves behind the grid — without touching any editing logic.
 
-- [ ] `PatternEditorMode` enum + toggle button in the pattern-view toolbar (mirror the
-  step-entry-mode toggle styling). Persist in `PatternViewState`.
-- [ ] `draw_tracker(ui, data: &PianoRollData, view_state, ...)` in a new
-  `gui/sequencer/tracker.rs`, built with `egui_extras::TableBuilder` (see Rendering
-  approach above), consuming the existing snapshot.
-- [ ] **Columns (declared per frame):** `Column::auto()` row/time gutter (from
-  `tick_to_row`); then one column per **note/voice lane** (greedy lane assignment,
-  read-only); then one **automation column per lane** in `data.automation_lanes`.
-  Header row carries lane labels.
-- [ ] **Rows:** `body.rows(row_h, n_rows, …)` — virtualized, uniform height (`row_h`
-  from `pr_zoom_y`). Only visible rows render.
-- [ ] **Note cells (standard widgets):** note name (`C-4`), velocity, and small
-  expression markers (legato/glide; ornament later) via `ui.label`/`RichText`. Empty
-  step = `---` / `...`.
-- [ ] **Automation columns:** per-row numeric value (`lane.value_at(row_to_tick(r))`)
-  as a cell label, **plus the interpolated curve as a painted overlay** behind the
-  column (overlay aligned to the table's used rect; fallback to per-cell segments per
-  the risk note above).
-- [ ] **Off-grid markers:** notes whose `start` isn't on a row tick are snap-displayed
-  to the nearest row with a distinct marker; true tick shown on hover (cell tooltip).
-  The tracker is a **quantized lens** on the same data, never a separate store.
-- [ ] **Playhead** row highlight (paint over the current row's rect).
+- [x] `PatternEditorMode` enum + Piano roll / Tracker toggle (`selectable_value`) in the
+  pattern-view CentralPanel. Persisted on `PatternViewState.editor_mode`
+  (`pattern_view.rs`).
+- [x] `draw_tracker(ui, data, playhead_tick, view_state)` in
+  `crates/pertylizer/src/gui/sequencer/tracker.rs` (child module of `sequencer`, so it
+  reads the private `PianoRollData` snapshot directly). Built with
+  `egui_extras::TableBuilder`.
+- [x] **Columns (declared per frame):** `Column::auto()` row/time gutter; one
+  `Column::initial(72)` per **voice lane** (greedy interval-coloring assignment,
+  read-only); one `Column::initial(80)` per **automation lane**. Header row carries
+  `V1..Vn` + `target.display_name()`.
+- [x] **Rows:** `body.rows(row_h, n_rows, …)` — virtualized, uniform height
+  (`TRACKER_ROW_HEIGHT * pr_zoom_y`).
+- [x] **Note cells:** note name (`Pitch` Display), 2-digit velocity, legato/glide/
+  expression markers, empty step = `·`.
+- [x] **Automation columns:** per-row numeric value via a local `sample_at` that mirrors
+  `AutomationLane::value_at` and reuses `CurveType::interpolate` (exact curve shape).
+  **Curve rendered as PER-CELL SEGMENTS** (the plan's fallback 1), value→x within the
+  cell, top-tick→bottom-tick; adjacent cells share edges so the curve is continuous.
+  The single-overlay path was *not* used in T1 — per-cell is robust under
+  virtualization and needs no geometry alignment. Revisit a true overlay only if a
+  smoother/anti-aliased curve is wanted.
+- [x] **Off-grid markers:** `~` glyph + hover with the true tick when
+  `start_tick % ticks_per_row != 0`.
+- [x] **Playhead** marker (`▶` + accent) on the matching gutter row.
+- [x] **Shared toolbar row** (user feedback 2026-06-03): extracted the piano-roll's
+  instrument selector + "track plays" badge + mini-transport (play/pause/stop/record/
+  solo) into `draw_pattern_instrument_transport` in `sequencer/mod.rs`; both the piano
+  roll and the tracker call it (no duplication of the recording-arm logic). Tracker
+  header row = pattern name + that shared control.
+- [x] **Auto-follow playhead** (user feedback): `TableBuilder::scroll_to_row(playhead,
+  Center)` when playing + `auto_follow_playhead` (guarded `prow < n_rows`); repaint
+  requested each frame while playing.
+  - **Known divergence (deferred to T2 polish):** unlike the piano roll, the tracker
+    does not yet detect manual scroll-away to break follow — it re-centers every frame
+    while playing (lock-follow). Acceptable for T1; add scroll-offset detection +
+    `auto_follow_playhead` disable mirroring the piano roll when editing lands.
+- [ ] **Visual confirmation in the running app** — re-verify BOTH the piano roll
+  (toolbar unchanged after extraction) AND the tracker (toolbar + auto-follow). The
+  gate is green but does not catch visual/behavioral regressions in the shared toolbar.
+
+**Bonus:** the Rust 1.96 `clippy::manual_is_multiple_of` lint flagged the `% == 0`
+beat/off-grid checks → switched to `.is_multiple_of()`.
 
 **Acceptance:** open a pattern with a chord + at least one automation lane, toggle to
 tracker, and see every voice in its own column, per-row automation values, and the

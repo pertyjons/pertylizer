@@ -22,6 +22,9 @@ use crate::gui::input::KEY_MAP;
 use crate::gui::theme::theme;
 use crate::gui::widgets::toggle_button;
 
+mod tracker;
+pub(crate) use tracker::draw_tracker;
+
 // ============================================================================
 // EDIT TYPES
 // ============================================================================
@@ -3637,6 +3640,229 @@ fn draw_piano_roll_selection_inspector(
     }
 }
 
+/// Shared pattern-editor controls rendered inline into the caller's toolbar row:
+/// the working-instrument selector, the "track plays" badge, and the mini-transport
+/// (play/pause, stop, record arm/disarm, pattern-solo). Both the piano roll and the
+/// tracker call this so they show the same row without duplicating the
+/// recording-arm logic.
+fn draw_pattern_instrument_transport(
+    ui: &mut egui::Ui,
+    data: &PianoRollData,
+    handle: &mut EngineHandle,
+    song: &Arc<RwLock<Song>>,
+    view_state: &mut SequencerViewState,
+    instruments: &[crate::gui::instrument_rack::InstrumentUiState],
+    is_playing: bool,
+) {
+    let t = theme();
+
+    // Instrument selector for new notes
+    {
+        let selected_label = instruments
+            .iter()
+            .find(|inst| inst.id.0 == view_state.selected_instrument.0 as u64)
+            .map_or_else(|| "---".to_owned(), |inst| inst.name.clone());
+        egui::ComboBox::from_id_salt(ui.id().with("piano_roll_instrument"))
+            .selected_text(RichText::new(&selected_label).size(12.0))
+            .width(100.0)
+            .show_ui(ui, |ui| {
+                for inst in instruments {
+                    let seq_id = SeqInstrumentId::new(inst.id.0 as u16);
+                    let selected = view_state.selected_instrument == seq_id;
+                    if ui.selectable_label(selected, &inst.name).clicked() {
+                        view_state.selected_instrument = seq_id;
+                    }
+                }
+            });
+
+        // Badge: which instrument(s) the pattern's placements actually play
+        // through. The selector above is only the working instrument (note
+        // colour + preview); playback always routes via the track.
+        if !data.track_overrides.is_empty() {
+            let names: Vec<String> = data
+                .track_overrides
+                .iter()
+                .map(|seq_id| {
+                    instruments
+                        .iter()
+                        .find(|inst| inst.id.0 == seq_id.0 as u64)
+                        .map_or_else(|| format!("#{}", seq_id.0), |inst| inst.name.clone())
+                })
+                .collect();
+            let arrow = egui_remixicon::icons::ARROW_RIGHT_S_LINE;
+            let badge_text = if names.len() == 1 {
+                format!("{arrow} track plays: {}", names[0])
+            } else {
+                format!("{arrow} track plays: {}", names.join(", "))
+            };
+            ui.label(
+                RichText::new(badge_text)
+                    .size(10.0)
+                    .color(t.colors.accent_yellow),
+            )
+            .on_hover_text(
+                "Instrument(s) this pattern plays through where it is placed \
+                    (set per track). The selector above is the working instrument \
+                    for note colour and preview only.",
+            );
+        }
+    }
+    ui.separator();
+
+    // Mini-transport controls
+    {
+        use egui_remixicon::icons as ri;
+        ui.spacing_mut().item_spacing.x = 2.0;
+
+        if is_playing {
+            // Pause button
+            if ui
+                .button(
+                    RichText::new(ri::PAUSE_FILL)
+                        .size(12.0)
+                        .color(t.colors.accent_yellow),
+                )
+                .on_hover_text("Pause")
+                .clicked()
+            {
+                handle.send(EngineCommand::Pause);
+            }
+        } else {
+            // Play pattern button — always loops the open pattern.
+            // Pattern-solo toggle controls whether other tracks/patterns
+            // are silenced during this playback.
+            let play_tooltip = if view_state.pattern_solo {
+                "Play pattern (solo — other tracks silent)"
+            } else {
+                "Play pattern (with other tracks)"
+            };
+            if ui
+                .button(
+                    RichText::new(ri::PLAY_FILL)
+                        .size(12.0)
+                        .color(t.colors.accent_green),
+                )
+                .on_hover_text(play_tooltip)
+                .clicked()
+            {
+                // Only take the armed-Play path when recording is armed for
+                // THIS pattern. Routing through `Play` runs the engine's
+                // Armed → CountIn → Capturing flow (`PlayPattern` skips that
+                // transition). If armed for a *different* pattern, fall
+                // through and just audition the one on screen. Solo is not
+                // applied while recording: the engine is either in orphan-
+                // preview mode (solo ignored there) or the user wants to
+                // hear surrounding context while overdubbing.
+                let armed_for_this = handle.state.transport.recording_state()
+                    == RecordingState::Armed
+                    && view_state.recording_pattern == Some(data.pattern_id);
+                if armed_for_this {
+                    handle.send(EngineCommand::Play);
+                } else {
+                    let solo_target = if view_state.pattern_solo {
+                        Some(data.pattern_id)
+                    } else {
+                        None
+                    };
+                    handle.send(EngineCommand::SetSoloPattern(solo_target));
+                    handle.send(EngineCommand::PlayPattern {
+                        pattern_id: data.pattern_id,
+                        instrument: view_state.selected_instrument,
+                    });
+                }
+            }
+        }
+
+        // Stop button — also clears the solo filter via the engine.
+        if ui
+            .button(
+                RichText::new(ri::STOP_FILL)
+                    .size(12.0)
+                    .color(if is_playing {
+                        t.colors.accent_red
+                    } else {
+                        t.colors.text_dim
+                    }),
+            )
+            .on_hover_text("Stop")
+            .clicked()
+        {
+            handle.send(EngineCommand::Stop);
+        }
+
+        // Mini record button — mirrors the global transport's record
+        // arm/disarm behaviour so the user does not have to reach
+        // back up while editing in the piano roll.
+        let mini_rec_state = handle.state.transport.recording_state();
+        let dim_red = DIM_RED;
+        let mini_rec_color = match mini_rec_state {
+            RecordingState::Capturing => t.colors.accent_red,
+            RecordingState::CountIn | RecordingState::Armed => {
+                let blink = ((ui.input(|i| i.time) * 2.0) as u64).is_multiple_of(2);
+                if blink { t.colors.accent_red } else { dim_red }
+            }
+            RecordingState::Idle => dim_red,
+        };
+        if ui
+            .button(
+                RichText::new(ri::RECORD_CIRCLE_FILL)
+                    .size(12.0)
+                    .color(mini_rec_color),
+            )
+            .on_hover_text(match mini_rec_state {
+                RecordingState::Idle => "Arm recording",
+                _ => "Disarm recording",
+            })
+            .clicked()
+        {
+            if mini_rec_state != RecordingState::Idle {
+                handle.send(EngineCommand::DisarmRecord);
+            } else {
+                arm_recording_for_pattern(handle, song, view_state, data.pattern_id);
+            }
+        }
+        if matches!(
+            mini_rec_state,
+            RecordingState::Armed | RecordingState::CountIn
+        ) {
+            ui.ctx().request_repaint();
+        }
+
+        // Pattern solo toggle — when ON (default), pattern playback
+        // isolates the open pattern. When OFF, other tracks/patterns
+        // overlapping the pattern's time range also play.
+        let solo_icon = if view_state.pattern_solo {
+            RichText::new(ri::VOLUME_MUTE_FILL)
+                .size(12.0)
+                .color(t.colors.accent_yellow)
+        } else {
+            RichText::new(ri::VOLUME_UP_LINE)
+                .size(12.0)
+                .color(t.colors.text_dim)
+        };
+        let solo_resp = ui
+            .button(solo_icon)
+            .on_hover_text(if view_state.pattern_solo {
+                "Solo: only this pattern plays — click to also hear other tracks"
+            } else {
+                "Other tracks audible — click to isolate this pattern"
+            });
+        if solo_resp.clicked() {
+            view_state.pattern_solo = !view_state.pattern_solo;
+            if is_playing {
+                let solo_target = if view_state.pattern_solo {
+                    Some(data.pattern_id)
+                } else {
+                    None
+                };
+                handle.send(EngineCommand::SetSoloPattern(solo_target));
+            }
+        }
+
+        ui.spacing_mut().item_spacing.x = 8.0;
+    }
+}
+
 /// Draw the piano roll in a bottom panel.
 /// Returns false if the close button was clicked.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -3771,211 +3997,15 @@ pub(crate) fn draw_piano_roll(
             }
         }
 
-        // Instrument selector for new notes
-        {
-            let selected_label = instruments
-                .iter()
-                .find(|inst| inst.id.0 == view_state.selected_instrument.0 as u64)
-                .map_or_else(|| "---".to_owned(), |inst| inst.name.clone());
-            egui::ComboBox::from_id_salt(ui.id().with("piano_roll_instrument"))
-                .selected_text(RichText::new(&selected_label).size(12.0))
-                .width(100.0)
-                .show_ui(ui, |ui| {
-                    for inst in instruments {
-                        let seq_id = SeqInstrumentId::new(inst.id.0 as u16);
-                        let selected = view_state.selected_instrument == seq_id;
-                        if ui.selectable_label(selected, &inst.name).clicked() {
-                            view_state.selected_instrument = seq_id;
-                        }
-                    }
-                });
-
-            // Badge: which instrument(s) the pattern's placements actually play
-            // through. The selector above is only the working instrument (note
-            // colour + preview); playback always routes via the track.
-            if !data.track_overrides.is_empty() {
-                let names: Vec<String> = data
-                    .track_overrides
-                    .iter()
-                    .map(|seq_id| {
-                        instruments
-                            .iter()
-                            .find(|inst| inst.id.0 == seq_id.0 as u64)
-                            .map_or_else(|| format!("#{}", seq_id.0), |inst| inst.name.clone())
-                    })
-                    .collect();
-                let arrow = egui_remixicon::icons::ARROW_RIGHT_S_LINE;
-                let badge_text = if names.len() == 1 {
-                    format!("{arrow} track plays: {}", names[0])
-                } else {
-                    format!("{arrow} track plays: {}", names.join(", "))
-                };
-                ui.label(
-                    RichText::new(badge_text)
-                        .size(10.0)
-                        .color(t.colors.accent_yellow),
-                )
-                .on_hover_text(
-                    "Instrument(s) this pattern plays through where it is placed \
-                    (set per track). The selector above is the working instrument \
-                    for note colour and preview only.",
-                );
-            }
-        }
-        ui.separator();
-
-        // Mini-transport controls
-        {
-            use egui_remixicon::icons as ri;
-            ui.spacing_mut().item_spacing.x = 2.0;
-
-            if is_playing {
-                // Pause button
-                if ui
-                    .button(
-                        RichText::new(ri::PAUSE_FILL)
-                            .size(12.0)
-                            .color(t.colors.accent_yellow),
-                    )
-                    .on_hover_text("Pause")
-                    .clicked()
-                {
-                    handle.send(EngineCommand::Pause);
-                }
-            } else {
-                // Play pattern button — always loops the open pattern.
-                // Pattern-solo toggle controls whether other tracks/patterns
-                // are silenced during this playback.
-                let play_tooltip = if view_state.pattern_solo {
-                    "Play pattern (solo — other tracks silent)"
-                } else {
-                    "Play pattern (with other tracks)"
-                };
-                if ui
-                    .button(
-                        RichText::new(ri::PLAY_FILL)
-                            .size(12.0)
-                            .color(t.colors.accent_green),
-                    )
-                    .on_hover_text(play_tooltip)
-                    .clicked()
-                {
-                    // Only take the armed-Play path when recording is armed for
-                    // THIS pattern. Routing through `Play` runs the engine's
-                    // Armed → CountIn → Capturing flow (`PlayPattern` skips that
-                    // transition). If armed for a *different* pattern, fall
-                    // through and just audition the one on screen. Solo is not
-                    // applied while recording: the engine is either in orphan-
-                    // preview mode (solo ignored there) or the user wants to
-                    // hear surrounding context while overdubbing.
-                    let armed_for_this = handle.state.transport.recording_state()
-                        == RecordingState::Armed
-                        && view_state.recording_pattern == Some(data.pattern_id);
-                    if armed_for_this {
-                        handle.send(EngineCommand::Play);
-                    } else {
-                        let solo_target = if view_state.pattern_solo {
-                            Some(data.pattern_id)
-                        } else {
-                            None
-                        };
-                        handle.send(EngineCommand::SetSoloPattern(solo_target));
-                        handle.send(EngineCommand::PlayPattern {
-                            pattern_id: data.pattern_id,
-                            instrument: view_state.selected_instrument,
-                        });
-                    }
-                }
-            }
-
-            // Stop button — also clears the solo filter via the engine.
-            if ui
-                .button(
-                    RichText::new(ri::STOP_FILL)
-                        .size(12.0)
-                        .color(if is_playing {
-                            t.colors.accent_red
-                        } else {
-                            t.colors.text_dim
-                        }),
-                )
-                .on_hover_text("Stop")
-                .clicked()
-            {
-                handle.send(EngineCommand::Stop);
-            }
-
-            // Mini record button — mirrors the global transport's record
-            // arm/disarm behaviour so the user does not have to reach
-            // back up while editing in the piano roll.
-            let mini_rec_state = handle.state.transport.recording_state();
-            let dim_red = DIM_RED;
-            let mini_rec_color = match mini_rec_state {
-                RecordingState::Capturing => t.colors.accent_red,
-                RecordingState::CountIn | RecordingState::Armed => {
-                    let blink = ((ui.input(|i| i.time) * 2.0) as u64).is_multiple_of(2);
-                    if blink { t.colors.accent_red } else { dim_red }
-                }
-                RecordingState::Idle => dim_red,
-            };
-            if ui
-                .button(
-                    RichText::new(ri::RECORD_CIRCLE_FILL)
-                        .size(12.0)
-                        .color(mini_rec_color),
-                )
-                .on_hover_text(match mini_rec_state {
-                    RecordingState::Idle => "Arm recording",
-                    _ => "Disarm recording",
-                })
-                .clicked()
-            {
-                if mini_rec_state != RecordingState::Idle {
-                    handle.send(EngineCommand::DisarmRecord);
-                } else {
-                    arm_recording_for_pattern(handle, song, view_state, data.pattern_id);
-                }
-            }
-            if matches!(
-                mini_rec_state,
-                RecordingState::Armed | RecordingState::CountIn
-            ) {
-                ui.ctx().request_repaint();
-            }
-
-            // Pattern solo toggle — when ON (default), pattern playback
-            // isolates the open pattern. When OFF, other tracks/patterns
-            // overlapping the pattern's time range also play.
-            let solo_icon = if view_state.pattern_solo {
-                RichText::new(ri::VOLUME_MUTE_FILL)
-                    .size(12.0)
-                    .color(t.colors.accent_yellow)
-            } else {
-                RichText::new(ri::VOLUME_UP_LINE)
-                    .size(12.0)
-                    .color(t.colors.text_dim)
-            };
-            let solo_resp = ui
-                .button(solo_icon)
-                .on_hover_text(if view_state.pattern_solo {
-                    "Solo: only this pattern plays — click to also hear other tracks"
-                } else {
-                    "Other tracks audible — click to isolate this pattern"
-                });
-            if solo_resp.clicked() {
-                view_state.pattern_solo = !view_state.pattern_solo;
-                if is_playing {
-                    let solo_target = if view_state.pattern_solo {
-                        Some(data.pattern_id)
-                    } else {
-                        None
-                    };
-                    handle.send(EngineCommand::SetSoloPattern(solo_target));
-                }
-            }
-
-            ui.spacing_mut().item_spacing.x = 8.0;
-        }
+        draw_pattern_instrument_transport(
+            ui,
+            data,
+            handle,
+            song,
+            view_state,
+            instruments,
+            is_playing,
+        );
         ui.separator();
 
         ui.label(
