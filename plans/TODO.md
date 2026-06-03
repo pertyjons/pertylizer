@@ -147,7 +147,7 @@
   a stretch goal — modules not reverse-reachable from `StereoOutput` (and any sidechain source)
   through `connections` should also go in `optimize_project`. Bigger scope (needs graph traversal
   per instrument); pick up later.
-- [ ] **LPC Vocoder: missing synthesis gain + auto-vocoder positive feedback.** The
+- [x] **LPC Vocoder: missing synthesis gain + auto-vocoder positive feedback.** The
   `Vocoder` effect (`crates/synth_modules/src/effects/vocoder.rs`) is "stable" but
   unmusical on resonant inputs — it amplified the `Formant Voice` patch by ~25× and
   produced a -0 dB peak at 18–20 kHz in the §0.1 Formant Voice investigation. Two
@@ -192,7 +192,7 @@
   `instrument_snapshots[i].volume` (etc.) under the same write lock as the queued
   `EngineCommand`. Maintenance burden: every new `set_*` tool needs to remember the write-through.
   Original diagnosis with file:line references in commit history.
-- [ ] **MCP disconnects = tokio worker thread death (strace-confirmed 2026-05-18).** Until today
+- [x] **MCP disconnects = tokio worker thread death (strace-confirmed 2026-05-18).** Until today
   the working hypothesis from the §1 MCP-stability investigation was "tool-handler panics inside
   `block_in_place` kill the worker; `LocalSessionManager` loses session state with the dying worker;
   rmcp returns `404 Session not found` on the next request and the client experiences a disconnect".

@@ -1,0 +1,208 @@
+# Plan: Tracker view (toggleable, per-pattern)
+
+A second, **vertical tracker-style editor** for a single pattern, toggleable against
+the existing horizontal piano roll **inside the Pattern view**. Rows = time steps,
+columns = voice/automation/(future) processor lanes. Goal: a dense numeric overview
+of notes *and* parameter values per step, with the **automation curve drawn behind
+the grid** so you see discrete values and the continuous shape at once.
+
+Scope locked with the user 2026-06-03:
+- **Per-pattern only.** Not an arrangement-wide / sequencer tracker ("blir för stort,
+  lättare att överklicka").
+- **Columns are polyphony/voice lanes feeding the pattern's ONE instrument** — *not*
+  multi-instrument. A pattern is instrument-agnostic content today; the placement's
+  track sets the instrument and per-note instrument is not consulted at playback
+  ("Phase 4"). No data-model change to multi-instrument.
+- Column types: **note/voice lanes** + **automation lanes** + (later, when they land)
+  **NoteProcessor** lanes and **NoteExpression** sub-columns.
+- Must be able to **add new columns** and **remove empty columns** (both note lanes
+  and automation/other lanes).
+
+---
+
+## Verified engine/GUI state (confirmed against code 2026-06-03)
+
+- **Clean toggle point.** `draw_pattern_view` (`crates/pertylizer/src/gui/pattern_view.rs`)
+  is a pattern browser that, when a pattern is open, calls the shared
+  `draw_piano_roll(...)` (`pattern_view.rs:167`) with a snapshot from
+  `collect_piano_roll_data(song, pattern_id)` (`:143`). The toggle is a single branch
+  there: `match editor_mode { PianoRoll => draw_piano_roll(...), Tracker => draw_tracker(...) }`.
+- **Shared snapshot is reusable as-is.** `PianoRollData` (`gui/sequencer/mod.rs:2857`)
+  already carries `ticks_per_row` (`:2862`), `notes`, `automation_lanes`, `time_sig`,
+  `pitch_min/max`. The tracker eats the same snapshot — no new collection path.
+- **Row/step model already exists in the data.** `RowResolution` on `Pattern` with
+  `row_to_tick` (`pattern.rs:67`), `tick_to_row` (`:72`), `quantize` (`:77`),
+  `RowIndex` newtype. ticks↔rows mapping is built-in.
+- **Automation is trivial to render.** `AutomationLane` (`automation.rs:144`) with
+  `AutomationPoint { tick, value, curve }` (`:66`), `CurveType` =
+  Linear/Step/Exponential/SCurve (`:92`), and `value_at(tick)` already interpolates
+  (`:186`). The piano roll already draws the curve pixel-by-pixel via `value_at`
+  (`gui/sequencer/mod.rs` automation zone ~6164–6314).
+- **Step-entry stub exists.** `step_entry_mode` / `step_cursor_tick`
+  (`gui/sequencer/mod.rs:165,167`) + keyboard advance/commit (~5516–5560) — the
+  natural input model for T2.
+- **Rendering is immediate-mode egui `Painter`** (rects/lines/circles/text); all
+  primitives the tracker needs already in use.
+- **View mode storage:** add an `editor_mode: PatternEditorMode { PianoRoll, Tracker }`
+  to `PatternViewState` (`pattern_view.rs:40`) — a per-pattern-view sub-mode, NOT a new
+  top-level `AppView`.
+
+---
+
+## The one open design decision (gates T2, NOT T1)
+
+**How do free-tick, possibly-overlapping notes map to stable voice columns?**
+Notes are a `Vec<Note>` with `start` + `duration`; there is no stored voice/lane index
+today.
+
+- **For T1 (read-only):** compute lanes on the fly with greedy interval coloring
+  (assign each note the lowest column free at its start tick). Good enough to validate
+  the view; no model change.
+- **For T2 (editing + add/remove columns):** columns become a first-class, user-managed
+  concept, so the assignment must be **stable across edits/scroll**. Recommended:
+  **store a lane index on `Note`** (a small `Copy` newtype, e.g. `VoiceLane(u8)`,
+  default 0, `#[serde(default)]`, additive — piano roll ignores it). This makes
+  add/remove-column real, persisted operations and stops notes reshuffling between
+  columns. Decide at the top of T2; flagged here so it isn't a surprise.
+
+---
+
+## Rendering approach — LOCKED 2026-06-03: `egui_extras::TableBuilder`
+
+Chosen with the user over raw `Painter`: lean on the table's automatic features
+(row **virtualization** via `body.rows`, column **resize**, sticky **header**,
+**scroll**) and keep cells as **standard widgets** (`ui.label`/small widgets). The
+automation **curve-behind-grid** is done as a **painted overlay** — experiment with
+alignment (see risk below). egui/egui_extras are at **0.34.3**; `egui_extras` is
+already a dependency (currently only for image loaders), so this is the first real
+`TableBuilder` use in the codebase.
+
+**Build notes (egui_extras 0.34 API):**
+- `TableBuilder::new(ui).striped(true).resizable(true).cell_layout(...)` then one
+  `Column` per lane: `Column::auto()` for the row/time gutter,
+  `Column::initial(w).resizable(true)` (or `Column::remainder()`) per
+  voice/automation column. Columns are declared **per frame**, so **add/remove
+  column = change the column list** — fits T2 cheaply.
+- `.header(row_h, |mut header| header.col(|ui| { ui.label(lane_name) }))` for labels.
+- `.body(|mut body| body.rows(row_h, n_rows, |mut row| { row.col(|ui| { … }) }))` —
+  **uniform fixed row height matches a tracker exactly** and only visible rows render.
+- Cells: note name / value via `ui.label`; off-grid + expression markers as small
+  glyphs/`RichText`; tooltip carries the true tick.
+
+**Risk to watch (the experimental bit):** `TableBuilder` clips per cell and
+virtualizes rows, so a **continuous curve spanning rows** has no single canvas. Plan:
+read the table's used rect (wrap the table and read the parent `ui.min_rect`, or use
+the returned response), then paint the curve into an aligned layer over each
+automation column's x-range, mapping `tick → y` from `(first_visible_row, row_h)`.
+If aligning the overlay to the virtualized geometry proves too fiddly, fallbacks in
+order: (1) draw the curve as **per-cell segments** inside each `row.col` (no overlay
+alignment needed), (2) revisit raw `Painter` for the automation columns only. Log
+which path T1 actually used.
+
+---
+
+## Status at a glance
+
+- [ ] **T1** — Read-only tracker render (MVP): toggle + note lanes + automation lanes
+  with per-row values **and curve-behind-grid** + off-grid markers. No editing.
+- [ ] **T2** — Editing + column management: add/remove note lanes, add/remove +
+  remove-empty automation lanes, step-entry note input, velocity, delete. Quantized
+  writes + undo. (Resolve the lane-storage decision first.)
+- [ ] **T3** — Future column types: NoteProcessor lanes (when `note_processors` on
+  `Pattern` lands — see `plans/note-processors-plan.md`) and NoteExpression sub-columns.
+
+Build order is value-first: **T1 ships the overview you asked for with zero model
+change.** Stop after T1 if that's enough; T2/T3 as appetite allows.
+
+---
+
+## T1 — Read-only tracker render (MVP)
+
+The headline deliverable: see all voice lanes, all automation values per step, and the
+automation curves behind the grid — without touching any editing logic.
+
+- [ ] `PatternEditorMode` enum + toggle button in the pattern-view toolbar (mirror the
+  step-entry-mode toggle styling). Persist in `PatternViewState`.
+- [ ] `draw_tracker(ui, data: &PianoRollData, view_state, ...)` in a new
+  `gui/sequencer/tracker.rs`, built with `egui_extras::TableBuilder` (see Rendering
+  approach above), consuming the existing snapshot.
+- [ ] **Columns (declared per frame):** `Column::auto()` row/time gutter (from
+  `tick_to_row`); then one column per **note/voice lane** (greedy lane assignment,
+  read-only); then one **automation column per lane** in `data.automation_lanes`.
+  Header row carries lane labels.
+- [ ] **Rows:** `body.rows(row_h, n_rows, …)` — virtualized, uniform height (`row_h`
+  from `pr_zoom_y`). Only visible rows render.
+- [ ] **Note cells (standard widgets):** note name (`C-4`), velocity, and small
+  expression markers (legato/glide; ornament later) via `ui.label`/`RichText`. Empty
+  step = `---` / `...`.
+- [ ] **Automation columns:** per-row numeric value (`lane.value_at(row_to_tick(r))`)
+  as a cell label, **plus the interpolated curve as a painted overlay** behind the
+  column (overlay aligned to the table's used rect; fallback to per-cell segments per
+  the risk note above).
+- [ ] **Off-grid markers:** notes whose `start` isn't on a row tick are snap-displayed
+  to the nearest row with a distinct marker; true tick shown on hover (cell tooltip).
+  The tracker is a **quantized lens** on the same data, never a separate store.
+- [ ] **Playhead** row highlight (paint over the current row's rect).
+
+**Acceptance:** open a pattern with a chord + at least one automation lane, toggle to
+tracker, and see every voice in its own column, per-row automation values, and the
+curve behind the automation column. No edits possible yet; piano roll unchanged.
+
+---
+
+## T2 — Editing + column management
+
+(Resolve the lane-storage decision above first — recommended: store `VoiceLane` on
+`Note`.)
+
+- [ ] **Add note column** (more polyphony/chord depth) / **remove empty note column**.
+- [ ] **Add automation column** (choose a target → new `AutomationLane`) / **remove
+  empty automation column** (lane with no points). A single **"remove empty columns"**
+  command prunes all empty lanes (notes and automation).
+- [ ] **Step-entry note input** (reuse `step_cursor_tick` + keyboard advance/commit):
+  enter note name + velocity at the cursor cell; arrow keys move the cursor.
+- [ ] **Numeric automation entry:** type a value into an automation cell → writes a
+  point at `row_to_tick(row)` (quantized).
+- [ ] Delete cell, clear lane. All writes go through existing pattern mutators
+  (`move_note`/`add_note`/automation edits) so **undo works for free**; tracker writes
+  are quantized while piano-roll keeps free placement.
+
+**Acceptance:** build a small pattern entirely in the tracker (notes + an automation
+lane), add and remove a column, prune empties, undo/redo each step, and confirm it
+plays identically and round-trips `save_project`/`load_project`.
+
+---
+
+## T3 — Future column types (when the features exist)
+
+- [ ] **NoteProcessor lanes:** surface the pattern's `note_processors` rack (from
+  `plans/note-processors-plan.md`, rack lives on `Pattern`) as columns — e.g. an
+  `arp` column showing its per-step contribution. Add/remove mirrors T2.
+- [ ] **NoteExpression sub-columns:** per-voice-column FX sub-columns for
+  vibrato/accent/gate/ghost/probability (the existing `NoteExpression` block on
+  `Note`), tracker-FX-style.
+
+---
+
+## Cross-cutting
+
+- **No second source of truth.** The tracker reads and writes the *same* `Pattern`
+  notes + automation as the piano roll. It is a different lens, not a different store;
+  toggling back and forth must show identical content.
+- **Off-grid honesty.** Never silently hide or mangle off-grid notes — always mark
+  them and preserve the true tick.
+- **Maintenance cost.** Two view modes. T1 is pure rendering (no editing duplication);
+  the editing/hit-test cost only arrives in T2.
+
+## Critical files
+
+| Concern | File |
+|---|---|
+| Toggle point + pattern-view host | `crates/pertylizer/src/gui/pattern_view.rs:143,167` (`draw_pattern_view`, `PatternViewState:40`) |
+| Shared snapshot (reused as-is) | `crates/pertylizer/src/gui/sequencer/mod.rs:2857` (`PianoRollData`, `ticks_per_row:2862`) |
+| New tracker renderer | `crates/pertylizer/src/gui/sequencer/tracker.rs` (new) — `egui_extras::TableBuilder` |
+| Table component (egui 0.34.3, already a dep) | `egui_extras::TableBuilder` / `Column` / `body.rows` |
+| Row/step mapping | `crates/synth_sequencer/src/pattern.rs:67` (`row_to_tick`/`tick_to_row`/`quantize`, `RowResolution`) |
+| Automation value + curve | `crates/synth_sequencer/src/automation.rs:144,186` (`AutomationLane`, `value_at`); piano-roll automation zone `gui/sequencer/mod.rs` ~6164 |
+| Step-entry stub to reuse | `crates/pertylizer/src/gui/sequencer/mod.rs:165,167` + ~5516 |
+| Lane index (T2, if stored) | `crates/synth_sequencer/src/note.rs:158` (`Note`) |

@@ -35,7 +35,7 @@ into primitives 1–3, it is a Note Processor — do **not** add a `Note` field 
 
 ## Status at a glance
 
-- [ ] **NP0** — Architecture decision: expansion model + attachment scope (gating)
+- [x] **NP0** — Architecture decision: expansion model + attachment scope (gating) — LOCKED 2026-06-03 (Model B, expand in `collect_events_at_tick`; stream rack on `Pattern` + `Ornament` on `Note`)
 - [ ] **NP1** — `NoteProcessor` engine + the playback-time expansion point
 - [ ] **NP2** — Arpeggiator (flagship; trill/mordent/turn are special cases of it)
 - [ ] **NP3** — Timed-repeat ornaments: flam / drag / ruff / roll + grace note
@@ -103,10 +103,10 @@ keeps the source musically legible. The cost is the RT-safety work in NP1 — ac
 
 Generators split cleanly into **two scopes** — the plan needs both:
 
-- **Region/track-scoped generators** — apply to a stream of notes: **arpeggiator**,
+- **Region-scoped stream generators** — apply to a stream of notes: **arpeggiator**,
   **humanize**, **scale-quantize**, **chord**. Natural home: a small ordered
-  *processor rack* on the `SequencerTrack` (or on a `PatternPlacement`). One arp over a
-  held chord is the canonical case.
+  *processor rack* on `Pattern` (next to `notes` + `automation`; see NP0 decision).
+  One arp over a held chord is the canonical case.
 - **Per-note ornaments** — attach to a single note: **trill/mordent/turn**, **flam/
   drag/roll**, **grace note**, **strum** (strum attaches to a chord = a note cluster).
   Natural home: an `Option<Ornament>` on `Note` (a `Copy` enum + small params, so it
@@ -117,6 +117,88 @@ Lock the two storage sites in NP0 so NP1's trait can serve both.
 **Deliverable of NP0:** a one-page decision doc appended here (expansion model,
 expansion location, the two storage sites, and the chaining order from the X-cut
 section) — then the checkboxes below become buildable.
+
+### NP0 — Decision record (LOCKED 2026-06-03)
+
+Verified against current code before locking: `Note` (`note.rs:158`) already carries
+`legato` / `glide` / `expression` optional fields, so an `ornament` field is
+consistent; `Pattern` (`pattern.rs:103`) already owns both `notes` and
+`automation: Vec<AutomationLane>`, so a processor rack belongs there too;
+`SequencerTrack` (`track.rs:167`) is a pure mixer channel (no musical content);
+`collect_events_at_tick` (`sequencer_engine.rs:547`) already reuses pre-allocated
+`scratch_notes` / `scratch_automation` buffers and reads `pattern.automation` in the
+arrangement branch — the expansion buffer and the rack read ride that exact idiom.
+
+**Decision 1 — Expansion model: Model B (playback-time expand). CHOSEN.**
+- The source note stays as **one** note in the pattern; a processor stores its
+  *config*, never its baked output. Editing/undo acts on processor params.
+- A **`freeze_to_notes`** command provides the Model-A bake on demand (one-shot
+  expand → replace with concrete notes, undoable) for hand-editing.
+- **Expansion location: inside `SequencerEngine::collect_events_at_tick`**
+  (`sequencer_engine.rs:547`), on the audio thread, sample-accurate per tick.
+  Expansion writes into a new pre-allocated `scratch_expansion` buffer that mirrors
+  the existing `scratch_notes` / `scratch_automation` reuse pattern (clear-and-refill,
+  never grow). Rationale: the collection step is already the alloc-free per-tick
+  funnel; doing expansion here keeps arp/roll timing tight and avoids a second code
+  path. The "snapshot step just ahead" fallback is **rejected** — it would duplicate
+  the collection logic and coarsen timing for no gain, since the scratch-buffer idiom
+  already gives us bounded, alloc-free expansion in place.
+- **Overflow policy:** a hard `MAX_EXPANSION_EVENTS_PER_TICK` cap. On overflow, drop
+  the newest events and `log` once per processor-instance (not per tick). Documented,
+  never reallocate to grow.
+
+**Decision 2 — Attachment scope: BOTH, two storage sites. CHOSEN (rack home
+revised 2026-06-03 — see rationale).**
+- **Region-scoped stream rack** → an ordered `Vec<NoteProcessor>` "processor rack" on
+  **`Pattern`** (`pattern.rs:103`), alongside the existing `notes` and `automation`.
+  Home for: arpeggiator, humanize, scale-quantize, chord.
+- **Per-note** → `ornament: Option<Ornament>` on `Note` (`note.rs:158`), where
+  `Ornament` is a small `Copy` enum + inline scalar params (no heap), set via the
+  piano-roll context menu. Home for: trill / mordent / turn, flam / drag / ruff /
+  roll, grace, strum.
+- NP1's `NoteProcessor` trait must serve both sites from one emit path.
+
+  **Why `Pattern`, not `SequencerTrack` (the earlier draft was wrong):**
+  1. **Consistency.** A stream note-processor is the sibling of *automation* —
+     both modulate/generate over a region of musical content. Automation already
+     lives in `Pattern` (`pattern.rs:117`), so the rack belongs there too. The
+     engine reads `pattern.automation` in `collect_events_at_tick`; it reads the
+     rack at the same point.
+  2. **`SequencerTrack` owns no musical content.** It is a mixer channel
+     (instrument/volume/pan/sends/mute/solo). A note-generating rack there would
+     mix "channel" with "composition". The effect-chain-rack analogy is a false
+     friend: effects live on the channel because they process *audio output*;
+     note-processors generate *content* → pattern level.
+  3. **Scope & reuse.** Patterns are reusable phrases placed via
+     `PatternPlacement`; one track plays many patterns across the song. A
+     track-rack would arp the *whole track for the whole song*. A pattern-rack
+     scopes naturally to wherever the pattern is placed, and is defined once.
+- **Deferred (not now):** a per-`PatternPlacement` rack override, mirroring the
+  existing `length_override` (`song.rs:48`) — lets one placement of a pattern be
+  arped differently from another. The `Pattern` rack is the base; placement-level
+  override can layer on later without changing the `NoteProcessor` trait. Do not
+  build it in this pass.
+
+**Chaining order (LOCKED):**
+`scale-quantize → chord → arp → ornaments/strum → humanize`.
+Quantize first so everything downstream stays in key; humanize last so it perturbs
+the final result. Documented on the `NoteProcessor` engine and locked with a test.
+
+**RT-safety contract (binds the whole plan):** the expansion path is audio-thread
+hot code — no heap alloc, no locks, no unbounded loops, no `Math.random()`. Required:
+the pre-allocated bounded `scratch_expansion` buffer, a seeded PRNG for humanize
+(seed per region/placement → reproducible offline render), and the documented
+overflow drop/log policy above.
+
+**Persistence:** the pattern processor rack **and** the per-note ornament must
+round-trip `save_project` / `load_project` and standalone-pattern operations. No
+partial states — a processor whose config is live but unpersisted is not shippable.
+(The rack riding on `Pattern` means it round-trips through the same path as
+`notes` and `automation`.)
+
+**NP0 outcome:** decisions locked. NP1 is now buildable — start with the
+`NoteProcessor` trait + the `scratch_expansion` expansion point in
+`collect_events_at_tick`, then NP2 (arpeggiator) on top.
 
 ---
 
@@ -208,10 +290,11 @@ These transform notes rather than multiplying them, but they are still generator
 
 ## NP6 — GUI
 
-- [ ] **Per-track processor rack** (region-scoped generators): an ordered, add/
-  remove/reorder list on the track header or a dedicated panel — mirrors the existing
-  effect-chain rack UI so it's familiar. Each processor gets the descriptor-driven
-  param grid (`gui/widgets/param_grid.rs`) for free if its params are descriptor-backed.
+- [ ] **Per-pattern processor rack** (region-scoped generators): an ordered, add/
+  remove/reorder list surfaced in the pattern/piano-roll editor (the rack lives on
+  `Pattern`, alongside its automation) — mirrors the existing effect-chain rack UI so
+  it's familiar. Each processor gets the descriptor-driven param grid
+  (`gui/widgets/param_grid.rs`) for free if its params are descriptor-backed.
 - [ ] **Per-note ornament menu** (per-note scope): piano-roll right-click → "Add
   ornament…" with the trill/mordent/turn/flam/drag/roll/grace presets; a small badge
   on ornamented notes.
@@ -226,8 +309,9 @@ These transform notes rather than multiplying them, but they are still generator
 Mirror the existing effect-chain MCP shape (`add_*_effect` / `set_*_effect_parameter`
 / `reorder_*_effect`) so AI composition can drive generators:
 
-- [ ] `add_note_processor(track_id, kind, params)` / `remove_note_processor` /
-  `set_note_processor_parameter` / `reorder_note_processor`.
+- [ ] `add_note_processor(pattern_id, kind, params)` / `remove_note_processor` /
+  `set_note_processor_parameter` / `reorder_note_processor` (rack lives on `Pattern`,
+  addressed by `pattern_id` + index).
 - [ ] `set_note_ornament(pattern_id, note_id, ornament)` / clear with `""`/`null`.
 - [ ] `freeze_note_processor(...)` → bakes to notes (the Model-A escape hatch over MCP).
 - [ ] Surface configured processors/ornaments in the relevant `list_*` / `get_*_info`
@@ -265,7 +349,7 @@ drop/log policy on overflow.
 | Concern | File |
 |---|---|
 | Note model (ornament field) | `crates/synth_sequencer/src/note.rs` |
-| Track (processor rack) | `crates/synth_sequencer/src/song.rs` (`SequencerTrack`) |
+| Pattern (processor rack — next to notes + automation) | `crates/synth_sequencer/src/pattern.rs:103` (`Pattern`) |
 | Playback expansion point | `crates/synth_engine/src/sequencer_engine.rs` (`collect_events_at_tick`) |
 | Event routing | `crates/synth_engine/src/synth_engine.rs` (`route_sequencer_events`) |
 | Allocator (legato/glide reuse) | `crates/synth_engine/src/voice_allocator.rs`, `voice.rs` |
