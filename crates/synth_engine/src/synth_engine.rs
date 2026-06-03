@@ -1141,7 +1141,6 @@ impl SynthEngine {
                 self.state
                     .transport
                     .set_ticks(self.sequencer.current_tick().0);
-                self.sync_cursor_to_transport();
 
                 // Release all voices on all instruments and revert any
                 // automation overrides to their base values.
@@ -1158,7 +1157,6 @@ impl SynthEngine {
                 let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
                 self.sequencer.set_cursor(synth_sequencer::Tick::ZERO);
                 self.state.transport.set_ticks(0);
-                self.sync_cursor_to_transport();
             }
             EngineCommand::Seek { tick } => {
                 // A seek marks the cursor too: this is the position Play starts
@@ -1167,7 +1165,6 @@ impl SynthEngine {
                 let _ = self.sequencer.seek(tick);
                 self.sequencer.set_cursor(tick);
                 self.state.transport.set_ticks(tick.0);
-                self.sync_cursor_to_transport();
             }
             EngineCommand::SetLoop {
                 start,
@@ -1883,16 +1880,6 @@ impl SynthEngine {
             self.sequencer.loop_end(),
             self.sequencer.is_looping(),
         );
-    }
-
-    /// Mirror the sequencer's cursor (play-start / return) position into the
-    /// shared transport state. The GUI does not render a separate cursor marker
-    /// (see `TransportState::cursor_ticks`); this keeps the shared mirror in
-    /// step with the engine for diagnostics / potential future use.
-    fn sync_cursor_to_transport(&self) {
-        self.state
-            .transport
-            .set_cursor_ticks(self.sequencer.cursor_tick().0);
     }
 
     // ========================================================================
