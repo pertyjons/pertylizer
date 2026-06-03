@@ -210,6 +210,9 @@ pub struct SequencerViewState {
     auto_follow_playhead: bool,
     /// Last scroll offset set by auto-follow (to detect manual scrolling).
     last_auto_scroll_offset: Option<f32>,
+    /// Same, for the piano roll's own scroll area (both are drawn in the
+    /// same frame, so they cannot share one expected-offset slot).
+    pr_last_auto_scroll_offset: Option<f32>,
     /// Frames left to keep repainting after a transport jump / seek / stop while
     /// stopped, so the timeline catches the engine's async playhead update and
     /// can scroll the marker back into view (off-screen follow).
@@ -287,6 +290,7 @@ impl SequencerViewState {
             zoom_level: 1.0,
             auto_follow_playhead: true,
             last_auto_scroll_offset: None,
+            pr_last_auto_scroll_offset: None,
             follow_settle_frames: 0,
             record_quantize: 0,
             overdub: true,
@@ -4617,10 +4621,11 @@ pub(crate) fn draw_piano_roll(
         if let Some(mut scroll_state) = egui::scroll_area::State::load(ui.ctx(), pr_scroll_id) {
             scroll_state.offset.x = target_offset;
             scroll_state.store(ui.ctx(), pr_scroll_id);
+            view_state.pr_last_auto_scroll_offset = Some(target_offset);
         }
     }
 
-    egui::ScrollArea::both()
+    let scroll_output = egui::ScrollArea::both()
         .id_salt(pr_scroll_salt)
         .max_height(scroll_max_height)
         .scroll_source(egui::scroll_area::ScrollSource {
@@ -5445,6 +5450,21 @@ pub(crate) fn draw_piano_roll(
                 undo_manager,
             );
         });
+
+    // Detect manual scrolling to disable auto-follow, mirroring the
+    // arrangement timeline: if the offset after the scroll area differs from
+    // what auto-follow set, the user dragged the scrollbar — stop fighting.
+    if is_playing {
+        let actual_offset = scroll_output.state.offset.x;
+        if let Some(expected) = view_state.pr_last_auto_scroll_offset
+            && (actual_offset - expected).abs() > 2.0
+        {
+            view_state.auto_follow_playhead = false;
+            view_state.pr_last_auto_scroll_offset = None;
+        }
+    } else {
+        view_state.pr_last_auto_scroll_offset = None;
+    }
 
     // ── Keyboard shortcuts ──
     let ctx = ui.ctx();
