@@ -3,8 +3,12 @@
 Status: **Phases 1–5 implemented** (v0.307.0, 2026-06-02) and **Phase 6
 (standalone `VocalTract` Kelly–Lochbaum engine) complete** — 6a waveguide
 module, 6b full area function + lips, 6c-1 glottal coupling, 6c-2 nasal
-side-branch, 6c-3 example patch (v0.308.0, 2026-06-03). A genuine-FOF generator
-could still become an optional third engine. One phase per session.
+side-branch, 6c-3 example patch (v0.308.0, 2026-06-03). **Follow-up
+(2026-06-03):** VocalTract gained a **tract-length / voice-type control** — a
+variable active waveguide length scaling all formants ∝ 1/length (short =
+soprano/child, long = bass), so genuine SATB registers are now possible. A
+genuine-FOF generator could still become an optional third engine. One phase
+per session.
 
 ## Goal
 
