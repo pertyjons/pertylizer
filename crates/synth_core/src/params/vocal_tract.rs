@@ -17,6 +17,8 @@ pub enum VocalTractParam {
     Constriction(NormalizedValue),
     /// Lip aperture / rounding (0 = rounded/closed, 1 = spread/open)
     Lips(NormalizedValue),
+    /// Tract length / voice type (0 = short tract → soprano/child, 1 = long → bass)
+    Length(NormalizedValue),
     /// Nasality / velar port opening (0 = oral, 1 = fully nasal)
     Nasality(NormalizedValue),
     /// Aspiration / breath noise at the glottis (0 = none)
@@ -35,6 +37,7 @@ impl VocalTractParam {
             Self::Tongue(_) => "Tongue",
             Self::Constriction(_) => "Constriction",
             Self::Lips(_) => "Lips",
+            Self::Length(_) => "Length",
             Self::Nasality(_) => "Nasality",
             Self::Breathiness(_) => "Breathiness",
             Self::Level(_) => "Level",
@@ -46,6 +49,7 @@ impl VocalTractParam {
             Self::Tongue(v)
             | Self::Constriction(v)
             | Self::Lips(v)
+            | Self::Length(v)
             | Self::Nasality(v)
             | Self::Breathiness(v)
             | Self::Level(v) => v.as_f32(),
@@ -57,6 +61,7 @@ impl VocalTractParam {
             Self::Tongue(_) => Self::Tongue(NormalizedValue::new(value)),
             Self::Constriction(_) => Self::Constriction(NormalizedValue::new(value)),
             Self::Lips(_) => Self::Lips(NormalizedValue::new(value)),
+            Self::Length(_) => Self::Length(NormalizedValue::new(value)),
             Self::Nasality(_) => Self::Nasality(NormalizedValue::new(value)),
             Self::Breathiness(_) => Self::Breathiness(NormalizedValue::new(value)),
             Self::Level(_) => Self::Level(NormalizedValue::new(value)),

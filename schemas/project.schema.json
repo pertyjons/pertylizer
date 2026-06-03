@@ -4583,6 +4583,14 @@
                   "title": "Constriction",
                   "type": "number"
                 },
+                "length": {
+                  "default": 0.5,
+                  "description": "Tract length / voice type (0 = short → soprano/child, 0.5 = neutral, 1 = long → bass). Scales all formants.",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Length",
+                  "type": "number"
+                },
                 "level": {
                   "default": 0.800000011920929,
                   "description": "Output level",

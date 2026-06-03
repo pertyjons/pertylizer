@@ -25,8 +25,15 @@ use synth_core::{Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, 
 use synth_core::{ModuleType, Param, VocalTractParam};
 use synth_dsp::KellyLochbaumTract;
 
-/// Number of waveguide sections (≈ vocal-tract discretisation).
-const N_SECTIONS: usize = 44;
+/// Nominal waveguide length (sections) — the "neutral" tract the length
+/// control scales around. Kept at the historical 44 so a default patch (length
+/// 0.5) sounds exactly as before the length control existed.
+const N_NOMINAL_SECTIONS: usize = 44;
+/// Shortest tract (fewest sections → highest formants: soprano / child).
+const N_MIN_SECTIONS: usize = 34;
+/// Longest tract (most sections → lowest formants: bass). Also the allocated
+/// waveguide capacity; the active length never exceeds it.
+const N_MAX_SECTIONS: usize = 54;
 /// Waveguide steps per audio sample (raises the effective tract rate so the
 /// formants land in the speech range).
 const TRACT_OVERSAMPLE: usize = 2;
@@ -74,8 +81,12 @@ const ARTIC_EPS: f32 = 0.005;
 // --- Nasal branch ---
 /// Number of nasal-cavity waveguide sections.
 const NOSE_SECTIONS: usize = 28;
-/// Main-tract junction (the velum / soft palate) where the nose taps in.
+/// Main-tract junction (the velum / soft palate) where the nose taps in, at the
+/// nominal tract length.
 const VELUM_INDEX: usize = 24;
+/// Velar tap as a fraction of the (variable) tract length, so the nose stays at
+/// the soft palate as the length control changes (24/44 at the nominal length).
+const VELUM_FRAC: f32 = VELUM_INDEX as f32 / N_NOMINAL_SECTIONS as f32;
 /// Rest diameter of the nasal cavity at its widest (mid-cavity).
 const NOSE_BASE: f32 = 1.6;
 /// Nasal diameter at the velar and nostril ends (a gentle taper at both ends
@@ -111,6 +122,7 @@ pub struct VocalTract {
     tongue: NormalizedValue,
     constriction: NormalizedValue,
     lips: NormalizedValue,
+    length: NormalizedValue,
     nasality: NormalizedValue,
     breathiness: NormalizedValue,
     level: NormalizedValue,
@@ -145,6 +157,7 @@ impl VocalTract {
             tongue: NormalizedValue::new(0.5),
             constriction: NormalizedValue::new(0.3),
             lips: NormalizedValue::new(0.5),
+            length: NormalizedValue::new(0.5),
             nasality: NormalizedValue::new(0.0),
             breathiness: NormalizedValue::new(0.1),
             level: NormalizedValue::new(0.8),
@@ -154,14 +167,33 @@ impl VocalTract {
             current_tongue: 0.5,
             current_lips: 0.5,
             current_nasality: 0.0,
-            tract: KellyLochbaumTract::new(N_SECTIONS),
+            tract: KellyLochbaumTract::new(N_MAX_SECTIONS),
             note_freq: Hertz::ZERO,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
             output_buffer: AudioBuffer::new(1024),
         };
         v.build_nose();
+        v.apply_length();
         v.rebuild_profile();
         v
+    }
+
+    /// Map the `length` knob (0..1) to an active section count in
+    /// `[N_MIN_SECTIONS, N_MAX_SECTIONS]` — 0.5 lands on the nominal length.
+    fn length_to_sections(&self) -> usize {
+        let t = self.length.as_f32().clamp(0.0, 1.0);
+        let span = (N_MAX_SECTIONS - N_MIN_SECTIONS) as f32;
+        (N_MIN_SECTIONS as f32 + span * t).round() as usize
+    }
+
+    /// Apply the current `length` to the waveguide: set the active section count
+    /// (the tract length, which scales all formants) and keep the velar tap at
+    /// the soft palate. Cheap and real-time safe — no allocation.
+    fn apply_length(&mut self) {
+        let sections = self.length_to_sections();
+        self.tract.set_active_len(sections);
+        let velum = (sections as f32 * VELUM_FRAC).round() as usize;
+        self.tract.set_velum_index(velum);
     }
 
     /// Attach the nasal cavity and give it a fixed tapered area profile. The
@@ -198,7 +230,7 @@ impl VocalTract {
         let constriction = self.constriction.as_f32();
         // Lip aperture: 1 = spread (no narrowing), 0 = fully rounded.
         let lip_scale = LIP_ROUND + (1.0 - LIP_ROUND) * self.current_lips;
-        let n = self.tract.sections();
+        let n = self.tract.active_len();
         for i in 0..n {
             let x = i as f32 / (n - 1) as f32;
 
@@ -263,6 +295,20 @@ impl Describable for VocalTract {
                     "Lips",
                 )
                 .description("Lip aperture (0 = rounded /o u/, 1 = spread /i e/)")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "length",
+                    Param::VocalTract(VocalTractParam::Length(NormalizedValue::new(0.5))),
+                    "Length",
+                )
+                .description(
+                    "Tract length / voice type (0 = short → soprano/child, \
+                     0.5 = neutral, 1 = long → bass). Scales all formants.",
+                )
                 .range(0.0, 1.0)
                 .default(0.5)
                 .widget(WidgetHint::Knob),
@@ -355,6 +401,9 @@ impl PolyModule for VocalTract {
         if !nasality_cv_connected {
             self.current_nasality = self.nasality.as_f32();
         }
+        // Tract length is a structural per-voice control (no CV): apply it once
+        // per block before rebuilding the area profile over the active length.
+        self.apply_length();
         self.rebuild_profile();
         self.tract.set_velum(self.current_nasality);
 
@@ -444,6 +493,7 @@ impl PolyModule for VocalTract {
                     self.lips = v;
                     self.current_lips = v.as_f32();
                 }
+                VocalTractParam::Length(v) => self.length = v,
                 VocalTractParam::Nasality(v) => {
                     self.nasality = v;
                     self.current_nasality = v.as_f32();
@@ -460,6 +510,7 @@ impl PolyModule for VocalTract {
                 VocalTractParam::Tongue(_) => self.tongue.as_f32(),
                 VocalTractParam::Constriction(_) => self.constriction.as_f32(),
                 VocalTractParam::Lips(_) => self.lips.as_f32(),
+                VocalTractParam::Length(_) => self.length.as_f32(),
                 VocalTractParam::Nasality(_) => self.nasality.as_f32(),
                 VocalTractParam::Breathiness(_) => self.breathiness.as_f32(),
                 VocalTractParam::Level(_) => self.level.as_f32(),
@@ -474,6 +525,7 @@ impl PolyModule for VocalTract {
             Param::VocalTract(VocalTractParam::Tongue(self.tongue)),
             Param::VocalTract(VocalTractParam::Constriction(self.constriction)),
             Param::VocalTract(VocalTractParam::Lips(self.lips)),
+            Param::VocalTract(VocalTractParam::Length(self.length)),
             Param::VocalTract(VocalTractParam::Nasality(self.nasality)),
             Param::VocalTract(VocalTractParam::Breathiness(self.breathiness)),
             Param::VocalTract(VocalTractParam::Level(self.level)),
@@ -634,6 +686,47 @@ mod tests {
             (oral - nasal).abs() > 0.01,
             "Nasality should change output: oral={oral}, nasal={nasal}"
         );
+    }
+
+    #[test]
+    fn test_vocal_tract_length_changes_output_and_active_len() {
+        // A short tract (soprano/child) vs a long one (bass) changes the
+        // formants, and the waveguide's active length reflects the control.
+        let energy = |length: f32| -> f32 {
+            let out = render(
+                |v| {
+                    v.set_param(Param::VocalTract(VocalTractParam::Length(
+                        NormalizedValue::new(length),
+                    )))
+                },
+                4096,
+            );
+            let max = out.iter().fold(0.0_f32, |m, &x| m.max(x.abs()));
+            assert!(
+                max.is_finite() && max <= 1.5,
+                "length output unbounded: {max}"
+            );
+            out.iter().map(|x| x.abs()).sum()
+        };
+        let short = energy(0.0);
+        let long = energy(1.0);
+        assert!(
+            (short - long).abs() > 0.01,
+            "Tract length should change output: short={short}, long={long}"
+        );
+
+        // The mapping: 0 → shortest, 0.5 → nominal, 1 → longest.
+        let active = |length: f32| {
+            let mut v = VocalTract::new();
+            v.set_param(Param::VocalTract(VocalTractParam::Length(
+                NormalizedValue::new(length),
+            )));
+            v.apply_length();
+            v.tract.active_len()
+        };
+        assert_eq!(active(0.0), N_MIN_SECTIONS);
+        assert_eq!(active(0.5), N_NOMINAL_SECTIONS);
+        assert_eq!(active(1.0), N_MAX_SECTIONS);
     }
 
     #[test]

@@ -32,7 +32,10 @@ fn flush(x: f32) -> f32 {
 /// magnitude < 1 and `damping` < 1, so the ladder is unconditionally stable.
 #[derive(Clone, Debug)]
 pub struct KellyLochbaumTract {
+    /// Allocated capacity (maximum section count).
     n: usize,
+    /// Currently active section count (≤ `n`) — the runtime tract length.
+    active: usize,
     right: Vec<f32>,
     left: Vec<f32>,
     new_right: Vec<f32>,
@@ -70,6 +73,7 @@ impl KellyLochbaumTract {
         let n = n.max(2);
         let mut t = Self {
             n,
+            active: n,
             right: vec![0.0; n],
             left: vec![0.0; n],
             new_right: vec![0.0; n],
@@ -94,16 +98,47 @@ impl KellyLochbaumTract {
         t
     }
 
-    /// Number of sections.
+    /// Allocated section capacity (the maximum tract length).
     #[must_use]
     pub fn sections(&self) -> usize {
         self.n
+    }
+
+    /// Currently active section count (≤ [`Self::sections`]) — the runtime
+    /// tract length. The waveguide only propagates through this many sections,
+    /// so the formants scale with `1 / active_len`.
+    #[must_use]
+    pub fn active_len(&self) -> usize {
+        self.active
+    }
+
+    /// Set the active section count (the tract length), clamped to
+    /// `[2, sections()]`. Cheap and real-time safe — no allocation. Fewer
+    /// sections = a shorter tract = higher formants (soprano/child); more =
+    /// lower (bass). Sections beyond the active length are left inert; a length
+    /// change does not clear the wave state, so it is meant as a structural
+    /// per-voice control rather than a smooth per-sample modulation.
+    pub fn set_active_len(&mut self, len: usize) {
+        self.active = len.clamp(2, self.n);
+        if self.nose_len >= 2 {
+            self.velum_index = self.velum_index.clamp(1, self.active - 1);
+        }
+    }
+
+    /// Move the velar tap to main-tract junction `idx`, clamped to a valid
+    /// interior junction of the active tract. Cheap; real-time safe. No-op when
+    /// no nasal branch is attached.
+    pub fn set_velum_index(&mut self, idx: usize) {
+        if self.nose_len >= 2 {
+            self.velum_index = idx.clamp(1, self.active - 1);
+        }
     }
 
     /// Resize to `n` sections (uniform tube) — allocates; not real-time safe.
     pub fn resize(&mut self, n: usize) {
         let n = n.max(2);
         self.n = n;
+        self.active = n;
         self.right = vec![0.0; n];
         self.left = vec![0.0; n];
         self.new_right = vec![0.0; n];
@@ -159,7 +194,7 @@ impl KellyLochbaumTract {
         self.nose_new_left = vec![0.0; nose_len];
         self.nose_k = vec![0.0; nose_len];
         self.nose_area = vec![1.0; nose_len];
-        self.velum_index = velum_index.clamp(1, self.n - 1);
+        self.velum_index = velum_index.clamp(1, self.active - 1);
         self.update_nose_reflections();
     }
 
@@ -192,9 +227,10 @@ impl KellyLochbaumTract {
         }
     }
 
-    /// Recompute junction reflection coefficients from the area profile.
+    /// Recompute junction reflection coefficients from the area profile (over
+    /// the active sections).
     pub fn update_reflections(&mut self) {
-        for i in 1..self.n {
+        for i in 1..self.active {
             let a0 = self.area[i - 1];
             let a1 = self.area[i];
             self.k[i] = (a0 - a1) / (a0 + a1).max(MIN_AREA);
@@ -231,7 +267,7 @@ impl KellyLochbaumTract {
     /// Oral-only step: a single Kelly–Lochbaum ladder, glottis → lips.
     #[inline]
     fn step_oral(&mut self, glottal_input: f32) -> f32 {
-        let n = self.n;
+        let n = self.active;
 
         // Terminations: glottis reflects + injects the source; lips reflect.
         self.new_right[0] = self.left[0] * self.glottal_reflection + glottal_input;
@@ -266,7 +302,7 @@ impl KellyLochbaumTract {
     /// output sums the lip and nostril radiation.
     #[inline]
     fn step_with_nose(&mut self, glottal_input: f32) -> f32 {
-        let n = self.n;
+        let n = self.active;
         let m = self.nose_len;
         let v = self.velum_index;
 
@@ -554,6 +590,54 @@ mod tests {
                 "nasal tract unstable (constricted) at velum={opening}: max={max}"
             );
         }
+    }
+
+    /// The active-length setter clamps to `[2, capacity]` and a fresh tract is
+    /// fully active.
+    #[test]
+    fn active_len_clamps_to_capacity() {
+        let mut t = KellyLochbaumTract::new(54);
+        assert_eq!(t.active_len(), 54);
+        assert_eq!(t.sections(), 54);
+        t.set_active_len(1);
+        assert_eq!(t.active_len(), 2);
+        t.set_active_len(1000);
+        assert_eq!(t.active_len(), 54);
+        t.set_active_len(40);
+        assert_eq!(t.active_len(), 40);
+    }
+
+    /// A shorter active tract resonates higher: counting output sign changes of
+    /// a single impulse's ring-out, the short tract crosses zero more often than
+    /// the long one. Both stay bounded. This is the formant-scaling behaviour the
+    /// tract-length control relies on.
+    #[test]
+    fn shorter_tract_resonates_higher() {
+        let crossings = |len: usize| {
+            let mut t = KellyLochbaumTract::new(54);
+            t.set_active_len(len);
+            t.step(1.0); // single impulse
+            let mut prev = t.step(0.0);
+            let mut count = 0u32;
+            let mut max = 0.0_f32;
+            for _ in 0..4_000 {
+                t.step(0.0);
+                let out = t.step(0.0);
+                if (out > 0.0) != (prev > 0.0) {
+                    count += 1;
+                }
+                prev = out;
+                max = max.max(out.abs());
+            }
+            assert!(max.is_finite() && max < 50.0, "tract unstable at len={len}");
+            count
+        };
+        let short = crossings(30);
+        let long = crossings(54);
+        assert!(
+            short > long,
+            "shorter tract should resonate higher: short={short}, long={long}"
+        );
     }
 
     #[test]
