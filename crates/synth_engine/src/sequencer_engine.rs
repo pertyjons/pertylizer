@@ -180,6 +180,12 @@ pub struct SequencerEngine {
     play_state: PlayState,
     /// Current position in the song (integer ticks).
     current_tick: Tick,
+    /// Cursor: the play-start / return position. `play()` from a stopped
+    /// transport starts here, and `stop()` returns the playhead here (rather
+    /// than always to 0). Set by `set_cursor` (driven by ruler clicks /
+    /// `EngineCommand::Seek`). A second `stop()` once the playhead already
+    /// rests on the cursor rewinds the cursor and playhead to the song start.
+    cursor_tick: Tick,
     /// Sub-tick accumulator for sample-accurate timing.
     tick_accumulator: f64,
     /// Current sample rate.
@@ -234,6 +240,7 @@ impl SequencerEngine {
             song: Arc::new(RwLock::new(Song::default())),
             play_state: PlayState::Stopped,
             current_tick: Tick::ZERO,
+            cursor_tick: Tick::ZERO,
             tick_accumulator: 0.0,
             sample_rate,
             active_notes: Vec::with_capacity(64),
@@ -264,6 +271,7 @@ impl SequencerEngine {
             song,
             play_state: PlayState::Stopped,
             current_tick: Tick::ZERO,
+            cursor_tick: Tick::ZERO,
             tick_accumulator: 0.0,
             sample_rate,
             active_notes: Vec::with_capacity(64),
@@ -333,10 +341,22 @@ impl SequencerEngine {
         self.current_tick
     }
 
-    /// Start playback.
+    /// Get the cursor (play-start / return) position.
+    pub fn cursor_tick(&self) -> Tick {
+        self.cursor_tick
+    }
+
+    /// Set the cursor (play-start / return) position. This is where `play()`
+    /// starts from when stopped and where `stop()` returns the playhead.
+    pub fn set_cursor(&mut self, tick: Tick) {
+        self.cursor_tick = tick;
+    }
+
+    /// Start playback. From a stopped transport, playback begins at the cursor
+    /// (the marked start position); from a paused transport it resumes in place.
     pub fn play(&mut self) {
         if self.play_state == PlayState::Stopped {
-            self.current_tick = Tick::ZERO;
+            self.current_tick = self.cursor_tick;
             self.tick_accumulator = 0.0;
             self.roll_nonce = 0;
         }
@@ -349,10 +369,21 @@ impl SequencerEngine {
         self.play_state = PlayState::Paused;
     }
 
-    /// Stop playback and return to beginning.
+    /// Stop playback and return the playhead to the cursor. Pressing stop a
+    /// second time once the playhead already rests on the cursor rewinds both
+    /// the cursor and the playhead to the song start.
     pub fn stop(&mut self) -> Vec<SequencerEvent> {
+        let was_stopped = self.play_state == PlayState::Stopped;
+        let at_cursor = self.current_tick == self.cursor_tick;
         self.play_state = PlayState::Stopped;
-        self.current_tick = Tick::ZERO;
+        if was_stopped && at_cursor {
+            // Second stop at the cursor → rewind to the song start.
+            self.cursor_tick = Tick::ZERO;
+            self.current_tick = Tick::ZERO;
+        } else {
+            // Return the playhead to the marked start position.
+            self.current_tick = self.cursor_tick;
+        }
         self.tick_accumulator = 0.0;
         self.roll_nonce = 0;
 
@@ -480,7 +511,7 @@ impl SequencerEngine {
                 self.last_automation_values.clear();
                 self.track_auto.clear();
                 self.play_state = PlayState::Stopped;
-                self.current_tick = Tick::ZERO;
+                self.current_tick = self.cursor_tick;
                 self.tick_accumulator = 0.0;
                 self.roll_nonce = 0;
                 break;
@@ -821,6 +852,12 @@ impl SequencerEngine {
     /// Set a new song.
     pub fn set_song(&mut self, song: Arc<RwLock<Song>>) {
         let _ = self.stop();
+        // A new song is unrelated to the old one's timeline: reset both the
+        // playhead and the cursor (play-start / return position) to the start so
+        // Play does not resume at a stale position carried over from the
+        // previous song (e.g. when the swap happens mid-playback).
+        self.current_tick = Tick::ZERO;
+        self.cursor_tick = Tick::ZERO;
         self.song = song;
         self.update_cached_state();
     }
@@ -1040,6 +1077,47 @@ mod tests {
         seq.seek(target);
 
         assert_eq!(seq.current_tick(), target);
+    }
+
+    #[test]
+    fn test_cursor_play_stop_semantics() {
+        let song = Arc::new(RwLock::new(create_test_song()));
+        let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
+
+        // Mark a cursor, then play: playback starts at the cursor, not 0.
+        let cursor = Tick(1920);
+        seq.set_cursor(cursor);
+        seq.play();
+        assert_eq!(seq.current_tick(), cursor, "play starts at the cursor");
+
+        // Advance, then pause: the playhead holds where it is.
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(5000), &mut events);
+        let paused_at = seq.current_tick();
+        assert!(paused_at > cursor, "playhead advanced past the cursor");
+        seq.pause();
+        assert_eq!(seq.current_tick(), paused_at, "pause holds position");
+
+        // Resume from a pause continues in place (not from the cursor).
+        seq.play();
+        assert_eq!(seq.current_tick(), paused_at, "play resumes in place");
+
+        // Stop returns the playhead to the cursor.
+        let _ = seq.stop();
+        assert_eq!(seq.current_tick(), cursor, "stop returns to the cursor");
+
+        // A second stop at the cursor rewinds cursor and playhead to the start.
+        let _ = seq.stop();
+        assert_eq!(
+            seq.current_tick(),
+            Tick::ZERO,
+            "second stop rewinds to start"
+        );
+        assert_eq!(
+            seq.cursor_tick(),
+            Tick::ZERO,
+            "second stop clears the cursor"
+        );
     }
 
     #[test]

@@ -1102,6 +1102,11 @@ impl SynthEngine {
                     self.clear_preview();
                     self.sequencer.play();
                     self.state.transport.set_playing(true);
+                    // Playback starts at the cursor when coming from a stop;
+                    // surface that position immediately rather than next block.
+                    self.state
+                        .transport
+                        .set_ticks(self.sequencer.current_tick().0);
                 }
             }
             EngineCommand::Stop => {
@@ -1131,7 +1136,12 @@ impl SynthEngine {
                 self.clear_preview();
                 let _ = self.sequencer.stop();
                 self.state.transport.set_playing(false);
-                self.state.transport.set_ticks(0);
+                // Stop returns the playhead to the cursor (or to 0 on a second
+                // press); mirror whatever position the sequencer settled on.
+                self.state
+                    .transport
+                    .set_ticks(self.sequencer.current_tick().0);
+                self.sync_cursor_to_transport();
 
                 // Release all voices on all instruments and revert any
                 // automation overrides to their base values.
@@ -1146,11 +1156,18 @@ impl SynthEngine {
             }
             EngineCommand::Rewind => {
                 let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
+                self.sequencer.set_cursor(synth_sequencer::Tick::ZERO);
                 self.state.transport.set_ticks(0);
+                self.sync_cursor_to_transport();
             }
             EngineCommand::Seek { tick } => {
+                // A seek marks the cursor too: this is the position Play starts
+                // from and Stop returns to. Clicking the ruler is how the user
+                // places the cursor.
                 let _ = self.sequencer.seek(tick);
+                self.sequencer.set_cursor(tick);
                 self.state.transport.set_ticks(tick.0);
+                self.sync_cursor_to_transport();
             }
             EngineCommand::SetLoop {
                 start,
@@ -1212,7 +1229,11 @@ impl SynthEngine {
                         // make sure we don't leave a stale preview target set.
                         self.clear_preview();
                         self.sequencer.play();
+                        // play() now starts at the cursor; the pre-orphan
+                        // fallback played from the start, so seek to 0.
+                        let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
                         self.state.transport.set_playing(true);
+                        self.state.transport.set_ticks(0);
                     }
                 }
             }
@@ -1237,9 +1258,13 @@ impl SynthEngine {
                     self.state.transport.set_playing(true);
                     self.state.transport.set_ticks(start.0);
                 } else {
-                    // Fallback: pattern not in arrangement, just play from beginning
+                    // Fallback: pattern not in arrangement, play from the start.
+                    // play() now begins at the cursor, so seek to 0 explicitly to
+                    // honor the "from beginning" intent.
                     self.sequencer.play();
+                    let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
                     self.state.transport.set_playing(true);
+                    self.state.transport.set_ticks(0);
                 }
             }
             EngineCommand::SetSoloPattern(pattern) => {
@@ -1858,6 +1883,16 @@ impl SynthEngine {
             self.sequencer.loop_end(),
             self.sequencer.is_looping(),
         );
+    }
+
+    /// Mirror the sequencer's cursor (play-start / return) position into the
+    /// shared transport state. The GUI does not render a separate cursor marker
+    /// (see `TransportState::cursor_ticks`); this keeps the shared mirror in
+    /// step with the engine for diagnostics / potential future use.
+    fn sync_cursor_to_transport(&self) {
+        self.state
+            .transport
+            .set_cursor_ticks(self.sequencer.cursor_tick().0);
     }
 
     // ========================================================================
@@ -4351,6 +4386,13 @@ mod tests {
                 song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
             });
         }
+        // Deterministic oscillator start phase. note_on randomizes the unison
+        // phase via fastrand (unison_phase_random defaults to MAX), so without a
+        // fixed seed the baseline and with-send passes start at different phases
+        // and the rendered energy ratio occasionally dips below the assert
+        // threshold — a flaky failure unrelated to send routing. Seeding right
+        // before note_on makes both passes render the identical dry signal.
+        fastrand::seed(0x5EED);
         handle.note_on(MidiNote::C4, Velocity::new(0.8));
         engine.process_commands();
 

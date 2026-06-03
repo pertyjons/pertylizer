@@ -207,6 +207,10 @@ pub struct SequencerViewState {
     auto_follow_playhead: bool,
     /// Last scroll offset set by auto-follow (to detect manual scrolling).
     last_auto_scroll_offset: Option<f32>,
+    /// Frames left to keep repainting after a transport jump / seek / stop while
+    /// stopped, so the timeline catches the engine's async playhead update and
+    /// can scroll the marker back into view (off-screen follow).
+    follow_settle_frames: u8,
     /// Recording quantize grid in ticks (0=off, 960=1/4, 480=1/8, 240=1/16, 120=1/32).
     pub record_quantize: u32,
     /// Overdub mode: true = layer on existing notes, false = replace.
@@ -280,6 +284,7 @@ impl SequencerViewState {
             zoom_level: 1.0,
             auto_follow_playhead: true,
             last_auto_scroll_offset: None,
+            follow_settle_frames: 0,
             record_quantize: 0,
             overdub: true,
             recording_preview_completed: Vec::new(),
@@ -398,6 +403,10 @@ const RESIZE_GHOST_STROKE: Color32 = Color32::from_rgb(255, 200, 120);
 const DRAG_GHOST_FILL: Color32 = Color32::from_rgba_unmultiplied_const(120, 180, 255, 60);
 /// Stroke for the placement drag ghost.
 const DRAG_GHOST_STROKE: Color32 = Color32::from_rgb(120, 180, 255);
+/// Number of frames to keep repainting after a transport jump / seek / stop
+/// while the transport is stopped, so the off-screen follow picks up the
+/// engine's asynchronous playhead update and scrolls the marker into view.
+const FOLLOW_SETTLE_FRAMES: u8 = 8;
 /// Colour for tempo-change markers on the ruler.
 const TEMPO_MARKER: Color32 = Color32::from_rgb(255, 180, 80);
 /// Fill for the step-entry mode banner.
@@ -549,11 +558,34 @@ fn draw_transport_bar(
     let rec_state = handle.state.transport.recording_state();
     let metro_on = handle.state.transport.is_metronome_on();
 
-    // Read time signature and song name from song (non-blocking)
+    // Read time signature and song name from the song (non-blocking).
     let (time_sig, song_name) = song
         .try_read()
         .map(|s| (s.time_signature_at(current_tick), s.name.clone()))
         .unwrap_or((TimeSignature::COMMON, String::new()));
+
+    // Phrase boundaries are the sorted, de-duplicated start and end ticks of
+    // every placement (plus the song start) — the musical anchors the ◀◀/▶▶
+    // buttons jump between, so navigation follows the music even when the tune
+    // is not aligned to the 4/4 bar grid. They are only needed when those
+    // buttons are actually clicked, so build them lazily here rather than
+    // allocating + sorting on every frame.
+    let phrase_boundaries = || -> Vec<u64> {
+        song.try_read()
+            .map(|s| {
+                let mut boundaries: Vec<u64> = vec![0];
+                for p in s.arrangement().iter() {
+                    boundaries.push(p.start.0);
+                    if let Some(pat) = s.pattern(p.pattern_id) {
+                        boundaries.push(p.end(pat.length).0);
+                    }
+                }
+                boundaries.sort_unstable();
+                boundaries.dedup();
+                boundaries
+            })
+            .unwrap_or_else(|| vec![0])
+    };
 
     let (bar, beat, tick) = current_tick.to_bar_beat_tick(time_sig);
 
@@ -575,36 +607,96 @@ fn draw_transport_bar(
             handle.send(EngineCommand::Seek { tick: Tick::ZERO });
         }
 
-        // Play / Pause toggle
+        // Previous phrase — jump to the previous placement boundary (or, with
+        // Shift, the previous 4/4 bar line). Boundary stepping follows the
+        // music; bar stepping is the rigid grid for aligned songs.
+        let ticks_per_bar = u64::from(time_sig.ticks_per_bar());
+        let shift = ui.input(|i| i.modifiers.shift);
+        if ui
+            .button(RichText::new(ri::REWIND_MINI_FILL).color(t.colors.text_primary))
+            .on_hover_text("Previous phrase (Shift: previous bar)")
+            .clicked()
+        {
+            let prev = if shift && ticks_per_bar > 0 {
+                // On a bar line → a full bar back; otherwise snap to this bar.
+                if current_ticks.is_multiple_of(ticks_per_bar) {
+                    current_ticks.saturating_sub(ticks_per_bar)
+                } else {
+                    (current_ticks / ticks_per_bar) * ticks_per_bar
+                }
+            } else {
+                // Last boundary strictly before the playhead (sorted ascending).
+                phrase_boundaries()
+                    .iter()
+                    .copied()
+                    .rfind(|&b| b < current_ticks)
+                    .unwrap_or(0)
+            };
+            handle.send(EngineCommand::Seek { tick: Tick(prev) });
+            view_state.auto_follow_playhead = true;
+            view_state.follow_settle_frames = FOLLOW_SETTLE_FRAMES;
+        }
+
+        // Play / Pause toggle. Play starts from the cursor (or resumes in
+        // place after a pause); Pause freezes the playhead where it is.
         if is_playing {
             if ui
                 .button(RichText::new(ri::PAUSE_FILL).color(t.colors.accent_yellow))
-                .on_hover_text("Pause")
+                .on_hover_text("Pause — hold position (Play resumes here)")
                 .clicked()
             {
                 handle.send(EngineCommand::Pause);
             }
         } else if ui
             .button(RichText::new(ri::PLAY_FILL).color(t.colors.accent_green))
-            .on_hover_text("Play")
+            .on_hover_text("Play — from the cursor")
             .clicked()
         {
             handle.send(EngineCommand::Play);
             view_state.auto_follow_playhead = true;
         }
 
-        // Stop (rewinds to beginning)
+        // Next phrase — jump to the next placement boundary (or, with Shift,
+        // the next 4/4 bar line).
         if ui
-            .button(RichText::new(ri::STOP_FILL).color(if is_playing {
-                t.colors.accent_red
+            .button(RichText::new(ri::SPEED_MINI_FILL).color(t.colors.text_primary))
+            .on_hover_text("Next phrase (Shift: next bar)")
+            .clicked()
+        {
+            let next = if shift && ticks_per_bar > 0 {
+                (current_ticks / ticks_per_bar + 1) * ticks_per_bar
             } else {
-                t.colors.text_dim
-            }))
-            .on_hover_text("Stop")
+                // First boundary strictly after the playhead; stay put if none.
+                phrase_boundaries()
+                    .iter()
+                    .copied()
+                    .find(|&b| b > current_ticks)
+                    .unwrap_or(current_ticks)
+            };
+            handle.send(EngineCommand::Seek { tick: Tick(next) });
+            view_state.auto_follow_playhead = true;
+            view_state.follow_settle_frames = FOLLOW_SETTLE_FRAMES;
+        }
+
+        // Stop returns the playhead to the cursor; a second press once it is
+        // already at the cursor rewinds to the start. Disabled only when
+        // stopped at the very beginning (nothing to return to or rewind).
+        let stop_enabled = is_playing || current_ticks > 0;
+        if ui
+            .add_enabled(
+                stop_enabled,
+                egui::Button::new(RichText::new(ri::STOP_FILL).color(if is_playing {
+                    t.colors.accent_red
+                } else {
+                    t.colors.text_primary
+                })),
+            )
+            .on_hover_text("Stop — return to cursor (again: to start)")
             .clicked()
         {
             handle.send(EngineCommand::Stop);
             view_state.auto_follow_playhead = true;
+            view_state.follow_settle_frames = FOLLOW_SETTLE_FRAMES;
         }
 
         // Record button
@@ -1694,19 +1786,36 @@ fn draw_arrangement(
     // ── Timeline area (right side, uses painter for performance) ──
     // The scroll area's actual ID = ui.make_persistent_id(Id::new(salt))
 
-    // Pre-set scroll offset for auto-follow before showing the scroll area
-    if is_playing && view_state.auto_follow_playhead && ticks_per_beat > 0 {
-        let playhead_beats = current_tick as f32 / ticks_per_beat as f32;
-        let playhead_x_offset = playhead_beats * pixels_per_beat;
+    // Pre-set scroll offset for auto-follow before showing the scroll area.
+    // While playing we continuously keep the playhead ~30% from the right edge.
+    // While stopped we only scroll when the playhead has landed outside the
+    // visible viewport (after a ◀◀/▶▶ jump, a ruler seek, or stop-to-cursor),
+    // bringing the marker back into view without fighting manual scrolling.
+    if view_state.auto_follow_playhead && ticks_per_beat > 0 {
+        let playhead_x_offset = current_tick as f32 / ticks_per_beat as f32 * pixels_per_beat;
         let visible_width = ui.available_width();
-        // Keep playhead at ~30% from the right edge
-        let target_offset = (playhead_x_offset - visible_width * 0.7).max(0.0);
-        // Write scroll state directly
         let mut scroll_state =
             egui::scroll_area::State::load(ui.ctx(), scroll_id).unwrap_or_default();
-        scroll_state.offset.x = target_offset;
-        scroll_state.store(ui.ctx(), scroll_id);
-        view_state.last_auto_scroll_offset = Some(target_offset);
+        let current_offset = scroll_state.offset.x;
+
+        let target_offset = if is_playing {
+            // Continuous follow: keep the playhead ~30% from the right edge.
+            Some((playhead_x_offset - visible_width * 0.7).max(0.0))
+        } else {
+            // Stopped: act only when the marker is off-screen, then re-center it
+            // ~30% from the left so the music ahead of it stays visible. A small
+            // slack keeps it from hugging the edge.
+            let margin = pixels_per_beat;
+            let off_screen = playhead_x_offset < current_offset + margin
+                || playhead_x_offset > current_offset + visible_width - margin;
+            off_screen.then(|| (playhead_x_offset - visible_width * 0.3).max(0.0))
+        };
+
+        if let Some(target_offset) = target_offset {
+            scroll_state.offset.x = target_offset;
+            scroll_state.store(ui.ctx(), scroll_id);
+            view_state.last_auto_scroll_offset = Some(target_offset);
+        }
     }
 
     let scroll_output = egui::ScrollArea::both()
@@ -2025,6 +2134,7 @@ fn draw_arrangement(
                     });
                     // Re-enable auto-follow on ruler click
                     view_state.auto_follow_playhead = true;
+                    view_state.follow_settle_frames = FOLLOW_SETTLE_FRAMES;
                 } else {
                     view_state.highlighted_track = None;
                 }
@@ -2654,10 +2764,15 @@ fn draw_arrangement(
             }
 
             // ── Playhead ──
+            // The play-start / return position (the "cursor") is tracked by the
+            // engine and drives Play / Stop, but it is intentionally not drawn
+            // as a separate marker: while paused it sits behind the playhead and
+            // reads as a misaligned "ghost". Stop simply snaps the playhead back
+            // to it, the standard DAW behavior.
+            let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
             if current_tick > 0 || data.song_end_tick > 0 {
                 let playhead_x = tick_to_x(current_tick);
                 let line_top = tl_y;
-                let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
 
                 painter.line_segment(
                     [
@@ -6521,8 +6636,14 @@ pub(crate) fn draw_sequencer_view(
         .show_inside(ui, |ui| draw_transport_bar(ui, handle, song, view_state))
         .inner;
 
-    // Request repaint during playback for smooth position updates
+    // Request repaint during playback for smooth position updates. While
+    // stopped, keep repainting for a few frames after a transport jump / seek /
+    // stop so the timeline catches the engine's async playhead update and the
+    // off-screen follow can scroll the marker into view.
     if is_playing {
+        ctx.request_repaint();
+    } else if view_state.follow_settle_frames > 0 {
+        view_state.follow_settle_frames -= 1;
         ctx.request_repaint();
     }
 

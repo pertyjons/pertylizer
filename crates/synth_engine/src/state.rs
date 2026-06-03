@@ -277,6 +277,13 @@ pub struct TransportState {
     pub position_samples: AtomicU64,
     /// Current position in sequencer ticks.
     pub position_ticks: AtomicU64,
+    /// Cursor (play-start / return) position in sequencer ticks. Mirrors
+    /// `SequencerEngine.cursor_tick`: the position Play starts from and Stop
+    /// returns the playhead to. The GUI intentionally does NOT draw this as a
+    /// separate marker (a paused cursor sitting behind the playhead reads as a
+    /// misaligned "ghost"); this mirror is currently unused and kept only for
+    /// potential external/diagnostic inspection of the play-start position.
+    pub cursor_ticks: AtomicU64,
     /// Is playing.
     pub is_playing: std::sync::atomic::AtomicBool,
     /// Recording state: 0=off, 1=armed, 2=count_in, 3=capturing.
@@ -305,6 +312,7 @@ impl TransportState {
             position_beats: AtomicF64::new(0.0),
             position_samples: AtomicU64::new(0),
             position_ticks: AtomicU64::new(0),
+            cursor_ticks: AtomicU64::new(0),
             is_playing: std::sync::atomic::AtomicBool::new(false),
             recording: StdAtomicU32::new(0),
             metronome: StdAtomicU32::new(0),
@@ -364,10 +372,21 @@ impl TransportState {
         self.position_ticks.load(Ordering::Relaxed)
     }
 
+    /// Set the cursor (play-start / return) position in ticks.
+    pub fn set_cursor_ticks(&self, ticks: u64) {
+        self.cursor_ticks.store(ticks, Ordering::Relaxed);
+    }
+
+    /// Get the cursor (play-start / return) position in ticks.
+    pub fn get_cursor_ticks(&self) -> u64 {
+        self.cursor_ticks.load(Ordering::Relaxed)
+    }
+
     pub fn reset(&self) {
         self.position_samples.store(0, Ordering::Relaxed);
         self.position_beats.store(0.0);
         self.position_ticks.store(0, Ordering::Relaxed);
+        self.cursor_ticks.store(0, Ordering::Relaxed);
     }
 
     /// Get the recording state.
