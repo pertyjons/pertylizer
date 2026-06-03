@@ -30,9 +30,19 @@ git commit -m "<short description of changes>"
 
 ### `new version`
 
-1. Update `docs/history.md` with new version number and changes
-2. Review `docs/TODO.md` and mark completed tasks
-3. Update version number in `Cargo.toml`
+1. **HARD REQUIREMENT — document every change since the last version.**
+   `docs/history.md` MUST contain an entry covering **every commit made since the
+   previous version's entry**. No commit may be left undocumented. The boundary is
+   the most recent release commit, **not** a git tag (versions are tagged only at
+   actual releases, so tags lag behind `docs/history.md`). Enumerate the commits
+   with `git log "$(git log --grep='^Release v' --format=%H -n 1)"..HEAD --oneline`
+   and fold each into the new entry. Cutting a version without doing this is not
+   allowed.
+2. Add the new version entry to `docs/history.md` (newest on top,
+   `## [x.y.z] - YYYY-MM-DD`).
+3. Review `plans/TODO.md` and mark completed tasks.
+4. Update the version number in `crates/pertylizer/Cargo.toml`, then run
+   `cargo build` so `Cargo.lock` is synced.
 
 ### `docs/history.md` style
 
