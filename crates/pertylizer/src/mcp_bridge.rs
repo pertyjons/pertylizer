@@ -345,6 +345,28 @@ impl AppSynthBridge {
     }
 }
 
+/// Whether a module type can originate audio on its own — the test behind the
+/// "instrument will be silent" graph diagnostic.
+///
+/// Driven by `ModuleCategory` rather than a hand-maintained list, so every
+/// `Oscillator`-category generator (including the `VoiceSynth` and `VocalTract`
+/// voices, `AmFormant`, `PadSynth`, …) and every `Sampler`-category source
+/// (`Sampler`, `AudioInput`) counts automatically. `MechanicalNoise` is added
+/// explicitly: it is a real generator but sits in the `PhysicalModeling`
+/// category next to input-fed resonators (`BodyResonance`), so the category
+/// alone wouldn't capture it.
+fn is_sound_source(module_type: synth_core::ModuleType) -> bool {
+    if module_type == synth_core::ModuleType::MechanicalNoise {
+        return true;
+    }
+    crate::module_factory::get_descriptor(module_type).is_some_and(|desc| {
+        matches!(
+            desc.category,
+            synth_core::ModuleCategory::Oscillator | synth_core::ModuleCategory::Sampler
+        )
+    })
+}
+
 impl SynthBridge for AppSynthBridge {
     fn list_instruments(&self) -> Result<Vec<InstrumentInfo>, McpBridgeError> {
         let snapshots = self.session.list_instruments();
@@ -593,21 +615,7 @@ impl SynthBridge for AppSynthBridge {
         }
 
         // Check for essential module types
-        let has_sound_source = modules.iter().any(|m| {
-            matches!(
-                m.id.module_type,
-                synth_core::ModuleType::Oscillator
-                    | synth_core::ModuleType::MathOscillator
-                    | synth_core::ModuleType::SubOscillator
-                    | synth_core::ModuleType::Noise
-                    | synth_core::ModuleType::WavetableOsc
-                    | synth_core::ModuleType::AdditiveOsc
-                    | synth_core::ModuleType::GranularOsc
-                    | synth_core::ModuleType::FractalOsc
-                    | synth_core::ModuleType::LaSynth
-                    | synth_core::ModuleType::Sampler
-            )
-        });
+        let has_sound_source = modules.iter().any(|m| is_sound_source(m.id.module_type));
         let has_output = modules
             .iter()
             .any(|m| m.id.module_type == synth_core::ModuleType::StereoOutput);
@@ -619,7 +627,7 @@ impl SynthBridge for AppSynthBridge {
             diagnostics.push(GraphDiagnostic {
                 severity: DiagnosticSeverity::Error,
                 module_id: None,
-                message: "No sound source (oscillator/noise/granular) — instrument will be silent"
+                message: "No sound source (oscillator / sampler / voice generator) — instrument will be silent"
                     .to_string(),
             });
         }
@@ -11322,6 +11330,39 @@ mod mod_matrix_routing_tests {
             mt,
             format!("{}-{}", mt.prefix(), instance),
         )
+    }
+
+    /// The "instrument will be silent" diagnostic must recognise every audio
+    /// generator as a sound source — including the voice modules (regression:
+    /// the old hand-maintained whitelist omitted VoiceSynth / VocalTract and so
+    /// flagged every voice patch as silent).
+    #[test]
+    fn is_sound_source_covers_generators_and_voices() {
+        for mt in [
+            ModuleType::Oscillator,
+            ModuleType::Noise,
+            ModuleType::GranularOsc,
+            ModuleType::Sampler,
+            ModuleType::AmFormant,
+            ModuleType::VoiceSynth,
+            ModuleType::VocalTract,
+            ModuleType::MechanicalNoise,
+        ] {
+            assert!(is_sound_source(mt), "{mt:?} should count as a sound source");
+        }
+        for mt in [
+            ModuleType::Lfo,
+            ModuleType::Filter,
+            ModuleType::Envelope,
+            ModuleType::Amplifier,
+            ModuleType::StereoOutput,
+            ModuleType::Reverb,
+        ] {
+            assert!(
+                !is_sound_source(mt),
+                "{mt:?} should not count as a sound source"
+            );
+        }
     }
 
     fn matrix_snapshot(matrix_instance: u16, params: Vec<Param>) -> ModuleStateSnapshot {
