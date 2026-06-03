@@ -21,7 +21,10 @@ the host envelope shapes the overall amplitude.
 
 VOICE TYPE:
 - Formant Shift sets vocal-tract length: <0.5 = bass/baritone (darker),
-  >0.5 = alto/soprano (brighter). Default 0.5 is a neutral tenor.
+  >0.5 = alto/soprano (brighter). Default 0.5 is a neutral tenor. For
+  dedicated, physically-modelled SATB voices, see the SATB Soprano/Alto/
+  Tenor/Bass presets (the articulatory Vocal Tract engine + its Length
+  control).
 
 TRY: sweep Vowel for a "talking" line; raise Breathiness for a whispery
 tone; lower Open Quotient for a pressed, belted character.

@@ -44,6 +44,10 @@ mod punchy_stab;
 mod pwm_epiano;
 mod resonant_percussion;
 mod ring_mod_drone;
+mod satb_alto;
+mod satb_bass;
+mod satb_soprano;
+mod satb_tenor;
 mod screamer_lead;
 mod shepard_riser;
 mod solo_voice;
@@ -108,6 +112,10 @@ pub use punchy_stab::patch_punchy_stab;
 pub use pwm_epiano::patch_pwm_epiano;
 pub use resonant_percussion::patch_resonant_percussion;
 pub use ring_mod_drone::patch_ring_mod_drone;
+pub use satb_alto::patch_satb_alto;
+pub use satb_bass::patch_satb_bass;
+pub use satb_soprano::patch_satb_soprano;
+pub use satb_tenor::patch_satb_tenor;
 pub use screamer_lead::patch_screamer_lead;
 pub use shepard_riser::patch_shepard_riser;
 pub use solo_voice::patch_solo_voice;
@@ -239,7 +247,15 @@ pub fn categorized_patches() -> Vec<(String, Vec<Patch>)> {
         ),
         (
             format!("{} Vocal & Choir", ri::USER_VOICE_FILL),
-            vec![patch_solo_voice(), patch_choir(), patch_vocal_tract()],
+            vec![
+                patch_solo_voice(),
+                patch_choir(),
+                patch_vocal_tract(),
+                patch_satb_soprano(),
+                patch_satb_alto(),
+                patch_satb_tenor(),
+                patch_satb_bass(),
+            ],
         ),
         (
             format!("{} Ambient & Texture", ri::MIST_FILL),

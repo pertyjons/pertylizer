@@ -24,7 +24,8 @@ A slow LFO drifts the vowel for an evolving "aah → ooh" texture.
 VOICE TYPE (SATB):
 Formant Shift sets vocal-tract length — sweep it for the section you want:
 ~0.30 bass, ~0.45 tenor, ~0.60 alto, ~0.75 soprano. Combine with the
-note range you play.
+note range you play. For solo, physically-modelled section voices, see the
+dedicated SATB Soprano/Alto/Tenor/Bass presets (Vocal Tract + Length).
 
 TRY: lower Unison Voices for a small group; raise Unison Detune for a
 more dissonant, massed sound; set Unison Spread to 0 for a mono collapse.

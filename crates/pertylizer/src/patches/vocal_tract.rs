@@ -18,21 +18,25 @@ Vocal Tract (mono out) -> Amplifier (env on cv) -> Reverb -> Output
 LFO -> Vocal Tract tongue_cv (slow vowel morph / "talking" motion)
 
 Unlike the source–filter Voice Synth, the Vocal Tract derives its
-formants from the *physics* of a 44-section tube: a glottal pulse is
-scattered down the tract and radiated at the lips. The vowel is the
-tube's shape, set by three articulators:
+formants from the *physics* of the tube: a glottal pulse is scattered
+down the tract and radiated at the lips. The vowel is the tube's shape,
+set by the articulators:
 - Tongue / Constriction: position and tightness of the tongue hump
   (the main vowel control).
 - Lips: aperture/rounding (0 = rounded /o u/, 1 = spread /i e/).
+- Length: the physical tract length / voice type (0.5 = neutral here).
+  Shorter = higher formants (soprano/child), longer = lower (bass) — see
+  the SATB Soprano/Alto/Tenor/Bass presets, which are this same patch at
+  different Lengths.
 - Nasality: opens the velum into a nasal cavity for /m n ŋ/ and
   nasalised vowels (0 here — raise it for a nasal colour).
 
 The LFO slowly sweeps the tongue for a vowel-morphing, almost-talking
 character; the host envelope shapes the overall amplitude.
 
-TRY: raise Nasality for a nasal/"blocked nose" tone; lower Lips for
-rounded vowels; increase Constriction for a tighter, more vowel-like
-resonance; play low notes for a darker, chest-like voice.
+TRY: sweep Length for a voice-type morph (child → bass); raise Nasality
+for a nasal/"blocked nose" tone; lower Lips for rounded vowels; increase
+Constriction for a tighter, more vowel-like resonance.
 "#
         .into(),
     );
@@ -51,6 +55,7 @@ resonance; play low notes for a darker, chest-like voice.
             .param_f("tongue", 0.5)
             .param_f("constriction", 0.4)
             .param_f("lips", 0.5)
+            .param_f("length", 0.5)
             .param_f("nasality", 0.0)
             .param_f("breathiness", 0.12)
             .param_f("level", 0.85)

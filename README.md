@@ -43,7 +43,7 @@ exploratory encounter — poke at things, see what happens, and discover how it 
 A quick tour of what's inside — each item is described in more detail in its own section below.
 
 - **Modular synthesis** — 69 module types (including 25 effects), patched freely over a DAG-based audio graph with live
-  cable visualization, plus 63 built-in patches to start from
+  cable visualization, plus 67 built-in patches to start from
 - **Real-time GUI** — an immediate-mode egui interface for building instruments, wiring modules, and tweaking
   parameters while everything keeps playing
 - **MIDI** — hardware MIDI input with velocity, pitch bend, mod wheel, and aftertouch
@@ -91,7 +91,7 @@ up from scratch.
 - **25 effects** — delay, BBD delay, reverb, shimmer reverb, reverse gate reverb, chorus, ensemble chorus, flanger,
   phaser, univibe, distortion, waveshaper, compressor, limiter, EQ, tilt EQ, mid/side, crossover splitter, convolver,
   phase vocoder, vocoder, frequency shifter, granular FX, spectral blur, modal resonator
-- **63 built-in patches** — from acid bass and grand piano to fractal cosmos and spectral freeze pad, plus solo voice, choir and vocal tract
+- **67 built-in patches** — from acid bass and grand piano to fractal cosmos and spectral freeze pad, plus solo voice, choir, vocal tract and the SATB section voices
 
 ### Signature capabilities
 
