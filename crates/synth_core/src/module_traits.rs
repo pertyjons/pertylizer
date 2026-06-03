@@ -1258,6 +1258,7 @@ pub trait VisualizationSink: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn test_input_reader_connected() {
@@ -1335,10 +1336,10 @@ mod tests {
                 max: 1.0,
             })
         );
-        assert!(matches!(
+        assert_matches!(
             pd.validate_f32(-0.1),
             Err(ParamValueError::OutOfRange { .. })
-        ));
+        );
     }
 
     #[test]
@@ -1367,10 +1368,10 @@ mod tests {
         );
         assert_eq!(pd.validate_f32(0.0), Ok(0.0));
         assert_eq!(pd.validate_f32(2.0), Ok(2.0));
-        assert!(matches!(
+        assert_matches!(
             pd.validate_f32(3.0),
             Err(ParamValueError::OutOfRange { .. })
-        ));
+        );
     }
 
     #[test]

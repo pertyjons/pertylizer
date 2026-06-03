@@ -649,6 +649,7 @@ impl Default for UndoManager {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn test_pattern_id() -> PatternId {
         PatternId(1)
@@ -694,7 +695,7 @@ mod tests {
 
         let undone = mgr.undo().unwrap();
         // Undo returns the inverse: RemoveNote (to reverse AddNote).
-        assert!(matches!(undone, UndoAction::RemoveNote { .. }));
+        assert_matches!(undone, UndoAction::RemoveNote { .. });
         assert!(mgr.can_redo());
         assert!(!mgr.can_undo());
     }
@@ -710,7 +711,7 @@ mod tests {
 
         let redone = mgr.redo().unwrap();
         // Redo returns the original action (AddNote) to re-execute.
-        assert!(matches!(redone, UndoAction::AddNote { .. }));
+        assert_matches!(redone, UndoAction::AddNote { .. });
         assert!(mgr.can_undo());
         assert!(!mgr.can_redo());
     }
@@ -840,9 +841,9 @@ mod tests {
         if let UndoAction::Composite(actions) = inv {
             assert_eq!(actions.len(), 2);
             // First in inverse should be inverse of MoveNote (was second).
-            assert!(matches!(actions[0], UndoAction::MoveNote { .. }));
+            assert_matches!(actions[0], UndoAction::MoveNote { .. });
             // Second should be inverse of AddNote (was first) => RemoveNote.
-            assert!(matches!(actions[1], UndoAction::RemoveNote { .. }));
+            assert_matches!(actions[1], UndoAction::RemoveNote { .. });
         } else {
             panic!("Expected Composite inverse");
         }

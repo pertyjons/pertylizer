@@ -11589,6 +11589,7 @@ mod pre_master_peak_tests {
 #[cfg(test)]
 mod automation_target_tests {
     use super::*;
+    use std::assert_matches;
     use synth_engine::ModuleId;
     use synth_sequencer::{AutomationTarget, SeqInstrumentId};
 
@@ -11663,7 +11664,7 @@ mod automation_target_tests {
     fn build_instrument_target_still_works() {
         // Instrument-level params ignore the module set.
         let t = build_automation_target("FilterCutoff", 2, &[]).unwrap();
-        assert!(matches!(t, AutomationTarget::Instrument { .. }));
+        assert_matches!(t, AutomationTarget::Instrument { .. });
     }
 
     #[test]
@@ -11710,6 +11711,7 @@ mod automation_target_tests {
 #[cfg(test)]
 mod mcp_helper_tests {
     use super::*;
+    use std::assert_matches;
     use synth_core::ModuleType;
 
     /// The embedded `.pertyproj` schema that `get_project_schema` ships is valid
@@ -11980,7 +11982,7 @@ mod mcp_helper_tests {
             &pd.name,
         )
         .unwrap_err();
-        assert!(matches!(err, McpBridgeError::InvalidChoice { .. }));
+        assert_matches!(err, McpBridgeError::InvalidChoice { .. });
     }
 
     #[test]
@@ -11999,6 +12001,6 @@ mod mcp_helper_tests {
             &numeric.name,
         )
         .unwrap_err();
-        assert!(matches!(err, McpBridgeError::InvalidChoice { .. }));
+        assert_matches!(err, McpBridgeError::InvalidChoice { .. });
     }
 }

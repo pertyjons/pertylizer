@@ -573,6 +573,7 @@ impl PolyModule for Envelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn test_envelope_creation() {
@@ -614,7 +615,7 @@ mod tests {
         // Base params are never mutated by the override.
         assert!((env.sustain.as_f32() - 0.5).abs() < 1e-6);
         assert!((env.attack.as_f32() - 0.2).abs() < 1e-6);
-        assert!(matches!(env.override_attack, Some(a) if (a.as_f32() - 0.01).abs() < 1e-6));
+        assert_matches!(env.override_attack, Some(a) if (a.as_f32() - 0.01).abs() < 1e-6);
 
         // Clearing reverts to the base.
         env.clear_param_overrides();

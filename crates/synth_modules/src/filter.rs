@@ -741,6 +741,7 @@ impl PolyModule for LadderFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn test_filter_creation() {
@@ -794,7 +795,7 @@ mod tests {
             0.9,
         ))));
         assert!((filter.effective_cutoff().as_f32() - 400.0).abs() < 0.5);
-        assert!(matches!(filter.override_resonance, Some(r) if (r.as_f32() - 0.9).abs() < 1e-6));
+        assert_matches!(filter.override_resonance, Some(r) if (r.as_f32() - 0.9).abs() < 1e-6);
 
         // Base params are never mutated by the override.
         assert!((filter.cutoff.as_f32() - 1000.0).abs() < 1e-3);

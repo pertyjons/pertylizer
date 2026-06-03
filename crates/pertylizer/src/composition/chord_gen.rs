@@ -293,6 +293,7 @@ fn drop_index(notes: &mut [i32], idx: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn major_triad_close_at_c4() {
@@ -361,26 +362,26 @@ mod tests {
 
     #[test]
     fn empty_symbol_errors() {
-        assert!(matches!(
+        assert_matches!(
             generate_chord("", 4, ChordVoicing::Close),
             Err(GenerateChordError::EmptySymbol)
-        ));
+        );
     }
 
     #[test]
     fn unknown_quality_errors() {
-        assert!(matches!(
+        assert_matches!(
             generate_chord("Czzz", 4, ChordVoicing::Close),
             Err(GenerateChordError::UnknownQuality { .. })
-        ));
+        );
     }
 
     #[test]
     fn octave_out_of_range_errors() {
-        assert!(matches!(
+        assert_matches!(
             generate_chord("C", 12, ChordVoicing::Close),
             Err(GenerateChordError::OctaveOutOfRange(12))
-        ));
+        );
     }
 
     #[test]

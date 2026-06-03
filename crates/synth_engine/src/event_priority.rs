@@ -282,6 +282,7 @@ impl PrioritizedEventConsumer {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn test_event_priority_ordering() {
@@ -316,13 +317,13 @@ mod tests {
 
         // Should receive in priority order
         let event1 = consumer.poll().unwrap();
-        assert!(matches!(event1.event, EngineEvent::BufferUnderrun));
+        assert_matches!(event1.event, EngineEvent::BufferUnderrun);
 
         let event2 = consumer.poll().unwrap();
-        assert!(matches!(event2.event, EngineEvent::VoiceCount(_)));
+        assert_matches!(event2.event, EngineEvent::VoiceCount(_));
 
         let event3 = consumer.poll().unwrap();
-        assert!(matches!(event3.event, EngineEvent::PeakMeter { .. }));
+        assert_matches!(event3.event, EngineEvent::PeakMeter { .. });
     }
 
     #[test]

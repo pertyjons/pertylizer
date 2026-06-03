@@ -657,6 +657,7 @@ impl PolyModule for Mseg {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
     use synth_core::SampleCount;
 
     fn make_context<'a>(samples: usize) -> ProcessContext<'a> {
@@ -706,7 +707,7 @@ mod tests {
     fn test_mseg_trigger_starts_envelope() {
         let mut mseg = Mseg::new();
         mseg.note_on(MidiNote::new(60), Velocity::MAX);
-        assert!(matches!(mseg.state, MsegState::Running(0)));
+        assert_matches!(mseg.state, MsegState::Running(0));
     }
 
     #[test]

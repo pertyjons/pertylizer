@@ -449,6 +449,7 @@ impl Default for InputMultiplexer {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn test_input_command_categories() {
@@ -486,13 +487,13 @@ mod tests {
         keyboard.key_down(0, None); // C at base octave
         let commands = keyboard.poll();
         assert_eq!(commands.len(), 1);
-        assert!(matches!(commands[0], InputCommand::NoteOn { .. }));
+        assert_matches!(commands[0], InputCommand::NoteOn { .. });
 
         // Key up
         keyboard.key_up(0);
         let commands = keyboard.poll();
         assert_eq!(commands.len(), 1);
-        assert!(matches!(commands[0], InputCommand::NoteOff { .. }));
+        assert_matches!(commands[0], InputCommand::NoteOff { .. });
     }
 
     #[test]

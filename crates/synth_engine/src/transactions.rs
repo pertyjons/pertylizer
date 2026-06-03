@@ -707,6 +707,7 @@ impl EngineCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn test_transaction_id() {
@@ -769,10 +770,7 @@ mod tests {
 
         assert!(!batch.is_empty());
         let commands = batch.commands();
-        assert!(matches!(
-            commands[0].command,
-            EngineCommand::ClearAllModules
-        ));
+        assert_matches!(commands[0].command, EngineCommand::ClearAllModules);
     }
 
     #[test]

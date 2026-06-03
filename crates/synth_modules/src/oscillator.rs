@@ -728,6 +728,7 @@ impl PolyModule for Oscillator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn test_oscillator_param_automatable_allowlist() {
@@ -775,7 +776,7 @@ mod tests {
         osc.set_param_override(Param::Oscillator(OscillatorParam::PulseWidth(
             PulseWidthParam::new(0.25),
         )));
-        assert!(matches!(osc.override_pulse_width, Some(pw) if (pw.as_f32() - 0.25).abs() < 1e-6));
+        assert_matches!(osc.override_pulse_width, Some(pw) if (pw.as_f32() - 0.25).abs() < 1e-6);
 
         // Base params are never mutated by the override.
         assert!(osc.detune.as_f32().abs() < 1e-6);

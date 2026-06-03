@@ -297,6 +297,7 @@ pub enum MidiError {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn test_parse_note_on() {
@@ -446,7 +447,7 @@ mod tests {
         let msg = [0xB0, 123, 0];
         let cmd = parse_midi(&msg).unwrap();
 
-        assert!(matches!(cmd, EngineCommand::AllNotesOff));
+        assert_matches!(cmd, EngineCommand::AllNotesOff);
     }
 
     #[test]
