@@ -1,5 +1,46 @@
 # Version History
 
+## [0.310.0] - 2026-06-03
+
+### Tracker view — read-only, per-pattern (T1)
+
+- **New vertical step/row-based tracker editor**, toggleable against the piano
+  roll inside the Pattern view (`egui_extras::TableBuilder`). Columns: a row/time
+  gutter + one per polyphony voice lane (greedy interval coloring) + one per
+  automation lane showing the per-row value with the interpolated curve drawn
+  behind each cell. Off-grid notes are flagged, the playhead row is highlighted,
+  and the table auto-follows the playhead during playback. Read-only in T1;
+  editing + column management is T2.
+- **Shared pattern-editor toolbar.** Extracted the piano-roll instrument selector,
+  "track plays" badge, and mini-transport (play/pause/stop/record/solo) into one
+  `draw_pattern_instrument_transport` used by both the piano roll and the tracker,
+  so they share the same row without duplicating the recording-arm logic.
+
+### Transport — cursor semantics + off-screen follow
+
+- **Cursor-driven transport.** Play-from-cursor / Stop-returns-to-cursor /
+  double-stop→start, a single playhead marker, and ◀◀/▶▶ phrase-boundary jumps
+  (Shift = one 4/4 bar) with off-screen follow; `set_song` resets the cursor.
+  Removed the now-dead transport `cursor_ticks` mirror.
+
+### Tooling
+
+- **Adopted Rust 1.96.** Converted 23 `assert!(matches!(…))` test assertions to the
+  now-stable `assert_matches!` (better failure output) and bumped the workspace
+  `rust-version` to 1.96.
+
+### Fixes
+
+- **Flaky send-routing test** made deterministic by seeding `fastrand` (landed with
+  the transport-cursor work).
+
+### Planning
+
+- Locked the Note Processors **NP0** architecture decision (Model B; expand in
+  `collect_events_at_tick`; stream rack on `Pattern`, `Ornament` on `Note`), added
+  the **Tracker-view** plan, and synced the **Tier-1** release-gate checkboxes (all
+  five done + merged to main).
+
 ## [0.309.0] - 2026-06-03
 
 ### Voice — SATB tract-length control, singer's formant, shared formant tables
