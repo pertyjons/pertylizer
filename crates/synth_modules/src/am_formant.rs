@@ -17,28 +17,12 @@ use synth_core::{
 };
 use synth_core::{Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
 
-/// Number of formant bands (carrier oscillators).
+use crate::formant_tables::{FORMANT_FREQ, FORMANT_GAIN, NUM_VOWELS};
+
+/// Number of formant bands (carrier oscillators) — F1/F2/F3. AM synthesis uses
+/// no bandwidths, and the shared tables' singer's-formant band is voice-synth
+/// only, so this stays at the three speech formants.
 const NUM_BANDS: usize = 3;
-/// Number of vowels (A, E, I, O, U).
-const NUM_VOWELS: usize = 5;
-
-/// Formant frequencies for each vowel [vowel][band] in Hz.
-const FORMANT_FREQ: [[f32; NUM_BANDS]; NUM_VOWELS] = [
-    [800.0, 1150.0, 2900.0], // A (as in "father")
-    [350.0, 2000.0, 2800.0], // E (as in "bed")
-    [270.0, 2140.0, 3200.0], // I (as in "heed")
-    [450.0, 800.0, 2830.0],  // O (as in "hot")
-    [325.0, 700.0, 2530.0],  // U (as in "boot")
-];
-
-/// Formant amplitude weights per band (higher bands are quieter).
-const FORMANT_GAIN: [[f32; NUM_BANDS]; NUM_VOWELS] = [
-    [1.0, 0.5, 0.25],  // A
-    [1.0, 0.5, 0.2],   // E
-    [1.0, 0.35, 0.15], // I
-    [1.0, 0.35, 0.2],  // O
-    [1.0, 0.3, 0.15],  // U
-];
 
 /// AM Formantic Synthesis voice module.
 ///

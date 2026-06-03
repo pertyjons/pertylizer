@@ -29,10 +29,8 @@ use synth_core::{
 use synth_core::{Cents, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, VoiceSynthParam};
 
-/// Number of formant bands (parallel bandpass resonators).
-const NUM_BANDS: usize = 3;
-/// Number of vowels (A, E, I, O, U).
-const NUM_VOWELS: usize = 5;
+use crate::formant_tables::{FORMANT_BW, FORMANT_FREQ, FORMANT_GAIN, NUM_BANDS, NUM_VOWELS};
+
 /// Maximum number of unison sub-voices (fixed array — no heap in `process()`).
 const MAX_UNISON: usize = 16;
 
@@ -44,33 +42,6 @@ const NOISE_GAIN: f32 = 2.0;
 const RNG_SEED: u32 = 0x9E37_79B9;
 /// Maximum per-voice onset stagger, in seconds, for choir attack decorrelation.
 const ONSET_MAX_SECS: f32 = 0.004;
-
-/// Formant frequencies for each vowel [vowel][band] in Hz.
-const FORMANT_FREQ: [[f32; NUM_BANDS]; NUM_VOWELS] = [
-    [800.0, 1150.0, 2900.0], // A (as in "father")
-    [350.0, 2000.0, 2800.0], // E (as in "bed")
-    [270.0, 2140.0, 3200.0], // I (as in "heed")
-    [450.0, 800.0, 2830.0],  // O (as in "hot")
-    [325.0, 700.0, 2530.0],  // U (as in "boot")
-];
-
-/// Formant bandwidths for each vowel [vowel][band] in Hz.
-const FORMANT_BW: [[f32; NUM_BANDS]; NUM_VOWELS] = [
-    [80.0, 90.0, 120.0],  // A
-    [60.0, 100.0, 120.0], // E
-    [60.0, 90.0, 100.0],  // I
-    [70.0, 80.0, 100.0],  // O
-    [50.0, 60.0, 170.0],  // U
-];
-
-/// Formant gains (linear) for each vowel [vowel][band].
-const FORMANT_GAIN: [[f32; NUM_BANDS]; NUM_VOWELS] = [
-    [1.0, 0.5, 0.25],  // A
-    [1.0, 0.5, 0.2],   // E
-    [1.0, 0.35, 0.15], // I
-    [1.0, 0.35, 0.2],  // O
-    [1.0, 0.3, 0.15],  // U
-];
 
 /// 2nd-order bandpass filter state (per band).
 #[derive(Clone, Copy, Default)]
@@ -179,7 +150,7 @@ impl SubVoice {
             rng_state: RNG_SEED,
             states: [BandpassState::default(); NUM_BANDS],
             coeffs: [BandpassCoeffs::default(); NUM_BANDS],
-            gains: [1.0, 0.5, 0.25],
+            gains: [1.0, 0.5, 0.25, 0.15],
             detune_cents: 0.0,
             vib_rate_mult: 1.0,
             formant_jitter: 1.0,

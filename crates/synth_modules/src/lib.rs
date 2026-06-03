@@ -33,6 +33,7 @@ pub mod euclidean;
 pub mod filter;
 pub mod fooglers;
 pub mod formant_filter;
+pub mod formant_tables;
 pub mod fractal_osc;
 pub mod granular_osc;
 pub mod kinetic_modulator;
