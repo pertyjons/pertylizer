@@ -226,8 +226,13 @@ could later become a *third* module if wanted; not in this phase.)
 
 ## Open questions
 - LF analytic eval vs per-period wavetable — decide in Phase 1 by profiling.
-- Formant count: 4 vs 5 (5th formant adds "singer's formant" ~3 kHz brilliance;
-  worth it for choir).
+- ~~Formant count: 4 vs 5 (5th formant adds "singer's formant" ~3 kHz
+  brilliance; worth it for choir).~~ **Resolved (2026-06-03):** VoiceSynth went
+  to 4 bands — the 4th is a singer's-formant resonance (~3.3-3.7 kHz). Done
+  together with the shared-table extraction.
+- ~~Shared `formant_tables` extraction (deferred in Phase 1).~~ **Done
+  (2026-06-03):** `synth_modules::formant_tables` is now the single source of
+  truth for voice_synth / formant_filter / am_formant.
 - Should `UnisonVoices` reallocate voices in the engine, or stay self-contained
   inside one module? Plan assumes **self-contained** (simpler, tighter ensemble
   control). Revisit if CPU is an issue.
