@@ -1942,6 +1942,18 @@ pub struct RemoveNoteProcessorParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetNoteOrnamentParam {
+    #[schemars(description = "Pattern ID containing the note")]
+    pub pattern_id: u32,
+    #[schemars(description = "Note ID (from list_notes)")]
+    pub note_id: u64,
+    #[schemars(
+        description = "Ornament as JSON to set, or null/omitted to clear. Fields (all optional): count (total hits: flam 2, drag 3, ruff 4, roll N), spacing (ticks between hits), spacing_curve (Even/Accelerate/Decelerate), dynamics (Flat/Crescendo/Decrescendo), placement (LeadIn/OnBeat), pitch_offset (semitones for grace tones), grace_gate (0-1 grace length fraction)."
+    )]
+    pub ornament: Option<serde_json::Value>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ClearPatternParam {
     #[schemars(description = "Pattern ID to clear all notes from")]
     pub pattern_id: u32,
@@ -3239,6 +3251,7 @@ impl SynthMcpServer {
             "set_note_processor" => set_note_processor(SetNoteProcessorParam),
             "remove_note_processor" => remove_note_processor(RemoveNoteProcessorParam),
             "freeze_note_processors" => freeze_note_processors(PatternIdParam),
+            "set_note_ornament" => set_note_ornament(SetNoteOrnamentParam),
 
             // Tracks
             "list_tracks" => list_tracks(NoParams),
@@ -5179,6 +5192,23 @@ impl SynthMcpServer {
                 "pattern_id": params.0.pattern_id,
                 "note_count": note_count
             })),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set or clear a note's per-note timed-repeat ornament (flam/drag/ruff/roll/grace note). Pass the Ornament JSON to set it, or null to clear it. The ornament expands the note into its figure at playback time."
+    )]
+    async fn set_note_ornament(&self, params: Parameters<SetNoteOrnamentParam>) -> String {
+        let p = params.0;
+        match self
+            .bridge
+            .set_note_ornament(p.pattern_id, p.note_id, p.ornament)
+        {
+            Ok(()) => format!(
+                "Ornament updated on note {} in pattern {}",
+                p.note_id, p.pattern_id
+            ),
             Err(e) => format!("Error: {e}"),
         }
     }

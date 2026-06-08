@@ -611,6 +611,11 @@ pub struct NoteInfo {
     pub duration_beats: f32,
     /// Velocity (0-127).
     pub velocity: u8,
+    /// Per-note timed-repeat ornament, if any, as JSON — the same shape
+    /// `set_note_ornament` accepts (so it round-trips). Omitted when the note
+    /// has no ornament.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ornament: Option<serde_json::Value>,
 }
 
 /// Information about a sequencer track.

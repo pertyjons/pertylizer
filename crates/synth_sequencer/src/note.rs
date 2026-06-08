@@ -216,6 +216,7 @@ pub enum OrnamentPlacement {
 /// `count` ≤ 1 is a no-op (the note plays unchanged). Trill / mordent / turn
 /// are *not* here — those alternate pitches and are arpeggiator presets (NP2).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
 pub struct Ornament {
     /// Total number of struck hits (including the main hit). ≤ 1 is a no-op;
     /// bounded at expansion by the engine's hit cap.

@@ -7270,9 +7270,11 @@
       ]
     },
     "Ornament": {
+      "additionalProperties": false,
       "description": "Per-note timed-repeat ornament — taxonomy **primitive 4** (a generator).\n\nOne generator covers flam / drag / ruff / roll and the grace note: emit\n`count` hits of the note offset in time, with a spacing and velocity curve.\nExactly one hit is the *main* hit — it carries the source pitch, duration,\nand per-note expression/glide; the rest are short *grace* hits at\n`pitch_offset` semitones (0 for same-pitch drum figures, non-zero for an\nacciaccatura). `Copy`/alloc-free so it stays RT-cheap on the audio thread.\n\nPreset mappings (drum-rudiment convention, by total `count`): flam = 2,\ndrag = 3, ruff = 4, roll = N; acciaccatura = 2 with a `pitch_offset`. A\n`count` ≤ 1 is a no-op (the note plays unchanged). Trill / mordent / turn\nare *not* here — those alternate pitches and are arpeggiator presets (NP2).",
       "properties": {
         "count": {
+          "default": 2,
           "description": "Total number of struck hits (including the main hit). ≤ 1 is a no-op;\nbounded at expansion by the engine's hit cap.",
           "format": "uint8",
           "maximum": 255,
@@ -7286,6 +7288,7 @@
         },
         "grace_gate": {
           "$ref": "#/$defs/NormalizedValue",
+          "default": 0.5,
           "description": "Grace-hit duration as a fraction of its gap to the next hit (short =\ncrushed). The main hit keeps the source note's duration."
         },
         "pitch_offset": {
@@ -7300,6 +7303,7 @@
         },
         "spacing": {
           "$ref": "#/$defs/Duration",
+          "default": 120,
           "description": "Base tick gap between adjacent hits (the curve warps it)."
         },
         "spacing_curve": {
@@ -7308,11 +7312,6 @@
           "description": "How the gaps evolve across the figure."
         }
       },
-      "required": [
-        "count",
-        "spacing",
-        "grace_gate"
-      ],
       "type": "object"
     },
     "OrnamentDynamics": {

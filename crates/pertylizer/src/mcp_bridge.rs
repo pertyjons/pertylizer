@@ -1532,6 +1532,7 @@ impl SynthBridge for AppSynthBridge {
             start_beat,
             duration_beats,
             velocity,
+            ornament: None,
         }))
     }
 
@@ -1703,6 +1704,32 @@ impl SynthBridge for AppSynthBridge {
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
         Ok(pattern.freeze_processors())
+    }
+
+    fn set_note_ornament(
+        &self,
+        pattern_id: u32,
+        note_id: u64,
+        ornament: Option<serde_json::Value>,
+    ) -> Result<(), McpBridgeError> {
+        // null / omitted clears the ornament; otherwise parse the Ornament.
+        let parsed: Option<synth_sequencer::Ornament> = match ornament {
+            None | Some(serde_json::Value::Null) => None,
+            Some(value) => Some(
+                serde_json::from_value(value)
+                    .map_err(|e| McpBridgeError::Other(format!("invalid ornament: {e}")))?,
+            ),
+        };
+        let mut song = self.shared.song.write();
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+        let note = pattern
+            .note_mut(synth_sequencer::NoteId(note_id))
+            .ok_or(McpBridgeError::NoteNotFound(note_id))?;
+        note.ornament = parsed;
+        Ok(())
     }
 
     // === Sequencer: Tracks ===
@@ -6795,6 +6822,10 @@ fn note_to_info(n: &synth_sequencer::Note) -> NoteInfo {
         start_beat: ticks_to_beats(n.start.0),
         duration_beats: n.duration.map_or(1.0, |d| ticks_to_beats(d.0)),
         velocity: synth_core::Velocity::to_midi(n.velocity),
+        ornament: n
+            .ornament
+            .as_ref()
+            .and_then(|o| serde_json::to_value(o).ok()),
     }
 }
 

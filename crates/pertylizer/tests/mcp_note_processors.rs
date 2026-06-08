@@ -127,6 +127,48 @@ fn note_processor_rack_round_trip_via_bridge() {
 }
 
 #[test]
+fn set_and_clear_note_ornament_via_bridge() {
+    let bridge = build_bridge();
+    let pid = bridge
+        .create_pattern("phrase", 4.0)
+        .expect("create pattern");
+    let note = bridge.add_note(pid, 60, 0.0, 1.0, 100).expect("add note");
+
+    // A fresh note has no ornament.
+    let listed = bridge.list_notes(pid).unwrap();
+    assert!(listed[0].ornament.is_none());
+
+    // Set a flam (partial config; #[serde(default)] fills the rest).
+    bridge
+        .set_note_ornament(pid, note.id, Some(json!({ "count": 2, "spacing": 60 })))
+        .expect("set ornament");
+    let listed = bridge.list_notes(pid).unwrap();
+    let orn = listed[0]
+        .ornament
+        .as_ref()
+        .expect("ornament surfaced in reader");
+    assert_eq!(orn["count"], 2);
+    assert_eq!(orn["spacing"], 60);
+
+    // A typo'd field is rejected (deny_unknown_fields).
+    assert!(
+        bridge
+            .set_note_ornament(pid, note.id, Some(json!({ "kount": 3 })))
+            .is_err(),
+        "misspelled ornament field must error"
+    );
+
+    // null clears it.
+    bridge
+        .set_note_ornament(pid, note.id, Some(serde_json::Value::Null))
+        .expect("clear ornament with null");
+    assert!(bridge.list_notes(pid).unwrap()[0].ornament.is_none());
+
+    // None also clears (and unknown note errors).
+    assert!(bridge.set_note_ornament(pid, 999, None).is_err());
+}
+
+#[test]
 fn note_processor_tools_reject_unknown_pattern() {
     let bridge = build_bridge();
     assert!(bridge.list_note_processors(999).is_err());

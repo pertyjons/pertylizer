@@ -923,6 +923,16 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Returns the resulting note count.
     fn freeze_note_processors(&self, pattern_id: u32) -> Result<usize, McpBridgeError>;
 
+    /// Set or clear a note's per-note timed-repeat ornament
+    /// (flam/drag/ruff/roll/grace). `ornament` is the `Ornament` JSON to set,
+    /// or `None`/`null` to clear it.
+    fn set_note_ornament(
+        &self,
+        pattern_id: u32,
+        note_id: u64,
+        ornament: Option<serde_json::Value>,
+    ) -> Result<(), McpBridgeError>;
+
     // === Sequencer: Tracks ===
 
     /// List all tracks in the song.
