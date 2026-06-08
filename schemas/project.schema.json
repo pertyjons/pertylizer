@@ -852,7 +852,7 @@
       "type": "number"
     },
     "Chord": {
-      "description": "Chord generator (chain stage 1) — expand one source note into a chord.\n\nEach source-note onset is **replaced** by the pitches at the source pitch\nplus each stored interval (semitones; `0` keeps the root, negatives voice\nbelow it). The classic chain is `chord → arp`: the arpeggiator reads the\ngenerated tones through the widened held-notes seam ([`NoteProcessor::\nexpand_pitch`]), so one source note + chord + arp arpeggiates the full\nchord. Intervals are stored inline (no heap) and capped at\n[`MAX_CHORD_INTERVALS`].",
+      "description": "Chord generator (chain stage 1) — expand one source note into a chord.\n\nEach source-note onset is **replaced** by the pitches at the source pitch\nplus each stored interval (semitones; `0` keeps the root, negatives voice\nbelow it). The classic chain is `chord → arp`: the arpeggiator reads the\ngenerated tones through the widened held-notes seam ([`NoteProcessor::\nexpand_pitch`]), so one source note + chord + arp arpeggiates the full\nchord. Intervals are stored inline (no heap) and capped at\n[`MAX_CHORD_INTERVALS`].\n\n**Strum:** with `strum > 0` the tones are struck one at a time, `strum`\nticks apart, ordered by `direction` (a block chord at `strum = 0`). Strum\nshapes *onset timing*, so it only affects a standalone chord — a downstream\narp re-times everything and ignores it. A strummed chord *replaces* the\nsource stream (it scans the source notes by onset, like the arp), so — like\nthe arp — it bypasses per-note trigger probability; the block path respects\nit (it transforms the already-gated buffer).",
       "properties": {
         "count": {
           "description": "Number of live intervals (clamped to [`MAX_CHORD_INTERVALS`]).",
@@ -860,6 +860,11 @@
           "maximum": 255,
           "minimum": 0,
           "type": "integer"
+        },
+        "direction": {
+          "$ref": "#/$defs/StrumDirection",
+          "default": "Up",
+          "description": "Tone order when strumming."
         },
         "intervals": {
           "description": "Semitone offsets from the source pitch; only the first `count` are live.",
@@ -872,6 +877,11 @@
           "maxItems": 8,
           "minItems": 8,
           "type": "array"
+        },
+        "strum": {
+          "$ref": "#/$defs/Duration",
+          "default": 0,
+          "description": "Onset spread between adjacent tones (`0` = a simultaneous block chord)."
         }
       },
       "required": [
@@ -8261,6 +8271,21 @@
       "description": "Tail stretch factor for late reverb (dimensionless).",
       "format": "float",
       "type": "number"
+    },
+    "StrumDirection": {
+      "description": "Order in which a strummed chord's tones are struck.",
+      "oneOf": [
+        {
+          "const": "Up",
+          "description": "Lowest pitch first (an upstroke).",
+          "type": "string"
+        },
+        {
+          "const": "Down",
+          "description": "Highest pitch first (a downstroke).",
+          "type": "string"
+        }
+      ]
     },
     "TempoChange": {
       "description": "Tempo change event.",

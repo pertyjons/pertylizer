@@ -190,6 +190,18 @@ impl ScaleQuantize {
 /// audio-thread fan-out and the held-view buffer.
 pub const MAX_CHORD_INTERVALS: usize = 8;
 
+/// Order in which a strummed chord's tones are struck.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum StrumDirection {
+    /// Lowest pitch first (an upstroke).
+    #[default]
+    Up,
+    /// Highest pitch first (a downstroke).
+    Down,
+}
+
 /// Chord generator (chain stage 1) — expand one source note into a chord.
 ///
 /// Each source-note onset is **replaced** by the pitches at the source pitch
@@ -199,6 +211,14 @@ pub const MAX_CHORD_INTERVALS: usize = 8;
 /// expand_pitch`]), so one source note + chord + arp arpeggiates the full
 /// chord. Intervals are stored inline (no heap) and capped at
 /// [`MAX_CHORD_INTERVALS`].
+///
+/// **Strum:** with `strum > 0` the tones are struck one at a time, `strum`
+/// ticks apart, ordered by `direction` (a block chord at `strum = 0`). Strum
+/// shapes *onset timing*, so it only affects a standalone chord — a downstream
+/// arp re-times everything and ignores it. A strummed chord *replaces* the
+/// source stream (it scans the source notes by onset, like the arp), so — like
+/// the arp — it bypasses per-note trigger probability; the block path respects
+/// it (it transforms the already-gated buffer).
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Chord {
@@ -206,6 +226,12 @@ pub struct Chord {
     intervals: [i8; MAX_CHORD_INTERVALS],
     /// Number of live intervals (clamped to [`MAX_CHORD_INTERVALS`]).
     count: u8,
+    /// Onset spread between adjacent tones (`0` = a simultaneous block chord).
+    #[serde(default)]
+    strum: Duration,
+    /// Tone order when strumming.
+    #[serde(default)]
+    direction: StrumDirection,
 }
 
 impl Chord {
@@ -220,7 +246,28 @@ impl Chord {
         Self {
             intervals: stored,
             count: count as u8,
+            strum: Duration(0),
+            direction: StrumDirection::Up,
         }
+    }
+
+    /// Strum the chord: tones struck `spread` ticks apart in `direction`
+    /// (builder). `spread = 0` restores a block chord.
+    pub fn with_strum(mut self, spread: Duration, direction: StrumDirection) -> Self {
+        self.strum = spread;
+        self.direction = direction;
+        self
+    }
+
+    /// Tick span from the first strummed tone to the last (`0` for a block
+    /// chord). Used to bound the strum scan window and extend the freeze walk.
+    #[must_use]
+    fn strum_tail(&self) -> u32 {
+        let live = self.intervals().len() as u32;
+        // `strum` is unbounded (serde); saturate so a pathological spread can't
+        // overflow the scan window / freeze walk (matches the module's i64/
+        // saturating discipline elsewhere).
+        live.saturating_sub(1).saturating_mul(self.strum.0)
     }
 
     /// Major triad (root, +4, +7).
@@ -708,7 +755,8 @@ impl NoteProcessor {
                     note.pitch = q.snap(note.pitch);
                 }
             }
-            Self::Chord(c) => c.expand_into(buf),
+            Self::Chord(c) if c.strum.0 == 0 => c.expand_into(buf),
+            Self::Chord(c) => c.expand_strummed(pattern, tick, upstream, buf),
             Self::Arpeggiator(a) => a.process_at_tick(pattern, tick, upstream, buf),
         }
     }
@@ -756,6 +804,73 @@ impl Chord {
             });
         }
     }
+
+    /// Strummed expansion (`strum > 0`): like [`Self::expand_into`] but each
+    /// tone's onset is staggered by `strum` ticks in `direction`, so the chord
+    /// spans several ticks. Because a tone can land on a tick after its source
+    /// note's onset, this **scans the source notes** per tick (like the arp /
+    /// ornaments) rather than transforming the buffer — the buffer at this tick
+    /// no longer holds the originating note. Replaces the source stream at this
+    /// stage (clears the buffer first). RT-safe: bounded by
+    /// [`MAX_CHORD_INTERVALS`]; tones stage through a fixed array.
+    #[allow(clippy::cast_possible_truncation)]
+    fn expand_strummed(
+        &self,
+        pattern: &Pattern,
+        tick: PatternTick,
+        upstream: &[NoteProcessor],
+        buf: &mut ExpansionBuffer,
+    ) {
+        buf.clear_notes();
+        let live = self.intervals().len();
+        if live == 0 {
+            return; // empty chord — nothing to strum, skip the source scan
+        }
+        let t = i64::from(tick.0);
+        let spread = i64::from(self.strum.0); // > 0 (block chords take expand_into)
+        let tail = i64::from(self.strum_tail());
+
+        for note in pattern.notes() {
+            let start = i64::from(note.start.0);
+            // Only one tone of a note can land on this tick, at strum index
+            // `j = (t - start) / spread` when the gap is an exact multiple of
+            // the spread. Reject every other tick before building/sorting the
+            // chord (the sorted order and root are tick-invariant, so doing
+            // them only on the ~1-in-`spread` onset ticks avoids the bulk of
+            // the per-tick work).
+            let delta = t - start;
+            if delta < 0 || delta > tail || delta % spread != 0 {
+                continue;
+            }
+            let j = (delta / spread) as usize;
+            if j >= live {
+                continue;
+            }
+
+            // Chord tones, viewed through the upstream chain (so a quantize
+            // ahead of the chord snaps the root first), ordered by the strum.
+            let mut tones = [Pitch::MIDDLE_C; MAX_CHORD_INTERVALS];
+            let mut tn = 0;
+            let root = upstream_pitch(upstream, note.pitch);
+            self.tones(root, &mut |p| {
+                if tn < MAX_CHORD_INTERVALS {
+                    tones[tn] = p;
+                    tn += 1;
+                }
+            });
+            let tones = &mut tones[..tn];
+            tones.sort_unstable_by_key(|p| p.as_midi());
+            if self.direction == StrumDirection::Down {
+                tones.reverse();
+            }
+            if let Some(&pitch) = tones.get(j) {
+                let _ = buf.push(ExpandedNote {
+                    pitch,
+                    ..ExpandedNote::from_note(note)
+                });
+            }
+        }
+    }
 }
 
 /// Expand one source pitch through the `upstream` chain (1→N at each stage)
@@ -766,6 +881,23 @@ impl Chord {
 /// Ping-pongs two fixed [`MAX_ARP_HELD`] stacks — no allocation; each stage's
 /// fan-out is capped so a chord-of-chords cannot overflow the held view (the
 /// excess is silently dropped, matching the held-notes truncation policy).
+/// The first pitch `pitch` maps to through the `upstream` chain — the root a
+/// chord generator builds from when scanning source notes (its upstream is
+/// only pitch transforms like scale-quantize, which are 1→1, so "first" is
+/// the whole story; a hypothetical 1→N upstream would just pick its first
+/// tone as the strum root).
+fn upstream_pitch(upstream: &[NoteProcessor], pitch: Pitch) -> Pitch {
+    let mut root = pitch;
+    let mut set = false;
+    expand_held_pitch(upstream, pitch, &mut |p| {
+        if !set {
+            root = p;
+            set = true;
+        }
+    });
+    root
+}
+
 fn expand_held_pitch(upstream: &[NoteProcessor], pitch: Pitch, sink: &mut impl FnMut(Pitch)) {
     let mut cur = [Pitch::MIDDLE_C; MAX_ARP_HELD];
     cur[0] = pitch;
@@ -1155,10 +1287,22 @@ impl Pattern {
                 _ => base,
             }
         };
+        // A strumming chord in the rack staggers tones up to its tail past a
+        // note's onset, so the walk must reach that far too.
+        let strum_tail = self
+            .processors
+            .iter()
+            .filter_map(|p| match p {
+                NoteProcessor::Chord(c) => Some(c.strum_tail()),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
         let walk_end = self
             .length
             .0
-            .max(self.notes().iter().map(note_reach).max().unwrap_or(0));
+            .max(self.notes().iter().map(note_reach).max().unwrap_or(0))
+            .saturating_add(strum_tail);
         for tick in 0..walk_end {
             let t = PatternTick(tick);
             self.expand_at_tick(t, |_| true, &mut buf);
@@ -1788,6 +1932,112 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let back: Pattern = serde_json::from_str(&json).unwrap();
         assert_eq!(back.processors(), p.processors());
+    }
+
+    // --- Strum (NP4b) -------------------------------------------------------
+
+    #[test]
+    fn strum_up_staggers_tones_low_to_high() {
+        // C major triad strummed up, 30 ticks apart: C@0, E@30, G@60.
+        let mut p = chord_pattern_single(60, 960);
+        let _ = p.add_processor(NoteProcessor::Chord(
+            Chord::major().with_strum(Duration(30), StrumDirection::Up),
+        ));
+        let got = expand_all(&p, 200);
+        assert_eq!(got, vec![(0, 60), (30, 64), (60, 67)]);
+    }
+
+    #[test]
+    fn strum_down_staggers_tones_high_to_low() {
+        let mut p = chord_pattern_single(60, 960);
+        let _ = p.add_processor(NoteProcessor::Chord(
+            Chord::major().with_strum(Duration(30), StrumDirection::Down),
+        ));
+        let got = expand_all(&p, 200);
+        assert_eq!(got, vec![(0, 67), (30, 64), (60, 60)]);
+    }
+
+    #[test]
+    fn strum_zero_spread_is_a_block_chord() {
+        // strum 0 must behave exactly like an un-strummed chord (block, same tick).
+        let mut p = chord_pattern_single(60, 960);
+        let _ = p.add_processor(NoteProcessor::Chord(
+            Chord::major().with_strum(Duration(0), StrumDirection::Up),
+        ));
+        let got = expand_all(&p, 200);
+        assert_eq!(got, vec![(0, 60), (0, 64), (0, 67)]);
+    }
+
+    #[test]
+    fn strum_tones_inherit_velocity_and_duration() {
+        let mut p = Pattern::new(PatternId(0), Duration(3840));
+        let id = p.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::FF);
+        let _ = p.resize_note(id, Duration(480));
+        let _ = p.add_processor(NoteProcessor::Chord(
+            Chord::minor().with_strum(Duration(20), StrumDirection::Up),
+        ));
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(40), |_| true, &mut buf); // third tone (G)
+        assert_eq!(buf.notes().len(), 1);
+        assert_eq!(buf.notes()[0].pitch.as_midi(), 67);
+        assert!((buf.notes()[0].velocity.as_f32() - Velocity::FF.as_f32()).abs() < 1e-6);
+        assert_eq!(buf.notes()[0].duration, Some(Duration(480)));
+    }
+
+    #[test]
+    fn strum_under_quantize_builds_from_snapped_root() {
+        // C# source → quantize → D → D-major strummed up: D@0 F#@30 A@60.
+        let mut p = chord_pattern_single(61, 960);
+        let _ = p.add_processor(NoteProcessor::ScaleQuantize(c_major()));
+        let _ = p.add_processor(NoteProcessor::Chord(
+            Chord::major().with_strum(Duration(30), StrumDirection::Up),
+        ));
+        let got = expand_all(&p, 200);
+        assert_eq!(got, vec![(0, 62), (30, 66), (60, 69)]);
+    }
+
+    #[test]
+    fn strum_then_arp_ignores_strum_timing() {
+        // A downstream arp re-times everything: chord(strum) → arp arps all
+        // three tones on the arp grid, the strum offsets having no effect.
+        let mut p = chord_pattern_single(60, 3840);
+        let _ = p.add_processor(NoteProcessor::Chord(
+            Chord::major().with_strum(Duration(30), StrumDirection::Up),
+        ));
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
+        let got: Vec<u8> = expand_all(&p, 720).into_iter().map(|(_, m)| m).collect();
+        assert_eq!(got, vec![60, 64, 67], "arp grid, not the strum grid");
+    }
+
+    #[test]
+    fn strum_huge_spread_does_not_overflow() {
+        // Regression: strum_tail = (tones-1) * spread must saturate — an
+        // unbounded spread used to risk a u32 overflow panic on the audio
+        // thread. Expansion at the onset still emits the first tone, no panic.
+        let mut p = chord_pattern_single(60, 960);
+        let _ = p.add_processor(NoteProcessor::Chord(
+            Chord::major().with_strum(Duration(u32::MAX), StrumDirection::Up),
+        ));
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        assert_eq!(buf.notes().len(), 1, "first tone at the onset, no panic");
+        assert_eq!(buf.notes()[0].pitch.as_midi(), 60);
+    }
+
+    #[test]
+    fn strum_freeze_bakes_staggered_onsets() {
+        let mut p = chord_pattern_single(60, 960);
+        let _ = p.add_processor(NoteProcessor::Chord(
+            Chord::major().with_strum(Duration(30), StrumDirection::Up),
+        ));
+        let count = p.freeze_processors();
+        assert_eq!(count, 3);
+        let baked: Vec<(u32, u8)> = p
+            .notes()
+            .iter()
+            .map(|n| (n.start.0, n.pitch.as_midi()))
+            .collect();
+        assert_eq!(baked, vec![(0, 60), (30, 64), (60, 67)]);
     }
 
     // --- Ornaments (NP3) ----------------------------------------------------
