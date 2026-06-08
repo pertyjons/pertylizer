@@ -36,9 +36,9 @@ into primitives 1–3, it is a Note Processor — do **not** add a `Note` field 
 ## Status at a glance
 
 - [x] **NP0** — Architecture decision: expansion model + attachment scope (gating) — LOCKED 2026-06-03 (Model B, expand in `collect_events_at_tick`; stream rack on `Pattern` + `Ornament` on `Note`)
-- [ ] **NP1** — `NoteProcessor` engine + the playback-time expansion point
-- [ ] **NP2** — Arpeggiator (flagship; trill/mordent/turn are special cases of it)
-- [ ] **NP3** — Timed-repeat ornaments: flam / drag / ruff / roll + grace note
+- [x] **NP1** — `NoteProcessor` engine + the playback-time expansion point (shipped 8997062)
+- [x] **NP2** — Arpeggiator (flagship; trill/mordent/turn are special cases of it) (shipped bb0bd28)
+- [x] **NP3** — Timed-repeat ornaments: flam / drag / ruff / roll + grace note (shipped 5178f03)
 - [ ] **NP4** — Chord + strum
 - [ ] **NP5** — Pitch/statistical processors: scale-quantize + humanize
 - [ ] **NP6** — GUI (per-track rack + per-note ornament menu)
