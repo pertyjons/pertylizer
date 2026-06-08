@@ -43,7 +43,7 @@ into primitives 1–3, it is a Note Processor — do **not** add a `Note` field 
 - [x] **NP5** — Pitch/statistical processors: scale-quantize (was NP1) + humanize (`0539793`)
 - [ ] **NP6** — GUI (per-track rack + per-note ornament menu) — DEFERRED for interactive work with the user (egui, not headless-testable)
 - [x] **NP7** — MCP surface (rack tools `3cac252`, `set_note_ornament` `670edf2`; `reorder` omitted — rack self-orders by chain stage)
-- [ ] **X-cut** — Persistence (round-trip) + ordering/chaining + RT-safety
+- [x] **X-cut** — Persistence round-trip (`dbb9f2b`) + ordering/chaining (locked + per-processor tested) + RT-safety (bounded buffers, seeded PRNG, drop/log policy — all in place)
 
 Build order is value-first: NP0 → NP1 → **NP2 (stop here and ship if that's enough)**
 → NP3/NP4/NP5 as appetite allows.
