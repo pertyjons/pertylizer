@@ -1912,6 +1912,36 @@ pub struct ReplaceNotesParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AddNoteProcessorParam {
+    #[schemars(description = "Pattern ID whose rack to add to")]
+    pub pattern_id: u32,
+    #[schemars(
+        description = "Note processor as externally-tagged JSON: one of {\"ScaleQuantize\":{...}}, {\"Chord\":{...}}, {\"Arpeggiator\":{...}}, {\"Humanize\":{...}}. Inserted at its canonical chain position (quantize→chord→arp→humanize). Read existing processors with list_note_processors to see the exact shape."
+    )]
+    pub processor: serde_json::Value,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetNoteProcessorParam {
+    #[schemars(description = "Pattern ID")]
+    pub pattern_id: u32,
+    #[schemars(description = "Rack index to replace (from list_note_processors)")]
+    pub index: usize,
+    #[schemars(
+        description = "Replacement note processor as externally-tagged JSON (same shape as add_note_processor). Position is preserved."
+    )]
+    pub processor: serde_json::Value,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RemoveNoteProcessorParam {
+    #[schemars(description = "Pattern ID")]
+    pub pattern_id: u32,
+    #[schemars(description = "Rack index to remove (from list_note_processors)")]
+    pub index: usize,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ClearPatternParam {
     #[schemars(description = "Pattern ID to clear all notes from")]
     pub pattern_id: u32,
@@ -3202,6 +3232,13 @@ impl SynthMcpServer {
             "update_note" => update_note(UpdateNotesParam),
             "replace_notes" => replace_notes(ReplaceNotesParam),
             "clear_pattern" => clear_pattern(ClearPatternParam),
+
+            // Note processors (generative articulation rack)
+            "list_note_processors" => list_note_processors(PatternIdParam),
+            "add_note_processor" => add_note_processor(AddNoteProcessorParam),
+            "set_note_processor" => set_note_processor(SetNoteProcessorParam),
+            "remove_note_processor" => remove_note_processor(RemoveNoteProcessorParam),
+            "freeze_note_processors" => freeze_note_processors(PatternIdParam),
 
             // Tracks
             "list_tracks" => list_tracks(NoParams),
@@ -5077,6 +5114,73 @@ impl SynthMcpServer {
             }
         }
         batch_msg(ok_count, "notes removed", &[], &errors)
+    }
+
+    // === Sequencer: Note processors (generative articulation rack) ===
+
+    #[tool(
+        description = "List a pattern's note-processor rack in execution order. Each entry has its index, kind, chain stage, and full config JSON (the same shape add_note_processor/set_note_processor accept)."
+    )]
+    async fn list_note_processors(&self, params: Parameters<PatternIdParam>) -> String {
+        match self.bridge.list_note_processors(params.0.pattern_id) {
+            Ok(procs) => to_json(&procs),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Add a note processor (scale-quantize, chord, arpeggiator, or humanize) to a pattern's rack at its canonical chain position. These expand the pattern's notes at playback time. Returns the insertion index."
+    )]
+    async fn add_note_processor(&self, params: Parameters<AddNoteProcessorParam>) -> String {
+        let p = params.0;
+        match self.bridge.add_note_processor(p.pattern_id, p.processor) {
+            Ok(index) => {
+                to_json(&serde_json::json!({ "pattern_id": p.pattern_id, "index": index }))
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Replace the note processor at a rack index in place (config edit), preserving its position."
+    )]
+    async fn set_note_processor(&self, params: Parameters<SetNoteProcessorParam>) -> String {
+        let p = params.0;
+        match self
+            .bridge
+            .set_note_processor(p.pattern_id, p.index, p.processor)
+        {
+            Ok(()) => format!(
+                "Note processor {} updated on pattern {}",
+                p.index, p.pattern_id
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Remove the note processor at a rack index from a pattern.")]
+    async fn remove_note_processor(&self, params: Parameters<RemoveNoteProcessorParam>) -> String {
+        let p = params.0;
+        match self.bridge.remove_note_processor(p.pattern_id, p.index) {
+            Ok(()) => format!(
+                "Note processor {} removed from pattern {}",
+                p.index, p.pattern_id
+            ),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Bake a pattern's whole note-processor rack into concrete notes (Model-A freeze) and clear the rack, for hand-editing. DESTRUCTIVE: the generative rack is removed and cannot be un-baked — re-add the processors to restore it. Returns the resulting note count."
+    )]
+    async fn freeze_note_processors(&self, params: Parameters<PatternIdParam>) -> String {
+        match self.bridge.freeze_note_processors(params.0.pattern_id) {
+            Ok(note_count) => to_json(&serde_json::json!({
+                "pattern_id": params.0.pattern_id,
+                "note_count": note_count
+            })),
+            Err(e) => format!("Error: {e}"),
+        }
     }
 
     // === Sequencer: Tracks ===

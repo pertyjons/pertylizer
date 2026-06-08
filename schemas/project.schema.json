@@ -151,21 +151,26 @@
       ]
     },
     "Arpeggiator": {
+      "additionalProperties": false,
       "description": "Arpeggiator (chain stage 2) — the flagship stream generator.\n\nReplaces the source stream: at each step-grid onset it emits one member of\nthe currently *held* chord (every source note sounding at that tick, viewed\nthrough the upstream chain's pitch transforms), and suppresses the source\nchord onsets themselves. Step phase counts from the held chord's earliest\nstart, so the figure restarts on each new chord block. Stateless and\ndeterministic per the rack contract.\n\nTrill / mordent / turn are constrained presets of this generator (NP3/NP6\nexpose them via the per-note ornament menu); they are not separate code.",
       "properties": {
         "gate": {
           "$ref": "#/$defs/NormalizedValue",
+          "default": 0.75,
           "description": "Step gate as a fraction of the step length (≥1 tick). A 1.0 gate on\nrepeated pitches ties via the engine's boundary coalesce."
         },
         "latch": {
+          "default": false,
           "description": "Hold the last chord through gaps (keeps arpeggiating after the source\nnotes end, using the chord that sounded just before the gap).",
           "type": "boolean"
         },
         "mode": {
           "$ref": "#/$defs/ArpMode",
+          "default": "Up",
           "description": "Step order over the held chord."
         },
         "octaves": {
+          "default": 1,
           "description": "Octave range (1–4; values outside are clamped at use).",
           "format": "uint8",
           "maximum": 255,
@@ -174,26 +179,20 @@
         },
         "rate": {
           "$ref": "#/$defs/ArpRate",
+          "default": "Sixteenth",
           "description": "Tempo-synced step length."
         },
         "swing": {
           "$ref": "#/$defs/NormalizedValue",
+          "default": 0.0,
           "description": "Swing: odd steps are delayed by `swing × step/2`."
         },
         "velocity": {
           "$ref": "#/$defs/ArpVelocity",
+          "default": "AsPlayed",
           "description": "Step velocity behavior."
         }
       },
-      "required": [
-        "mode",
-        "rate",
-        "octaves",
-        "gate",
-        "swing",
-        "velocity",
-        "latch"
-      ],
       "type": "object"
     },
     "Author": {
@@ -852,9 +851,11 @@
       "type": "number"
     },
     "Chord": {
+      "additionalProperties": false,
       "description": "Chord generator (chain stage 1) — expand one source note into a chord.\n\nEach source-note onset is **replaced** by the pitches at the source pitch\nplus each stored interval (semitones; `0` keeps the root, negatives voice\nbelow it). The classic chain is `chord → arp`: the arpeggiator reads the\ngenerated tones through the widened held-notes seam ([`NoteProcessor::\nexpand_pitch`]), so one source note + chord + arp arpeggiates the full\nchord. Intervals are stored inline (no heap) and capped at\n[`MAX_CHORD_INTERVALS`].\n\n**Strum:** with `strum > 0` the tones are struck one at a time, `strum`\nticks apart, ordered by `direction` (a block chord at `strum = 0`). Strum\nshapes *onset timing*, so it only affects a standalone chord — a downstream\narp re-times everything and ignores it. A strummed chord *replaces* the\nsource stream (it scans the source notes by onset, like the arp), so — like\nthe arp — it bypasses per-note trigger probability; the block path respects\nit (it transforms the already-gated buffer).",
       "properties": {
         "count": {
+          "default": 3,
           "description": "Number of live intervals (clamped to [`MAX_CHORD_INTERVALS`]).",
           "format": "uint8",
           "maximum": 255,
@@ -867,6 +868,16 @@
           "description": "Tone order when strumming."
         },
         "intervals": {
+          "default": [
+            0,
+            4,
+            7,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
           "description": "Semitone offsets from the source pitch; only the first `count` are live.",
           "items": {
             "format": "int8",
@@ -884,10 +895,6 @@
           "description": "Onset spread between adjacent tones (`0` = a simultaneous block chord)."
         }
       },
-      "required": [
-        "intervals",
-        "count"
-      ],
       "type": "object"
     },
     "ConnectionState": {
@@ -1165,13 +1172,16 @@
       "type": "number"
     },
     "Humanize": {
+      "additionalProperties": false,
       "description": "Humanize (chain stage 4, last) — bounded, **seeded** random perturbation of\nthe final note stream, so a sequenced part loses its machine-uniformity\nwithout losing reproducibility.\n\nA pure buf transform on whatever the rack produced (arp steps, chord tones,\nplain notes). The per-note random is a deterministic hash of\n*(seed, tick, pitch, buffer index)* — never `Math.random` on the audio\nthread — so a given `seed` renders byte-identical every time (offline and\nlive), and changing `seed` rerolls the feel.\n\n**Scope:** velocity and gate (note-length) only. *Timing* humanize is\ndeliberately not here — shifting a note's onset is a multi-tick / engine\nmicro-timing concern (a stage-4 buf transform can only see notes already\nlanded on the current tick, and the per-tick model cannot *rush* a note\nearlier than where the chain placed it). *Micro-pitch* needs a sub-semitone\ndetune field on the emitted note. Both are tracked as follow-ups.",
       "properties": {
         "gate": {
           "$ref": "#/$defs/NormalizedValue",
+          "default": 0.0,
           "description": "Max note-length deviation as a ± fraction of each note's duration\n(0 = off; notes with no explicit duration are untouched)."
         },
         "seed": {
+          "default": 0,
           "description": "PRNG seed for this processor. Same seed → identical render every time\n(offline and live). NB: the seed lives on the pattern, so every\nplacement of the pattern humanizes identically — per-placement variation\nis the deferred per-`PatternPlacement` override (NP0), which would mix a\nplacement nonce into the per-note key the way the engine's probability\nroll mixes `roll_nonce`.",
           "format": "uint64",
           "minimum": 0,
@@ -1179,14 +1189,10 @@
         },
         "velocity": {
           "$ref": "#/$defs/NormalizedValue",
+          "default": 0.15000000596046448,
           "description": "Max velocity deviation as a ± fraction of the note's velocity (0 = off)."
         }
       },
-      "required": [
-        "velocity",
-        "gate",
-        "seed"
-      ],
       "type": "object"
     },
     "InstrumentId": {
@@ -8030,21 +8036,20 @@
       "type": "integer"
     },
     "ScaleQuantize": {
+      "additionalProperties": false,
       "description": "Scale-quantize: snap every pitch to the nearest member of `root` + `mask`.\n\nFirst stage of the locked chain so randomized / interval-built notes from\ndownstream generators stay in key. Equidistant candidates prefer the upper\npitch (the melody side of dyads, matching the app-side scale snapper).",
       "properties": {
         "mask": {
           "$ref": "#/$defs/ScaleMask",
+          "default": 2741,
           "description": "Scale membership relative to the root."
         },
         "root": {
           "$ref": "#/$defs/PitchClass",
+          "default": 0,
           "description": "Tonic pitch class."
         }
       },
-      "required": [
-        "root",
-        "mask"
-      ],
       "type": "object"
     },
     "Semitones": {

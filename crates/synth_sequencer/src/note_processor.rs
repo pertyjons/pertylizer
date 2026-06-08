@@ -147,6 +147,7 @@ impl Default for ScaleMask {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
 )]
+#[serde(default, deny_unknown_fields)]
 pub struct ScaleQuantize {
     /// Tonic pitch class.
     pub root: PitchClass,
@@ -221,6 +222,7 @@ pub enum StrumDirection {
 /// it (it transforms the already-gated buffer).
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
 pub struct Chord {
     /// Semitone offsets from the source pitch; only the first `count` are live.
     intervals: [i8; MAX_CHORD_INTERVALS],
@@ -411,6 +413,7 @@ const ARP_RAMP_FLOOR: f32 = 0.4;
 /// expose them via the per-note ornament menu); they are not separate code.
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
 pub struct Arpeggiator {
     /// Step order over the held chord.
     pub mode: ArpMode,
@@ -702,6 +705,7 @@ impl Arpeggiator {
 /// detune field on the emitted note. Both are tracked as follow-ups.
 #[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
 pub struct Humanize {
     /// Max velocity deviation as a ± fraction of the note's velocity (0 = off).
     pub velocity: NormalizedValue,
@@ -792,6 +796,17 @@ impl NoteProcessor {
             Self::Chord(_) => 1,
             Self::Arpeggiator(_) => 2,
             Self::Humanize(_) => 4,
+        }
+    }
+
+    /// Stable kind tag (snake_case) for readers / MCP.
+    #[must_use]
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::ScaleQuantize(_) => "scale_quantize",
+            Self::Chord(_) => "chord",
+            Self::Arpeggiator(_) => "arpeggiator",
+            Self::Humanize(_) => "humanize",
         }
     }
 
@@ -1287,6 +1302,20 @@ impl Pattern {
     /// Remove the processor at `index`.
     pub fn remove_processor(&mut self, index: usize) -> Option<NoteProcessor> {
         (index < self.processors.len()).then(|| self.processors.remove(index))
+    }
+
+    /// Replace the processor at `index` in place, returning whether the index
+    /// was valid. Position is preserved (intended for editing a processor's
+    /// config); replacing with a different chain stage can break the canonical
+    /// order — use [`Self::remove_processor`] + [`Self::add_processor`] for that.
+    pub fn set_processor(&mut self, index: usize, processor: NoteProcessor) -> bool {
+        match self.processors.get_mut(index) {
+            Some(slot) => {
+                *slot = processor;
+                true
+            }
+            None => false,
+        }
     }
 
     /// Model-B playback-time expansion at one tick: collect the source notes

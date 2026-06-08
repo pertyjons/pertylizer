@@ -22,10 +22,10 @@ use crate::types::{
     ChordProgressionStep, ConnectionCheckResult, ConnectionInfo, CreateChordProgressionResult,
     DetailedSampleInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
     InputDeviceInfo, InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult,
-    MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParameterInfo,
-    PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry, ProjectLintReport,
-    ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo, SamplerStateInfo,
-    SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, NoteProcessorInfo, OptimizeResult,
+    ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry,
+    ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo,
+    SamplerStateInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -888,6 +888,40 @@ pub trait SynthBridge: Send + Sync + 'static {
         duration_beats: Option<f32>,
         velocity: Option<u8>,
     ) -> Result<NoteInfo, McpBridgeError>;
+
+    // === Sequencer: Note processors (generative articulation rack) ===
+
+    /// List a pattern's note-processor rack in execution order.
+    fn list_note_processors(
+        &self,
+        pattern_id: u32,
+    ) -> Result<Vec<NoteProcessorInfo>, McpBridgeError>;
+
+    /// Add a note processor to a pattern's rack. `processor` is the
+    /// externally-tagged `NoteProcessor` JSON (e.g.
+    /// `{"Arpeggiator": {...}}`, `{"Chord": {...}}`); it is inserted at its
+    /// canonical chain position. Returns the insertion index.
+    fn add_note_processor(
+        &self,
+        pattern_id: u32,
+        processor: serde_json::Value,
+    ) -> Result<usize, McpBridgeError>;
+
+    /// Replace the processor at `index` in place (config edit). `processor` is
+    /// the same JSON shape `add_note_processor` accepts.
+    fn set_note_processor(
+        &self,
+        pattern_id: u32,
+        index: usize,
+        processor: serde_json::Value,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Remove the processor at `index` from a pattern's rack.
+    fn remove_note_processor(&self, pattern_id: u32, index: usize) -> Result<(), McpBridgeError>;
+
+    /// Bake the whole rack into concrete notes (Model-A freeze) and clear it.
+    /// Returns the resulting note count.
+    fn freeze_note_processors(&self, pattern_id: u32) -> Result<usize, McpBridgeError>;
 
     // === Sequencer: Tracks ===
 

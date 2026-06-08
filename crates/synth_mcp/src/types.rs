@@ -569,6 +569,31 @@ pub struct PatternInfo {
     pub length_beats: f32,
     /// Number of notes.
     pub note_count: usize,
+    /// Number of note processors in the pattern's rack (0 = none). Read the
+    /// rack itself with `list_note_processors`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub processor_count: usize,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// One note processor in a pattern's rack, as surfaced to MCP readers.
+#[derive(Debug, Clone, Serialize)]
+pub struct NoteProcessorInfo {
+    /// Position in the rack (execution order; address for set/remove).
+    pub index: usize,
+    /// Kind tag (`scale_quantize`, `chord`, `arpeggiator`, `humanize`).
+    pub kind: String,
+    /// Canonical chain stage: 0 = scale-quantize, 1 = chord, 2 = arpeggiator,
+    /// 4 = humanize. (Stage 3 is per-note ornaments/strum, which live on the
+    /// note rather than in this rack, so it never appears here.)
+    pub stage: u8,
+    /// Full config as JSON — the same externally-tagged shape
+    /// `add_note_processor` / `set_note_processor` accept, so it round-trips.
+    pub config: serde_json::Value,
 }
 
 /// Information about a note in a pattern.

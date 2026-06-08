@@ -28,10 +28,10 @@ use synth_mcp::types::{
     BatchResult, BuildInstrumentResult, CompareMixResult, ConnectionCheckResult, ConnectionInfo,
     DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent,
     HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo,
-    MixBusMetrics, MixDelta, ModuleInfo, ModuleTypeInfo, NoteInfo, OptimizeResult, ParamTypeInfo,
-    ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
-    PatternInfo, PlacementInfo, ProjectSchemaInfo, RebuildInstrumentResult, SetSongResult,
-    SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    MixBusMetrics, MixDelta, ModuleInfo, ModuleTypeInfo, NoteInfo, NoteProcessorInfo,
+    OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue,
+    PatchResourceData, PatternInfo, PlacementInfo, ProjectSchemaInfo, RebuildInstrumentResult,
+    SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -1444,6 +1444,7 @@ impl SynthBridge for AppSynthBridge {
                 description: p.description.clone(),
                 length_beats: ticks_to_beats(p.length.0),
                 note_count: p.note_count(),
+                processor_count: p.processors().len(),
             })
             .collect();
         patterns.sort_by_key(|p| p.id);
@@ -1600,6 +1601,108 @@ impl SynthBridge for AppSynthBridge {
         }
 
         Ok(note_to_info(note))
+    }
+
+    // === Sequencer: Note processors ===
+
+    fn list_note_processors(
+        &self,
+        pattern_id: u32,
+    ) -> Result<Vec<NoteProcessorInfo>, McpBridgeError> {
+        let song = self.shared.song.read();
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+        pattern
+            .processors()
+            .iter()
+            .enumerate()
+            .map(|(index, proc)| {
+                Ok(NoteProcessorInfo {
+                    index,
+                    kind: proc.kind().to_string(),
+                    stage: proc.chain_stage(),
+                    config: serde_json::to_value(proc)
+                        .map_err(|e| McpBridgeError::Other(e.to_string()))?,
+                })
+            })
+            .collect()
+    }
+
+    fn add_note_processor(
+        &self,
+        pattern_id: u32,
+        processor: serde_json::Value,
+    ) -> Result<usize, McpBridgeError> {
+        let proc = parse_note_processor(processor)?;
+        let mut song = self.shared.song.write();
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+        Ok(pattern.add_processor(proc))
+    }
+
+    fn set_note_processor(
+        &self,
+        pattern_id: u32,
+        index: usize,
+        processor: serde_json::Value,
+    ) -> Result<(), McpBridgeError> {
+        let proc = parse_note_processor(processor)?;
+        let mut song = self.shared.song.write();
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+        let existing = pattern
+            .processors()
+            .get(index)
+            .ok_or(McpBridgeError::IndexOutOfBounds {
+                name: "note processor",
+                index,
+                count: pattern.processors().len(),
+            })?;
+        // Replacing a processor with a different chain stage would reorder the
+        // rack out of its locked execution order; require an explicit
+        // remove + add for that rather than silently breaking the chain.
+        if existing.chain_stage() != proc.chain_stage() {
+            return Err(McpBridgeError::Other(format!(
+                "cannot replace a '{}' processor with a '{}' (different chain stage); \
+                 remove it and add the new processor instead",
+                existing.kind(),
+                proc.kind()
+            )));
+        }
+        pattern.set_processor(index, proc);
+        Ok(())
+    }
+
+    fn remove_note_processor(&self, pattern_id: u32, index: usize) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+        let count = pattern.processors().len();
+        pattern
+            .remove_processor(index)
+            .map(|_| ())
+            .ok_or(McpBridgeError::IndexOutOfBounds {
+                name: "note processor",
+                index,
+                count,
+            })
+    }
+
+    fn freeze_note_processors(&self, pattern_id: u32) -> Result<usize, McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+        Ok(pattern.freeze_processors())
     }
 
     // === Sequencer: Tracks ===
@@ -6674,6 +6777,16 @@ fn collect_mod_matrix_routings(
 }
 
 /// Convert a sequencer `Note` to MCP `NoteInfo`.
+/// Deserialize a `NoteProcessor` from MCP-supplied JSON (externally tagged,
+/// e.g. `{"Chord": {...}}`). The single source of truth for note-processor
+/// parsing, shared by `add_note_processor` and `set_note_processor`.
+fn parse_note_processor(
+    value: serde_json::Value,
+) -> Result<synth_sequencer::NoteProcessor, McpBridgeError> {
+    serde_json::from_value(value)
+        .map_err(|e| McpBridgeError::Other(format!("invalid note processor: {e}")))
+}
+
 fn note_to_info(n: &synth_sequencer::Note) -> NoteInfo {
     NoteInfo {
         id: n.id.0,
