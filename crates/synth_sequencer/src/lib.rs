@@ -52,9 +52,9 @@ pub use note::{
     OrnamentPlacement, OrnamentSpacing, Vibrato, VibratoShape,
 };
 pub use note_processor::{
-    ArpMode, ArpRate, ArpVelocity, Arpeggiator, ExpandedNote, ExpansionBuffer, MAX_ARP_HELD,
-    MAX_EXPANSION_EVENTS_PER_TICK, MAX_ORNAMENT_HITS, NoteProcessor, PitchClass, ScaleMask,
-    ScaleQuantize,
+    ArpMode, ArpRate, ArpVelocity, Arpeggiator, Chord, ExpandedNote, ExpansionBuffer, MAX_ARP_HELD,
+    MAX_CHORD_INTERVALS, MAX_EXPANSION_EVENTS_PER_TICK, MAX_ORNAMENT_HITS, NoteProcessor,
+    PitchClass, ScaleMask, ScaleQuantize,
 };
 pub use pattern::{Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};

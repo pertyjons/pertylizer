@@ -851,6 +851,35 @@
       "format": "float",
       "type": "number"
     },
+    "Chord": {
+      "description": "Chord generator (chain stage 1) — expand one source note into a chord.\n\nEach source-note onset is **replaced** by the pitches at the source pitch\nplus each stored interval (semitones; `0` keeps the root, negatives voice\nbelow it). The classic chain is `chord → arp`: the arpeggiator reads the\ngenerated tones through the widened held-notes seam ([`NoteProcessor::\nexpand_pitch`]), so one source note + chord + arp arpeggiates the full\nchord. Intervals are stored inline (no heap) and capped at\n[`MAX_CHORD_INTERVALS`].",
+      "properties": {
+        "count": {
+          "description": "Number of live intervals (clamped to [`MAX_CHORD_INTERVALS`]).",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "intervals": {
+          "description": "Semitone offsets from the source pitch; only the first `count` are live.",
+          "items": {
+            "format": "int8",
+            "maximum": 127,
+            "minimum": -128,
+            "type": "integer"
+          },
+          "maxItems": 8,
+          "minItems": 8,
+          "type": "array"
+        }
+      },
+      "required": [
+        "intervals",
+        "count"
+      ],
+      "type": "object"
+    },
     "ConnectionState": {
       "description": "Connection between two modules.",
       "examples": [
@@ -7155,6 +7184,19 @@
           },
           "required": [
             "ScaleQuantize"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Expand each source note into a chord (chain stage 1).",
+          "properties": {
+            "Chord": {
+              "$ref": "#/$defs/Chord"
+            }
+          },
+          "required": [
+            "Chord"
           ],
           "type": "object"
         },

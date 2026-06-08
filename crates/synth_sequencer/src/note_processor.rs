@@ -185,6 +185,73 @@ impl ScaleQuantize {
     }
 }
 
+/// Most tones a chord generator emits per source note. A source note expands
+/// into at most this many pitches; excess intervals are ignored. Bounds the
+/// audio-thread fan-out and the held-view buffer.
+pub const MAX_CHORD_INTERVALS: usize = 8;
+
+/// Chord generator (chain stage 1) — expand one source note into a chord.
+///
+/// Each source-note onset is **replaced** by the pitches at the source pitch
+/// plus each stored interval (semitones; `0` keeps the root, negatives voice
+/// below it). The classic chain is `chord → arp`: the arpeggiator reads the
+/// generated tones through the widened held-notes seam ([`NoteProcessor::
+/// expand_pitch`]), so one source note + chord + arp arpeggiates the full
+/// chord. Intervals are stored inline (no heap) and capped at
+/// [`MAX_CHORD_INTERVALS`].
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Chord {
+    /// Semitone offsets from the source pitch; only the first `count` are live.
+    intervals: [i8; MAX_CHORD_INTERVALS],
+    /// Number of live intervals (clamped to [`MAX_CHORD_INTERVALS`]).
+    count: u8,
+}
+
+impl Chord {
+    /// Build a chord from semitone intervals above (or below) the source pitch.
+    /// Excess beyond [`MAX_CHORD_INTERVALS`] is dropped. An empty set silences
+    /// the source note (no tones) — callers wanting the root must include `0`.
+    pub fn new(intervals: &[i8]) -> Self {
+        let mut stored = [0_i8; MAX_CHORD_INTERVALS];
+        let count = intervals.len().min(MAX_CHORD_INTERVALS);
+        stored[..count].copy_from_slice(&intervals[..count]);
+        #[allow(clippy::cast_possible_truncation)]
+        Self {
+            intervals: stored,
+            count: count as u8,
+        }
+    }
+
+    /// Major triad (root, +4, +7).
+    pub fn major() -> Self {
+        Self::new(&[0, 4, 7])
+    }
+
+    /// Minor triad (root, +3, +7).
+    pub fn minor() -> Self {
+        Self::new(&[0, 3, 7])
+    }
+
+    /// Dominant 7th (root, +4, +7, +10).
+    pub fn dominant7() -> Self {
+        Self::new(&[0, 4, 7, 10])
+    }
+
+    /// The live intervals (the single normalization point — `count` is clamped
+    /// here so a hand-crafted JSON `count` can't read past the array).
+    #[must_use]
+    pub fn intervals(&self) -> &[i8] {
+        &self.intervals[..(self.count as usize).min(MAX_CHORD_INTERVALS)]
+    }
+}
+
+impl Default for Chord {
+    fn default() -> Self {
+        Self::major()
+    }
+}
+
 /// Arpeggiator step order over the held chord.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
@@ -389,10 +456,12 @@ impl Arpeggiator {
             .min()
     }
 
-    /// Phase-2 (step onsets only): the chord at `tick`, pitch-mapped through
-    /// `upstream`, in scan (start) order. Excess beyond [`MAX_ARP_HELD`] is
-    /// truncated in scan order — *not* pitch order — so a >16-note cluster
-    /// keeps its earliest-starting 16 notes and Up/Down may miss the extremes.
+    /// Phase-2 (step onsets only): the chord at `tick`, viewed through the
+    /// `upstream` chain (the 1→N seam — a chord generator expands each held
+    /// note into its tones), in scan (start) order. Excess beyond
+    /// [`MAX_ARP_HELD`] is truncated in scan order — *not* pitch order — so a
+    /// cluster past 16 notes keeps its earliest-starting 16 (chord tones
+    /// included) and Up/Down may miss the extremes.
     fn held_at(
         pattern: &Pattern,
         tick: PatternTick,
@@ -407,14 +476,16 @@ impl Arpeggiator {
             if n == MAX_ARP_HELD {
                 break;
             }
-            let pitch = upstream
-                .iter()
-                .fold(note.pitch, |p, proc| proc.map_pitch(p));
-            held[n] = HeldArpNote {
-                pitch,
-                velocity: note.velocity,
-            };
-            n += 1;
+            // 1→N seam: a source note becomes its chord tones (snapped) when a
+            // chord/quantize sits upstream, so `chord → arp` arpeggiates the
+            // whole chord rather than the single source pitch.
+            let velocity = note.velocity;
+            expand_held_pitch(upstream, note.pitch, &mut |pitch| {
+                if n < MAX_ARP_HELD {
+                    held[n] = HeldArpNote { pitch, velocity };
+                    n += 1;
+                }
+            });
         }
         n
     }
@@ -577,6 +648,8 @@ impl Arpeggiator {
 pub enum NoteProcessor {
     /// Snap pitches to a scale (chain stage 0).
     ScaleQuantize(ScaleQuantize),
+    /// Expand each source note into a chord (chain stage 1).
+    Chord(Chord),
     /// Arpeggiate the held chord (chain stage 2).
     Arpeggiator(Arpeggiator),
 }
@@ -589,23 +662,23 @@ impl NoteProcessor {
     pub fn chain_stage(&self) -> u8 {
         match self {
             Self::ScaleQuantize(_) => 0,
+            Self::Chord(_) => 1,
             Self::Arpeggiator(_) => 2,
         }
     }
 
-    /// The single-pitch transform this processor applies, used by downstream
-    /// generators to view source material *through* the upstream chain (e.g.
-    /// the arp reading held notes through a preceding scale-quantize).
-    /// Identity for generators.
-    ///
-    /// NB (NP4): a chord *generator* multiplies one note into several and
-    /// cannot be expressed as a pitch map — when it lands, widen this seam
-    /// into an upstream held-notes view (1→N) so `chord → arp` composes;
-    /// do not bolt chord expansion into the arp itself.
-    fn map_pitch(&self, pitch: Pitch) -> Pitch {
+    /// Expand one source pitch as this processor contributes it to a downstream
+    /// generator's held-notes view — the **1→N seam**. A pitch transform yields
+    /// one pitch (scale-quantize snaps); a chord generator yields its tones; a
+    /// stream replacer (the arp) is identity here (it never sits upstream of a
+    /// held-notes consumer except behind another stream generator, where
+    /// "last one wins"). Chaining these across an upstream slice is
+    /// [`expand_held_pitch`], which is how the arp sees a preceding chord.
+    fn expand_pitch(&self, pitch: Pitch, sink: &mut impl FnMut(Pitch)) {
         match self {
-            Self::ScaleQuantize(q) => q.snap(pitch),
-            Self::Arpeggiator(_) => pitch,
+            Self::ScaleQuantize(q) => sink(q.snap(pitch)),
+            Self::Chord(c) => c.tones(pitch, sink),
+            Self::Arpeggiator(_) => sink(pitch),
         }
     }
 
@@ -635,8 +708,84 @@ impl NoteProcessor {
                     note.pitch = q.snap(note.pitch);
                 }
             }
+            Self::Chord(c) => c.expand_into(buf),
             Self::Arpeggiator(a) => a.process_at_tick(pattern, tick, upstream, buf),
         }
+    }
+}
+
+impl Chord {
+    /// Emit this chord's pitches for a given `root` into `sink` — the single
+    /// source of truth for "a chord's tones", shared by the buf-side
+    /// [`Self::expand_into`] and the held-view [`NoteProcessor::expand_pitch`].
+    /// Tones transposed off the MIDI range are skipped.
+    fn tones(&self, root: Pitch, sink: &mut impl FnMut(Pitch)) {
+        for &iv in self.intervals() {
+            if let Some(p) = root.transpose(Semitones::new(f32::from(iv))) {
+                sink(p);
+            }
+        }
+    }
+
+    /// Buf-side expansion (standalone chord, i.e. not consumed by a downstream
+    /// stream generator): **replace** each note currently in `buf` — the
+    /// upstream onsets at this tick — with its chord tones. The chained
+    /// held-notes view ([`expand_held_pitch`]) is the *other* half: it lets a
+    /// downstream arp see these tones without this buf rewrite (the arp clears
+    /// the buffer). RT-safe: tones are produced through a fixed snapshot, no
+    /// allocation; the snapshot is skipped entirely on the common no-onset tick.
+    fn expand_into(&self, buf: &mut ExpansionBuffer) {
+        if buf.notes().is_empty() {
+            return;
+        }
+        const DUMMY: ExpandedNote = ExpandedNote {
+            duration: None,
+            pitch: Pitch::MIDDLE_C,
+            velocity: Velocity::MF,
+            legato: false,
+            glide: None,
+            expression: None,
+        };
+        let mut roots = [DUMMY; MAX_EXPANSION_EVENTS_PER_TICK];
+        let n = buf.notes().len().min(MAX_EXPANSION_EVENTS_PER_TICK);
+        roots[..n].copy_from_slice(&buf.notes()[..n]);
+        buf.clear_notes();
+        for root in &roots[..n] {
+            self.tones(root.pitch, &mut |pitch| {
+                let _ = buf.push(ExpandedNote { pitch, ..*root });
+            });
+        }
+    }
+}
+
+/// Expand one source pitch through the `upstream` chain (1→N at each stage)
+/// and invoke `sink` for every resulting held pitch. This is the widened seam
+/// that lets a downstream generator (the arp) view source material *through*
+/// an upstream chord/quantize: a single note becomes the snapped chord tones.
+///
+/// Ping-pongs two fixed [`MAX_ARP_HELD`] stacks — no allocation; each stage's
+/// fan-out is capped so a chord-of-chords cannot overflow the held view (the
+/// excess is silently dropped, matching the held-notes truncation policy).
+fn expand_held_pitch(upstream: &[NoteProcessor], pitch: Pitch, sink: &mut impl FnMut(Pitch)) {
+    let mut cur = [Pitch::MIDDLE_C; MAX_ARP_HELD];
+    cur[0] = pitch;
+    let mut cur_n = 1;
+    let mut next = [Pitch::MIDDLE_C; MAX_ARP_HELD];
+    for proc in upstream {
+        let mut next_n = 0;
+        for &p in &cur[..cur_n] {
+            proc.expand_pitch(p, &mut |out| {
+                if next_n < MAX_ARP_HELD {
+                    next[next_n] = out;
+                    next_n += 1;
+                }
+            });
+        }
+        cur[..next_n].copy_from_slice(&next[..next_n]);
+        cur_n = next_n;
+    }
+    for &p in &cur[..cur_n] {
+        sink(p);
     }
 }
 
@@ -1267,6 +1416,14 @@ mod tests {
         p
     }
 
+    /// A single note `midi` held for `hold` ticks from tick 0.
+    fn chord_pattern_single(midi: u8, hold: u32) -> Pattern {
+        let mut p = Pattern::new(PatternId(0), Duration(3840));
+        let id = p.add_note(PatternTick(0), Pitch::new(midi).unwrap(), Velocity::MF);
+        let _ = p.resize_note(id, Duration(hold));
+        p
+    }
+
     fn arp(mode: ArpMode, octaves: u8) -> Arpeggiator {
         Arpeggiator {
             mode,
@@ -1527,6 +1684,107 @@ mod tests {
             velocity: ArpVelocity::RampDown,
             latch: true,
         }));
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Pattern = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.processors(), p.processors());
+    }
+
+    // --- Chord (NP4) --------------------------------------------------------
+
+    #[test]
+    fn chord_replaces_source_note_with_tones() {
+        // One C note → C major triad (C E G) at the same tick.
+        let mut p = pattern_with_notes(&[60]);
+        let _ = p.add_processor(NoteProcessor::Chord(Chord::major()));
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        let pitches: Vec<u8> = buf.notes().iter().map(|n| n.pitch.as_midi()).collect();
+        assert_eq!(pitches, vec![60, 64, 67]);
+    }
+
+    #[test]
+    fn chord_tones_inherit_source_note_fields() {
+        // Velocity (and other fields) carry from the source note to every tone.
+        let mut p = Pattern::new(PatternId(0), Duration(3840));
+        let id = p.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::FF);
+        let _ = p.resize_note(id, Duration(480));
+        let _ = p.add_processor(NoteProcessor::Chord(Chord::minor()));
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        let pitches: Vec<u8> = buf.notes().iter().map(|n| n.pitch.as_midi()).collect();
+        assert_eq!(pitches, vec![60, 63, 67], "minor triad");
+        assert!(
+            buf.notes().iter().all(
+                |n| (n.velocity.as_f32() - Velocity::FF.as_f32()).abs() < 1e-6
+                    && n.duration == Some(Duration(480))
+            ),
+            "every tone inherits velocity + duration"
+        );
+    }
+
+    #[test]
+    fn chord_empty_interval_set_silences_the_note() {
+        let mut p = pattern_with_notes(&[60]);
+        let _ = p.add_processor(NoteProcessor::Chord(Chord::new(&[])));
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        assert!(buf.notes().is_empty(), "no intervals → no tones");
+    }
+
+    #[test]
+    fn chord_new_clamps_excess_intervals() {
+        let c = Chord::new(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+        assert_eq!(c.intervals().len(), MAX_CHORD_INTERVALS);
+        assert_eq!(c.intervals(), &[0, 1, 2, 3, 4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn chord_then_arp_arpeggiates_the_whole_chord() {
+        // THE SEAM: a single source note + chord + arp must arpeggiate all
+        // three chord tones, not replay the one source pitch. This only works
+        // if the arp's held-notes view expands 1→N through the upstream chord.
+        let mut p = chord_pattern_single(60, 3840); // one held C, no authored chord
+        let _ = p.add_processor(NoteProcessor::Chord(Chord::major()));
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
+        // Canonical insertion: chord (stage 1) before arp (stage 2).
+        assert_eq!(p.processors()[0].chain_stage(), 1);
+        assert_eq!(p.processors()[1].chain_stage(), 2);
+        let got: Vec<u8> = expand_all(&p, 720).into_iter().map(|(_, m)| m).collect();
+        assert_eq!(
+            got,
+            vec![60, 64, 67],
+            "arp must see all chord tones via the widened held-notes seam"
+        );
+    }
+
+    #[test]
+    fn quantize_then_chord_builds_in_key_from_snapped_root() {
+        // C# source → quantize snaps to D → D major triad (D F# A = 62 66 69).
+        let mut p = pattern_with_notes(&[61]);
+        let _ = p.add_processor(NoteProcessor::ScaleQuantize(c_major()));
+        let _ = p.add_processor(NoteProcessor::Chord(Chord::major()));
+        assert_eq!(p.processors()[0].chain_stage(), 0, "quantize before chord");
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        let pitches: Vec<u8> = buf.notes().iter().map(|n| n.pitch.as_midi()).collect();
+        assert_eq!(pitches, vec![62, 66, 69]);
+    }
+
+    #[test]
+    fn chord_freeze_bakes_tones() {
+        let mut p = pattern_with_notes(&[60]);
+        let _ = p.add_processor(NoteProcessor::Chord(Chord::dominant7()));
+        let count = p.freeze_processors();
+        assert_eq!(count, 4, "dominant 7th = four tones");
+        assert!(p.processors().is_empty());
+        let pitches: Vec<u8> = p.notes().iter().map(|n| n.pitch.as_midi()).collect();
+        assert_eq!(pitches, vec![60, 64, 67, 70]);
+    }
+
+    #[test]
+    fn chord_serde_roundtrip() {
+        let mut p = pattern_with_notes(&[60]);
+        let _ = p.add_processor(NoteProcessor::Chord(Chord::new(&[-12, 0, 7, 12])));
         let json = serde_json::to_string(&p).unwrap();
         let back: Pattern = serde_json::from_str(&json).unwrap();
         assert_eq!(back.processors(), p.processors());
