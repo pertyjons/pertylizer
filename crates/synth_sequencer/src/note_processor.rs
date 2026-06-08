@@ -29,7 +29,9 @@ use synth_core::hash::splitmix64;
 use synth_core::{NormalizedValue, Semitones};
 
 use super::ids::NoteId;
-use super::note::{Glide, Note, NoteExpression};
+use super::note::{
+    Glide, Note, NoteExpression, Ornament, OrnamentDynamics, OrnamentPlacement, OrnamentSpacing,
+};
 use super::pattern::Pattern;
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
@@ -40,6 +42,17 @@ use super::time::{Duration, PatternTick};
 /// buffer. A pathological config (e.g. a 1 ms roll) hits this instead of
 /// allocating on the audio thread.
 pub const MAX_EXPANSION_EVENTS_PER_TICK: usize = 128;
+
+/// Hard cap on the hits a single per-note ornament may emit (a roll's `count`).
+///
+/// Bounds the per-tick window scan and, with [`MAX_EXPANSION_EVENTS_PER_TICK`],
+/// keeps a pathological roll from unbounded work on the audio thread. A
+/// `count` above this clamps down; it never grows a buffer.
+pub const MAX_ORNAMENT_HITS: u8 = 64;
+
+/// Velocity-curve floor: a crescendo/decrescendo ornament ramps between this
+/// fraction of the source velocity and the full source velocity.
+const ORNAMENT_VEL_FLOOR: f32 = 0.35;
 
 // ============================================================================
 // Scale primitives (used by the ScaleQuantize processor)
@@ -535,8 +548,8 @@ impl Arpeggiator {
         let t = pos as f32 / span;
         let factor = match self.velocity {
             ArpVelocity::AsPlayed => return base,
-            ArpVelocity::RampUp => ARP_RAMP_FLOOR + (1.0 - ARP_RAMP_FLOOR) * t,
-            ArpVelocity::RampDown => 1.0 - (1.0 - ARP_RAMP_FLOOR) * t,
+            ArpVelocity::RampUp => velocity_ramp(ARP_RAMP_FLOOR, t, true),
+            ArpVelocity::RampDown => velocity_ramp(ARP_RAMP_FLOOR, t, false),
         };
         Velocity::new(base.as_f32() * factor)
     }
@@ -730,6 +743,163 @@ impl Default for ExpansionBuffer {
 }
 
 // ============================================================================
+// Per-note ornaments (NP3): the timed-repeat generator
+// ============================================================================
+
+/// Effective hit count of an ornament (clamped to the RT cap). `< 2` means
+/// "no figure" — the note plays unchanged.
+fn ornament_hits(orn: &Ornament) -> u32 {
+    u32::from(orn.count.min(MAX_ORNAMENT_HITS))
+}
+
+/// Curve-warped onset offset (ticks from the figure's first hit) of hit `k` of
+/// `n`, before strict-monotonic dedup. Monotonic non-decreasing in `k`, with
+/// `offset(0) = 0` and `offset(n-1) = total_span`. The warp can *round* two
+/// adjacent hits onto the same tick (e.g. a fast curve with a tiny `spacing`);
+/// [`ornament_onsets`] resolves that into strictly increasing onsets, so this
+/// is never consumed raw. `i64` throughout — `total_span` can exceed `u32`.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+fn ornament_offset(curve: OrnamentSpacing, k: u32, n: u32, total_span: i64) -> i64 {
+    if n <= 1 || total_span == 0 {
+        return 0;
+    }
+    let u = f64::from(k) / f64::from(n - 1);
+    let w = match curve {
+        OrnamentSpacing::Even => u,
+        // Gaps shrink toward the end (onsets bunch up late) → accelerando.
+        OrnamentSpacing::Accelerate => 2.0 * u - u * u,
+        // Gaps grow toward the end → ritardando.
+        OrnamentSpacing::Decelerate => u * u,
+    };
+    (total_span as f64 * w).round() as i64
+}
+
+/// Build the figure's `n` hit onsets (offsets from the first hit) into `out`,
+/// returning the populated prefix. The curve shapes the spacing, but the
+/// onsets are forced **strictly increasing with the endpoints pinned**
+/// (`out[0] = 0`, `out[n-1] = total_span`): each onset is clamped to at least
+/// one tick past its predecessor and to leave one tick per remaining hit. This
+/// guarantees no two hits of one ornament ever collide on a tick — a collision
+/// would emit two same-pitch `NoteOn`s whose differing `NoteOff`s would cut
+/// each other short in the (pitch-keyed) voice bookkeeping. `base >= 1` makes
+/// `total_span >= n - 1`, so the clamp range is always non-empty.
+fn ornament_onsets(orn: &Ornament, n: u32, total_span: i64, out: &mut [i64]) {
+    let mut prev = -1_i64;
+    for k in 0..n {
+        let raw = ornament_offset(orn.spacing_curve, k, n, total_span);
+        let lower = prev + 1;
+        let upper = total_span - i64::from(n - 1 - k);
+        let onset = raw.clamp(lower, upper);
+        out[k as usize] = onset;
+        prev = onset;
+    }
+}
+
+/// Shared velocity ramp: linear from `floor` (at `t = 0`) to `1.0` (at
+/// `t = 1`), or the reverse when `!rising`. Used by both the arpeggiator's
+/// velocity ramp and ornament dynamics so the curve shape stays in one place.
+fn velocity_ramp(floor: f32, t: f32, rising: bool) -> f32 {
+    if rising {
+        floor + (1.0 - floor) * t
+    } else {
+        1.0 - (1.0 - floor) * t
+    }
+}
+
+/// Velocity multiplier for hit `k` of `n` under the dynamics curve.
+#[allow(clippy::cast_precision_loss)]
+fn ornament_velocity_factor(dynamics: OrnamentDynamics, k: u32, n: u32) -> f32 {
+    if n <= 1 {
+        return 1.0;
+    }
+    let t = k as f32 / (n - 1) as f32;
+    match dynamics {
+        OrnamentDynamics::Flat => 1.0,
+        OrnamentDynamics::Crescendo => velocity_ramp(ORNAMENT_VEL_FLOOR, t, true),
+        OrnamentDynamics::Decrescendo => velocity_ramp(ORNAMENT_VEL_FLOOR, t, false),
+    }
+}
+
+/// Emit the timed-repeat ornament hits of `note` that land **exactly** on
+/// `tick`, into `buf`. A pure, stateless function of *(note, ornament, tick)* —
+/// the engine calls it on every tick, so a lead-in figure's grace hits surface
+/// at the ticks before `note.start`. RT-safe: no allocation (onsets live in a
+/// fixed stack array bounded by [`MAX_ORNAMENT_HITS`]).
+///
+/// Exactly one hit is the *main* hit (source pitch + duration + expression);
+/// the rest are short grace hits at `pitch_offset`. A grace whose onset falls
+/// before tick 0 (a lead-in figure too close to the pattern start) is dropped.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+fn expand_ornament_at(note: &Note, orn: &Ornament, tick: PatternTick, buf: &mut ExpansionBuffer) {
+    let n = ornament_hits(orn);
+    if n < 2 {
+        return;
+    }
+    // i64 throughout: `count` (≤ 64) × `spacing` (u32) overflows u32, and a
+    // lead-in `figure_start` can go negative.
+    let base = i64::from(orn.spacing.0.max(1));
+    let total_span = (i64::from(n) - 1) * base;
+    let start = i64::from(note.start.0);
+    let figure_start = match orn.placement {
+        OrnamentPlacement::LeadIn => start - total_span,
+        OrnamentPlacement::OnBeat => start,
+    };
+
+    // Cheap window reject before building the onsets.
+    let rel = i64::from(tick.0) - figure_start;
+    if rel < 0 || rel > total_span {
+        return;
+    }
+
+    let mut onsets = [0_i64; MAX_ORNAMENT_HITS as usize];
+    let onsets = &mut onsets[..n as usize];
+    ornament_onsets(orn, n, total_span, onsets);
+
+    // Onsets are strictly increasing, so at most one hit lands on this tick.
+    let Some(k) = (0..n as usize).find(|&k| onsets[k] == rel) else {
+        return;
+    };
+    let is_main = match orn.placement {
+        OrnamentPlacement::LeadIn => k + 1 == n as usize,
+        OrnamentPlacement::OnBeat => k == 0,
+    };
+    let velocity = match orn.dynamics {
+        OrnamentDynamics::Flat => note.velocity,
+        _ => {
+            let factor = ornament_velocity_factor(orn.dynamics, k as u32, n);
+            Velocity::new(note.velocity.as_f32() * factor)
+        }
+    };
+
+    if is_main {
+        // The main hit is the source note, only its velocity reshaped.
+        let mut e = ExpandedNote::from_note(note);
+        e.velocity = velocity;
+        let _ = buf.push(e);
+    } else {
+        let Some(pitch) = note.pitch.transpose(orn.pitch_offset) else {
+            return; // grace transposed off the MIDI range — skip
+        };
+        // Grace duration = its gap to the next hit × grace_gate (the last hit
+        // has no successor, so fall back to the base spacing).
+        let gap = if k + 1 < n as usize {
+            onsets[k + 1] - onsets[k]
+        } else {
+            base
+        };
+        let duration = ((gap as f64 * f64::from(orn.grace_gate.as_f32())) as i64).max(1);
+        let _ = buf.push(ExpandedNote {
+            duration: Some(Duration(duration as u32)),
+            pitch,
+            velocity,
+            legato: false,
+            glide: None,
+            expression: None,
+        });
+    }
+}
+
+// ============================================================================
 // Pattern integration: rack accessors, the expansion point, freeze
 // ============================================================================
 
@@ -757,9 +927,21 @@ impl Pattern {
     }
 
     /// Model-B playback-time expansion at one tick: collect the source notes
-    /// that start at `tick` and pass `gate` (the engine's per-note probability
+    /// that sound at `tick` and pass `gate` (the engine's per-note probability
     /// roll; preview passes `|_| true`), then run the rack in order. The result
     /// lands in `buf` (cleared first).
+    ///
+    /// A plain note contributes one event at its own start tick. A note with a
+    /// per-note [`Ornament`] instead contributes the ornament's timed-repeat
+    /// hits that land on `tick` (which, for a lead-in figure, includes ticks
+    /// *before* the note's start). Because an ornament spans many ticks, `gate`
+    /// must roll consistently for a given note across all of them — the engine
+    /// seeds it by the note's start, not the expansion tick.
+    ///
+    /// Per-note ornaments expand during collection, so an upstream
+    /// scale-quantize snaps their grace pitches into key, and a stream
+    /// generator that replaces the stream (the arpeggiator clears the buffer)
+    /// consumes them — "last stream generator wins", as for the source chord.
     ///
     /// **Audio-thread hot path** — no allocation, bounded by `buf`'s cap.
     pub fn expand_at_tick(
@@ -770,8 +952,17 @@ impl Pattern {
     ) {
         buf.clear();
         for note in self.notes() {
-            if note.start == tick && gate(note) {
-                let _ = buf.push(ExpandedNote::from_note(note));
+            match &note.ornament {
+                Some(orn) if ornament_hits(orn) >= 2 => {
+                    if gate(note) {
+                        expand_ornament_at(note, orn, tick, buf);
+                    }
+                }
+                _ => {
+                    if note.start == tick && gate(note) {
+                        let _ = buf.push(ExpandedNote::from_note(note));
+                    }
+                }
             }
         }
         for i in 0..self.processors.len() {
@@ -782,27 +973,43 @@ impl Pattern {
         }
     }
 
-    /// One-shot Model-A bake: run the rack over every tick of the pattern,
-    /// replace the source notes with the concrete expansion, and clear the
-    /// rack. Returns the number of notes after the bake.
+    /// One-shot Model-A bake: run the rack (and any per-note ornaments) over
+    /// every tick of the pattern, replace the source notes with the concrete
+    /// expansion, and clear the rack. Returns the number of notes after the
+    /// bake. Per-note ornament fields are dropped — the baked notes are plain.
     ///
     /// UI-thread only (allocates; walks the full pattern length — generators
     /// may emit at ticks where no source note starts, so every tick is
     /// visited).
     pub fn freeze_processors(&mut self) -> usize {
-        if self.processors.is_empty() {
+        let has_ornament = self
+            .notes()
+            .iter()
+            .any(|n| n.ornament.as_ref().is_some_and(|o| ornament_hits(o) >= 2));
+        if self.processors.is_empty() && !has_ornament {
             return self.note_count();
         }
         let mut buf = ExpansionBuffer::new();
         let mut frozen: Vec<(PatternTick, ExpandedNote)> = Vec::new();
-        // Walk past `length` if any note starts beyond it (add_note does not
-        // clamp), so an out-of-range source note survives the bake instead of
-        // being silently dropped by the clear-and-reinsert below.
-        let walk_end = self.length.0.max(
-            self.notes()
-                .last()
-                .map_or(0, |n| n.start.0.saturating_add(1)),
-        );
+        // Walk past `length` if any note (or its on-beat ornament tail) reaches
+        // beyond it — add_note does not clamp — so an out-of-range source note
+        // survives the bake instead of being silently dropped by the
+        // clear-and-reinsert below. (A lead-in ornament reaches earlier ticks,
+        // which the 0-based walk already covers.)
+        let note_reach = |n: &Note| {
+            let base = n.start.0.saturating_add(1);
+            match &n.ornament {
+                Some(o) if ornament_hits(o) >= 2 && o.placement == OrnamentPlacement::OnBeat => {
+                    let span = (ornament_hits(o) - 1) * o.spacing.0.max(1);
+                    base.saturating_add(span)
+                }
+                _ => base,
+            }
+        };
+        let walk_end = self
+            .length
+            .0
+            .max(self.notes().iter().map(note_reach).max().unwrap_or(0));
         for tick in 0..walk_end {
             let t = PatternTick(tick);
             self.expand_at_tick(t, |_| true, &mut buf);
@@ -1323,6 +1530,288 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let back: Pattern = serde_json::from_str(&json).unwrap();
         assert_eq!(back.processors(), p.processors());
+    }
+
+    // --- Ornaments (NP3) ----------------------------------------------------
+
+    /// A single note at `start` lasting `dur`, with the given ornament.
+    fn ornamented(start: u32, midi: u8, dur: u32, orn: Ornament) -> Pattern {
+        let mut p = Pattern::new(PatternId(0), Duration(3840));
+        let id = p.add_note(PatternTick(start), Pitch::new(midi).unwrap(), Velocity::MF);
+        let _ = p.resize_note(id, Duration(dur));
+        if let Some(n) = p.note_mut(id) {
+            n.ornament = Some(orn);
+        }
+        p
+    }
+
+    fn flam() -> Ornament {
+        Ornament {
+            count: 2,
+            spacing: Duration(120),
+            spacing_curve: OrnamentSpacing::Even,
+            dynamics: OrnamentDynamics::Flat,
+            placement: OrnamentPlacement::LeadIn,
+            pitch_offset: Semitones::new(0.0),
+            grace_gate: NormalizedValue::new(0.5),
+        }
+    }
+
+    #[test]
+    fn ornament_count_below_two_is_a_noop() {
+        let p = ornamented(480, 60, 240, Ornament { count: 1, ..flam() });
+        // Plays as a single plain note at its own start, nowhere else.
+        let got = expand_all(&p, 960);
+        assert_eq!(got, vec![(480, 60)]);
+    }
+
+    #[test]
+    fn ornament_lead_in_main_lands_on_start() {
+        // count 2, spacing 120, lead-in: grace at 360, main at 480.
+        let p = ornamented(480, 60, 240, flam());
+        let got = expand_all(&p, 960);
+        assert_eq!(
+            got,
+            vec![(360, 60), (480, 60)],
+            "lead-in grace precedes the beat; main lands on the note start"
+        );
+    }
+
+    #[test]
+    fn ornament_on_beat_trails_the_start() {
+        let p = ornamented(
+            0,
+            60,
+            240,
+            Ornament {
+                count: 3,
+                placement: OrnamentPlacement::OnBeat,
+                ..flam()
+            },
+        );
+        // Main on 0, graces trailing at 120 and 240.
+        let got = expand_all(&p, 600);
+        assert_eq!(got, vec![(0, 60), (120, 60), (240, 60)]);
+    }
+
+    #[test]
+    fn ornament_grace_takes_pitch_offset_main_keeps_pitch() {
+        // Acciaccatura: grace a tone above (62), main at 60.
+        let p = ornamented(
+            240,
+            60,
+            240,
+            Ornament {
+                pitch_offset: Semitones::new(2.0),
+                ..flam()
+            },
+        );
+        let got = expand_all(&p, 480);
+        assert_eq!(got, vec![(120, 62), (240, 60)]);
+    }
+
+    #[test]
+    fn ornament_lead_in_grace_before_tick_zero_is_dropped() {
+        // Note at tick 60, lead-in grace would land at 60 - 120 = -60 → dropped;
+        // only the main hit survives, on the beat.
+        let p = ornamented(60, 60, 240, flam());
+        let got = expand_all(&p, 480);
+        assert_eq!(got, vec![(60, 60)]);
+    }
+
+    #[test]
+    fn ornament_main_keeps_duration_grace_is_short() {
+        let p = ornamented(480, 60, 960, flam());
+        let mut buf = ExpansionBuffer::new();
+        // Grace at 360: short (grace_gate 0.5 × spacing 120 = 60 ticks).
+        p.expand_at_tick(PatternTick(360), |_| true, &mut buf);
+        assert_eq!(buf.notes()[0].duration, Some(Duration(60)));
+        // Main at 480: keeps the source note's full duration.
+        p.expand_at_tick(PatternTick(480), |_| true, &mut buf);
+        assert_eq!(buf.notes()[0].duration, Some(Duration(960)));
+    }
+
+    #[test]
+    fn ornament_roll_is_bounded_by_hit_cap() {
+        // A roll asking for more than the cap clamps; never unbounded.
+        let p = ornamented(
+            0,
+            60,
+            3840,
+            Ornament {
+                count: u8::MAX,
+                spacing: Duration(10),
+                placement: OrnamentPlacement::OnBeat,
+                ..flam()
+            },
+        );
+        let got = expand_all(&p, 3840);
+        assert_eq!(
+            got.len() as u8,
+            MAX_ORNAMENT_HITS,
+            "roll must clamp to the hit cap"
+        );
+    }
+
+    #[test]
+    fn ornament_crescendo_rises_across_the_figure() {
+        let p = ornamented(
+            0,
+            60,
+            240,
+            Ornament {
+                count: 4,
+                placement: OrnamentPlacement::OnBeat,
+                dynamics: OrnamentDynamics::Crescendo,
+                ..flam()
+            },
+        );
+        let mut buf = ExpansionBuffer::new();
+        let mut vels = Vec::new();
+        for t in [0u32, 120, 240, 360] {
+            p.expand_at_tick(PatternTick(t), |_| true, &mut buf);
+            vels.push(buf.notes()[0].velocity.as_f32());
+        }
+        assert!(
+            vels.windows(2).all(|w| w[0] < w[1]),
+            "crescendo must rise monotonically: {vels:?}"
+        );
+    }
+
+    #[test]
+    fn ornament_accelerate_shrinks_the_gaps() {
+        // 4 hits, on-beat, accelerate: gaps must be non-increasing and the
+        // figure still ends at start + total_span (3 × 120 = 360).
+        let p = ornamented(
+            0,
+            60,
+            240,
+            Ornament {
+                count: 4,
+                placement: OrnamentPlacement::OnBeat,
+                spacing_curve: OrnamentSpacing::Accelerate,
+                ..flam()
+            },
+        );
+        let ticks: Vec<u32> = expand_all(&p, 600).into_iter().map(|(t, _)| t).collect();
+        assert_eq!(ticks.first(), Some(&0));
+        assert_eq!(ticks.last(), Some(&360), "endpoint pinned to total span");
+        let gaps: Vec<u32> = ticks.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(
+            gaps.windows(2).all(|w| w[0] >= w[1]),
+            "accelerating gaps must not grow: {gaps:?}"
+        );
+    }
+
+    #[test]
+    fn ornament_freeze_bakes_and_drops_the_field() {
+        let mut p = ornamented(480, 60, 240, flam());
+        let count = p.freeze_processors();
+        assert_eq!(count, 2, "grace + main baked to concrete notes");
+        let baked: Vec<(u32, u8)> = p
+            .notes()
+            .iter()
+            .map(|n| (n.start.0, n.pitch.as_midi()))
+            .collect();
+        assert_eq!(baked, vec![(360, 60), (480, 60)]);
+        assert!(
+            p.notes().iter().all(|n| n.ornament.is_none()),
+            "baked notes are plain — no residual ornament"
+        );
+    }
+
+    #[test]
+    fn ornament_under_quantize_snaps_grace_into_key() {
+        // Grace +1 semitone (C# = 61) under C-major quantize snaps to D (62).
+        let mut p = ornamented(
+            240,
+            60,
+            240,
+            Ornament {
+                pitch_offset: Semitones::new(1.0),
+                ..flam()
+            },
+        );
+        let _ = p.add_processor(NoteProcessor::ScaleQuantize(c_major()));
+        let got = expand_all(&p, 480);
+        assert_eq!(got, vec![(120, 62), (240, 60)], "grace snapped into key");
+    }
+
+    #[test]
+    fn ornament_curve_never_collides_two_hits_on_one_tick() {
+        // Regression: a fast curve with tiny spacing used to round adjacent
+        // onsets onto the same tick (Accelerate count=3 spacing=1 → [0,2,2]),
+        // emitting the main hit + a grace at one tick. Same-pitch collisions
+        // then make the grace's short NoteOff cut the main note short. Onsets
+        // must be strictly increasing and the main hit must still land on start.
+        for curve in [OrnamentSpacing::Accelerate, OrnamentSpacing::Decelerate] {
+            let p = ornamented(
+                480,
+                60,
+                240,
+                Ornament {
+                    count: 3,
+                    spacing: Duration(1),
+                    spacing_curve: curve,
+                    ..flam()
+                },
+            );
+            let got = expand_all(&p, 960);
+            let ticks: Vec<u32> = got.iter().map(|(t, _)| *t).collect();
+            let mut sorted = ticks.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(ticks.len(), 3, "exactly three distinct hits: {got:?}");
+            assert_eq!(sorted.len(), 3, "no two hits share a tick: {got:?}");
+            assert_eq!(
+                ticks.last(),
+                Some(&480),
+                "lead-in main still lands on the beat: {got:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ornament_huge_spacing_does_not_overflow() {
+        // Regression: total_span = (count-1) * spacing overflowed u32 and
+        // panicked on the audio thread. i64 math must absorb it; expansion at
+        // the anchor still emits the main hit, nowhere does it panic.
+        let p = ornamented(
+            0,
+            60,
+            240,
+            Ornament {
+                count: MAX_ORNAMENT_HITS,
+                spacing: Duration(u32::MAX),
+                placement: OrnamentPlacement::OnBeat,
+                ..flam()
+            },
+        );
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        assert_eq!(buf.notes().len(), 1, "main hit at the anchor, no panic");
+        assert_eq!(buf.notes()[0].pitch.as_midi(), 60);
+    }
+
+    #[test]
+    fn ornament_serde_roundtrip() {
+        let p = ornamented(
+            480,
+            60,
+            240,
+            Ornament {
+                count: 5,
+                spacing: Duration(80),
+                spacing_curve: OrnamentSpacing::Decelerate,
+                dynamics: OrnamentDynamics::Decrescendo,
+                placement: OrnamentPlacement::OnBeat,
+                pitch_offset: Semitones::new(-1.0),
+                grace_gate: NormalizedValue::new(0.3),
+            },
+        );
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Pattern = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.notes(), p.notes());
     }
 
     #[test]

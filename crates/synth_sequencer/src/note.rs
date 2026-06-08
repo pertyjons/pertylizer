@@ -153,6 +153,108 @@ impl NoteExpression {
     }
 }
 
+/// How the gaps between an ornament's hits evolve across the figure.
+///
+/// Drum/keyboard ornaments are rarely metronomic — a press roll accelerates,
+/// a drag opens up. The curve warps the *onset* spacing; the hit count and the
+/// total span stay fixed (the last hit always lands on the figure's anchor).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum OrnamentSpacing {
+    /// Even gaps (a metronomic roll).
+    #[default]
+    Even,
+    /// Gaps shrink across the figure (the ornament speeds up).
+    Accelerate,
+    /// Gaps grow across the figure (the ornament opens up).
+    Decelerate,
+}
+
+/// How hit velocity evolves across an ornament's figure.
+///
+/// A lead-in crescendo is the canonical flam/ruff shape (quiet graces swelling
+/// into the main hit on the beat); decrescendo is the buzz that dies away.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum OrnamentDynamics {
+    /// Every hit at the source velocity.
+    #[default]
+    Flat,
+    /// Velocity rises from a floor to the source velocity across the figure.
+    Crescendo,
+    /// Velocity falls from the source velocity to a floor across the figure.
+    Decrescendo,
+}
+
+/// Where an ornament's figure sits relative to the note's start tick.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub enum OrnamentPlacement {
+    /// Grace hits precede the beat; the *main* hit (the source pitch) lands
+    /// exactly on `note.start`. Flam / drag / ruff / acciaccatura.
+    #[default]
+    LeadIn,
+    /// The main hit is on the beat; grace hits follow it (nachschlag / a roll
+    /// that decays after the downbeat).
+    OnBeat,
+}
+
+/// Per-note timed-repeat ornament — taxonomy **primitive 4** (a generator).
+///
+/// One generator covers flam / drag / ruff / roll and the grace note: emit
+/// `count` hits of the note offset in time, with a spacing and velocity curve.
+/// Exactly one hit is the *main* hit — it carries the source pitch, duration,
+/// and per-note expression/glide; the rest are short *grace* hits at
+/// `pitch_offset` semitones (0 for same-pitch drum figures, non-zero for an
+/// acciaccatura). `Copy`/alloc-free so it stays RT-cheap on the audio thread.
+///
+/// Preset mappings (drum-rudiment convention, by total `count`): flam = 2,
+/// drag = 3, ruff = 4, roll = N; acciaccatura = 2 with a `pitch_offset`. A
+/// `count` ≤ 1 is a no-op (the note plays unchanged). Trill / mordent / turn
+/// are *not* here — those alternate pitches and are arpeggiator presets (NP2).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Ornament {
+    /// Total number of struck hits (including the main hit). ≤ 1 is a no-op;
+    /// bounded at expansion by the engine's hit cap.
+    pub count: u8,
+    /// Base tick gap between adjacent hits (the curve warps it).
+    pub spacing: Duration,
+    /// How the gaps evolve across the figure.
+    #[serde(default)]
+    pub spacing_curve: OrnamentSpacing,
+    /// How hit velocity evolves across the figure.
+    #[serde(default)]
+    pub dynamics: OrnamentDynamics,
+    /// Where the figure sits relative to the beat.
+    #[serde(default)]
+    pub placement: OrnamentPlacement,
+    /// Semitone offset of the grace hits relative to the main pitch (0 = a
+    /// same-pitch roll/flam; e.g. `+2` = an acciaccatura a tone above).
+    #[serde(default)]
+    pub pitch_offset: Semitones,
+    /// Grace-hit duration as a fraction of its gap to the next hit (short =
+    /// crushed). The main hit keeps the source note's duration.
+    pub grace_gate: NormalizedValue,
+}
+
+impl Default for Ornament {
+    fn default() -> Self {
+        // A basic flam: one quiet grace crushed into the main hit on the beat.
+        Self {
+            count: 2,
+            spacing: Duration(120),
+            spacing_curve: OrnamentSpacing::Even,
+            dynamics: OrnamentDynamics::Crescendo,
+            placement: OrnamentPlacement::LeadIn,
+            pitch_offset: Semitones::new(0.0),
+            grace_gate: NormalizedValue::new(0.5),
+        }
+    }
+}
+
 /// A note in a pattern.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Note {
@@ -179,6 +281,11 @@ pub struct Note {
     /// defaults to `None`.
     #[serde(default)]
     pub expression: Option<NoteExpression>,
+    /// Per-note timed-repeat ornament (flam/drag/ruff/roll/grace). Expanded at
+    /// playback time (Model B), never baked into storage. Additive; defaults
+    /// to `None`.
+    #[serde(default)]
+    pub ornament: Option<Ornament>,
 }
 
 impl Note {
@@ -195,6 +302,7 @@ impl Note {
             legato: false,
             glide: None,
             expression: None,
+            ornament: None,
         }
     }
 
@@ -230,6 +338,13 @@ impl Note {
     #[must_use]
     pub fn with_expression(mut self, expression: NoteExpression) -> Self {
         self.expression = Some(expression);
+        self
+    }
+
+    /// Set the per-note ornament (builder pattern).
+    #[must_use]
+    pub fn with_ornament(mut self, ornament: Ornament) -> Self {
+        self.ornament = Some(ornament);
         self
     }
 

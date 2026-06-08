@@ -47,10 +47,14 @@ pub use ids::{
     TrackId, TrackIndex,
 };
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
-pub use note::{Glide, GlideFrom, GlideInterp, Note, NoteExpression, Vibrato, VibratoShape};
+pub use note::{
+    Glide, GlideFrom, GlideInterp, Note, NoteExpression, Ornament, OrnamentDynamics,
+    OrnamentPlacement, OrnamentSpacing, Vibrato, VibratoShape,
+};
 pub use note_processor::{
     ArpMode, ArpRate, ArpVelocity, Arpeggiator, ExpandedNote, ExpansionBuffer, MAX_ARP_HELD,
-    MAX_EXPANSION_EVENTS_PER_TICK, NoteProcessor, PitchClass, ScaleMask, ScaleQuantize,
+    MAX_EXPANSION_EVENTS_PER_TICK, MAX_ORNAMENT_HITS, NoteProcessor, PitchClass, ScaleMask,
+    ScaleQuantize,
 };
 pub use pattern::{Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};

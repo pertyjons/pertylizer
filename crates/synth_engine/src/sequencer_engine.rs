@@ -692,11 +692,19 @@ impl SequencerEngine {
                 // tick seeds it, so a looped section varies roll-to-roll yet
                 // stays reproducible. The pattern's processor rack then runs in
                 // pattern space (placement transpose applies after).
-                let current_tick = self.current_tick;
+                let placement_start = placement.start.0;
                 let roll_nonce = self.roll_nonce;
                 pattern.expand_at_tick(
                     PatternTick(pattern_tick),
-                    |note| note_passes_probability(note, current_tick, roll_nonce),
+                    // Seed the roll by the note's *own* absolute start, not the
+                    // expansion tick. For a plain note (gated only at its start)
+                    // this is identical to the current tick; for a multi-tick
+                    // ornament it keeps the figure's roll consistent across all
+                    // the ticks it spans.
+                    |note| {
+                        let note_start = Tick(placement_start + u64::from(note.start.0));
+                        note_passes_probability(note, note_start, roll_nonce)
+                    },
                     &mut self.scratch_expansion,
                 );
                 self.expansion_drops += u64::from(self.scratch_expansion.dropped());

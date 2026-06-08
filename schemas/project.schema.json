@@ -7011,6 +7011,18 @@
           "description": "Tie / legato intent: when set, this note connects to its successor without\nre-gating (taxonomy primitive 2). Additive; defaults to `false`.",
           "type": "boolean"
         },
+        "ornament": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Ornament"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-note timed-repeat ornament (flam/drag/ruff/roll/grace). Expanded at\nplayback time (Model B), never baked into storage. Additive; defaults\nto `None`."
+        },
         "pitch": {
           "$ref": "#/$defs/Pitch",
           "description": "Pitch."
@@ -7158,6 +7170,107 @@
             "Arpeggiator"
           ],
           "type": "object"
+        }
+      ]
+    },
+    "Ornament": {
+      "description": "Per-note timed-repeat ornament — taxonomy **primitive 4** (a generator).\n\nOne generator covers flam / drag / ruff / roll and the grace note: emit\n`count` hits of the note offset in time, with a spacing and velocity curve.\nExactly one hit is the *main* hit — it carries the source pitch, duration,\nand per-note expression/glide; the rest are short *grace* hits at\n`pitch_offset` semitones (0 for same-pitch drum figures, non-zero for an\nacciaccatura). `Copy`/alloc-free so it stays RT-cheap on the audio thread.\n\nPreset mappings (drum-rudiment convention, by total `count`): flam = 2,\ndrag = 3, ruff = 4, roll = N; acciaccatura = 2 with a `pitch_offset`. A\n`count` ≤ 1 is a no-op (the note plays unchanged). Trill / mordent / turn\nare *not* here — those alternate pitches and are arpeggiator presets (NP2).",
+      "properties": {
+        "count": {
+          "description": "Total number of struck hits (including the main hit). ≤ 1 is a no-op;\nbounded at expansion by the engine's hit cap.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dynamics": {
+          "$ref": "#/$defs/OrnamentDynamics",
+          "default": "Flat",
+          "description": "How hit velocity evolves across the figure."
+        },
+        "grace_gate": {
+          "$ref": "#/$defs/NormalizedValue",
+          "description": "Grace-hit duration as a fraction of its gap to the next hit (short =\ncrushed). The main hit keeps the source note's duration."
+        },
+        "pitch_offset": {
+          "$ref": "#/$defs/Semitones",
+          "default": 0.0,
+          "description": "Semitone offset of the grace hits relative to the main pitch (0 = a\nsame-pitch roll/flam; e.g. `+2` = an acciaccatura a tone above)."
+        },
+        "placement": {
+          "$ref": "#/$defs/OrnamentPlacement",
+          "default": "LeadIn",
+          "description": "Where the figure sits relative to the beat."
+        },
+        "spacing": {
+          "$ref": "#/$defs/Duration",
+          "description": "Base tick gap between adjacent hits (the curve warps it)."
+        },
+        "spacing_curve": {
+          "$ref": "#/$defs/OrnamentSpacing",
+          "default": "Even",
+          "description": "How the gaps evolve across the figure."
+        }
+      },
+      "required": [
+        "count",
+        "spacing",
+        "grace_gate"
+      ],
+      "type": "object"
+    },
+    "OrnamentDynamics": {
+      "description": "How hit velocity evolves across an ornament's figure.\n\nA lead-in crescendo is the canonical flam/ruff shape (quiet graces swelling\ninto the main hit on the beat); decrescendo is the buzz that dies away.",
+      "oneOf": [
+        {
+          "const": "Flat",
+          "description": "Every hit at the source velocity.",
+          "type": "string"
+        },
+        {
+          "const": "Crescendo",
+          "description": "Velocity rises from a floor to the source velocity across the figure.",
+          "type": "string"
+        },
+        {
+          "const": "Decrescendo",
+          "description": "Velocity falls from the source velocity to a floor across the figure.",
+          "type": "string"
+        }
+      ]
+    },
+    "OrnamentPlacement": {
+      "description": "Where an ornament's figure sits relative to the note's start tick.",
+      "oneOf": [
+        {
+          "const": "LeadIn",
+          "description": "Grace hits precede the beat; the *main* hit (the source pitch) lands\nexactly on `note.start`. Flam / drag / ruff / acciaccatura.",
+          "type": "string"
+        },
+        {
+          "const": "OnBeat",
+          "description": "The main hit is on the beat; grace hits follow it (nachschlag / a roll\nthat decays after the downbeat).",
+          "type": "string"
+        }
+      ]
+    },
+    "OrnamentSpacing": {
+      "description": "How the gaps between an ornament's hits evolve across the figure.\n\nDrum/keyboard ornaments are rarely metronomic — a press roll accelerates,\na drag opens up. The curve warps the *onset* spacing; the hit count and the\ntotal span stay fixed (the last hit always lands on the figure's anchor).",
+      "oneOf": [
+        {
+          "const": "Even",
+          "description": "Even gaps (a metronomic roll).",
+          "type": "string"
+        },
+        {
+          "const": "Accelerate",
+          "description": "Gaps shrink across the figure (the ornament speeds up).",
+          "type": "string"
+        },
+        {
+          "const": "Decelerate",
+          "description": "Gaps grow across the figure (the ornament opens up).",
+          "type": "string"
         }
       ]
     },
