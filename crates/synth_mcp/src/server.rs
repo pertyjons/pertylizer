@@ -351,6 +351,41 @@ fn batch_msg(ok_count: usize, noun: &str, details: &[String], errors: &[String])
     out
 }
 
+/// Summarise a batch of mutations that each return a JSON object (created /
+/// imported / duplicated entities) as a single valid-JSON response. Always emits
+/// `{ "<noun>": [...successes...], "errors": [...] }` so callers can `JSON.parse`
+/// the reply on full *and* partial success (unlike interleaving JSON with prose).
+fn batch_json<T: serde::Serialize>(noun: &str, oks: &[T], errors: &[String]) -> String {
+    let oks_value =
+        serde_json::to_value(oks).unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
+    to_json(&serde_json::json!({ noun: oks_value, "errors": errors }))
+}
+
+/// Convert a tagged [`ParamValueInput`] into the bridge's [`BridgeParamValue`],
+/// rejecting non-finite numbers. Shared by the effect-parameter batch handlers.
+fn param_value_to_bridge(
+    value: ParamValueInput,
+) -> Result<crate::bridge::BridgeParamValue, String> {
+    match value {
+        ParamValueInput::Number(n) => {
+            if !n.is_finite() {
+                return Err(format!(
+                    "{}",
+                    McpBridgeError::ValueOutOfRange {
+                        name: "value",
+                        value: n as f32,
+                        min: f32::NEG_INFINITY,
+                        max: f32::INFINITY,
+                    }
+                ));
+            }
+            Ok(crate::bridge::BridgeParamValue::Number(n))
+        }
+        ParamValueInput::Bool(b) => Ok(crate::bridge::BridgeParamValue::Bool(b)),
+        ParamValueInput::Choice(s) => Ok(crate::bridge::BridgeParamValue::Choice(s)),
+    }
+}
+
 /// Convert a [`McpBridgeError`] into the MCP [`ErrorData`] type used by tool handlers.
 fn mcp_err(e: McpBridgeError) -> ErrorData {
     ErrorData::internal_error(e.to_string(), None)
@@ -608,8 +643,20 @@ pub struct SearchModulesParam {
     pub query: Option<String>,
 }
 
-/// Same fields as `ConnectParam` — reused for connection validation.
-pub type CheckConnectionParam = ConnectParam;
+/// Single from/to port pair for the `check_connection` validator.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CheckConnectionParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: u64,
+    #[schemars(description = "Source module ID, e.g. 'osc-1'")]
+    pub from_module: String,
+    #[schemars(description = "Source port name, e.g. 'output'")]
+    pub from_port: String,
+    #[schemars(description = "Destination module ID, e.g. 'flt-1'")]
+    pub to_module: String,
+    #[schemars(description = "Destination port name, e.g. 'input'")]
+    pub to_port: String,
+}
 
 // === Batch execute parameter structs ===
 
@@ -677,7 +724,7 @@ pub struct GetParameterParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct NoteOnParam {
+pub struct NoteOnInput {
     #[schemars(description = "MIDI note number (0-127, where 60 = middle C)")]
     pub note: u8,
     #[schemars(description = "Velocity (0-127, where 127 = maximum)")]
@@ -687,11 +734,23 @@ pub struct NoteOnParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct NoteOffParam {
+pub struct NoteOnParam {
+    #[schemars(description = "Notes to trigger on (one or many — e.g. a whole chord in one call)")]
+    pub notes: Vec<NoteOnInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct NoteOffInput {
     #[schemars(description = "MIDI note number (0-127)")]
     pub note: u8,
     #[schemars(description = "MIDI channel (1-16, default 1)")]
     pub channel: Option<u8>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct NoteOffParam {
+    #[schemars(description = "Notes to release (one or many)")]
+    pub notes: Vec<NoteOffInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1404,21 +1463,7 @@ pub struct RemoveModulesParam {
     pub module_ids: Vec<String>,
 }
 
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ConnectParam {
-    #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
-    #[schemars(description = "Source module ID, e.g. 'osc-1'")]
-    pub from_module: String,
-    #[schemars(description = "Source port name, e.g. 'output'")]
-    pub from_port: String,
-    #[schemars(description = "Destination module ID, e.g. 'flt-1'")]
-    pub to_module: String,
-    #[schemars(description = "Destination port name, e.g. 'input'")]
-    pub to_port: String,
-}
-
-/// A single connection in a batch connect call.
+/// A single connection in a batch connect/disconnect call.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ConnectionInput {
     #[schemars(description = "Source module ID, e.g. 'osc-1'")]
@@ -1534,12 +1579,12 @@ impl InsertModuleBetweenParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CreateInstrumentParam {
-    #[schemars(description = "Name for the new instrument")]
-    pub name: String,
+    #[schemars(description = "Names for the new instruments (one or many, created in order)")]
+    pub names: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RenameInstrumentParam {
+pub struct RenameInstrumentInput {
     #[schemars(description = "Instrument ID to rename")]
     pub instrument_id: u64,
     #[schemars(description = "New name for the instrument")]
@@ -1547,7 +1592,13 @@ pub struct RenameInstrumentParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetInstrumentDescriptionParam {
+pub struct RenameInstrumentParam {
+    #[schemars(description = "Array of per-instrument renames")]
+    pub items: Vec<RenameInstrumentInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct InstrumentDescriptionInput {
     #[schemars(description = "Instrument ID to annotate")]
     pub instrument_id: u64,
     #[schemars(
@@ -1556,6 +1607,12 @@ pub struct SetInstrumentDescriptionParam {
         list_instruments / get_instrument_info for later AI reads."
     )]
     pub description: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInstrumentDescriptionParam {
+    #[schemars(description = "Array of per-instrument description updates")]
+    pub items: Vec<InstrumentDescriptionInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1589,7 +1646,7 @@ pub struct SetSongDescriptionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetPatternDescriptionParam {
+pub struct PatternDescriptionInput {
     #[schemars(description = "Pattern ID to annotate")]
     pub pattern_id: u32,
     #[schemars(
@@ -1600,7 +1657,13 @@ pub struct SetPatternDescriptionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetTrackDescriptionParam {
+pub struct SetPatternDescriptionParam {
+    #[schemars(description = "Array of per-pattern description updates")]
+    pub items: Vec<PatternDescriptionInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TrackDescriptionInput {
     #[schemars(description = "Track ID to annotate")]
     pub track_id: u16,
     #[schemars(
@@ -1611,7 +1674,13 @@ pub struct SetTrackDescriptionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetTrackColorParam {
+pub struct SetTrackDescriptionParam {
+    #[schemars(description = "Array of per-track description updates")]
+    pub items: Vec<TrackDescriptionInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TrackColorInput {
     #[schemars(description = "Track ID to recolor")]
     pub track_id: u16,
     #[schemars(
@@ -1622,7 +1691,13 @@ pub struct SetTrackColorParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetSampleDescriptionParam {
+pub struct SetTrackColorParam {
+    #[schemars(description = "Array of per-track color updates")]
+    pub items: Vec<TrackColorInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SampleDescriptionInput {
     #[schemars(description = "Sample ID to annotate")]
     pub sample_id: u64,
     #[schemars(
@@ -1633,7 +1708,13 @@ pub struct SetSampleDescriptionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetSidechainSourceParam {
+pub struct SetSampleDescriptionParam {
+    #[schemars(description = "Array of per-sample description updates")]
+    pub items: Vec<SampleDescriptionInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SidechainSourceInput {
     #[schemars(description = "Instrument ID whose sidechain input to configure")]
     pub instrument_id: u64,
     #[schemars(
@@ -1645,39 +1726,50 @@ pub struct SetSidechainSourceParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetInstrumentVolumeParam {
+pub struct SetSidechainSourceParam {
+    #[schemars(description = "Array of per-instrument sidechain-source assignments")]
+    pub items: Vec<SidechainSourceInput>,
+}
+
+/// One instrument's mixer update for `set_instrument_mixer`. Every field except
+/// `instrument_id` is optional; only the fields that are present are changed.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct InstrumentMixerInput {
     #[schemars(description = "Instrument ID")]
     pub instrument_id: u64,
-    #[schemars(description = "Volume level (0.0 = silent, 1.0 = unity, 2.0 = max)")]
-    pub volume: f32,
+    #[serde(default)]
+    #[schemars(
+        description = "Volume level (0.0 = silent, 1.0 = unity, 2.0 = max). Omit to leave unchanged."
+    )]
+    pub volume: Option<f32>,
+    #[serde(default)]
+    #[schemars(
+        description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right). Omit to leave unchanged."
+    )]
+    pub pan: Option<f32>,
+    #[serde(default)]
+    #[schemars(description = "Whether the instrument should be muted. Omit to leave unchanged.")]
+    pub muted: Option<bool>,
+    #[serde(default)]
+    #[schemars(description = "Whether the instrument should be soloed. Omit to leave unchanged.")]
+    pub solo: Option<bool>,
+    #[serde(default)]
+    #[schemars(description = "Whether the instrument should be enabled. Omit to leave unchanged.")]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetInstrumentPanParam {
-    #[schemars(description = "Instrument ID")]
-    pub instrument_id: u64,
-    #[schemars(description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right)")]
-    pub pan: f32,
+pub struct SetInstrumentMixerParam {
+    #[schemars(
+        description = "Array of per-instrument mixer updates. Each entry sets any of \
+        volume / pan / muted / solo / enabled on one instrument in a single call."
+    )]
+    pub items: Vec<InstrumentMixerInput>,
 }
 
+/// One instrument's MIDI-channel assignment for `set_instrument_midi_channel`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetInstrumentMuteParam {
-    #[schemars(description = "Instrument ID")]
-    pub instrument_id: u64,
-    #[schemars(description = "Whether the instrument should be muted")]
-    pub muted: bool,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetInstrumentSoloParam {
-    #[schemars(description = "Instrument ID")]
-    pub instrument_id: u64,
-    #[schemars(description = "Whether the instrument should be soloed")]
-    pub solo: bool,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetInstrumentMidiChannelParam {
+pub struct InstrumentMidiChannelInput {
     #[schemars(description = "Instrument ID")]
     pub instrument_id: u64,
     #[schemars(description = "MIDI channel (1-16)")]
@@ -1685,19 +1777,24 @@ pub struct SetInstrumentMidiChannelParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetInstrumentEnabledParam {
-    #[schemars(description = "Instrument ID")]
-    pub instrument_id: u64,
-    #[schemars(description = "Whether the instrument should be enabled")]
-    pub enabled: bool,
+pub struct SetInstrumentMidiChannelParam {
+    #[schemars(description = "Array of per-instrument MIDI-channel assignments")]
+    pub items: Vec<InstrumentMidiChannelInput>,
 }
 
+/// One instrument's category assignment for `set_instrument_category`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetInstrumentCategoryParam {
+pub struct InstrumentCategoryInput {
     #[schemars(description = "Instrument ID")]
     pub instrument_id: u64,
     #[schemars(description = "Category: Uncategorized, Drums, Bass, Pad, Lead, Arp, Keys, FX")]
     pub category: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInstrumentCategoryParam {
+    #[schemars(description = "Array of per-instrument category assignments")]
+    pub items: Vec<InstrumentCategoryInput>,
 }
 
 // === Sequencer parameter structs ===
@@ -1912,13 +2009,21 @@ pub struct ReplaceNotesParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct AddNoteProcessorParam {
+pub struct AddNoteProcessorInput {
     #[schemars(description = "Pattern ID whose rack to add to")]
     pub pattern_id: u32,
     #[schemars(
         description = "Note processor as externally-tagged JSON: one of {\"ScaleQuantize\":{...}}, {\"Chord\":{...}}, {\"Arpeggiator\":{...}}, {\"Humanize\":{...}}. Inserted at its canonical chain position (quantize→chord→arp→humanize). Read existing processors with list_note_processors to see the exact shape."
     )]
     pub processor: serde_json::Value,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AddNoteProcessorParam {
+    #[schemars(
+        description = "Note processors to add (one or many). Each is inserted into its pattern's rack at the processor's canonical chain position."
+    )]
+    pub items: Vec<AddNoteProcessorInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1942,7 +2047,7 @@ pub struct RemoveNoteProcessorParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetNoteOrnamentParam {
+pub struct NoteOrnamentInput {
     #[schemars(description = "Pattern ID containing the note")]
     pub pattern_id: u32,
     #[schemars(description = "Note ID (from list_notes)")]
@@ -1954,9 +2059,15 @@ pub struct SetNoteOrnamentParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetNoteOrnamentParam {
+    #[schemars(description = "Array of per-note ornament updates (set or clear)")]
+    pub items: Vec<NoteOrnamentInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ClearPatternParam {
-    #[schemars(description = "Pattern ID to clear all notes from")]
-    pub pattern_id: u32,
+    #[schemars(description = "Pattern IDs to clear all notes from (one or many)")]
+    pub pattern_ids: Vec<u32>,
 }
 
 /// A structured automation target — a typed alternative to the
@@ -2066,7 +2177,7 @@ pub struct RemoveAutomationPointsParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ClearAutomationLaneParam {
+pub struct ClearAutomationLaneInput {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: u32,
     #[schemars(description = "Target parameter name (e.g. Volume, Pan)")]
@@ -2076,7 +2187,13 @@ pub struct ClearAutomationLaneParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ScaleAutomationLaneParam {
+pub struct ClearAutomationLaneParam {
+    #[schemars(description = "Automation lanes to clear (one or many)")]
+    pub items: Vec<ClearAutomationLaneInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ScaleAutomationLaneInput {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: u32,
     #[schemars(description = "Target lane (e.g. 'module:flt:1:cutoff' or 'FilterCutoff')")]
@@ -2094,7 +2211,13 @@ pub struct ScaleAutomationLaneParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct OffsetAutomationLaneParam {
+pub struct ScaleAutomationLaneParam {
+    #[schemars(description = "Automation lanes to scale (one or many)")]
+    pub items: Vec<ScaleAutomationLaneInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct OffsetAutomationLaneInput {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: u32,
     #[schemars(description = "Target lane (e.g. 'module:flt:1:cutoff' or 'FilterCutoff')")]
@@ -2108,7 +2231,13 @@ pub struct OffsetAutomationLaneParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct CopyAutomationLaneParam {
+pub struct OffsetAutomationLaneParam {
+    #[schemars(description = "Automation lanes to offset (one or many)")]
+    pub items: Vec<OffsetAutomationLaneInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CopyAutomationLaneInput {
     #[schemars(description = "Source pattern ID")]
     pub from_pattern_id: u32,
     #[schemars(description = "Source target lane")]
@@ -2136,6 +2265,12 @@ pub struct CopyAutomationLaneParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CopyAutomationLaneParam {
+    #[schemars(description = "Automation-lane copy operations (one or many)")]
+    pub items: Vec<CopyAutomationLaneInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct GetAutomationSummaryParam {
     #[schemars(
         description = "How to group lanes: 'instrument' (default), 'target', or 'pattern'."
@@ -2145,52 +2280,61 @@ pub struct GetAutomationSummaryParam {
 
 // === Track control parameter structs ===
 
+/// One track's mixer update for `set_track_mixer`. Every field except `track_id`
+/// is optional; only the fields that are present are changed.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetTrackVolumeParam {
+pub struct TrackMixerInput {
     #[schemars(description = "Track ID")]
     pub track_id: u16,
-    #[schemars(description = "Volume (0.0 = silent, 1.0 = full)")]
-    pub volume: f32,
+    #[serde(default)]
+    #[schemars(description = "Volume (0.0 = silent, 1.0 = full). Omit to leave unchanged.")]
+    pub volume: Option<f32>,
+    #[serde(default)]
+    #[schemars(
+        description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right). Omit to leave unchanged."
+    )]
+    pub pan: Option<f32>,
+    #[serde(default)]
+    #[schemars(description = "Whether the track should be muted. Omit to leave unchanged.")]
+    pub muted: Option<bool>,
+    #[serde(default)]
+    #[schemars(description = "Whether the track should be soloed. Omit to leave unchanged.")]
+    pub solo: Option<bool>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetTrackPanParam {
-    #[schemars(description = "Track ID")]
-    pub track_id: u16,
-    #[schemars(description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right)")]
-    pub pan: f32,
+pub struct SetTrackMixerParam {
+    #[schemars(
+        description = "Array of per-track mixer updates. Each entry sets any of \
+        volume / pan / muted / solo on one track in a single call."
+    )]
+    pub items: Vec<TrackMixerInput>,
 }
 
+/// One track's instrument assignment for `set_track_instrument`. `instrument_id`
+/// is required but nullable: a number assigns that instrument, `null` unassigns.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetTrackMuteParam {
-    #[schemars(description = "Track ID")]
-    pub track_id: u16,
-    #[schemars(description = "Whether the track should be muted")]
-    pub muted: bool,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetTrackSoloParam {
-    #[schemars(description = "Track ID")]
-    pub track_id: u16,
-    #[schemars(description = "Whether the track should be soloed")]
-    pub solo: bool,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetTrackInstrumentParam {
+pub struct TrackInstrumentInput {
     #[schemars(description = "Track ID")]
     pub track_id: u16,
     #[schemars(
-        description = "Instrument ID for this track. Every track has an instrument; omitting leaves it unchanged."
+        description = "Instrument ID to drive this track. Pass null to unassign (the track plays nothing)."
     )]
     pub instrument_id: Option<u16>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTrackInstrumentParam {
+    #[schemars(description = "Array of per-track instrument assignments")]
+    pub items: Vec<TrackInstrumentInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CreateReturnBusParam {
-    #[schemars(description = "Return bus name (e.g. \"Reverb\", \"Delay\")")]
-    pub name: String,
+    #[schemars(
+        description = "Names for the new return busses (e.g. \"Reverb\", \"Delay\"), created in order"
+    )]
+    pub names: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2201,40 +2345,39 @@ pub struct DeleteReturnBusesParam {
     pub return_ids: Vec<u16>,
 }
 
+/// One return bus's mixer update for `set_return_bus_mixer`. Every field except
+/// `return_id` is optional; only the fields that are present are changed.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetReturnBusVolumeParam {
+pub struct ReturnBusMixerInput {
     #[schemars(description = "Return bus ID")]
     pub return_id: u16,
-    #[schemars(description = "Volume (0.0 = silent, 1.0 = full)")]
-    pub volume: f32,
+    #[serde(default)]
+    #[schemars(description = "Volume (0.0 = silent, 1.0 = full). Omit to leave unchanged.")]
+    pub volume: Option<f32>,
+    #[serde(default)]
+    #[schemars(
+        description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right). Omit to leave unchanged."
+    )]
+    pub pan: Option<f32>,
+    #[serde(default)]
+    #[schemars(description = "Whether the return bus should be muted. Omit to leave unchanged.")]
+    pub muted: Option<bool>,
+    #[serde(default)]
+    #[schemars(description = "Whether the return bus should be soloed. Omit to leave unchanged.")]
+    pub solo: Option<bool>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetReturnBusPanParam {
-    #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
-    #[schemars(description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right)")]
-    pub pan: f32,
+pub struct SetReturnBusMixerParam {
+    #[schemars(
+        description = "Array of per-return-bus mixer updates. Each entry sets any of \
+        volume / pan / muted / solo on one return bus in a single call."
+    )]
+    pub items: Vec<ReturnBusMixerInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetReturnBusMuteParam {
-    #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
-    #[schemars(description = "Whether the return bus should be muted")]
-    pub muted: bool,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetReturnBusSoloParam {
-    #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
-    #[schemars(description = "Whether the return bus should be soloed")]
-    pub solo: bool,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetReturnBusColorParam {
+pub struct ReturnBusColorInput {
     #[schemars(description = "Return bus ID")]
     pub return_id: u16,
     #[schemars(description = "Display color as \"#RRGGBB\" (or \"#RRGGBBAA\", alpha ignored)")]
@@ -2242,7 +2385,13 @@ pub struct SetReturnBusColorParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetReturnBusDescriptionParam {
+pub struct SetReturnBusColorParam {
+    #[schemars(description = "Array of per-return-bus color updates")]
+    pub items: Vec<ReturnBusColorInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReturnBusDescriptionInput {
     #[schemars(description = "Return bus ID")]
     pub return_id: u16,
     #[schemars(description = "Free-text description / intent (\"\" clears it)")]
@@ -2250,11 +2399,23 @@ pub struct SetReturnBusDescriptionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RenameReturnBusParam {
+pub struct SetReturnBusDescriptionParam {
+    #[schemars(description = "Array of per-return-bus description updates")]
+    pub items: Vec<ReturnBusDescriptionInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RenameReturnBusInput {
     #[schemars(description = "Return bus ID")]
     pub return_id: u16,
     #[schemars(description = "New name")]
     pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RenameReturnBusParam {
+    #[schemars(description = "Array of per-return-bus renames")]
+    pub items: Vec<RenameReturnBusInput>,
 }
 
 /// Serde default for boolean fields that should default to `true` when omitted.
@@ -2263,7 +2424,7 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetTrackSendParam {
+pub struct TrackSendInput {
     #[schemars(description = "Track ID (the channel sending)")]
     pub track_id: u16,
     #[schemars(description = "Destination return bus ID")]
@@ -2280,6 +2441,14 @@ pub struct SetTrackSendParam {
         description = "Whether the send is active (default true). false = non-destructive bypass: keeps the level/tap but contributes nothing to the return bus."
     )]
     pub enabled: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTrackSendParam {
+    #[schemars(
+        description = "Track sends to add or update (one or many; upsert by track_id+return_id target)"
+    )]
+    pub sends: Vec<TrackSendInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2319,7 +2488,7 @@ pub struct RemoveReturnEffectsParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetReturnEffectParameterParam {
+pub struct ReturnEffectParamInput {
     #[schemars(description = "Return bus ID")]
     pub return_id: u16,
     #[schemars(description = "Effect module-id string (e.g. 'rev-1')")]
@@ -2335,7 +2504,13 @@ pub struct SetReturnEffectParameterParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetReturnEffectEnabledParam {
+pub struct SetReturnEffectParameterParam {
+    #[schemars(description = "Return-bus effect parameter changes to apply (one or many)")]
+    pub params: Vec<ReturnEffectParamInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReturnEffectEnabledInput {
     #[schemars(description = "Return bus ID")]
     pub return_id: u16,
     #[schemars(description = "Effect module-id string (e.g. 'rev-1')")]
@@ -2345,7 +2520,13 @@ pub struct SetReturnEffectEnabledParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ReorderReturnEffectParam {
+pub struct SetReturnEffectEnabledParam {
+    #[schemars(description = "Return-bus effect enable/bypass toggles to apply (one or many)")]
+    pub items: Vec<ReturnEffectEnabledInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReorderReturnEffectInput {
     #[schemars(description = "Return bus ID")]
     pub return_id: u16,
     #[schemars(description = "Effect module-id string (e.g. 'rev-1')")]
@@ -2355,7 +2536,15 @@ pub struct ReorderReturnEffectParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetReturnSendParam {
+pub struct ReorderReturnEffectParam {
+    #[schemars(
+        description = "Return-bus effect reorder moves to apply (one or many, applied in order)"
+    )]
+    pub items: Vec<ReorderReturnEffectInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReturnSendInput {
     #[schemars(description = "Source return bus ID (the one sending)")]
     pub from_id: u16,
     #[schemars(description = "Destination return bus ID")]
@@ -2367,6 +2556,14 @@ pub struct SetReturnSendParam {
         description = "Whether the send is active (default true). false = non-destructive bypass."
     )]
     pub enabled: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetReturnSendParam {
+    #[schemars(
+        description = "Bus-to-bus sends to add or update (one or many; upsert by from_id+to_id target)"
+    )]
+    pub sends: Vec<ReturnSendInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2408,7 +2605,7 @@ pub struct RemoveMasterEffectsParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetMasterEffectParameterParam {
+pub struct MasterEffectParamInput {
     #[schemars(description = "Effect module-id string (e.g. 'lim-1')")]
     pub module_id: String,
     #[schemars(description = "Parameter name (type_id or display name); see list_master_effects")]
@@ -2420,7 +2617,13 @@ pub struct SetMasterEffectParameterParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetMasterEffectEnabledParam {
+pub struct SetMasterEffectParameterParam {
+    #[schemars(description = "Master-effect parameter changes to apply (one or many)")]
+    pub params: Vec<MasterEffectParamInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct MasterEffectEnabledInput {
     #[schemars(description = "Effect module-id string (e.g. 'lim-1')")]
     pub module_id: String,
     #[schemars(description = "true = active, false = bypassed")]
@@ -2428,7 +2631,13 @@ pub struct SetMasterEffectEnabledParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ReorderMasterEffectParam {
+pub struct SetMasterEffectEnabledParam {
+    #[schemars(description = "Master-effect enable/bypass toggles to apply (one or many)")]
+    pub items: Vec<MasterEffectEnabledInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ReorderMasterEffectInput {
     #[schemars(description = "Effect module-id string (e.g. 'lim-1')")]
     pub module_id: String,
     #[schemars(description = "Direction to move: 'up' (earlier in the chain) or 'down' (later)")]
@@ -2436,11 +2645,25 @@ pub struct ReorderMasterEffectParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RenameTrackParam {
+pub struct ReorderMasterEffectParam {
+    #[schemars(
+        description = "Master-effect reorder moves to apply (one or many, applied in order)"
+    )]
+    pub items: Vec<ReorderMasterEffectInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RenameTrackInput {
     #[schemars(description = "Track ID")]
     pub track_id: u16,
     #[schemars(description = "New name for the track")]
     pub name: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RenameTrackParam {
+    #[schemars(description = "Array of per-track renames")]
+    pub items: Vec<RenameTrackInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2454,7 +2677,7 @@ pub struct DeleteTracksParam {
 // === Pattern management parameter structs ===
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RenamePatternParam {
+pub struct RenamePatternInput {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: u32,
     #[schemars(description = "New name for the pattern")]
@@ -2462,7 +2685,13 @@ pub struct RenamePatternParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetPatternLengthParam {
+pub struct RenamePatternParam {
+    #[schemars(description = "Array of per-pattern renames")]
+    pub items: Vec<RenamePatternInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PatternLengthInput {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: u32,
     #[schemars(description = "New length in beats (e.g. 4.0 for one bar in 4/4)")]
@@ -2470,9 +2699,15 @@ pub struct SetPatternLengthParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetPatternLengthParam {
+    #[schemars(description = "Array of per-pattern length changes")]
+    pub items: Vec<PatternLengthInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct DuplicatePatternParam {
-    #[schemars(description = "Pattern ID to duplicate")]
-    pub pattern_id: u32,
+    #[schemars(description = "Pattern IDs to duplicate (one or many)")]
+    pub pattern_ids: Vec<u32>,
 }
 
 // === Song metadata parameter structs ===
@@ -2822,7 +3057,7 @@ pub struct ListSamplesParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ImportSampleParam {
+pub struct ImportSampleInput {
     #[schemars(description = "Absolute file path to the WAV file to import.")]
     pub path: String,
     #[schemars(description = "Optional display name. Defaults to filename without extension.")]
@@ -2834,9 +3069,22 @@ pub struct ImportSampleParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ImportSampleParam {
+    #[schemars(description = "WAV files to import (one or many).")]
+    pub samples: Vec<ImportSampleInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SampleIdParam {
     #[schemars(description = "Sample ID. Use list_samples to find available IDs.")]
     pub sample_id: u64,
+}
+
+/// One-or-many sample IDs, for in-place sample edits (normalize / reverse / trim / duplicate).
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SampleIdsParam {
+    #[schemars(description = "Sample IDs (one or many). Use list_samples to find available IDs.")]
+    pub sample_ids: Vec<u64>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2848,7 +3096,7 @@ pub struct DeleteSamplesParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RenameSampleParam {
+pub struct RenameSampleInput {
     #[schemars(description = "Sample ID.")]
     pub sample_id: u64,
     #[schemars(description = "New display name for the sample.")]
@@ -2856,7 +3104,13 @@ pub struct RenameSampleParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetSampleRootNoteParam {
+pub struct RenameSampleParam {
+    #[schemars(description = "Array of per-sample renames")]
+    pub items: Vec<RenameSampleInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SampleRootNoteInput {
     #[schemars(description = "Sample ID.")]
     pub sample_id: u64,
     #[schemars(description = "Root MIDI note (0-127). 60=C4, 48=C3, 72=C5.")]
@@ -2864,7 +3118,13 @@ pub struct SetSampleRootNoteParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetSampleLoopParam {
+pub struct SetSampleRootNoteParam {
+    #[schemars(description = "Array of per-sample root-note assignments")]
+    pub items: Vec<SampleRootNoteInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SampleLoopInput {
     #[schemars(description = "Sample ID.")]
     pub sample_id: u64,
     #[schemars(description = "Enable or disable looping.")]
@@ -2878,7 +3138,13 @@ pub struct SetSampleLoopParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetSampleCropParam {
+pub struct SetSampleLoopParam {
+    #[schemars(description = "Array of per-sample loop settings")]
+    pub items: Vec<SampleLoopInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SampleCropInput {
     #[schemars(description = "Sample ID.")]
     pub sample_id: u64,
     #[schemars(
@@ -2890,7 +3156,13 @@ pub struct SetSampleCropParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ExportSampleParam {
+pub struct SetSampleCropParam {
+    #[schemars(description = "Array of per-sample crop settings")]
+    pub items: Vec<SampleCropInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ExportSampleInput {
     #[schemars(description = "Sample ID.")]
     pub sample_id: u64,
     #[schemars(description = "Absolute file path for the output WAV file.")]
@@ -2899,16 +3171,28 @@ pub struct ExportSampleParam {
     pub bit_depth: Option<u8>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ExportSampleParam {
+    #[schemars(description = "Samples to export to WAV files (one or many)")]
+    pub samples: Vec<ExportSampleInput>,
+}
+
 // === Sampler module parameter structs ===
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct AssignSampleParam {
+pub struct AssignSampleInput {
     #[schemars(description = "Instrument ID.")]
     pub instrument_id: u64,
     #[schemars(description = "Sampler module ID (e.g. \"sam-1\"). Must be a Sampler module.")]
     pub module_id: String,
     #[schemars(description = "Sample ID to assign. Use list_samples to find IDs.")]
     pub sample_id: u64,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AssignSampleParam {
+    #[schemars(description = "Sample-to-sampler-module assignments (one or many)")]
+    pub items: Vec<AssignSampleInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2920,7 +3204,7 @@ pub struct SamplerModuleParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetSamplerParameterParam {
+pub struct SamplerParameterInput {
     #[schemars(description = "Instrument ID.")]
     pub instrument_id: u64,
     #[schemars(description = "Sampler module ID (e.g. \"sam-1\").")]
@@ -2935,6 +3219,12 @@ pub struct SetSamplerParameterParam {
                        \"forward\"/\"reverse\"/\"ping_pong\" for direction. \
                        Numbers: float value as string.")]
     pub value: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetSamplerParameterParam {
+    #[schemars(description = "Sampler parameter changes to apply (one or many)")]
+    pub params: Vec<SamplerParameterInput>,
 }
 
 // === MCP Server ===
@@ -3198,7 +3488,7 @@ impl SynthMcpServer {
             "add_module" => add_module(AddModulesParam),
             "remove_module" => remove_module(RemoveModulesParam),
             "connect" => connect(ConnectMultipleParam),
-            "disconnect" => disconnect(ConnectParam),
+            "disconnect" => disconnect(ConnectMultipleParam),
             "clear_graph" => clear_graph(InstrumentIdParam),
             "insert_module_between" => insert_module_between(InsertModuleBetweenParam),
 
@@ -3210,12 +3500,8 @@ impl SynthMcpServer {
             "set_patch_description" => set_patch_description(SetPatchDescriptionParam),
             "set_awe_description" => set_awe_description(SetAweDescriptionParam),
             "set_sidechain_source" => set_sidechain_source(SetSidechainSourceParam),
-            "set_instrument_volume" => set_instrument_volume(SetInstrumentVolumeParam),
-            "set_instrument_pan" => set_instrument_pan(SetInstrumentPanParam),
-            "set_instrument_mute" => set_instrument_mute(SetInstrumentMuteParam),
-            "set_instrument_solo" => set_instrument_solo(SetInstrumentSoloParam),
+            "set_instrument_mixer" => set_instrument_mixer(SetInstrumentMixerParam),
             "set_instrument_midi_channel" => set_instrument_midi_channel(SetInstrumentMidiChannelParam),
-            "set_instrument_enabled" => set_instrument_enabled(SetInstrumentEnabledParam),
             "set_instrument_category" => set_instrument_category(SetInstrumentCategoryParam),
 
             // Song
@@ -3256,10 +3542,7 @@ impl SynthMcpServer {
             // Tracks
             "list_tracks" => list_tracks(NoParams),
             "create_track" => create_track(CreateTracksParam),
-            "set_track_volume" => set_track_volume(SetTrackVolumeParam),
-            "set_track_pan" => set_track_pan(SetTrackPanParam),
-            "set_track_mute" => set_track_mute(SetTrackMuteParam),
-            "set_track_solo" => set_track_solo(SetTrackSoloParam),
+            "set_track_mixer" => set_track_mixer(SetTrackMixerParam),
             "set_track_instrument" => set_track_instrument(SetTrackInstrumentParam),
             "rename_track" => rename_track(RenameTrackParam),
             "set_track_description" => set_track_description(SetTrackDescriptionParam),
@@ -3270,10 +3553,7 @@ impl SynthMcpServer {
             "list_return_busses" => list_return_busses(NoParams),
             "create_return_bus" => create_return_bus(CreateReturnBusParam),
             "delete_return_bus" => delete_return_bus(DeleteReturnBusesParam),
-            "set_return_bus_volume" => set_return_bus_volume(SetReturnBusVolumeParam),
-            "set_return_bus_pan" => set_return_bus_pan(SetReturnBusPanParam),
-            "set_return_bus_mute" => set_return_bus_mute(SetReturnBusMuteParam),
-            "set_return_bus_solo" => set_return_bus_solo(SetReturnBusSoloParam),
+            "set_return_bus_mixer" => set_return_bus_mixer(SetReturnBusMixerParam),
             "set_return_bus_color" => set_return_bus_color(SetReturnBusColorParam),
             "set_return_bus_description" => set_return_bus_description(SetReturnBusDescriptionParam),
             "rename_return_bus" => rename_return_bus(RenameReturnBusParam),
@@ -3346,14 +3626,14 @@ impl SynthMcpServer {
             "rename_sample" => rename_sample(RenameSampleParam),
             "set_sample_description" => set_sample_description(SetSampleDescriptionParam),
             "set_sample_root_note" => set_sample_root_note(SetSampleRootNoteParam),
-            "normalize_sample" => normalize_sample(SampleIdParam),
-            "reverse_sample" => reverse_sample(SampleIdParam),
-            "trim_sample_silence" => trim_sample_silence(SampleIdParam),
+            "normalize_sample" => normalize_sample(SampleIdsParam),
+            "reverse_sample" => reverse_sample(SampleIdsParam),
+            "trim_sample_silence" => trim_sample_silence(SampleIdsParam),
             "set_sample_loop" => set_sample_loop(SetSampleLoopParam),
             "set_sample_crop" => set_sample_crop(SetSampleCropParam),
             "export_sample" => export_sample(ExportSampleParam),
             "get_sample_info" => get_sample_info(SampleIdParam),
-            "duplicate_sample" => duplicate_sample(SampleIdParam),
+            "duplicate_sample" => duplicate_sample(SampleIdsParam),
 
             // Sampler module
             "assign_sample_to_module" => assign_sample_to_module(AssignSampleParam),
@@ -3829,46 +4109,54 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Play a MIDI note (note on). Use note=60 for middle C, velocity=100 for moderate strength."
+        description = "Play one or more MIDI notes (note on) — pass several to strike a whole chord in one call. Use note=60 for middle C, velocity=100 for moderate strength."
     )]
     async fn note_on(&self, params: Parameters<NoteOnParam>) -> String {
-        if let Err(e) = validate_midi_note(params.0.note) {
-            return format!("Error: {e}");
+        for n in &params.0.notes {
+            if let Err(e) = validate_midi_note(n.note) {
+                return format!("Error: {e}");
+            }
+            if let Err(e) = validate_velocity(n.velocity) {
+                return format!("Error: {e}");
+            }
+            if let Err(e) = validate_midi_channel(n.channel.unwrap_or(1)) {
+                return format!("Error: {e}");
+            }
         }
-        if let Err(e) = validate_velocity(params.0.velocity) {
-            return format!("Error: {e}");
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for n in &params.0.notes {
+            let channel = n.channel.unwrap_or(1);
+            match self.bridge.note_on(n.note, n.velocity, channel) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("note {}: {e}", n.note)),
+            }
         }
-        let channel = params.0.channel.unwrap_or(1);
-        if let Err(e) = validate_midi_channel(channel) {
-            return format!("Error: {e}");
-        }
-        match self
-            .bridge
-            .note_on(params.0.note, params.0.velocity, channel)
-        {
-            Ok(()) => format!(
-                "Note {} on (vel={}, ch={})",
-                params.0.note, params.0.velocity, channel
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
+        batch_msg(ok_count, "notes on", &[], &errors)
     }
 
     #[tool(
-        description = "Stop a MIDI note (note off). Use the same note number as the corresponding note_on."
+        description = "Stop one or more MIDI notes (note off). Use the same note numbers as the corresponding note_on."
     )]
     async fn note_off(&self, params: Parameters<NoteOffParam>) -> String {
-        if let Err(e) = validate_midi_note(params.0.note) {
-            return format!("Error: {e}");
+        for n in &params.0.notes {
+            if let Err(e) = validate_midi_note(n.note) {
+                return format!("Error: {e}");
+            }
+            if let Err(e) = validate_midi_channel(n.channel.unwrap_or(1)) {
+                return format!("Error: {e}");
+            }
         }
-        let channel = params.0.channel.unwrap_or(1);
-        if let Err(e) = validate_midi_channel(channel) {
-            return format!("Error: {e}");
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for n in &params.0.notes {
+            let channel = n.channel.unwrap_or(1);
+            match self.bridge.note_off(n.note, channel) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("note {}: {e}", n.note)),
+            }
         }
-        match self.bridge.note_off(params.0.note, channel) {
-            Ok(()) => format!("Note {} off (ch={})", params.0.note, channel),
-            Err(e) => format!("Error: {e}"),
-        }
+        batch_msg(ok_count, "notes off", &[], &errors)
     }
 
     #[tool(
@@ -4611,16 +4899,23 @@ impl SynthMcpServer {
     // === Instrument lifecycle ===
 
     #[tool(
-        description = "Create a new instrument. Returns the instrument info with its assigned ID."
+        description = "Create one or more instruments. Returns the array of created instrument infos, each with its assigned ID."
     )]
     async fn create_instrument(&self, params: Parameters<CreateInstrumentParam>) -> String {
-        if let Err(e) = validate_name("instrument", &params.0.name) {
-            return format!("Error: {e}");
+        for name in &params.0.names {
+            if let Err(e) = validate_name("instrument", name) {
+                return format!("Error: {e}");
+            }
         }
-        match self.bridge.create_instrument(&params.0.name) {
-            Ok(info) => to_json(&info),
-            Err(e) => format!("Error: {e}"),
+        let mut infos = Vec::new();
+        let mut errors = Vec::new();
+        for name in &params.0.names {
+            match self.bridge.create_instrument(name) {
+                Ok(info) => infos.push(info),
+                Err(e) => errors.push(format!("'{name}': {e}")),
+            }
         }
+        batch_json("created", &infos, &errors)
     }
 
     #[tool(
@@ -4639,22 +4934,23 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Rename an instrument. The name is shown in the UI instrument strip and track selector."
+        description = "Rename one or more instruments. The name is shown in the UI instrument strip and track selector."
     )]
     async fn rename_instrument(&self, params: Parameters<RenameInstrumentParam>) -> String {
-        if let Err(e) = validate_name("instrument", &params.0.name) {
-            return format!("Error: {e}");
+        for it in &params.0.items {
+            if let Err(e) = validate_name("instrument", &it.name) {
+                return format!("Error: {e}");
+            }
         }
-        match self
-            .bridge
-            .rename_instrument(params.0.instrument_id, &params.0.name)
-        {
-            Ok(()) => format!(
-                "OK: renamed instrument {} to '{}'",
-                params.0.instrument_id, params.0.name
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.rename_instrument(it.instrument_id, &it.name) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+            }
         }
+        batch_msg(ok_count, "instruments renamed", &[], &errors)
     }
 
     #[tool(
@@ -4668,17 +4964,18 @@ impl SynthMcpServer {
         &self,
         params: Parameters<SetInstrumentDescriptionParam>,
     ) -> String {
-        match self
-            .bridge
-            .set_instrument_description(params.0.instrument_id, &params.0.description)
-        {
-            Ok(()) => format!(
-                "OK: set instrument {} description ({} chars)",
-                params.0.instrument_id,
-                params.0.description.chars().count()
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_instrument_description(it.instrument_id, &it.description)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+            }
         }
+        batch_msg(ok_count, "instrument descriptions set", &[], &errors)
     }
 
     #[tool(
@@ -4733,17 +5030,18 @@ impl SynthMcpServer {
         &self,
         params: Parameters<SetPatternDescriptionParam>,
     ) -> String {
-        match self
-            .bridge
-            .set_pattern_description(params.0.pattern_id, &params.0.description)
-        {
-            Ok(()) => format!(
-                "OK: set pattern {} description ({} chars)",
-                params.0.pattern_id,
-                params.0.description.chars().count()
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_pattern_description(it.pattern_id, &it.description)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.pattern_id)),
+            }
         }
+        batch_msg(ok_count, "pattern descriptions set", &[], &errors)
     }
 
     #[tool(
@@ -4751,34 +5049,34 @@ impl SynthMcpServer {
         \"sidechain source\"). Pass \"\" to clear. Surfaces in list_tracks."
     )]
     async fn set_track_description(&self, params: Parameters<SetTrackDescriptionParam>) -> String {
-        match self
-            .bridge
-            .set_track_description(params.0.track_id, &params.0.description)
-        {
-            Ok(()) => format!(
-                "OK: set track {} description ({} chars)",
-                params.0.track_id,
-                params.0.description.chars().count()
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_track_description(it.track_id, &it.description)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.track_id)),
+            }
         }
+        batch_msg(ok_count, "track descriptions set", &[], &errors)
     }
 
     #[tool(
-        description = "Set a track's display color from a \"#RRGGBB\" / \"#RRGGBBAA\" hex string \
+        description = "Set the display color of one or more tracks from a \"#RRGGBB\" / \"#RRGGBBAA\" hex string \
         (alpha ignored). Paints the arrangement so it is visually scannable. Surfaces in list_tracks."
     )]
     async fn set_track_color(&self, params: Parameters<SetTrackColorParam>) -> String {
-        match self
-            .bridge
-            .set_track_color(params.0.track_id, &params.0.color)
-        {
-            Ok(()) => format!(
-                "OK: set track {} color to {}",
-                params.0.track_id, params.0.color
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.set_track_color(it.track_id, &it.color) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.track_id)),
+            }
         }
+        batch_msg(ok_count, "track colors set", &[], &errors)
     }
 
     #[tool(
@@ -4789,17 +5087,18 @@ impl SynthMcpServer {
         &self,
         params: Parameters<SetSampleDescriptionParam>,
     ) -> String {
-        match self
-            .bridge
-            .set_sample_description(params.0.sample_id, &params.0.description)
-        {
-            Ok(()) => format!(
-                "OK: set sample {} description ({} chars)",
-                params.0.sample_id,
-                params.0.description.chars().count()
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_sample_description(it.sample_id, &it.description)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.sample_id)),
+            }
         }
+        batch_msg(ok_count, "sample descriptions set", &[], &errors)
     }
 
     #[tool(
@@ -4832,171 +5131,151 @@ impl SynthMcpServer {
         Pass source = null (or omit) to disable. Self-routing is rejected."
     )]
     async fn set_sidechain_source(&self, params: Parameters<SetSidechainSourceParam>) -> String {
-        match self
-            .bridge
-            .set_sidechain_source(params.0.instrument_id, params.0.source)
-        {
-            Ok(()) => match params.0.source {
-                Some(src) => format!(
-                    "OK: instrument {} sidechains from instrument {}",
-                    params.0.instrument_id, src
-                ),
-                None => format!(
-                    "OK: cleared sidechain source on instrument {}",
-                    params.0.instrument_id
-                ),
-            },
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Set the volume of an instrument (0.0 = silent, 1.0 = unity gain, 2.0 = max)."
-    )]
-    async fn set_instrument_volume(&self, params: Parameters<SetInstrumentVolumeParam>) -> String {
-        if let Err(e) = validate_range("volume", params.0.volume, 0.0, 2.0) {
-            return format!("Error: {e}");
-        }
-        match self
-            .bridge
-            .set_instrument_volume(params.0.instrument_id, params.0.volume)
-        {
-            Ok(()) => format!(
-                "OK: instrument {} volume set to {}",
-                params.0.instrument_id, params.0.volume
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Set the pan position of an instrument (-1.0 = left, 0.0 = center, 1.0 = right)."
-    )]
-    async fn set_instrument_pan(&self, params: Parameters<SetInstrumentPanParam>) -> String {
-        if let Err(e) = validate_range("pan", params.0.pan, -1.0, 1.0) {
-            return format!("Error: {e}");
-        }
-        match self
-            .bridge
-            .set_instrument_pan(params.0.instrument_id, params.0.pan)
-        {
-            Ok(()) => format!(
-                "OK: instrument {} pan set to {}",
-                params.0.instrument_id, params.0.pan
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(description = "Mute or unmute an instrument.")]
-    async fn set_instrument_mute(&self, params: Parameters<SetInstrumentMuteParam>) -> String {
-        match self
-            .bridge
-            .set_instrument_mute(params.0.instrument_id, params.0.muted)
-        {
-            Ok(()) => {
-                let state = if params.0.muted { "muted" } else { "unmuted" };
-                format!("OK: instrument {} {state}", params.0.instrument_id)
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_sidechain_source(it.instrument_id, it.source)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
             }
-            Err(e) => format!("Error: {e}"),
         }
+        batch_msg(ok_count, "sidechain sources set", &[], &errors)
     }
 
     #[tool(
-        description = "Solo or unsolo an instrument. When any instrument is soloed, only soloed instruments produce sound."
+        description = "Set mixer state on one or more instruments in a single call. Each item \
+        carries an instrument_id plus any of volume (0.0=silent, 1.0=unity, 2.0=max), pan \
+        (-1.0=left..1.0=right), muted, solo, and enabled (disabled instruments skip all audio \
+        processing — lighter than mute, which still processes but silences output). Omitted \
+        fields are left unchanged. When any instrument is soloed, only soloed instruments sound."
     )]
-    async fn set_instrument_solo(&self, params: Parameters<SetInstrumentSoloParam>) -> String {
-        match self
-            .bridge
-            .set_instrument_solo(params.0.instrument_id, params.0.solo)
-        {
-            Ok(()) => {
-                let state = if params.0.solo { "soloed" } else { "unsoloed" };
-                format!("OK: instrument {} {state}", params.0.instrument_id)
+    async fn set_instrument_mixer(&self, params: Parameters<SetInstrumentMixerParam>) -> String {
+        // Validate all ranges up front so a bad value rejects the whole call.
+        for it in &params.0.items {
+            if let Some(v) = it.volume
+                && let Err(e) = validate_range("volume", v, 0.0, 2.0)
+            {
+                return format!("Error: {e}");
             }
-            Err(e) => format!("Error: {e}"),
+            if let Some(p) = it.pan
+                && let Err(e) = validate_range("pan", p, -1.0, 1.0)
+            {
+                return format!("Error: {e}");
+            }
         }
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            let id = it.instrument_id;
+            let mut item_err: Option<String> = None;
+            if let Some(v) = it.volume
+                && let Err(e) = self.bridge.set_instrument_volume(id, v)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(p) = it.pan
+                && let Err(e) = self.bridge.set_instrument_pan(id, p)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(m) = it.muted
+                && let Err(e) = self.bridge.set_instrument_mute(id, m)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(s) = it.solo
+                && let Err(e) = self.bridge.set_instrument_solo(id, s)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(en) = it.enabled
+                && let Err(e) = self.bridge.set_instrument_enabled(id, en)
+            {
+                item_err = Some(e.to_string());
+            }
+            match item_err {
+                None => ok_count += 1,
+                Some(e) => errors.push(format!("{id}: {e}")),
+            }
+        }
+        batch_msg(ok_count, "instrument mixer updates applied", &[], &errors)
     }
 
-    #[tool(description = "Set the MIDI channel for an instrument (1-16).")]
+    #[tool(description = "Set the MIDI channel (1-16) for one or more instruments.")]
     async fn set_instrument_midi_channel(
         &self,
         params: Parameters<SetInstrumentMidiChannelParam>,
     ) -> String {
-        if let Err(e) = validate_midi_channel(params.0.channel) {
-            return format!("Error: {e}");
-        }
-        match self
-            .bridge
-            .set_instrument_midi_channel(params.0.instrument_id, params.0.channel)
-        {
-            Ok(()) => format!(
-                "OK: instrument {} MIDI channel set to {}",
-                params.0.instrument_id, params.0.channel
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Enable or disable an instrument. Disabled instruments skip all audio processing (lighter than mute which still processes but silences output)."
-    )]
-    async fn set_instrument_enabled(
-        &self,
-        params: Parameters<SetInstrumentEnabledParam>,
-    ) -> String {
-        match self
-            .bridge
-            .set_instrument_enabled(params.0.instrument_id, params.0.enabled)
-        {
-            Ok(()) => {
-                let state = if params.0.enabled {
-                    "enabled"
-                } else {
-                    "disabled"
-                };
-                format!("OK: instrument {} {state}", params.0.instrument_id)
+        for it in &params.0.items {
+            if let Err(e) = validate_midi_channel(it.channel) {
+                return format!("Error: {e}");
             }
-            Err(e) => format!("Error: {e}"),
         }
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_instrument_midi_channel(it.instrument_id, it.channel)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+            }
+        }
+        batch_msg(ok_count, "instrument MIDI channels set", &[], &errors)
     }
 
     #[tool(
-        description = "Set the category of an instrument (for visualization routing). Categories: Uncategorized, Drums, Bass, Pad, Lead, Arp, Keys, FX."
+        description = "Set the category of one or more instruments (for visualization routing). Categories: Uncategorized, Drums, Bass, Pad, Lead, Arp, Keys, FX."
     )]
     async fn set_instrument_category(
         &self,
         params: Parameters<SetInstrumentCategoryParam>,
     ) -> String {
-        match self
-            .bridge
-            .set_instrument_category(params.0.instrument_id, &params.0.category)
-        {
-            Ok(()) => format!(
-                "OK: instrument {} category set to {}",
-                params.0.instrument_id, params.0.category
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_instrument_category(it.instrument_id, &it.category)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+            }
         }
+        batch_msg(ok_count, "instrument categories set", &[], &errors)
     }
 
     #[tool(
-        description = "Disconnect a cable between two module ports. Uses same from/to parameters as connect."
+        description = "Disconnect one or more cables between module ports in one call. \
+                       Each connection specifies from_module:from_port → to_module:to_port (same shape as connect)."
     )]
-    async fn disconnect(&self, params: Parameters<ConnectParam>) -> String {
-        match self.bridge.disconnect(
-            params.0.instrument_id,
-            &params.0.from_module,
-            &params.0.from_port,
-            &params.0.to_module,
-            &params.0.to_port,
-        ) {
-            Ok(()) => format!(
-                "OK: disconnected {}:{} → {}:{}",
-                params.0.from_module, params.0.from_port, params.0.to_module, params.0.to_port
-            ),
-            Err(e) => format!("Error: {e}"),
+    async fn disconnect(&self, params: Parameters<ConnectMultipleParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for c in &params.0.connections {
+            match self.bridge.disconnect(
+                params.0.instrument_id,
+                &c.from_module,
+                &c.from_port,
+                &c.to_module,
+                &c.to_port,
+            ) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!(
+                    "{}:{} → {}:{}: {e}",
+                    c.from_module, c.from_port, c.to_module, c.to_port
+                )),
+            }
         }
+        batch_msg(ok_count, "cables disconnected", &[], &errors)
     }
 
     // === Sequencer: Song ===
@@ -5142,16 +5421,19 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Add a note processor (scale-quantize, chord, arpeggiator, or humanize) to a pattern's rack at its canonical chain position. These expand the pattern's notes at playback time. Returns the insertion index."
+        description = "Add one or more note processors (scale-quantize, chord, arpeggiator, or humanize) to patterns' racks, each at its canonical chain position. These expand the patterns' notes at playback time. Returns the per-item insertion indices."
     )]
     async fn add_note_processor(&self, params: Parameters<AddNoteProcessorParam>) -> String {
-        let p = params.0;
-        match self.bridge.add_note_processor(p.pattern_id, p.processor) {
-            Ok(index) => {
-                to_json(&serde_json::json!({ "pattern_id": p.pattern_id, "index": index }))
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for it in params.0.items {
+            let pattern_id = it.pattern_id;
+            match self.bridge.add_note_processor(pattern_id, it.processor) {
+                Ok(index) => oks.push(format!("pattern {pattern_id} @ index {index}")),
+                Err(e) => errors.push(format!("{pattern_id}: {e}")),
             }
-            Err(e) => format!("Error: {e}"),
         }
+        batch_msg(oks.len(), "note processors added", &oks, &errors)
     }
 
     #[tool(
@@ -5197,20 +5479,22 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Set or clear a note's per-note timed-repeat ornament (flam/drag/ruff/roll/grace note). Pass the Ornament JSON to set it, or null to clear it. The ornament expands the note into its figure at playback time."
+        description = "Set or clear per-note timed-repeat ornaments (flam/drag/ruff/roll/grace note) on one or more notes. Each item gives the Ornament JSON to set, or null to clear it. Ornaments expand each note into its figure at playback time."
     )]
     async fn set_note_ornament(&self, params: Parameters<SetNoteOrnamentParam>) -> String {
-        let p = params.0;
-        match self
-            .bridge
-            .set_note_ornament(p.pattern_id, p.note_id, p.ornament)
-        {
-            Ok(()) => format!(
-                "Ornament updated on note {} in pattern {}",
-                p.note_id, p.pattern_id
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in params.0.items {
+            let (pattern_id, note_id) = (it.pattern_id, it.note_id);
+            match self
+                .bridge
+                .set_note_ornament(pattern_id, note_id, it.ornament)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("pattern {pattern_id} note {note_id}: {e}")),
+            }
         }
+        batch_msg(ok_count, "note ornaments updated", &[], &errors)
     }
 
     // === Sequencer: Tracks ===
@@ -5321,15 +5605,28 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Clear all notes from a pattern. Returns the number of notes removed.")]
+    #[tool(
+        description = "Clear all notes from one or more patterns. Returns the total number of notes removed."
+    )]
     async fn clear_pattern(&self, params: Parameters<ClearPatternParam>) -> String {
-        match self.bridge.clear_pattern(params.0.pattern_id) {
-            Ok(count) => format!(
-                "OK: cleared {count} notes from pattern {}",
-                params.0.pattern_id
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut total = 0usize;
+        let mut errors = Vec::new();
+        for id in &params.0.pattern_ids {
+            match self.bridge.clear_pattern(*id) {
+                Ok(count) => {
+                    ok_count += 1;
+                    total += count;
+                }
+                Err(e) => errors.push(format!("{id}: {e}")),
+            }
         }
+        batch_msg(
+            ok_count,
+            &format!("patterns cleared ({total} notes removed)"),
+            &[],
+            &errors,
+        )
     }
 
     #[tool(
@@ -5416,86 +5713,100 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Clear all automation points from a specific lane in a pattern.")]
+    #[tool(
+        description = "Clear all automation points from one or more lanes (each a pattern + target + optional instrument index)."
+    )]
     async fn clear_automation_lane(&self, params: Parameters<ClearAutomationLaneParam>) -> String {
-        let p = params.0;
-        match self.bridge.clear_automation_lane(
-            p.pattern_id,
-            &p.target,
-            p.instrument_id.unwrap_or(0),
-        ) {
-            Ok(count) => format!("OK: cleared {count} points from {}", p.target),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.clear_automation_lane(
+                it.pattern_id,
+                &it.target,
+                it.instrument_id.unwrap_or(0),
+            ) {
+                Ok(_count) => ok_count += 1,
+                Err(e) => errors.push(format!("{}/{}: {e}", it.pattern_id, it.target)),
+            }
         }
+        batch_msg(ok_count, "automation lanes cleared", &[], &errors)
     }
 
     #[tool(
-        description = "Scale an existing automation lane's values around a pivot, in place (tick + curve preserved). \
+        description = "Scale one or more automation lanes' values around a pivot, in place (tick + curve preserved). \
                        Makes a filter sweep (or any lane) more or less dramatic without re-entering points. \
                        value' = clamp((value - pivot) * scale + pivot, 0..1)."
     )]
     async fn scale_automation_lane(&self, params: Parameters<ScaleAutomationLaneParam>) -> String {
-        let p = params.0;
-        let pivot = p.pivot.unwrap_or(0.5);
-        match self.bridge.transform_automation_lane(
-            p.pattern_id,
-            &p.target,
-            p.instrument_id.unwrap_or(0),
-            p.scale,
-            pivot,
-            0.0,
-        ) {
-            Ok(count) => format!("OK: scaled {count} points in {}", p.target),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.transform_automation_lane(
+                it.pattern_id,
+                &it.target,
+                it.instrument_id.unwrap_or(0),
+                it.scale,
+                it.pivot.unwrap_or(0.5),
+                0.0,
+            ) {
+                Ok(_count) => ok_count += 1,
+                Err(e) => errors.push(format!("{}/{}: {e}", it.pattern_id, it.target)),
+            }
         }
+        batch_msg(ok_count, "automation lanes scaled", &[], &errors)
     }
 
     #[tool(
-        description = "Shift an existing automation lane's values by a constant, in place (tick + curve preserved). \
+        description = "Shift one or more automation lanes' values by a constant, in place (tick + curve preserved). \
                        value' = clamp(value + offset, 0..1)."
     )]
     async fn offset_automation_lane(
         &self,
         params: Parameters<OffsetAutomationLaneParam>,
     ) -> String {
-        let p = params.0;
-        match self.bridge.transform_automation_lane(
-            p.pattern_id,
-            &p.target,
-            p.instrument_id.unwrap_or(0),
-            1.0,
-            0.0,
-            p.offset,
-        ) {
-            Ok(count) => format!("OK: offset {count} points in {}", p.target),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.transform_automation_lane(
+                it.pattern_id,
+                &it.target,
+                it.instrument_id.unwrap_or(0),
+                1.0,
+                0.0,
+                it.offset,
+            ) {
+                Ok(_count) => ok_count += 1,
+                Err(e) => errors.push(format!("{}/{}: {e}", it.pattern_id, it.target)),
+            }
         }
+        batch_msg(ok_count, "automation lanes offset", &[], &errors)
     }
 
     #[tool(
-        description = "Copy an automation lane's points to another pattern/target (tick + curve preserved), \
+        description = "Copy one or more automation lanes' points to another pattern/target (tick + curve preserved), \
                        optionally scaled/offset. Useful for reusing filter motion between similar voices. \
                        By default points are merged into the destination; set clear_destination to replace."
     )]
     async fn copy_automation_lane(&self, params: Parameters<CopyAutomationLaneParam>) -> String {
-        let p = params.0;
-        match self.bridge.copy_automation_lane(
-            p.from_pattern_id,
-            &p.from_target,
-            p.from_instrument_id.unwrap_or(0),
-            p.to_pattern_id,
-            &p.to_target,
-            p.to_instrument_id.unwrap_or(0),
-            p.scale.unwrap_or(1.0),
-            p.offset.unwrap_or(0.0),
-            p.clear_destination.unwrap_or(false),
-        ) {
-            Ok(count) => format!(
-                "OK: copied {count} points from {} to {}",
-                p.from_target, p.to_target
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.copy_automation_lane(
+                it.from_pattern_id,
+                &it.from_target,
+                it.from_instrument_id.unwrap_or(0),
+                it.to_pattern_id,
+                &it.to_target,
+                it.to_instrument_id.unwrap_or(0),
+                it.scale.unwrap_or(1.0),
+                it.offset.unwrap_or(0.0),
+                it.clear_destination.unwrap_or(false),
+            ) {
+                Ok(_count) => ok_count += 1,
+                Err(e) => errors.push(format!("{} → {}: {e}", it.from_target, it.to_target)),
+            }
         }
+        batch_msg(ok_count, "automation lanes copied", &[], &errors)
     }
 
     #[tool(
@@ -5523,99 +5834,97 @@ impl SynthMcpServer {
     // === Track control ===
 
     #[tool(
-        description = "Set the volume of a track (0.0 = silent, 1.0 = full, up to 2.0 for boost)."
+        description = "Set mixer state on one or more tracks in a single call. Each item carries \
+        a track_id plus any of volume (0.0=silent, 1.0=full, up to 2.0 for boost), pan \
+        (-1.0=left..1.0=right), muted, and solo. Omitted fields are left unchanged. When any track \
+        is soloed, only soloed tracks sound. To (un)assign a track's instrument, use set_track_instrument."
     )]
-    async fn set_track_volume(&self, params: Parameters<SetTrackVolumeParam>) -> String {
-        if let Err(e) = validate_range("volume", params.0.volume, 0.0, 2.0) {
-            return validation_err(e);
-        }
-        match self
-            .bridge
-            .set_track_volume(params.0.track_id, params.0.volume)
-        {
-            Ok(()) => format!(
-                "OK: track {} volume set to {}",
-                params.0.track_id, params.0.volume
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Set the pan position of a track (-1.0 = left, 0.0 = center, 1.0 = right)."
-    )]
-    async fn set_track_pan(&self, params: Parameters<SetTrackPanParam>) -> String {
-        if let Err(e) = validate_range("pan", params.0.pan, -1.0, 1.0) {
-            return validation_err(e);
-        }
-        match self.bridge.set_track_pan(params.0.track_id, params.0.pan) {
-            Ok(()) => format!(
-                "OK: track {} pan set to {}",
-                params.0.track_id, params.0.pan
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(description = "Mute or unmute a track.")]
-    async fn set_track_mute(&self, params: Parameters<SetTrackMuteParam>) -> String {
-        match self
-            .bridge
-            .set_track_mute(params.0.track_id, params.0.muted)
-        {
-            Ok(()) => {
-                let state = if params.0.muted { "muted" } else { "unmuted" };
-                format!("OK: track {} {state}", params.0.track_id)
+    async fn set_track_mixer(&self, params: Parameters<SetTrackMixerParam>) -> String {
+        for it in &params.0.items {
+            if let Some(v) = it.volume
+                && let Err(e) = validate_range("volume", v, 0.0, 2.0)
+            {
+                return validation_err(e);
             }
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Solo or unsolo a track. When any track is soloed, only soloed tracks produce sound."
-    )]
-    async fn set_track_solo(&self, params: Parameters<SetTrackSoloParam>) -> String {
-        match self.bridge.set_track_solo(params.0.track_id, params.0.solo) {
-            Ok(()) => {
-                let state = if params.0.solo { "soloed" } else { "unsoloed" };
-                format!("OK: track {} {state}", params.0.track_id)
+            if let Some(p) = it.pan
+                && let Err(e) = validate_range("pan", p, -1.0, 1.0)
+            {
+                return validation_err(e);
             }
-            Err(e) => format!("Error: {e}"),
         }
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            let id = it.track_id;
+            let mut item_err: Option<String> = None;
+            if let Some(v) = it.volume
+                && let Err(e) = self.bridge.set_track_volume(id, v)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(p) = it.pan
+                && let Err(e) = self.bridge.set_track_pan(id, p)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(m) = it.muted
+                && let Err(e) = self.bridge.set_track_mute(id, m)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(s) = it.solo
+                && let Err(e) = self.bridge.set_track_solo(id, s)
+            {
+                item_err = Some(e.to_string());
+            }
+            match item_err {
+                None => ok_count += 1,
+                Some(e) => errors.push(format!("{id}: {e}")),
+            }
+        }
+        batch_msg(ok_count, "track mixer updates applied", &[], &errors)
     }
 
     #[tool(
-        description = "Set the instrument assigned to a track. All notes on this track will play through the assigned instrument. \
-                       Set instrument_id to null to unassign."
+        description = "Assign (or unassign) the instrument driving one or more tracks. Each item's \
+        instrument_id is required: a number assigns that instrument, null unassigns (the track plays nothing)."
     )]
     async fn set_track_instrument(&self, params: Parameters<SetTrackInstrumentParam>) -> String {
-        match self
-            .bridge
-            .set_track_instrument(params.0.track_id, params.0.instrument_id)
-        {
-            Ok(()) => {
-                let inst = params
-                    .0
-                    .instrument_id
-                    .map_or_else(|| "none".to_string(), |id| id.to_string());
-                format!("OK: track {} instrument set to {inst}", params.0.track_id)
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_track_instrument(it.track_id, it.instrument_id)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.track_id)),
             }
-            Err(e) => format!("Error: {e}"),
         }
+        batch_msg(ok_count, "track instruments set", &[], &errors)
     }
 
-    #[tool(description = "Rename a track. The name is shown in the sequencer track headers.")]
+    #[tool(
+        description = "Rename one or more tracks. The name is shown in the sequencer track headers."
+    )]
     async fn rename_track(&self, params: Parameters<RenameTrackParam>) -> String {
-        if let Err(e) = validate_name("track", &params.0.name) {
-            return validation_err(e);
+        for it in &params.0.items {
+            if let Err(e) = validate_name("track", &it.name) {
+                return validation_err(e);
+            }
         }
-        match self.bridge.rename_track(params.0.track_id, &params.0.name) {
-            Ok(()) => format!(
-                "OK: track {} renamed to '{}'",
-                params.0.track_id, params.0.name
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.rename_track(it.track_id, &it.name) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.track_id)),
+            }
         }
+        batch_msg(ok_count, "tracks renamed", &[], &errors)
     }
 
     #[tool(
@@ -5646,16 +5955,23 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Create a return bus (a sub-mix with its own effect chain, fed by track sends). Returns its ID."
+        description = "Create one or more return busses (each a sub-mix with its own effect chain, fed by track sends). Returns the assigned IDs."
     )]
     async fn create_return_bus(&self, params: Parameters<CreateReturnBusParam>) -> String {
-        if let Err(e) = validate_name("return bus", &params.0.name) {
-            return validation_err(e);
+        for name in &params.0.names {
+            if let Err(e) = validate_name("return bus", name) {
+                return validation_err(e);
+            }
         }
-        match self.bridge.create_return_bus(&params.0.name) {
-            Ok(id) => format!("OK: created return bus {id} '{}'", params.0.name),
-            Err(e) => format!("Error: {e}"),
+        let mut ids = Vec::new();
+        let mut errors = Vec::new();
+        for name in &params.0.names {
+            match self.bridge.create_return_bus(name) {
+                Ok(id) => ids.push(format!("{id} '{name}'")),
+                Err(e) => errors.push(format!("'{name}': {e}")),
+            }
         }
+        batch_msg(ids.len(), "return busses created", &ids, &errors)
     }
 
     #[tool(
@@ -5673,153 +5989,144 @@ impl SynthMcpServer {
         batch_msg(ok_count, "return busses deleted", &[], &errors)
     }
 
-    #[tool(description = "Set a return bus's output volume (0.0 = silent, 1.0 = full).")]
-    async fn set_return_bus_volume(&self, params: Parameters<SetReturnBusVolumeParam>) -> String {
-        // Stored as NormalizedValue (clamps to [0, 1]); validate to match.
-        if let Err(e) = validate_range("volume", params.0.volume, 0.0, 1.0) {
-            return validation_err(e);
-        }
-        match self
-            .bridge
-            .set_return_bus_volume(params.0.return_id, params.0.volume)
-        {
-            Ok(()) => format!(
-                "OK: return bus {} volume set to {}",
-                params.0.return_id, params.0.volume
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(description = "Set a return bus's output pan (-1.0 = left, 0.0 = center, 1.0 = right).")]
-    async fn set_return_bus_pan(&self, params: Parameters<SetReturnBusPanParam>) -> String {
-        if let Err(e) = validate_range("pan", params.0.pan, -1.0, 1.0) {
-            return validation_err(e);
-        }
-        match self
-            .bridge
-            .set_return_bus_pan(params.0.return_id, params.0.pan)
-        {
-            Ok(()) => format!(
-                "OK: return bus {} pan set to {}",
-                params.0.return_id, params.0.pan
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(description = "Mute or unmute a return bus.")]
-    async fn set_return_bus_mute(&self, params: Parameters<SetReturnBusMuteParam>) -> String {
-        match self
-            .bridge
-            .set_return_bus_mute(params.0.return_id, params.0.muted)
-        {
-            Ok(()) => format!(
-                "OK: return bus {} {}",
-                params.0.return_id,
-                if params.0.muted { "muted" } else { "unmuted" }
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
     #[tool(
-        description = "Solo or unsolo a return bus. When any return is soloed, only soloed returns reach the master mix (bus-to-bus routing still flows)."
+        description = "Set mixer state on one or more return busses in a single call. Each item \
+        carries a return_id plus any of volume (0.0=silent..1.0=full), pan (-1.0=left..1.0=right), \
+        muted, and solo. Omitted fields are left unchanged. When any return is soloed, only soloed \
+        returns reach the master mix (bus-to-bus routing still flows)."
     )]
-    async fn set_return_bus_solo(&self, params: Parameters<SetReturnBusSoloParam>) -> String {
-        match self
-            .bridge
-            .set_return_bus_solo(params.0.return_id, params.0.solo)
-        {
-            Ok(()) => format!(
-                "OK: return bus {} {}",
-                params.0.return_id,
-                if params.0.solo { "soloed" } else { "unsoloed" }
-            ),
-            Err(e) => format!("Error: {e}"),
+    async fn set_return_bus_mixer(&self, params: Parameters<SetReturnBusMixerParam>) -> String {
+        for it in &params.0.items {
+            // Return-bus volume is stored as NormalizedValue (clamps to [0, 1]).
+            if let Some(v) = it.volume
+                && let Err(e) = validate_range("volume", v, 0.0, 1.0)
+            {
+                return validation_err(e);
+            }
+            if let Some(p) = it.pan
+                && let Err(e) = validate_range("pan", p, -1.0, 1.0)
+            {
+                return validation_err(e);
+            }
         }
-    }
-
-    #[tool(description = "Set a return bus's display color from a \"#RRGGBB\" hex string.")]
-    async fn set_return_bus_color(&self, params: Parameters<SetReturnBusColorParam>) -> String {
-        match self
-            .bridge
-            .set_return_bus_color(params.0.return_id, &params.0.color)
-        {
-            Ok(()) => format!(
-                "OK: return bus {} color set to {}",
-                params.0.return_id, params.0.color
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            let id = it.return_id;
+            let mut item_err: Option<String> = None;
+            if let Some(v) = it.volume
+                && let Err(e) = self.bridge.set_return_bus_volume(id, v)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(p) = it.pan
+                && let Err(e) = self.bridge.set_return_bus_pan(id, p)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(m) = it.muted
+                && let Err(e) = self.bridge.set_return_bus_mute(id, m)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(s) = it.solo
+                && let Err(e) = self.bridge.set_return_bus_solo(id, s)
+            {
+                item_err = Some(e.to_string());
+            }
+            match item_err {
+                None => ok_count += 1,
+                Some(e) => errors.push(format!("{id}: {e}")),
+            }
         }
+        batch_msg(ok_count, "return bus mixer updates applied", &[], &errors)
     }
 
     #[tool(
-        description = "Set a return bus's free-text description / intent (\"\" clears it). Never affects audio."
+        description = "Set the display color of one or more return busses from a \"#RRGGBB\" hex string."
+    )]
+    async fn set_return_bus_color(&self, params: Parameters<SetReturnBusColorParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.set_return_bus_color(it.return_id, &it.color) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.return_id)),
+            }
+        }
+        batch_msg(ok_count, "return bus colors set", &[], &errors)
+    }
+
+    #[tool(
+        description = "Set the free-text description / intent (\"\" clears it) on one or more return busses. Never affects audio."
     )]
     async fn set_return_bus_description(
         &self,
         params: Parameters<SetReturnBusDescriptionParam>,
     ) -> String {
-        match self
-            .bridge
-            .set_return_bus_description(params.0.return_id, &params.0.description)
-        {
-            Ok(()) => format!("OK: return bus {} description set", params.0.return_id),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_return_bus_description(it.return_id, &it.description)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.return_id)),
+            }
         }
+        batch_msg(ok_count, "return bus descriptions set", &[], &errors)
     }
 
-    #[tool(description = "Rename a return bus.")]
+    #[tool(description = "Rename one or more return busses.")]
     async fn rename_return_bus(&self, params: Parameters<RenameReturnBusParam>) -> String {
-        if let Err(e) = validate_name("return bus", &params.0.name) {
-            return validation_err(e);
+        for it in &params.0.items {
+            if let Err(e) = validate_name("return bus", &it.name) {
+                return validation_err(e);
+            }
         }
-        match self
-            .bridge
-            .rename_return_bus(params.0.return_id, &params.0.name)
-        {
-            Ok(()) => format!(
-                "OK: return bus {} renamed to '{}'",
-                params.0.return_id, params.0.name
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.rename_return_bus(it.return_id, &it.name) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.return_id)),
+            }
         }
+        batch_msg(ok_count, "return busses renamed", &[], &errors)
     }
 
     #[tool(
-        description = "Add or update a track's effect send to a return bus (upsert by target). pre_fader taps before the channel fader."
+        description = "Add or update one or more track effect sends to return busses (upsert by track+return target). pre_fader taps before the channel fader."
     )]
     async fn set_track_send(&self, params: Parameters<SetTrackSendParam>) -> String {
         // Stored as NormalizedValue (clamps to [0, 1]); validate to match.
-        if let Err(e) = validate_range("level", params.0.level, 0.0, 1.0) {
-            return validation_err(e);
+        for s in &params.0.sends {
+            if let Err(e) = validate_range("level", s.level, 0.0, 1.0) {
+                return validation_err(e);
+            }
         }
-        match self.bridge.set_track_send(
-            params.0.track_id,
-            params.0.return_id,
-            params.0.level,
-            params.0.pre_fader,
-            params.0.enabled,
-        ) {
-            Ok(()) => format!(
-                "OK: track {} sends {} to return bus {} ({}, {})",
-                params.0.track_id,
-                params.0.level,
-                params.0.return_id,
-                if params.0.pre_fader {
-                    "pre-fader"
-                } else {
-                    "post-fader"
-                },
-                if params.0.enabled {
-                    "enabled"
-                } else {
-                    "bypassed"
-                }
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for s in &params.0.sends {
+            match self.bridge.set_track_send(
+                s.track_id,
+                s.return_id,
+                s.level,
+                s.pre_fader,
+                s.enabled,
+            ) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!(
+                    "track {} → return {}: {e}",
+                    s.track_id, s.return_id
+                )),
+            }
         }
+        batch_msg(ok_count, "track sends set", &[], &errors)
     }
 
     #[tool(description = "Remove one or more track effect sends to return busses.")]
@@ -5839,31 +6146,26 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Add or update a bus-to-bus send: route one return bus's output into another (e.g. a delay return into a reverb return). Upsert by target; rejected if it would create a routing cycle."
+        description = "Add or update one or more bus-to-bus sends: route one return bus's output into another (e.g. a delay return into a reverb return). Upsert by from+to target; each is rejected if it would create a routing cycle."
     )]
     async fn set_return_send(&self, params: Parameters<SetReturnSendParam>) -> String {
-        if let Err(e) = validate_range("level", params.0.level, 0.0, 1.0) {
-            return validation_err(e);
+        for s in &params.0.sends {
+            if let Err(e) = validate_range("level", s.level, 0.0, 1.0) {
+                return validation_err(e);
+            }
         }
-        match self.bridge.set_return_send(
-            params.0.from_id,
-            params.0.to_id,
-            params.0.level,
-            params.0.enabled,
-        ) {
-            Ok(()) => format!(
-                "OK: return bus {} sends {} to return bus {} ({})",
-                params.0.from_id,
-                params.0.level,
-                params.0.to_id,
-                if params.0.enabled {
-                    "enabled"
-                } else {
-                    "bypassed"
-                }
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for s in &params.0.sends {
+            match self
+                .bridge
+                .set_return_send(s.from_id, s.to_id, s.level, s.enabled)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("return {} → return {}: {e}", s.from_id, s.to_id)),
+            }
         }
+        batch_msg(ok_count, "return sends set", &[], &errors)
     }
 
     #[tool(description = "Remove one or more bus-to-bus sends from one return bus into another.")]
@@ -5924,89 +6226,83 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Set a parameter on a return-bus insert effect. param_name is the parameter's type_id or display name; value is a number, boolean, or choice string. Use list_return_busses to discover effects and their parameters."
+        description = "Set parameters on return-bus insert effects (one or many). Each item gives return_id, module_id, param_name (type_id or display name) and value (number, boolean, or choice string). Use list_return_busses to discover effects and their parameters."
     )]
     async fn set_return_effect_parameter(
         &self,
         params: Parameters<SetReturnEffectParameterParam>,
     ) -> String {
-        let p = params.0;
-        let value = match p.value {
-            ParamValueInput::Number(n) => {
-                if !n.is_finite() {
-                    return format!(
-                        "Error: {}",
-                        McpBridgeError::ValueOutOfRange {
-                            name: "value",
-                            value: n as f32,
-                            min: f32::NEG_INFINITY,
-                            max: f32::INFINITY,
-                        }
-                    );
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in params.0.params {
+            let value = match param_value_to_bridge(it.value) {
+                Ok(v) => v,
+                Err(e) => {
+                    errors.push(format!("{}/{}: {e}", it.return_id, it.module_id));
+                    continue;
                 }
-                crate::bridge::BridgeParamValue::Number(n)
+            };
+            match self.bridge.set_return_effect_parameter(
+                it.return_id,
+                &it.module_id,
+                &it.param_name,
+                value,
+            ) {
+                Ok(_info) => ok_count += 1,
+                Err(e) => errors.push(format!("{}/{}: {e}", it.return_id, it.module_id)),
             }
-            ParamValueInput::Bool(b) => crate::bridge::BridgeParamValue::Bool(b),
-            ParamValueInput::Choice(s) => crate::bridge::BridgeParamValue::Choice(s),
-        };
-        match self.bridge.set_return_effect_parameter(
-            p.return_id,
-            &p.module_id,
-            &p.param_name,
-            value,
-        ) {
-            Ok(info) => to_json(&info),
-            Err(e) => format!("Error: {e}"),
         }
+        batch_msg(ok_count, "return effect parameters set", &[], &errors)
     }
 
     #[tool(
-        description = "Enable or bypass a return-bus insert effect (enabled = false bypasses it)."
+        description = "Enable or bypass one or more return-bus insert effects (enabled = false bypasses)."
     )]
     async fn set_return_effect_enabled(
         &self,
         params: Parameters<SetReturnEffectEnabledParam>,
     ) -> String {
-        match self.bridge.set_return_effect_enabled(
-            params.0.return_id,
-            &params.0.module_id,
-            params.0.enabled,
-        ) {
-            Ok(()) => format!(
-                "OK: return bus {} effect {} {}",
-                params.0.return_id,
-                params.0.module_id,
-                if params.0.enabled {
-                    "enabled"
-                } else {
-                    "bypassed"
-                }
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_return_effect_enabled(it.return_id, &it.module_id, it.enabled)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}/{}: {e}", it.return_id, it.module_id)),
+            }
         }
+        batch_msg(ok_count, "return effect toggles applied", &[], &errors)
     }
 
     #[tool(
-        description = "Move a return-bus insert effect up or down within the effect chain (direction: 'up' = earlier, 'down' = later)."
+        description = "Move one or more return-bus insert effects up or down within their effect chain (direction: 'up' = earlier, 'down' = later). Moves are applied in array order."
     )]
     async fn reorder_return_effect(&self, params: Parameters<ReorderReturnEffectParam>) -> String {
-        let direction = match params.0.direction.trim().to_ascii_lowercase().as_str() {
-            "up" => crate::bridge::ReturnEffectMove::Up,
-            "down" => crate::bridge::ReturnEffectMove::Down,
-            other => {
-                return format!("Error: invalid direction '{other}', expected 'up' or 'down'");
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            let direction = match it.direction.trim().to_ascii_lowercase().as_str() {
+                "up" => crate::bridge::ReturnEffectMove::Up,
+                "down" => crate::bridge::ReturnEffectMove::Down,
+                other => {
+                    errors.push(format!(
+                        "{}/{}: invalid direction '{other}', expected 'up' or 'down'",
+                        it.return_id, it.module_id
+                    ));
+                    continue;
+                }
+            };
+            match self
+                .bridge
+                .reorder_return_effect(it.return_id, &it.module_id, direction)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}/{}: {e}", it.return_id, it.module_id)),
             }
-        };
-        match self
-            .bridge
-            .reorder_return_effect(params.0.return_id, &params.0.module_id, direction)
-        {
-            Ok(()) => format!(
-                "OK: moved {} {} in return bus {}",
-                params.0.module_id, params.0.direction, params.0.return_id
-            ),
-            Err(e) => format!("Error: {e}"),
         }
+        batch_msg(ok_count, "return effects reordered", &[], &errors)
     }
 
     // === Master bus ===
@@ -6077,132 +6373,132 @@ impl SynthMcpServer {
         &self,
         params: Parameters<SetMasterEffectParameterParam>,
     ) -> String {
-        let p = params.0;
-        let value = match p.value {
-            ParamValueInput::Number(n) => {
-                if !n.is_finite() {
-                    return format!(
-                        "Error: {}",
-                        McpBridgeError::ValueOutOfRange {
-                            name: "value",
-                            value: n as f32,
-                            min: f32::NEG_INFINITY,
-                            max: f32::INFINITY,
-                        }
-                    );
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in params.0.params {
+            let value = match param_value_to_bridge(it.value) {
+                Ok(v) => v,
+                Err(e) => {
+                    errors.push(format!("{}: {e}", it.module_id));
+                    continue;
                 }
-                crate::bridge::BridgeParamValue::Number(n)
+            };
+            match self
+                .bridge
+                .set_master_effect_parameter(&it.module_id, &it.param_name, value)
+            {
+                Ok(_info) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.module_id)),
             }
-            ParamValueInput::Bool(b) => crate::bridge::BridgeParamValue::Bool(b),
-            ParamValueInput::Choice(s) => crate::bridge::BridgeParamValue::Choice(s),
-        };
-        match self
-            .bridge
-            .set_master_effect_parameter(&p.module_id, &p.param_name, value)
-        {
-            Ok(info) => to_json(&info),
-            Err(e) => format!("Error: {e}"),
         }
+        batch_msg(ok_count, "master effect parameters set", &[], &errors)
     }
 
     #[tool(
-        description = "Enable or bypass a master-bus insert effect (enabled = false bypasses it)."
+        description = "Enable or bypass one or more master-bus insert effects (enabled = false bypasses)."
     )]
     async fn set_master_effect_enabled(
         &self,
         params: Parameters<SetMasterEffectEnabledParam>,
     ) -> String {
-        match self
-            .bridge
-            .set_master_effect_enabled(&params.0.module_id, params.0.enabled)
-        {
-            Ok(()) => format!(
-                "OK: master effect {} {}",
-                params.0.module_id,
-                if params.0.enabled {
-                    "enabled"
-                } else {
-                    "bypassed"
-                }
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_master_effect_enabled(&it.module_id, it.enabled)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.module_id)),
+            }
         }
+        batch_msg(ok_count, "master effect toggles applied", &[], &errors)
     }
 
     #[tool(
-        description = "Move a master-bus insert effect up or down within the chain (direction: 'up' = earlier, 'down' = later)."
+        description = "Move one or more master-bus insert effects up or down within the chain (direction: 'up' = earlier, 'down' = later). Moves are applied in array order."
     )]
     async fn reorder_master_effect(&self, params: Parameters<ReorderMasterEffectParam>) -> String {
-        let direction = match params.0.direction.trim().to_ascii_lowercase().as_str() {
-            "up" => crate::bridge::ReturnEffectMove::Up,
-            "down" => crate::bridge::ReturnEffectMove::Down,
-            other => {
-                return format!("Error: invalid direction '{other}', expected 'up' or 'down'");
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            let direction = match it.direction.trim().to_ascii_lowercase().as_str() {
+                "up" => crate::bridge::ReturnEffectMove::Up,
+                "down" => crate::bridge::ReturnEffectMove::Down,
+                other => {
+                    errors.push(format!(
+                        "{}: invalid direction '{other}', expected 'up' or 'down'",
+                        it.module_id
+                    ));
+                    continue;
+                }
+            };
+            match self.bridge.reorder_master_effect(&it.module_id, direction) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.module_id)),
             }
-        };
-        match self
-            .bridge
-            .reorder_master_effect(&params.0.module_id, direction)
-        {
-            Ok(()) => format!(
-                "OK: moved {} {} in master bus",
-                params.0.module_id, params.0.direction
-            ),
-            Err(e) => format!("Error: {e}"),
         }
+        batch_msg(ok_count, "master effects reordered", &[], &errors)
     }
 
     // === Pattern management ===
 
     #[tool(
-        description = "Rename a pattern. The name is shown in the arrangement timeline and piano roll."
+        description = "Rename one or more patterns. The name is shown in the arrangement timeline and piano roll."
     )]
     async fn rename_pattern(&self, params: Parameters<RenamePatternParam>) -> String {
-        if let Err(e) = validate_name("pattern", &params.0.name) {
-            return format!("Error: {e}");
+        for it in &params.0.items {
+            if let Err(e) = validate_name("pattern", &it.name) {
+                return format!("Error: {e}");
+            }
         }
-        match self
-            .bridge
-            .rename_pattern(params.0.pattern_id, &params.0.name)
-        {
-            Ok(()) => format!(
-                "OK: pattern {} renamed to '{}'",
-                params.0.pattern_id, params.0.name
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.rename_pattern(it.pattern_id, &it.name) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.pattern_id)),
+            }
         }
+        batch_msg(ok_count, "patterns renamed", &[], &errors)
     }
 
     #[tool(
-        description = "Set the length of a pattern in beats (e.g. 4.0 = one bar in 4/4, 8.0 = two bars)."
+        description = "Set the length in beats of one or more patterns (e.g. 4.0 = one bar in 4/4, 8.0 = two bars)."
     )]
     async fn set_pattern_length(&self, params: Parameters<SetPatternLengthParam>) -> String {
-        if let Err(e) = validate_range("length_beats", params.0.length_beats, 0.001, 1024.0) {
-            return format!("Error: {e}");
+        for it in &params.0.items {
+            if let Err(e) = validate_range("length_beats", it.length_beats, 0.001, 1024.0) {
+                return format!("Error: {e}");
+            }
         }
-        match self
-            .bridge
-            .set_pattern_length(params.0.pattern_id, params.0.length_beats)
-        {
-            Ok(()) => format!(
-                "OK: pattern {} length set to {} beats",
-                params.0.pattern_id, params.0.length_beats
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_pattern_length(it.pattern_id, it.length_beats)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.pattern_id)),
+            }
         }
+        batch_msg(ok_count, "pattern lengths set", &[], &errors)
     }
 
     #[tool(
-        description = "Duplicate a pattern including all notes and automation. Returns the new pattern ID."
+        description = "Duplicate one or more patterns including all notes and automation. Returns the new pattern IDs."
     )]
     async fn duplicate_pattern(&self, params: Parameters<DuplicatePatternParam>) -> String {
-        match self.bridge.duplicate_pattern(params.0.pattern_id) {
-            Ok(new_id) => format!(
-                "OK: duplicated pattern {} as new pattern {new_id}",
-                params.0.pattern_id
-            ),
-            Err(e) => format!("Error: {e}"),
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for id in &params.0.pattern_ids {
+            match self.bridge.duplicate_pattern(*id) {
+                Ok(new_id) => oks.push(format!("{id} → {new_id}")),
+                Err(e) => errors.push(format!("{id}: {e}")),
+            }
         }
+        batch_msg(oks.len(), "patterns duplicated", &oks, &errors)
     }
 
     // === Song metadata ===
@@ -6798,24 +7094,30 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Import a WAV file into the sample library. Returns the new sample info with \
-                       assigned ID. Optionally override the name and set the root MIDI note (0-127, \
-                       default 60=C4)."
+        description = "Import one or more WAV files into the sample library. Returns the array of new \
+                       sample infos with assigned IDs. Each entry may override the name and set the root \
+                       MIDI note (0-127, default 60=C4)."
     )]
     async fn import_sample(&self, params: Parameters<ImportSampleParam>) -> String {
-        if let Some(note) = params.0.root_note
-            && let Err(e) = validate_midi_note(note)
-        {
-            return format!("Error: {e}");
+        for s in &params.0.samples {
+            if let Some(note) = s.root_note
+                && let Err(e) = validate_midi_note(note)
+            {
+                return format!("Error: {e}");
+            }
         }
-        match self.bridge.import_sample(
-            &params.0.path,
-            params.0.name.as_deref(),
-            params.0.root_note,
-        ) {
-            Ok(info) => to_json(&info),
-            Err(e) => format!("Error: {e}"),
+        let mut infos = Vec::new();
+        let mut errors = Vec::new();
+        for s in &params.0.samples {
+            match self
+                .bridge
+                .import_sample(&s.path, s.name.as_deref(), s.root_note)
+            {
+                Ok(info) => infos.push(info),
+                Err(e) => errors.push(format!("'{}': {e}", s.path)),
+            }
         }
+        batch_json("imported", &infos, &errors)
     }
 
     #[tool(
@@ -6833,59 +7135,82 @@ impl SynthMcpServer {
         batch_msg(ok_count, "samples deleted", &[], &errors)
     }
 
-    #[tool(description = "Rename a sample in the library.")]
+    #[tool(description = "Rename one or more samples in the library.")]
     async fn rename_sample(&self, params: Parameters<RenameSampleParam>) -> String {
-        match self
-            .bridge
-            .rename_sample(params.0.sample_id, &params.0.name)
-        {
-            Ok(()) => format!("OK: Sample renamed to '{}'", params.0.name),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.rename_sample(it.sample_id, &it.name) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.sample_id)),
+            }
         }
+        batch_msg(ok_count, "samples renamed", &[], &errors)
     }
 
     #[tool(
-        description = "Set the root MIDI note for a sample (determines playback pitch mapping). \
+        description = "Set the root MIDI note for one or more samples (determines playback pitch mapping). \
                        Note 60 = C4 (middle C). Range: 0-127."
     )]
     async fn set_sample_root_note(&self, params: Parameters<SetSampleRootNoteParam>) -> String {
-        if let Err(e) = validate_midi_note(params.0.note) {
-            return format!("Error: {e}");
+        for it in &params.0.items {
+            if let Err(e) = validate_midi_note(it.note) {
+                return format!("Error: {e}");
+            }
         }
-        match self
-            .bridge
-            .set_sample_root_note(params.0.sample_id, params.0.note)
-        {
-            Ok(()) => format!("OK: Root note set to {}", params.0.note),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.set_sample_root_note(it.sample_id, it.note) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.sample_id)),
+            }
         }
-    }
-
-    #[tool(description = "Normalize sample peak level to 0 dB (maximum without clipping).")]
-    async fn normalize_sample(&self, params: Parameters<SampleIdParam>) -> String {
-        match self.bridge.normalize_sample(params.0.sample_id) {
-            Ok(()) => "OK: Sample normalized".to_string(),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(description = "Reverse the sample audio data in place.")]
-    async fn reverse_sample(&self, params: Parameters<SampleIdParam>) -> String {
-        match self.bridge.reverse_sample(params.0.sample_id) {
-            Ok(()) => "OK: Sample reversed".to_string(),
-            Err(e) => format!("Error: {e}"),
-        }
+        batch_msg(ok_count, "sample root notes set", &[], &errors)
     }
 
     #[tool(
-        description = "Auto-trim silence from the start and end of a sample. Sets crop markers \
+        description = "Normalize peak level to 0 dB (maximum without clipping) for one or more samples."
+    )]
+    async fn normalize_sample(&self, params: Parameters<SampleIdsParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for id in &params.0.sample_ids {
+            match self.bridge.normalize_sample(*id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{id}: {e}")),
+            }
+        }
+        batch_msg(ok_count, "samples normalized", &[], &errors)
+    }
+
+    #[tool(description = "Reverse the audio data in place for one or more samples.")]
+    async fn reverse_sample(&self, params: Parameters<SampleIdsParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for id in &params.0.sample_ids {
+            match self.bridge.reverse_sample(*id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{id}: {e}")),
+            }
+        }
+        batch_msg(ok_count, "samples reversed", &[], &errors)
+    }
+
+    #[tool(
+        description = "Auto-trim silence from the start and end of one or more samples. Sets crop markers \
                        at the first and last audible frames (threshold: -40 dB)."
     )]
-    async fn trim_sample_silence(&self, params: Parameters<SampleIdParam>) -> String {
-        match self.bridge.trim_sample_silence(params.0.sample_id) {
-            Ok(()) => "OK: Silence trimmed".to_string(),
-            Err(e) => format!("Error: {e}"),
+    async fn trim_sample_silence(&self, params: Parameters<SampleIdsParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for id in &params.0.sample_ids {
+            match self.bridge.trim_sample_silence(*id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{id}: {e}")),
+            }
         }
+        batch_msg(ok_count, "samples trimmed", &[], &errors)
     }
 
     #[tool(
@@ -6900,68 +7225,78 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Create a copy of a sample with a new ID. The copy gets \" (copy)\" \
-                       appended to its name."
+        description = "Create a copy of one or more samples, each with a new ID. The copy gets \" (copy)\" \
+                       appended to its name. Returns the array of new sample infos."
     )]
-    async fn duplicate_sample(&self, params: Parameters<SampleIdParam>) -> String {
-        match self.bridge.duplicate_sample(params.0.sample_id) {
-            Ok(info) => to_json(&info),
-            Err(e) => format!("Error: {e}"),
+    async fn duplicate_sample(&self, params: Parameters<SampleIdsParam>) -> String {
+        let mut infos = Vec::new();
+        let mut errors = Vec::new();
+        for id in &params.0.sample_ids {
+            match self.bridge.duplicate_sample(*id) {
+                Ok(info) => infos.push(info),
+                Err(e) => errors.push(format!("{id}: {e}")),
+            }
         }
+        batch_json("duplicated", &infos, &errors)
     }
 
     #[tool(
-        description = "Set or disable the loop region for a sample. When enabled, provide start \
+        description = "Set or disable the loop region for one or more samples. When enabled, provide start \
                        and end times in seconds. Optional crossfade in milliseconds smooths the \
                        loop boundary."
     )]
     async fn set_sample_loop(&self, params: Parameters<SetSampleLoopParam>) -> String {
-        match self.bridge.set_sample_loop(
-            params.0.sample_id,
-            params.0.enabled,
-            params.0.start_seconds,
-            params.0.end_seconds,
-            params.0.crossfade_ms,
-        ) {
-            Ok(()) => {
-                if params.0.enabled {
-                    "OK: Loop region set".to_string()
-                } else {
-                    "OK: Loop disabled".to_string()
-                }
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.set_sample_loop(
+                it.sample_id,
+                it.enabled,
+                it.start_seconds,
+                it.end_seconds,
+                it.crossfade_ms,
+            ) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.sample_id)),
             }
-            Err(e) => format!("Error: {e}"),
         }
+        batch_msg(ok_count, "sample loops set", &[], &errors)
     }
 
     #[tool(
-        description = "Set or remove the crop region for a sample. Crop defines the audible \
+        description = "Set or remove the crop region for one or more samples. Crop defines the audible \
                        portion. Omit start_seconds and end_seconds to remove the crop and use \
                        the full sample."
     )]
     async fn set_sample_crop(&self, params: Parameters<SetSampleCropParam>) -> String {
-        match self.bridge.set_sample_crop(
-            params.0.sample_id,
-            params.0.start_seconds,
-            params.0.end_seconds,
-        ) {
-            Ok(()) => "OK: Crop region updated".to_string(),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_sample_crop(it.sample_id, it.start_seconds, it.end_seconds)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.sample_id)),
+            }
         }
+        batch_msg(ok_count, "sample crops updated", &[], &errors)
     }
 
     #[tool(
-        description = "Export a sample to a WAV file at the given path. Crop region is applied \
+        description = "Export one or more samples to WAV files at the given paths. Crop region is applied \
                        if set. Bit depth: 16 (default), 24, or 32 (float)."
     )]
     async fn export_sample(&self, params: Parameters<ExportSampleParam>) -> String {
-        match self
-            .bridge
-            .export_sample(params.0.sample_id, &params.0.path, params.0.bit_depth)
-        {
-            Ok(()) => format!("OK: Sample exported to '{}'", params.0.path),
-            Err(e) => format!("Error: {e}"),
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for s in params.0.samples {
+            match self.bridge.export_sample(s.sample_id, &s.path, s.bit_depth) {
+                Ok(()) => oks.push(s.path),
+                Err(e) => errors.push(format!("{}: {e}", s.sample_id)),
+            }
         }
+        batch_msg(oks.len(), "samples exported", &oks, &errors)
     }
 
     // ========================================================================
@@ -6974,14 +7309,18 @@ impl SynthMcpServer {
                        get_instrument_info for module IDs."
     )]
     async fn assign_sample_to_module(&self, params: Parameters<AssignSampleParam>) -> String {
-        match self.bridge.assign_sample_to_module(
-            params.0.instrument_id,
-            &params.0.module_id,
-            params.0.sample_id,
-        ) {
-            Ok(()) => "OK: Sample assigned to module".to_string(),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .assign_sample_to_module(it.instrument_id, &it.module_id, it.sample_id)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.module_id)),
+            }
         }
+        batch_msg(ok_count, "samples assigned to modules", &[], &errors)
     }
 
     #[tool(
@@ -7005,15 +7344,20 @@ impl SynthMcpServer {
                        fine_tune (-100 to 100 cents), start_offset (0.0-1.0)."
     )]
     async fn set_sampler_parameter(&self, params: Parameters<SetSamplerParameterParam>) -> String {
-        match self.bridge.set_sampler_parameter(
-            params.0.instrument_id,
-            &params.0.module_id,
-            &params.0.param_name,
-            &params.0.value,
-        ) {
-            Ok(()) => format!("OK: {} set to {}", params.0.param_name, params.0.value),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.params {
+            match self.bridge.set_sampler_parameter(
+                it.instrument_id,
+                &it.module_id,
+                &it.param_name,
+                &it.value,
+            ) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}/{}: {e}", it.module_id, it.param_name)),
+            }
         }
+        batch_msg(ok_count, "sampler parameters set", &[], &errors)
     }
 
     // ========================================================================

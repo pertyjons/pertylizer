@@ -1,7 +1,7 @@
 # Pertylizer × MCP — AI Agent Integration Guide
 
 Pertylizer ships with a built-in [Model Context Protocol](https://modelcontextprotocol.io) server that exposes
-**180+ tools** for full remote control of the synth, sequencer, sample library, and Acoustic World Engine. Any
+**175+ tools** for full remote control of the synth, sequencer, sample library, and Acoustic World Engine. Any
 MCP-capable client — Claude Code, Claude Desktop, custom agents — can use it to build instruments, compose songs,
 edit patterns, render audio, and analyze the result, all while the synth keeps running.
 
@@ -170,7 +170,7 @@ Create instruments, wire modules together, set parameters.
 | `create_instrument`, `delete_instrument`, `rename_instrument` | Lifecycle |
 | `set_instrument_category` | Drums/Bass/Lead/Pad/Pluck/Keys/FX/Other |
 | `add_module`, `remove_module` | Modify the graph |
-| `connect`, `disconnect` | Cables (`connect` takes one or many port pairs) |
+| `connect`, `disconnect` | Cables (each takes one or many port pairs) |
 | `clear_graph`, `auto_layout` | Reset / tidy |
 | `set_parameter` | One or many params atomically; value may be a number, a choice string (`"sawtooth"`), or a boolean |
 | `build_instrument` | Single call: one or many full instruments from a JSON spec |
@@ -232,17 +232,16 @@ optional fields beyond pitch/start/duration/velocity:
 | Tool | Purpose |
 |------|---------|
 | `list_tracks`, `create_track` | Track lifecycle (`create_track` takes one or many) |
-| `rename_track`, `delete_track`, `set_track_instrument` | |
-| `set_track_volume`, `set_track_pan`, `set_track_mute`, `set_track_solo` | Mixing |
+| `rename_track`, `delete_track`, `set_track_instrument` | (each takes one or many; `set_track_instrument` null = unassign) |
+| `set_track_mixer` | Volume / pan / mute / solo per track, array of updates |
 | `list_arrangement`, `place_pattern`, `remove_placement` | Song arrangement (`place_pattern` takes one or many) |
 
 ### Instrument Mixing
 
 | Tool | Purpose |
 |------|---------|
-| `set_instrument_volume`, `set_instrument_pan` | |
-| `set_instrument_mute`, `set_instrument_solo`, `set_instrument_enabled` | |
-| `set_instrument_midi_channel` | Multitimbral routing |
+| `set_instrument_mixer` | Volume / pan / muted / solo / enabled per instrument, array of updates |
+| `set_instrument_midi_channel` | Multitimbral routing (one or many) |
 
 ### Automation
 
@@ -404,15 +403,22 @@ parameter changes by re-running analysis.
 
 ### Batch operations to save tokens
 
-Most mutating tools accept either a single item or an array, so pass many items in
-one call instead of one call per item:
+Nearly every mutating tool takes an array, so pass many items in one call instead
+of one call per item:
 
 - `add_note`, `update_note`, `replace_notes` — many notes at once
-- `create_pattern`, `place_pattern`, `create_track` — arranger setup in one call
+- `create_pattern`, `place_pattern`, `create_track`, `create_instrument`,
+  `create_return_bus` — lifecycle setup in one call
 - `build_instrument` — one or many full patches in one call
 - `set_parameter` — atomic multi-parameter changes
-- `add_module` / `remove_module`, `add_return_effect` / `remove_return_effect`,
-  `add_master_effect` / `remove_master_effect` — build or tear down chains in one call
+- `set_instrument_mixer`, `set_track_mixer`, `set_return_bus_mixer` — volume / pan /
+  mute / solo (and more) for many channels in one call, omitting fields you don't change
+- `note_on` / `note_off` — strike or release a whole chord in one call
+- `connect` / `disconnect`, `add_module` / `remove_module`,
+  `add_return_effect` / `remove_return_effect`, `add_master_effect` / `remove_master_effect`,
+  `set_track_send` / `set_return_send` — build or tear down routing/chains in one call
+- `rename_*`, `set_*_description`, `set_*_color`, sample edits (`set_sample_loop`,
+  `set_sample_crop`, `rename_sample`, `import_sample`, …) — per-entity edits batched
 - `remove_note`, `remove_placement`, `remove_track_send`, `remove_return_send`,
   `delete_instrument`, `delete_pattern`, `delete_track`, `delete_return_bus`,
   `delete_sample` — bulk removal by passing many IDs
@@ -440,7 +446,7 @@ mod-matrix slot-source mismatches. Run it after any patch edit to catch broken g
                          ▼
 ┌─────────────────────────────────────────────────────────┐
 │  synth_mcp::server (rmcp + axum)                        │
-│  • 180+ #[tool] handlers                                │
+│  • 175+ #[tool] handlers                                │
 │  • Validates JSON params, serializes results            │
 └────────────────────────┬────────────────────────────────┘
                          │  SynthBridge trait (primitive types only)
@@ -494,7 +500,7 @@ rendered to a buffer. The live engine is untouched.
 
 1. Agent calls `analyze_mix_bus` for global metrics.
 2. Agent calls `analyze_section` per section to find the loudest/dullest parts.
-3. Agent calls `set_track_volume`, `set_track_pan`, `set_instrument_volume` to balance.
+3. Agent calls `set_track_mixer` / `set_instrument_mixer` (one array call each) to balance.
 4. Agent re-runs `analyze_mix_bus` to verify LUFS-I target.
 
 ### "Inspect what the user just patched"

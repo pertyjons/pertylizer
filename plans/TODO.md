@@ -15,7 +15,7 @@
   notes via `track.instrument`. Pan and volume per *track* are then ignored
   — the only pan/volume that actually reaches the bus is at the *instrument*
   level (`InstrumentState.pan`/`.volume` → `Gain::from_pan` in
-  `instrument.rs:1295`). The GUI slider, MCP `set_track_pan`/`set_track_volume`,
+  `instrument.rs:1295`). The GUI slider, MCP `set_track_mixer` (pan/volume),
   and the `track.volume`/`.pan` storage round-trip cleanly through save/load,
   but the values do nothing audibly. Likely fix: in `sequencer_engine.rs`
   around line ~358, multiply the dispatched note's velocity by

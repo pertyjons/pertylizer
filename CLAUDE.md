@@ -68,7 +68,7 @@ commit and the code carry the detail; history.md is the index.
 | `synth_dsp`          | Low-level DSP primitives (biquad, delay lines, interpolation)      |
 | `synth_sampler`      | Sample loading, playback, and waveform analysis                    |
 | `synth_awe`          | Acoustic World Engine (room simulation)                            |
-| `synth_mcp`          | MCP server for external control (180+ tools)                       |
+| `synth_mcp`          | MCP server for external control (175+ tools)                       |
 | `synth_osc`          | OSC telemetry sender (spectrum, notes, transport over UDP)         |
 | `synth_osc_protocol` | Shared OSC protocol definitions for synth and visualizer           |
 

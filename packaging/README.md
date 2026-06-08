@@ -88,7 +88,7 @@ Open one of the example projects (`examples/projects`), then talk to the agent:
    harmony, mix, groove and arrangement findings into one ranked to-do list.
 
 5. **"Fix it: clean up the low-mids, give the lead room, and tame the peak."**
-   Now the agent *changes* things — `set_track_volume` / `set_instrument_pan` to rebalance, an EQ on
+   Now the agent *changes* things — `set_track_mixer` / `set_instrument_mixer` to rebalance, an EQ on
    the pad (`add_module`) to carve out the band the lead needs, a master limiter
    (`add_master_effect`), and `auto_gain_stage` to hit a sensible loudness without breaching the
    true-peak ceiling. Shared reverb/delay goes on a send via `create_return_bus` + `set_track_send`.
