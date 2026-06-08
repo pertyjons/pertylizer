@@ -1164,6 +1164,31 @@
       "format": "float",
       "type": "number"
     },
+    "Humanize": {
+      "description": "Humanize (chain stage 4, last) — bounded, **seeded** random perturbation of\nthe final note stream, so a sequenced part loses its machine-uniformity\nwithout losing reproducibility.\n\nA pure buf transform on whatever the rack produced (arp steps, chord tones,\nplain notes). The per-note random is a deterministic hash of\n*(seed, tick, pitch, buffer index)* — never `Math.random` on the audio\nthread — so a given `seed` renders byte-identical every time (offline and\nlive), and changing `seed` rerolls the feel.\n\n**Scope:** velocity and gate (note-length) only. *Timing* humanize is\ndeliberately not here — shifting a note's onset is a multi-tick / engine\nmicro-timing concern (a stage-4 buf transform can only see notes already\nlanded on the current tick, and the per-tick model cannot *rush* a note\nearlier than where the chain placed it). *Micro-pitch* needs a sub-semitone\ndetune field on the emitted note. Both are tracked as follow-ups.",
+      "properties": {
+        "gate": {
+          "$ref": "#/$defs/NormalizedValue",
+          "description": "Max note-length deviation as a ± fraction of each note's duration\n(0 = off; notes with no explicit duration are untouched)."
+        },
+        "seed": {
+          "description": "PRNG seed for this processor. Same seed → identical render every time\n(offline and live). NB: the seed lives on the pattern, so every\nplacement of the pattern humanizes identically — per-placement variation\nis the deferred per-`PatternPlacement` override (NP0), which would mix a\nplacement nonce into the per-note key the way the engine's probability\nroll mixes `roll_nonce`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "velocity": {
+          "$ref": "#/$defs/NormalizedValue",
+          "description": "Max velocity deviation as a ± fraction of the note's velocity (0 = off)."
+        }
+      },
+      "required": [
+        "velocity",
+        "gate",
+        "seed"
+      ],
+      "type": "object"
+    },
     "InstrumentId": {
       "description": "Unique identifier for an instrument.\n\nEach instrument in the synth engine has a unique ID that persists for\nits lifetime. IDs are never reused within a session.",
       "format": "uint64",
@@ -7220,6 +7245,19 @@
           },
           "required": [
             "Arpeggiator"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Seeded random perturbation of the final stream (chain stage 4).",
+          "properties": {
+            "Humanize": {
+              "$ref": "#/$defs/Humanize"
+            }
+          },
+          "required": [
+            "Humanize"
           ],
           "type": "object"
         }

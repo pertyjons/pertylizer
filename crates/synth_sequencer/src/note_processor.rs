@@ -25,7 +25,7 @@
 //! drop count is the (non-RT) caller's job; the audio thread must not log.
 
 use serde::{Deserialize, Serialize};
-use synth_core::hash::splitmix64;
+use synth_core::hash::{splitmix64, splitmix64_bipolar};
 use synth_core::{NormalizedValue, Semitones};
 
 use super::ids::NoteId;
@@ -684,6 +684,84 @@ impl Arpeggiator {
     }
 }
 
+/// Humanize (chain stage 4, last) — bounded, **seeded** random perturbation of
+/// the final note stream, so a sequenced part loses its machine-uniformity
+/// without losing reproducibility.
+///
+/// A pure buf transform on whatever the rack produced (arp steps, chord tones,
+/// plain notes). The per-note random is a deterministic hash of
+/// *(seed, tick, pitch, buffer index)* — never `Math.random` on the audio
+/// thread — so a given `seed` renders byte-identical every time (offline and
+/// live), and changing `seed` rerolls the feel.
+///
+/// **Scope:** velocity and gate (note-length) only. *Timing* humanize is
+/// deliberately not here — shifting a note's onset is a multi-tick / engine
+/// micro-timing concern (a stage-4 buf transform can only see notes already
+/// landed on the current tick, and the per-tick model cannot *rush* a note
+/// earlier than where the chain placed it). *Micro-pitch* needs a sub-semitone
+/// detune field on the emitted note. Both are tracked as follow-ups.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Humanize {
+    /// Max velocity deviation as a ± fraction of the note's velocity (0 = off).
+    pub velocity: NormalizedValue,
+    /// Max note-length deviation as a ± fraction of each note's duration
+    /// (0 = off; notes with no explicit duration are untouched).
+    pub gate: NormalizedValue,
+    /// PRNG seed for this processor. Same seed → identical render every time
+    /// (offline and live). NB: the seed lives on the pattern, so every
+    /// placement of the pattern humanizes identically — per-placement variation
+    /// is the deferred per-`PatternPlacement` override (NP0), which would mix a
+    /// placement nonce into the per-note key the way the engine's probability
+    /// roll mixes `roll_nonce`.
+    pub seed: u64,
+}
+
+impl Default for Humanize {
+    fn default() -> Self {
+        Self {
+            velocity: NormalizedValue::new(0.15),
+            gate: NormalizedValue::new(0.0),
+            seed: 0,
+        }
+    }
+}
+
+impl Humanize {
+    /// Perturb each note in `buf` in place. RT-safe: no allocation, the random
+    /// draws are pure hashes.
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+    fn apply(&self, tick: PatternTick, buf: &mut ExpansionBuffer) {
+        let vel_amt = self.velocity.as_f32();
+        let gate_amt = self.gate.as_f32();
+        if vel_amt == 0.0 && gate_amt == 0.0 {
+            return;
+        }
+        for (i, note) in buf.notes_mut().iter_mut().enumerate() {
+            // Stable per-note key: same playback position + pitch + slot →
+            // same perturbation (reproducible), decorrelated across notes. The
+            // fields occupy disjoint bit ranges (tick: 0–31, pitch: 32–39,
+            // slot: 40–47) so they can't alias even in very long patterns; the
+            // velocity and gate sub-streams come from adjacent seeds.
+            let key = self.seed
+                ^ u64::from(tick.0)
+                ^ (u64::from(note.pitch.as_midi()) << 32)
+                ^ ((i as u64) << 40);
+            if vel_amt > 0.0 {
+                let bipolar = splitmix64_bipolar(key);
+                note.velocity = Velocity::new(note.velocity.as_f32() * (1.0 + bipolar * vel_amt));
+            }
+            if gate_amt > 0.0
+                && let Some(duration) = note.duration
+            {
+                let bipolar = splitmix64_bipolar(key.wrapping_add(1));
+                let scaled = (duration.0 as f32 * (1.0 + bipolar * gate_amt)).max(1.0);
+                note.duration = Some(Duration(scaled.round() as u32));
+            }
+        }
+    }
+}
+
 // ============================================================================
 // The processor rack
 // ============================================================================
@@ -699,6 +777,8 @@ pub enum NoteProcessor {
     Chord(Chord),
     /// Arpeggiate the held chord (chain stage 2).
     Arpeggiator(Arpeggiator),
+    /// Seeded random perturbation of the final stream (chain stage 4).
+    Humanize(Humanize),
 }
 
 impl NoteProcessor {
@@ -711,6 +791,7 @@ impl NoteProcessor {
             Self::ScaleQuantize(_) => 0,
             Self::Chord(_) => 1,
             Self::Arpeggiator(_) => 2,
+            Self::Humanize(_) => 4,
         }
     }
 
@@ -725,7 +806,7 @@ impl NoteProcessor {
         match self {
             Self::ScaleQuantize(q) => sink(q.snap(pitch)),
             Self::Chord(c) => c.tones(pitch, sink),
-            Self::Arpeggiator(_) => sink(pitch),
+            Self::Arpeggiator(_) | Self::Humanize(_) => sink(pitch),
         }
     }
 
@@ -758,6 +839,7 @@ impl NoteProcessor {
             Self::Chord(c) if c.strum.0 == 0 => c.expand_into(buf),
             Self::Chord(c) => c.expand_strummed(pattern, tick, upstream, buf),
             Self::Arpeggiator(a) => a.process_at_tick(pattern, tick, upstream, buf),
+            Self::Humanize(h) => h.apply(tick, buf),
         }
     }
 }
@@ -2038,6 +2120,146 @@ mod tests {
             .map(|n| (n.start.0, n.pitch.as_midi()))
             .collect();
         assert_eq!(baked, vec![(0, 60), (30, 64), (60, 67)]);
+    }
+
+    // --- Humanize (NP5) -----------------------------------------------------
+
+    fn humanize(velocity: f32, gate: f32, seed: u64) -> Humanize {
+        Humanize {
+            velocity: NormalizedValue::new(velocity),
+            gate: NormalizedValue::new(gate),
+            seed,
+        }
+    }
+
+    /// A run of identical notes, one per quarter, so humanize has uniform
+    /// material to perturb.
+    fn uniform_run(n: u32) -> Pattern {
+        let mut p = Pattern::new(PatternId(0), Duration(3840));
+        for i in 0..n {
+            let id = p.add_note(PatternTick(i * 960), Pitch::new(60).unwrap(), Velocity::MF);
+            let _ = p.resize_note(id, Duration(480));
+        }
+        p
+    }
+
+    #[test]
+    fn humanize_is_deterministic_for_a_seed() {
+        let mut p = uniform_run(8);
+        let _ = p.add_processor(NoteProcessor::Humanize(humanize(0.3, 0.3, 42)));
+        // Capture velocity+duration at each onset across two passes.
+        let snapshot = |p: &Pattern| -> Vec<(u8, u32)> {
+            let mut buf = ExpansionBuffer::new();
+            let mut out = Vec::new();
+            for i in 0..8 {
+                p.expand_at_tick(PatternTick(i * 960), |_| true, &mut buf);
+                for note in buf.notes() {
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    out.push((
+                        (note.velocity.as_f32() * 1000.0) as u8,
+                        note.duration.unwrap().0,
+                    ));
+                }
+            }
+            out
+        };
+        assert_eq!(snapshot(&p), snapshot(&p), "same seed → identical render");
+    }
+
+    #[test]
+    fn humanize_seed_changes_the_result() {
+        let mut a = uniform_run(8);
+        let _ = a.add_processor(NoteProcessor::Humanize(humanize(0.3, 0.0, 1)));
+        let mut b = uniform_run(8);
+        let _ = b.add_processor(NoteProcessor::Humanize(humanize(0.3, 0.0, 2)));
+        let vels = |p: &Pattern| -> Vec<f32> {
+            let mut buf = ExpansionBuffer::new();
+            let mut out = Vec::new();
+            for i in 0..8 {
+                p.expand_at_tick(PatternTick(i * 960), |_| true, &mut buf);
+                out.extend(buf.notes().iter().map(|n| n.velocity.as_f32()));
+            }
+            out
+        };
+        assert_ne!(vels(&a), vels(&b), "different seeds → different feel");
+    }
+
+    #[test]
+    fn humanize_velocity_stays_within_bounds() {
+        let mut p = uniform_run(16);
+        let amt = 0.25;
+        let _ = p.add_processor(NoteProcessor::Humanize(humanize(amt, 0.0, 7)));
+        let base = Velocity::MF.as_f32();
+        let mut buf = ExpansionBuffer::new();
+        for i in 0..16 {
+            p.expand_at_tick(PatternTick(i * 960), |_| true, &mut buf);
+            for note in buf.notes() {
+                let v = note.velocity.as_f32();
+                // ±amt of the base, modulo the 0..1 clamp.
+                assert!(
+                    v <= base * (1.0 + amt) + 1e-6 && v >= (base * (1.0 - amt) - 1e-6).max(0.0),
+                    "velocity {v} outside ±{amt} of {base}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn humanize_zero_amounts_are_a_noop() {
+        let mut p = uniform_run(4);
+        let _ = p.add_processor(NoteProcessor::Humanize(humanize(0.0, 0.0, 99)));
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        assert_eq!(buf.notes()[0].velocity.as_f32(), Velocity::MF.as_f32());
+        assert_eq!(buf.notes()[0].duration, Some(Duration(480)));
+    }
+
+    #[test]
+    fn humanize_runs_last_perturbing_arp_steps() {
+        // quantize → arp → humanize: humanize sits at stage 4 and reshapes the
+        // arp's generated step velocities (not the source chord).
+        let mut p = chord_pattern(3840);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
+        let _ = p.add_processor(NoteProcessor::Humanize(humanize(0.4, 0.0, 5)));
+        assert_eq!(p.processors()[1].chain_stage(), 4, "humanize is last");
+        // Collect arp-step velocities; with a strong humanize they must vary
+        // across steps (a plain arp would repeat the source velocity).
+        let mut buf = ExpansionBuffer::new();
+        let mut vels = Vec::new();
+        for i in 0..8 {
+            p.expand_at_tick(PatternTick(i * 240), |_| true, &mut buf);
+            vels.extend(buf.notes().iter().map(|n| n.velocity.as_f32()));
+        }
+        assert!(
+            vels.windows(2).any(|w| (w[0] - w[1]).abs() > 1e-4),
+            "humanize must vary arp-step velocities: {vels:?}"
+        );
+    }
+
+    #[test]
+    fn humanize_gate_perturbs_duration() {
+        let mut p = uniform_run(8);
+        let _ = p.add_processor(NoteProcessor::Humanize(humanize(0.0, 0.5, 3)));
+        let mut buf = ExpansionBuffer::new();
+        let mut durations = Vec::new();
+        for i in 0..8 {
+            p.expand_at_tick(PatternTick(i * 960), |_| true, &mut buf);
+            durations.extend(buf.notes().iter().map(|n| n.duration.unwrap().0));
+        }
+        assert!(
+            durations.iter().any(|&d| d != 480),
+            "gate humanize must vary note lengths: {durations:?}"
+        );
+        assert!(durations.iter().all(|&d| d >= 1), "duration floored at 1");
+    }
+
+    #[test]
+    fn humanize_serde_roundtrip() {
+        let mut p = pattern_with_notes(&[60]);
+        let _ = p.add_processor(NoteProcessor::Humanize(humanize(0.2, 0.1, 0xDEAD_BEEF)));
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Pattern = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.processors(), p.processors());
     }
 
     // --- Ornaments (NP3) ----------------------------------------------------

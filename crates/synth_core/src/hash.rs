@@ -31,6 +31,14 @@ pub fn splitmix64_unit(seed: u64) -> f32 {
     ((splitmix64(seed) >> 40) as f32) / 16_777_216.0
 }
 
+/// Deterministic pseudo-random value in `[-1, 1)` from a 64-bit seed — the
+/// bipolar form of [`splitmix64_unit`], for symmetric ± perturbations
+/// (humanize velocity/gate, seeded detune jitter). Reproducible for a seed.
+#[must_use]
+pub fn splitmix64_bipolar(seed: u64) -> f32 {
+    splitmix64_unit(seed) * 2.0 - 1.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,5 +56,14 @@ mod tests {
     fn mix_decorrelates_adjacent_seeds() {
         assert_ne!(splitmix64(1), splitmix64(2));
         assert_ne!(splitmix64(0), 0);
+    }
+
+    #[test]
+    fn bipolar_is_in_range_and_reproducible() {
+        for seed in [0u64, 1, 42, 1_000_000, u64::MAX, SPLITMIX_GAMMA] {
+            let v = splitmix64_bipolar(seed);
+            assert!((-1.0..1.0).contains(&v), "seed {seed} → {v} out of [-1,1)");
+            assert_eq!(v, splitmix64_bipolar(seed), "must be reproducible");
+        }
     }
 }
