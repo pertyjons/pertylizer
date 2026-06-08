@@ -40,7 +40,7 @@ into primitives 1–3, it is a Note Processor — do **not** add a `Note` field 
 - [x] **NP2** — Arpeggiator (flagship; trill/mordent/turn are special cases of it) (shipped bb0bd28)
 - [x] **NP3** — Timed-repeat ornaments: flam / drag / ruff / roll + grace note (shipped 5178f03)
 - [x] **NP4** — Chord + strum (chord+seam `83965ed`, strum `2c846b8`)
-- [ ] **NP5** — Pitch/statistical processors: scale-quantize + humanize
+- [x] **NP5** — Pitch/statistical processors: scale-quantize (was NP1) + humanize (`0539793`)
 - [ ] **NP6** — GUI (per-track rack + per-note ornament menu)
 - [ ] **NP7** — MCP surface
 - [ ] **X-cut** — Persistence (round-trip) + ordering/chaining + RT-safety
