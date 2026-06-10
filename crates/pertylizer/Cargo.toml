@@ -16,6 +16,11 @@ default = ["gui-egui", "mcp", "osc"]
 gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:egui-file-dialog", "dep:egui-remixicon", "dep:image"]
 mcp = ["dep:synth_mcp", "dep:tokio"]
 osc = ["dep:synth_osc"]
+# A native PipeWire host (Linux) is intentionally NOT wired up yet: cpal 0.18.1
+# declares its optional dependency as `pipewire = "^0.10"`, but pipewire-rs is
+# only published up to 0.8.0 on crates.io, so even a `cpal/pipewire` passthrough
+# makes the whole workspace unresolvable. Revisit once that lands. (We already
+# reach PipeWire via the ALSA host's pipewire-alsa shim in the meantime.)
 
 [dependencies]
 synth_core = { path = "../synth_core" }
