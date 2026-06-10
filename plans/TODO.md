@@ -578,11 +578,12 @@ extracted here.
   (which freed on every drop). Full fix: route cleared/replaced targets through the
   engine's `return_producer` off-thread drop channel. Low priority (bounded, rare).
 
-**Note Processors (generative articulation):** lifted into its own fleshed-out plan —
-`plans/note-processors-plan.md` (arpeggiator, ornaments, strum, chord, scale-quantize,
-humanize). This was the one broadly-useful slice of the old Phase E. The arpeggiator is
-the flagship; trill/mordent/turn are presets of it, and flam/drag/roll/grace are one
-timed-repeat generator.
+**Note Processors (generative articulation): SHIPPED in v0.311.0 except the GUI.**
+The engine and every processor landed per `plans/note-processors-plan.md`: arpeggiator
+(flagship), timed-repeat ornaments (flam/drag/ruff/roll/grace), chord + strum,
+scale-quantize + humanize, the MCP surface, and save/load persistence. The one
+remaining item is **NP6 — the per-track rack + per-note ornament GUI**, deferred for
+interactive egui work with the user (not headless-testable).
 
 **Iceboxed — the rest of Phase E (build on demand only).** The expensive,
 narrow-audience remainder of the old north-star phase. No plan doc; pick up only when a

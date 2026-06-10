@@ -1,5 +1,56 @@
 # Version History
 
+## [0.311.0] - 2026-06-10
+
+### Note Processors — playback-time generative articulation
+
+- **NoteProcessor engine + playback-time expansion.** A per-pattern processor
+  rack (plus a per-`Note` `Ornament`) is expanded inside `collect_events_at_tick`
+  through a bounded, RT-safe emit path, so source notes stay musically legible
+  while the engine generates the extra events at playback time.
+- **Arpeggiator** — the flagship stream generator; its arrival widened the
+  pitch-map seam from 1→1 to a 1→N held-notes view.
+- **Timed-repeat ornaments** — per-note flam / drag / ruff / roll + grace,
+  count-bounded by the engine cap.
+- **Chord + strum** — a chord generator (reusing the widened 1→N seam) and a
+  strum that spreads per-tone onsets across the chord.
+- **Humanize + scale-quantize** — seeded velocity/gate jitter plus pitch
+  scale-quantize.
+- **MCP surface** — tools for the processor rack and `set_note_ornament`, with
+  ornaments exposed in the readers; the rack round-trips through save/load.
+- Only the GUI (per-track rack + per-note ornament menu) remains, deferred for
+  interactive egui work.
+
+### MCP — array/batch parameters
+
+- **Array params across the mutating tool surface**, and unified
+  `set_instrument/track/return_bus_mixer` tools that consolidate the
+  per-channel setters (189 → 178 tools).
+
+### Audio — cpal 0.18
+
+- **Upgraded cpal 0.17.3 → 0.18.1** with the `realtime` feature, so cpal
+  promotes its audio callback threads to RT scheduling (SCHED_FIFO on Linux)
+  without a D-Bus dependency; adapted to the by-value `StreamConfig` build API.
+- **Exact output latency** from the per-callback `OutputCallbackInfo`
+  timestamps (playback − callback), with the reported `StreamInfo` latency
+  refined via the buffer size cpal actually negotiated (`buffer_size()`).
+- **`ErrorKind` mapping** — the unified cpal 0.18 `Error` now maps onto
+  `AudioError` by kind (lost/invalidated device → `DeviceDisconnected`, bad
+  config → `UnsupportedConfig`, xrun → `BufferUnderrun`).
+- The native PipeWire host is intentionally not wired up yet — cpal 0.18.1
+  references an unpublished pipewire-rs 0.10 — recorded in a `Cargo.toml` note.
+
+### Fixes
+
+- **Arrangement view** — pixel-budget note miniatures and a fixed scroll-snap
+  glitch.
+- **Piano roll** — auto-follow no longer fights manual scrollbar drags.
+
+### Tooling
+
+- Ignore the merged-doctest artifact `librust_out.rlib`.
+
 ## [0.310.0] - 2026-06-03
 
 ### Tracker view — read-only, per-pattern (T1)
