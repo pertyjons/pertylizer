@@ -41,8 +41,11 @@ serde_json = { version = "1.0.150", features = ["raw_value"] }
 toml = "0.9.5"
 thiserror = "2.0.18"
 
-# Audio I/O
-cpal = "0.17.3"
+# Audio I/O.
+# `realtime` promotes cpal's audio callback threads to RT scheduling
+# (SCHED_FIFO on Linux) without pulling in D-Bus. It degrades gracefully to
+# normal priority when the process lacks rtprio privileges.
+cpal = { version = "0.18.1", features = ["realtime"] }
 
 # MIDI I/O
 midir = "0.11.0"

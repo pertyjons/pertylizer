@@ -296,7 +296,7 @@ impl CpalStream {
         // Build the stream
         let stream = device
             .build_output_stream(
-                &cpal_config,
+                cpal_config,
                 move |data: &mut [f32], _output_info: &cpal::OutputCallbackInfo| {
                     let _denormal_guard = DenormalGuard::new();
 
@@ -434,7 +434,7 @@ impl CpalInputStream {
 
         let stream = device
             .build_input_stream(
-                &cpal_config,
+                cpal_config,
                 move |data: &[f32], _input_info: &cpal::InputCallbackInfo| {
                     if !running_clone.load(Ordering::Relaxed) {
                         return;
