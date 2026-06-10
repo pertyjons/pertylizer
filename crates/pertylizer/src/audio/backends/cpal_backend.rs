@@ -18,6 +18,24 @@ use ringbuf::traits::Producer;
 use crate::audio::traits::{AudioBackend, AudioProcessor, AudioStream};
 use crate::audio::types::*;
 
+/// Map a cpal 0.18 unified [`cpal::Error`] onto our [`AudioError`].
+///
+/// cpal 0.18 collapsed the per-operation error enums into a single `Error`
+/// carrying an [`cpal::ErrorKind`]. Route the kinds we model explicitly to
+/// dedicated variants (so callers can react — reconnect on a lost device,
+/// surface an unsupported config) and fall back to `generic`, the
+/// operation-specific wrapper, for everything else.
+fn map_cpal_error(err: &cpal::Error, generic: impl FnOnce(String) -> AudioError) -> AudioError {
+    use cpal::ErrorKind as K;
+    let msg = err.to_string();
+    match err.kind() {
+        K::DeviceNotAvailable | K::StreamInvalidated => AudioError::DeviceDisconnected,
+        K::UnsupportedConfig => AudioError::UnsupportedConfig(msg),
+        K::Xrun => AudioError::BufferUnderrun,
+        _ => generic(msg),
+    }
+}
+
 /// CPAL audio backend.
 pub struct CpalBackend {
     host: Host,
@@ -272,7 +290,7 @@ impl CpalStream {
             })
             .unwrap_or(Duration::from_millis(10));
 
-        let info = StreamInfo {
+        let mut info = StreamInfo {
             sample_rate: config.sample_rate,
             buffer_size: config.buffer_size,
             channels: config.channels,
@@ -297,7 +315,7 @@ impl CpalStream {
         let stream = device
             .build_output_stream(
                 cpal_config,
-                move |data: &mut [f32], _output_info: &cpal::OutputCallbackInfo| {
+                move |data: &mut [f32], output_info: &cpal::OutputCallbackInfo| {
                     let _denormal_guard = DenormalGuard::new();
 
                     if !running_clone.load(Ordering::Relaxed) {
@@ -309,13 +327,26 @@ impl CpalStream {
                     let frames = data.len() / channels as usize;
                     let current_position = position_clone.load(Ordering::Relaxed);
 
+                    // cpal 0.18 exposes the host's per-callback timestamps. The gap
+                    // between when this callback runs and when the samples reach the
+                    // DAC is the true output latency for this buffer; prefer it over
+                    // the static estimate and fall back before the clock has warmed
+                    // up. Integer-only, no alloc/lock — RT-safe.
+                    let ts = output_info.timestamp();
+                    let live_latency = ts.playback.duration_since(ts.callback);
+                    let latency = if live_latency.is_zero() {
+                        output_latency
+                    } else {
+                        live_latency
+                    };
+
                     let context = AudioCallbackContext {
                         sample_rate,
                         frames,
                         channels,
                         stream_time: start_time.elapsed().as_secs_f64(),
                         sample_position: current_position,
-                        output_latency: synth_core::Seconds::new(output_latency.as_secs_f32()),
+                        output_latency: synth_core::Seconds::new(latency.as_secs_f32()),
                     };
 
                     processor.process(data, &context);
@@ -330,7 +361,17 @@ impl CpalStream {
                 },
                 None, // No timeout, blocking mode
             )
-            .map_err(|e| AudioError::StreamCreationFailed(format!("{e}")))?;
+            .map_err(|e| map_cpal_error(&e, AudioError::StreamCreationFailed))?;
+
+        // Refine the reported latency with the buffer size cpal actually
+        // negotiated (0.18's `buffer_size()` accessor) — it can differ from
+        // what we requested. Keep the estimate if the host can't report it.
+        if let Ok(frames) = stream.buffer_size() {
+            let sample_rate_hz = f64::from(config.sample_rate.0);
+            if frames > 0 && sample_rate_hz > 0.0 {
+                info.output_latency = Duration::from_secs_f64(f64::from(frames) / sample_rate_hz);
+            }
+        }
 
         Ok(Self {
             stream,
@@ -348,9 +389,11 @@ impl AudioStream for CpalStream {
             return Err(AudioError::StreamAlreadyRunning);
         }
 
-        self.stream
-            .play()
-            .map_err(|e| AudioError::BackendError(format!("Failed to start stream: {e}")))?;
+        self.stream.play().map_err(|e| {
+            map_cpal_error(&e, |m| {
+                AudioError::BackendError(format!("start stream: {m}"))
+            })
+        })?;
 
         self.running.store(true, Ordering::Relaxed);
         Ok(())
@@ -363,9 +406,11 @@ impl AudioStream for CpalStream {
 
         self.running.store(false, Ordering::Relaxed);
 
-        self.stream
-            .pause()
-            .map_err(|e| AudioError::BackendError(format!("Failed to stop stream: {e}")))?;
+        self.stream.pause().map_err(|e| {
+            map_cpal_error(&e, |m| {
+                AudioError::BackendError(format!("stop stream: {m}"))
+            })
+        })?;
 
         Ok(())
     }
@@ -452,7 +497,7 @@ impl CpalInputStream {
                 },
                 None,
             )
-            .map_err(|e| AudioError::StreamCreationFailed(format!("{e}")))?;
+            .map_err(|e| map_cpal_error(&e, AudioError::StreamCreationFailed))?;
 
         Ok(Self {
             stream,
@@ -469,9 +514,11 @@ impl AudioStream for CpalInputStream {
             return Err(AudioError::StreamAlreadyRunning);
         }
 
-        self.stream
-            .play()
-            .map_err(|e| AudioError::BackendError(format!("Failed to start input stream: {e}")))?;
+        self.stream.play().map_err(|e| {
+            map_cpal_error(&e, |m| {
+                AudioError::BackendError(format!("start input stream: {m}"))
+            })
+        })?;
 
         self.running.store(true, Ordering::Relaxed);
         Ok(())
@@ -484,9 +531,11 @@ impl AudioStream for CpalInputStream {
 
         self.running.store(false, Ordering::Relaxed);
 
-        self.stream
-            .pause()
-            .map_err(|e| AudioError::BackendError(format!("Failed to stop input stream: {e}")))?;
+        self.stream.pause().map_err(|e| {
+            map_cpal_error(&e, |m| {
+                AudioError::BackendError(format!("stop input stream: {m}"))
+            })
+        })?;
 
         Ok(())
     }
