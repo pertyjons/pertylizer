@@ -22,6 +22,7 @@ mod expressive_lead;
 mod fluid_keys;
 mod fluid_pad;
 mod fm_bell;
+mod fof_choir;
 mod formant_voice;
 mod fractal_cosmos;
 mod glitch_pad;
@@ -90,6 +91,7 @@ pub use expressive_lead::patch_expressive_lead;
 pub use fluid_keys::patch_fluid_keys;
 pub use fluid_pad::patch_fluid_pad;
 pub use fm_bell::patch_fm_bell;
+pub use fof_choir::patch_fof_choir;
 pub use formant_voice::patch_formant_voice;
 pub use fractal_cosmos::patch_fractal_cosmos;
 pub use glitch_pad::patch_glitch_pad;
@@ -250,6 +252,7 @@ pub fn categorized_patches() -> Vec<(String, Vec<Patch>)> {
             vec![
                 patch_solo_voice(),
                 patch_choir(),
+                patch_fof_choir(),
                 patch_vocal_tract(),
                 patch_satb_soprano(),
                 patch_satb_alto(),
