@@ -407,6 +407,18 @@ impl PolyModule for GranularOsc {
         self.output_buffer.resize(samples);
         self.output_buffer.clear();
 
+        // Follow the render sample rate. The engine propagates the rate to
+        // voice-graph modules only through ProcessContext — it never calls
+        // set_sample_rate on them — and this module's pitch and grain timing are
+        // tied to the rate its source buffer was filled at. Without this sync an
+        // offline render at 44.1 kHz of a buffer filled at the 48 kHz default
+        // plays back ~147 cents flat. Refill only on an actual change (rare:
+        // once at stream start), so the per-sample hot path stays allocation-free.
+        if context.sample_rate != self.sample_rate {
+            self.sample_rate = context.sample_rate;
+            self.fill_source_buffer();
+        }
+
         let sr = self.sample_rate.as_f32();
         let level = self.level.as_f32();
 
@@ -695,6 +707,71 @@ mod tests {
                 late > early * 0.5,
                 "note {note}: late RMS {late:.4} fell below half of early RMS {early:.4} \
                  — grains are comb-filtering instead of sustaining"
+            );
+        }
+    }
+
+    /// Render a held note at an explicit render sample rate, driven purely
+    /// through ProcessContext (never via set_sample_rate) — mirroring how the
+    /// engine feeds voice-graph modules.
+    fn render_note_at(note: u8, rate: SampleRate, blocks: usize) -> Vec<f32> {
+        const BLOCK: usize = 512;
+        let mut osc = GranularOsc::new();
+        for p in [
+            Param::GranularOsc(GranularParam::Source(GrainSource::Sine)),
+            Param::GranularOsc(GranularParam::Density(NormalizedValue::new(1.0))),
+            Param::GranularOsc(GranularParam::GrainSize(Milliseconds::new(150.0))),
+            Param::GranularOsc(GranularParam::Position(NormalizedValue::MIN)),
+            Param::GranularOsc(GranularParam::PositionSpread(NormalizedValue::MIN)),
+            Param::GranularOsc(GranularParam::PitchSpread(NormalizedValue::MIN)),
+        ] {
+            osc.set_param(p);
+        }
+        osc.note_on(MidiNote::new(note), Velocity::new(1.0));
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(BLOCK),
+            sample_rate: rate,
+            ..ProcessContext::default()
+        };
+        let mut out = HashMap::new();
+        out.insert(PortName::OUT, AudioBuffer::new(BLOCK));
+
+        let mut samples = Vec::with_capacity(BLOCK * blocks);
+        for _ in 0..blocks {
+            osc.process(InputPorts::empty(), &mut out, &ctx);
+            let buf = &out[&PortName::OUT];
+            for i in 0..BLOCK {
+                samples.push(buf[i]);
+            }
+        }
+        samples
+    }
+
+    /// Upward-zero-crossing pitch estimate over the steady-state middle half.
+    fn dominant_freq_hz(buf: &[f32], rate: f32) -> f32 {
+        let seg = &buf[buf.len() / 4..buf.len() * 3 / 4];
+        let crossings = seg.windows(2).filter(|w| w[0] <= 0.0 && w[1] > 0.0).count();
+        let seconds = seg.len() as f32 / rate;
+        crossings as f32 / seconds
+    }
+
+    /// Pitch must not depend on the render sample rate. The source buffer is
+    /// filled at one rate, but the engine only hands voice modules the render
+    /// rate through ProcessContext (it never calls set_sample_rate on them).
+    /// Regression: an offline render at 44.1 kHz of a buffer left at the 48 kHz
+    /// default played C4 ~147 cents flat.
+    #[test]
+    fn pitch_is_sample_rate_independent() {
+        let expected = 261.626_f32; // C4
+        for rate in [SampleRate::DVD_QUALITY, SampleRate::new(44_100.0)] {
+            let buf = render_note_at(60, rate, 60);
+            let f = dominant_freq_hz(&buf, rate.as_f32());
+            let cents = 1200.0 * (f / expected).log2();
+            assert!(
+                cents.abs() < 50.0,
+                "C4 rendered at {} Hz read as {f:.1} Hz ({cents:+.0} cents)",
+                rate.as_f32()
             );
         }
     }
