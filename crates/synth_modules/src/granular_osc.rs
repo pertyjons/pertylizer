@@ -40,8 +40,10 @@ const SOURCE_BASE_FREQ: f32 = 110.0;
 #[allow(dead_code)]
 struct Grain {
     active: bool,
-    /// Start position in source buffer (in samples).
-    start_pos: usize,
+    /// Start position in source buffer (in samples, fractional). Captured from the
+    /// shared free-running playhead at spawn time so overlapping grains stay
+    /// phase-coherent.
+    start_pos: f32,
     /// Current position within the grain (in samples).
     pos: f32,
     /// Grain length in samples.
@@ -56,7 +58,7 @@ impl Default for Grain {
     fn default() -> Self {
         Self {
             active: false,
-            start_pos: 0,
+            start_pos: 0.0,
             pos: 0.0,
             length: 0,
             rate: 1.0,
@@ -116,6 +118,11 @@ pub struct GranularOsc {
     // State
     sample_rate: SampleRate,
     note_freq: Hertz,
+    /// Free-running read position into the source buffer (in samples). Advances
+    /// every output sample at the note's base rate and wraps at the buffer end.
+    /// New grains capture this value as their start position, which keeps all
+    /// overlapping grains phase-coherent (see `spawn_grain`).
+    playhead: f32,
     samples_until_next_grain: f32,
     rng: Xorshift32,
 
@@ -144,6 +151,7 @@ impl GranularOsc {
 
             sample_rate: SampleRate::DVD_QUALITY,
             note_freq: Hertz::A4,
+            playhead: 0.0,
             samples_until_next_grain: 0.0,
             rng: Xorshift32::new(42),
 
@@ -216,12 +224,17 @@ impl GranularOsc {
         let grain_samples = (self.grain_size.as_f32() * 0.001 * sr) as usize;
         let grain_samples = grain_samples.clamp(16, self.source_len / 2);
 
-        // Position with spread
+        // Start position = the shared free-running playhead at spawn time, offset by
+        // the Position knob (+ per-grain spread). Capturing the same playhead for every
+        // grain is what keeps overlapping grains phase-coherent: with spread = 0 they
+        // all read the identical buffer sample at a given output time, so the windowed
+        // overlap-add reconstructs the source tone instead of comb-filtering it into
+        // pitch-dependent dropouts. The read wraps at the buffer end, so no clamp here.
         let base_pos = self.position.as_f32();
         let spread = self.position_spread.as_f32();
-        let pos = (base_pos + self.rng.next_bipolar() * spread * 0.5).clamp(0.0, 1.0);
-        let max_start = self.source_len.saturating_sub(grain_samples);
-        let start = (pos * max_start as f32) as usize;
+        let pos_offset =
+            (base_pos + self.rng.next_bipolar() * spread * 0.5) * self.source_len as f32;
+        let start = self.playhead + pos_offset;
 
         // Pitch variation (semitones -> rate)
         let pitch_spread_semitones = self.pitch_spread.as_f32() * 24.0;
@@ -401,6 +414,11 @@ impl PolyModule for GranularOsc {
         let grains_per_second = 1.0 + self.density.as_f32() * 99.0;
         let samples_between_grains = sr / grains_per_second;
 
+        // Base playback rate (note pitch relative to the buffer's native pitch). The
+        // shared playhead advances at this rate; per-grain Pitch Spread detunes around it.
+        let base_rate = self.note_freq.as_f32() / SOURCE_BASE_FREQ;
+        let source_len_f = self.source_len as f32;
+
         for i in 0..samples {
             // Trigger new grains
             self.samples_until_next_grain -= 1.0;
@@ -432,20 +450,19 @@ impl PolyModule for GranularOsc {
 
                 let env = Self::grain_envelope(self.window, t);
 
-                // Read from source buffer with linear interpolation
-                let read_pos = grain.start_pos as f32 + grain.pos * grain.rate;
-                let idx = read_pos as usize;
+                // Read from source buffer with linear interpolation, wrapping at the
+                // buffer end so a grain that runs past it loops back instead of reading
+                // silence (the buffer holds a whole number of source cycles).
+                let read_pos = (grain.start_pos + grain.pos * grain.rate).rem_euclid(source_len_f);
+                let idx = (read_pos as usize).min(self.source_len - 1);
                 let frac = read_pos - idx as f32;
-                let s0 = if idx < self.source_len {
-                    self.source_buffer[idx]
+                let s0 = self.source_buffer[idx];
+                let next = if idx + 1 < self.source_len {
+                    idx + 1
                 } else {
-                    0.0
+                    0
                 };
-                let s1 = if idx + 1 < self.source_len {
-                    self.source_buffer[idx + 1]
-                } else {
-                    0.0
-                };
+                let s1 = self.source_buffer[next];
                 let sample = crate::math::lerp(s0, s1, frac);
 
                 mix += sample * env;
@@ -453,6 +470,12 @@ impl PolyModule for GranularOsc {
             }
 
             self.output_buffer[i] = mix * level;
+
+            // Advance the shared playhead, wrapping at the buffer end.
+            self.playhead += base_rate;
+            while self.playhead >= source_len_f {
+                self.playhead -= source_len_f;
+            }
         }
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
@@ -531,11 +554,13 @@ impl PolyModule for GranularOsc {
         for grain in &mut self.grains {
             grain.active = false;
         }
+        self.playhead = 0.0;
         self.samples_until_next_grain = 0.0;
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.note_freq = note.to_frequency();
+        self.playhead = 0.0;
         self.samples_until_next_grain = 0.0;
     }
 
@@ -598,6 +623,80 @@ mod tests {
             nonzero,
             "Setting Source(Saw) on a fresh module produced an empty buffer"
         );
+    }
+
+    /// Render `blocks` × 512 samples of a held note and return the full output.
+    fn render_held_note(note: u8) -> Vec<f32> {
+        const BLOCK: usize = 512;
+        const BLOCKS: usize = 70; // ~0.75 s at 48 kHz
+        let mut osc = GranularOsc::new();
+        // The "tuning check" config that exposed the bug: zero spreads, full
+        // density, long grains, periodic Sine source, read from position 0.
+        for p in [
+            Param::GranularOsc(GranularParam::Source(GrainSource::Sine)),
+            Param::GranularOsc(GranularParam::Density(NormalizedValue::new(1.0))),
+            Param::GranularOsc(GranularParam::GrainSize(Milliseconds::new(150.0))),
+            Param::GranularOsc(GranularParam::Position(NormalizedValue::MIN)),
+            Param::GranularOsc(GranularParam::PositionSpread(NormalizedValue::MIN)),
+            Param::GranularOsc(GranularParam::PitchSpread(NormalizedValue::MIN)),
+        ] {
+            osc.set_param(p);
+        }
+        osc.note_on(MidiNote::new(note), Velocity::new(1.0));
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(BLOCK),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        let mut out = HashMap::new();
+        out.insert(PortName::OUT, AudioBuffer::new(BLOCK));
+
+        let mut samples = Vec::with_capacity(BLOCK * BLOCKS);
+        for _ in 0..BLOCKS {
+            osc.process(InputPorts::empty(), &mut out, &ctx);
+            let buf = &out[&PortName::OUT];
+            for i in 0..BLOCK {
+                samples.push(buf[i]);
+            }
+        }
+        samples
+    }
+
+    fn rms(slice: &[f32]) -> f32 {
+        if slice.is_empty() {
+            return 0.0;
+        }
+        (slice.iter().map(|s| s * s).sum::<f32>() / slice.len() as f32).sqrt()
+    }
+
+    /// A held note must keep sounding for its whole duration at *every* pitch.
+    ///
+    /// Regression guard: when every grain read from the same fixed buffer
+    /// position (the old behaviour), overlapping phase-locked grains comb-filtered
+    /// each other into near-silence at most pitches — e.g. C4 collapsed to ~1 % of
+    /// its onset level a few grains in while D4 sustained. The shared free-running
+    /// playhead keeps overlapping grains phase-coherent so the late-note level
+    /// stays close to the early-note level across the chromatic scale.
+    #[test]
+    fn held_note_does_not_collapse_across_pitches() {
+        // One octave, C4..B4 — the old bug killed roughly half of these.
+        for note in 60u8..=71 {
+            let buf = render_held_note(note);
+            let len = buf.len();
+            // Skip the attack; compare an early sustain window to a late one.
+            let early = rms(&buf[len / 5..len * 2 / 5]);
+            let late = rms(&buf[len * 3 / 5..len * 4 / 5]);
+            assert!(
+                late > 0.05,
+                "note {note}: late-note RMS collapsed to {late:.4} (early {early:.4})"
+            );
+            assert!(
+                late > early * 0.5,
+                "note {note}: late RMS {late:.4} fell below half of early RMS {early:.4} \
+                 — grains are comb-filtering instead of sustaining"
+            );
+        }
     }
 
     /// All five GrainSource variants must produce non-empty buffers when
