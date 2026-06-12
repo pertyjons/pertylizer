@@ -177,12 +177,7 @@ impl SubVoice {
     /// One white-noise sample in [-1, 1] via xorshift32.
     #[inline]
     fn next_noise(&mut self) -> f32 {
-        let mut x = self.rng_state;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        self.rng_state = x;
-        (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+        crate::math::xorshift_noise(&mut self.rng_state)
     }
 
     /// Recompute formant coefficients for the current vowel position, applying
@@ -528,8 +523,7 @@ impl PolyModule for VoiceSynth {
         let tilt_amt = self.tilt.as_f32();
         let tilt_active = tilt_amt > 0.0;
         let tilt_fc = 10000.0 * (1.0 - tilt_amt) + 1200.0 * tilt_amt;
-        let tilt_coef =
-            (1.0 - (-2.0 * std::f32::consts::PI * tilt_fc * inv_sr).exp()).clamp(0.0, 1.0);
+        let tilt_coef = crate::math::one_pole_lp_coef(tilt_fc, inv_sr);
 
         // Initial coefficients for this block.
         for voice in self.voices[..active].iter_mut() {

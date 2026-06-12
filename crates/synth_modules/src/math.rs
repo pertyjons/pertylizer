@@ -223,6 +223,27 @@ pub fn semitones_to_ratio(semitones: f32) -> f32 {
     (semitones / 12.0).exp2()
 }
 
+// ── Shared voice-synthesis primitives ──────────────────────────────────────
+
+/// Advance an `xorshift32` PRNG `state` and return one white-noise sample in
+/// `[-1, 1]`. Shared by the noise paths of the voice modules.
+#[inline]
+pub fn xorshift_noise(state: &mut u32) -> f32 {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x;
+    (x as f32 / u32::MAX as f32) * 2.0 - 1.0
+}
+
+/// One-pole lowpass smoothing coefficient for cutoff `fc_hz` at the given
+/// inverse sample rate. Clamped to `[0, 1]`; 0 at `fc = 0` (a true bypass).
+#[inline]
+pub fn one_pole_lp_coef(fc_hz: f32, inv_sample_rate: f32) -> f32 {
+    (1.0 - (-2.0 * std::f32::consts::PI * fc_hz * inv_sample_rate).exp()).clamp(0.0, 1.0)
+}
+
 /// Convert a frequency (Hz) to 1 V/octave CV relative to C4 (261.63 Hz).
 ///
 /// Returns 0 for frequencies ≤ 0.

@@ -27,10 +27,10 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
+use synth_core::{Cents, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 use synth_core::{FofParam, ModuleType, Param};
-use synth_core::{MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 
 use crate::formant_tables::{FORMANT_BW, FORMANT_FREQ, FORMANT_GAIN, NUM_BANDS, NUM_VOWELS};
 
@@ -40,12 +40,15 @@ use crate::formant_tables::{FORMANT_BW, FORMANT_FREQ, FORMANT_GAIN, NUM_BANDS, N
 /// Grain lifetime is set by the formant bandwidth (the decay rate `β = π·BW`),
 /// *not* by pitch — so the number of overlapping grains is `lifetime × F0` and
 /// grows with pitch. The ring must therefore be sized for the *highest* musical
-/// F0 with the *narrowest* bandwidth, not the lowest. Worst case: the narrowest
-/// vowel band (BW ≈ 50 Hz → lifetime ≈ ln(1/ENV_FLOOR)/(π·BW) ≈ 44 ms at the
-/// −60 dB floor) at F0 ≈ 1 kHz (≈ C6, top of the soprano range) → ≈ 44 grains.
-/// 64 covers up to ≈ 1.45 kHz. Above that the round-robin overwrites the oldest
-/// (most-decayed) grain, so any artifact is bounded by its residual envelope.
-const MAX_GRAINS: usize = 64;
+/// F0 with the *narrowest effective* bandwidth, not the lowest. Worst case: the
+/// narrowest vowel band (BW ≈ 50 Hz) at the lowest `Bandwidth` setting (×0.5 →
+/// ≈ 25 Hz effective) gives lifetime ≈ ln(1/ENV_FLOOR)/(π·BW) ≈ 88 ms at the
+/// −60 dB floor; at F0 ≈ 1 kHz (≈ C6, top of the soprano range) that is ≈ 88
+/// grains. 96 covers that worst case. Above it the round-robin overwrites the
+/// oldest (most-decayed) grain, so any artifact is bounded by its residual
+/// envelope. (Phase 3 will track the active-grain range to bound the per-sample
+/// scan once the choir multiplies this cost.)
+const MAX_GRAINS: usize = 96;
 /// Envelope level below which a grain is retired (−60 dB — inaudible, and keeps
 /// the active-grain count bounded; see `MAX_GRAINS`).
 const ENV_FLOOR: f32 = 1.0e-3;
@@ -63,6 +66,20 @@ const MIN_TRIGGER_INC: f32 = 1.0e-6;
 const MAX_TRIGGER_INC: f32 = 0.5;
 /// Clamp on `pitch_cv` (semitones) so the effective F0 stays finite.
 const MAX_PITCH_CV_SEMITONES: f32 = 60.0;
+/// Non-zero PRNG seed (golden-ratio constant) for the breath-noise generator.
+const RNG_SEED: u32 = 0x9E37_79B9;
+/// Makeup gain applied to breath noise before it joins the voiced grains.
+const NOISE_GAIN: f32 = 0.5;
+/// Cutoff (Hz) of the one-pole lowpass that takes the harsh top off the breath.
+const BREATH_LP_FC: f32 = 5000.0;
+/// Vowel-CV modulation depth (matches `voice_synth`'s convention): a ±1 CV
+/// shifts the vowel position by ±0.5 of the A→U range.
+const VOWEL_CV_DEPTH: f32 = 0.5;
+/// Bandwidth-param → BW scale: 0.5 = ×1 (table), 0.0 = ×0.5, 1.0 = ×2.0.
+#[inline]
+fn bandwidth_scale(norm: f32) -> f32 {
+    (2.0_f32).powf(2.0 * norm - 1.0)
+}
 
 /// One active FOF grain — a decaying formant impulse response.
 #[derive(Clone, Copy, Default)]
@@ -117,19 +134,43 @@ struct BandTarget {
     amp: f32,
 }
 
-/// FOF module — CHANT-style granular formant voice (mono, Phase 1).
+/// Output normalization for a grain target set: `1 / Σ amp`, so the summed
+/// formant gains stay near unity regardless of vowel.
+#[inline]
+fn grain_norm(targets: &[BandTarget; NUM_BANDS]) -> f32 {
+    let gain_sum: f32 = targets.iter().map(|t| t.amp).sum();
+    if gain_sum > 1.0e-7 {
+        1.0 / gain_sum
+    } else {
+        1.0
+    }
+}
+
+/// FOF module — CHANT-style granular formant voice (mono).
 #[derive(Clone)]
 pub struct Fof {
     // Parameters
     vowel: NormalizedValue,
     formant_shift: NormalizedValue,
     skirt: NormalizedValue,
+    bandwidth: NormalizedValue,
+    breathiness: NormalizedValue,
+    vibrato_rate: Hertz,
+    vibrato_depth: Cents,
     level: NormalizedValue,
 
     // Voice state
     note_freq: synth_core::Hertz,
+    /// Effective (CV-modulated) vowel position in 0..1, drives `band_targets`.
+    current_vowel: f32,
     /// Glottal trigger phase in turns; wrapping past 1.0 fires a new grain set.
     trigger_phase: f32,
+    /// Internal vibrato LFO phase in turns.
+    vibrato_phase: f32,
+    /// Breath-noise PRNG state (xorshift32).
+    rng_state: u32,
+    /// One-pole lowpass state shaping the breath noise.
+    breath_lp: f32,
     grains: [[Grain; MAX_GRAINS]; NUM_BANDS],
     /// Round-robin write cursor per band (persists across blocks).
     cursor: [usize; NUM_BANDS],
@@ -148,9 +189,17 @@ impl Fof {
             vowel: NormalizedValue::MIN,
             formant_shift: NormalizedValue::new(0.5),
             skirt: NormalizedValue::new(0.3),
+            bandwidth: NormalizedValue::new(0.5),
+            breathiness: NormalizedValue::MIN,
+            vibrato_rate: Hertz::new(5.5),
+            vibrato_depth: Cents::ZERO,
             level: NormalizedValue::new(0.8),
             note_freq: synth_core::Hertz::ZERO,
+            current_vowel: 0.0,
             trigger_phase: 0.0,
+            vibrato_phase: 0.0,
+            rng_state: RNG_SEED,
+            breath_lp: 0.0,
             grains: [[Grain::default(); MAX_GRAINS]; NUM_BANDS],
             cursor: [0; NUM_BANDS],
             sample_rate: SampleRate::DVD_QUALITY,
@@ -166,12 +215,14 @@ impl Fof {
         (secs * self.sample_rate.as_f32()).round().max(1.0) as u32
     }
 
-    /// Compute the per-band grain targets for the current vowel + formant shift.
-    fn band_targets(&self) -> [BandTarget; NUM_BANDS] {
-        let pos = self.vowel.as_f32() * (NUM_VOWELS - 1) as f32;
+    /// Compute the per-band grain targets for the given vowel position, applying
+    /// the formant shift and the bandwidth scale.
+    fn band_targets(&self, vowel: f32) -> [BandTarget; NUM_BANDS] {
+        let pos = vowel * (NUM_VOWELS - 1) as f32;
         let idx = (pos as usize).min(NUM_VOWELS - 2);
         let frac = pos - idx as f32;
         let shift = crate::formant_tables::formant_shift_factor(self.formant_shift.as_f32());
+        let bw_scale = bandwidth_scale(self.bandwidth.as_f32());
         let sr = self.sample_rate.as_f32();
         let inv_sr = self.inv_sample_rate;
 
@@ -182,7 +233,7 @@ impl Fof {
             let gain = FORMANT_GAIN[idx][band] * (1.0 - frac) + FORMANT_GAIN[idx + 1][band] * frac;
 
             let scaled = (freq * shift).clamp(20.0, sr * 0.45);
-            let beta = std::f32::consts::PI * bw.max(10.0);
+            let beta = std::f32::consts::PI * (bw * bw_scale).max(10.0);
             *target = BandTarget {
                 phase_inc: scaled * inv_sr,
                 decay: (-beta * inv_sr).exp(),
@@ -269,6 +320,52 @@ impl Describable for Fof {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "bandwidth",
+                    Param::Fof(FofParam::Bandwidth(NormalizedValue::new(0.5))),
+                    "Bandwidth",
+                )
+                .description("Formant bandwidth: 0.5 = natural, <0.5 narrower/sharper, >0.5 wider")
+                .range(0.0, 1.0)
+                .default(0.5)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "breathiness",
+                    Param::Fof(FofParam::Breathiness(NormalizedValue::MIN)),
+                    "Breathiness",
+                )
+                .description("Aspiration / breath noise amount")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "vibrato_rate",
+                    Param::Fof(FofParam::VibratoRate(Hertz::new(5.5))),
+                    "Vibrato Rate",
+                )
+                .description("Vibrato LFO rate")
+                .range(0.0, 12.0)
+                .default(5.5)
+                .unit(ParameterUnit::Hertz)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "vibrato_depth",
+                    Param::Fof(FofParam::VibratoDepth(Cents::ZERO)),
+                    "Vibrato Depth",
+                )
+                .description("Vibrato depth in cents")
+                .range(0.0, 100.0)
+                .default(0.0)
+                .unit(ParameterUnit::Cents)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "level",
                     Param::Fof(FofParam::Level(NormalizedValue::new(0.8))),
                     "Level",
@@ -281,6 +378,14 @@ impl Describable for Fof {
             .port(
                 PortDescriptor::control_input("pitch_cv", "Pitch CV")
                     .description("Pitch offset in semitones. Connect: LFO, Envelope, Pitch bend"),
+            )
+            .port(
+                PortDescriptor::control_input("vowel_cv", "Vowel CV")
+                    .description("Modulate vowel position. Connect: LFO, Envelope"),
+            )
+            .port(
+                PortDescriptor::control_input("breath_cv", "Breath CV")
+                    .description("Modulate breathiness. Connect: LFO, Envelope"),
             )
             .port(PortDescriptor::audio_output("out", "Out").description("Voice output (mono)"))
     }
@@ -308,51 +413,94 @@ impl PolyModule for Fof {
         }
 
         let pitch_cv = inputs.reader(PortName::intern("pitch_cv"), 0.0);
+        let vowel_cv = inputs.reader(PortName::intern("vowel_cv"), 0.0);
+        let breath_cv = inputs.reader(PortName::intern("breath_cv"), 0.0);
         let pitch_cv_connected = pitch_cv.is_connected();
+        let vowel_cv_connected = vowel_cv.is_connected();
+
         let inv_sr = self.inv_sample_rate;
         let level = self.level.as_f32();
         let base_freq = self.note_freq.as_f32();
         let tex = self.tex_samples();
-        let targets = self.band_targets();
-        let gain_sum: f32 = targets.iter().map(|t| t.amp).sum();
-        let norm = if gain_sum > 1.0e-7 {
-            1.0 / gain_sum
-        } else {
-            1.0
-        };
-        let out_gain = norm * FOF_GAIN * level;
-        // Trigger-phase increment when pitch CV is unconnected (hoisted constant).
+        let breath_base = self.breathiness.as_f32();
+        let vib_depth_cents = self.vibrato_depth.as_f32();
+        let vib_inc = self.vibrato_rate.as_f32() * inv_sr;
+
+        if !vowel_cv_connected {
+            self.current_vowel = self.vowel.as_f32();
+        }
+        // Grain targets feed only newly-triggered grains; recompute on vowel
+        // change (vowel CV), not every sample.
+        let mut targets = self.band_targets(self.current_vowel);
+        let mut norm = grain_norm(&targets);
+        let out_gain = FOF_GAIN * level;
+
+        // One-pole breath lowpass coefficient (fixed cutoff).
+        let breath_lp_coef = crate::math::one_pole_lp_coef(BREATH_LP_FC, inv_sr);
+
+        // Fast path: no pitch CV and no vibrato → a constant trigger increment,
+        // so the per-sample pitch transcendentals can be hoisted out entirely.
+        let pitch_static = !pitch_cv_connected && vib_depth_cents == 0.0;
         let base_inc = (base_freq * inv_sr).clamp(MIN_TRIGGER_INC, MAX_TRIGGER_INC);
 
         for i in 0..num_samples {
-            // Trigger rate follows F0 (+ optional pitch CV in semitones). The
-            // increment is clamped < 1.0 so at most one grain set fires per
-            // sample (a single `-= 1.0` suffices) and a clamped, finite CV keeps
-            // `freq` from overflowing to a non-finite value.
-            let inc = if pitch_cv_connected {
-                let cv = pitch_cv[i].clamp(-MAX_PITCH_CV_SEMITONES, MAX_PITCH_CV_SEMITONES);
-                let freq = base_freq * crate::math::semitones_to_ratio(cv);
-                (freq * inv_sr).clamp(MIN_TRIGGER_INC, MAX_TRIGGER_INC)
-            } else {
+            // Vowel CV: recompute grain targets (and their norm) on a shift.
+            if vowel_cv_connected {
+                let target_vowel =
+                    (self.vowel.as_f32() + vowel_cv[i] * VOWEL_CV_DEPTH).clamp(0.0, 1.0);
+                if (target_vowel - self.current_vowel).abs() > 0.001 {
+                    self.current_vowel = target_vowel;
+                    targets = self.band_targets(target_vowel);
+                    norm = grain_norm(&targets);
+                }
+            }
+
+            // Pitch: base ± vibrato (cents) ± pitch_cv (semitones). The increment
+            // is clamped < 1.0 so at most one grain set fires per sample (a single
+            // `-= 1.0` suffices) and a clamped, finite CV keeps `freq` finite.
+            let inc = if pitch_static {
                 base_inc
+            } else {
+                let vib_cents = vib_depth_cents * crate::math::fast_sin_turns(self.vibrato_phase);
+                let pcv = if pitch_cv_connected {
+                    pitch_cv[i].clamp(-MAX_PITCH_CV_SEMITONES, MAX_PITCH_CV_SEMITONES)
+                } else {
+                    0.0
+                };
+                let semis = pcv + vib_cents / 100.0;
+                let freq = base_freq * crate::math::semitones_to_ratio(semis);
+                (freq * inv_sr).clamp(MIN_TRIGGER_INC, MAX_TRIGGER_INC)
             };
+
             self.trigger_phase += inc;
             if self.trigger_phase >= 1.0 {
                 self.trigger_phase -= 1.0;
                 self.trigger(&targets, tex);
             }
+            self.vibrato_phase = (self.vibrato_phase + vib_inc).fract();
 
-            // Sum all active grains across every band.
-            let mut sample = 0.0_f32;
+            // Sum all active grains across every band (normalized voiced signal).
+            let mut voiced = 0.0_f32;
             for ring in &mut self.grains {
                 for grain in ring.iter_mut() {
                     if grain.active {
-                        sample += grain.next_sample();
+                        voiced += grain.next_sample();
                     }
                 }
             }
+            voiced *= norm;
 
-            self.out_buffer[i] = crate::math::soft_clip(sample * out_gain);
+            // Breath / aspiration: lowpass-shaped white noise, mixed by amount.
+            // The filter/PRNG run every sample (no state freeze when breath = 0);
+            // only the output is gated, so re-opening breath has no discontinuity.
+            let breath = (breath_base + breath_cv[i]).clamp(0.0, 1.0);
+            let n = crate::math::xorshift_noise(&mut self.rng_state);
+            self.breath_lp += breath_lp_coef * (n - self.breath_lp);
+            if breath > 0.0 {
+                voiced += self.breath_lp * breath * NOISE_GAIN;
+            }
+
+            self.out_buffer[i] = crate::math::soft_clip(voiced * out_gain);
         }
 
         self.write_output(outputs);
@@ -361,9 +509,16 @@ impl PolyModule for Fof {
     fn set_param(&mut self, param: Param) {
         if let Param::Fof(p) = param {
             match p {
-                FofParam::Vowel(v) => self.vowel = v,
+                FofParam::Vowel(v) => {
+                    self.vowel = v;
+                    self.current_vowel = v.as_f32();
+                }
                 FofParam::FormantShift(v) => self.formant_shift = v,
                 FofParam::Skirt(v) => self.skirt = v,
+                FofParam::Bandwidth(v) => self.bandwidth = v,
+                FofParam::Breathiness(v) => self.breathiness = v,
+                FofParam::VibratoRate(hz) => self.vibrato_rate = hz,
+                FofParam::VibratoDepth(c) => self.vibrato_depth = c,
                 FofParam::Level(v) => self.level = v,
             }
         }
@@ -375,6 +530,10 @@ impl PolyModule for Fof {
                 FofParam::Vowel(_) => self.vowel.as_f32(),
                 FofParam::FormantShift(_) => self.formant_shift.as_f32(),
                 FofParam::Skirt(_) => self.skirt.as_f32(),
+                FofParam::Bandwidth(_) => self.bandwidth.as_f32(),
+                FofParam::Breathiness(_) => self.breathiness.as_f32(),
+                FofParam::VibratoRate(_) => self.vibrato_rate.as_f32(),
+                FofParam::VibratoDepth(_) => self.vibrato_depth.as_f32(),
                 FofParam::Level(_) => self.level.as_f32(),
             })
         } else {
@@ -387,6 +546,10 @@ impl PolyModule for Fof {
             Param::Fof(FofParam::Vowel(self.vowel)),
             Param::Fof(FofParam::FormantShift(self.formant_shift)),
             Param::Fof(FofParam::Skirt(self.skirt)),
+            Param::Fof(FofParam::Bandwidth(self.bandwidth)),
+            Param::Fof(FofParam::Breathiness(self.breathiness)),
+            Param::Fof(FofParam::VibratoRate(self.vibrato_rate)),
+            Param::Fof(FofParam::VibratoDepth(self.vibrato_depth)),
             Param::Fof(FofParam::Level(self.level)),
         ]
     }
@@ -396,14 +559,25 @@ impl PolyModule for Fof {
     }
 
     fn reset(&mut self) {
+        self.current_vowel = self.vowel.as_f32();
         self.trigger_phase = 0.0;
+        self.vibrato_phase = 0.0;
+        self.rng_state = RNG_SEED;
+        self.breath_lp = 0.0;
         self.clear_grains();
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.note_freq = note.to_frequency();
+        self.current_vowel = self.vowel.as_f32();
         // Start at 1.0 so the very first processed sample fires a grain set.
         self.trigger_phase = 1.0;
+        self.vibrato_phase = 0.0;
+        self.breath_lp = 0.0;
+        // Re-seed the breath PRNG so re-triggers are deterministic (mirrors
+        // reset()), but mix in the note so cloned/polyphonic voices on different
+        // notes start with decorrelated breath rather than identical sequences.
+        self.rng_state = (RNG_SEED ^ self.note_freq.as_f32().to_bits()) | 1;
         self.clear_grains();
     }
 
@@ -567,5 +741,97 @@ mod tests {
             .get_param(&Param::Fof(FofParam::FormantShift(NormalizedValue::MIN)))
             .unwrap_or(0.0);
         assert!((got - 0.7).abs() < 0.001);
+
+        f.set_param(Param::Fof(FofParam::VibratoDepth(Cents::new(40.0))));
+        let vd = f
+            .get_param(&Param::Fof(FofParam::VibratoDepth(Cents::ZERO)))
+            .unwrap_or(0.0);
+        assert!((vd - 40.0).abs() < 0.001);
+    }
+
+    fn total_energy(f: &mut Fof, n: usize) -> f32 {
+        let mut out = outputs(n);
+        f.process(InputPorts::empty(), &mut out, &ctx(n));
+        (0..n).map(|i| out[&PortName::OUT][i].abs()).sum::<f32>()
+    }
+
+    #[test]
+    fn test_fof_breathiness_changes_output() {
+        let render = |breath: f32| {
+            let mut f = Fof::new();
+            f.set_param(Param::Fof(FofParam::Breathiness(NormalizedValue::new(
+                breath,
+            ))));
+            f.note_on(MidiNote::new(50), Velocity::new(1.0));
+            total_energy(&mut f, 1024)
+        };
+        let dry = render(0.0);
+        let breathy = render(1.0);
+        assert!(
+            (dry - breathy).abs() > 0.01,
+            "Breathiness should change output: dry={dry}, breathy={breathy}"
+        );
+    }
+
+    #[test]
+    fn test_fof_bandwidth_changes_output() {
+        let render = |bw: f32| {
+            let mut f = Fof::new();
+            f.set_param(Param::Fof(FofParam::Bandwidth(NormalizedValue::new(bw))));
+            f.note_on(MidiNote::new(48), Velocity::new(1.0));
+            total_energy(&mut f, 2048)
+        };
+        let narrow = render(0.0);
+        let wide = render(1.0);
+        assert!(
+            (narrow - wide).abs() > 0.01,
+            "Bandwidth should change output: narrow={narrow}, wide={wide}"
+        );
+    }
+
+    #[test]
+    fn test_fof_vibrato_modulates_pitch() {
+        // With vibrato the trigger timing drifts vs a dead-steady reference, so
+        // the rendered waveforms diverge in total energy / shape.
+        let render = |depth: f32| {
+            let mut f = Fof::new();
+            f.set_param(Param::Fof(FofParam::VibratoRate(Hertz::new(6.0))));
+            f.set_param(Param::Fof(FofParam::VibratoDepth(Cents::new(depth))));
+            f.note_on(MidiNote::new(45), Velocity::new(1.0));
+            total_energy(&mut f, 4096)
+        };
+        let steady = render(0.0);
+        let vibrato = render(100.0);
+        assert!(
+            (steady - vibrato).abs() > 0.01,
+            "Vibrato should modulate output: steady={steady}, vibrato={vibrato}"
+        );
+    }
+
+    #[test]
+    fn test_fof_vowel_cv_morphs() {
+        // A connected vowel CV must shift the timbre away from the static vowel.
+        let mut f_static = Fof::new();
+        f_static.set_param(Param::Fof(FofParam::Vowel(NormalizedValue::MIN)));
+        f_static.note_on(MidiNote::new(52), Velocity::new(1.0));
+        let static_e = total_energy(&mut f_static, 2048);
+
+        let mut f_cv = Fof::new();
+        f_cv.set_param(Param::Fof(FofParam::Vowel(NormalizedValue::MIN)));
+        f_cv.note_on(MidiNote::new(52), Velocity::new(1.0));
+        let mut cv = AudioBuffer::new(2048);
+        for i in 0..2048 {
+            cv[i] = 1.0; // push the vowel fully toward U
+        }
+        let ports_data = [(PortName::intern("vowel_cv"), &cv)];
+        let inputs = InputPorts::new(&ports_data);
+        let mut out = outputs(2048);
+        f_cv.process(inputs, &mut out, &ctx(2048));
+        let cv_e = (0..2048).map(|i| out[&PortName::OUT][i].abs()).sum::<f32>();
+
+        assert!(
+            (static_e - cv_e).abs() > 0.01,
+            "Vowel CV should change timbre: static={static_e}, cv={cv_e}"
+        );
     }
 }

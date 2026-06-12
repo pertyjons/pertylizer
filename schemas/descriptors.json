@@ -1387,6 +1387,26 @@
       "description": "CHANT-style granular formant voice (FOF / formant wave functions)",
       "name": "FOF",
       "parameters": {
+        "bandwidth": {
+          "default": 0.5,
+          "description": "Formant bandwidth: 0.5 = natural, <0.5 narrower/sharper, >0.5 wider",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Bandwidth",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "breathiness": {
+          "default": 0.0,
+          "description": "Aspiration / breath noise amount",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Breathiness",
+          "response_curve": "linear",
+          "unit": "none"
+        },
         "formant_shift": {
           "default": 0.5,
           "description": "Vocal-tract length: <0.5 longer/darker, >0.5 shorter/brighter",
@@ -1416,6 +1436,26 @@
           "name": "Skirt",
           "response_curve": "linear",
           "unit": "none"
+        },
+        "vibrato_depth": {
+          "default": 0.0,
+          "description": "Vibrato depth in cents",
+          "max": 100.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Vibrato Depth",
+          "response_curve": "linear",
+          "unit": "cents"
+        },
+        "vibrato_rate": {
+          "default": 5.5,
+          "description": "Vibrato LFO rate",
+          "max": 12.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Vibrato Rate",
+          "response_curve": "linear",
+          "unit": "hertz"
         },
         "vowel": {
           "default": 0.0,

@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::NormalizedValue;
+use crate::types::{Cents, Hertz, NormalizedValue};
 
 /// FOF parameter with typed value.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -20,6 +20,14 @@ pub enum FofParam {
     /// Grain excitation time `tex` — the FOF skirt: 0 = sharp attack / wide
     /// bright skirt, 1 = soft attack / narrow duller skirt.
     Skirt(NormalizedValue),
+    /// Formant bandwidth scale: 0.5 = table value, <0.5 narrower, >0.5 wider.
+    Bandwidth(NormalizedValue),
+    /// Aspiration / breath noise amount (0.0 = none)
+    Breathiness(NormalizedValue),
+    /// Vibrato rate
+    VibratoRate(Hertz),
+    /// Vibrato depth in cents
+    VibratoDepth(Cents),
     /// Output level
     Level(NormalizedValue),
 }
@@ -34,13 +42,24 @@ impl FofParam {
             Self::Vowel(_) => "Vowel",
             Self::FormantShift(_) => "Formant Shift",
             Self::Skirt(_) => "Skirt",
+            Self::Bandwidth(_) => "Bandwidth",
+            Self::Breathiness(_) => "Breathiness",
+            Self::VibratoRate(_) => "Vibrato Rate",
+            Self::VibratoDepth(_) => "Vibrato Depth",
             Self::Level(_) => "Level",
         }
     }
 
     pub fn as_f32(&self) -> f32 {
         match self {
-            Self::Vowel(v) | Self::FormantShift(v) | Self::Skirt(v) | Self::Level(v) => v.as_f32(),
+            Self::Vowel(v)
+            | Self::FormantShift(v)
+            | Self::Skirt(v)
+            | Self::Bandwidth(v)
+            | Self::Breathiness(v)
+            | Self::Level(v) => v.as_f32(),
+            Self::VibratoRate(hz) => hz.as_f32(),
+            Self::VibratoDepth(c) => c.as_f32(),
         }
     }
 
@@ -49,6 +68,10 @@ impl FofParam {
             Self::Vowel(_) => Self::Vowel(NormalizedValue::new(value)),
             Self::FormantShift(_) => Self::FormantShift(NormalizedValue::new(value)),
             Self::Skirt(_) => Self::Skirt(NormalizedValue::new(value)),
+            Self::Bandwidth(_) => Self::Bandwidth(NormalizedValue::new(value)),
+            Self::Breathiness(_) => Self::Breathiness(NormalizedValue::new(value)),
+            Self::VibratoRate(_) => Self::VibratoRate(Hertz::new(value)),
+            Self::VibratoDepth(_) => Self::VibratoDepth(Cents::new(value)),
             Self::Level(_) => Self::Level(NormalizedValue::new(value)),
         }
     }
