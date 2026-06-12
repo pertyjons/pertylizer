@@ -92,6 +92,67 @@ impl std::fmt::Display for TrackIndex {
     }
 }
 
+/// Voice/polyphony lane a note occupies in the tracker grid (0-255).
+///
+/// Purely an editor/layout concept: it groups simultaneous notes into stable
+/// tracker columns and is **not** consulted at playback. Defaults to lane 0, so
+/// piano-roll-created notes and pre-lane projects all land in the first column.
+/// Distinct from [`TrackId`] (mono-per-track routing) and from engine voice
+/// allocation — this only describes a note's column in the tracker view.
+#[must_use]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+pub struct NoteLane(u8);
+
+impl NoteLane {
+    /// First lane (index 0) — the default column.
+    pub const ZERO: Self = Self(0);
+
+    /// Create a new note lane.
+    #[inline]
+    pub const fn new(index: u8) -> Self {
+        Self(index)
+    }
+
+    /// Get the raw u8 value.
+    #[inline]
+    #[must_use]
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+
+    /// Get as usize for array/column indexing.
+    #[inline]
+    #[must_use]
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl From<u8> for NoteLane {
+    fn from(index: u8) -> Self {
+        Self(index)
+    }
+}
+
+impl From<usize> for NoteLane {
+    fn from(index: usize) -> Self {
+        Self(index.min(255) as u8)
+    }
+}
+
 /// Index for row within a pattern (0-65535).
 #[must_use]
 #[derive(

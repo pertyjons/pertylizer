@@ -259,6 +259,10 @@ pub struct SequencerViewState {
     /// Mirrored to the engine via `EngineCommand::SetLoop`.
     loop_start_tick: Option<Tick>,
     loop_end_tick: Option<Tick>,
+    /// Tracker-view cursor (row + flat column index). Persisted across frames and
+    /// view toggles; navigated with arrow keys / clicks in `draw_tracker`. T1
+    /// highlights it, T2 will edit the cell under it.
+    tracker_cursor: tracker::TrackerCursor,
 }
 
 impl SequencerViewState {
@@ -310,6 +314,7 @@ impl SequencerViewState {
             tap_tempo_times: Vec::new(),
             loop_start_tick: None,
             loop_end_tick: None,
+            tracker_cursor: tracker::TrackerCursor::default(),
         }
     }
 }

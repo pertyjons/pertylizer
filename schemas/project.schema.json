@@ -7197,6 +7197,11 @@
           "$ref": "#/$defs/NoteId",
           "description": "Unique ID for this note (for editing/selection)."
         },
+        "lane": {
+          "$ref": "#/$defs/NoteLane",
+          "default": 0,
+          "description": "Voice lane this note occupies in the tracker grid. A pure editor/layout\nconcept — ignored by the piano roll and at playback. Additive; defaults\nto lane 0, so pre-lane projects load with every note in the first column."
+        },
         "legato": {
           "default": false,
           "description": "Tie / legato intent: when set, this note connects to its successor without\nre-gating (taxonomy primitive 2). Additive; defaults to `false`.",
@@ -7305,6 +7310,13 @@
     "NoteId": {
       "description": "Unique identifier for a note within a pattern.\nUsed for selection, undo/redo, and editing operations.",
       "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "NoteLane": {
+      "description": "Voice/polyphony lane a note occupies in the tracker grid (0-255).\n\nPurely an editor/layout concept: it groups simultaneous notes into stable\ntracker columns and is **not** consulted at playback. Defaults to lane 0, so\npiano-roll-created notes and pre-lane projects all land in the first column.\nDistinct from [`TrackId`] (mono-per-track routing) and from engine voice\nallocation — this only describes a note's column in the tracker view.",
+      "format": "uint8",
+      "maximum": 255,
       "minimum": 0,
       "type": "integer"
     },

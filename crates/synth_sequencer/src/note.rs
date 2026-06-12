@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use synth_core::{Hertz, Milliseconds, NormalizedValue, Semitones};
 
-use super::ids::{NoteId, TrackId};
+use super::ids::{NoteId, NoteLane, TrackId};
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
 
@@ -287,6 +287,11 @@ pub struct Note {
     /// to `None`.
     #[serde(default)]
     pub ornament: Option<Ornament>,
+    /// Voice lane this note occupies in the tracker grid. A pure editor/layout
+    /// concept — ignored by the piano roll and at playback. Additive; defaults
+    /// to lane 0, so pre-lane projects load with every note in the first column.
+    #[serde(default)]
+    pub lane: NoteLane,
 }
 
 impl Note {
@@ -304,6 +309,7 @@ impl Note {
             glide: None,
             expression: None,
             ornament: None,
+            lane: NoteLane::ZERO,
         }
     }
 
@@ -346,6 +352,13 @@ impl Note {
     #[must_use]
     pub fn with_ornament(mut self, ornament: Ornament) -> Self {
         self.ornament = Some(ornament);
+        self
+    }
+
+    /// Set the tracker voice lane (builder pattern).
+    #[must_use]
+    pub fn with_lane(mut self, lane: NoteLane) -> Self {
+        self.lane = lane;
         self
     }
 

@@ -43,8 +43,8 @@ pub use automation::{AutoInstrumentParam, GlobalParam, TrackParam};
 pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType, ParamId};
 pub use events::SequencerEvent;
 pub use ids::{
-    NoteId, PatternId, ReturnBusId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount,
-    TrackId, TrackIndex,
+    NoteId, NoteLane, PatternId, ReturnBusId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow,
+    TrackCount, TrackId, TrackIndex,
 };
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use note::{
@@ -67,7 +67,7 @@ pub mod prelude {
     pub use super::automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
     pub use super::events::SequencerEvent;
     pub use super::ids::{
-        NoteId, PatternId, ReturnBusId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow,
+        NoteId, NoteLane, PatternId, ReturnBusId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow,
         TrackCount, TrackId, TrackIndex,
     };
     pub use super::input::{InputCommand, InputSource};
