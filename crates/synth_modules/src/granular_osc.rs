@@ -30,6 +30,11 @@ const SOURCE_BUFFER_SECONDS: f32 = 2.0;
 /// Maximum source buffer size at 48kHz.
 const MAX_SOURCE_SAMPLES: usize = 96_000;
 
+/// Base frequency the source buffer is filled at (low A, for harmonic richness).
+/// Grain playback rate is `note_freq / SOURCE_BASE_FREQ`, so a played note comes
+/// out at concert pitch (rate 1.0 reproduces the buffer's native 110 Hz).
+const SOURCE_BASE_FREQ: f32 = 110.0;
+
 /// A single grain instance.
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
@@ -159,8 +164,7 @@ impl GranularOsc {
         self.source_len = (SOURCE_BUFFER_SECONDS * sr) as usize;
         self.source_len = self.source_len.min(MAX_SOURCE_SAMPLES);
 
-        let base_freq = 110.0; // Low A for rich content
-        let phase_inc = base_freq / sr;
+        let phase_inc = SOURCE_BASE_FREQ / sr;
 
         let mut rng = Xorshift32::new(12345);
         let mut phase = 0.0f32;
@@ -222,8 +226,8 @@ impl GranularOsc {
         // Pitch variation (semitones -> rate)
         let pitch_spread_semitones = self.pitch_spread.as_f32() * 24.0;
         let pitch_offset = self.rng.next_bipolar() * pitch_spread_semitones;
-        let rate =
-            (self.note_freq.as_f32() / 440.0) * crate::math::semitones_to_ratio(pitch_offset);
+        let rate = (self.note_freq.as_f32() / SOURCE_BASE_FREQ)
+            * crate::math::semitones_to_ratio(pitch_offset);
 
         // Pan
         let pan = BipolarValue::new(self.rng.next_bipolar() * self.pan_spread.as_f32());
