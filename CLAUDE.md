@@ -64,7 +64,7 @@ commit and the code carry the detail; history.md is the index.
 | `synth_config`       | Runtime config (`pertylizer.toml`) shared by the app and visualizer |
 | `synth_engine`       | Audio engine, voice management, instrument graph, recording        |
 | `synth_sequencer`    | Song, patterns, tracks, arrangement, automation                    |
-| `synth_modules`      | DSP module implementations (67 module types incl. 25 effects)      |
+| `synth_modules`      | DSP module implementations (70 module types incl. 25 effects)      |
 | `synth_dsp`          | Low-level DSP primitives (biquad, delay lines, interpolation)      |
 | `synth_sampler`      | Sample loading, playback, and waveform analysis                    |
 | `synth_awe`          | Acoustic World Engine (room simulation)                            |

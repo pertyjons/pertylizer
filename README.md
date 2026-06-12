@@ -42,8 +42,8 @@ exploratory encounter — poke at things, see what happens, and discover how it 
 
 A quick tour of what's inside — each item is described in more detail in its own section below.
 
-- **Modular synthesis** — 69 module types (including 25 effects), patched freely over a DAG-based audio graph with live
-  cable visualization, plus 67 built-in patches to start from
+- **Modular synthesis** — 70 module types (including 25 effects), patched freely over a DAG-based audio graph with live
+  cable visualization, plus 68 built-in patches to start from
 - **Real-time GUI** — an immediate-mode egui interface for building instruments, wiring modules, and tweaking
   parameters while everything keeps playing
 - **MIDI** — hardware MIDI input with velocity, pitch bend, mod wheel, and aftertouch
@@ -85,13 +85,13 @@ At its core, Pertylizer is a modular synthesizer. Every instrument is a voice gr
 feeding a per-instrument effect chain. You can start from one of the built-in patches or from an empty graph and build
 up from scratch.
 
-- **69 module types** (41 voice & synthesis modules, 25 effects, 3 inline visualizers) — oscillators (standard,
+- **70 module types** (42 voice & synthesis modules, 25 effects, 3 inline visualizers) — oscillators (standard,
   wavetable, additive, granular, fractal, FM/math, sub, LA synth, vector, pad synth, chaotic), filters (ladder, SVF,
   biquad, formant), envelopes, LFOs, MSEG, mod matrix, ring mod, drift generator, sampler, audio input, and more
 - **25 effects** — delay, BBD delay, reverb, shimmer reverb, reverse gate reverb, chorus, ensemble chorus, flanger,
   phaser, univibe, distortion, waveshaper, compressor, limiter, EQ, tilt EQ, mid/side, crossover splitter, convolver,
   phase vocoder, vocoder, frequency shifter, granular FX, spectral blur, modal resonator
-- **67 built-in patches** — from acid bass and grand piano to fractal cosmos and spectral freeze pad, plus solo voice, choir, vocal tract and the SATB section voices
+- **68 built-in patches** — from acid bass and grand piano to fractal cosmos and spectral freeze pad, plus solo voice, choir, vocal tract and the SATB section voices
 
 ### Signature capabilities
 
@@ -294,7 +294,7 @@ cargo test && cargo clippy --all-targets && cargo fmt --check
 | `synth_awe`          | Acoustic World Engine — spatial audio & room simulation      |
 | `synth_sampler`      | Sample loading, playback, and waveform analysis              |
 | `synth_sequencer`    | Pattern and song sequencing                                  |
-| `synth_modules`      | 69 module types including 25 effects                         |
+| `synth_modules`      | 70 module types including 25 effects                         |
 | `synth_engine`       | Audio engine: voice allocation, modular graph, mixing        |
 | `synth_mcp`          | MCP server with 180+ tools for AI agent integration          |
 | `synth_osc`          | OSC telemetry sender (spectrum, notes, transport over UDP)   |

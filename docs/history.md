@@ -1,5 +1,30 @@
 # Version History
 
+## [0.312.0] - 2026-06-12
+
+### FOF — CHANT-style granular formant voice (third voice engine)
+
+- **New `ModuleType::Fof`.** A third voice engine alongside VoiceSynth
+  (source–filter) and VocalTract (Kelly–Lochbaum): it builds vowels in the time
+  domain from overlapping formant-wave-function grains (FOF / CHANT, Rodet 1984)
+  — one grain per formant fired each F0 period, a carrier sine under a
+  raised-cosine attack into an exponential decay. Pitch (trigger rate) and vowel
+  (grain shape) are fully decoupled.
+- **Expressivity.** Vowel morph + Formant Shift (vocal-tract length / SATB),
+  the FOF-specific Skirt (grain attack), Bandwidth, breath/aspiration noise,
+  internal vibrato, and `pitch_cv` / `vowel_cv` / `breath_cv` inputs.
+- **Choir.** Up to 16 decorrelated sub-voices (detune, vibrato, formant jitter,
+  onset stagger, stereo pan) summed to a mono `out` plus `out_l`/`out_r`.
+  Per-band active-grain tracking keeps the per-sample scan proportional to the
+  live grains; the grain ring is sized so it does not truncate audible grains
+  across the singing range, and `pitch_cv` is clamped so the trigger stays finite.
+- **`FOF Choir` example patch** in the Vocal & Choir category (the granular
+  counterpart to `Choir`); covered by the vocal-patch render test.
+- **Shared formant primitives.** Extracted `formant_tables::interpolate_vowel`
+  and `math::{xorshift_noise, one_pole_lp_coef, formant_shift_factor}`, now used
+  by both Fof and VoiceSynth (de-duplicating the vowel-table blend and noise/LP
+  helpers). Module count 69 → 70, patches 67 → 68.
+
 ## [0.311.0] - 2026-06-10
 
 ### Note Processors — playback-time generative articulation

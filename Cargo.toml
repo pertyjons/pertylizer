@@ -25,7 +25,7 @@ rust-version = "1.96"
 authors = ["Per Jonsson"]
 license = "MIT"
 repository = "https://github.com/pertyjons/pertylizer"
-description = "Pertylizer — a modular synthesizer with 69 module types (including 25 effects) and MCP integration"
+description = "Pertylizer — a modular synthesizer with 70 module types (including 25 effects) and MCP integration"
 
 [workspace.dependencies]
 # Core dependencies

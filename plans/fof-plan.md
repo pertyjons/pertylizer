@@ -1,9 +1,13 @@
 # FOF Generator — CHANT-style Formant-Wave-Function Voice Module Plan
 
-Status: **Not started.** Optional third voice engine alongside the shipped
-`VoiceSynth` (source–filter) and `VocalTract` (Kelly–Lochbaum). See
-`plans/voice-synth-plan.md` (Phase 6 design note: *"A genuine-FOF generator
-could later become a third module if wanted"*). One phase per session.
+Status: **COMPLETE — all 5 phases shipped in v0.312.0 (2026-06-12).** The third
+voice engine alongside `VoiceSynth` (source–filter) and `VocalTract`
+(Kelly–Lochbaum). Phase 1 skeleton/grain-bank, Phase 2 expressivity, Phase 3
+choir/unison + stereo + active-grain tracking, Phase 4 `FOF Choir` patch,
+Phase 5 polish/release. Each phase passed a multi-agent `/code-review --fix`.
+Kept as a reference record; remaining ideas (a stochastic-FOF breath path, the
+optional `voice_common` extraction beyond the shared formant_tables/math
+helpers) are not scheduled.
 
 ## Goal
 
