@@ -4051,6 +4051,70 @@
           "type": "object"
         },
         {
+          "description": "FOF (fof) — CHANT-style granular formant voice (FOF / formant wave functions)",
+          "properties": {
+            "id": {
+              "description": "Module instance ID, e.g. `fof-1`.",
+              "pattern": "^fof-\\d+$",
+              "type": "string"
+            },
+            "parameters": {
+              "additionalProperties": false,
+              "default": {},
+              "description": "Parameter values for this module.",
+              "properties": {
+                "formant_shift": {
+                  "default": 0.5,
+                  "description": "Vocal-tract length: <0.5 longer/darker, >0.5 shorter/brighter",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Formant Shift",
+                  "type": "number"
+                },
+                "level": {
+                  "default": 0.800000011920929,
+                  "description": "Output level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Level",
+                  "type": "number"
+                },
+                "skirt": {
+                  "default": 0.30000001192092896,
+                  "description": "Grain attack / formant skirt: 0 sharp & bright, 1 soft & dull",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Skirt",
+                  "type": "number"
+                },
+                "vowel": {
+                  "default": 0.0,
+                  "description": "Vowel morph (A → E → I → O → U)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Vowel",
+                  "type": "number"
+                }
+              },
+              "type": "object"
+            },
+            "position": {
+              "$ref": "#/$defs/Position"
+            },
+            "type": {
+              "const": "fof",
+              "description": "Module type discriminator."
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "position"
+          ],
+          "title": "FOF",
+          "type": "object"
+        },
+        {
           "description": "Delay (delay) — Stereo delay with ping-pong mode",
           "properties": {
             "id": {
@@ -6183,7 +6247,8 @@
         "crossover_splitter",
         "vocoder",
         "voice_synth",
-        "vocal_tract"
+        "vocal_tract",
+        "fof"
       ],
       "type": "string"
     },

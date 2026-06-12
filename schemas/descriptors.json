@@ -1383,6 +1383,52 @@
         }
       }
     },
+    "fof": {
+      "description": "CHANT-style granular formant voice (FOF / formant wave functions)",
+      "name": "FOF",
+      "parameters": {
+        "formant_shift": {
+          "default": 0.5,
+          "description": "Vocal-tract length: <0.5 longer/darker, >0.5 shorter/brighter",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Formant Shift",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "level": {
+          "default": 0.800000011920929,
+          "description": "Output level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "skirt": {
+          "default": 0.30000001192092896,
+          "description": "Grain attack / formant skirt: 0 sharp & bright, 1 soft & dull",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Skirt",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "vowel": {
+          "default": 0.0,
+          "description": "Vowel morph (A → E → I → O → U)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Vowel",
+          "response_curve": "linear",
+          "unit": "none"
+        }
+      }
+    },
     "fooglers": {
       "description": "Micro delay-line weird synthesis (physical modeling)",
       "name": "Fooglers",

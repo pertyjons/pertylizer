@@ -271,7 +271,7 @@ impl VoiceSynth {
     /// 0.0 → 0.5 (octave down), 0.5 → 1.0 (no shift), 1.0 → 2.0 (octave up).
     #[inline]
     fn shift_factor(&self) -> f32 {
-        (2.0_f32).powf(2.0 * self.formant_shift.as_f32() - 1.0)
+        crate::formant_tables::formant_shift_factor(self.formant_shift.as_f32())
     }
 
     /// Glottal open quotient in 0.3..0.9 (0.5 normalized → 0.6).

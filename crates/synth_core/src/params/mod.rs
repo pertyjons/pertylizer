@@ -21,6 +21,7 @@ mod effects;
 mod envelope_follower;
 mod envelopes;
 mod filters;
+mod fof;
 mod fooglers;
 mod formant_filter;
 mod fractal_osc;
@@ -69,6 +70,7 @@ pub use effects::{
 pub use envelope_follower::EnvelopeFollowerParam;
 pub use envelopes::EnvelopeParam;
 pub use filters::{FilterMode, FilterModel, FilterParam};
+pub use fof::FofParam;
 pub use fooglers::FooglersParam;
 pub use formant_filter::FormantFilterParam;
 pub use fractal_osc::FractalOscParam;
@@ -225,6 +227,7 @@ pub enum ModuleType {
     // Synthesis (voice)
     VoiceSynth,
     VocalTract,
+    Fof,
 }
 
 impl ModuleType {
@@ -293,6 +296,7 @@ impl ModuleType {
                 | Self::AmFormant
                 | Self::VoiceSynth
                 | Self::VocalTract
+                | Self::Fof
         )
     }
 
@@ -434,6 +438,7 @@ impl ModuleType {
             Self::Vocoder => "LPC Vocoder",
             Self::VoiceSynth => "Voice Synth",
             Self::VocalTract => "Vocal Tract",
+            Self::Fof => "FOF",
         }
     }
 
@@ -514,6 +519,7 @@ impl ModuleType {
             Self::Vocoder => "vcd",
             Self::VoiceSynth => "vox",
             Self::VocalTract => "vtr",
+            Self::Fof => "fof",
         }
     }
 
@@ -594,6 +600,7 @@ impl ModuleType {
             "vcd" => Some(Self::Vocoder),
             "vox" => Some(Self::VoiceSynth),
             "vtr" => Some(Self::VocalTract),
+            "fof" => Some(Self::Fof),
             _ => None,
         }
     }
@@ -724,6 +731,7 @@ pub enum Param {
     // Synthesis (voice)
     VoiceSynth(VoiceSynthParam),
     VocalTract(VocalTractParam),
+    Fof(FofParam),
 }
 
 impl Param {
@@ -810,6 +818,7 @@ impl Param {
             (Self::Vocoder(a), Self::Vocoder(b)) => a.same_kind(b),
             (Self::VoiceSynth(a), Self::VoiceSynth(b)) => a.same_kind(b),
             (Self::VocalTract(a), Self::VocalTract(b)) => a.same_kind(b),
+            (Self::Fof(a), Self::Fof(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -888,6 +897,7 @@ impl Param {
             Self::Vocoder(_) => ModuleType::Vocoder,
             Self::VoiceSynth(_) => ModuleType::VoiceSynth,
             Self::VocalTract(_) => ModuleType::VocalTract,
+            Self::Fof(_) => ModuleType::Fof,
         }
     }
 
@@ -965,6 +975,7 @@ impl Param {
             Self::Vocoder(p) => p.name(),
             Self::VoiceSynth(p) => p.name(),
             Self::VocalTract(p) => p.name(),
+            Self::Fof(p) => p.name(),
         }
     }
 
@@ -1042,6 +1053,7 @@ impl Param {
             Self::Vocoder(p) => p.as_f32(),
             Self::VoiceSynth(p) => p.as_f32(),
             Self::VocalTract(p) => p.as_f32(),
+            Self::Fof(p) => p.as_f32(),
         }
     }
 
@@ -1119,6 +1131,7 @@ impl Param {
             Self::Vocoder(p) => Self::Vocoder(p.with_f32(value)),
             Self::VoiceSynth(p) => Self::VoiceSynth(p.with_f32(value)),
             Self::VocalTract(p) => Self::VocalTract(p.with_f32(value)),
+            Self::Fof(p) => Self::Fof(p.with_f32(value)),
         }
     }
 }

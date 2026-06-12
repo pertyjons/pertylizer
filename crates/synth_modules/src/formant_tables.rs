@@ -48,3 +48,13 @@ pub const FORMANT_GAIN: [[f32; NUM_BANDS]; NUM_VOWELS] = [
     [1.0, 0.35, 0.2, 0.13],  // O
     [1.0, 0.3, 0.15, 0.1],   // U
 ];
+
+/// Map a normalized formant-shift / vocal-tract-length control to a frequency
+/// scale factor: 0.0 → 0.5 (octave down, longer tract / darker), 0.5 → 1.0 (no
+/// shift), 1.0 → 2.0 (octave up, shorter tract / brighter). Shared by the
+/// formant-based voice modules.
+#[inline]
+#[must_use]
+pub fn formant_shift_factor(norm_shift: f32) -> f32 {
+    (2.0_f32).powf(2.0 * norm_shift - 1.0)
+}

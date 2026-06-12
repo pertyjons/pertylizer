@@ -11490,6 +11490,7 @@ mod mod_matrix_routing_tests {
             ModuleType::AmFormant,
             ModuleType::VoiceSynth,
             ModuleType::VocalTract,
+            ModuleType::Fof,
             ModuleType::MechanicalNoise,
         ] {
             assert!(is_sound_source(mt), "{mt:?} should count as a sound source");
