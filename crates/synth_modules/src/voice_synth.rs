@@ -30,18 +30,12 @@ use synth_core::{Cents, Hertz, MidiNote, NormalizedValue, Phase, PortName, Sampl
 use synth_core::{ModuleType, Param, VoiceSynthParam};
 
 use crate::formant_tables::NUM_BANDS;
-
-/// Maximum number of unison sub-voices (fixed array — no heap in `process()`).
-const MAX_UNISON: usize = 16;
+use crate::voice_common::{self, MAX_UNISON, ONSET_MAX_SECS, RNG_SEED, VoiceSpread};
 
 /// Relative position of the glottal flow peak within the open phase.
 const GLOTTAL_TP: f32 = 0.6;
 /// Makeup gain applied to breath noise before it joins the glottal excitation.
 const NOISE_GAIN: f32 = 2.0;
-/// Non-zero PRNG seed (golden-ratio constant) for the breath-noise generator.
-const RNG_SEED: u32 = 0x9E37_79B9;
-/// Maximum per-voice onset stagger, in seconds, for choir attack decorrelation.
-const ONSET_MAX_SECS: f32 = 0.004;
 
 /// 2nd-order bandpass filter state (per band).
 #[derive(Clone, Copy, Default)]
@@ -107,15 +101,6 @@ fn glottal_flow(phase: f32, oq: f32) -> f32 {
     } else {
         (0.5 * std::f32::consts::PI * (x - GLOTTAL_TP) / (1.0 - GLOTTAL_TP)).cos()
     }
-}
-
-/// Deterministic decorrelation hash in [0, 1) from (voice index, note, salt).
-/// Reproducible and allocation-free — used instead of `Math.random`.
-#[inline]
-fn decorr_hash(voice: usize, note: f32, salt: f32) -> f32 {
-    let x = voice as f32 * 0.618_034 + note * 0.019_3 + salt;
-    let h = (x.sin() * 43758.547).abs();
-    h - h.floor()
 }
 
 /// One decorrelated unison sub-voice: an independent glottal source + formant
@@ -272,8 +257,7 @@ impl VoiceSynth {
     /// Number of active unison sub-voices (1..=MAX_UNISON).
     #[inline]
     fn unison_count(&self) -> usize {
-        let n = 1 + (self.unison_voices.as_f32() * (MAX_UNISON - 1) as f32).round() as usize;
-        n.clamp(1, MAX_UNISON)
+        voice_common::unison_count(self.unison_voices.as_f32(), MAX_UNISON)
     }
 
     /// Recompute per-voice decorrelation (detune, vibrato rate, formant jitter,
@@ -286,21 +270,16 @@ impl VoiceSynth {
         let note = self.note_freq.as_f32();
 
         for (v, voice) in self.voices[..active].iter_mut().enumerate() {
-            if active == 1 {
-                voice.detune_cents = 0.0;
-                voice.vib_rate_mult = 1.0;
-                voice.formant_jitter = 1.0;
-                voice.pan_l = std::f32::consts::FRAC_1_SQRT_2;
-                voice.pan_r = std::f32::consts::FRAC_1_SQRT_2;
-                continue;
-            }
-            voice.detune_cents = (decorr_hash(v, note, 1.0) * 2.0 - 1.0) * detune;
-            voice.vib_rate_mult = 1.0 + (decorr_hash(v, note, 2.0) * 2.0 - 1.0) * 0.08;
-            voice.formant_jitter = 1.0 + (decorr_hash(v, note, 3.0) * 2.0 - 1.0) * 0.03;
-            let pos = (v as f32 / (active - 1) as f32) * 2.0 - 1.0;
-            let (l, r) = crate::math::equal_power_pan(pos * spread);
-            voice.pan_l = l;
-            voice.pan_r = r;
+            let s = if active == 1 {
+                VoiceSpread::solo()
+            } else {
+                VoiceSpread::derive(v, active, note, detune, spread)
+            };
+            voice.detune_cents = s.detune_cents;
+            voice.vib_rate_mult = s.vib_rate_mult;
+            voice.formant_jitter = s.formant_jitter;
+            voice.pan_l = s.pan_l;
+            voice.pan_r = s.pan_r;
         }
     }
 }
@@ -690,12 +669,15 @@ impl PolyModule for VoiceSynth {
             let (glottal_phase, vib_phase) = if v == 0 {
                 (0.0, 0.0)
             } else {
-                (decorr_hash(v, note_hz, 6.0), decorr_hash(v, note_hz, 4.0))
+                (
+                    voice_common::decorr_hash(v, note_hz, 6.0),
+                    voice_common::decorr_hash(v, note_hz, 4.0),
+                )
             };
             let onset = if v == 0 || v >= active {
                 0
             } else {
-                (decorr_hash(v, note_hz, 5.0) * onset_max) as u32
+                voice_common::onset_samples(v, note_hz, onset_max)
             };
             let seed = RNG_SEED ^ (v as u32 + 1).wrapping_mul(0x9E37_79B9);
             voice.restart(seed.max(1), glottal_phase, vib_phase, onset);

@@ -37,6 +37,7 @@ use synth_core::{Cents, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, 
 use synth_core::{FofParam, ModuleType, Param};
 
 use crate::formant_tables::NUM_BANDS;
+use crate::voice_common::{self, MAX_UNISON, ONSET_MAX_SECS, RNG_SEED, VoiceSpread};
 
 /// Maximum simultaneously-active grains per formant band, per sub-voice (fixed
 /// ring — no heap in `process()`).
@@ -60,8 +61,6 @@ use crate::formant_tables::NUM_BANDS;
 /// are skipped, never summed) and self-heals once the old grain retires — output
 /// stays correct, and the cost never exceeds the naive full-ring scan.
 const MAX_GRAINS: usize = 96;
-/// Maximum number of unison sub-voices (fixed array — no heap in `process()`).
-const MAX_UNISON: usize = 16;
 /// Envelope level below which a grain is retired (−60 dB — inaudible, and keeps
 /// the active-grain count bounded; see `MAX_GRAINS`).
 const ENV_FLOOR: f32 = 1.0e-3;
@@ -79,8 +78,6 @@ const MIN_TRIGGER_INC: f32 = 1.0e-6;
 const MAX_TRIGGER_INC: f32 = 0.5;
 /// Clamp on `pitch_cv` (semitones) so the effective F0 stays finite.
 const MAX_PITCH_CV_SEMITONES: f32 = 60.0;
-/// Non-zero PRNG seed (golden-ratio constant) for the breath-noise generator.
-const RNG_SEED: u32 = 0x9E37_79B9;
 /// Makeup gain applied to breath noise before it joins the voiced grains.
 const NOISE_GAIN: f32 = 0.5;
 /// Cutoff (Hz) of the one-pole lowpass that takes the harsh top off the breath.
@@ -88,22 +85,11 @@ const BREATH_LP_FC: f32 = 5000.0;
 /// Vowel-CV modulation depth (matches `voice_synth`'s convention): a ±1 CV
 /// shifts the vowel position by ±0.5 of the A→U range.
 const VOWEL_CV_DEPTH: f32 = 0.5;
-/// Maximum per-voice onset stagger, in seconds, for choir attack decorrelation.
-const ONSET_MAX_SECS: f32 = 0.004;
 
 /// Bandwidth-param → BW scale: 0.5 = ×1 (table), 0.0 = ×0.5, 1.0 = ×2.0.
 #[inline]
 fn bandwidth_scale(norm: f32) -> f32 {
     (2.0_f32).powf(2.0 * norm - 1.0)
-}
-
-/// Deterministic decorrelation hash in [0, 1) from (voice index, note, salt).
-/// Reproducible and allocation-free — used instead of `Math.random`.
-#[inline]
-fn decorr_hash(voice: usize, note: f32, salt: f32) -> f32 {
-    let x = voice as f32 * 0.618_034 + note * 0.019_3 + salt;
-    let h = (x.sin() * 43758.547).abs();
-    h - h.floor()
 }
 
 /// One active FOF grain — a decaying formant impulse response.
@@ -351,8 +337,7 @@ impl Fof {
     /// Number of active unison sub-voices (1..=MAX_UNISON).
     #[inline]
     fn unison_count(&self) -> usize {
-        let n = 1 + (self.unison_voices.as_f32() * (MAX_UNISON - 1) as f32).round() as usize;
-        n.clamp(1, MAX_UNISON)
+        voice_common::unison_count(self.unison_voices.as_f32(), MAX_UNISON)
     }
 
     /// Compute the per-band grain targets for the given vowel position, applying
@@ -388,21 +373,16 @@ impl Fof {
         let note = self.note_freq.as_f32();
 
         for (v, voice) in self.voices[..active].iter_mut().enumerate() {
-            if active == 1 {
-                voice.detune_cents = 0.0;
-                voice.vib_rate_mult = 1.0;
-                voice.formant_jitter = 1.0;
-                voice.pan_l = std::f32::consts::FRAC_1_SQRT_2;
-                voice.pan_r = std::f32::consts::FRAC_1_SQRT_2;
-                continue;
-            }
-            voice.detune_cents = (decorr_hash(v, note, 1.0) * 2.0 - 1.0) * detune;
-            voice.vib_rate_mult = 1.0 + (decorr_hash(v, note, 2.0) * 2.0 - 1.0) * 0.08;
-            voice.formant_jitter = 1.0 + (decorr_hash(v, note, 3.0) * 2.0 - 1.0) * 0.03;
-            let pos = (v as f32 / (active - 1) as f32) * 2.0 - 1.0;
-            let (l, r) = crate::math::equal_power_pan(pos * spread);
-            voice.pan_l = l;
-            voice.pan_r = r;
+            let s = if active == 1 {
+                VoiceSpread::solo()
+            } else {
+                VoiceSpread::derive(v, active, note, detune, spread)
+            };
+            voice.detune_cents = s.detune_cents;
+            voice.vib_rate_mult = s.vib_rate_mult;
+            voice.formant_jitter = s.formant_jitter;
+            voice.pan_l = s.pan_l;
+            voice.pan_r = s.pan_r;
         }
     }
 }
@@ -824,12 +804,15 @@ impl PolyModule for Fof {
                 // Start at 1.0 so the first processed sample fires a grain set.
                 (1.0, 0.0)
             } else {
-                (decorr_hash(v, note_hz, 6.0), decorr_hash(v, note_hz, 4.0))
+                (
+                    voice_common::decorr_hash(v, note_hz, 6.0),
+                    voice_common::decorr_hash(v, note_hz, 4.0),
+                )
             };
             let onset = if v == 0 || v >= active {
                 0
             } else {
-                (decorr_hash(v, note_hz, 5.0) * onset_max) as u32
+                voice_common::onset_samples(v, note_hz, onset_max)
             };
             let seed = (RNG_SEED ^ note_hz.to_bits()) ^ (v as u32 + 1).wrapping_mul(0x9E37_79B9);
             voice.restart(seed, trigger_phase, vib_phase, onset);

@@ -56,6 +56,7 @@ pub mod sub_osc;
 pub mod turing_machine;
 pub mod vector_mixer;
 pub mod vocal_tract;
+pub mod voice_common;
 pub mod voice_synth;
 pub mod wavetable_data;
 pub mod wavetable_osc;
