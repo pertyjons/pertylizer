@@ -28,6 +28,12 @@ pub enum FofParam {
     VibratoRate(Hertz),
     /// Vibrato depth in cents
     VibratoDepth(Cents),
+    /// Choir size: number of decorrelated unison sub-voices (1..16)
+    UnisonVoices(NormalizedValue),
+    /// Unison detune spread in cents
+    UnisonDetune(Cents),
+    /// Unison stereo spread (0 = mono, 1 = full width)
+    UnisonSpread(NormalizedValue),
     /// Output level
     Level(NormalizedValue),
 }
@@ -46,6 +52,9 @@ impl FofParam {
             Self::Breathiness(_) => "Breathiness",
             Self::VibratoRate(_) => "Vibrato Rate",
             Self::VibratoDepth(_) => "Vibrato Depth",
+            Self::UnisonVoices(_) => "Unison Voices",
+            Self::UnisonDetune(_) => "Unison Detune",
+            Self::UnisonSpread(_) => "Unison Spread",
             Self::Level(_) => "Level",
         }
     }
@@ -57,9 +66,11 @@ impl FofParam {
             | Self::Skirt(v)
             | Self::Bandwidth(v)
             | Self::Breathiness(v)
+            | Self::UnisonVoices(v)
+            | Self::UnisonSpread(v)
             | Self::Level(v) => v.as_f32(),
             Self::VibratoRate(hz) => hz.as_f32(),
-            Self::VibratoDepth(c) => c.as_f32(),
+            Self::VibratoDepth(c) | Self::UnisonDetune(c) => c.as_f32(),
         }
     }
 
@@ -72,6 +83,9 @@ impl FofParam {
             Self::Breathiness(_) => Self::Breathiness(NormalizedValue::new(value)),
             Self::VibratoRate(_) => Self::VibratoRate(Hertz::new(value)),
             Self::VibratoDepth(_) => Self::VibratoDepth(Cents::new(value)),
+            Self::UnisonVoices(_) => Self::UnisonVoices(NormalizedValue::new(value)),
+            Self::UnisonDetune(_) => Self::UnisonDetune(Cents::new(value)),
+            Self::UnisonSpread(_) => Self::UnisonSpread(NormalizedValue::new(value)),
             Self::Level(_) => Self::Level(NormalizedValue::new(value)),
         }
     }

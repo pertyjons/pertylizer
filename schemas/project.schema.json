@@ -4884,7 +4884,7 @@
           "type": "object"
         },
         {
-          "description": "FOF (fof) — CHANT-style granular formant voice (FOF / formant wave functions)",
+          "description": "FOF (fof) — CHANT-style granular formant voice / choir (FOF / formant wave functions)",
           "properties": {
             "id": {
               "description": "Module instance ID, e.g. `fof-1`.",
@@ -4934,6 +4934,30 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Skirt",
+                  "type": "number"
+                },
+                "unison_detune": {
+                  "default": 15.0,
+                  "description": "Pitch spread across unison voices — unit: ct",
+                  "maximum": 50.0,
+                  "minimum": 0.0,
+                  "title": "Unison Detune",
+                  "type": "number"
+                },
+                "unison_spread": {
+                  "default": 0.699999988079071,
+                  "description": "Stereo width of the choir (0 = mono, 1 = full)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Unison Spread",
+                  "type": "number"
+                },
+                "unison_voices": {
+                  "default": 0.0,
+                  "description": "Choir size: 1 (solo) to 16 decorrelated voices",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Unison Voices",
                   "type": "number"
                 },
                 "vibrato_depth": {

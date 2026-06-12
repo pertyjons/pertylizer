@@ -29,7 +29,7 @@ use synth_core::{
 use synth_core::{Cents, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, VoiceSynthParam};
 
-use crate::formant_tables::{FORMANT_BW, FORMANT_FREQ, FORMANT_GAIN, NUM_BANDS, NUM_VOWELS};
+use crate::formant_tables::NUM_BANDS;
 
 /// Maximum number of unison sub-voices (fixed array — no heap in `process()`).
 const MAX_UNISON: usize = 16;
@@ -183,19 +183,13 @@ impl SubVoice {
     /// Recompute formant coefficients for the current vowel position, applying
     /// this voice's formant jitter and the shared formant shift.
     fn update_coeffs(&mut self, vowel_pos: f32, shift: f32, sample_rate: f32) {
-        let pos = vowel_pos * (NUM_VOWELS - 1) as f32;
-        let idx = (pos as usize).min(NUM_VOWELS - 2);
-        let frac = pos - idx as f32;
+        let (freqs, bws, gains) = crate::formant_tables::interpolate_vowel(vowel_pos);
         let scale = shift * self.formant_jitter;
 
         for band in 0..NUM_BANDS {
-            let freq = FORMANT_FREQ[idx][band] * (1.0 - frac) + FORMANT_FREQ[idx + 1][band] * frac;
-            let bw = FORMANT_BW[idx][band] * (1.0 - frac) + FORMANT_BW[idx + 1][band] * frac;
-            let gain = FORMANT_GAIN[idx][band] * (1.0 - frac) + FORMANT_GAIN[idx + 1][band] * frac;
-
-            let scaled_freq = (freq * scale).clamp(20.0, sample_rate * 0.45);
-            self.coeffs[band] = BandpassCoeffs::new(scaled_freq, bw.max(10.0), sample_rate);
-            self.gains[band] = gain;
+            let scaled_freq = (freqs[band] * scale).clamp(20.0, sample_rate * 0.45);
+            self.coeffs[band] = BandpassCoeffs::new(scaled_freq, bws[band].max(10.0), sample_rate);
+            self.gains[band] = gains[band];
         }
     }
 }

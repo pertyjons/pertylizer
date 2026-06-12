@@ -58,3 +58,25 @@ pub const FORMANT_GAIN: [[f32; NUM_BANDS]; NUM_VOWELS] = [
 pub fn formant_shift_factor(norm_shift: f32) -> f32 {
     (2.0_f32).powf(2.0 * norm_shift - 1.0)
 }
+
+/// Interpolate the formant tables at a normalized vowel position in `0..1`
+/// (0 = A … 1 = U), returning `(freqs, bws, gains)` for every band. Folds the
+/// `pos`/`idx`/`frac` setup and the per-band linear blend that every
+/// formant-based module would otherwise duplicate; the `(pos as usize).min(..)`
+/// clamp keeps `idx` and `idx + 1` in range for any input.
+#[must_use]
+pub fn interpolate_vowel(vowel: f32) -> ([f32; NUM_BANDS], [f32; NUM_BANDS], [f32; NUM_BANDS]) {
+    let pos = vowel.clamp(0.0, 1.0) * (NUM_VOWELS - 1) as f32;
+    let idx = (pos as usize).min(NUM_VOWELS - 2);
+    let frac = pos - idx as f32;
+
+    let mut freqs = [0.0; NUM_BANDS];
+    let mut bws = [0.0; NUM_BANDS];
+    let mut gains = [0.0; NUM_BANDS];
+    for band in 0..NUM_BANDS {
+        freqs[band] = FORMANT_FREQ[idx][band] * (1.0 - frac) + FORMANT_FREQ[idx + 1][band] * frac;
+        bws[band] = FORMANT_BW[idx][band] * (1.0 - frac) + FORMANT_BW[idx + 1][band] * frac;
+        gains[band] = FORMANT_GAIN[idx][band] * (1.0 - frac) + FORMANT_GAIN[idx + 1][band] * frac;
+    }
+    (freqs, bws, gains)
+}
