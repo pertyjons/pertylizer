@@ -112,10 +112,12 @@ which path T1 actually used.
   automation column add/clean via the shared target picker (`9c9c81c`), and auto-follow
   scroll-away. All writes go through the pattern mutators with `UndoAction`, quantized to
   the row grid.
-- [x] **T3** — Future column types. SHIPPED 2026-06-13 on branch `feat/tracker-t3`:
-  NoteExpression sub-columns (`3f0a858`, `76e0092`) + read-only NoteProcessor output
-  column (`64847fc`). Only the optional NP **rack-management** (add/remove/configure
-  from the tracker) is left, deferred — see T3 section.
+- [x] **T3** — Future column types. SHIPPED 2026-06-13 on branch `feat/tracker-t3`
+  (merged to main): NoteExpression sub-columns (`3f0a858`, `76e0092`) + read-only
+  NoteProcessor output columns, **one per processor stage** (`64847fc`, `e736ba6`),
+  plus Expr-on-by-default + per-column header tooltips (`a8c6434`). Only the optional
+  NP **rack-management** (add/remove/configure from the tracker) is left, deferred —
+  see T3 section.
 
 Build order is value-first: **T1 ships the overview you asked for with zero model
 change.** Stop after T1 if that's enough; T2/T3 as appetite allows.
@@ -226,9 +228,9 @@ Branch `feat/tracker-t3`. Scope confirmed with the user 2026-06-13: expression
 sub-columns first (per-field, behind a toggle), NP lanes after / as appetite allows.
 
 - [x] **NoteExpression sub-columns** — SHIPPED 2026-06-13 (`3f0a858` display, `76e0092`
-  editing). An **"Expr" toggle** interleaves four narrow per-note columns
-  (**Acc/Gat/Gho/Prb**) after each voice column. New `ExprField` +
-  `TrackerColumn::Expr(lane, field)`; the flat selectable-column layout became
+  editing). An **"Expr" toggle** (on by default since `a8c6434`) interleaves four
+  narrow per-note columns (**Acc/Gat/Gho/Prb**) after each voice column. New `ExprField`
+  + `TrackerColumn::Expr(lane, field)`; the flat selectable-column layout became
   contiguous per-voice groups of `cols_per_voice` (1 or 5) followed by automation
   lanes (one `voice_group_base` helper shared by decode + encode). Accent/Gate/
   Probability edit via the shared digit buffer (×100 display, `EXPR_DISPLAY_SCALE`);
@@ -238,17 +240,28 @@ sub-columns first (per-field, behind a toggle), NP lanes after / as appetite all
   `•` marker for it.
 
 - [x] **NoteProcessor lanes (read-only contribution)** — SHIPPED 2026-06-13
-  (`64847fc`). A non-selectable **"NP" column** (shown only when the rack is
-  non-empty) renders the rack's expanded pitches per row, computed offline via the
-  already-`pub` `Pattern::expand_at_tick` (no new engine API was needed —
-  `processors()`/`expand_at_tick`/`ExpansionBuffer` were public). Header names the
-  rack (kinds joined). Row-resolution: samples at each row tick, so sub-row generated
-  events aren't shown (documented). User chose "read-only contribution first".
+  (`64847fc`, refined `e736ba6`). **One non-selectable column per processor** in the
+  rack (shown only when the rack is non-empty), headed by the processor kind
+  (`scale_quantize`/`chord`/`arp`/`humanize`) and showing the rack's **cumulative**
+  expansion *after* that stage — so comparing adjacent columns reveals each
+  processor's contribution. Computed offline via the new `pub
+  Pattern::expand_at_tick_through(through)` (`expand_at_tick` delegates with
+  `through = rack length`, so the audio thread is unchanged); the only other needed
+  API (`processors()`/`ExpansionBuffer`) was already public. Row-resolution: samples
+  at each row tick, so sub-row generated events aren't shown (documented). User chose
+  "read-only contribution first".
 - [ ] **NoteProcessor rack management (optional, not done)** — the heavier half of the
   original bullet: add/remove/configure processors from the tracker ("add/remove
   mirrors T2"). Needs a rack-management UX for *configured* processors (each kind has
   its own config). Deferred — pursue only if the read-only view proves worth editing
   in-place rather than via the existing NP rack UI.
+
+**Known follow-ups (not blocking; flagged by code review):**
+- Header tooltips cover every column (`a8c6434`); cell-level tooltips are not added.
+- The four tracker fields (`tracker_cursor` / `tracker_value_buffer` /
+  `tracker_voice_columns` / `tracker_show_expression`) live flat on
+  `SequencerViewState`; reviews suggest grouping them into a `TrackerViewState`
+  sub-struct (pure cleanup, deferred).
 
 ---
 
