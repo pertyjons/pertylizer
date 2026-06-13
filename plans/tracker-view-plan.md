@@ -112,9 +112,10 @@ which path T1 actually used.
   automation column add/clean via the shared target picker (`9c9c81c`), and auto-follow
   scroll-away. All writes go through the pattern mutators with `UndoAction`, quantized to
   the row grid.
-- [~] **T3** — Future column types. NoteExpression sub-columns SHIPPED 2026-06-13 on
-  branch `feat/tracker-t3` (`3f0a858`, `76e0092`); NoteProcessor lanes assessed but not
-  started (scope open — see T3 section).
+- [x] **T3** — Future column types. SHIPPED 2026-06-13 on branch `feat/tracker-t3`:
+  NoteExpression sub-columns (`3f0a858`, `76e0092`) + read-only NoteProcessor output
+  column (`64847fc`). Only the optional NP **rack-management** (add/remove/configure
+  from the tracker) is left, deferred — see T3 section.
 
 Build order is value-first: **T1 ships the overview you asked for with zero model
 change.** Stop after T1 if that's enough; T2/T3 as appetite allows.
@@ -236,17 +237,18 @@ sub-columns first (per-field, behind a toggle), NP lanes after / as appetite all
   excluded** from the sub-columns (too rich for one cell) — the note cell keeps its
   `•` marker for it.
 
-- [ ] **NoteProcessor lanes** — NOT STARTED; **scope open, heavier than it reads.**
-  Assessment 2026-06-13: the rack (`Pattern.processors: Vec<NoteProcessor>` —
-  ScaleQuantize/Chord/Arpeggiator/Humanize) is `pub(crate)`, and the expansion
-  (`process_at_tick`/`expand_pitch`, `ExpansionBuffer`) is private + audio-thread /
-  RT-oriented. Surfacing "per-step contribution" in the GUI needs **new public API**
-  on `synth_sequencer` for an offline, GUI-callable expansion (or reuse of the
-  engine's offline-render path), plus a display design, plus — for "add/remove
-  mirrors T2" — a **rack-management UX** (adding a *configured* processor, not a bare
-  column). Decide before building: (a) read-only per-row contribution display only,
-  vs (b) also add/remove/configure the rack from the tracker. Recommend (a) first if
-  pursued; it's the value with the least surface.
+- [x] **NoteProcessor lanes (read-only contribution)** — SHIPPED 2026-06-13
+  (`64847fc`). A non-selectable **"NP" column** (shown only when the rack is
+  non-empty) renders the rack's expanded pitches per row, computed offline via the
+  already-`pub` `Pattern::expand_at_tick` (no new engine API was needed —
+  `processors()`/`expand_at_tick`/`ExpansionBuffer` were public). Header names the
+  rack (kinds joined). Row-resolution: samples at each row tick, so sub-row generated
+  events aren't shown (documented). User chose "read-only contribution first".
+- [ ] **NoteProcessor rack management (optional, not done)** — the heavier half of the
+  original bullet: add/remove/configure processors from the tracker ("add/remove
+  mirrors T2"). Needs a rack-management UX for *configured* processors (each kind has
+  its own config). Deferred — pursue only if the read-only view proves worth editing
+  in-place rather than via the existing NP rack UI.
 
 ---
 
