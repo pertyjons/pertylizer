@@ -4338,6 +4338,18 @@ impl SynthApp {
                     lane.add_point(point);
                 }
             }
+            UndoAction::AddAutomationLane { pattern_id, lane } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    pattern.add_automation_lane(lane.clone());
+                }
+            }
+            UndoAction::RemoveAutomationLane { pattern_id, lane } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    pattern.remove_automation_lane(&lane.target);
+                }
+            }
             UndoAction::AddModule {
                 instrument_id,
                 module_state,

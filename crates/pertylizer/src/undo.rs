@@ -207,6 +207,17 @@ pub(crate) enum UndoAction {
         new_value: synth_core::NormalizedValue,
         curve: synth_sequencer::CurveType,
     },
+    /// A whole automation lane was added (e.g. a new empty tracker column).
+    AddAutomationLane {
+        pattern_id: PatternId,
+        lane: synth_sequencer::AutomationLane,
+    },
+    /// A whole automation lane was removed (e.g. pruning empty tracker columns).
+    /// Carries the full lane so undo restores its points too.
+    RemoveAutomationLane {
+        pattern_id: PatternId,
+        lane: synth_sequencer::AutomationLane,
+    },
 
     // ── Module operations ──
     /// A module was added to an instrument (connections captured for undo round-trip).
@@ -595,6 +606,18 @@ impl UndoManager {
                 new_value: *old_value,
                 curve: *curve,
             },
+            UndoAction::AddAutomationLane { pattern_id, lane } => {
+                UndoAction::RemoveAutomationLane {
+                    pattern_id: *pattern_id,
+                    lane: lane.clone(),
+                }
+            }
+            UndoAction::RemoveAutomationLane { pattern_id, lane } => {
+                UndoAction::AddAutomationLane {
+                    pattern_id: *pattern_id,
+                    lane: lane.clone(),
+                }
+            }
             UndoAction::AddModule {
                 instrument_id,
                 module_state,

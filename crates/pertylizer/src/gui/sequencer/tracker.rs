@@ -21,12 +21,13 @@ use parking_lot::RwLock;
 use synth_core::NormalizedValue;
 use synth_engine::EngineHandle;
 use synth_sequencer::{
-    AutomationPoint, CurveType, Duration as SeqDuration, NoteLane, PatternTick, Pitch, Song,
+    AutomationLane, AutomationPoint, CurveType, Duration as SeqDuration, NoteLane, PatternTick,
+    Pitch, Song,
 };
 
 use super::{
     AutomationPointSnapshot, PianoRollData, PianoRollNote, SequencerViewState,
-    draw_pattern_instrument_transport, preview_note,
+    draw_automation_target_selector, draw_pattern_instrument_transport, preview_note,
 };
 use crate::gui::input::KEY_MAP;
 use crate::gui::instrument_rack::InstrumentUiState;
@@ -468,17 +469,15 @@ fn edit_voice_cell(
     drop(song_w);
 
     if let Some(add) = add {
-        if migration.is_empty() {
-            undo_manager.push(add);
-        } else {
-            undo_manager.push(UndoAction::Composite(vec![
-                UndoAction::SetLaneBatch {
-                    pattern_id: data.pattern_id,
-                    changes: migration,
-                },
-                add,
-            ]));
+        let mut actions: Vec<UndoAction> = Vec::new();
+        if !migration.is_empty() {
+            actions.push(UndoAction::SetLaneBatch {
+                pattern_id: data.pattern_id,
+                changes: migration,
+            });
         }
+        actions.push(add);
+        push_actions(undo_manager, actions);
     }
     preview_note(handle, pitch, view_state.default_velocity);
 
@@ -619,24 +618,25 @@ fn edit_automation_cell(
     false
 }
 
-/// "Remove empty voice columns": compact note lanes so there are no gaps, and drop
-/// any trailing empty columns the user added. When the pattern is lane-organized the
-/// stored lanes are renumbered densely (one `SetLaneBatch` undo step); the requested
-/// column minimum is lowered to the number of occupied lanes so empties disappear.
-/// On a not-yet-organized pattern the greedy layout is already dense, so only the
-/// requested minimum is reset (no note mutation).
-fn clean_empty_voice_columns(
+/// "Remove empty columns": compact note lanes so there are no gaps, drop any
+/// trailing empty voice columns the user added, and remove automation lanes with no
+/// points. Voice compaction renumbers stored lanes densely (when lane-organized);
+/// the requested column minimum is lowered to the occupied-lane count. All the
+/// resulting mutations are bundled into a single undo step.
+fn clean_empty_columns(
     data: &PianoRollData,
     song: &Arc<RwLock<Song>>,
     undo_manager: &mut UndoManager,
     view_state: &mut SequencerViewState,
     lane_of_note: &[usize],
 ) {
+    let mut actions: Vec<UndoAction> = Vec::new();
+
+    // ── Voice lanes: compact stored lanes densely (organized patterns only). ──
     // Distinct occupied display lanes, ascending → dense 0..k remap by position.
     let mut occupied: Vec<usize> = lane_of_note.to_vec();
     occupied.sort_unstable();
     occupied.dedup();
-
     if is_lane_organized(&data.notes) {
         let mut changes: Vec<(synth_sequencer::NoteId, NoteLane, NoteLane)> = Vec::new();
         for note in &data.notes {
@@ -656,14 +656,53 @@ fn clean_empty_voice_columns(
                 }
             }
             drop(song_w);
-            undo_manager.push(UndoAction::SetLaneBatch {
+            actions.push(UndoAction::SetLaneBatch {
                 pattern_id: data.pattern_id,
                 changes,
             });
         }
     }
-
     view_state.tracker_voice_columns = occupied.len();
+
+    // ── Automation lanes: remove the ones with no points. ──
+    let empty_targets: Vec<_> = data
+        .automation_lanes
+        .iter()
+        .filter(|l| l.points.is_empty())
+        .map(|l| l.target.clone())
+        .collect();
+    if !empty_targets.is_empty() {
+        let mut song_w = song.write();
+        if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+            for target in &empty_targets {
+                if let Some(removed) = pattern.remove_automation_lane(target) {
+                    actions.push(UndoAction::RemoveAutomationLane {
+                        pattern_id: data.pattern_id,
+                        lane: removed,
+                    });
+                }
+            }
+        }
+    }
+
+    // Bundle every mutation into one undo step (note compaction + lane removals are
+    // disjoint, so their order within the composite doesn't matter).
+    push_actions(undo_manager, actions);
+}
+
+/// Push a batch of undo actions as a single undo step: nothing on empty, the lone
+/// action directly, otherwise a `Composite`. Keeps undo granularity consistent
+/// across the tracker's bundled edits.
+fn push_actions(undo_manager: &mut UndoManager, actions: Vec<UndoAction>) {
+    match actions.len() {
+        0 => {}
+        1 => {
+            if let Some(action) = actions.into_iter().next() {
+                undo_manager.push(action);
+            }
+        }
+        _ => undo_manager.push(UndoAction::Composite(actions)),
+    }
 }
 
 /// Render the tracker view for one pattern. Voice cells accept note entry and
@@ -701,18 +740,29 @@ pub(crate) fn draw_tracker(
             is_playing,
         );
     });
-    // Column controls: add an empty voice column / prune empty columns.
-    let (add_voice, clean_cols) = ui
+    // Column controls: add an empty voice column, add an automation column for the
+    // selected target, or prune empty columns.
+    let (add_voice, add_auto, clean_cols) = ui
         .horizontal(|ui| {
-            let add = ui
+            let add_v = ui
                 .button("+ Voice")
                 .on_hover_text("Add an empty voice column for note entry")
                 .clicked();
+            ui.separator();
+            draw_automation_target_selector(ui, view_state, data, instruments);
+            let add_a = ui
+                .button("+ Auto")
+                .on_hover_text("Add an automation column for the selected target")
+                .clicked();
+            ui.separator();
             let clean = ui
                 .button("Clean")
-                .on_hover_text("Remove empty voice columns (compact lanes to close gaps)")
+                .on_hover_text(
+                    "Remove empty columns: compact voice lanes to close gaps and drop \
+                     empty automation lanes",
+                )
                 .clicked();
-            (add, clean)
+            (add_v, add_a, clean)
         })
         .inner;
     ui.separator();
@@ -739,8 +789,24 @@ pub(crate) fn draw_tracker(
     if add_voice {
         view_state.tracker_voice_columns = (n_lanes + 1).min(MAX_TRACKER_VOICE_COLUMNS);
     }
+    if add_auto && let Some(target) = view_state.selected_automation.clone() {
+        // Materialize the selected target as an empty lane (a new column), unless
+        // it already exists.
+        if !data.automation_lanes.iter().any(|l| l.target == target) {
+            let lane = AutomationLane::new(target);
+            let mut song_w = song.write();
+            if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                pattern.add_automation_lane(lane.clone());
+            }
+            drop(song_w);
+            undo_manager.push(UndoAction::AddAutomationLane {
+                pattern_id: data.pattern_id,
+                lane,
+            });
+        }
+    }
     if clean_cols {
-        clean_empty_voice_columns(data, song, undo_manager, view_state, &lane_of_note);
+        clean_empty_columns(data, song, undo_manager, view_state, &lane_of_note);
     }
 
     let mut notes_by_start_row: HashMap<usize, Vec<usize>> = HashMap::new();

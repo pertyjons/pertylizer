@@ -487,6 +487,22 @@ impl Pattern {
     ) -> Option<&AutomationLane> {
         self.automation.iter().find(|l| &l.target == target)
     }
+
+    /// Insert a complete automation lane, replacing any existing lane for the same
+    /// target. Used to restore a lane removed via undo.
+    pub fn add_automation_lane(&mut self, lane: AutomationLane) {
+        self.automation.retain(|l| l.target != lane.target);
+        self.automation.push(lane);
+    }
+
+    /// Remove the automation lane for a target, returning it (for undo).
+    pub fn remove_automation_lane(
+        &mut self,
+        target: &super::automation::AutomationTarget,
+    ) -> Option<AutomationLane> {
+        let pos = self.automation.iter().position(|l| &l.target == target)?;
+        Some(self.automation.remove(pos))
+    }
 }
 
 #[cfg(test)]
