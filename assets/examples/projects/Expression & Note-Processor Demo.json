@@ -1,0 +1,2675 @@
+{
+  "file_type": "project",
+  "version": "1.0",
+  "instruments": [
+    {
+      "id": 17,
+      "name": "Expr Lead",
+      "channel": 1,
+      "volume": 0.8,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description": "Demo voice for the per-note EXPRESSION patterns (bars 1-9): accent/ghost, gate, vibrato, glide, legato, probability, ornaments.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "patch": {
+        "name": "Expr Lead",
+        "version": "1.0",
+        "description": "Detuned 3-voice sawtooth lead → lowpass filter (slight drive) → ensemble chorus → tempo-synced ping-pong delay → plate reverb. Sustained, exposed tone chosen so per-note expression — vibrato, portamento/glissando, accent vs ghost, legato ties and ornaments — is clearly audible. Medium attack/release lets glides and vibrato breathe.",
+        "modules": [
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "anti_alias": "polyblep",
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": "exponential",
+              "frequency": 440.0,
+              "level": 1.0,
+              "pulse_width": 0.5,
+              "uni_detune": 12.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 3.0,
+              "waveform": "sawtooth",
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 3800.0,
+              "cv_amt": 1.0,
+              "drive": 1.2,
+              "env_amt": 0.25,
+              "key_track": 0.4,
+              "model": "standard",
+              "morph": 0.0,
+              "resonance": 0.25,
+              "type": "lowpass"
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 448.0,
+              "y": 320.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.02,
+              "dec_curve": 0.0,
+              "decay": 0.25,
+              "rel_curve": 0.0,
+              "release": 0.35,
+              "sustain": 0.75,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 832.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1184.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "dly-1",
+            "type": "delay",
+            "position": {
+              "x": 1536.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "feedback": 0.28,
+              "mix": 0.16,
+              "mode": "ping_pong",
+              "time": 0.273,
+              "tone": 0.45
+            }
+          },
+          {
+            "id": "rev-1",
+            "type": "reverb",
+            "position": {
+              "x": 1536.0,
+              "y": 544.0
+            },
+            "parameters": {
+              "damping": 0.5,
+              "decay": 0.45,
+              "diffusion": 0.5,
+              "low_cut": 80.0,
+              "mix": 0.22,
+              "pre_delay": 0.0,
+              "room_size": 0.45,
+              "width": 1.0
+            }
+          },
+          {
+            "id": "enc-1",
+            "type": "ensemble_chorus",
+            "position": {
+              "x": 1536.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "base_delay": 12.0,
+              "depth": 1.1,
+              "mix": 0.3,
+              "noise": 0.1,
+              "rate": 0.5,
+              "stereo_width": 1.0,
+              "tone": 0.4,
+              "voices": 2.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1986.0,
+            "height": 1044.0
+          },
+          "effect_chain_order": [
+            "enc-1",
+            "dly-1",
+            "rev-1"
+          ]
+        }
+      }
+    },
+    {
+      "id": 18,
+      "name": "Poly Keys",
+      "channel": 1,
+      "volume": 0.75,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description": "Demo voice for the pattern NOTE-PROCESSOR patterns (bars 10-18): scale-quantize, chord, chord+strum, chord→arpeggiator, humanize.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "patch": {
+        "name": "Poly Keys",
+        "version": "1.0",
+        "description": "Soft triangle-wave poly synth with a plucky envelope and an open lowpass, into a 3-voice Juno-style ensemble chorus → lush hall reverb. Clean, pitched tone with fast transients so individual chord tones and arpeggiator steps stay distinct while still sounding rich. Built for the note-processor demos (quantize / chord / strum / arp / humanize).",
+        "modules": [
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "anti_alias": "polyblep",
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": "exponential",
+              "frequency": 440.0,
+              "level": 1.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": "triangle",
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 5200.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "env_amt": 0.25,
+              "key_track": 0.5,
+              "model": "standard",
+              "morph": 0.0,
+              "resonance": 0.15,
+              "type": "lowpass"
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 448.0,
+              "y": 320.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.005,
+              "dec_curve": 0.0,
+              "decay": 0.3,
+              "rel_curve": 0.0,
+              "release": 0.25,
+              "sustain": 0.35,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 832.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1184.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "rev-1",
+            "type": "reverb",
+            "position": {
+              "x": 1536.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "damping": 0.4,
+              "decay": 0.6,
+              "diffusion": 0.5,
+              "low_cut": 80.0,
+              "mix": 0.32,
+              "pre_delay": 0.0,
+              "room_size": 0.7,
+              "width": 1.0
+            }
+          },
+          {
+            "id": "enc-1",
+            "type": "ensemble_chorus",
+            "position": {
+              "x": 1536.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "base_delay": 12.0,
+              "depth": 1.4,
+              "mix": 0.42,
+              "noise": 0.1,
+              "rate": 0.6,
+              "stereo_width": 1.0,
+              "tone": 0.4,
+              "voices": 3.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1986.0,
+            "height": 820.0
+          },
+          "effect_chain_order": [
+            "enc-1",
+            "rev-1"
+          ]
+        }
+      }
+    }
+  ],
+  "active_instrument_id": 18,
+  "author": {
+    "name": "Per Jonsson",
+    "email": "pertyjons@gmail.com"
+  },
+  "song": {
+    "name": "Expression & Note-Processor Demo",
+    "author": "",
+    "description": "A guided walkthrough of Pertylizer's per-note expressions and pattern note-processors. Play from the start. Bars 1-9 (Lead): accent/ghost, gate (staccato→tenuto), vibrato, glide (portamento+glissando), legato (dry→tied), probability (dry→stutter), ornaments. Bars 10-18 (Keys): scale-quantize, chord, chord+strum, chord→arpeggiator and humanize — each processor demo is preceded by a dry \"before\" bar so you hear the contrast.",
+    "patterns": [
+      {
+        "id": 0,
+        "name": "1. Accent + Ghost",
+        "description": "Expression: accent (velocity x1.7 on the beats) vs ghost (forced-soft offbeats).",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 480,
+            "pitch": 60,
+            "velocity": 0.62992126,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": 1.7,
+              "gate": null,
+              "ghost": false,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 480,
+            "duration": 480,
+            "pitch": 60,
+            "velocity": 0.62992126,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": true,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 960,
+            "duration": 480,
+            "pitch": 64,
+            "velocity": 0.62992126,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": 1.7,
+              "gate": null,
+              "ghost": false,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 1440,
+            "duration": 480,
+            "pitch": 64,
+            "velocity": 0.62992126,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": true,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 1920,
+            "duration": 480,
+            "pitch": 67,
+            "velocity": 0.62992126,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": 1.7,
+              "gate": null,
+              "ghost": false,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 2400,
+            "duration": 480,
+            "pitch": 67,
+            "velocity": 0.62992126,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": true,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 6,
+            "start": 2880,
+            "duration": 480,
+            "pitch": 64,
+            "velocity": 0.62992126,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": 1.7,
+              "gate": null,
+              "ghost": false,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 7,
+            "start": 3360,
+            "duration": 480,
+            "pitch": 60,
+            "velocity": 0.62992126,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": true,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 8
+      },
+      {
+        "id": 1,
+        "name": "2. Gate (staccato to tenuto)",
+        "description": "Expression: gate fraction — staccato (0.15) lengthening to tenuto (1.0).",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 960,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": 0.15,
+              "ghost": false,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 960,
+            "pitch": 62,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": 0.4,
+              "ghost": false,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 960,
+            "pitch": 64,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": 0.7,
+              "ghost": false,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 960,
+            "pitch": 67,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": 1.0,
+              "ghost": false,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 4
+      },
+      {
+        "id": 2,
+        "name": "3. Vibrato",
+        "description": "Expression: per-note vibrato — sine w/ 200ms delay, then deeper triangle.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 1920,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": {
+                "depth": 0.4,
+                "rate": 5.5,
+                "delay": 200.0,
+                "shape": "Sine"
+              },
+              "accent": null,
+              "gate": null,
+              "ghost": false,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 1920,
+            "duration": 1920,
+            "pitch": 67,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": {
+                "depth": 0.8,
+                "rate": 6.5,
+                "delay": 0.0,
+                "shape": "Triangle"
+              },
+              "accent": null,
+              "gate": null,
+              "ghost": false,
+              "probability": null
+            },
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 2
+      },
+      {
+        "id": 3,
+        "name": "4. Glide (portamento + glissando)",
+        "description": "Expression: glide — continuous portamento up, then stepped chromatic glissando down.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 1920,
+            "pitch": 67,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": {
+              "from": {
+                "Pitch": 55
+              },
+              "time": 350.0,
+              "interp": "Continuous"
+            },
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 1920,
+            "duration": 1920,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": {
+              "from": {
+                "Pitch": 72
+              },
+              "time": 350.0,
+              "interp": "Stepped"
+            },
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 2
+      },
+      {
+        "id": 4,
+        "name": "5. Legato (tied notes)",
+        "description": "A/B (with feature): legato — first four notes tied, so the envelope does NOT retrigger; only the pitch changes. Compare with the previous bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 720,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": true,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 720,
+            "duration": 720,
+            "pitch": 62,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": true,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1440,
+            "duration": 720,
+            "pitch": 64,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": true,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2160,
+            "duration": 720,
+            "pitch": 65,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": true,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 2880,
+            "duration": 960,
+            "pitch": 67,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 5
+      },
+      {
+        "id": 5,
+        "name": "6. Probability",
+        "description": "A/B (with feature): probability — beat anchors stay at 1.0, offbeats at 0.5, so the riff stutters differently each pass. Compare with the previous bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 480,
+            "pitch": 60,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": false,
+              "probability": 1.0
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 480,
+            "duration": 480,
+            "pitch": 64,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": false,
+              "probability": 0.5
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 960,
+            "duration": 480,
+            "pitch": 67,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": false,
+              "probability": 0.5
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 1440,
+            "duration": 480,
+            "pitch": 64,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": false,
+              "probability": 0.5
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 1920,
+            "duration": 480,
+            "pitch": 60,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": false,
+              "probability": 1.0
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 2400,
+            "duration": 480,
+            "pitch": 64,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": false,
+              "probability": 0.5
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 6,
+            "start": 2880,
+            "duration": 480,
+            "pitch": 67,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": false,
+              "probability": 0.5
+            },
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 7,
+            "start": 3360,
+            "duration": 480,
+            "pitch": 71,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": {
+              "vibrato": null,
+              "accent": null,
+              "gate": null,
+              "ghost": false,
+              "probability": 0.5
+            },
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 8
+      },
+      {
+        "id": 6,
+        "name": "7. Ornaments (flam/drag/roll/grace)",
+        "description": "Expression: ornaments — flam, drag, 6-hit roll, grace note (a tone above).",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 960,
+            "pitch": 62,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 2,
+              "spacing": 70,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 960,
+            "pitch": 64,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 3,
+              "spacing": 60,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 960,
+            "pitch": 67,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 6,
+              "spacing": 110,
+              "spacing_curve": "Even",
+              "dynamics": "Flat",
+              "placement": "OnBeat",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.6
+            },
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 960,
+            "pitch": 69,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 2,
+              "spacing": 140,
+              "spacing_curve": "Even",
+              "dynamics": "Flat",
+              "placement": "LeadIn",
+              "pitch_offset": 2.0,
+              "grace_gate": 0.4
+            },
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 4
+      },
+      {
+        "id": 7,
+        "name": "8. ScaleQuantize (chromatic to C major)",
+        "description": "A/B (with processor): ScaleQuantize snaps that same chromatic run to C major — every note now in key. Compare with the previous bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 307,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 320,
+            "duration": 307,
+            "pitch": 61,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 640,
+            "duration": 307,
+            "pitch": 62,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 960,
+            "duration": 307,
+            "pitch": 63,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 1280,
+            "duration": 307,
+            "pitch": 64,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 1600,
+            "duration": 307,
+            "pitch": 65,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 6,
+            "start": 1920,
+            "duration": 307,
+            "pitch": 66,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 7,
+            "start": 2240,
+            "duration": 307,
+            "pitch": 67,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 8,
+            "start": 2560,
+            "duration": 307,
+            "pitch": 68,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 9,
+            "start": 2880,
+            "duration": 307,
+            "pitch": 69,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 10,
+            "start": 3200,
+            "duration": 307,
+            "pitch": 70,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 11,
+            "start": 3520,
+            "duration": 307,
+            "pitch": 71,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [
+          {
+            "ScaleQuantize": {
+              "root": 0,
+              "mask": 2741
+            }
+          }
+        ],
+        "next_note_id": 12
+      },
+      {
+        "id": 8,
+        "name": "9. Chord (1 note to triad)",
+        "description": "A/B (with processor): Chord expands each of those single notes into a major triad. Compare with the previous bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 960,
+            "pitch": 48,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 960,
+            "pitch": 53,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 960,
+            "pitch": 55,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 960,
+            "pitch": 48,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [
+          {
+            "Chord": {
+              "intervals": [
+                0,
+                4,
+                7,
+                0,
+                0,
+                0,
+                0,
+                0
+              ],
+              "count": 3,
+              "strum": 0,
+              "direction": "Up"
+            }
+          }
+        ],
+        "next_note_id": 4
+      },
+      {
+        "id": 9,
+        "name": "10. Chord + Strum",
+        "description": "Note processor: Chord + strum — a 4-tone chord (root/3rd/5th/octave) struck tone-by-tone upward instead of as a block.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 1920,
+            "pitch": 48,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 1920,
+            "duration": 1920,
+            "pitch": 55,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [
+          {
+            "Chord": {
+              "intervals": [
+                0,
+                4,
+                7,
+                12,
+                0,
+                0,
+                0,
+                0
+              ],
+              "count": 4,
+              "strum": 80,
+              "direction": "Up"
+            }
+          }
+        ],
+        "next_note_id": 2
+      },
+      {
+        "id": 10,
+        "name": "11. Chord + Arpeggiator",
+        "description": "A/B (with processors): one held root per chord, then Chord → Arpeggiator arpeggiates the whole triad up across 2 octaves in 16ths. Compare with the previous bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 1920,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 1920,
+            "duration": 1920,
+            "pitch": 65,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [
+          {
+            "Chord": {
+              "intervals": [
+                0,
+                4,
+                7,
+                0,
+                0,
+                0,
+                0,
+                0
+              ],
+              "count": 3,
+              "strum": 0,
+              "direction": "Up"
+            }
+          },
+          {
+            "Arpeggiator": {
+              "mode": "Up",
+              "rate": "Sixteenth",
+              "octaves": 2,
+              "gate": 0.75,
+              "swing": 0.0,
+              "velocity": "AsPlayed",
+              "latch": false
+            }
+          }
+        ],
+        "next_note_id": 2
+      },
+      {
+        "id": 11,
+        "name": "12. Humanize",
+        "description": "A/B (with processor): Humanize adds seeded velocity + note-length variation to those same 16ths — looser, more human, still reproducible.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 240,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 480,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 720,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 960,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 1200,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 6,
+            "start": 1440,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 7,
+            "start": 1680,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 8,
+            "start": 1920,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 9,
+            "start": 2160,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 10,
+            "start": 2400,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 11,
+            "start": 2640,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 12,
+            "start": 2880,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 13,
+            "start": 3120,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 14,
+            "start": 3360,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 15,
+            "start": 3600,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [
+          {
+            "Humanize": {
+              "velocity": 0.35,
+              "gate": 0.25,
+              "seed": 12345
+            }
+          }
+        ],
+        "next_note_id": 16
+      },
+      {
+        "id": 12,
+        "name": "5a. Legato OFF (re-triggered)",
+        "description": "A/B reference (dry): the same rising phrase with NO legato — every note re-triggers the envelope. Listen, then compare with the next bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 720,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 720,
+            "duration": 720,
+            "pitch": 62,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1440,
+            "duration": 720,
+            "pitch": 64,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2160,
+            "duration": 720,
+            "pitch": 65,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 2880,
+            "duration": 960,
+            "pitch": 67,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 5
+      },
+      {
+        "id": 13,
+        "name": "6a. Probability OFF (every note plays)",
+        "description": "A/B reference (dry): probability OFF — every note plays, full riff. Compare with the next bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 480,
+            "pitch": 60,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 480,
+            "duration": 480,
+            "pitch": 64,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 960,
+            "duration": 480,
+            "pitch": 67,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 1440,
+            "duration": 480,
+            "pitch": 64,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 1920,
+            "duration": 480,
+            "pitch": 60,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 2400,
+            "duration": 480,
+            "pitch": 64,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 6,
+            "start": 2880,
+            "duration": 480,
+            "pitch": 67,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 7,
+            "start": 3360,
+            "duration": 480,
+            "pitch": 71,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 8
+      },
+      {
+        "id": 14,
+        "name": "8a. No quantize (chromatic, out of key)",
+        "description": "A/B reference (dry): a chromatic run with NO processor — deliberately out of key. Compare with the next bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 307,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 320,
+            "duration": 307,
+            "pitch": 61,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 640,
+            "duration": 307,
+            "pitch": 62,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 960,
+            "duration": 307,
+            "pitch": 63,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 1280,
+            "duration": 307,
+            "pitch": 64,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 1600,
+            "duration": 307,
+            "pitch": 65,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 6,
+            "start": 1920,
+            "duration": 307,
+            "pitch": 66,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 7,
+            "start": 2240,
+            "duration": 307,
+            "pitch": 67,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 8,
+            "start": 2560,
+            "duration": 307,
+            "pitch": 68,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 9,
+            "start": 2880,
+            "duration": 307,
+            "pitch": 69,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 10,
+            "start": 3200,
+            "duration": 307,
+            "pitch": 70,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 11,
+            "start": 3520,
+            "duration": 307,
+            "pitch": 71,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 12
+      },
+      {
+        "id": 15,
+        "name": "9a. No chord (single notes)",
+        "description": "A/B reference (dry): single bass notes, NO processor. Compare with the next bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 960,
+            "pitch": 48,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 960,
+            "pitch": 53,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 960,
+            "pitch": 55,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 960,
+            "pitch": 48,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 4
+      },
+      {
+        "id": 16,
+        "name": "11a. Block chord (before arp)",
+        "description": "A/B reference (dry): the C and F major triads played as plain block chords, NO processor. Compare with the next bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 1920,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 0,
+            "duration": 1920,
+            "pitch": 64,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 0,
+            "duration": 1920,
+            "pitch": 67,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 1920,
+            "duration": 1920,
+            "pitch": 65,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 1920,
+            "duration": 1920,
+            "pitch": 69,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 1920,
+            "duration": 1920,
+            "pitch": 72,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 6
+      },
+      {
+        "id": 17,
+        "name": "12a. No humanize (robotic)",
+        "description": "A/B reference (dry): 16 identical 16th notes, NO processor — machine-perfect and stiff. Compare with the next bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 240,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 480,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 720,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 960,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 1200,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 6,
+            "start": 1440,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 7,
+            "start": 1680,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 8,
+            "start": 1920,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 9,
+            "start": 2160,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 10,
+            "start": 2400,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 11,
+            "start": 2640,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 12,
+            "start": 2880,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 13,
+            "start": 3120,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 14,
+            "start": 3360,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 15,
+            "start": 3600,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 16
+      }
+    ],
+    "next_pattern_id": 18,
+    "tracks": [
+      {
+        "id": 0,
+        "name": "Lead (expressions)",
+        "description": "",
+        "instrument": 17,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      {
+        "id": 1,
+        "name": "Keys (note processors)",
+        "description": "",
+        "instrument": 18,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      }
+    ],
+    "next_track_id": 2,
+    "arrangement": [
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 0,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 0,
+        "start": 3840,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 0,
+        "start": 7680,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 3,
+        "track_id": 0,
+        "start": 11520,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 12,
+        "track_id": 0,
+        "start": 15360,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 0,
+        "start": 19200,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 13,
+        "track_id": 0,
+        "start": 23040,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 0,
+        "start": 26880,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 6,
+        "track_id": 0,
+        "start": 30720,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 14,
+        "track_id": 1,
+        "start": 34560,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 7,
+        "track_id": 1,
+        "start": 38400,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 15,
+        "track_id": 1,
+        "start": 42240,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 8,
+        "track_id": 1,
+        "start": 46080,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 9,
+        "track_id": 1,
+        "start": 49920,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 16,
+        "track_id": 1,
+        "start": 53760,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 10,
+        "track_id": 1,
+        "start": 57600,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 17,
+        "track_id": 1,
+        "start": 61440,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 11,
+        "track_id": 1,
+        "start": 65280,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      }
+    ],
+    "tempo_changes": [],
+    "time_signature_changes": [],
+    "default_tempo": 110.0,
+    "default_time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 64,
+      "ticks_per_row": 240
+    },
+    "next_return_bus_id": 0
+  },
+  "global": {
+    "master_volume": 0.8,
+    "octave_offset": 0,
+    "glide_time": 0.0
+  }
+}
