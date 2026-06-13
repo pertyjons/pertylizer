@@ -37,6 +37,12 @@ use crate::undo::{UndoAction, UndoManager};
 /// each tracker row carries text.
 const TRACKER_ROW_HEIGHT: f32 = 18.0;
 
+/// Upper bound on voice columns. Far above any realistic single-instrument
+/// polyphony, and well under `NoteLane`'s u8 ceiling (255) so a column index can
+/// never saturate `NoteLane::from(usize)` and silently collapse two columns onto
+/// one stored lane.
+const MAX_TRACKER_VOICE_COLUMNS: usize = 32;
+
 // ============================================================================
 // View adapter — data → display mapping
 //
@@ -613,6 +619,53 @@ fn edit_automation_cell(
     false
 }
 
+/// "Remove empty voice columns": compact note lanes so there are no gaps, and drop
+/// any trailing empty columns the user added. When the pattern is lane-organized the
+/// stored lanes are renumbered densely (one `SetLaneBatch` undo step); the requested
+/// column minimum is lowered to the number of occupied lanes so empties disappear.
+/// On a not-yet-organized pattern the greedy layout is already dense, so only the
+/// requested minimum is reset (no note mutation).
+fn clean_empty_voice_columns(
+    data: &PianoRollData,
+    song: &Arc<RwLock<Song>>,
+    undo_manager: &mut UndoManager,
+    view_state: &mut SequencerViewState,
+    lane_of_note: &[usize],
+) {
+    // Distinct occupied display lanes, ascending → dense 0..k remap by position.
+    let mut occupied: Vec<usize> = lane_of_note.to_vec();
+    occupied.sort_unstable();
+    occupied.dedup();
+
+    if is_lane_organized(&data.notes) {
+        let mut changes: Vec<(synth_sequencer::NoteId, NoteLane, NoteLane)> = Vec::new();
+        for note in &data.notes {
+            let old = note.lane.as_usize();
+            // `occupied` lists every used lane, so the position is always found.
+            if let Some(new) = occupied.iter().position(|&l| l == old)
+                && new != old
+            {
+                changes.push((note.note_id, note.lane, NoteLane::from(new)));
+            }
+        }
+        if !changes.is_empty() {
+            let mut song_w = song.write();
+            if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                for (id, _old, new) in &changes {
+                    pattern.set_note_lane(*id, *new);
+                }
+            }
+            drop(song_w);
+            undo_manager.push(UndoAction::SetLaneBatch {
+                pattern_id: data.pattern_id,
+                changes,
+            });
+        }
+    }
+
+    view_state.tracker_voice_columns = occupied.len();
+}
+
 /// Render the tracker view for one pattern. Voice cells accept note entry and
 /// delete at the cursor; the toolbar row (instrument selector + mini-transport) is
 /// the same shared control the piano roll uses.
@@ -648,6 +701,20 @@ pub(crate) fn draw_tracker(
             is_playing,
         );
     });
+    // Column controls: add an empty voice column / prune empty columns.
+    let (add_voice, clean_cols) = ui
+        .horizontal(|ui| {
+            let add = ui
+                .button("+ Voice")
+                .on_hover_text("Add an empty voice column for note entry")
+                .clicked();
+            let clean = ui
+                .button("Clean")
+                .on_hover_text("Remove empty voice columns (compact lanes to close gaps)")
+                .clicked();
+            (add, clean)
+        })
+        .inner;
     ui.separator();
 
     let tpr = u32::from(data.ticks_per_row).max(1);
@@ -663,8 +730,19 @@ pub(crate) fn draw_tracker(
     }
 
     // Assign each note to a voice lane and index notes by their start row so each
-    // cell lookup is cheap.
-    let (lane_of_note, n_lanes) = display_lanes(&data.notes, tpr);
+    // cell lookup is cheap. The shown column count honors the user's requested
+    // minimum (Add voice column) on top of what the notes need.
+    let (lane_of_note, derived_lanes) = display_lanes(&data.notes, tpr);
+    let n_lanes = derived_lanes.max(view_state.tracker_voice_columns).max(1);
+
+    // Column add/prune (applied to the song/view; reflected next frame).
+    if add_voice {
+        view_state.tracker_voice_columns = (n_lanes + 1).min(MAX_TRACKER_VOICE_COLUMNS);
+    }
+    if clean_cols {
+        clean_empty_voice_columns(data, song, undo_manager, view_state, &lane_of_note);
+    }
+
     let mut notes_by_start_row: HashMap<usize, Vec<usize>> = HashMap::new();
     for (idx, note) in data.notes.iter().enumerate() {
         let row = (note.start_tick.0 / tpr) as usize;

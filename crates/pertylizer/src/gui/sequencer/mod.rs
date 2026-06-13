@@ -268,6 +268,11 @@ pub struct SequencerViewState {
     /// `Some` while the user is typing a value (digits/`.`); committed on Enter,
     /// discarded on Esc or when the cursor leaves the cell. `None` when idle.
     tracker_value_buffer: Option<String>,
+    /// User-requested minimum number of tracker voice columns. The actual column
+    /// count is `max(derived_from_notes, this, 1)`; "Add voice column" raises it so
+    /// an empty lane appears for entry, "Remove empty columns" lowers it. `0` = just
+    /// derive from the notes.
+    tracker_voice_columns: usize,
 }
 
 impl SequencerViewState {
@@ -321,6 +326,7 @@ impl SequencerViewState {
             loop_end_tick: None,
             tracker_cursor: tracker::TrackerCursor::default(),
             tracker_value_buffer: None,
+            tracker_voice_columns: 0,
         }
     }
 }
