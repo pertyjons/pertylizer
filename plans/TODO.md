@@ -4,127 +4,12 @@
 
 ### 0.1 Misc findings
 
-- [x] **★ HIGH — RESOLVED (channel-strip Phases 1–2): `SequencerTrack.pan`/`.volume`
-  now reach audio.** A per-channel bus stage applies the track fader (composed with
-  instrument vol/pan) post-FX; Track Volume/Pan/Mute automation is wired too. See
-  `docs/history.md`. The design discussion below is historical (kept for context).
-  Original text: **`SequencerTrack.pan` and `.volume` are stored but never
-  applied to audio output.** Discovered while migrating `track.pan` to
-  `BipolarValue` (commit `61e46e1`). The audio thread (`sequencer_engine.rs`)
-  only reads `track.is_audible(any_solo)` for mute/solo gating and routes
-  notes via `track.instrument`. Pan and volume per *track* are then ignored
-  — the only pan/volume that actually reaches the bus is at the *instrument*
-  level (`InstrumentState.pan`/`.volume` → `Gain::from_pan` in
-  `instrument.rs:1295`). The GUI slider, MCP `set_track_mixer` (pan/volume),
-  and the `track.volume`/`.pan` storage round-trip cleanly through save/load,
-  but the values do nothing audibly. Likely fix: in `sequencer_engine.rs`
-  around line ~358, multiply the dispatched note's velocity by
-  `track.volume.as_f32()` and apply `Gain::from_pan(track.pan)` either by
-  attenuating the routed note's velocity asymmetrically or — cleaner — by
-  applying a per-track stereo gain on the instrument's output bus before
-  summing. Worth deciding whether track-pan should override or compose with
-  instrument-pan (probably compose: `final_pan = clamp(inst_pan + track_pan, -1, 1)`).
-  Also: **`SequencerTrack.mode: TrackMode` is dead** — the enum has a single
-  `Polyphonic` variant and is never read anywhere; either remove it or land
-  the planned `Mono` / `Legato` / `Unison` variants and wire them into voice
-  allocation per track (analogous to `Instrument`'s `AllocationMode`).
-  **Audit follow-up:** sweep every other domain struct for the same pattern.
-  Candidates worth checking: `Pattern.*` (row_resolution, automation lanes —
-  do they all reach the engine?), `Instrument.*` (some fields like
-  `velocity_amp_sensitivity` / `velocity_filter_sensitivity` were added but
-  may still be unwired), `PatternPlacement.length_override` (added in v0.281,
-  confirmed used), AWE-side material/room fields. A small `cargo run --bin
-  audit_dormant_fields` style check — or just a grep for every `pub` field on
-  a domain struct and a hand-trace into the audio path — would surface these.
-
-  **Design findings (2026-05-27 — "model A" below was the one IMPLEMENTED).**
-  Traced the full path before touching code. Notes route to *instruments* by
-  `SeqInstrumentId`; the instrument is the audio-producing/mixing entity, and its
-  `volume`/`pan` are applied **post-effect-chain** at the output mix
-  (`Instrument::stereo_gain`, `instrument.rs:1294`; consumed in the mix loop
-  `instrument.rs:1280`). Track vol/pan never enter this path. Routing happens in
-  `route_sequencer_events` (`synth_engine.rs:2415`); the `Parameter` arm
-  (`:2469`) already sets instrument vol/pan via `set_volume`/`set_pan`, so that
-  is the natural write point. Per-voice panning already exists in the voice-sum
-  loop (`instrument.rs:1219`, used by the spatial bank), so a per-voice path is
-  *technically* available too.
-
-  - **How real DAWs do it (the consistent model).** Channel strip = instrument →
-    insert FX → **volume fader (post-FX)** → pan → sends → master. Crucially:
-    (1) track *is* the channel — there is no separate track-volume vs
-    instrument-volume, it's one fader; (2) the fader is post-FX (pulling it down
-    dims the reverb tail); (3) **volume ≠ velocity** — velocity is per-note (sets
-    timbre/attack at note-on, already correct here), the fader is a continuous
-    *post-synth* channel control. Automation is not a separate math layer: it
-    writes to the *same control, at the same point in the signal path*, that the
-    user would turn by hand. This gives one rule covering all automation targets.
-  - **Implication: TODO suggestion (a) above is the wrong model.** Multiplying the
-    dispatched note's velocity by `track.volume` would alter timbre via velocity
-    sensitivity. Track volume is a fader, not a velocity scaler.
-  - **The real ambiguity is N tracks → 1 instrument**, not "one pattern on two
-    tracks". The latter (two placements of pattern P on tracks A/B with different
-    instruments) is legitimate *layering* and already works — each placement
-    routes through its own track's instrument. The hard case is two tracks
-    pointing at the *same* instrument: doubled notes + undefined "which fader".
-    The DAW channel-strip convention (1 track ↔ 1 instrument) *removes* this case
-    by construction — layering uses two instruments, not a shared one.
-  - **Three candidate models.**
-    - **A — per-instrument post-FX gain (recommended).** Compose track vol/pan
-      with instrument vol/pan in `stereo_gain()`:
-      `gain = inst.vol × track.vol`, `pan = clamp(inst.pan + track.pan, -1, 1)`.
-      All Volume/Pan automation (track *and* instrument) writes to this same
-      post-FX stage → trivially consistent, sets up §0.1 automation item and §2.1
-      tempo. DAW-correct. Imperfect only when tracks share one instrument
-      (define as "last routed track wins per block").
-    - **B — per-voice gain/pan.** Carry track vol/pan in `SequencerEvent::NoteOn`,
-      apply per voice (like the spatial pan). Correct under instrument-sharing,
-      *but* lands **pre-effect-chain** (track volume changes reverb send level)
-      and won't affect already-ringing voices on a live fader move — i.e. *not*
-      how a DAW fader behaves. Rejected as inconsistent with the fader model.
-    - **C — full per-track output bus.** A real channel bus per track. Correct in
-      all cases but needs per-voice track-tagging to split a shared instrument's
-      output across buses, plus duplicated effect chains. Large rework, not
-      justified now.
-  - **Open decision (why this is deferred).** Whether to also do the deeper
-    *struct merge* — collapse `SequencerTrack` + `Instrument` into one channel
-    strip (1 instrument per track). That would make per-not `note.instrument`
-    redundant (track instrument already overrides it via
-    `effective_instrument = track.instrument.unwrap_or(note.instrument)`,
-    `sequencer_engine.rs:443`) and remove the "track has no instrument →
-    per-note multitimbral routing" mode entirely. Bigger refactor: deprecate
-    per-note instrument, guarantee track→instrument, migrate save/load + MCP.
-  - **Recommended split (when picked up).** (1) *Now:* implement model A — compose
-    track vol/pan post-FX in `stereo_gain`, route via the existing
-    `route_sequencer_events` path; assume channel-strip semantics (1 track ↔ 1
-    instrument) as idiomatic, document shared-instrument as last-wins. This fixes
-    the bug and gives the automation hook. (2) *Later, separate session:* the full
-    struct merge above. The two are independent — A does not require the merge.
-- [x] **★ HIGH — mostly RESOLVED: pattern automation targets now reach the engine.**
-  Instrument macros (Automation A1), generic `AutomationTarget::Module` (A2), and Track
-  Volume/Pan/Mute + Global MasterVolume (channel-strip Phase 2) all sound now.
-  `Global(Tempo)` was removed (use the tempo map — see §2.1). Still open:
-  `Global(Swing)`/`Track(Solo)` (no engine implementation). Historical detail:
-  Resolves the audit follow-up above ("automation lanes — do they all reach the engine?").
-  The automation system (`synth_sequencer/src/automation.rs`) defines
-  `AutomationTarget::{Instrument, Track, Global}` covering 8 instrument params
-  (`AutoInstrumentParam::ALL` — Volume, Pan, FilterCutoff, FilterResonance, Attack, Decay,
-  Sustain, Release), 4 track params (Volume, Pan, Mute, Solo) and (at the time) 3 global
-  params (Tempo — since removed, see §2.1; MasterVolume; Swing). The sequencer reads every lane per tick
-  (`sequencer_engine.rs:379` / `:454` via `lane.value_at`), deduplicates, and emits
-  `SequencerEvent::Parameter` (`sequencer_engine.rs:504`). But the engine handler
-  (`synth_engine.rs:2469`) only matches `AutomationTarget::Instrument`, and within it only
-  `Volume` (`set_volume`) and `Pan` (`set_pan`) — every other instrument param hits
-  `_ => {}` (comment: "requires module routing (future)"), and `Track` / `Global` targets
-  are not matched at all. Net effect: the automation-lane ComboBox
-  (`gui/sequencer/mod.rs:3309`) offers all 8 instrument params for the selected instrument,
-  so a user can draw a Filter Cutoff / Resonance / ADSR curve and hear nothing. Two fixes:
-  (a) route the non-Volume/Pan instrument params through the same per-module parameter path
-  `set_parameter` uses (map `AutoInstrumentParam::FilterCutoff` → the instrument's filter
-  module cutoff param, etc.) — this needs the module routing the comment defers;
-  (b) add match arms for `Global(MasterVolume)` and `Track { .. }` — though track automation
-  shares the same missing per-track output bus as the static `track.pan`/`.volume` item above,
-  so land that plumbing first. (`Global(Tempo)` was later removed rather than wired — tempo
-  lives in the song tempo map; see §2.1. `Global(Swing)` remains unimplemented.)
+- [ ] **Swing / Track-Solo automation unimplemented.** Most automation targets now
+  reach the engine (instrument macros, generic `AutomationTarget::Module`, Track
+  Volume/Pan/Mute, Global MasterVolume — all shipped via channel-strip Phases 1–2).
+  `Global(Tempo)` was removed in favour of the tempo map (see §2.1). Still no engine
+  implementation for `Global(Swing)` and `Track(Solo)` — lanes drawn for those targets
+  are silent no-ops. Either wire them or drop the variants.
 - [ ] **★ HIGH: expand Sub Oscillator waveform set from 3 to 6.** `SubOscWaveform`
   (`crates/synth_core/src/params/sub_osc.rs:13`) currently exposes only
   `Sine / Square / Pulse25`, while the main `Oscillator` exposes 6
@@ -133,104 +18,29 @@
   from `Pulse` (Pulse25 = fixed 25 % duty, dedicated bass shape — Pulse
   needs a PulseWidth param that the lean Sub Osc workflow deliberately
   skips). The waveform-selector widget already filters by descriptor
-  choices (`gui/widgets/waveform.rs::WaveformType::from_id`, landed in
-  commit `177cb0e`) so the GUI picks up the new buttons automatically as
-  long as `WaveformType::from_id` covers the new ids. Touch points:
-  `sub_osc.rs:23-55` (variants + `ALL` + `name` + `id` + `to_choices` +
-  rendering branch in `generate_sample`), `WaveformType::from_id`
-  (mappings for `triangle`/`sawtooth`/`dsf_saw` — already exist), and any
-  example projects that pin Sub Osc waveform via numeric index (resaved
-  to string form in `f7a6121` so the migration is free). No save-format
-  bump required; existing `"sine"` / `"square"` / `"pulse25"` keep
-  loading.
-- [ ] **Follow-up: remove dead modules inside patch graphs.** Original §0.1 entry included this as
-  a stretch goal — modules not reverse-reachable from `StereoOutput` (and any sidechain source)
-  through `connections` should also go in `optimize_project`. Bigger scope (needs graph traversal
-  per instrument); pick up later.
-- [x] **LPC Vocoder: missing synthesis gain + auto-vocoder positive feedback.** The
-  `Vocoder` effect (`crates/synth_modules/src/effects/vocoder.rs`) is "stable" but
-  unmusical on resonant inputs — it amplified the `Formant Voice` patch by ~25× and
-  produced a -0 dB peak at 18–20 kHz in the §0.1 Formant Voice investigation. Two
-  concrete bugs:
-  (a) **No gain factor `G` from LPC analysis.** The canonical LPC synthesis filter
-  is `y[n] = G·x[n] − Σ a_k·y[n−k]` where `G = sqrt(error)` (residual energy).
-  `levinson_durbin_fixed` (`math.rs:825`) computes `error` but never returns it, and
-  `lpc_analysis_fixed` (`math.rs:869`) discards it. `Vocoder::filter_sample`
-  (`vocoder.rs:79`) uses `G = 1` implicit. Fix: have `lpc_analysis_fixed` return the
-  final `error`, store it on the `Vocoder`, and multiply `input` by `sqrt(error)` in
-  `filter_sample`.
-  (b) **Auto-vocoder: single input used as both modulator and carrier.** LPC analysis
-  places poles at the input's spectral peaks; filtering the same input through
-  `1/A(z)` amplifies exactly those peaks → positive feedback. Standard fix: split
-  into `in_carrier` + `in_modulator` ports, run LPC on the modulator, filter the
-  carrier. Backwards-compatible fallback: when only one input is connected, derive
-  the carrier as a saw/noise pulse train so the auto-mode still sounds like a
-  vocoder instead of a self-resonator. Note that the existing
-  `vocoder_stable_on_decaying_carrier` test (`vocoder.rs:271`) only checks
-  `|output| < 50` — it documents the loudness problem rather than guards against it;
-  tighten to a "musical" threshold (e.g. `peak ≤ 2.5·input_peak`) once the gain fix
-  lands.
-  Effect-chain order matters but is only a symptom: vocoder first → narrowband input
-  → poles cluster at formant → 25× gain; vocoder after chorus+reverb → broader
-  input → poles spread → modest gain.
-- [x] **Project save format follows sample content.** A project with samples always saves
-  as a `.zip` bundle; otherwise plain `.json`. Enforced by `project_extension` /
-  `normalize_project_path` (which forces the extension regardless of what the user typed) at
-  every save path — GUI File-menu save and MCP `do_save_project` both branch on
-  `has_samples` → `save_bundle` vs JSON. Locked by unit tests in `project.rs` (verified
-  2026-06-01; the helpers and call sites were already correct, the tests were the gap).
+  choices (`gui/widgets/waveform.rs::WaveformType::from_id`) so the GUI picks
+  up the new buttons automatically as long as `WaveformType::from_id` covers
+  the new ids. Touch points: `sub_osc.rs:23-55` (variants + `ALL` + `name` +
+  `id` + `to_choices` + rendering branch in `generate_sample`),
+  `WaveformType::from_id` (mappings for `triangle`/`sawtooth`/`dsf_saw` —
+  already exist). No save-format bump required; existing `"sine"` / `"square"`
+  / `"pulse25"` keep loading.
+- [ ] **Follow-up: remove dead modules inside patch graphs.** Modules not
+  reverse-reachable from `StereoOutput` (and any sidechain source) through
+  `connections` should also be pruned in `optimize_project` (which today only
+  removes unused patterns/tracks/instruments/samples, not unreachable modules
+  inside a patch graph). Needs graph traversal per instrument.
 - [ ] **Follow-up: stale `list_instruments` readback inside one `batch_execute`.** The primary
   bridge-race (set/get validation failing with `"instrument not found"` right after
   `apply_example_patch`) was fixed by adding a synchronous `alive_instruments` mirror on
-  `SynthSession` (parallel to the existing module `registry`). What's left: `list_instruments`,
-  `get_instrument_info`, and other readers that pull `volume`/`pan`/`mute` etc. still read
-  `EngineState::instrument_snapshots`, which is only rebuilt on the audio thread. So
-  `set_instrument_volume(5, 0.8)` followed by `list_instruments` in the same batch still reports
-  the old `volume: 1.0` until the audio thread ticks (~one buffer, 5–10 ms at 44.1 kHz / 256
-  samples). The audio itself is already correct; only the metadata is stale. Fix by layering
-  write-through onto the `set_instrument_*` handlers in `session.rs` — patch
-  `instrument_snapshots[i].volume` (etc.) under the same write lock as the queued
-  `EngineCommand`. Maintenance burden: every new `set_*` tool needs to remember the write-through.
-  Original diagnosis with file:line references in commit history.
-- [x] **MCP disconnects = tokio worker thread death (strace-confirmed 2026-05-18).** Until today
-  the working hypothesis from the §1 MCP-stability investigation was "tool-handler panics inside
-  `block_in_place` kill the worker; `LocalSessionManager` loses session state with the dying worker;
-  rmcp returns `404 Session not found` on the next request and the client experiences a disconnect".
-  This was proven during the Prodigy session: with `strace -e write=2` attached to all 20
-  `tokio-rt-worker` threads of the GUI process (PID 671814) covering TIDs 671846–671865, a
-  `build_instrument` call with a non-default mix of param values (numeric enum indices for `Waveform` /
-  `Model`, the param name `"Key Tracking"`, and a small `Env Amount: 0.1`) returned
-  `Streamable HTTP error: Not Found: Session not found` on the client. The strace log showed:
-  `671856 +++ exited with 0 +++`, `671862 +++ exited with 0 +++`, `671863 +++ exited with 0 +++`
-  (three workers terminated). A subsequent thread-list of the same process showed the worker count
-  was back at 20, but with three new TIDs (678806, 678948, 679054) replacing the dead ones — the
-  tokio runtime respawned, but the session state was already gone.
-  Crucially **none of the §1 tracing fires for this** — the panic happens beneath the tracing
-  layer, in `block_in_place`'s panic-handling path, so `on_initialized` / `Drop` / the `tracing::warn!`
-  on the dispatch-error branch all sit silent. The only signal an operator sees is the worker exit
-  in `strace -e write=2` (or an external panic hook, which is not currently installed).
-  This is concrete validation for two §1 follow-ups that should be promoted to actual TODO items:
-  (a) **panic catching around tool dispatch** in `synth_mcp::server` (`AssertUnwindSafe` +
-  `FutureExt::catch_unwind` around the `tool_router` and `dispatch_tool` calls) so a single bad
-  tool call surfaces as `ErrorData::internal_error` to the client instead of killing a worker;
-  (b) **migrate the CPU-bound bridge calls from `block_in_place` to `spawn_blocking`** so panic
-  recovery is the standard tokio task path (`spawn_blocking` returns a `JoinHandle` whose `await`
-  yields `JoinError::Panic`, while a panic in `block_in_place` propagates up the worker's polling
-  loop and kills it). Both fixes are explicitly named in §1 of the MCP stability plan; (a) is the
-  high-leverage one (one place, ~20 lines, removes the entire class of "single bad call kills
-  the session"). After either lands, also extend the §1 tracing with a
-  `std::panic::set_hook` that logs `tracing::error!("MCP task panicked", message, location, ...)`
-  so operators see panics without needing `strace`.
-- [x] **`WidgetHint::PanKnob` parameters now render in the auto-renderer.** The grid grouped
-  params by hint with no group for `PanKnob` / `XYPad` / `PercentSlider` / `DecibelSlider`, so
-  those params silently vanished (the amp/output Pan knobs were invisible in the Rack). Replaced
-  the scattered `by_hint` lists with a single exhaustive `render_group(hint) -> Option<RenderGroup>`
-  mapping (no wildcard → a new `WidgetHint` is a compile error until classified): PanKnob/XYPad →
-  Knob (descriptor-driven, so bipolar pan renders), Percent/DecibelSlider → Slider, and the
-  module-supplied/Hidden hints → not auto-rendered. Locked by unit tests in `param_grid.rs`.
-  Follow-ups (latent, no module uses them yet): Percent/DecibelSlider don't show a `%`/`dB` suffix
-  (would need a unit-aware slider, touches all sliders), and `XYPad` collapses to one knob (needs a
-  real 2D widget before any module adopts it).
+  `SynthSession`. What's left: `list_instruments`, `get_instrument_info`, and other readers that
+  pull `volume`/`pan`/`mute` etc. still read `EngineState::instrument_snapshots`, which is only
+  rebuilt on the audio thread. So `set_instrument_volume(5, 0.8)` followed by `list_instruments`
+  in the same batch still reports the old `volume: 1.0` until the audio thread ticks (~one buffer,
+  5–10 ms at 44.1 kHz / 256 samples). The audio itself is already correct; only the metadata is
+  stale. Fix by layering write-through onto the `set_instrument_*` handlers in `session.rs` — patch
+  `instrument_snapshots[i].volume` (etc.) under the same write lock as the queued `EngineCommand`.
+  Maintenance burden: every new `set_*` tool needs to remember the write-through.
 
 --- 
 
@@ -255,32 +65,24 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 
 ### Current status of description fields
 
+Phase 1 (`InstrumentState`/`Patch`/`AwePresetFile`) and Phase 2 (`Song`/`Pattern`/`SequencerTrack`/`Sample`)
+are shipped — those entities have their `description` field plus MCP read + write tool and GUI editing.
+The remaining gap is **Phase 3: per-module-instance descriptions** (a different concept from the type docs).
+
 | Entity                       | Field exists?                        | MCP read | MCP write       |
 |------------------------------|--------------------------------------|----------|-----------------|
-| `InstrumentState`            | ✅ `patch.rs:697`                     | ❌        | ❌               |
-| `Patch`                      | ✅ `patch.rs:130, 307` (Option)       | ❌        | ❌               |
-| `AwePresetFile`              | ✅ `patch.rs:792`                     | ❌        | ❌               |
-| `Song`                       | ❌ — add to `synth_sequencer/song.rs` | ❌        | ❌               |
-| `Pattern`                    | ❌ — add to `synth_sequencer`         | ❌        | ❌               |
-| `SequencerTrack`             | ❌ — add to `synth_sequencer`         | ❌        | ❌               |
-| `Sample` entry               | ❌ — add to sample registry           | ❌        | ❌               |
+| `InstrumentState`            | ✅ `patch.rs:697`                     | ✅        | ✅               |
+| `Patch`                      | ✅ `patch.rs:130, 307` (Option)       | ✅        | ✅               |
+| `AwePresetFile`              | ✅ `patch.rs:792`                     | ✅        | ✅               |
+| `Song`                       | ✅                                    | ✅        | ✅               |
+| `Pattern`                    | ✅                                    | ✅        | ✅               |
+| `SequencerTrack`             | ✅                                    | ✅        | ✅               |
+| `Sample` entry (`SampleMeta`)| ✅                                    | ✅        | ✅               |
 | Module *instance* (in patch) | ❌ — separate from `ModuleDescriptor` | ❌        | ❌               |
 | `ModuleDescriptor` (type)    | ✅ `module_traits.rs:869`             | ✅        | n/a (hardcoded) |
 | `ParameterDescriptor` (type) | ✅ `module_traits.rs:586`             | ✅        | n/a             |
 | `PortDescriptor` (type)      | ✅                                    | ✅        | n/a             |
 | `ChoiceOption` (type)        | ✅ `module_traits.rs:557` (Option)    | partial  | n/a             |
-
-### Phase 2 — add new description fields + MCP read/write tools
-
-- [x] Add `description: String` to `Song` (`synth_sequencer/src/song.rs`); surface in `get_song_info`;
-  add `set_song_description` MCP tool
-- [x] Add `description: String` to `Pattern`; surface in `list_patterns` / pattern resource;
-  add `set_pattern_description` MCP tool (e.g. `"chorus drop, half-time feel"`)
-- [x] Add `description: String` to `SequencerTrack`; surface in `list_tracks`;
-  add `set_track_description` MCP tool
-- [x] Add `description: String` to sample registry entries (`SampleMeta`); surface in `list_samples` /
-  `get_sample_info`; add `set_sample_description` MCP tool
-- [x] Editable from GUI (song properties, pattern properties dialog, track header context menu, sample library)
 
 ### Phase 3 — per-module-instance notes (different concept from type docs)
 
@@ -295,7 +97,7 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 
 Module-instance descriptions **must** survive serialization, both at the project and standalone-patch
 level — otherwise AI-applied notes silently vanish on save/reload. Same pattern as
-`Patch.description` and the planned color persistence above.
+`Patch.description` and the planned color persistence below.
 
 - [ ] **Project save** — every module instance's description persisted inside its containing patch
   in the project JSON. Round-trip test: MCP-set description on `lfo-1` → `save_project` →
@@ -323,10 +125,12 @@ level — otherwise AI-applied notes silently vanish on save/reload. Same patter
 ## ★ Color fields via MCP
 
 Color fields already exist on several entities (Patch, Instrument, Group, SequencerTrack), but
-**no MCP setter** exposes them — AI can build a song but can't paint the strips/tracks to make the
+most have **no MCP setter** — AI can build a song but can't paint the strips/tracks to make the
 arrangement visually scannable. Parallel structure to the description roadmap above: read on the
 existing getter response, write via a dedicated setter routed through
 `bridge.rs` → `mcp_bridge.rs` → `server.rs`. Color is also already GUI-editable in most cases.
+Track color is the only one shipped via MCP so far (`set_track_color`); the rest are blocked on
+engine-ownership refactors noted below.
 
 ### Current status of color fields
 
@@ -335,7 +139,7 @@ existing getter response, write via a dedicated setter routed through
 | `InstrumentState` | ✅ `patch.rs:700` `Option<HexColor>`  | ❌        | ❌         |
 | `Patch`           | ✅ `patch.rs:255` `Option<HexColor>`  | ❌        | ❌         |
 | `Group`           | ✅ `patch.rs:316` `Option<HexColor>`  | ❌        | ❌         |
-| `SequencerTrack`  | ✅ in song JSON `{r, g, b}` per track | ❌        | ❌         |
+| `SequencerTrack`  | ✅ in song JSON `{r, g, b}` per track | ✅        | ✅         |
 
 ### Work to do
 
@@ -348,9 +152,6 @@ existing getter response, write via a dedicated setter routed through
 - [ ] Surface patch color on the same getters as a separate `patch_color` field, mirroring how
   `patch_description` is exposed alongside `description`. Add `set_patch_color` MCP tool.
   **Blocked: `Patch.color` does not exist yet** — add the field first, then mirror the description flow.
-- [x] Surface track color on `list_tracks`; add `set_track_color(track_id, color)` MCP tool.
-  Accepts `"#RRGGBB"`/`"#RRGGBBAA"`; backed by `TrackColor::to_hex`/`from_hex`. Track color is a
-  pure `Song` write, so it round-trips for free and was already GUI-editable.
 - [ ] Surface group color on `get_instrument_info` (or wherever groups are listed); add
   `set_group_color` MCP tool. **Group color is GUI-only** (no engine path) — needs MCP to mutate
   the `PatchEditor` group state directly. Own PR.
@@ -402,15 +203,12 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
 - [ ] Preset browser in module context menu or header
 - [ ] Ship default presets for common module types
 
-### 1.4 Mixer view
-
-- [x] Dedicated mixer view with faders, pan, sends, and inserts (channel-strip Phase 7b, v0.300–0.301)
-- [x] Send/return effect busses — shared effects instead of per-instrument chains only (channel-strip Phase 7a, v0.298–0.299)
-
 ### 1.5 Settings & utilities
 
 - [ ] Add Browse button in Settings dialog to change patches directory
-- [ ] Extract `magnitude_to_normalized_db()` into `synth_core` or `synth_dsp` — repeated in 4+ locations
+- [ ] Extract `magnitude_to_normalized_db()` into `synth_core` or `synth_dsp` — the
+  `20·log10(mag)` → normalized-dB pattern is repeated in 5+ locations (`synth_osc/src/sender.rs`,
+  `mcp_bridge.rs`, `audio/analysis.rs`, two in `gui/widgets/meter.rs`) with no shared helper.
 - [ ] Add ergonomic constructor `SamplerParam::sample_select(u64) -> Self` (or `Param::sample_select`) in
   `synth_core/src/params/sampler.rs` — 4 call sites currently spell out
   `Param::Sampler(SamplerParam::SampleSelect(SampleId(id)))` verbatim (`session.rs`, `mcp_bridge.rs`,
@@ -476,17 +274,15 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
 
 ### 2.1 Tempo automation
 
-- [x] **`Global(Tempo)` automation removed (not wired).** Decided 2026-06-01: tempo
-  changes the playback time grid itself, not a per-block value, so it doesn't fit the
-  generic automation-lane model and a `Global(Tempo)` lane would be a *second* source of
-  truth competing with the song's tempo map (`Song::set_tempo_at` / `tempo_at`), which is
-  what actually drives the sequencer tick rate. The lane was a silent no-op (never built by
-  GUI/MCP, only reachable from hand-edited JSON), so the `GlobalParam::Tempo` variant was
-  removed. The tempo map is the canonical mechanism.
 - [ ] **Expose + edit the tempo map** (`Song::set_tempo_at` / `tempo_changes`): MCP tools
   and a GUI tempo-track/curve editor, with interpolation between adjacent tempo points
-  (accelerando/ritardando ramps) rather than the current step changes. This is the real
-  "tempo automation" feature — built on the tempo map, not a generic lane.
+  (accelerando/ritardando ramps) rather than the current step changes. The engine tempo
+  map already exists and the GUI uses `set_tempo_at`, but MCP only exposes `set_song_tempo`
+  (global default), there is no tempo-map editor, and changes are step-only. This is the real
+  "tempo automation" feature — built on the tempo map, not a generic automation lane. (The old
+  `Global(Tempo)` automation lane was removed 2026-06-01: tempo changes the playback time grid
+  itself, so it can't be a per-block value, and a lane would be a second source of truth competing
+  with the tempo map.)
 
 ### 2.2 Section markers
 
@@ -583,7 +379,8 @@ The engine and every processor landed per `plans/note-processors-plan.md`: arpeg
 (flagship), timed-repeat ornaments (flam/drag/ruff/roll/grace), chord + strum,
 scale-quantize + humanize, the MCP surface, and save/load persistence. The one
 remaining item is **NP6 — the per-track rack + per-note ornament GUI**, deferred for
-interactive egui work with the user (not headless-testable).
+interactive egui work with the user (not headless-testable). Verified still absent from
+`crates/pertylizer/src/gui/` as of 2026-06-12.
 
 **Iceboxed — the rest of Phase E (build on demand only).** The expensive,
 narrow-audience remainder of the old north-star phase. No plan doc; pick up only when a
@@ -603,7 +400,7 @@ concrete need appears:
 ### 3.5 Polyphony settings
 
 - [ ] Voice stealing mode selection (oldest, quietest, none) — engine + persistence done, GUI selector
-  not yet added (defaults still applied).
+  not yet added (`stealing_strategy` field is read but has no ComboBox; `allocation_mode` already does).
 - [ ] Unison detune/spread controls
 
 ---
@@ -630,15 +427,10 @@ concrete need appears:
 ### 4.4 Mod Matrix routing visibility
 
 When a module (e.g. `env-2`, `lfo-1`) is referenced only via Mod Matrix slots — not via cables —
-it *looks* unused: no visible cable in the patch-editor graph, and `list_modules` reports
-`output_ports: []` because the matrix routes by parameter selectors, not ports. The graph is
-healthy and `get_graph_diagnostics` confirms that, but the user has no way to see *why* from the
-cable view alone. Real example: the `Acid Bass` example patch — `env-2` modulates Filter cutoff
-via Mod Matrix slot 1 with amount 0.9, zero cables, and looks dead.
+it *looks* unused: no visible cable in the patch-editor graph. Header badges and MCP surfacing
+shipped in v0.289.0 (`get_mod_matrix_routings`, virtual `"matrix"` port on `list_modules`, header
+arrow badge with tooltip). What remains is the in-canvas visual + navigation polish:
 
-- [x] **GUI: badge on module headers when referenced by Mod Matrix.** Done in 0.289.0 —
-  `PatchAnalysis` collects matrix sources/destinations and the header shows an
-  arrow badge with a tooltip pointing at the Mod Matrix module.
 - [ ] **GUI: ghost cables for Mod Matrix routings.** In the cable view, draw faint dashed lines
   (different colour) from matrix sources to their destinations (e.g. `env-2` → `flt-1.cutoff`),
   togglable in the View menu. Both routing paradigms become visible in one canvas.
@@ -646,13 +438,6 @@ via Mod Matrix slot 1 with amount 0.9, zero cables, and looks dead.
   Two-way matrix↔graph navigation — was Phase 4 of the (now-completed, removed)
   mod-matrix-routing-visibility plan; Phases 1–3 (MCP surface, framed zone, header badges)
   shipped in v0.289.0.
-- [x] **MCP: surface Mod Matrix routings in `get_connections`.** Done in 0.289.0 —
-  new `get_mod_matrix_routings` tool returns `[{source, source_name, destination,
-  destination_name, amount, enabled, slot}]` with positional `ModSource` /
-  `ModDestination` resolution.
-- [x] **MCP: stop reporting `output_ports: []` on matrix-only modules.** Done in
-  0.289.0 — `list_modules` surfaces a virtual `"matrix"` port on the matrix
-  module and on every module referenced by an active matrix slot.
 
 ---
 
@@ -722,12 +507,6 @@ ship dates.
   `tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`.
   After session-reuse lands, parallelize the sweep target vector with `par_iter` for a 2-4×
   speedup on top (same sequence as §7.1 → §7.2).
-- [x] **`batch_execute` dispatch-coverage guard test.** Done in
-  `crates/pertylizer/tests/mcp_batch_dispatch_coverage.rs`: enumerates the rmcp tool-router's
-  registered names (`SynthMcpServer::router_tool_names`) and asserts each — except the documented
-  exemptions `batch_execute`, `preview_note`, `analyze_note` — is reachable through the
-  `dispatch_tool_inner` table (probed via `dispatch_tool_for_test` with scalar params so no tool
-  body runs). Prevents the router/dispatch drift fixed in `00845fb`.
 - [ ] **Static `#[schemars(range(...))]` on fixed-range numeric MCP fields.** Module/AWE *parameter*
   values are now validated at the bridge boundary against the descriptor's `ValueRange`
   (`ParameterDescriptor::validate_f32`), but the *globally* fixed numeric tool fields — MIDI note
