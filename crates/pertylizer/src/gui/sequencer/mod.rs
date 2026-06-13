@@ -14,8 +14,9 @@ use synth_core::{BipolarValue, Bpm, Hertz, MidiNote, Milliseconds, NormalizedVal
 use synth_engine::{EngineCommand, EngineHandle, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
-    Glide, GlideFrom, GlideInterp, NoteExpression, NoteId, NoteName, PatternId, PatternTick, Pitch,
-    SeqInstrumentId, Song, Tick, TimeSignature, TrackId, Velocity, Vibrato, VibratoShape,
+    Glide, GlideFrom, GlideInterp, NoteExpression, NoteId, NoteLane, NoteName, PatternId,
+    PatternTick, Pitch, SeqInstrumentId, Song, Tick, TimeSignature, TrackId, Velocity, Vibrato,
+    VibratoShape,
 };
 
 use crate::gui::input::KEY_MAP;
@@ -2886,6 +2887,9 @@ struct PianoRollNote {
     legato: bool,
     glide: Option<Glide>,
     expression: Option<NoteExpression>,
+    /// Stored voice/column lane (the tracker's source of truth for which voice
+    /// column a note lives in). The piano roll ignores it.
+    lane: NoteLane,
 }
 
 /// Snapshot of a single automation point for rendering.
@@ -2950,6 +2954,7 @@ pub(crate) fn collect_piano_roll_data(
                 legato: n.legato,
                 glide: n.glide,
                 expression: n.expression,
+                lane: n.lane,
             }
         })
         .collect();

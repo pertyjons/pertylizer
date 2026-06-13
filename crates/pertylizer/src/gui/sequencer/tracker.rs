@@ -343,9 +343,9 @@ pub(crate) fn draw_tracker(
         ui.ctx().request_repaint();
     }
 
-    // Assign each note to a voice lane (greedy interval coloring) and index notes by
-    // their start row so each cell lookup is cheap.
-    let (lane_of_note, n_lanes) = assign_voice_lanes(&data.notes, tpr);
+    // Assign each note to a voice lane and index notes by their start row so each
+    // cell lookup is cheap.
+    let (lane_of_note, n_lanes) = display_lanes(&data.notes, tpr);
     let mut notes_by_start_row: HashMap<usize, Vec<usize>> = HashMap::new();
     for (idx, note) in data.notes.iter().enumerate() {
         let row = (note.start_tick.0 / tpr) as usize;
@@ -471,11 +471,30 @@ pub(crate) fn draw_tracker(
                     let is_cursor_cell = is_cursor_row && cursor.col == lane;
                     let (_, resp) = row.col(|ui| {
                         colors.paint_cursor(ui, is_cursor_row, is_cursor_cell);
-                        let hit = notes_by_start_row
+                        // Notes starting on this row in this lane. Usually 0 or 1;
+                        // more than one means notes share a (row, lane) — we draw the
+                        // first and mark the rest with a "+N" overflow glyph rather
+                        // than silently hiding them.
+                        let mut hits = notes_by_start_row
                             .get(&r)
-                            .and_then(|v| v.iter().find(|&&i| lane_of_note[i] == lane).copied());
-                        match hit {
-                            Some(idx) => draw_note_cell(ui, &data.notes[idx], tpr, &colors),
+                            .into_iter()
+                            .flatten()
+                            .filter(|&&i| lane_of_note[i] == lane);
+                        match hits.next() {
+                            Some(&idx) => {
+                                draw_note_cell(ui, &data.notes[idx], tpr, &colors);
+                                let extra = hits.count();
+                                if extra > 0 {
+                                    ui.label(
+                                        RichText::new(format!("+{extra}"))
+                                            .color(colors.off_grid)
+                                            .small(),
+                                    )
+                                    .on_hover_text(format!(
+                                        "{extra} more note(s) share this voice lane on this row"
+                                    ));
+                                }
+                            }
                             None => {
                                 ui.label(
                                     RichText::new(EMPTY_VOICE).color(colors.empty).monospace(),
@@ -566,9 +585,33 @@ fn draw_note_cell(ui: &mut egui::Ui, note: &PianoRollNote, tpr: u32, colors: &Tr
     });
 }
 
+/// Lane assignment for display. Stored `Note.lane` is the tracker's source of
+/// truth for columns, but legacy patterns (built in the piano roll) have every
+/// note on lane 0, where stacking them all in V1 would hide notes. So: if **any**
+/// note carries a non-zero lane the pattern is "lane-organized" and we render by
+/// the stored lane; if **all** notes are on lane 0 we fall back to greedy
+/// interval-coloring so legacy content spreads readably. The first lane-assigning
+/// edit (T2) migrates the greedy layout into stored lanes, after which this stays
+/// on the stored-lane branch with no visible jump.
+///
+/// Returns the per-note lane index (parallel to `notes`) and the lane count (at
+/// least 1, so one empty voice column always shows).
+fn display_lanes(notes: &[PianoRollNote], tpr: u32) -> (Vec<usize>, usize) {
+    let lane_organized = notes.iter().any(|n| n.lane.as_u8() != 0);
+    if lane_organized {
+        let lane_of: Vec<usize> = notes.iter().map(|n| n.lane.as_usize()).collect();
+        // `map_or(1, m+1)` already floors at 1 (empty → 1, any max → ≥1).
+        let n_lanes = lane_of.iter().copied().max().map_or(1, |m| m + 1);
+        (lane_of, n_lanes)
+    } else {
+        assign_voice_lanes(notes, tpr)
+    }
+}
+
 /// Greedy interval-coloring lane assignment: each note takes the lowest voice lane
-/// free at its start tick. Read-only/computed for T1; T2 will store a stable lane
-/// index on `Note`. Returns the per-note lane index (parallel to `notes`) and the
+/// free at its start tick. Used as the read-only fallback for not-yet-lane-organized
+/// patterns (see `display_lanes`) and as the seed the first tracker edit migrates
+/// into stored lanes. Returns the per-note lane index (parallel to `notes`) and the
 /// lane count (at least 1, so one empty voice column always shows).
 fn assign_voice_lanes(notes: &[PianoRollNote], tpr: u32) -> (Vec<usize>, usize) {
     let mut order: Vec<usize> = (0..notes.len()).collect();

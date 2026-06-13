@@ -49,21 +49,21 @@ Scope locked with the user 2026-06-03:
 
 ---
 
-## The one open design decision (gates T2, NOT T1)
+## The one open design decision — RESOLVED 2026-06-12 (commit `85008b9`)
 
 **How do free-tick, possibly-overlapping notes map to stable voice columns?**
-Notes are a `Vec<Note>` with `start` + `duration`; there is no stored voice/lane index
-today.
+Notes are a `Vec<Note>` with `start` + `duration` and had no stored voice/lane index.
 
-- **For T1 (read-only):** compute lanes on the fly with greedy interval coloring
-  (assign each note the lowest column free at its start tick). Good enough to validate
-  the view; no model change.
-- **For T2 (editing + add/remove columns):** columns become a first-class, user-managed
-  concept, so the assignment must be **stable across edits/scroll**. Recommended:
-  **store a lane index on `Note`** (a small `Copy` newtype, e.g. `VoiceLane(u8)`,
-  default 0, `#[serde(default)]`, additive — piano roll ignores it). This makes
-  add/remove-column real, persisted operations and stops notes reshuffling between
-  columns. Decide at the top of T2; flagged here so it isn't a surprise.
+- **T1 (read-only) — SHIPPED:** lanes computed on the fly with greedy interval coloring
+  (`assign_voice_lanes` in `tracker.rs`, assigns each note the lowest column free at its
+  start tick). No model change; validates the view.
+- **T2 (editing + add/remove columns) — RESOLVED as recommended:** the lane index is now
+  **stored on `Note`** — a `NoteLane` newtype (`synth_sequencer/src/ids.rs`, next to
+  `TrackIndex`) + an additive `lane: NoteLane` field on `Note` (`#[serde(default)]` → 0,
+  `with_lane` builder; piano roll ignores it; `project.schema.json` regenerated). This
+  makes add/remove-column a real, persisted operation and stops notes reshuffling between
+  columns. **The greedy fallback still drives the read-only render; T2 editing must switch
+  the lane assignment over to the stored `Note.lane`.**
 
 ---
 
@@ -106,9 +106,13 @@ which path T1 actually used.
 - [x] **T1** — Read-only tracker render (MVP): toggle + note lanes + automation lanes
   with per-row values **and curve-behind-grid** + off-grid markers. No editing.
   IMPLEMENTED 2026-06-03 (full gate green; awaits visual confirmation).
-- [ ] **T2** — Editing + column management: add/remove note lanes, add/remove +
-  remove-empty automation lanes, step-entry note input, velocity, delete. Quantized
-  writes + undo. (Resolve the lane-storage decision first.)
+- [~] **T2** — Editing + column management. **Scaffold landed 2026-06-12 (`85008b9`),
+  still read-only:** view-adapter refactor (`TrackerColors` palette + `Cow` text
+  helpers), cursor model (`TrackerCursor` row + flat column index, `TrackerColumn`
+  resolution; arrow/Page/Home/End nav, click-to-place, row/cell/header highlight), and
+  the lane-storage decision resolved (`NoteLane` on `Note`). **Not yet done:** any actual
+  write — step-entry note input, velocity, numeric automation entry, add/remove +
+  remove-empty columns, delete. Quantized writes + undo.
 - [ ] **T3** — Future column types: NoteProcessor lanes (when `note_processors` on
   `Pattern` lands — see `plans/note-processors-plan.md`) and NoteExpression sub-columns.
 
@@ -159,9 +163,10 @@ automation curves behind the grid — without touching any editing logic.
     does not yet detect manual scroll-away to break follow — it re-centers every frame
     while playing (lock-follow). Acceptable for T1; add scroll-offset detection +
     `auto_follow_playhead` disable mirroring the piano roll when editing lands.
-- [ ] **Visual confirmation in the running app** — re-verify BOTH the piano roll
-  (toolbar unchanged after extraction) AND the tracker (toolbar + auto-follow). The
-  gate is green but does not catch visual/behavioral regressions in the shared toolbar.
+- [x] **Visual confirmation in the running app** — re-verified BOTH the piano roll
+  (toolbar unchanged after extraction) AND the tracker (toolbar + auto-follow). T1 is
+  fully shipped; the read-only render then got the view-adapter refactor + cursor
+  scaffold in `85008b9` (see T2).
 
 **Bonus:** the Rust 1.96 `clippy::manual_is_multiple_of` lint flagged the `% == 0`
 beat/off-grid checks → switched to `.is_multiple_of()`.
@@ -174,9 +179,20 @@ curve behind the automation column. No edits possible yet; piano roll unchanged.
 
 ## T2 — Editing + column management
 
-(Resolve the lane-storage decision above first — recommended: store `VoiceLane` on
-`Note`.)
+Lane-storage decision RESOLVED: `NoteLane` is stored on `Note` (see above).
 
+**Scaffold already landed (`85008b9`, read-only):**
+- [x] View-adapter refactor — `TrackerColors` palette snapshotted once per frame +
+  pure `Cow` text helpers; cells no longer format inline or take a per-cell theme lock.
+- [x] Cursor model — `TrackerCursor` (row + flat column index) + `TrackerColumn`
+  resolution on `SequencerViewState`; arrow/Page/Home/End nav, click-to-place,
+  row/cell/column-header highlight. `handle_tracker_keys` in `tracker.rs`.
+- [x] `NoteLane` newtype (`ids.rs`) + additive `lane: NoteLane` on `Note`
+  (`#[serde(default)]`, `with_lane`); `project.schema.json` regenerated.
+
+**Editing (none done yet — the cursor writes nothing):**
+- [ ] Switch the read-only render's lane assignment from greedy `assign_voice_lanes`
+  to the stored `Note.lane` (so columns are stable once editing can write lanes).
 - [ ] **Add note column** (more polyphony/chord depth) / **remove empty note column**.
 - [ ] **Add automation column** (choose a target → new `AutomationLane`) / **remove
   empty automation column** (lane with no points). A single **"remove empty columns"**
