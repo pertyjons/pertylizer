@@ -21,8 +21,8 @@ use parking_lot::RwLock;
 use synth_core::NormalizedValue;
 use synth_engine::EngineHandle;
 use synth_sequencer::{
-    AutomationLane, AutomationPoint, CurveType, Duration as SeqDuration, NoteLane, PatternTick,
-    Pitch, Song,
+    AutomationLane, AutomationPoint, CurveType, Duration as SeqDuration, NoteExpression, NoteLane,
+    PatternTick, Pitch, Song,
 };
 
 use super::{
@@ -92,6 +92,29 @@ fn automation_value_text(value: Option<NormalizedValue>) -> Cow<'static, str> {
     value.map_or(Cow::Borrowed(EMPTY_AUTOMATION), |v| {
         Cow::Owned(format!("{:.2}", v.as_f32()))
     })
+}
+
+/// Placeholder for an expression field with no value (on a row that *has* a note).
+const EXPR_UNSET: &str = "--";
+
+/// One expression field of a note, as shown in its sub-column. Assumes the row
+/// carries a note; the caller renders a blank cell when it does not. Scalars are
+/// shown as 0–100-ish integers (accent/gate/probability ×100); ghost is a dot.
+fn expr_field_text(expr: Option<&NoteExpression>, field: ExprField) -> Cow<'static, str> {
+    let Some(e) = expr else {
+        return Cow::Borrowed(EXPR_UNSET);
+    };
+    let pct = |v: f32| Cow::Owned(format!("{:.0}", v * 100.0));
+    match field {
+        ExprField::Accent => e.accent.map_or(Cow::Borrowed(EXPR_UNSET), pct),
+        ExprField::Gate => e
+            .gate
+            .map_or(Cow::Borrowed(EXPR_UNSET), |g| pct(g.as_f32())),
+        ExprField::Ghost => Cow::Borrowed(if e.ghost { EXPRESSION_MARK } else { EXPR_UNSET }),
+        ExprField::Probability => e
+            .probability
+            .map_or(Cow::Borrowed(EXPR_UNSET), |p| pct(p.as_f32())),
+    }
 }
 
 /// Palette for the tracker grid, snapshotted once per frame from the active
@@ -189,12 +212,53 @@ impl TrackerColors {
 // the persisted cursor is clamped to the current grid shape every frame.
 // ============================================================================
 
+/// A per-note expression sub-column (the four scalar fields of `NoteExpression`;
+/// vibrato is excluded — too rich for a single cell, so the note cell keeps its
+/// `•` marker for it). Ordered as displayed left-to-right after a voice column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExprField {
+    Accent,
+    Gate,
+    Ghost,
+    Probability,
+}
+
+impl ExprField {
+    /// In display order, matching `EXPR_FIELDS`.
+    const ALL: [Self; 4] = [Self::Accent, Self::Gate, Self::Ghost, Self::Probability];
+
+    /// Short column header.
+    fn header(self) -> &'static str {
+        match self {
+            Self::Accent => "Acc",
+            Self::Gate => "Gat",
+            Self::Ghost => "Gho",
+            Self::Probability => "Prb",
+        }
+    }
+}
+
+/// Number of expression sub-columns shown per voice lane when the "Expr" toggle is
+/// on (one per `ExprField::ALL`).
+const EXPR_FIELDS: usize = ExprField::ALL.len();
+
 /// A typed grid column, resolved from the cursor's flat index for the frame's
-/// current lane layout. Voice/automation lanes are addressed by their own index.
+/// current layout. Voice lanes, their optional expression sub-columns, and
+/// automation lanes are each addressed by their own index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrackerColumn {
     Voice(usize),
+    Expr(usize, ExprField),
     Automation(usize),
+}
+
+/// Flat selectable-column index where voice lane `lane`'s group begins (its voice
+/// cell; expression sub-cells, if shown, follow at `base + 1 + field_index`).
+/// Called with `lane == n_lanes` it yields the first automation column. The one
+/// definition of the per-voice column layout, shared by `resolved` (decode) and the
+/// render/edit paths (encode) so they can't disagree.
+fn voice_group_base(lane: usize, cols_per_voice: usize) -> usize {
+    lane * cols_per_voice
 }
 
 /// Cursor position in the tracker grid. Persisted on `SequencerViewState` so it
@@ -233,13 +297,22 @@ impl TrackerCursor {
         self.col = (self.col as isize + delta).clamp(0, max) as usize;
     }
 
-    /// Resolve the flat column index into a typed voice/automation column for the
-    /// frame's lane layout.
-    fn resolved(&self, n_lanes: usize) -> TrackerColumn {
-        if self.col < n_lanes {
-            TrackerColumn::Voice(self.col)
+    /// Resolve the flat column index into a typed column for the frame's layout.
+    /// `cols_per_voice` is 1 (voice only) or `1 + EXPR_FIELDS` (voice + expression
+    /// sub-columns) — each voice lane owns a contiguous group of that width, then
+    /// the automation lanes follow.
+    fn resolved(&self, n_lanes: usize, cols_per_voice: usize) -> TrackerColumn {
+        let n_voice_cols = voice_group_base(n_lanes, cols_per_voice);
+        if self.col < n_voice_cols {
+            let lane = self.col / cols_per_voice;
+            let sub = self.col % cols_per_voice;
+            if sub == 0 {
+                TrackerColumn::Voice(lane)
+            } else {
+                TrackerColumn::Expr(lane, ExprField::ALL[sub - 1])
+            }
         } else {
-            TrackerColumn::Automation(self.col - n_lanes)
+            TrackerColumn::Automation(self.col - n_voice_cols)
         }
     }
 }
@@ -327,6 +400,7 @@ fn handle_tracker_edit_keys(
     undo_manager: &mut UndoManager,
     view_state: &mut SequencerViewState,
     n_lanes: usize,
+    cols_per_voice: usize,
     n_rows: usize,
     tpr: u32,
     lane_of_note: &[usize],
@@ -336,7 +410,7 @@ fn handle_tracker_edit_keys(
         return false;
     }
     let cursor = view_state.tracker_cursor;
-    match cursor.resolved(n_lanes) {
+    match cursor.resolved(n_lanes, cols_per_voice) {
         TrackerColumn::Voice(lane) => {
             // Leaving an automation cell drops any half-typed value.
             view_state.tracker_value_buffer = None;
@@ -354,6 +428,11 @@ fn handle_tracker_edit_keys(
                 lane_of_note,
                 notes_by_start_row,
             )
+        }
+        // Expression sub-columns are read-only in T3.1a (editing lands in T3.1b).
+        TrackerColumn::Expr(..) => {
+            view_state.tracker_value_buffer = None;
+            false
         }
         TrackerColumn::Automation(ai) => edit_automation_cell(
             ui,
@@ -762,6 +841,11 @@ pub(crate) fn draw_tracker(
                      empty automation lanes",
                 )
                 .clicked();
+            ui.separator();
+            ui.toggle_value(&mut view_state.tracker_show_expression, "Expr")
+                .on_hover_text(
+                    "Show per-note expression sub-columns (accent / gate / ghost / probability)",
+                );
             (add_v, add_a, clean)
         })
         .inner;
@@ -816,10 +900,13 @@ pub(crate) fn draw_tracker(
     }
 
     // Cursor: clamp to the current grid, then apply keyboard navigation. The
-    // selectable column space is the voice lanes followed by the automation lanes
-    // (the row/time gutter is not selectable).
+    // selectable column space is each voice lane's group (the voice cell + its
+    // optional expression sub-cells) followed by the automation lanes (the row/time
+    // gutter is not selectable). `cols_per_voice` is the width of one voice group.
+    let show_expr = view_state.tracker_show_expression;
+    let cols_per_voice = if show_expr { 1 + EXPR_FIELDS } else { 1 };
     let n_auto = data.automation_lanes.len();
-    let n_cols = n_lanes + n_auto;
+    let n_cols = n_lanes * cols_per_voice + n_auto;
     let cursor_before_nav = view_state.tracker_cursor;
     view_state.tracker_cursor.clamp(n_rows, n_cols);
     let nav_moved = handle_tracker_keys(ui, &mut view_state.tracker_cursor, n_rows, n_cols);
@@ -837,6 +924,7 @@ pub(crate) fn draw_tracker(
         undo_manager,
         view_state,
         n_lanes,
+        cols_per_voice,
         n_rows,
         tpr,
         &lane_of_note,
@@ -844,7 +932,7 @@ pub(crate) fn draw_tracker(
     );
     let cursor_moved = nav_moved || edit_moved;
     let cursor = view_state.tracker_cursor;
-    let cursor_kind = cursor.resolved(n_lanes);
+    let cursor_kind = cursor.resolved(n_lanes, cols_per_voice);
     // In-progress automation value entry, snapshotted for the (immutable) cell
     // closures so they can show it in the cursor cell without borrowing view_state.
     let entry_buffer = view_state.tracker_value_buffer.clone();
@@ -871,7 +959,12 @@ pub(crate) fn draw_tracker(
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(Column::auto().at_least(44.0)); // row/time gutter
     for _ in 0..n_lanes {
-        builder = builder.column(Column::initial(72.0).at_least(40.0));
+        builder = builder.column(Column::initial(72.0).at_least(40.0)); // voice
+        if show_expr {
+            for _ in 0..EXPR_FIELDS {
+                builder = builder.column(Column::initial(34.0).at_least(26.0)); // expr field
+            }
+        }
     }
     for _ in 0..n_auto {
         builder = builder.column(Column::initial(80.0).at_least(52.0));
@@ -923,6 +1016,17 @@ pub(crate) fn draw_tracker(
                         cursor_kind == TrackerColumn::Voice(lane),
                     );
                 });
+                if show_expr {
+                    for field in ExprField::ALL {
+                        header.col(|ui| {
+                            header_label(
+                                ui,
+                                field.header().to_string(),
+                                cursor_kind == TrackerColumn::Expr(lane, field),
+                            );
+                        });
+                    }
+                }
             }
             for (ai, lane) in data.automation_lanes.iter().enumerate() {
                 header.col(|ui| {
@@ -965,24 +1069,29 @@ pub(crate) fn draw_tracker(
                     click_target.set(Some((r, cursor.col)));
                 }
 
-                // Voice columns.
+                // Voice columns (each optionally followed by its expression cells).
                 for lane in 0..n_lanes {
-                    let is_cursor_cell = is_cursor_row && cursor.col == lane;
+                    let voice_col = voice_group_base(lane, cols_per_voice);
+                    // The (first) note starting on this row in this lane, plus how
+                    // many extra share it — shared by the voice cell and its
+                    // expression sub-cells (no per-cell allocation).
+                    let mut hits = notes_by_start_row
+                        .get(&r)
+                        .into_iter()
+                        .flatten()
+                        .filter(|&&i| lane_of_note[i] == lane);
+                    let first_note = hits.next().copied();
+                    let extra = hits.count();
+
+                    let is_cursor_cell = is_cursor_row && cursor.col == voice_col;
                     let (_, resp) = row.col(|ui| {
                         colors.paint_cursor(ui, is_cursor_row, is_cursor_cell);
-                        // Notes starting on this row in this lane. Usually 0 or 1;
-                        // more than one means notes share a (row, lane) — we draw the
-                        // first and mark the rest with a "+N" overflow glyph rather
-                        // than silently hiding them.
-                        let mut hits = notes_by_start_row
-                            .get(&r)
-                            .into_iter()
-                            .flatten()
-                            .filter(|&&i| lane_of_note[i] == lane);
-                        match hits.next() {
-                            Some(&idx) => {
+                        // Usually 0 or 1 notes; more than one means notes share a
+                        // (row, lane) — draw the first and mark the rest with a "+N"
+                        // overflow glyph rather than silently hiding them.
+                        match first_note {
+                            Some(idx) => {
                                 draw_note_cell(ui, &data.notes[idx], tpr, &colors);
-                                let extra = hits.count();
                                 if extra > 0 {
                                     ui.label(
                                         RichText::new(format!("+{extra}"))
@@ -1002,13 +1111,42 @@ pub(crate) fn draw_tracker(
                         }
                     });
                     if resp.interact(egui::Sense::click()).clicked() {
-                        click_target.set(Some((r, lane)));
+                        click_target.set(Some((r, voice_col)));
+                    }
+
+                    // Expression sub-columns: the note's scalar fields, read-only
+                    // (T3.1a). Blank when no note carries this (row, lane).
+                    if show_expr {
+                        for (fi, field) in ExprField::ALL.into_iter().enumerate() {
+                            let flat = voice_col + 1 + fi;
+                            let is_cc = is_cursor_row && cursor.col == flat;
+                            let (_, resp) = row.col(|ui| {
+                                colors.paint_cursor(ui, is_cursor_row, is_cc);
+                                if let Some(idx) = first_note {
+                                    let expr = data.notes[idx].expression.as_ref();
+                                    let text = expr_field_text(expr, field);
+                                    let set = text != EXPR_UNSET;
+                                    ui.label(
+                                        RichText::new(text)
+                                            .color(if set {
+                                                colors.automation
+                                            } else {
+                                                colors.empty
+                                            })
+                                            .monospace(),
+                                    );
+                                }
+                            });
+                            if resp.interact(egui::Sense::click()).clicked() {
+                                click_target.set(Some((r, flat)));
+                            }
+                        }
                     }
                 }
 
                 // Automation columns: numeric value + per-cell curve segment behind it.
                 for (ai, lane) in data.automation_lanes.iter().enumerate() {
-                    let flat_col = n_lanes + ai;
+                    let flat_col = voice_group_base(n_lanes, cols_per_voice) + ai;
                     let is_cursor_cell = is_cursor_row && cursor.col == flat_col;
                     let (_, resp) = row.col(|ui| {
                         colors.paint_cursor(ui, is_cursor_row, is_cursor_cell);

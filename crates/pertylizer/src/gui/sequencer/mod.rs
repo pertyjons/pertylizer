@@ -273,6 +273,9 @@ pub struct SequencerViewState {
     /// an empty lane appears for entry, "Remove empty columns" lowers it. `0` = just
     /// derive from the notes.
     tracker_voice_columns: usize,
+    /// Whether the tracker interleaves the per-note expression sub-columns
+    /// (accent/gate/ghost/probability) after each voice column ("Expr" toggle).
+    tracker_show_expression: bool,
 }
 
 impl SequencerViewState {
@@ -327,6 +330,7 @@ impl SequencerViewState {
             tracker_cursor: tracker::TrackerCursor::default(),
             tracker_value_buffer: None,
             tracker_voice_columns: 0,
+            tracker_show_expression: false,
         }
     }
 }
