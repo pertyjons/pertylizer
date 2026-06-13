@@ -97,6 +97,11 @@ fn automation_value_text(value: Option<NormalizedValue>) -> Cow<'static, str> {
 /// Placeholder for an expression field with no value (on a row that *has* a note).
 const EXPR_UNSET: &str = "--";
 
+/// Expression scalars are shown and entered as percent-ish integers (the stored
+/// value ×100): accent 1.2 ↔ "120", gate/probability 0.5 ↔ "50". One definition for
+/// both the display (`expr_field_text`) and parse (`set_expr_field`) sides.
+const EXPR_DISPLAY_SCALE: f32 = 100.0;
+
 /// One expression field of a note, as shown in its sub-column. Assumes the row
 /// carries a note; the caller renders a blank cell when it does not. Scalars are
 /// shown as 0–100-ish integers (accent/gate/probability ×100); ghost is a dot.
@@ -104,7 +109,7 @@ fn expr_field_text(expr: Option<&NoteExpression>, field: ExprField) -> Cow<'stat
     let Some(e) = expr else {
         return Cow::Borrowed(EXPR_UNSET);
     };
-    let pct = |v: f32| Cow::Owned(format!("{:.0}", v * 100.0));
+    let pct = |v: f32| Cow::Owned(format!("{:.0}", v * EXPR_DISPLAY_SCALE));
     match field {
         ExprField::Accent => e.accent.map_or(Cow::Borrowed(EXPR_UNSET), pct),
         ExprField::Gate => e
@@ -429,11 +434,18 @@ fn handle_tracker_edit_keys(
                 notes_by_start_row,
             )
         }
-        // Expression sub-columns are read-only in T3.1a (editing lands in T3.1b).
-        TrackerColumn::Expr(..) => {
-            view_state.tracker_value_buffer = None;
-            false
-        }
+        TrackerColumn::Expr(lane, field) => edit_expression_cell(
+            ui,
+            data,
+            song,
+            undo_manager,
+            view_state,
+            lane,
+            field,
+            cursor.row,
+            lane_of_note,
+            notes_by_start_row,
+        ),
         TrackerColumn::Automation(ai) => edit_automation_cell(
             ui,
             data,
@@ -674,8 +686,14 @@ fn edit_automation_cell(
         }
         return false;
     }
+    accumulate_digit_buffer(ui, &mut view_state.tracker_value_buffer);
+    false
+}
 
-    // Accumulate typed digits / decimal point into the entry buffer.
+/// Append any digit / `.` characters typed this frame to the shared numeric entry
+/// buffer (created on first input), capped at 8 chars. Shared by the automation and
+/// expression numeric cells.
+fn accumulate_digit_buffer(ui: &egui::Ui, buffer: &mut Option<String>) {
     let typed: String = ui.input(|i| {
         i.events
             .iter()
@@ -687,13 +705,132 @@ fn edit_automation_cell(
             .collect()
     });
     if !typed.is_empty() {
-        let buf = view_state
-            .tracker_value_buffer
-            .get_or_insert_with(String::new);
+        let buf = buffer.get_or_insert_with(String::new);
         if buf.len() < 8 {
             buf.push_str(&typed);
         }
     }
+}
+
+/// Write one `NoteExpression` scalar from its displayed (×100) value, or clear it
+/// when `displayed` is `None`. Accent is a raw multiplier (clamped 0–4×); gate and
+/// probability are normalized 0..1. Ghost is a flag handled by the caller.
+fn set_expr_field(expr: &mut NoteExpression, field: ExprField, displayed: Option<f32>) {
+    // Descale the displayed (×100) value once; each field then just clamps to its
+    // own domain.
+    let v = displayed.map(|d| d / EXPR_DISPLAY_SCALE);
+    let norm = |x: f32| NormalizedValue::new(x.clamp(0.0, 1.0));
+    match field {
+        ExprField::Accent => expr.accent = v.map(|x| x.clamp(0.0, 4.0)),
+        ExprField::Gate => expr.gate = v.map(norm),
+        ExprField::Probability => expr.probability = v.map(norm),
+        ExprField::Ghost => {}
+    }
+}
+
+/// Editing for an expression sub-cell at the cursor. Only acts when a note carries
+/// this (row, lane). Numeric fields (accent/gate/probability) use the same digit
+/// buffer as automation entry — Enter commits, Esc discards, Delete clears the
+/// field. Ghost is a flag toggled by Enter/Space, cleared by Delete. Every write
+/// goes through `set_note_expression` (normalizing an empty block to `None`) with a
+/// `SetExpressionBatch` undo step. Never advances the cursor.
+#[allow(clippy::too_many_arguments)]
+fn edit_expression_cell(
+    ui: &egui::Ui,
+    data: &PianoRollData,
+    song: &Arc<RwLock<Song>>,
+    undo_manager: &mut UndoManager,
+    view_state: &mut SequencerViewState,
+    lane: usize,
+    field: ExprField,
+    row: usize,
+    lane_of_note: &[usize],
+    notes_by_start_row: &HashMap<usize, Vec<usize>>,
+) -> bool {
+    // The note this expression cell belongs to (none → nothing to edit).
+    let Some(idx) = notes_by_start_row
+        .get(&row)
+        .into_iter()
+        .flatten()
+        .find(|&&i| lane_of_note[i] == lane)
+        .copied()
+    else {
+        view_state.tracker_value_buffer = None;
+        return false;
+    };
+    let note_id = data.notes[idx].note_id;
+    let old_expr = data.notes[idx].expression;
+
+    let (enter, esc, delete, backspace, space) = ui.input_mut(|i| {
+        (
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Space),
+        )
+    });
+
+    // Apply a mutated block (normalize empty → None) with one undo step.
+    let mut commit = |expr: NoteExpression| {
+        let new = expr.normalized();
+        {
+            let mut song_w = song.write();
+            if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                pattern.set_note_expression(note_id, new);
+            }
+        }
+        undo_manager.push(UndoAction::SetExpressionBatch {
+            pattern_id: data.pattern_id,
+            changes: vec![(note_id, old_expr, new)],
+        });
+    };
+
+    if esc {
+        view_state.tracker_value_buffer = None;
+        return false;
+    }
+
+    // Ghost: a boolean flag — Enter/Space toggles, Delete clears. No value buffer.
+    if field == ExprField::Ghost {
+        view_state.tracker_value_buffer = None;
+        if enter || space {
+            let mut e = old_expr.unwrap_or_default();
+            e.ghost = !e.ghost;
+            commit(e);
+        } else if delete && let Some(mut e) = old_expr {
+            e.ghost = false;
+            commit(e);
+        }
+        return false;
+    }
+
+    // Numeric fields: Delete clears, Enter commits the typed buffer, digits build it.
+    if delete {
+        view_state.tracker_value_buffer = None;
+        if let Some(mut e) = old_expr {
+            set_expr_field(&mut e, field, None);
+            commit(e);
+        }
+        return false;
+    }
+    if enter {
+        if let Some(buf) = view_state.tracker_value_buffer.take()
+            && let Ok(parsed) = buf.parse::<f32>()
+        {
+            let mut e = old_expr.unwrap_or_default();
+            set_expr_field(&mut e, field, Some(parsed));
+            commit(e);
+        }
+        return false;
+    }
+    if backspace {
+        if let Some(buf) = view_state.tracker_value_buffer.as_mut() {
+            buf.pop();
+        }
+        return false;
+    }
+    accumulate_digit_buffer(ui, &mut view_state.tracker_value_buffer);
     false
 }
 
@@ -1122,20 +1259,28 @@ pub(crate) fn draw_tracker(
                             let is_cc = is_cursor_row && cursor.col == flat;
                             let (_, resp) = row.col(|ui| {
                                 colors.paint_cursor(ui, is_cursor_row, is_cc);
-                                if let Some(idx) = first_note {
-                                    let expr = data.notes[idx].expression.as_ref();
-                                    let text = expr_field_text(expr, field);
-                                    let set = text != EXPR_UNSET;
+                                let Some(idx) = first_note else { return };
+                                // While typing a value into this (numeric) cell, show
+                                // the entry buffer with a caret; otherwise the value.
+                                if is_cc
+                                    && field != ExprField::Ghost
+                                    && let Some(buf) = entry_buffer.as_deref()
+                                {
                                     ui.label(
-                                        RichText::new(text)
-                                            .color(if set {
-                                                colors.automation
-                                            } else {
-                                                colors.empty
-                                            })
+                                        RichText::new(format!("{buf}_"))
+                                            .color(colors.cursor_border)
                                             .monospace(),
                                     );
+                                    return;
                                 }
+                                let expr = data.notes[idx].expression.as_ref();
+                                let text = expr_field_text(expr, field);
+                                let set = text != EXPR_UNSET;
+                                ui.label(
+                                    RichText::new(text)
+                                        .color(if set { colors.automation } else { colors.empty })
+                                        .monospace(),
+                                );
                             });
                             if resp.interact(egui::Sense::click()).clicked() {
                                 click_target.set(Some((r, flat)));
