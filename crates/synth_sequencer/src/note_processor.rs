@@ -1342,6 +1342,21 @@ impl Pattern {
         gate: impl Fn(&Note) -> bool,
         buf: &mut ExpansionBuffer,
     ) {
+        self.expand_at_tick_through(tick, gate, self.processors.len(), buf);
+    }
+
+    /// As [`Self::expand_at_tick`] but runs only the first `through` processors of
+    /// the rack (clamped to the rack length). `through == processors().len()` is the
+    /// full expansion; smaller values give the cumulative output *after* a given
+    /// stage, which the tracker uses to show each processor's contribution as its
+    /// own column. Same RT-safety contract as `expand_at_tick`.
+    pub fn expand_at_tick_through(
+        &self,
+        tick: PatternTick,
+        gate: impl Fn(&Note) -> bool,
+        through: usize,
+        buf: &mut ExpansionBuffer,
+    ) {
         buf.clear();
         for note in self.notes() {
             match &note.ornament {
@@ -1357,7 +1372,7 @@ impl Pattern {
                 }
             }
         }
-        for i in 0..self.processors.len() {
+        for i in 0..through.min(self.processors.len()) {
             // Each processor sees its upstream slice so generators can view
             // source material through the preceding transforms (`map_pitch`).
             let (upstream, rest) = self.processors.split_at(i);

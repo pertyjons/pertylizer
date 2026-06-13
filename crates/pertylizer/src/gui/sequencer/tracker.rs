@@ -122,53 +122,58 @@ fn expr_field_text(expr: Option<&NoteExpression>, field: ExprField) -> Cow<'stat
     }
 }
 
-/// Read-only overlay of the note-processor rack's per-row output (NP lanes, T3.2).
-/// Computed offline by running the rack's expansion **at each row's tick**; shown in
-/// a single non-selectable "NP" column so the user sees what the rack generates
-/// (chord tones, arp steps, ornament hits) alongside the source notes. `None` when
-/// the pattern has no processors.
+/// One note-processor's read-only output column (NP lanes, T3.2). One stage per
+/// processor in the rack, in execution order; each shows the **cumulative**
+/// expansion *after* that processor, so comparing adjacent stages reveals what each
+/// processor contributes (the source → after-quantize → after-chord → after-arp
+/// chain). Computed offline via `expand_at_tick_through`.
 ///
-/// Row-resolution, by design: it samples only at `row * ticks_per_row`, so generated
+/// Row-resolution, by design: sampled only at `row * ticks_per_row`, so generated
 /// events that land *between* rows (a strum offset, an arp step finer than a row) are
 /// not shown — consistent with how the voice cells key off a note's start row.
-struct NpOverlay {
-    /// Short rack summary for the column header (processor kinds, e.g. `chord→arp`).
+struct NpStage {
+    /// Column header — the processor kind (`scale_quantize`/`chord`/`arp`/`humanize`).
     label: String,
-    /// Expanded pitches per row, parallel to rows `0..n_rows`.
+    /// Cumulative expanded pitches after this stage, parallel to rows `0..n_rows`.
     rows: Vec<Vec<Pitch>>,
 }
 
-/// Run the pattern's processor rack offline at every row tick and collect the
-/// emitted pitches. Returns `None` (cheaply) when the rack is empty — the common
-/// case — so the per-row expansion cost is only paid when there is a rack to show.
-/// Uses a non-blocking `try_read`; a contended lock just skips the overlay this
-/// frame. `expand_at_tick` is pure/deterministic, so calling it off the audio
-/// thread is safe.
-fn compute_np_overlay(
+/// Run the rack offline and build one [`NpStage`] per processor (cumulative output
+/// after each stage). Returns an empty `Vec` (cheaply) when the rack is empty — the
+/// common case — so the per-row expansion cost is only paid when there is a rack to
+/// show. Non-blocking `try_read`; a contended lock just skips the overlay this frame.
+/// `expand_at_tick_through` is pure/deterministic, so calling it off the audio thread
+/// is safe.
+fn compute_np_stages(
     song: &Arc<RwLock<Song>>,
     pattern_id: PatternId,
     tpr: u32,
     n_rows: usize,
-) -> Option<NpOverlay> {
-    let song = song.try_read()?;
-    let pattern = song.pattern(pattern_id)?;
-    if pattern.processors().is_empty() {
-        return None;
+) -> Vec<NpStage> {
+    let Some(song) = song.try_read() else {
+        return Vec::new();
+    };
+    let Some(pattern) = song.pattern(pattern_id) else {
+        return Vec::new();
+    };
+    let n_proc = pattern.processors().len();
+    if n_proc == 0 {
+        return Vec::new();
     }
-    let label = pattern
-        .processors()
-        .iter()
-        .map(|p| p.kind())
-        .collect::<Vec<_>>()
-        .join("\u{2192}"); // →
     let mut buf = ExpansionBuffer::new();
-    let mut rows = Vec::with_capacity(n_rows);
-    for r in 0..n_rows {
-        let tick = PatternTick((r as u32) * tpr);
-        pattern.expand_at_tick(tick, |_| true, &mut buf);
-        rows.push(buf.notes().iter().map(|n| n.pitch).collect());
+    let mut stages = Vec::with_capacity(n_proc);
+    for p in 0..n_proc {
+        let label = pattern.processors()[p].kind().to_string();
+        let mut rows = Vec::with_capacity(n_rows);
+        for r in 0..n_rows {
+            let tick = PatternTick((r as u32) * tpr);
+            // Cumulative output through processors `0..=p`.
+            pattern.expand_at_tick_through(tick, |_| true, p + 1, &mut buf);
+            rows.push(buf.notes().iter().map(|n| n.pitch).collect());
+        }
+        stages.push(NpStage { label, rows });
     }
-    Some(NpOverlay { label, rows })
+    stages
 }
 
 /// Compact display of one row's NP output: up to three pitches, then `+N`.
@@ -1067,10 +1072,9 @@ pub(crate) fn draw_tracker(
         ui.ctx().request_repaint();
     }
 
-    // Note-processor output overlay (read-only "NP" column). `None` — and so no
-    // column — unless the pattern has a processor rack.
-    let np = compute_np_overlay(song, data.pattern_id, tpr, n_rows);
-    let show_np = np.is_some();
+    // Note-processor output columns (read-only, one per processor). Empty — and so
+    // no columns — unless the pattern has a processor rack.
+    let np_stages = compute_np_stages(song, data.pattern_id, tpr, n_rows);
 
     // Assign each note to a voice lane and index notes by their start row so each
     // cell lookup is cheap. The shown column count honors the user's requested
@@ -1178,8 +1182,8 @@ pub(crate) fn draw_tracker(
     for _ in 0..n_auto {
         builder = builder.column(Column::initial(80.0).at_least(52.0));
     }
-    if show_np {
-        builder = builder.column(Column::initial(96.0).at_least(56.0)); // NP output
+    for _ in &np_stages {
+        builder = builder.column(Column::initial(96.0).at_least(56.0)); // NP stage output
     }
 
     // Scroll target: the playhead while it's being followed, otherwise the cursor
@@ -1251,10 +1255,12 @@ pub(crate) fn draw_tracker(
                     .on_hover_text(name);
                 });
             }
-            if let Some(np) = np.as_ref() {
+            for (si, stage) in np_stages.iter().enumerate() {
                 header.col(|ui| {
-                    header_label(ui, "NP".to_string(), false)
-                        .on_hover_text(format!("Note-processor output: {}", np.label));
+                    header_label(ui, stage.label.clone(), false).on_hover_text(format!(
+                        "Note processor {} output (cumulative after this stage)",
+                        si + 1
+                    ));
                 });
             }
         })
@@ -1414,12 +1420,12 @@ pub(crate) fn draw_tracker(
                     }
                 }
 
-                // Note-processor output column (read-only, non-selectable). Clicking
-                // it just parks the cursor on this row (keeps the current column).
-                if let Some(np) = np.as_ref() {
+                // Note-processor output columns (read-only, non-selectable, one per
+                // processor stage). Clicking parks the cursor on this row.
+                for stage in &np_stages {
                     let (_, resp) = row.col(|ui| {
                         colors.paint_cursor(ui, is_cursor_row, false);
-                        if let Some(pitches) = np.rows.get(r) {
+                        if let Some(pitches) = stage.rows.get(r) {
                             ui.label(
                                 RichText::new(np_cell_text(pitches))
                                     .color(colors.expression)
