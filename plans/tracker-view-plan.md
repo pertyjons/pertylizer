@@ -105,14 +105,13 @@ which path T1 actually used.
 
 - [x] **T1** — Read-only tracker render (MVP): toggle + note lanes + automation lanes
   with per-row values **and curve-behind-grid** + off-grid markers. No editing.
-  IMPLEMENTED 2026-06-03 (full gate green; awaits visual confirmation).
-- [~] **T2** — Editing + column management. **Scaffold landed 2026-06-12 (`85008b9`),
-  still read-only:** view-adapter refactor (`TrackerColors` palette + `Cow` text
-  helpers), cursor model (`TrackerCursor` row + flat column index, `TrackerColumn`
-  resolution; arrow/Page/Home/End nav, click-to-place, row/cell/header highlight), and
-  the lane-storage decision resolved (`NoteLane` on `Note`). **Not yet done:** any actual
-  write — step-entry note input, velocity, numeric automation entry, add/remove +
-  remove-empty columns, delete. Quantized writes + undo.
+  IMPLEMENTED 2026-06-03.
+- [x] **T2** — Editing + column management. SHIPPED 2026-06-13 over scaffold `85008b9`:
+  stored-lane display (`f180be7`), step-entry note input + delete (`aa4d6b3`), numeric
+  automation entry + delete point (`e7bcb5e`), voice column add/clean (`e3d53de`),
+  automation column add/clean via the shared target picker (`9c9c81c`), and auto-follow
+  scroll-away. All writes go through the pattern mutators with `UndoAction`, quantized to
+  the row grid.
 - [ ] **T3** — Future column types: NoteProcessor lanes (when `note_processors` on
   `Pattern` lands — see `plans/note-processors-plan.md`) and NoteExpression sub-columns.
 
@@ -190,20 +189,28 @@ Lane-storage decision RESOLVED: `NoteLane` is stored on `Note` (see above).
 - [x] `NoteLane` newtype (`ids.rs`) + additive `lane: NoteLane` on `Note`
   (`#[serde(default)]`, `with_lane`); `project.schema.json` regenerated.
 
-**Editing (none done yet — the cursor writes nothing):**
-- [ ] Switch the read-only render's lane assignment from greedy `assign_voice_lanes`
-  to the stored `Note.lane` (so columns are stable once editing can write lanes).
-- [ ] **Add note column** (more polyphony/chord depth) / **remove empty note column**.
-- [ ] **Add automation column** (choose a target → new `AutomationLane`) / **remove
-  empty automation column** (lane with no points). A single **"remove empty columns"**
-  command prunes all empty lanes (notes and automation).
-- [ ] **Step-entry note input** (reuse `step_cursor_tick` + keyboard advance/commit):
-  enter note name + velocity at the cursor cell; arrow keys move the cursor.
-- [ ] **Numeric automation entry:** type a value into an automation cell → writes a
-  point at `row_to_tick(row)` (quantized).
-- [ ] Delete cell, clear lane. All writes go through existing pattern mutators
-  (`move_note`/`add_note`/automation edits) so **undo works for free**; tracker writes
-  are quantized while piano-roll keeps free placement.
+**Editing — SHIPPED 2026-06-13:**
+- [x] Display by stored `Note.lane` (`f180be7`): lane-organized patterns render by the
+  stored lane; legacy all-zero patterns keep the greedy fallback; the first lane-assigning
+  edit migrates greedy → stored in the same undo step. Multiple notes in one (row, lane)
+  show a `+N` overflow marker rather than hiding any.
+- [x] **Add note column** / **remove empty (Clean)** (`e3d53de`): `tracker_voice_columns`
+  minimum (capped at 32); Clean compacts stored lanes densely via one `SetLaneBatch`.
+- [x] **Add automation column** (shared target picker → `get_or_create_automation`) /
+  **remove empty automation lanes** via the same **Clean** (`9c9c81c`); new
+  `AddAutomationLane`/`RemoveAutomationLane` undo actions; Clean bundles every removal +
+  the note compaction into one undo step.
+- [x] **Step-entry note input + delete** (`aa4d6b3`): a computer-keyboard piano key
+  inserts a note at the cursor row on its voice lane (quantized to `row * tpr`),
+  Delete/Backspace removes it; no-op on an occupied cell (re-type = delete-then-enter).
+- [x] **Numeric automation entry + delete point** (`e7bcb5e`): type digits/`.` in an
+  automation cell (caret shown), Enter writes a point at `row_to_tick(row)` (clamped 0..1),
+  Delete removes it; replacing a point keeps its curve via `MoveAutomationPoint` undo.
+- [x] All writes go through the pattern mutators with `UndoAction`, so **undo/redo works**
+  and the audio engine (live `Arc<RwLock<Song>>` reader) picks edits up next tick. Tracker
+  writes are row-quantized while the piano roll keeps free placement.
+- [x] Auto-follow scroll-away: manual wheel scroll during playback breaks lock-follow
+  (keyed off scroll input, since `TableBuilder` hides its offset); re-enabled on Play.
 
 **Acceptance:** build a small pattern entirely in the tracker (notes + an automation
 lane), add and remove a column, prune empties, undo/redo each step, and confirm it

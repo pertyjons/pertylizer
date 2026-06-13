@@ -3976,6 +3976,9 @@ fn draw_pattern_instrument_transport(
                         instrument: view_state.selected_instrument,
                     });
                 }
+                // Starting playback re-engages playhead follow (both editors), so a
+                // prior manual scroll-away doesn't leave the view stuck off-screen.
+                view_state.auto_follow_playhead = true;
             }
         }
 

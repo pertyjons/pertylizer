@@ -853,6 +853,18 @@ pub(crate) fn draw_tracker(
     // `view_state` into the table closures; applied after the table is built.
     let click_target: Cell<Option<(usize, usize)>> = Cell::new(None);
 
+    // Manual wheel scrolling during playback breaks lock-follow, mirroring the
+    // piano roll's scroll-away detection. The table virtualizes rows and hides its
+    // scroll offset, so (unlike the piano roll's offset delta) we key off raw scroll
+    // input. Read before `TableBuilder::new(ui)` borrows `ui`. Re-enabled when
+    // playback restarts (the transport Play button sets `auto_follow_playhead`).
+    if is_playing
+        && view_state.auto_follow_playhead
+        && ui.input(|i| i.smooth_scroll_delta.y.abs() > 0.5)
+    {
+        view_state.auto_follow_playhead = false;
+    }
+
     let mut builder = TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
