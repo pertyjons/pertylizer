@@ -21,8 +21,8 @@ use parking_lot::RwLock;
 use synth_core::NormalizedValue;
 use synth_engine::EngineHandle;
 use synth_sequencer::{
-    AutomationLane, AutomationPoint, CurveType, Duration as SeqDuration, NoteExpression, NoteLane,
-    PatternTick, Pitch, Song,
+    AutomationLane, AutomationPoint, CurveType, Duration as SeqDuration, ExpansionBuffer,
+    NoteExpression, NoteLane, PatternId, PatternTick, Pitch, Song,
 };
 
 use super::{
@@ -120,6 +120,73 @@ fn expr_field_text(expr: Option<&NoteExpression>, field: ExprField) -> Cow<'stat
             .probability
             .map_or(Cow::Borrowed(EXPR_UNSET), |p| pct(p.as_f32())),
     }
+}
+
+/// Read-only overlay of the note-processor rack's per-row output (NP lanes, T3.2).
+/// Computed offline by running the rack's expansion **at each row's tick**; shown in
+/// a single non-selectable "NP" column so the user sees what the rack generates
+/// (chord tones, arp steps, ornament hits) alongside the source notes. `None` when
+/// the pattern has no processors.
+///
+/// Row-resolution, by design: it samples only at `row * ticks_per_row`, so generated
+/// events that land *between* rows (a strum offset, an arp step finer than a row) are
+/// not shown — consistent with how the voice cells key off a note's start row.
+struct NpOverlay {
+    /// Short rack summary for the column header (processor kinds, e.g. `chord→arp`).
+    label: String,
+    /// Expanded pitches per row, parallel to rows `0..n_rows`.
+    rows: Vec<Vec<Pitch>>,
+}
+
+/// Run the pattern's processor rack offline at every row tick and collect the
+/// emitted pitches. Returns `None` (cheaply) when the rack is empty — the common
+/// case — so the per-row expansion cost is only paid when there is a rack to show.
+/// Uses a non-blocking `try_read`; a contended lock just skips the overlay this
+/// frame. `expand_at_tick` is pure/deterministic, so calling it off the audio
+/// thread is safe.
+fn compute_np_overlay(
+    song: &Arc<RwLock<Song>>,
+    pattern_id: PatternId,
+    tpr: u32,
+    n_rows: usize,
+) -> Option<NpOverlay> {
+    let song = song.try_read()?;
+    let pattern = song.pattern(pattern_id)?;
+    if pattern.processors().is_empty() {
+        return None;
+    }
+    let label = pattern
+        .processors()
+        .iter()
+        .map(|p| p.kind())
+        .collect::<Vec<_>>()
+        .join("\u{2192}"); // →
+    let mut buf = ExpansionBuffer::new();
+    let mut rows = Vec::with_capacity(n_rows);
+    for r in 0..n_rows {
+        let tick = PatternTick((r as u32) * tpr);
+        pattern.expand_at_tick(tick, |_| true, &mut buf);
+        rows.push(buf.notes().iter().map(|n| n.pitch).collect());
+    }
+    Some(NpOverlay { label, rows })
+}
+
+/// Compact display of one row's NP output: up to three pitches, then `+N`.
+fn np_cell_text(pitches: &[Pitch]) -> String {
+    const SHOWN: usize = 3;
+    if pitches.is_empty() {
+        return String::new();
+    }
+    let mut s = pitches
+        .iter()
+        .take(SHOWN)
+        .map(|p| format!("{p}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if pitches.len() > SHOWN {
+        s.push_str(&format!(" +{}", pitches.len() - SHOWN));
+    }
+    s
 }
 
 /// Palette for the tracker grid, snapshotted once per frame from the active
@@ -1000,6 +1067,11 @@ pub(crate) fn draw_tracker(
         ui.ctx().request_repaint();
     }
 
+    // Note-processor output overlay (read-only "NP" column). `None` — and so no
+    // column — unless the pattern has a processor rack.
+    let np = compute_np_overlay(song, data.pattern_id, tpr, n_rows);
+    let show_np = np.is_some();
+
     // Assign each note to a voice lane and index notes by their start row so each
     // cell lookup is cheap. The shown column count honors the user's requested
     // minimum (Add voice column) on top of what the notes need.
@@ -1106,6 +1178,9 @@ pub(crate) fn draw_tracker(
     for _ in 0..n_auto {
         builder = builder.column(Column::initial(80.0).at_least(52.0));
     }
+    if show_np {
+        builder = builder.column(Column::initial(96.0).at_least(56.0)); // NP output
+    }
 
     // Scroll target: the playhead while it's being followed, otherwise the cursor
     // when it just moved by keyboard (so navigation keeps the cursor on-screen).
@@ -1174,6 +1249,12 @@ pub(crate) fn draw_tracker(
                         cursor_kind == TrackerColumn::Automation(ai),
                     )
                     .on_hover_text(name);
+                });
+            }
+            if let Some(np) = np.as_ref() {
+                header.col(|ui| {
+                    header_label(ui, "NP".to_string(), false)
+                        .on_hover_text(format!("Note-processor output: {}", np.label));
                 });
             }
         })
@@ -1330,6 +1411,24 @@ pub(crate) fn draw_tracker(
                     });
                     if resp.interact(egui::Sense::click()).clicked() {
                         click_target.set(Some((r, flat_col)));
+                    }
+                }
+
+                // Note-processor output column (read-only, non-selectable). Clicking
+                // it just parks the cursor on this row (keeps the current column).
+                if let Some(np) = np.as_ref() {
+                    let (_, resp) = row.col(|ui| {
+                        colors.paint_cursor(ui, is_cursor_row, false);
+                        if let Some(pitches) = np.rows.get(r) {
+                            ui.label(
+                                RichText::new(np_cell_text(pitches))
+                                    .color(colors.expression)
+                                    .monospace(),
+                            );
+                        }
+                    });
+                    if resp.interact(egui::Sense::click()).clicked() {
+                        click_target.set(Some((r, cursor.col)));
                     }
                 }
             });
