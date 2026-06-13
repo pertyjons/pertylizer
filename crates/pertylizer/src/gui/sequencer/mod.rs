@@ -264,6 +264,10 @@ pub struct SequencerViewState {
     /// view toggles; navigated with arrow keys / clicks in `draw_tracker`. T1
     /// highlights it, T2 will edit the cell under it.
     tracker_cursor: tracker::TrackerCursor,
+    /// In-progress numeric entry for the tracker automation cell under the cursor.
+    /// `Some` while the user is typing a value (digits/`.`); committed on Enter,
+    /// discarded on Esc or when the cursor leaves the cell. `None` when idle.
+    tracker_value_buffer: Option<String>,
 }
 
 impl SequencerViewState {
@@ -316,6 +320,7 @@ impl SequencerViewState {
             loop_start_tick: None,
             loop_end_tick: None,
             tracker_cursor: tracker::TrackerCursor::default(),
+            tracker_value_buffer: None,
         }
     }
 }

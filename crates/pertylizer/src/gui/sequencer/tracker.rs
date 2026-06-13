@@ -20,7 +20,9 @@ use egui_extras::{Column, TableBuilder};
 use parking_lot::RwLock;
 use synth_core::NormalizedValue;
 use synth_engine::EngineHandle;
-use synth_sequencer::{Duration as SeqDuration, NoteLane, PatternTick, Pitch, Song};
+use synth_sequencer::{
+    AutomationPoint, CurveType, Duration as SeqDuration, NoteLane, PatternTick, Pitch, Song,
+};
 
 use super::{
     AutomationPointSnapshot, PianoRollData, PianoRollNote, SequencerViewState,
@@ -327,16 +329,66 @@ fn handle_tracker_edit_keys(
         return false;
     }
     let cursor = view_state.tracker_cursor;
-    let row_tick = PatternTick(cursor.row as u32 * tpr);
+    match cursor.resolved(n_lanes) {
+        TrackerColumn::Voice(lane) => {
+            // Leaving an automation cell drops any half-typed value.
+            view_state.tracker_value_buffer = None;
+            edit_voice_cell(
+                ui,
+                data,
+                song,
+                handle,
+                undo_manager,
+                view_state,
+                lane,
+                cursor.row,
+                n_rows,
+                tpr,
+                lane_of_note,
+                notes_by_start_row,
+            )
+        }
+        TrackerColumn::Automation(ai) => edit_automation_cell(
+            ui,
+            data,
+            song,
+            undo_manager,
+            view_state,
+            ai,
+            cursor.row,
+            tpr,
+        ),
+    }
+}
 
-    // ── Delete: remove the note under the cursor (voice cell only). ──
+/// Note entry + delete for a voice cell. A piano key inserts a note at the cursor
+/// row on the cursor's voice lane; Delete/Backspace removes the note under the
+/// cursor. See `handle_tracker_edit_keys` for the lane-migration rationale.
+#[allow(clippy::too_many_arguments)]
+fn edit_voice_cell(
+    ui: &egui::Ui,
+    data: &PianoRollData,
+    song: &Arc<RwLock<Song>>,
+    handle: &mut EngineHandle,
+    undo_manager: &mut UndoManager,
+    view_state: &mut SequencerViewState,
+    lane: usize,
+    row: usize,
+    n_rows: usize,
+    tpr: u32,
+    lane_of_note: &[usize],
+    notes_by_start_row: &HashMap<usize, Vec<usize>>,
+) -> bool {
+    let row_tick = PatternTick(row as u32 * tpr);
+
+    // ── Delete: remove the note under the cursor. ──
     let delete = ui.input_mut(|i| {
         i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
             || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
     });
-    if delete && let TrackerColumn::Voice(lane) = cursor.resolved(n_lanes) {
+    if delete {
         let target = notes_by_start_row
-            .get(&cursor.row)
+            .get(&row)
             .and_then(|v| v.iter().find(|&&i| lane_of_note[i] == lane).copied());
         if let Some(idx) = target {
             let note_id = data.notes[idx].note_id;
@@ -355,9 +407,6 @@ fn handle_tracker_edit_keys(
     }
 
     // ── Note entry: a piano key inserts a note at the cursor's voice column. ──
-    let TrackerColumn::Voice(lane) = cursor.resolved(n_lanes) else {
-        return false;
-    };
     let pressed_note = ui.input(|i| {
         if i.modifiers.command || i.modifiers.ctrl {
             return None;
@@ -376,7 +425,7 @@ fn handle_tracker_edit_keys(
     // remove+add would break redo (re-adding reassigns the note id). Re-typing a
     // cell is therefore Delete-then-enter.
     let occupied = notes_by_start_row
-        .get(&cursor.row)
+        .get(&row)
         .is_some_and(|v| v.iter().any(|&i| lane_of_note[i] == lane));
     if occupied {
         return false;
@@ -428,9 +477,140 @@ fn handle_tracker_edit_keys(
     preview_note(handle, pitch, view_state.default_velocity);
 
     // Advance the cursor down one row (vertical tracker), wrapping at the end.
-    let next = cursor.row + 1;
+    let next = row + 1;
     view_state.tracker_cursor.row = if next >= n_rows { 0 } else { next };
     true
+}
+
+/// Numeric entry + delete for an automation cell. Typing digits/`.` builds a value
+/// in `tracker_value_buffer`; Enter commits it as a point at the cursor row's tick
+/// (quantized), Esc discards, Delete removes the point at the row. Replacing an
+/// existing point keeps its curve and uses `MoveAutomationPoint` so undo restores
+/// the old value (a new point uses `AddAutomationPoint`). Never advances the cursor.
+#[allow(clippy::too_many_arguments)]
+fn edit_automation_cell(
+    ui: &egui::Ui,
+    data: &PianoRollData,
+    song: &Arc<RwLock<Song>>,
+    undo_manager: &mut UndoManager,
+    view_state: &mut SequencerViewState,
+    ai: usize,
+    row: usize,
+    tpr: u32,
+) -> bool {
+    let Some(lane) = data.automation_lanes.get(ai) else {
+        view_state.tracker_value_buffer = None;
+        return false;
+    };
+    let tick = PatternTick(row as u32 * tpr);
+    let target = lane.target.clone();
+    // Existing point exactly on this row (value + curve), if any.
+    let existing = lane
+        .points
+        .iter()
+        .find(|p| p.tick == tick)
+        .map(|p| (p.value, p.curve));
+
+    let (enter, esc, delete, backspace) = ui.input_mut(|i| {
+        (
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace),
+        )
+    });
+
+    if esc {
+        view_state.tracker_value_buffer = None;
+        return false;
+    }
+
+    if delete {
+        view_state.tracker_value_buffer = None;
+        if let Some((value, curve)) = existing {
+            let mut song_w = song.write();
+            if let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                && let Some(auto_lane) = pattern.automation.iter_mut().find(|l| l.target == target)
+            {
+                auto_lane.remove_point(tick);
+            }
+            drop(song_w);
+            undo_manager.push(UndoAction::RemoveAutomationPoint {
+                pattern_id: data.pattern_id,
+                target,
+                tick,
+                value,
+                curve,
+            });
+        }
+        return false;
+    }
+
+    if enter {
+        if let Some(buf) = view_state.tracker_value_buffer.take()
+            && let Ok(parsed) = buf.parse::<f32>()
+        {
+            let value = NormalizedValue::new(parsed.clamp(0.0, 1.0));
+            // Preserve an existing point's curve on replace; new points get the
+            // default curve.
+            let curve = existing.map_or_else(CurveType::default, |(_, c)| c);
+            let mut song_w = song.write();
+            if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                let auto_lane = pattern.get_or_create_automation(target.clone());
+                let mut point = AutomationPoint::new(tick, value);
+                point.curve = curve;
+                auto_lane.add_point(point);
+            }
+            drop(song_w);
+            undo_manager.push(match existing {
+                Some((old_value, _)) => UndoAction::MoveAutomationPoint {
+                    pattern_id: data.pattern_id,
+                    target,
+                    old_tick: tick,
+                    old_value,
+                    new_tick: tick,
+                    new_value: value,
+                    curve,
+                },
+                None => UndoAction::AddAutomationPoint {
+                    pattern_id: data.pattern_id,
+                    target,
+                    tick,
+                    value,
+                    curve,
+                },
+            });
+        }
+        return false;
+    }
+
+    if backspace {
+        if let Some(buf) = view_state.tracker_value_buffer.as_mut() {
+            buf.pop();
+        }
+        return false;
+    }
+
+    // Accumulate typed digits / decimal point into the entry buffer.
+    let typed: String = ui.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::Text(t) => Some(t.chars().filter(|c| c.is_ascii_digit() || *c == '.')),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    });
+    if !typed.is_empty() {
+        let buf = view_state
+            .tracker_value_buffer
+            .get_or_insert_with(String::new);
+        if buf.len() < 8 {
+            buf.push_str(&typed);
+        }
+    }
+    false
 }
 
 /// Render the tracker view for one pattern. Voice cells accept note entry and
@@ -496,8 +676,15 @@ pub(crate) fn draw_tracker(
     // (the row/time gutter is not selectable).
     let n_auto = data.automation_lanes.len();
     let n_cols = n_lanes + n_auto;
+    let cursor_before_nav = view_state.tracker_cursor;
     view_state.tracker_cursor.clamp(n_rows, n_cols);
     let nav_moved = handle_tracker_keys(ui, &mut view_state.tracker_cursor, n_rows, n_cols);
+    if view_state.tracker_cursor != cursor_before_nav {
+        // Any cursor shift — keyboard nav OR a clamp from a reshaped grid (lane
+        // added/removed) — discards a half-typed automation value: it belonged to
+        // the cell we just left, and committing it to the new cell would be wrong.
+        view_state.tracker_value_buffer = None;
+    }
     let edit_moved = handle_tracker_edit_keys(
         ui,
         data,
@@ -514,6 +701,9 @@ pub(crate) fn draw_tracker(
     let cursor_moved = nav_moved || edit_moved;
     let cursor = view_state.tracker_cursor;
     let cursor_kind = cursor.resolved(n_lanes);
+    // In-progress automation value entry, snapshotted for the (immutable) cell
+    // closures so they can show it in the cursor cell without borrowing view_state.
+    let entry_buffer = view_state.tracker_value_buffer.clone();
 
     // Click-to-place: cells record their (row, col) here instead of borrowing
     // `view_state` into the table closures; applied after the table is built.
@@ -679,11 +869,25 @@ pub(crate) fn draw_tracker(
                                 egui::Stroke::new(1.5, colors.automation_curve),
                             );
                         }
-                        ui.label(
-                            RichText::new(automation_value_text(top))
-                                .color(colors.automation)
-                                .monospace(),
-                        );
+                        // While typing a value into this cell, show the entry buffer
+                        // with a caret; otherwise show the sampled value, emphasized
+                        // when an actual point sits on this row (vs. interpolation).
+                        if is_cursor_cell && let Some(buf) = entry_buffer.as_deref() {
+                            ui.label(
+                                RichText::new(format!("{buf}_"))
+                                    .color(colors.cursor_border)
+                                    .monospace(),
+                            );
+                        } else {
+                            let has_point = lane.points.iter().any(|p| p.tick.0 == row_tick);
+                            let mut text = RichText::new(automation_value_text(top)).monospace();
+                            text = if has_point {
+                                text.color(colors.automation_curve).strong()
+                            } else {
+                                text.color(colors.automation)
+                            };
+                            ui.label(text);
+                        }
                     });
                     if resp.interact(egui::Sense::click()).clicked() {
                         click_target.set(Some((r, flat_col)));
@@ -695,6 +899,9 @@ pub(crate) fn draw_tracker(
     // Apply a click captured during the table pass (deferred so the closures don't
     // need a mutable borrow of `view_state`).
     if let Some((row, col)) = click_target.get() {
+        if (row, col) != (view_state.tracker_cursor.row, view_state.tracker_cursor.col) {
+            view_state.tracker_value_buffer = None;
+        }
         view_state.tracker_cursor.row = row;
         view_state.tracker_cursor.col = col;
     }
