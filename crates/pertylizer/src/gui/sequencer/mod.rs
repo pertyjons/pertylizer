@@ -330,7 +330,7 @@ impl SequencerViewState {
             tracker_cursor: tracker::TrackerCursor::default(),
             tracker_value_buffer: None,
             tracker_voice_columns: 0,
-            tracker_show_expression: false,
+            tracker_show_expression: true,
         }
     }
 }

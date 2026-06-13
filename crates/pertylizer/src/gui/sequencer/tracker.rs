@@ -313,6 +313,22 @@ impl ExprField {
             Self::Probability => "Prb",
         }
     }
+
+    /// Header tooltip — what the field is and how it's entered.
+    fn description(self) -> &'static str {
+        match self {
+            Self::Accent => {
+                "Accent — velocity multiplier (entered ×100: 120 = 1.2×). Enter commits, Delete clears."
+            }
+            Self::Gate => {
+                "Gate — note length as a % of its duration (50 = half). Enter commits, Delete clears."
+            }
+            Self::Ghost => "Ghost — forced-quiet note. Enter/Space toggles, Delete clears.",
+            Self::Probability => {
+                "Probability — chance the note plays, % (80 = 0.8). Enter commits, Delete clears."
+            }
+        }
+    }
 }
 
 /// Number of expression sub-columns shown per voice lane when the "Expr" toggle is
@@ -1222,7 +1238,8 @@ pub(crate) fn draw_tracker(
                 ui.label(RichText::new(text).strong().color(fg))
             };
             header.col(|ui| {
-                header_label(ui, "Row".to_string(), false);
+                header_label(ui, "Row".to_string(), false)
+                    .on_hover_text("Step (row) number — each row is one ticks-per-row step");
             });
             for lane in 0..n_lanes {
                 header.col(|ui| {
@@ -1230,7 +1247,11 @@ pub(crate) fn draw_tracker(
                         ui,
                         format!("V{}", lane + 1),
                         cursor_kind == TrackerColumn::Voice(lane),
-                    );
+                    )
+                    .on_hover_text(format!(
+                        "Voice lane {} — notes feeding the pattern's instrument",
+                        lane + 1
+                    ));
                 });
                 if show_expr {
                     for field in ExprField::ALL {
@@ -1239,7 +1260,8 @@ pub(crate) fn draw_tracker(
                                 ui,
                                 field.header().to_string(),
                                 cursor_kind == TrackerColumn::Expr(lane, field),
-                            );
+                            )
+                            .on_hover_text(field.description());
                         });
                     }
                 }
@@ -1252,7 +1274,9 @@ pub(crate) fn draw_tracker(
                         name.clone(),
                         cursor_kind == TrackerColumn::Automation(ai),
                     )
-                    .on_hover_text(name);
+                    .on_hover_text(format!(
+                        "Automation: {name} — per-row value 0..1; type to set a point, Delete to clear"
+                    ));
                 });
             }
             for (si, stage) in np_stages.iter().enumerate() {
