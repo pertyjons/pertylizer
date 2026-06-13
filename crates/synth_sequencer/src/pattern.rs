@@ -284,6 +284,16 @@ impl Pattern {
         }
     }
 
+    /// Set the voice/column lane of a note (tracker column assignment).
+    pub fn set_note_lane(&mut self, id: NoteId, lane: super::ids::NoteLane) -> bool {
+        if let Some(note) = self.note_mut(id) {
+            note.lane = lane;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Set the legato/tie flag of a note.
     pub fn set_note_legato(&mut self, id: NoteId, legato: bool) -> bool {
         if let Some(note) = self.note_mut(id) {

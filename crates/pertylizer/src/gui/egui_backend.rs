@@ -4069,6 +4069,7 @@ impl SynthApp {
                     if let Some(n) = pattern.note_mut(nid) {
                         n.duration = note.duration;
                         n.track = note.track;
+                        n.lane = note.lane;
                     }
                 }
             }
@@ -4171,6 +4172,17 @@ impl SynthApp {
                 if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
                     for (note_id, _old, new) in changes {
                         pattern.set_note_expression(*note_id, *new);
+                    }
+                }
+            }
+            UndoAction::SetLaneBatch {
+                pattern_id,
+                changes,
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    for (note_id, _old, new) in changes {
+                        pattern.set_note_lane(*note_id, *new);
                     }
                 }
             }

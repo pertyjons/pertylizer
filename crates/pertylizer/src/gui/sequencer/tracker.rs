@@ -20,14 +20,16 @@ use egui_extras::{Column, TableBuilder};
 use parking_lot::RwLock;
 use synth_core::NormalizedValue;
 use synth_engine::EngineHandle;
-use synth_sequencer::{PatternTick, Song};
+use synth_sequencer::{Duration as SeqDuration, NoteLane, PatternTick, Pitch, Song};
 
 use super::{
     AutomationPointSnapshot, PianoRollData, PianoRollNote, SequencerViewState,
-    draw_pattern_instrument_transport,
+    draw_pattern_instrument_transport, preview_note,
 };
+use crate::gui::input::KEY_MAP;
 use crate::gui::instrument_rack::InstrumentUiState;
 use crate::gui::theme::theme;
+use crate::undo::{UndoAction, UndoManager};
 
 /// Row height in pixels at zoom 1.0. Taller than a piano-roll semitone row because
 /// each tracker row carries text.
@@ -295,9 +297,145 @@ fn handle_tracker_keys(
     *cursor != before
 }
 
-/// Render the tracker view for one pattern. The grid is read-only (T1); the toolbar
-/// row (instrument selector + mini-transport) is the same shared control the piano
-/// roll uses.
+/// Editing keys for the tracker cursor: note entry (computer-keyboard piano) and
+/// delete. Quantized to the row grid — the cursor row maps to `row * tpr`, so every
+/// write lands on a step. Writes go straight through the pattern mutators with an
+/// `UndoAction`, exactly like the piano roll, so undo/redo and audio pick them up
+/// for free. Returns `true` if the cursor advanced (so the caller scrolls it back
+/// into view). Gated on no focused widget, mirroring `handle_tracker_keys`.
+///
+/// Lane handling: a note entered in voice column V is stored on lane V. The first
+/// lane-assigning insert into a not-yet-organized pattern (all notes on lane 0)
+/// first migrates the current greedy display layout into the notes' stored lanes —
+/// bundled into the same undo step — so the columns don't reshuffle on the next
+/// frame. Edits on an automation column are ignored here (that is T3 numeric entry).
+#[allow(clippy::too_many_arguments)]
+fn handle_tracker_edit_keys(
+    ui: &egui::Ui,
+    data: &PianoRollData,
+    song: &Arc<RwLock<Song>>,
+    handle: &mut EngineHandle,
+    undo_manager: &mut UndoManager,
+    view_state: &mut SequencerViewState,
+    n_lanes: usize,
+    n_rows: usize,
+    tpr: u32,
+    lane_of_note: &[usize],
+    notes_by_start_row: &HashMap<usize, Vec<usize>>,
+) -> bool {
+    if ui.memory(|m| m.focused()).is_some() {
+        return false;
+    }
+    let cursor = view_state.tracker_cursor;
+    let row_tick = PatternTick(cursor.row as u32 * tpr);
+
+    // ── Delete: remove the note under the cursor (voice cell only). ──
+    let delete = ui.input_mut(|i| {
+        i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+            || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+    });
+    if delete && let TrackerColumn::Voice(lane) = cursor.resolved(n_lanes) {
+        let target = notes_by_start_row
+            .get(&cursor.row)
+            .and_then(|v| v.iter().find(|&&i| lane_of_note[i] == lane).copied());
+        if let Some(idx) = target {
+            let note_id = data.notes[idx].note_id;
+            let mut song_w = song.write();
+            if let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                && let Some(removed) = pattern.note(note_id).map(Into::into)
+            {
+                pattern.remove_note(note_id);
+                undo_manager.push(UndoAction::RemoveNote {
+                    pattern_id: data.pattern_id,
+                    note: removed,
+                });
+            }
+        }
+        return false;
+    }
+
+    // ── Note entry: a piano key inserts a note at the cursor's voice column. ──
+    let TrackerColumn::Voice(lane) = cursor.resolved(n_lanes) else {
+        return false;
+    };
+    let pressed_note = ui.input(|i| {
+        if i.modifiers.command || i.modifiers.ctrl {
+            return None;
+        }
+        KEY_MAP
+            .iter()
+            .find(|(key, _)| i.key_pressed(*key))
+            .map(|(_, note)| *note)
+    });
+    let Some(pitch) = pressed_note.and_then(Pitch::new) else {
+        return false;
+    };
+
+    // Don't stack a second note on an occupied voice cell: a single-note cell can't
+    // show or delete an overlapping duplicate cleanly, and overwriting via
+    // remove+add would break redo (re-adding reassigns the note id). Re-typing a
+    // cell is therefore Delete-then-enter.
+    let occupied = notes_by_start_row
+        .get(&cursor.row)
+        .is_some_and(|v| v.iter().any(|&i| lane_of_note[i] == lane));
+    if occupied {
+        return false;
+    }
+
+    let new_lane = NoteLane::from(lane);
+    // Migrate the greedy display layout into stored lanes before the first
+    // lane-assigning insert, so existing notes keep their columns. Only runs when
+    // the pattern isn't yet lane-organized; `lane_of_note` is the greedy layout here.
+    let mut migration: Vec<(synth_sequencer::NoteId, NoteLane, NoteLane)> = Vec::new();
+    if !is_lane_organized(&data.notes) {
+        for (i, note) in data.notes.iter().enumerate() {
+            let greedy = NoteLane::from(lane_of_note[i]);
+            if greedy != note.lane {
+                migration.push((note.note_id, note.lane, greedy));
+            }
+        }
+    }
+
+    let mut song_w = song.write();
+    let Some(pattern) = song_w.pattern_mut(data.pattern_id) else {
+        return false;
+    };
+    for (id, _old, new) in &migration {
+        pattern.set_note_lane(*id, *new);
+    }
+    let note_id = pattern.add_note(row_tick, pitch, view_state.default_velocity);
+    pattern.resize_note(note_id, SeqDuration(tpr));
+    pattern.set_note_lane(note_id, new_lane);
+    let add = pattern.note(note_id).map(|n| UndoAction::AddNote {
+        pattern_id: data.pattern_id,
+        note: n.into(),
+    });
+    drop(song_w);
+
+    if let Some(add) = add {
+        if migration.is_empty() {
+            undo_manager.push(add);
+        } else {
+            undo_manager.push(UndoAction::Composite(vec![
+                UndoAction::SetLaneBatch {
+                    pattern_id: data.pattern_id,
+                    changes: migration,
+                },
+                add,
+            ]));
+        }
+    }
+    preview_note(handle, pitch, view_state.default_velocity);
+
+    // Advance the cursor down one row (vertical tracker), wrapping at the end.
+    let next = cursor.row + 1;
+    view_state.tracker_cursor.row = if next >= n_rows { 0 } else { next };
+    true
+}
+
+/// Render the tracker view for one pattern. Voice cells accept note entry and
+/// delete at the cursor; the toolbar row (instrument selector + mini-transport) is
+/// the same shared control the piano roll uses.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_tracker(
     ui: &mut egui::Ui,
@@ -308,6 +446,7 @@ pub(crate) fn draw_tracker(
     song: &Arc<RwLock<Song>>,
     view_state: &mut SequencerViewState,
     instruments: &[InstrumentUiState],
+    undo_manager: &mut UndoManager,
 ) {
     let colors = TrackerColors::from_theme();
 
@@ -358,7 +497,21 @@ pub(crate) fn draw_tracker(
     let n_auto = data.automation_lanes.len();
     let n_cols = n_lanes + n_auto;
     view_state.tracker_cursor.clamp(n_rows, n_cols);
-    let cursor_moved = handle_tracker_keys(ui, &mut view_state.tracker_cursor, n_rows, n_cols);
+    let nav_moved = handle_tracker_keys(ui, &mut view_state.tracker_cursor, n_rows, n_cols);
+    let edit_moved = handle_tracker_edit_keys(
+        ui,
+        data,
+        song,
+        handle,
+        undo_manager,
+        view_state,
+        n_lanes,
+        n_rows,
+        tpr,
+        &lane_of_note,
+        &notes_by_start_row,
+    );
+    let cursor_moved = nav_moved || edit_moved;
     let cursor = view_state.tracker_cursor;
     let cursor_kind = cursor.resolved(n_lanes);
 
@@ -597,8 +750,7 @@ fn draw_note_cell(ui: &mut egui::Ui, note: &PianoRollNote, tpr: u32, colors: &Tr
 /// Returns the per-note lane index (parallel to `notes`) and the lane count (at
 /// least 1, so one empty voice column always shows).
 fn display_lanes(notes: &[PianoRollNote], tpr: u32) -> (Vec<usize>, usize) {
-    let lane_organized = notes.iter().any(|n| n.lane.as_u8() != 0);
-    if lane_organized {
+    if is_lane_organized(notes) {
         let lane_of: Vec<usize> = notes.iter().map(|n| n.lane.as_usize()).collect();
         // `map_or(1, m+1)` already floors at 1 (empty → 1, any max → ≥1).
         let n_lanes = lane_of.iter().copied().max().map_or(1, |m| m + 1);
@@ -606,6 +758,13 @@ fn display_lanes(notes: &[PianoRollNote], tpr: u32) -> (Vec<usize>, usize) {
     } else {
         assign_voice_lanes(notes, tpr)
     }
+}
+
+/// Whether a pattern is "lane-organized": any note carries a non-zero stored lane.
+/// Both the render-layout decision (`display_lanes`) and the edit-migration decision
+/// (`handle_tracker_edit_keys`) key off this single predicate so they can't disagree.
+fn is_lane_organized(notes: &[PianoRollNote]) -> bool {
+    notes.iter().any(|n| n.lane.as_u8() != 0)
 }
 
 /// Greedy interval-coloring lane assignment: each note takes the lowest voice lane

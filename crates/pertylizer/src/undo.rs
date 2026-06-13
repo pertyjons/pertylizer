@@ -9,8 +9,8 @@ use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
 use synth_sequencer::{
-    Duration as SeqDuration, Glide, NoteExpression, NoteId, PatternId, PatternTick, Pitch, Tick,
-    TrackId, Velocity,
+    Duration as SeqDuration, Glide, NoteExpression, NoteId, NoteLane, PatternId, PatternTick,
+    Pitch, Tick, TrackId, Velocity,
 };
 
 use crate::patch::{ConnectionState, ModuleState, ParamValue};
@@ -87,6 +87,12 @@ pub(crate) enum UndoAction {
     SetExpressionBatch {
         pattern_id: PatternId,
         changes: Vec<(NoteId, Option<NoteExpression>, Option<NoteExpression>)>,
+    },
+    /// Batch per-note voice-lane change (tracker column assignment / migration).
+    /// Each tuple is `(note_id, old_lane, new_lane)`.
+    SetLaneBatch {
+        pattern_id: PatternId,
+        changes: Vec<(NoteId, NoteLane, NoteLane)>,
     },
 
     // ── Pattern + track metadata ──
@@ -258,6 +264,7 @@ pub(crate) struct NoteSnapshot {
     pub(crate) pitch: Pitch,
     pub(crate) velocity: Velocity,
     pub(crate) track: Option<synth_sequencer::TrackId>,
+    pub(crate) lane: NoteLane,
 }
 
 impl From<&synth_sequencer::Note> for NoteSnapshot {
@@ -269,6 +276,7 @@ impl From<&synth_sequencer::Note> for NoteSnapshot {
             pitch: note.pitch,
             velocity: note.velocity,
             track: note.track,
+            lane: note.lane,
         }
     }
 }
@@ -428,6 +436,16 @@ impl UndoManager {
                 pattern_id,
                 changes,
             } => UndoAction::SetExpressionBatch {
+                pattern_id: *pattern_id,
+                changes: changes
+                    .iter()
+                    .map(|(id, old, new)| (*id, *new, *old))
+                    .collect(),
+            },
+            UndoAction::SetLaneBatch {
+                pattern_id,
+                changes,
+            } => UndoAction::SetLaneBatch {
                 pattern_id: *pattern_id,
                 changes: changes
                     .iter()
@@ -663,6 +681,7 @@ mod tests {
             pitch: Pitch::MIDDLE_C,
             velocity: Velocity::MF,
             track: None,
+            lane: NoteLane::ZERO,
         }
     }
 

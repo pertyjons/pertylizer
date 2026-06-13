@@ -202,6 +202,7 @@ pub(crate) fn draw_pattern_view(
                         song,
                         seq_view_state,
                         instruments,
+                        undo_manager,
                     );
                 }
                 PatternEditorMode::PianoRoll => {
