@@ -112,8 +112,9 @@ which path T1 actually used.
   automation column add/clean via the shared target picker (`9c9c81c`), and auto-follow
   scroll-away. All writes go through the pattern mutators with `UndoAction`, quantized to
   the row grid.
-- [ ] **T3** — Future column types: NoteProcessor lanes (when `note_processors` on
-  `Pattern` lands — see `plans/note-processors-plan.md`) and NoteExpression sub-columns.
+- [~] **T3** — Future column types. NoteExpression sub-columns SHIPPED 2026-06-13 on
+  branch `feat/tracker-t3` (`3f0a858`, `76e0092`); NoteProcessor lanes assessed but not
+  started (scope open — see T3 section).
 
 Build order is value-first: **T1 ships the overview you asked for with zero model
 change.** Stop after T1 if that's enough; T2/T3 as appetite allows.
@@ -218,14 +219,34 @@ plays identically and round-trips `save_project`/`load_project`.
 
 ---
 
-## T3 — Future column types (when the features exist)
+## T3 — Future column types
 
-- [ ] **NoteProcessor lanes:** surface the pattern's `note_processors` rack (from
-  `plans/note-processors-plan.md`, rack lives on `Pattern`) as columns — e.g. an
-  `arp` column showing its per-step contribution. Add/remove mirrors T2.
-- [ ] **NoteExpression sub-columns:** per-voice-column FX sub-columns for
-  vibrato/accent/gate/ghost/probability (the existing `NoteExpression` block on
-  `Note`), tracker-FX-style.
+Branch `feat/tracker-t3`. Scope confirmed with the user 2026-06-13: expression
+sub-columns first (per-field, behind a toggle), NP lanes after / as appetite allows.
+
+- [x] **NoteExpression sub-columns** — SHIPPED 2026-06-13 (`3f0a858` display, `76e0092`
+  editing). An **"Expr" toggle** interleaves four narrow per-note columns
+  (**Acc/Gat/Gho/Prb**) after each voice column. New `ExprField` +
+  `TrackerColumn::Expr(lane, field)`; the flat selectable-column layout became
+  contiguous per-voice groups of `cols_per_voice` (1 or 5) followed by automation
+  lanes (one `voice_group_base` helper shared by decode + encode). Accent/Gate/
+  Probability edit via the shared digit buffer (×100 display, `EXPR_DISPLAY_SCALE`);
+  Ghost is an Enter/Space flag; Delete clears; writes go through
+  `set_note_expression` (empty → `None`) with `SetExpressionBatch` undo. **Vibrato is
+  excluded** from the sub-columns (too rich for one cell) — the note cell keeps its
+  `•` marker for it.
+
+- [ ] **NoteProcessor lanes** — NOT STARTED; **scope open, heavier than it reads.**
+  Assessment 2026-06-13: the rack (`Pattern.processors: Vec<NoteProcessor>` —
+  ScaleQuantize/Chord/Arpeggiator/Humanize) is `pub(crate)`, and the expansion
+  (`process_at_tick`/`expand_pitch`, `ExpansionBuffer`) is private + audio-thread /
+  RT-oriented. Surfacing "per-step contribution" in the GUI needs **new public API**
+  on `synth_sequencer` for an offline, GUI-callable expansion (or reuse of the
+  engine's offline-render path), plus a display design, plus — for "add/remove
+  mirrors T2" — a **rack-management UX** (adding a *configured* processor, not a bare
+  column). Decide before building: (a) read-only per-row contribution display only,
+  vs (b) also add/remove/configure the rack from the tracker. Recommend (a) first if
+  pursued; it's the value with the least surface.
 
 ---
 
