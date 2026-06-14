@@ -464,7 +464,9 @@ impl ModDestination {
 /// destinations ([`DestAddr`]).
 #[derive(Debug, Clone, Copy)]
 pub struct ModRouting {
-    pub source: ModSource,
+    /// Source address, or `None` for an unconfigured routing. Address-based
+    /// (S1.3) so it can read any module output / macro — not just the 16 roles.
+    pub source: Option<SrcAddr>,
     /// Destination address, or `None` for an unconfigured routing. Address-based
     /// (S1.2) so it can target any modulatable param on any module.
     pub destination: Option<DestAddr>,
@@ -475,7 +477,7 @@ pub struct ModRouting {
 impl Default for ModRouting {
     fn default() -> Self {
         Self {
-            source: ModSource::None,
+            source: None,
             destination: None,
             amount: BipolarValue::CENTER,
             enabled: true,

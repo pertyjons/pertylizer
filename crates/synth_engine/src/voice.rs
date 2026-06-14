@@ -47,6 +47,17 @@ impl VoiceId {
 /// Maximum buffer size we support.
 const MAX_BUFFER_SIZE: usize = 4096;
 
+/// Per-voice values of the six true macro sources, computed once per block and
+/// read when resolving a routing whose source is a [`MacroSource`].
+struct MacroValues {
+    velocity: f32,
+    note: f32,
+    aftertouch: f32,
+    mod_wheel: f32,
+    pitch_bend: f32,
+    poly_aftertouch: f32,
+}
+
 /// Voice state with embedded data - "Make Invalid States Unrepresentable".
 ///
 /// Each state variant carries only the data that is valid for that state:
@@ -429,7 +440,7 @@ pub struct Voice {
     mod_matrix_id: Option<crate::ModuleId>,
 
     /// Pre-allocated buffer for mod matrix slot data (avoids per-frame Vec allocation).
-    mod_slots_cache: Vec<(usize, synth_core::DestAddr, f32)>,
+    mod_slots_cache: Vec<(f32, synth_core::DestAddr, f32)>,
 
     /// Temporary mono buffer for graph processing.
     mono_buffer: AudioBuffer,
@@ -905,88 +916,96 @@ impl Voice {
         }
     }
 
-    /// Apply modulation matrix: update source values and apply offsets to destination modules.
+    /// Apply modulation matrix: resolve each routing's source (macro / module
+    /// output / param) and add the scaled offset to its destination.
     fn apply_mod_matrix(&mut self, mm_id: crate::ModuleId) {
-        // Gather source values from the voice state and previous block outputs
-        let velocity_val = self.state.velocity().map(|v| v.as_f32()).unwrap_or(0.0);
-        let note_val = self
-            .state
-            .note()
-            .map(|n| n.as_u8() as f32 / 127.0)
-            .unwrap_or(0.0);
-        let aftertouch_val = self.aftertouch.as_f32();
-        let mod_wheel_val = self.mod_wheel.as_f32();
-        let pitch_bend_val = self.pitch_bend.as_f32();
+        // Per-voice macro source values.
+        let macros = MacroValues {
+            velocity: self.state.velocity().map(|v| v.as_f32()).unwrap_or(0.0),
+            note: self
+                .state
+                .note()
+                .map(|n| n.as_u8() as f32 / 127.0)
+                .unwrap_or(0.0),
+            aftertouch: self.aftertouch.as_f32(),
+            mod_wheel: self.mod_wheel.as_f32(),
+            pitch_bend: self.pitch_bend.as_f32(),
+            poly_aftertouch: self.poly_aftertouch.as_f32(),
+        };
 
-        // Read LFO/Envelope/EFL/Kinetic outputs from previous block.
-        // Uses internal graph iteration to avoid collect::<Vec<_>>() allocation.
-        let (lfo_values, env_values, kinetic_pos, kinetic_vel, kinetic_acc, efl_values) =
-            self.graph.gather_mod_source_values();
-
-        // Build source values array matching ModSource::ALL indices.
-        // ModSource::ALL: [None, Lfo(0), Lfo(1), Env(0), Env(1), Velocity, NoteNumber,
-        //   Aftertouch, ModWheel, PitchBend, PolyAftertouch, KineticPos, KineticVel, KineticAcc,
-        //   EnvFollower(0), EnvFollower(1)]
-        let poly_aftertouch_val = self.poly_aftertouch.as_f32();
-        let source_values: [f32; 16] = [
-            0.0,                 // None
-            lfo_values[0],       // Lfo(0)
-            lfo_values[1],       // Lfo(1)
-            env_values[0],       // Envelope(0)
-            env_values[1],       // Envelope(1)
-            velocity_val,        // Velocity
-            note_val,            // NoteNumber
-            aftertouch_val,      // Aftertouch
-            mod_wheel_val,       // ModWheel
-            pitch_bend_val,      // PitchBend
-            poly_aftertouch_val, // PolyAftertouch
-            kinetic_pos,         // KineticPos
-            kinetic_vel,         // KineticVel
-            kinetic_acc,         // KineticAcc
-            efl_values[0],       // EnvFollower(0)
-            efl_values[1],       // EnvFollower(1)
-        ];
-
-        // Read the routing list directly off the module (richer than the numeric
-        // get_param channel — lets a destination be more than an f32 index) and
-        // apply modulations (uses the pre-allocated cache to stay alloc-free).
-        self.read_mod_matrix_slots_into_cache(mm_id);
+        // Resolve each routing's source value into the pre-allocated cache while
+        // the graph is borrowed immutably; then apply (mutable) from the cache.
+        self.resolve_routings_into_cache(mm_id, &macros);
         for i in 0..self.mod_slots_cache.len() {
-            let (src_idx, dst, amount) = self.mod_slots_cache[i];
-
-            // Skip the `None` source (index 0); unconfigured destinations were
-            // already filtered out when the cache was filled.
-            if src_idx == 0 {
-                continue;
-            }
-            let src_value = if src_idx < source_values.len() {
-                source_values[src_idx]
-            } else {
-                0.0
-            };
-            let scaled = src_value * amount;
-            self.graph.apply_mod_offset_addr(dst, scaled);
+            let (src_value, dst, amount) = self.mod_slots_cache[i];
+            self.graph.apply_mod_offset_addr(dst, src_value * amount);
         }
     }
 
-    /// Snapshot the mod matrix's routing list into the pre-allocated cache.
+    /// Resolve a single source address to its previous-block value.
+    fn resolve_source(graph: &ModuleGraph, src: synth_core::SrcAddr, macros: &MacroValues) -> f32 {
+        use synth_core::{KineticParam, MacroSource, Param, SrcAddr};
+        match src {
+            SrcAddr::Macro(m) => match m {
+                MacroSource::Velocity => macros.velocity,
+                MacroSource::NoteNumber => macros.note,
+                MacroSource::Aftertouch => macros.aftertouch,
+                MacroSource::ModWheel => macros.mod_wheel,
+                MacroSource::PitchBend => macros.pitch_bend,
+                MacroSource::PolyAftertouch => macros.poly_aftertouch,
+            },
+            SrcAddr::Module {
+                module_type,
+                instance,
+                name,
+            } => {
+                let id = crate::ModuleId::new(module_type, instance);
+                // Kinetic vel/acc are parameter outputs, not ports.
+                if module_type == ModuleType::KineticModulator {
+                    match name.as_str() {
+                        "vel" => {
+                            return graph
+                                .get_param(id, &Param::Kinetic(KineticParam::OutputVel(0.0)))
+                                .unwrap_or(0.0);
+                        }
+                        "acc" => {
+                            return graph
+                                .get_param(id, &Param::Kinetic(KineticParam::OutputAcc(0.0)))
+                                .unwrap_or(0.0);
+                        }
+                        _ => {}
+                    }
+                }
+                // Output port: previous block's first sample (0 if absent — a
+                // dangling address or empty buffer).
+                graph
+                    .get_module_output(id, name)
+                    .map(|buf| if buf.is_empty() { 0.0 } else { buf[0] })
+                    .unwrap_or(0.0)
+            }
+        }
+    }
+
+    /// Resolve every active routing's source value into the pre-allocated cache.
     ///
-    /// Copies `(source index, destination, amount)` out of the module's
-    /// `mod_routings()` slice so the immutable borrow of the graph is released
-    /// before the apply loop takes a mutable borrow. Reuses `mod_slots_cache` to
-    /// stay allocation-free on the audio thread.
-    fn read_mod_matrix_slots_into_cache(&mut self, mm_id: crate::ModuleId) {
+    /// Stores `(resolved source value, destination, amount)` so the immutable
+    /// borrow of the graph (reading source ports/params) is released before the
+    /// apply loop takes a mutable borrow. Reuses `mod_slots_cache` to stay
+    /// allocation-free on the audio thread.
+    fn resolve_routings_into_cache(&mut self, mm_id: crate::ModuleId, macros: &MacroValues) {
         self.mod_slots_cache.clear();
 
         let Some(routings) = self.graph.get_module(mm_id).and_then(|m| m.mod_routings()) else {
             return;
         };
         for routing in routings {
-            // Only cache routings with a configured destination address.
-            if let Some(dest) = routing.destination {
-                self.mod_slots_cache
-                    .push((routing.source.index(), dest, routing.amount.as_f32()));
-            }
+            // Only active routings with both a source and a destination.
+            let (Some(source), Some(dest)) = (routing.source, routing.destination) else {
+                continue;
+            };
+            let value = Self::resolve_source(&self.graph, source, macros);
+            self.mod_slots_cache
+                .push((value, dest, routing.amount.as_f32()));
         }
     }
 
