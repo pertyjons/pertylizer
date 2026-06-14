@@ -602,6 +602,177 @@ impl<'de> Deserialize<'de> for DestAddr {
 }
 
 // ============================================================================
+// DYNAMIC SOURCE ADDRESS (S1.3)
+// ============================================================================
+
+/// A *true macro* source — a named per-voice scalar with no `ModuleId`
+/// (it is not a module output). The six decided macros.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacroSource {
+    Velocity,
+    NoteNumber,
+    Aftertouch,
+    ModWheel,
+    PitchBend,
+    PolyAftertouch,
+}
+
+impl MacroSource {
+    pub const ALL: [Self; 6] = [
+        Self::Velocity,
+        Self::NoteNumber,
+        Self::Aftertouch,
+        Self::ModWheel,
+        Self::PitchBend,
+        Self::PolyAftertouch,
+    ];
+
+    /// Stable id (matches the legacy `ModSource` id for these macros).
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Velocity => "velocity",
+            Self::NoteNumber => "note",
+            Self::Aftertouch => "aftertouch",
+            Self::ModWheel => "mod_wheel",
+            Self::PitchBend => "pitch_bend",
+            Self::PolyAftertouch => "poly_aftertouch",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(s: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|m| m.id() == s)
+    }
+}
+
+/// A dynamic modulation source: a per-voice macro, or a specific module
+/// instance's output port / parameter.
+///
+/// The address-based source that supersedes the fixed [`ModSource`] enum (S1.3),
+/// letting a routing read **any** module output (a third LFO, any env-follower)
+/// — not just the 16 hardcoded sources. Serialized as a string: a macro id
+/// (`"velocity"`) or `"<prefix>-<instance>.<name>"` (`"lfo-1.out"`). `name` is a
+/// module output port **or** a parameter; the Voice resolves which (S1.3b).
+/// [`SrcAddr::parse`] also accepts the legacy `ModSource` ids (`"lfo1"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SrcAddr {
+    /// A named per-voice macro (no `ModuleId`).
+    Macro(MacroSource),
+    /// A module instance's output port or parameter, by 1-based instance.
+    Module {
+        module_type: crate::ModuleType,
+        instance: u16,
+        name: crate::PortName,
+    },
+}
+
+impl SrcAddr {
+    /// Build a module source address.
+    #[must_use]
+    pub fn module(module_type: crate::ModuleType, instance: u16, name: &str) -> Self {
+        Self::Module {
+            module_type,
+            instance,
+            name: crate::PortName::intern(name),
+        }
+    }
+
+    /// Render to the canonical address string.
+    #[must_use]
+    pub fn to_address_string(&self) -> String {
+        match self {
+            Self::Macro(m) => m.id().to_string(),
+            Self::Module {
+                module_type,
+                instance,
+                name,
+            } => format!("{}-{}.{}", module_type.prefix(), instance, name.as_str()),
+        }
+    }
+
+    /// Convert a legacy [`ModSource`] to an address (`None` for `::None`).
+    /// Legacy role index is 0-based; `ModuleId` instances are 1-based. Kinetic
+    /// `pos` is the `out` port; `vel`/`acc` are parameters of the same module.
+    #[must_use]
+    pub fn from_mod_source(src: ModSource) -> Option<Self> {
+        Some(match src {
+            ModSource::None => return None,
+            ModSource::Velocity => Self::Macro(MacroSource::Velocity),
+            ModSource::NoteNumber => Self::Macro(MacroSource::NoteNumber),
+            ModSource::Aftertouch => Self::Macro(MacroSource::Aftertouch),
+            ModSource::ModWheel => Self::Macro(MacroSource::ModWheel),
+            ModSource::PitchBend => Self::Macro(MacroSource::PitchBend),
+            ModSource::PolyAftertouch => Self::Macro(MacroSource::PolyAftertouch),
+            ModSource::Lfo(i) => Self::module(crate::ModuleType::Lfo, i as u16 + 1, "out"),
+            ModSource::Envelope(i) => {
+                Self::module(crate::ModuleType::Envelope, i as u16 + 1, "out")
+            }
+            ModSource::EnvFollower(i) => {
+                Self::module(crate::ModuleType::EnvelopeFollower, i as u16 + 1, "out")
+            }
+            ModSource::KineticPos => Self::module(crate::ModuleType::KineticModulator, 1, "out"),
+            ModSource::KineticVel => Self::module(crate::ModuleType::KineticModulator, 1, "vel"),
+            ModSource::KineticAcc => Self::module(crate::ModuleType::KineticModulator, 1, "acc"),
+        })
+    }
+
+    /// The legacy `ModSource` index this address corresponds to (for the
+    /// enum-combo GUI / numeric `get_param`), or 0 (`None`) if it is not one of
+    /// the 16 legacy sources.
+    #[must_use]
+    pub fn legacy_index(&self) -> usize {
+        ModSource::ALL
+            .iter()
+            .position(|s| Self::from_mod_source(*s) == Some(*self))
+            .unwrap_or(0)
+    }
+
+    /// Parse the canonical new-form address (macro id or `"lfo-1.out"`).
+    fn parse_new(s: &str) -> Option<Self> {
+        if let Some(m) = MacroSource::from_id(s) {
+            return Some(Self::Macro(m));
+        }
+        let (module, name) = s.split_once('.')?;
+        let (prefix, instance) = module.rsplit_once('-')?;
+        if name.is_empty() {
+            return None;
+        }
+        let module_type = crate::ModuleType::from_prefix(prefix)?;
+        Some(Self::module(module_type, instance.parse().ok()?, name))
+    }
+
+    /// Parse a stored source string, accepting **both** the new address form and
+    /// a **legacy** [`ModSource`] id (`"lfo1"`). `None` for empty / `"none"` /
+    /// unrecognized.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        if s.is_empty() || s == "none" {
+            return None;
+        }
+        if let Some(addr) = Self::parse_new(s) {
+            return Some(addr);
+        }
+        let legacy = ModSource::ALL.iter().copied().find(|src| src.id() == s)?;
+        Self::from_mod_source(legacy)
+    }
+}
+
+impl Serialize for SrcAddr {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_address_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for SrcAddr {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Self::parse(&s)
+            .ok_or_else(|| serde::de::Error::custom(format!("invalid modulation source: {s:?}")))
+    }
+}
+
+// ============================================================================
 // MOD MATRIX PARAMETER ENUM (with typed values)
 // ============================================================================
 
@@ -833,5 +1004,81 @@ mod dest_addr_tests {
         assert_eq!(DestAddr::parse("not_a_real_destination"), None);
         // A bad prefix in new-form falls through and is not a legacy id either.
         assert_eq!(DestAddr::parse("zzz-1.cutoff"), None);
+    }
+}
+
+#[cfg(test)]
+mod src_addr_tests {
+    use super::*;
+    use crate::ModuleType;
+
+    #[test]
+    fn parse_macro_and_module() {
+        assert_eq!(
+            SrcAddr::parse("velocity"),
+            Some(SrcAddr::Macro(MacroSource::Velocity))
+        );
+        assert_eq!(
+            SrcAddr::parse("lfo-3.out"),
+            Some(SrcAddr::module(ModuleType::Lfo, 3, "out"))
+        );
+    }
+
+    #[test]
+    fn parse_legacy_ids_upgrade() {
+        // Legacy module-source ids map to module addresses (1-based instance).
+        assert_eq!(
+            SrcAddr::parse("lfo1"),
+            Some(SrcAddr::module(ModuleType::Lfo, 1, "out"))
+        );
+        assert_eq!(
+            SrcAddr::parse("env2"),
+            Some(SrcAddr::module(ModuleType::Envelope, 2, "out"))
+        );
+        assert_eq!(
+            SrcAddr::parse("efl1"),
+            Some(SrcAddr::module(ModuleType::EnvelopeFollower, 1, "out"))
+        );
+        // Kinetic: pos = out port, vel/acc = params of the same module.
+        assert_eq!(
+            SrcAddr::parse("kinetic_vel"),
+            Some(SrcAddr::module(ModuleType::KineticModulator, 1, "vel"))
+        );
+        // Legacy macro id is still a macro.
+        assert_eq!(
+            SrcAddr::parse("mod_wheel"),
+            Some(SrcAddr::Macro(MacroSource::ModWheel))
+        );
+    }
+
+    #[test]
+    fn round_trips_through_string() {
+        let a = SrcAddr::module(ModuleType::Lfo, 3, "out");
+        assert_eq!(a.to_address_string(), "lfo-3.out");
+        assert_eq!(SrcAddr::parse(&a.to_address_string()), Some(a));
+
+        let m = SrcAddr::Macro(MacroSource::PitchBend);
+        assert_eq!(m.to_address_string(), "pitch_bend");
+        assert_eq!(SrcAddr::parse(&m.to_address_string()), Some(m));
+    }
+
+    #[test]
+    fn none_and_garbage_parse_to_none() {
+        assert_eq!(SrcAddr::parse("none"), None);
+        assert_eq!(SrcAddr::parse(""), None);
+        assert_eq!(SrcAddr::parse("not_a_source"), None);
+        assert_eq!(SrcAddr::parse("zzz-1.out"), None);
+    }
+
+    #[test]
+    fn legacy_index_round_trips_for_module_sources() {
+        // A third LFO has no legacy index (beyond the 2 the enum allowed).
+        assert_eq!(SrcAddr::module(ModuleType::Lfo, 3, "out").legacy_index(), 0);
+        // The first two LFOs map back to their legacy ModSource index.
+        let lfo1 = SrcAddr::module(ModuleType::Lfo, 1, "out");
+        assert_eq!(
+            ModSource::from_index(lfo1.legacy_index()),
+            ModSource::Lfo(0)
+        );
     }
 }
