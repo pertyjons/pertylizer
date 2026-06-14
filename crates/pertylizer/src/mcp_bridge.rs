@@ -980,30 +980,53 @@ impl SynthBridge for AppSynthBridge {
                 })
         });
 
-        // Resolve the supplied value (number / bool / string choice) to the
-        // parameter's native f32, rejecting unknown choices at the boundary
-        // instead of silently mapping them to index 0.
-        let value = resolve_param_value(&value, param_desc, param_name)?;
-
-        // Validate against the parameter's range BEFORE applying, so out-of-range
-        // input is rejected at the boundary with a clear message instead of being
-        // silently clamped (or not) downstream.
-        if let Some(pd) = param_desc {
-            pd.validate_f32(value)
-                .map_err(|source| McpBridgeError::InvalidParameterValue {
-                    name: pd.name.clone(),
-                    source,
-                })?;
-        }
+        // The mod-matrix destination accepts a free-form address string
+        // ("flt-1.cutoff", a legacy id like "flt1_cutoff", or "none") so MCP can
+        // target any modulatable param on any module — the numeric choice path
+        // only reaches the 19 legacy roles. Hand the string to the session, which
+        // parses it (dual-format) in `ParamValue::to_param`.
+        let is_dest_addr = matches!(
+            param_desc.map(|pd| pd.id),
+            Some(Param::ModMatrix(ModMatrixParam::SlotDestination(..)))
+        );
+        let (value, pv) = if let (true, BridgeParamValue::Choice(s)) = (is_dest_addr, &value) {
+            let addr = if s.eq_ignore_ascii_case("none") {
+                None
+            } else {
+                Some(synth_core::DestAddr::parse(s).ok_or_else(|| {
+                    McpBridgeError::InvalidChoice {
+                        name: param_name.to_string(),
+                        value: s.clone(),
+                        detail: "expected a destination address like \"flt-1.cutoff\" \
+                                 (or a legacy id, or \"none\")"
+                            .to_string(),
+                    }
+                })?)
+            };
+            let display = addr.map_or_else(|| "none".to_string(), |a| a.to_address_string());
+            (
+                addr.map_or(0.0, |a| a.legacy_index() as f32),
+                crate::patch::ParamValue::Choice(display),
+            )
+        } else {
+            // Resolve the supplied value (number / bool / string choice) to the
+            // parameter's native f32, rejecting unknown choices at the boundary
+            // instead of silently mapping them to index 0.
+            let value = resolve_param_value(&value, param_desc, param_name)?;
+            // Validate against the parameter's range BEFORE applying.
+            if let Some(pd) = param_desc {
+                pd.validate_f32(value)
+                    .map_err(|source| McpBridgeError::InvalidParameterValue {
+                        name: pd.name.clone(),
+                        source,
+                    })?;
+            }
+            (value, crate::patch::ParamValue::Float(value))
+        };
 
         // Use session.set_parameter for correct effect/module routing
         self.session
-            .set_parameter(
-                inst_id,
-                mid,
-                param_name,
-                &crate::patch::ParamValue::Float(value),
-            )
+            .set_parameter(inst_id, mid, param_name, &pv)
             .map_err(|e| match e {
                 crate::session::SessionError::ModuleNotFound(s) => {
                     McpBridgeError::ModuleNotFound(s)
