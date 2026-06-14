@@ -295,7 +295,7 @@ impl GroupTemplate {
 /// distinguishable from plain numbers/strings under `untagged`. Plain `f32`
 /// can't represent a `u64` `SampleId` losslessly, so sampler assignments need
 /// their own variant.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ParamValue {
     Bool(bool),
@@ -393,6 +393,104 @@ impl ParamValue {
             return Self::Choice(choice.id.clone());
         }
         Self::Float(p.as_f32())
+    }
+}
+
+// ============================================================================
+// LEGACY MOD-MATRIX ADDRESS UPGRADE
+// ============================================================================
+
+/// Map each `ModuleType` to the sorted list of 1-based instance numbers present
+/// in this instrument's module list. Drives the positional upgrade of legacy
+/// mod-matrix ids in [`upgrade_legacy_mod_matrix`].
+fn positional_instances(modules: &[ModuleState]) -> BTreeMap<ModuleType, Vec<u16>> {
+    let mut map: BTreeMap<ModuleType, Vec<u16>> = BTreeMap::new();
+    for m in modules {
+        if let Some((prefix, inst)) = m.id.rsplit_once('-')
+            && let (Some(mt), Ok(instance)) = (ModuleType::from_prefix(prefix), inst.parse::<u16>())
+        {
+            map.entry(mt).or_default().push(instance);
+        }
+    }
+    for instances in map.values_mut() {
+        instances.sort_unstable();
+    }
+    map
+}
+
+/// Upgrade one legacy positional source id (`"env2"`) to an absolute address
+/// string (`"env-6.out"`) using this instrument's actual instances. Returns
+/// `None` to leave the value unchanged — a new-form address, a macro, or an
+/// unresolvable positional index.
+fn upgrade_legacy_source(s: &str, instances: &BTreeMap<ModuleType, Vec<u16>>) -> Option<String> {
+    // New-form addresses ("lfo-1.out") carry a '-' and never need upgrading.
+    if s.contains('-') {
+        return None;
+    }
+    let src = synth_core::ModSource::ALL
+        .iter()
+        .copied()
+        .find(|x| x.id() == s)?;
+    // `None` for macro sources (Velocity, ModWheel, …) — they have no instance.
+    let (module_type, position) = src.module_type_and_position()?;
+    let instance = *instances.get(&module_type)?.get(position)?;
+    match synth_core::SrcAddr::from_mod_source(src)? {
+        synth_core::SrcAddr::Module { name, .. } => Some(
+            synth_core::SrcAddr::module(module_type, instance, name.as_str()).to_address_string(),
+        ),
+        synth_core::SrcAddr::Macro(_) => None,
+    }
+}
+
+/// Upgrade one legacy positional destination id (`"osc1_pitch"`) to an absolute
+/// address string. See [`upgrade_legacy_source`].
+fn upgrade_legacy_dest(s: &str, instances: &BTreeMap<ModuleType, Vec<u16>>) -> Option<String> {
+    if s.contains('-') {
+        return None;
+    }
+    let dest = synth_core::ModDestination::ALL
+        .iter()
+        .copied()
+        .find(|x| x.id() == s)?;
+    let (module_type, position, param) = dest.module_target_position()?;
+    let instance = *instances.get(&module_type)?.get(position)?;
+    Some(synth_core::DestAddr::new(module_type, instance, param).to_address_string())
+}
+
+/// Upgrade legacy positional mod-matrix source/dest ids in `modules` to absolute
+/// addresses, resolving each legacy 0-based positional index against *this
+/// instrument's* real module instances.
+///
+/// The legacy [`ModSource`](synth_core::ModSource) /
+/// [`ModDestination`](synth_core::ModDestination) enums addressed the i-th
+/// module of a type *within the instrument*; the address form is an absolute
+/// global instance. When earlier instruments climbed the instance counter (so
+/// this instrument's envelopes are, say, `env-5`/`env-6`), naive parsing of
+/// `"env2"` would point at a *different* instrument's `env-2` — or a
+/// non-existent module — silently dropping the modulation. Resolving
+/// positionally here keeps old projects sounding the same after the address
+/// refactor. A no-op for canonical instances and already-upgraded addresses.
+pub(crate) fn upgrade_legacy_mod_matrix(modules: &mut [ModuleState]) {
+    let instances = positional_instances(modules);
+    for module in modules.iter_mut() {
+        if module.module_type != ModuleType::ModMatrix {
+            continue;
+        }
+        for (key, value) in &mut module.parameters {
+            let ParamValue::Choice(s) = value else {
+                continue;
+            };
+            let upgraded = if key.ends_with("_source") {
+                upgrade_legacy_source(s, &instances)
+            } else if key.ends_with("_dest") {
+                upgrade_legacy_dest(s, &instances)
+            } else {
+                None
+            };
+            if let Some(new_s) = upgraded {
+                *s = new_s;
+            }
+        }
     }
 }
 
@@ -907,6 +1005,93 @@ pub use crate::patches::{categorized_patches, example_patches};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Helper: a bare `ModuleState` with the given id and type, no parameters.
+    fn module_state(id: &str, module_type: ModuleType) -> ModuleState {
+        ModuleState {
+            id: id.to_string(),
+            module_type,
+            position: Position::default(),
+            parameters: BTreeMap::new(),
+        }
+    }
+
+    /// Legacy positional mod-matrix ids upgrade to the *positionally correct*
+    /// instance, not a naive global one. An instrument whose envelopes climbed
+    /// to env-5/env-6 (earlier instruments took 1-4) stores `"env2"` meaning its
+    /// own second envelope — env-6 — so the upgrade must land on env-6, never
+    /// the unrelated global env-2. Filter flt-3 / `"flt1_cutoff"` likewise.
+    #[test]
+    fn legacy_mod_matrix_upgrades_to_positional_instance() {
+        let mut matrix = module_state("mmx-2", ModuleType::ModMatrix);
+        matrix.parameters.insert(
+            "slot_1_source".to_string(),
+            ParamValue::Choice("env2".to_string()),
+        );
+        matrix.parameters.insert(
+            "slot_1_dest".to_string(),
+            ParamValue::Choice("flt1_cutoff".to_string()),
+        );
+        // A macro id and an already-upgraded address must pass through untouched.
+        matrix.parameters.insert(
+            "slot_2_source".to_string(),
+            ParamValue::Choice("velocity".to_string()),
+        );
+        matrix.parameters.insert(
+            "slot_3_source".to_string(),
+            ParamValue::Choice("lfo-7.out".to_string()),
+        );
+
+        let mut modules = vec![
+            module_state("env-5", ModuleType::Envelope),
+            module_state("env-6", ModuleType::Envelope),
+            module_state("flt-3", ModuleType::Filter),
+            matrix,
+        ];
+
+        upgrade_legacy_mod_matrix(&mut modules);
+
+        let params = &modules[3].parameters;
+        assert_eq!(
+            params.get("slot_1_source"),
+            Some(&ParamValue::Choice("env-6.out".to_string())),
+        );
+        assert_eq!(
+            params.get("slot_1_dest"),
+            Some(&ParamValue::Choice("flt-3.cutoff".to_string())),
+        );
+        assert_eq!(
+            params.get("slot_2_source"),
+            Some(&ParamValue::Choice("velocity".to_string())),
+        );
+        assert_eq!(
+            params.get("slot_3_source"),
+            Some(&ParamValue::Choice("lfo-7.out".to_string())),
+        );
+    }
+
+    /// On canonical instances (env-1/env-2) the positional upgrade is a no-op in
+    /// effect — `"env2"` already maps to env-2.
+    #[test]
+    fn legacy_mod_matrix_upgrade_is_identity_on_canonical_instances() {
+        let mut matrix = module_state("mmx-1", ModuleType::ModMatrix);
+        matrix.parameters.insert(
+            "slot_1_source".to_string(),
+            ParamValue::Choice("env2".to_string()),
+        );
+        let mut modules = vec![
+            module_state("env-1", ModuleType::Envelope),
+            module_state("env-2", ModuleType::Envelope),
+            matrix,
+        ];
+
+        upgrade_legacy_mod_matrix(&mut modules);
+
+        assert_eq!(
+            modules[2].parameters.get("slot_1_source"),
+            Some(&ParamValue::Choice("env-2.out".to_string())),
+        );
+    }
 
     /// A mod-matrix destination serializes as a free-form address string and
     /// round-trips — including an *arbitrary* address (`osc-1.detune`) outside

@@ -1516,7 +1516,7 @@
           "type": "object"
         },
         {
-          "description": "Mod Matrix (mod_matrix) — Grid-based modulation routing matrix (up to 16 slots)",
+          "description": "Mod Matrix (mod_matrix) — Modulation matrix — a list of source → destination routings",
           "properties": {
             "id": {
               "description": "Module instance ID, e.g. `mmx-1`.",

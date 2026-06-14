@@ -2725,7 +2725,7 @@
       }
     },
     "mod_matrix": {
-      "description": "Grid-based modulation routing matrix (up to 16 slots)",
+      "description": "Modulation matrix — a list of source → destination routings",
       "name": "Mod Matrix",
       "parameters": {
         "grid_size": {

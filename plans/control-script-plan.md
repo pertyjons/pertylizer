@@ -137,6 +137,11 @@ with no UI change. S1.2/S1.3 deliver the full dynamic addressing; the matching G
 
 ### Step 2 — Control Script (the compute layer)
 
+The language is **YAMS** (*Yet Another Modulation Script*). Grammar spiked in
+[`yams-grammar.md`](yams-grammar.md): header `src` bindings (each → a source register) +
+a body that assigns the normalized offset to `out`; rate/context-agnostic so the future
+audio-rate dialect reuses the same grammar; uniform across the tree→VM tiering.
+
 - [ ] **S2.1** — `CompiledScript` type + control-rate evaluator: expression tree per
   destination first (`dest = sigmoid(a*s1 + b*s2)`), grow to a small stack/register
   **bytecode VM** when state/conditionals/multi-output demand it. Offline compile,

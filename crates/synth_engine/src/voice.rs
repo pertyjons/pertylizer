@@ -999,7 +999,10 @@ impl Voice {
             return;
         };
         for routing in routings {
-            // Only active routings with both a source and a destination.
+            // Only enabled routings with both a source and a destination.
+            if !routing.enabled {
+                continue;
+            }
             let (Some(source), Some(dest)) = (routing.source, routing.destination) else {
                 continue;
             };

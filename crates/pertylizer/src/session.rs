@@ -778,8 +778,15 @@ impl SynthSession {
             return result;
         }
 
+        // Upgrade legacy positional mod-matrix ids ("env2") to absolute
+        // addresses, resolved against this instrument's real instances — old
+        // projects on non-canonical instance numbers would otherwise modulate
+        // the wrong (or no) module after the address refactor.
+        let mut modules = patch.modules.clone();
+        crate::patch::upgrade_legacy_mod_matrix(&mut modules);
+
         // Add modules
-        for module_state in &patch.modules {
+        for module_state in &modules {
             let module_type = module_state.module_type;
             if module_type.is_visualizer() || module_type == ModuleType::SignalMonitor {
                 // Visualizer/signal monitor — skip (requires GUI-specific setup)

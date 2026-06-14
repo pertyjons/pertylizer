@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use synth_core::{
-    BipolarValue, Gain, MidiNote, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
-    ModuleType, NormalizedValue, Param, ParameterUnit, PortDirection, SampleCount, Velocity,
+    BipolarValue, DestAddr, Gain, MidiNote, ModMatrixParam, ModuleType, NormalizedValue, Param,
+    ParameterUnit, PortDirection, SampleCount, SrcAddr, Velocity,
 };
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
@@ -440,7 +440,7 @@ impl SynthBridge for AppSynthBridge {
                 // live slot table for matrix modules themselves.
                 let is_mod_matrix = m.module_type == ModuleType::ModMatrix;
                 let mod_matrix_routings = if is_mod_matrix {
-                    Some(collect_mod_matrix_routings(&m.parameters, &module_index))
+                    Some(collect_mod_matrix_routings(&m.parameters))
                 } else {
                     None
                 };
@@ -545,12 +545,11 @@ impl SynthBridge for AppSynthBridge {
             .state()
             .shared_graph
             .get_modules_for_instrument(InstrumentId::new(instrument_id));
-        let module_index = InstrumentModuleIndex::from_snapshots(&modules);
 
         Ok(modules
             .iter()
             .filter(|m| m.module_type == ModuleType::ModMatrix)
-            .flat_map(|m| collect_mod_matrix_routings(&m.parameters, &module_index))
+            .flat_map(|m| collect_mod_matrix_routings(&m.parameters))
             .collect())
     }
 
@@ -5757,11 +5756,13 @@ impl SynthBridge for AppSynthBridge {
     }
 }
 
-/// Decoded slot state from a Mod Matrix module's parameter snapshot.
+/// Decoded routing from a Mod Matrix module's parameter snapshot. Address-based
+/// — no legacy enum, so arbitrary sources/destinations survive (a third LFO,
+/// `osc-1.detune`).
 #[derive(Debug, Clone, Copy)]
 struct ModMatrixSlot {
-    source: ModSource,
-    destination: ModDestination,
+    source: Option<SrcAddr>,
+    destination: Option<DestAddr>,
     amount: f32,
     enabled: bool,
 }
@@ -5769,79 +5770,56 @@ struct ModMatrixSlot {
 impl Default for ModMatrixSlot {
     fn default() -> Self {
         Self {
-            source: ModSource::None,
-            destination: ModDestination::None,
+            source: None,
+            destination: None,
             amount: 0.0,
             enabled: true,
         }
     }
 }
 
-/// Decode one Mod Matrix module's `Param` list into a typed slot table.
-/// Slots beyond the configured grid size are returned untouched (callers
-/// truncate via `grid_size.slot_count()`).
-fn decode_mod_matrix_slots(
-    params: &[Param],
-) -> (
-    ModMatrixGridSize,
-    [ModMatrixSlot; synth_core::MAX_MOD_MATRIX_SLOTS],
-) {
-    let mut grid_size = ModMatrixGridSize::default();
-    let mut slots = [ModMatrixSlot::default(); synth_core::MAX_MOD_MATRIX_SLOTS];
-
+/// Decode a Mod Matrix module's param snapshot into its dynamic routing list.
+/// The list length follows the `SlotN` params present; the vestigial `GridSize`
+/// is ignored (the engine no longer gates by it).
+fn decode_mod_matrix_slots(params: &[Param]) -> Vec<ModMatrixSlot> {
+    let mut slots: Vec<ModMatrixSlot> = Vec::new();
     for p in params {
         let Param::ModMatrix(mp) = p else { continue };
+        let idx = match mp {
+            ModMatrixParam::SlotSource(i, _)
+            | ModMatrixParam::SlotDestination(i, _)
+            | ModMatrixParam::SlotAmount(i, _)
+            | ModMatrixParam::SlotEnabled(i, _) => *i as usize,
+            _ => continue,
+        };
+        // Ignore out-of-range slots, matching the module's own `set_param`.
+        // Keeps the dense Vec ≤ MAX so `slot: i as u8 + 1` can't overflow.
+        if idx >= synth_core::MAX_MOD_MATRIX_SLOTS {
+            continue;
+        }
+        if slots.len() <= idx {
+            slots.resize(idx + 1, ModMatrixSlot::default());
+        }
         match mp {
-            ModMatrixParam::GridSize(gs) => grid_size = *gs,
-            ModMatrixParam::SlotSource(i, src) => {
-                if let Some(s) = slots.get_mut(*i as usize) {
-                    // Map the address back to the legacy enum for now; arbitrary
-                    // sources surface as `None` until the MCP source surface lands.
-                    s.source =
-                        src.map_or(ModSource::None, |a| ModSource::from_index(a.legacy_index()));
-                }
-            }
-            ModMatrixParam::SlotDestination(i, dst) => {
-                if let Some(s) = slots.get_mut(*i as usize) {
-                    // Map the address back to the legacy enum for now; arbitrary
-                    // addresses surface as `None` here until the MCP address
-                    // surface lands (S1.4).
-                    s.destination = dst.map_or(ModDestination::None, |a| {
-                        ModDestination::from_index(a.legacy_index())
-                    });
-                }
-            }
-            ModMatrixParam::SlotAmount(i, amt) => {
-                if let Some(s) = slots.get_mut(*i as usize) {
-                    s.amount = amt.as_f32();
-                }
-            }
-            ModMatrixParam::SlotEnabled(i, en) => {
-                if let Some(s) = slots.get_mut(*i as usize) {
-                    s.enabled = *en;
-                }
-            }
+            ModMatrixParam::SlotSource(_, src) => slots[idx].source = *src,
+            ModMatrixParam::SlotDestination(_, dst) => slots[idx].destination = *dst,
+            ModMatrixParam::SlotAmount(_, amt) => slots[idx].amount = amt.as_f32(),
+            ModMatrixParam::SlotEnabled(_, en) => slots[idx].enabled = *en,
+            _ => {}
         }
     }
-
-    (grid_size, slots)
+    slots
 }
 
-/// Iterate active slots (within grid size, enabled) across every Mod Matrix
-/// module in the snapshot.
+/// Iterate enabled routings across every Mod Matrix module in the snapshot.
 fn active_mod_matrix_slots(
     modules: &[synth_engine::ModuleStateSnapshot],
 ) -> impl Iterator<Item = ModMatrixSlot> + '_ {
     modules
         .iter()
         .filter(|m| m.id.module_type == synth_core::ModuleType::ModMatrix)
-        .flat_map(|m| {
-            let (grid_size, slots) = decode_mod_matrix_slots(&m.parameters);
-            slots
-                .into_iter()
-                .take(grid_size.slot_count())
-                .filter(|s| s.enabled)
-        })
+        .flat_map(|m| decode_mod_matrix_slots(&m.parameters))
+        .filter(|s| s.enabled)
 }
 
 /// Per-instrument positional lookup: for each `ModuleType`, the in-instrument
@@ -5865,29 +5843,32 @@ impl InstrumentModuleIndex {
         }
         Self { by_type }
     }
+}
 
-    fn position(&self, mt: synth_core::ModuleType, position: usize) -> Option<ModuleId> {
-        self.by_type.get(&mt)?.get(position).copied()
+/// Resolve a source address to the actual `ModuleId` in this instrument, or
+/// `None` for macros (no `ModuleId`) and addresses that name an absent module.
+fn resolve_source(source: SrcAddr, idx: &InstrumentModuleIndex) -> Option<ModuleId> {
+    match source {
+        SrcAddr::Macro(_) => None,
+        SrcAddr::Module {
+            module_type,
+            instance,
+            ..
+        } => {
+            let id = ModuleId::new(module_type, instance);
+            idx.by_type.get(&module_type)?.contains(&id).then_some(id)
+        }
     }
 }
 
-/// Resolve a `ModSource` to the actual `ModuleId` in this instrument, or
-/// `None` for non-module sources (Velocity, ModWheel, ...) or when the
-/// referenced positional slot is empty (e.g. `Envelope(1)` with only one
-/// envelope in the graph).
-fn resolve_source(source: ModSource, idx: &InstrumentModuleIndex) -> Option<ModuleId> {
-    let (mt, pos) = source.module_type_and_position()?;
-    idx.position(mt, pos)
-}
-
-/// Resolve a `ModDestination` to `(ModuleId, param_name)` in this instrument,
-/// or `None` for `ModDestination::None` / unfilled positional slots.
-fn resolve_destination(
-    dest: ModDestination,
-    idx: &InstrumentModuleIndex,
-) -> Option<(ModuleId, &'static str)> {
-    let (mt, pos, param) = dest.module_target_position()?;
-    idx.position(mt, pos).map(|id| (id, param))
+/// Resolve a destination address to `(ModuleId, param)` in this instrument, or
+/// `None` when it names an absent module (a dangling routing).
+fn resolve_destination(dest: DestAddr, idx: &InstrumentModuleIndex) -> Option<(ModuleId, String)> {
+    let id = ModuleId::new(dest.module_type, dest.instance);
+    idx.by_type
+        .get(&dest.module_type)?
+        .contains(&id)
+        .then(|| (id, dest.param.as_str().to_string()))
 }
 
 /// Collect module IDs referenced as sources by any active Mod Matrix slot.
@@ -5900,7 +5881,7 @@ fn collect_mod_matrix_sources(
     idx: &InstrumentModuleIndex,
 ) -> HashSet<ModuleId> {
     active_mod_matrix_slots(modules)
-        .filter_map(|s| resolve_source(s.source, idx))
+        .filter_map(|s| s.source.and_then(|src| resolve_source(src, idx)))
         .collect()
 }
 
@@ -5912,7 +5893,7 @@ fn collect_mod_matrix_destinations(
     idx: &InstrumentModuleIndex,
 ) -> HashSet<ModuleId> {
     active_mod_matrix_slots(modules)
-        .filter_map(|s| resolve_destination(s.destination, idx))
+        .filter_map(|s| s.destination.and_then(|dst| resolve_destination(dst, idx)))
         .map(|(id, _)| id)
         .collect()
 }
@@ -6794,40 +6775,27 @@ fn parse_module_type(token: &str) -> Option<synth_core::ModuleType> {
         .find(|mt| squash_token(mt.name()) == squashed)
 }
 
-/// Extract Mod Matrix routings from a `ModMatrix` module's parameter
-/// snapshot. Skips slots beyond the configured grid size and fully-empty
-/// slots (`None → None`); partially-configured slots (only source or only
-/// destination set) are reported so clients can see them.
-///
-/// `idx` is the *containing instrument's* positional module index — used to
-/// resolve `Envelope(1)` etc. to the actual envelope `ModuleId` in this
-/// instrument rather than a global-instance guess. Falls back to the
-/// source/destination's static `id()` when the position is unfilled.
-fn collect_mod_matrix_routings(
-    params: &[Param],
-    idx: &InstrumentModuleIndex,
-) -> Vec<MatrixRoutingInfo> {
-    let (grid_size, slots) = decode_mod_matrix_slots(params);
-    slots
+/// Extract Mod Matrix routings from a `ModMatrix` module's parameter snapshot.
+/// Each routing reports its source and destination as **address strings**
+/// (`"lfo-3.out"`, `"velocity"`, `"flt-1.cutoff"`) — so arbitrary addresses are
+/// named directly rather than lost to a legacy-enum round-trip. Fully-empty
+/// routings (no source and no destination) are skipped.
+fn collect_mod_matrix_routings(params: &[Param]) -> Vec<MatrixRoutingInfo> {
+    decode_mod_matrix_slots(params)
         .iter()
         .enumerate()
-        .take(grid_size.slot_count())
-        .filter(|(_, s)| {
-            !matches!(s.source, ModSource::None) || !matches!(s.destination, ModDestination::None)
-        })
+        .filter(|(_, s)| s.source.is_some() || s.destination.is_some())
         .map(|(i, s)| {
-            let source = resolve_source(s.source, idx)
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| s.source.id().to_string());
-            let destination = resolve_destination(s.destination, idx)
-                .map(|(id, p)| format!("{id}.{p}"))
-                .unwrap_or_else(|| s.destination.id().to_string());
+            let source = s
+                .source
+                .map_or_else(|| "none".to_string(), |a| a.to_address_string());
+            let destination = s
+                .destination
+                .map_or_else(|| "none".to_string(), |a| a.to_address_string());
             MatrixRoutingInfo {
                 slot: i as u8 + 1,
                 source,
-                source_name: s.source.name().to_string(),
                 destination,
-                destination_name: s.destination.name().to_string(),
                 amount: s.amount,
                 enabled: s.enabled,
             }
@@ -11549,13 +11517,13 @@ mod mod_matrix_routing_tests {
         snap
     }
 
-    /// Acid Bass shape under non-canonical global instances: this
-    /// instrument's envelopes are env-5 and env-6 and its filter is flt-3
-    /// (because earlier instruments consumed the lower instance numbers).
-    /// `ModSource::Envelope(1)` resolves positionally to the *second*
-    /// envelope in this instrument — env-6 — not the global `env-2`.
+    /// The report echoes the stored absolute address faithfully — no
+    /// report-time positional remap (legacy positional ids are upgraded at
+    /// *load* instead; see `patch::upgrade_legacy_mod_matrix`). An instrument on
+    /// non-canonical global instances (env-5/env-6, flt-3) resolves its routing
+    /// and badge sets to those exact instances.
     #[test]
-    fn positional_resolution_picks_correct_instance() {
+    fn report_echoes_absolute_addresses_for_noncanonical_instances() {
         let modules = vec![
             stub_module(ModuleType::Envelope, 5),
             stub_module(ModuleType::Envelope, 6),
@@ -11563,14 +11531,13 @@ mod mod_matrix_routing_tests {
             matrix_snapshot(
                 2,
                 vec![
-                    Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::Grid1x1)),
                     Param::ModMatrix(ModMatrixParam::SlotSource(
                         0,
-                        SrcAddr::from_mod_source(ModSource::Envelope(1)),
+                        Some(SrcAddr::module(ModuleType::Envelope, 6, "out")),
                     )),
                     Param::ModMatrix(ModMatrixParam::SlotDestination(
                         0,
-                        DestAddr::from_mod_destination(ModDestination::FilterCutoff(0)),
+                        Some(DestAddr::new(ModuleType::Filter, 3, "cutoff")),
                     )),
                     Param::ModMatrix(ModMatrixParam::SlotAmount(0, BipolarValue::new(0.9))),
                     Param::ModMatrix(ModMatrixParam::SlotEnabled(0, true)),
@@ -11579,38 +11546,35 @@ mod mod_matrix_routing_tests {
         ];
 
         let idx = InstrumentModuleIndex::from_snapshots(&modules);
-        let matrix_params = &modules.last().unwrap().parameters;
-        let routings = collect_mod_matrix_routings(matrix_params, &idx);
+        let routings = collect_mod_matrix_routings(&modules.last().unwrap().parameters);
         assert_eq!(routings.len(), 1);
         let r = &routings[0];
-        assert_eq!(r.source, "env-6");
-        assert_eq!(r.source_name, "Env 2");
+        assert_eq!(r.source, "env-6.out");
         assert_eq!(r.destination, "flt-3.cutoff");
-        assert_eq!(r.destination_name, "Filter 1 Cutoff");
         assert!((r.amount - 0.9).abs() < 1e-4);
         assert!(r.enabled);
 
-        // Sources/destinations sets agree with the routing — these feed the
+        // Badge sets resolve the exact addressed instances — these feed the
         // virtual "matrix" port surfaced on the actual module instances.
         let sources = collect_mod_matrix_sources(&modules, &idx);
         let destinations = collect_mod_matrix_destinations(&modules, &idx);
-        let env_6 = ModuleId::new(ModuleType::Envelope, 6);
-        let env_2 = ModuleId::new(ModuleType::Envelope, 2);
-        let flt_3 = ModuleId::new(ModuleType::Filter, 3);
-        assert!(sources.contains(&env_6), "sources={sources:?}");
         assert!(
-            destinations.contains(&flt_3),
+            sources.contains(&ModuleId::new(ModuleType::Envelope, 6)),
+            "sources={sources:?}"
+        );
+        assert!(
+            destinations.contains(&ModuleId::new(ModuleType::Filter, 3)),
             "destinations={destinations:?}"
         );
-        assert!(!sources.contains(&env_2));
+        // The unrelated global env-2 is NOT pulled in.
+        assert!(!sources.contains(&ModuleId::new(ModuleType::Envelope, 2)));
     }
 
-    /// Slots beyond the current grid size must be ignored even if they
-    /// carry valid source/dest — the user shrunk the grid and expects
-    /// only the visible slots to apply.
+    /// `GridSize` is vestigial: every configured slot is reported regardless of
+    /// the old grid dimension (the matrix is a flat list now, not an N×N grid).
     #[test]
-    fn slots_beyond_grid_size_are_ignored() {
-        let modules = vec![
+    fn grid_size_does_not_limit_configured_slots() {
+        let modules = [
             stub_module(ModuleType::Lfo, 1),
             stub_module(ModuleType::Envelope, 1),
             stub_module(ModuleType::Oscillator, 1),
@@ -11627,7 +11591,7 @@ mod mod_matrix_routing_tests {
                         0,
                         DestAddr::from_mod_destination(ModDestination::OscPitch(0)),
                     )),
-                    // Slot 5 is past 1×1 (1 slot) — must not appear.
+                    // Slot 5 would be past a 1×1 grid — it must still appear.
                     Param::ModMatrix(ModMatrixParam::SlotSource(
                         4,
                         SrcAddr::from_mod_source(ModSource::Envelope(0)),
@@ -11640,12 +11604,14 @@ mod mod_matrix_routing_tests {
             ),
         ];
 
-        let idx = InstrumentModuleIndex::from_snapshots(&modules);
-        let routings = collect_mod_matrix_routings(&modules.last().unwrap().parameters, &idx);
-        assert_eq!(routings.len(), 1);
+        let routings = collect_mod_matrix_routings(&modules.last().unwrap().parameters);
+        assert_eq!(routings.len(), 2);
         assert_eq!(routings[0].slot, 1);
-        assert_eq!(routings[0].source, "lfo-1");
+        assert_eq!(routings[0].source, "lfo-1.out");
         assert_eq!(routings[0].destination, "osc-1.pitch");
+        assert_eq!(routings[1].slot, 5);
+        assert_eq!(routings[1].source, "env-1.out");
+        assert_eq!(routings[1].destination, "amp-1.level");
     }
 
     /// Disabled slots should not contribute to either the source or
@@ -11683,7 +11649,7 @@ mod mod_matrix_routing_tests {
     /// string.
     #[test]
     fn implicit_sources_use_source_id_fallback() {
-        let modules = vec![
+        let modules = [
             stub_module(ModuleType::Amplifier, 1),
             stub_module(ModuleType::Filter, 1),
             matrix_snapshot(
@@ -11710,11 +11676,9 @@ mod mod_matrix_routing_tests {
             ),
         ];
 
-        let idx = InstrumentModuleIndex::from_snapshots(&modules);
-        let routings = collect_mod_matrix_routings(&modules.last().unwrap().parameters, &idx);
+        let routings = collect_mod_matrix_routings(&modules.last().unwrap().parameters);
         assert_eq!(routings.len(), 2);
         assert_eq!(routings[0].source, "velocity");
-        assert_eq!(routings[0].source_name, "Velocity");
         assert_eq!(routings[1].source, "mod_wheel");
     }
 }

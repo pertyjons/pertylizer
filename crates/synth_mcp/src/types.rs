@@ -71,15 +71,13 @@ pub struct ModuleInfo {
 pub struct MatrixRoutingInfo {
     /// 1-based slot index (1..=16).
     pub slot: u8,
-    /// Source semantic ID (e.g. `"lfo-1"`, `"env-2"`, or for non-module
-    /// sources the source key `"velocity"`, `"mod_wheel"`, etc.).
+    /// Source address: a module output/param `"<module-id>.<port>"` (e.g.
+    /// `"lfo-1.out"`, `"env-2.out"`), or a macro key (`"velocity"`,
+    /// `"mod_wheel"`, …). `"none"` when the slot has no source.
     pub source: String,
-    /// Source display name (e.g. `"LFO 1"`, `"Velocity"`).
-    pub source_name: String,
-    /// Destination as `"module-id.param"` (e.g. `"flt-1.cutoff"`).
+    /// Destination address `"<module-id>.<param>"` (e.g. `"flt-1.cutoff"`), or
+    /// `"none"` when the slot has no destination.
     pub destination: String,
-    /// Destination display name (e.g. `"Filter 1 Cutoff"`).
-    pub destination_name: String,
     /// Modulation amount in `-1.0..=1.0`.
     pub amount: f32,
     /// Whether the slot is enabled (an enabled slot can still be inactive
