@@ -90,18 +90,20 @@ Mod Matrix's parameter-offset path (`mmx → flt1.cutoff`, no wire).
   **Remaining to make it user-*creatable*:** the MCP address path (S1.4) and/or the
   deferred GUI picker (S1.5c) — the GUI combo + MCP `set_parameter` still go through the
   19-choice path. Same address approach applies to S1.3 sources.
-- [ ] **S1.3** — Dynamic **source** addressing + the shared **macro-source registry**:
-  sources are `(ModuleId, port|param)` over the patch **plus** the named per-voice macros.
-  Removes the 2-LFO / 2-env ceiling. **Taxonomy (decided):** the *true macros* are exactly
-  `velocity, mod_wheel, aftertouch, pitch_bend, note, poly_at` — they have no `ModuleId`.
-  Everything else in today's 16-source enum is a **module** and becomes a normal
-  module-addressed source: `lfo`, `env`, **`kinetic_pos/vel/acc`** (KineticModulator),
-  **`efl1/efl2`** (EnvFollower). The macro rail shows only the six true macros.
-  Includes **S1.7 voice-snapshot wiring** (below).
-- [ ] **S1.7** — Voice snapshot wiring: each block the Voice collects the **union of
-  referenced source ports/params** into the per-voice cache (today it populates only the 16
-  fixed sources). A real mechanism extension — the resolved routing list drives which ports
-  to snapshot. Pairs with S1.3.
+- [x] **S1.3** — Dynamic **source** addressing + macro registry. **SHIPPED** (mirrors S1.2):
+  - `bd9659b` **S1.3a** — `SrcAddr = Macro(MacroSource) | Module{type, instance, name}` +
+    `MacroSource` (the six true macros) + dual-format parse (macro id / `"lfo-1.out"` /
+    legacy `"lfo1"`, incl. kinetic pos=`out` port, vel/acc=params).
+  - `578e2be` **S1.3b** — `ModRouting.source: Option<SrcAddr>`; the Voice resolves each
+    source (macro / `get_module_output` / kinetic `get_param`) — a **3rd LFO** is now a
+    usable source. Includes **S1.7** (voice snapshot of arbitrary module outputs, RT-safe).
+    Removed the dead `source_values`/`gather_mod_source_values` machinery.
+  - `7d1f1ce` **S1.3c** — `SlotSource` carries `Option<SrcAddr>`; persist as an address
+    string (dual-format `from_param`/`to_param`); schema `slot_source` enum → string.
+  - `c35e033` **S1.3d** — MCP `set_parameter` accepts a source address string (unified with
+    the dest path). A 3rd LFO is creatable via MCP.
+- [x] **S1.7** — Voice snapshot wiring. **SHIPPED in S1.3b** (`578e2be`): the Voice reads
+  each referenced source's output port / param directly via the graph, per block, alloc-free.
 - [x] **S1.4** — Persistence + MCP (destination side). **SHIPPED `53bc171`.** MCP
   `set_parameter` accepts a free-form address string for a slot dest ('flt-1.cutoff' /
   legacy id / 'none'), parsed via `to_param` — so MCP can create an arbitrary destination.
@@ -119,6 +121,15 @@ Mod Matrix's parameter-offset path (`mmx → flt1.cutoff`, no wire).
   (`patch_editor.rs:1834`) and becomes a roll-up of the per-param data.
 
 (All S1.5 work is DEFERRED for interactive egui work — not headless-testable.)
+
+> **MILESTONE (2026-06-14): Step 1's headless scope is COMPLETE.** Dynamic
+> source **and** destination addressing ship end-to-end — engine, persistence,
+> schema, MCP. A routing can read any module output / macro (incl. a **3rd LFO**)
+> and target any modulatable param on any module; old projects auto-upgrade; the
+> GUI combo still edits the legacy roles. The **only** remaining Step 1 work is the
+> GUI address picker + per-knob markers + macro rail (S1.5a/b/c), all DEFERRED for
+> an interactive egui session (not headless-testable). Step 2 (Control Script /
+> expressions) is the next build phase.
 
 **S1.1 is shippable alone** — it lifts the destination ceiling (any modulatable param)
 with no UI change. S1.2/S1.3 deliver the full dynamic addressing; the matching GUI markers
