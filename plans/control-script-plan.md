@@ -102,9 +102,12 @@ Mod Matrix's parameter-offset path (`mmx → flt1.cutoff`, no wire).
   referenced source ports/params** into the per-voice cache (today it populates only the 16
   fixed sources). A real mechanism extension — the resolved routing list drives which ports
   to snapshot. Pairs with S1.3.
-- [ ] **S1.4** — Persistence + MCP: address-based routings round-trip; dangling-reference
-  policy on module delete (disable-and-keep); `get_mod_matrix_routings` already reports
-  dotted IDs — extend authoring tools to take addresses.
+- [x] **S1.4** — Persistence + MCP (destination side). **SHIPPED `53bc171`.** MCP
+  `set_parameter` accepts a free-form address string for a slot dest ('flt-1.cutoff' /
+  legacy id / 'none'), parsed via `to_param` — so MCP can create an arbitrary destination.
+  Persistence round-trip landed in S1.2d-2. Dangling references are **disable-and-keep**
+  (apply_mod_offset_addr no-ops when the addressed module is absent). Source-side MCP rides
+  along with S1.3.
 - [ ] **S1.5a** — GUI: per-parameter **destination** knob marker — **lands with S1.2**.
   Trivial once routings carry the exact `ParamId` (the analysis already computes the target
   param; the wrinkle is the enum's `"pitch"` tag, gone after S1.2). See GUI section.
