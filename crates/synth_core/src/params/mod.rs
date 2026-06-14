@@ -84,7 +84,7 @@ pub use kinetic::{
 pub use la_synth::LaSynthParam;
 pub use lfo::{LfoParam, LfoWaveform};
 pub use mod_matrix::{
-    MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
+    DestAddr, MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
 };
 pub use modules::{AmplifierParam, LevelMeterParam, MixerParam, OscilloscopeParam};
 pub use mseg::MsegParam;

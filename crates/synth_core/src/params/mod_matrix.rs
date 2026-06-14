@@ -453,6 +453,83 @@ impl ModDestination {
 }
 
 // ============================================================================
+// DYNAMIC DESTINATION ADDRESS (S1.2)
+// ============================================================================
+
+/// A dynamic modulation destination: a specific module instance's parameter.
+///
+/// The ID-based address that supersedes the fixed [`ModDestination`] enum (S1.2),
+/// letting a routing target **any** modulatable parameter on **any** module in the
+/// patch — not just the 19 hardcoded roles.
+///
+/// Serialized as the canonical string `"<prefix>-<instance>.<param>"`
+/// (e.g. `"flt-1.cutoff"`). [`DestAddr::parse`] also accepts the **legacy**
+/// `ModDestination` ids (`"flt1_cutoff"`), so old projects auto-upgrade on load
+/// without re-authoring. `param` reuses the interned [`PortName`](crate::PortName)
+/// pool as a copyable parameter identifier (the param's descriptor `type_id`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DestAddr {
+    pub module_type: crate::ModuleType,
+    /// 1-based instance, matching `ModuleId` (e.g. `"flt-1"` → 1).
+    pub instance: u16,
+    /// Interned parameter identifier (the descriptor `type_id`, e.g. `"cutoff"`).
+    pub param: crate::PortName,
+}
+
+impl DestAddr {
+    /// Build an address from a module type, 1-based instance, and param id.
+    #[must_use]
+    pub fn new(module_type: crate::ModuleType, instance: u16, param: &str) -> Self {
+        Self {
+            module_type,
+            instance,
+            param: crate::PortName::intern(param),
+        }
+    }
+
+    /// Render to the canonical address string, e.g. `"flt-1.cutoff"`.
+    #[must_use]
+    pub fn to_address_string(&self) -> String {
+        format!(
+            "{}-{}.{}",
+            self.module_type.prefix(),
+            self.instance,
+            self.param.as_str()
+        )
+    }
+
+    /// Parse the canonical new-form address `"flt-1.cutoff"`.
+    fn parse_new(s: &str) -> Option<Self> {
+        let (module, param) = s.split_once('.')?;
+        let (prefix, instance) = module.rsplit_once('-')?;
+        if param.is_empty() {
+            return None;
+        }
+        let module_type = crate::ModuleType::from_prefix(prefix)?;
+        let instance: u16 = instance.parse().ok()?;
+        Some(Self::new(module_type, instance, param))
+    }
+
+    /// Parse a stored destination string, accepting **both** the new address
+    /// form and a **legacy** [`ModDestination`] id (`"flt1_cutoff"`). Returns
+    /// `None` for an empty / `"none"` / unrecognized value.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        if s.is_empty() || s == "none" {
+            return None;
+        }
+        if let Some(addr) = Self::parse_new(s) {
+            return Some(addr);
+        }
+        // Legacy: map a `ModDestination` id to the equivalent address. The
+        // legacy role index is 0-based; `ModuleId` instances are 1-based.
+        let legacy = ModDestination::ALL.iter().copied().find(|d| d.id() == s)?;
+        let (mt, pos, param) = legacy.module_target_position()?;
+        Some(Self::new(mt, pos as u16 + 1, param))
+    }
+}
+
+// ============================================================================
 // MOD MATRIX PARAMETER ENUM (with typed values)
 // ============================================================================
 
@@ -637,5 +714,50 @@ impl ModMatrixParam {
 impl Default for ModMatrixParam {
     fn default() -> Self {
         Self::SlotSource(0, ModSource::default())
+    }
+}
+
+#[cfg(test)]
+mod dest_addr_tests {
+    use super::*;
+    use crate::ModuleType;
+
+    #[test]
+    fn parse_new_form() {
+        let a = DestAddr::parse("flt-1.cutoff").unwrap();
+        assert_eq!(a.module_type, ModuleType::Filter);
+        assert_eq!(a.instance, 1);
+        assert_eq!(a.param.as_str(), "cutoff");
+    }
+
+    #[test]
+    fn parse_legacy_id_upgrades() {
+        // Old ModDestination ids are accepted and mapped to the same address.
+        // `flt1_cutoff` (1-based role) → flt-1.cutoff.
+        assert_eq!(
+            DestAddr::parse("flt1_cutoff"),
+            Some(DestAddr::new(ModuleType::Filter, 1, "cutoff"))
+        );
+        // `osc2_pitch` → osc-2.pitch (second oscillator).
+        assert_eq!(
+            DestAddr::parse("osc2_pitch"),
+            Some(DestAddr::new(ModuleType::Oscillator, 2, "pitch"))
+        );
+    }
+
+    #[test]
+    fn round_trips_through_string() {
+        let a = DestAddr::new(ModuleType::Amplifier, 3, "pan");
+        assert_eq!(a.to_address_string(), "amp-3.pan");
+        assert_eq!(DestAddr::parse(&a.to_address_string()), Some(a));
+    }
+
+    #[test]
+    fn none_and_garbage_parse_to_none() {
+        assert_eq!(DestAddr::parse("none"), None);
+        assert_eq!(DestAddr::parse(""), None);
+        assert_eq!(DestAddr::parse("not_a_real_destination"), None);
+        // A bad prefix in new-form falls through and is not a legacy id either.
+        assert_eq!(DestAddr::parse("zzz-1.cutoff"), None);
     }
 }
