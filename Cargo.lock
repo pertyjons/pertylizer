@@ -4270,6 +4270,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "synth_script"
+version = "0.1.0"
+dependencies = [
+ "synth_core",
+]
+
+[[package]]
 name = "synth_sequencer"
 version = "0.1.0"
 dependencies = [
