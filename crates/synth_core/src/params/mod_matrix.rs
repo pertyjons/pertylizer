@@ -586,6 +586,21 @@ impl DestAddr {
     }
 }
 
+impl Serialize for DestAddr {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_address_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for DestAddr {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Self::parse(&s).ok_or_else(|| {
+            serde::de::Error::custom(format!("invalid modulation destination address: {s:?}"))
+        })
+    }
+}
+
 // ============================================================================
 // MOD MATRIX PARAMETER ENUM (with typed values)
 // ============================================================================
@@ -677,8 +692,9 @@ pub enum ModMatrixParam {
     GridSize(ModMatrixGridSize),
     /// Source for slot N.
     SlotSource(u8, ModSource),
-    /// Destination for slot N.
-    SlotDestination(u8, ModDestination),
+    /// Destination address for slot N (`None` = unconfigured). Address-based
+    /// (S1.2) so it can target any modulatable param on any module.
+    SlotDestination(u8, Option<DestAddr>),
     /// Amount for slot N (-1.0 to +1.0).
     SlotAmount(u8, BipolarValue),
     /// Enabled flag for slot N.
@@ -728,7 +744,7 @@ impl ModMatrixParam {
         match self {
             Self::GridSize(g) => g.index() as f32,
             Self::SlotSource(_, s) => s.index() as f32,
-            Self::SlotDestination(_, d) => d.index() as f32,
+            Self::SlotDestination(_, d) => d.map_or(0, |a| a.legacy_index()) as f32,
             Self::SlotAmount(_, a) => a.as_f32(),
             Self::SlotEnabled(_, e) => {
                 if *e {
@@ -748,9 +764,10 @@ impl ModMatrixParam {
             Self::SlotSource(slot, _) => {
                 Self::SlotSource(*slot, ModSource::from_index(value as usize))
             }
-            Self::SlotDestination(slot, _) => {
-                Self::SlotDestination(*slot, ModDestination::from_index(value as usize))
-            }
+            Self::SlotDestination(slot, _) => Self::SlotDestination(
+                *slot,
+                DestAddr::from_mod_destination(ModDestination::from_index(value as usize)),
+            ),
             Self::SlotAmount(slot, _) => Self::SlotAmount(*slot, BipolarValue::new(value)),
             Self::SlotEnabled(slot, _) => Self::SlotEnabled(*slot, value > 0.5),
         }

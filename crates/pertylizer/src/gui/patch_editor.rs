@@ -263,7 +263,7 @@ impl PatchAnalysis {
                     }
                 }
 
-                let dest_name = ModMatrixParam::SlotDestination(slot, ModDestination::None).name();
+                let dest_name = ModMatrixParam::SlotDestination(slot, None).name();
                 if let Some(dst_idx) = panel.param_values.get(dest_name) {
                     let dst = ModDestination::from_index(dst_idx.round() as usize);
                     if let Some((mt, pos, _)) = dst.module_target_position()
@@ -5228,7 +5228,7 @@ fn draw_mod_matrix_grid(
         let pid = if source {
             ModMatrixParam::SlotSource(slot_idx as u8, ModSource::None)
         } else {
-            ModMatrixParam::SlotDestination(slot_idx as u8, ModDestination::None)
+            ModMatrixParam::SlotDestination(slot_idx as u8, None)
         };
         state
             .param_values
@@ -5515,7 +5515,7 @@ fn draw_mod_matrix_grid(
                 0.0,
             ),
             (
-                Param::ModMatrix(ModMatrixParam::SlotDestination(slot, ModDestination::None)),
+                Param::ModMatrix(ModMatrixParam::SlotDestination(slot, None)),
                 0.0,
             ),
             (

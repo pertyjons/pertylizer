@@ -133,7 +133,7 @@ impl Describable for ModMatrix {
             desc = desc.parameter(
                 ParameterDescriptor::choice(
                     format!("slot_{slot_num}_dest"),
-                    Param::ModMatrix(ModMatrixParam::SlotDestination(slot, ModDestination::None)),
+                    Param::ModMatrix(ModMatrixParam::SlotDestination(slot, None)),
                     format!("Slot {slot_num} Dest"),
                     ModDestination::to_choices(),
                 )
@@ -193,10 +193,8 @@ impl PolyModule for ModMatrix {
                     match mm_param {
                         ModMatrixParam::SlotSource(_, src) => self.slots[slot].source = src,
                         ModMatrixParam::SlotDestination(_, dst) => {
-                            // Legacy enum value arrives via set_param; store it as
-                            // an address. (Arbitrary addresses come via a dedicated
-                            // path once it lands.)
-                            self.slots[slot].destination = DestAddr::from_mod_destination(dst);
+                            // The param now carries the address directly.
+                            self.slots[slot].destination = dst;
                         }
                         ModMatrixParam::SlotAmount(_, amt) => self.slots[slot].amount = amt,
                         ModMatrixParam::SlotEnabled(_, en) => self.slots[slot].enabled = en,
@@ -255,9 +253,7 @@ impl PolyModule for ModMatrix {
             )));
             params.push(Param::ModMatrix(ModMatrixParam::SlotDestination(
                 slot,
-                self.slots[i].destination.map_or(ModDestination::None, |d| {
-                    ModDestination::from_index(d.legacy_index())
-                }),
+                self.slots[i].destination,
             )));
             params.push(Param::ModMatrix(ModMatrixParam::SlotAmount(
                 slot,
@@ -318,7 +314,7 @@ mod tests {
         )));
         mm.set_param(Param::ModMatrix(ModMatrixParam::SlotDestination(
             0,
-            ModDestination::FilterCutoff(0),
+            DestAddr::from_mod_destination(ModDestination::FilterCutoff(0)),
         )));
         mm.set_param(Param::ModMatrix(ModMatrixParam::SlotAmount(
             0,
@@ -366,7 +362,7 @@ mod tests {
         )));
         mm.set_param(Param::ModMatrix(ModMatrixParam::SlotDestination(
             0,
-            ModDestination::FilterCutoff(0),
+            DestAddr::from_mod_destination(ModDestination::FilterCutoff(0)),
         )));
         mm.set_param(Param::ModMatrix(ModMatrixParam::SlotAmount(
             0,
@@ -379,7 +375,7 @@ mod tests {
         )));
         mm.set_param(Param::ModMatrix(ModMatrixParam::SlotDestination(
             1,
-            ModDestination::AmpLevel(0),
+            DestAddr::from_mod_destination(ModDestination::AmpLevel(0)),
         )));
         mm.set_param(Param::ModMatrix(ModMatrixParam::SlotAmount(
             1,
