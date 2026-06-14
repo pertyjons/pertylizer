@@ -340,6 +340,18 @@ impl ParamValue {
                 synth_core::params::SampleId(*sample_id),
             ));
         }
+        // Mod-matrix destination: parse the address string (accepting both the
+        // new "flt-1.cutoff" form and legacy enum ids like "flt1_cutoff").
+        if let (
+            Param::ModMatrix(synth_core::params::ModMatrixParam::SlotDestination(slot, _)),
+            Self::Choice(s),
+        ) = (&desc.id, self)
+        {
+            return Param::ModMatrix(synth_core::params::ModMatrixParam::SlotDestination(
+                *slot,
+                synth_core::DestAddr::parse(s),
+            ));
+        }
         desc.id.with_f32(self.to_f32(desc))
     }
 
@@ -350,6 +362,14 @@ impl ParamValue {
     pub fn from_param(p: &Param, desc: &ParameterDescriptor) -> Self {
         if let Param::Sampler(synth_core::params::SamplerParam::SampleSelect(sid)) = p {
             return Self::SampleId { sample_id: sid.0 };
+        }
+        // Mod-matrix destinations serialize as a free-form address string
+        // ("flt-1.cutoff"), not the legacy enum index — so they can target any
+        // modulatable param on any module (S1.2).
+        if let Param::ModMatrix(synth_core::params::ModMatrixParam::SlotDestination(_, dest)) = p {
+            return Self::Choice(
+                dest.map_or_else(|| "none".to_string(), |a| a.to_address_string()),
+            );
         }
         if let Some(choice) = desc.choice_for_value(p.as_f32()) {
             return Self::Choice(choice.id.clone());
@@ -869,6 +889,48 @@ pub use crate::patches::{categorized_patches, example_patches};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A mod-matrix destination serializes as a free-form address string and
+    /// round-trips — including an *arbitrary* address (`osc-1.detune`) outside
+    /// the 19 legacy roles — while a legacy id still upgrades on load.
+    #[test]
+    fn mod_matrix_arbitrary_destination_round_trips() {
+        use synth_core::params::{ModDestination, ModMatrixParam};
+        use synth_core::{DestAddr, ModuleType};
+
+        let desc = ParameterDescriptor::choice(
+            "slot_1_dest",
+            Param::ModMatrix(ModMatrixParam::SlotDestination(0, None)),
+            "Slot 1 Dest",
+            ModDestination::to_choices(),
+        );
+
+        // Arbitrary address (not one of the 19 legacy roles).
+        let addr = DestAddr::new(ModuleType::Oscillator, 1, "detune");
+        let param = Param::ModMatrix(ModMatrixParam::SlotDestination(0, Some(addr)));
+        let value = ParamValue::from_param(&param, &desc);
+        assert!(
+            matches!(&value, ParamValue::Choice(s) if s == "osc-1.detune"),
+            "expected address string, got {value:?}"
+        );
+        assert_eq!(value.to_param(&desc), param);
+
+        // A legacy enum id upgrades to the equivalent address on load.
+        let legacy = ParamValue::Choice("flt1_cutoff".to_string());
+        assert_eq!(
+            legacy.to_param(&desc),
+            Param::ModMatrix(ModMatrixParam::SlotDestination(
+                0,
+                DestAddr::from_mod_destination(ModDestination::FilterCutoff(0)),
+            )),
+        );
+
+        // `none` round-trips to an unconfigured destination.
+        assert_eq!(
+            ParamValue::Choice("none".to_string()).to_param(&desc),
+            Param::ModMatrix(ModMatrixParam::SlotDestination(0, None)),
+        );
+    }
 
     #[test]
     fn test_awe_preset_file_round_trip() {

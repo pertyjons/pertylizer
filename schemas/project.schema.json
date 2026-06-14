@@ -2381,7 +2381,9 @@
                   "type": "number"
                 },
                 "slot_10_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 10",
+                  "title": "Slot 10 Dest",
+                  "type": "string"
                 },
                 "slot_10_enabled": {
                   "default": 1.0,
@@ -2403,7 +2405,9 @@
                   "type": "number"
                 },
                 "slot_11_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 11",
+                  "title": "Slot 11 Dest",
+                  "type": "string"
                 },
                 "slot_11_enabled": {
                   "default": 1.0,
@@ -2425,7 +2429,9 @@
                   "type": "number"
                 },
                 "slot_12_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 12",
+                  "title": "Slot 12 Dest",
+                  "type": "string"
                 },
                 "slot_12_enabled": {
                   "default": 1.0,
@@ -2447,7 +2453,9 @@
                   "type": "number"
                 },
                 "slot_13_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 13",
+                  "title": "Slot 13 Dest",
+                  "type": "string"
                 },
                 "slot_13_enabled": {
                   "default": 1.0,
@@ -2469,7 +2477,9 @@
                   "type": "number"
                 },
                 "slot_14_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 14",
+                  "title": "Slot 14 Dest",
+                  "type": "string"
                 },
                 "slot_14_enabled": {
                   "default": 1.0,
@@ -2491,7 +2501,9 @@
                   "type": "number"
                 },
                 "slot_15_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 15",
+                  "title": "Slot 15 Dest",
+                  "type": "string"
                 },
                 "slot_15_enabled": {
                   "default": 1.0,
@@ -2513,7 +2525,9 @@
                   "type": "number"
                 },
                 "slot_16_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 16",
+                  "title": "Slot 16 Dest",
+                  "type": "string"
                 },
                 "slot_16_enabled": {
                   "default": 1.0,
@@ -2535,7 +2549,9 @@
                   "type": "number"
                 },
                 "slot_1_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 1",
+                  "title": "Slot 1 Dest",
+                  "type": "string"
                 },
                 "slot_1_enabled": {
                   "default": 1.0,
@@ -2557,7 +2573,9 @@
                   "type": "number"
                 },
                 "slot_2_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 2",
+                  "title": "Slot 2 Dest",
+                  "type": "string"
                 },
                 "slot_2_enabled": {
                   "default": 1.0,
@@ -2579,7 +2597,9 @@
                   "type": "number"
                 },
                 "slot_3_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 3",
+                  "title": "Slot 3 Dest",
+                  "type": "string"
                 },
                 "slot_3_enabled": {
                   "default": 1.0,
@@ -2601,7 +2621,9 @@
                   "type": "number"
                 },
                 "slot_4_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 4",
+                  "title": "Slot 4 Dest",
+                  "type": "string"
                 },
                 "slot_4_enabled": {
                   "default": 1.0,
@@ -2623,7 +2645,9 @@
                   "type": "number"
                 },
                 "slot_5_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 5",
+                  "title": "Slot 5 Dest",
+                  "type": "string"
                 },
                 "slot_5_enabled": {
                   "default": 1.0,
@@ -2645,7 +2669,9 @@
                   "type": "number"
                 },
                 "slot_6_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 6",
+                  "title": "Slot 6 Dest",
+                  "type": "string"
                 },
                 "slot_6_enabled": {
                   "default": 1.0,
@@ -2667,7 +2693,9 @@
                   "type": "number"
                 },
                 "slot_7_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 7",
+                  "title": "Slot 7 Dest",
+                  "type": "string"
                 },
                 "slot_7_enabled": {
                   "default": 1.0,
@@ -2689,7 +2717,9 @@
                   "type": "number"
                 },
                 "slot_8_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 8",
+                  "title": "Slot 8 Dest",
+                  "type": "string"
                 },
                 "slot_8_enabled": {
                   "default": 1.0,
@@ -2711,7 +2741,9 @@
                   "type": "number"
                 },
                 "slot_9_dest": {
-                  "$ref": "#/$defs/SharedEnum2"
+                  "description": "Modulation destination for slot 9",
+                  "title": "Slot 9 Dest",
+                  "type": "string"
                 },
                 "slot_9_enabled": {
                   "default": 1.0,
@@ -8280,31 +8312,6 @@
         "kinetic_acc",
         "efl1",
         "efl2"
-      ],
-      "type": "string"
-    },
-    "SharedEnum2": {
-      "description": "Shared enum (19 entries): none, osc1_pitch, osc1_level, …",
-      "enum": [
-        "none",
-        "osc1_pitch",
-        "osc1_level",
-        "flt1_cutoff",
-        "flt1_reso",
-        "amp1_level",
-        "amp1_pan",
-        "lfo1_rate",
-        "lfo1_depth",
-        "osc2_pitch",
-        "osc2_level",
-        "flt2_cutoff",
-        "flt2_reso",
-        "amp2_level",
-        "amp2_pan",
-        "lfo2_rate",
-        "lfo2_depth",
-        "osc3_pitch",
-        "osc3_level"
       ],
       "type": "string"
     },

@@ -573,6 +573,19 @@ fn parameter_schema(param: &ParameterDescriptor) -> Value {
         description.push_str(&format!("unit: {}", unit_suffix.trim()));
     }
 
+    // Mod-matrix destination is a free-form address string ("flt-1.cutoff"), not
+    // the legacy enum — so both old enum ids and new addresses validate (S1.2).
+    if matches!(
+        param.id,
+        Param::ModMatrix(synth_core::params::ModMatrixParam::SlotDestination(..))
+    ) {
+        let mut schema = json!({ "title": param.name, "type": "string" });
+        if !description.is_empty() {
+            schema["description"] = json!(description);
+        }
+        return schema;
+    }
+
     if let Some(choices) = &param.choices {
         let ids: Vec<Value> = choices.iter().map(|c| json!(c.id)).collect();
         let mut schema = json!({
