@@ -7,9 +7,12 @@
 //! `synth_core`) which the audio thread evaluates. See `plans/yams-grammar.md`
 //! for the language specification.
 
+pub mod ast;
 pub mod diag;
 pub mod lexer;
+pub mod parser;
 pub mod span;
 
 pub use diag::{Diagnostic, Severity};
+pub use parser::parse;
 pub use span::{LineCol, Span};
