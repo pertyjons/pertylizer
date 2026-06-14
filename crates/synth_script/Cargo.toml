@@ -1,0 +1,13 @@
+[package]
+name = "synth_script"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "YAMS control-script language front-end (lexer, parser, compiler, formatter) for Pertylizer"
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
