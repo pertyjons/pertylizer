@@ -184,7 +184,44 @@ readable source).
 
 ---
 
-## Data model — dynamic routing list
+## S1.1b implementation notes (revised after a spike — 2026-06-14)
+
+A first attempt at a true dynamic `Vec<Routing>` with a count-following descriptor
+**was reverted** after it collided with two architectural realities. Recorded here so
+the next attempt doesn't repeat them:
+
+1. **The JSON schema is descriptor-driven, and example projects carry the old format.**
+   `gen_schemas` builds `descriptors.json` from a *default* module instance; a
+   count-following descriptor on a fresh (0-routing) matrix emits no slot params, so the
+   `example_files_validate_against_schemas` test fails — the shipped example projects
+   (`Synth Pop a la Codex.json`, …) still contain `grid_size` + 16 slot params. Changing
+   the descriptor shape breaks schema validation unless every example is re-authored
+   (parked point #6) **or** the schema stays a 16-slot+grid superset.
+2. **The GUI caches each module's descriptor at add-time** (`add_module(id, descriptor)`
+   → `ModulePanelState`), it is **not** refreshed per frame. So a count-following
+   descriptor never shows newly-added routings — the panel can't see them.
+
+**Revised approach (keeps schema + persistence + descriptor STABLE):**
+- **Data model unchanged:** keep the fixed `[ModSlot; 16]` + `grid_size` field, the
+  16-slot descriptor, `get_params`/`set_param`, and therefore the schema and all example
+  projects — **no save-format break, point #6 stays parked.**
+- **Drop the grid from *processing* only:** the Voice (`read_mod_matrix_slots_into_cache`)
+  and `ModMatrix::calculate_modulations` iterate **all 16 slots** instead of
+  `grid_size.slot_count()`. `grid_size` becomes a vestigial field (kept for compat,
+  ignored). The only behavior change: a project that used a small grid to *disable*
+  configured slots beyond it now processes them (accepted under "grid removed").
+- **Dynamic list is a GUI presentation over the 16 fixed slots — stateless, derived:**
+  `draw_mod_matrix_grid` shows every *configured* routing (source≠None ∥ dest≠None) as a
+  row, plus one trailing empty "add" row (when <16 configured); a per-row ✕ clears that
+  slot (source→None, dest→None). No grid selector, no new `EngineCommand`/param variants,
+  no `Vec`. `PatchAnalysis` iterates all 16 likewise.
+- **`set_mod_offset` re-key (S1.1) stays** as the foundation.
+
+This delivers the user-facing goal (no grid, add/remove list, all routings live) with a
+fraction of the blast radius. Relaxing the 16 cap and a true dynamic `Vec` (with a
+descriptor-refresh path + example migration) is a later, separate step if wanted.
+
+## Data model — dynamic routing list (original spec — superseded by the notes above for S1.1b)
 
 The fixed 16 slots + `Grid Size` exist only because the addressing was a fixed enum. Once
 addressing is dynamic (S1.2/S1.3), a fixed slot count is meaningless — the natural
