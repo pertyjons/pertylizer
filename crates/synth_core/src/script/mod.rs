@@ -11,6 +11,6 @@ pub mod eval;
 
 pub use bytecode::{
     Builtin, CompiledScript, MAX_INSTRUCTIONS, MAX_LOCALS, MAX_NESTING_DEPTH, MAX_SOURCE_LEN,
-    MAX_SOURCES, MAX_STACK, MAX_STATE, Op,
+    MAX_SOURCES, MAX_STACK, MAX_STATE, Op, finite_or_zero, safe_clamp, safe_div,
 };
 pub use eval::{EvalContext, RegisterFile};

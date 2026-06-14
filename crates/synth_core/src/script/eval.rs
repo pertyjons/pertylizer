@@ -7,7 +7,9 @@
 //! to state, so it must not survive into a persistent cell).
 
 use crate::hash::{splitmix64, splitmix64_unit};
-use crate::script::bytecode::{Builtin, CompiledScript, MAX_LOCALS, MAX_STACK, MAX_STATE, Op};
+use crate::script::bytecode::{
+    Builtin, CompiledScript, MAX_LOCALS, MAX_STACK, MAX_STATE, Op, finite_or_zero, safe_div,
+};
 
 /// Per-evaluation context supplied by the engine.
 #[derive(Debug, Clone, Copy)]
@@ -269,97 +271,19 @@ fn binop(stack: &mut Stack, f: impl Fn(f32, f32) -> f32) {
     stack.push(f(a, b));
 }
 
+/// Pop the builtin's operands (last on top) and push `Builtin::eval`. The
+/// scalar math lives in `bytecode.rs` so it is shared with the const folder.
 fn apply_builtin(b: Builtin, s: &mut Stack) {
-    match b {
-        Builtin::Abs => unop(s, f32::abs),
-        Builtin::Sign => unop(s, |a| {
-            if a > 0.0 {
-                1.0
-            } else if a < 0.0 {
-                -1.0
-            } else {
-                0.0
-            }
-        }),
-        Builtin::Floor => unop(s, f32::floor),
-        Builtin::Ceil => unop(s, f32::ceil),
-        Builtin::Round => unop(s, f32::round),
-        Builtin::Trunc => unop(s, f32::trunc),
-        Builtin::Sqrt => unop(s, |a| if a < 0.0 { 0.0 } else { a.sqrt() }),
-        Builtin::Exp => unop(s, f32::exp),
-        Builtin::Log => unop(s, |a| if a <= 0.0 { 0.0 } else { a.ln() }),
-        Builtin::Sin => unop(s, f32::sin),
-        Builtin::Cos => unop(s, f32::cos),
-        Builtin::Tan => unop(s, f32::tan),
-        Builtin::Atan => unop(s, f32::atan),
-        Builtin::Sigmoid => unop(s, |a| 1.0 / (1.0 + (-a).exp())),
-        Builtin::Gauss => unop(s, |a| (-a * a).exp()),
-        Builtin::Semis => unop(s, |a| (a / 12.0).exp2()),
-        Builtin::Mtof => unop(s, |a| 440.0 * ((a * 127.0 - 69.0) / 12.0).exp2()),
-
-        Builtin::Min => binop(s, f32::min),
-        Builtin::Max => binop(s, f32::max),
-        Builtin::Pow => binop(s, f32::powf),
-        Builtin::Atan2 => binop(s, f32::atan2),
-        Builtin::Quantize => binop(s, |x, step| {
-            if step == 0.0 {
-                x
-            } else {
-                (x / step).round() * step
-            }
-        }),
-
-        Builtin::Clamp => {
-            let hi = s.pop();
-            let lo = s.pop();
-            let x = s.pop();
-            s.push(safe_clamp(x, lo, hi));
-        }
-        Builtin::Lerp => {
-            let t = s.pop();
-            let b = s.pop();
-            let a = s.pop();
-            s.push(a + (b - a) * t);
-        }
-        Builtin::Smoothstep => {
-            let x = s.pop();
-            let e1 = s.pop();
-            let e0 = s.pop();
-            let t = safe_div(x - e0, e1 - e0).clamp(0.0, 1.0);
-            s.push(t * t * (3.0 - 2.0 * t));
-        }
+    let n = b.arity();
+    let mut args = [0.0f32; 3];
+    for slot in args.iter_mut().take(n).rev() {
+        *slot = s.pop();
     }
+    s.push(b.eval(&args[..n]));
 }
-
-fn unop(stack: &mut Stack, f: impl Fn(f32) -> f32) {
-    let a = stack.pop();
-    stack.push(f(a));
-}
-
-// ---- safe math ------------------------------------------------------------
 
 fn b2f(cond: bool) -> f32 {
     if cond { 1.0 } else { 0.0 }
-}
-
-fn finite_or_zero(v: f32) -> f32 {
-    if v.is_finite() { v } else { 0.0 }
-}
-
-fn safe_div(a: f32, b: f32) -> f32 {
-    if b == 0.0 { 0.0 } else { a / b }
-}
-
-/// NaN-safe clamp: NaN value → 0; NaN bounds → ±∞; reversed bounds tolerated.
-/// (`f32::clamp` panics on NaN bounds or `min > max`, so it cannot be used.)
-fn safe_clamp(v: f32, lo: f32, hi: f32) -> f32 {
-    if v.is_nan() {
-        return 0.0;
-    }
-    let lo = if lo.is_nan() { f32::NEG_INFINITY } else { lo };
-    let hi = if hi.is_nan() { f32::INFINITY } else { hi };
-    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
-    v.clamp(lo, hi)
 }
 
 #[cfg(test)]

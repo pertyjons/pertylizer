@@ -82,6 +82,100 @@ impl Builtin {
             Self::Clamp | Self::Lerp | Self::Smoothstep => 3,
         }
     }
+
+    /// Apply this function to its arguments (`args[0]` is the first argument).
+    /// Pure scalar math, shared by the runtime evaluator and the compiler's
+    /// constant folder so the two can never drift apart. Missing args read 0.
+    #[must_use]
+    pub fn eval(self, args: &[f32]) -> f32 {
+        let a = args.first().copied().unwrap_or(0.0);
+        let b = args.get(1).copied().unwrap_or(0.0);
+        let c = args.get(2).copied().unwrap_or(0.0);
+        match self {
+            Self::Abs => a.abs(),
+            Self::Sign => {
+                if a > 0.0 {
+                    1.0
+                } else if a < 0.0 {
+                    -1.0
+                } else {
+                    0.0
+                }
+            }
+            Self::Min => a.min(b),
+            Self::Max => a.max(b),
+            Self::Clamp => safe_clamp(a, b, c),
+            Self::Floor => a.floor(),
+            Self::Ceil => a.ceil(),
+            Self::Round => a.round(),
+            Self::Trunc => a.trunc(),
+            Self::Quantize => {
+                if b == 0.0 {
+                    a
+                } else {
+                    (a / b).round() * b
+                }
+            }
+            Self::Pow => a.powf(b),
+            Self::Sqrt => {
+                if a < 0.0 {
+                    0.0
+                } else {
+                    a.sqrt()
+                }
+            }
+            Self::Exp => a.exp(),
+            Self::Log => {
+                if a <= 0.0 {
+                    0.0
+                } else {
+                    a.ln()
+                }
+            }
+            Self::Sin => a.sin(),
+            Self::Cos => a.cos(),
+            Self::Tan => a.tan(),
+            Self::Atan => a.atan(),
+            Self::Atan2 => a.atan2(b),
+            Self::Lerp => a + (b - a) * c,
+            Self::Smoothstep => {
+                let t = safe_div(c - a, b - a).clamp(0.0, 1.0);
+                t * t * (3.0 - 2.0 * t)
+            }
+            Self::Sigmoid => 1.0 / (1.0 + (-a).exp()),
+            Self::Gauss => (-a * a).exp(),
+            Self::Semis => (a / 12.0).exp2(),
+            Self::Mtof => 440.0 * ((a * 127.0 - 69.0) / 12.0).exp2(),
+        }
+    }
+}
+
+// ---- shared NaN-safe math (used by the evaluator and the const folder) -----
+
+/// Replace NaN/Inf with 0 — the layer-2 state sanitizer (decision: NaN poisoning
+/// is fatal to persistent state).
+#[must_use]
+pub fn finite_or_zero(v: f32) -> f32 {
+    if v.is_finite() { v } else { 0.0 }
+}
+
+/// Division with `a / 0 → 0` (layer-1: NaN-free arithmetic at the source).
+#[must_use]
+pub fn safe_div(a: f32, b: f32) -> f32 {
+    if b == 0.0 { 0.0 } else { a / b }
+}
+
+/// NaN-safe clamp: NaN value → 0; NaN bounds → ±∞; reversed bounds tolerated.
+/// (`f32::clamp` panics on NaN bounds or `min > max`, so it cannot be used.)
+#[must_use]
+pub fn safe_clamp(v: f32, lo: f32, hi: f32) -> f32 {
+    if v.is_nan() {
+        return 0.0;
+    }
+    let lo = if lo.is_nan() { f32::NEG_INFINITY } else { lo };
+    let hi = if hi.is_nan() { f32::INFINITY } else { hi };
+    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+    v.clamp(lo, hi)
 }
 
 /// One bytecode instruction. Operand-stack conventions are noted per variant;
