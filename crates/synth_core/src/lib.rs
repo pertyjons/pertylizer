@@ -21,6 +21,7 @@ pub mod audio;
 pub mod hash;
 pub mod module_traits;
 pub mod params;
+pub mod script;
 pub mod tuning;
 pub mod types;
 
