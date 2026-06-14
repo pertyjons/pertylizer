@@ -73,14 +73,23 @@ Mod Matrix's parameter-offset path (`mmx → flt1.cutoff`, no wire).
   as a stateless derived list (configured routings + trailing add-row + per-row clear).
   **Data model / descriptor / schema / save format kept UNCHANGED** (the true-`Vec` attempt
   was reverted — see the S1.1b implementation notes). **SHIPPED `506f1eb`.**
-- [ ] **S1.2** — Dynamic **destination** addressing: a routing's destination is
-  `(ModuleId, ParamId)` over the patch's actual modulatable params, not the 19-role enum.
-  **Approach DECIDED 2026-06-14 — load-time migration (keep examples):** the stored dest
-  becomes a **free-form address string** (e.g. `"flt-1.cutoff"`); the loader parses BOTH the
-  new form **and** the old enum ids (`"flt1_cutoff"`) so shipped example projects and old
-  saves auto-upgrade on load — **#6 stays parked, no re-authoring.** Schema for the dest goes
-  from an enum to a (less-restrictive) string, so old values still validate. Same plan for
-  S1.3 sources.
+- [x] **S1.2** — Dynamic **destination** addressing (engine + persistence + schema).
+  **SHIPPED** via load-time migration in sub-steps:
+  - `9161cd3` **S1.2a** — `DestAddr` type (`{module_type, instance, param}`, copyable via
+    interned `PortName`) + dual-format parse (new `"flt-1.cutoff"` / legacy `"flt1_cutoff"`).
+  - `de82668` **S1.2b** — voice reads routings via `PolyModule::mod_routings()` (drops the
+    `f32`-index read bottleneck).
+  - `19d255f` **S1.2c** — `ModRouting.destination: Option<DestAddr>`, applied via the
+    ID-based `graph.apply_mod_offset_addr` (exact `ModuleId`, no fuzzy fallback).
+  - `f38cf91` **S1.2d-1** — `SlotDestination` param carries `Option<DestAddr>`
+    (behavior-preserving; 19 roles round-trip via the legacy choice path).
+  - `33cfea8` **S1.2d-2** — persist dest as a free-form **address string** (dual-format
+    `from_param`/`to_param`); schema `slot_dest` enum → string; old projects auto-upgrade,
+    **#6 stays parked.**
+  A routing can now target **any modulatable param on any module** and round-trip.
+  **Remaining to make it user-*creatable*:** the MCP address path (S1.4) and/or the
+  deferred GUI picker (S1.5c) — the GUI combo + MCP `set_parameter` still go through the
+  19-choice path. Same address approach applies to S1.3 sources.
 - [ ] **S1.3** — Dynamic **source** addressing + the shared **macro-source registry**:
   sources are `(ModuleId, port|param)` over the patch **plus** the named per-voice macros.
   Removes the 2-LFO / 2-env ceiling. **Taxonomy (decided):** the *true macros* are exactly
