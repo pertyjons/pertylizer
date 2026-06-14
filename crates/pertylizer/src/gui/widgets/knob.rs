@@ -15,6 +15,9 @@ pub struct Knob<'a> {
     label: String,
     size: f32,
     accent_color: Color32,
+    /// Optional Mod Matrix marker `(glyph, color)` painted in the knob's corner —
+    /// kept off the label so it never widens the cell (S1.5a).
+    mod_marker: Option<(&'static str, Color32)>,
 }
 
 impl<'a> Knob<'a> {
@@ -27,6 +30,7 @@ impl<'a> Knob<'a> {
             label: String::new(),
             size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
+            mod_marker: None,
         }
     }
 
@@ -39,7 +43,15 @@ impl<'a> Knob<'a> {
             label: descriptor.name.clone(),
             size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
+            mod_marker: None,
         }
+    }
+
+    /// Paint a small Mod Matrix marker glyph in the knob's top-right corner.
+    #[must_use]
+    pub fn mod_marker(mut self, glyph: &'static str, color: Color32) -> Self {
+        self.mod_marker = Some((glyph, color));
+        self
     }
 
     #[must_use]
@@ -158,6 +170,19 @@ impl<'a> Knob<'a> {
         let indicator_pos =
             center + Vec2::new(value_angle.cos(), value_angle.sin()) * indicator_radius;
         painter.circle_filled(indicator_pos, indicator_size, t.colors.text_primary);
+
+        // Mod Matrix marker in the top-right corner (S1.5a) — same purple glyph
+        // language as the module-header badge, painted over the knob so it never
+        // changes the cell's footprint.
+        if let Some((glyph, color)) = self.mod_marker {
+            painter.text(
+                Pos2::new(knob_rect.right(), knob_rect.top()),
+                egui::Align2::RIGHT_TOP,
+                glyph,
+                egui::FontId::proportional(11.0),
+                color,
+            );
+        }
 
         // Label below knob
         if !self.label.is_empty() {

@@ -5130,9 +5130,13 @@ impl SynthApp {
                 patch_editor.add_module_at(module_id, descriptor, position);
 
                 if let Some(snap) = module_snapshots.iter().find(|s| s.id == module_id) {
-                    for param in &snap.parameters {
-                        patch_editor.set_parameter_by_name(module_id, param.name(), param.as_f32());
-                    }
+                    // Mirror via the same path as the per-frame sync so the panel
+                    // gets BOTH the f32 cache and the address mirror (slot_addrs).
+                    // The plain per-param f32 copy used here before left slot_addrs
+                    // empty, and the version-gated sync above never re-ran for a
+                    // freshly-added module — so a Mod Matrix created via MCP showed
+                    // "(none)" in its pickers forever.
+                    patch_editor.sync_module_params(module_id, &snap.parameters);
                 }
             }
 

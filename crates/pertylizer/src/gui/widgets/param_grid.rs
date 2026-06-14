@@ -10,6 +10,7 @@
 //! here means a tweak to, say, the time-slider formatting shows up in both views.
 
 use eframe::egui::{self, Color32, Ui, Vec2};
+use egui_remixicon::icons as ri;
 
 use synth_core::{ChoiceOption, ModuleDescriptor, ParameterDescriptor, WidgetHint};
 
@@ -20,6 +21,65 @@ use crate::gui::theme::theme;
 /// The value is stored as the parameter's raw `f32` (a 0-based index for choice
 /// parameters); apply it with `descriptor.id.with_f32(value)`.
 pub type ParamChange<'d> = (&'d ParameterDescriptor, f32);
+
+/// How a parameter participates in the Mod Matrix, for the per-knob marker
+/// (S1.5a/b). Mirrors the three-state module-header badge so the per-parameter
+/// marker reads as a precise zoom-in of the module roll-up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModRole {
+    /// The parameter's value is read as a modulation source.
+    Source,
+    /// A routing modulates this parameter.
+    Destination,
+    /// Both at once.
+    Both,
+}
+
+impl ModRole {
+    /// Build from `(is_source, is_destination)` flags — the module-header badge's
+    /// roll-up shape. `None` when the element participates in neither.
+    #[must_use]
+    pub fn from_flags(is_source: bool, is_destination: bool) -> Option<Self> {
+        match (is_source, is_destination) {
+            (true, true) => Some(Self::Both),
+            (true, false) => Some(Self::Source),
+            (false, true) => Some(Self::Destination),
+            (false, false) => None,
+        }
+    }
+
+    /// Icon glyph. Shared with the module-header badge so the per-knob marker and
+    /// the module roll-up never disagree on which arrow means which role.
+    #[must_use]
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Self::Source => ri::ARROW_RIGHT_UP_LINE,
+            Self::Destination => ri::ARROW_LEFT_DOWN_LINE,
+            Self::Both => ri::ARROW_LEFT_RIGHT_LINE,
+        }
+    }
+
+    fn tooltip(self) -> &'static str {
+        match self {
+            Self::Source => "Mod Matrix source\nThis parameter's value drives a Mod Matrix slot.",
+            Self::Destination => {
+                "Mod Matrix destination\nA Mod Matrix slot modulates this parameter."
+            }
+            Self::Both => "Mod Matrix\nThis parameter is both a source and a destination.",
+        }
+    }
+}
+
+/// Draw the inline Mod Matrix marker for a parameter — a small purple icon (the
+/// same accent + glyphs as the module-header badge) with an explanatory tooltip.
+fn draw_mod_marker(ui: &mut Ui, role: ModRole) {
+    ui.label(
+        egui::RichText::new(role.glyph())
+            .size(theme().fonts.size_small)
+            .color(theme().colors.accent_purple),
+    )
+    .on_hover_text(role.tooltip());
+}
 
 /// Which widget group the auto-renderer draws a parameter in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,13 +126,16 @@ fn render_group(hint: WidgetHint) -> Option<RenderGroup> {
 ///
 /// `get` supplies a parameter's current value; `choice_visible` filters dropdown
 /// choices (the patch editor hides mod-matrix targets that aren't wired up — the
-/// mixer shows everything by returning `true`).
+/// mixer shows everything by returning `true`). `mod_role` reports whether a
+/// parameter participates in the Mod Matrix so a marker is drawn beside it (the
+/// mixer returns `None` for every parameter).
 pub fn draw_parameter_grid<'d>(
     ui: &mut Ui,
     descriptor: &'d ModuleDescriptor,
     accent: Color32,
     get: impl Fn(&ParameterDescriptor) -> f32,
     choice_visible: impl Fn(&ParameterDescriptor, &ChoiceOption) -> bool,
+    mod_role: impl Fn(&ParameterDescriptor) -> Option<ModRole>,
 ) -> Vec<ParamChange<'d>> {
     let mut changes = Vec::new();
 
@@ -103,11 +166,16 @@ pub fn draw_parameter_grid<'d>(
             continue;
         }
         let mut selected = (get(param).round() as usize).min(waveforms.len() - 1);
-        ui.label(
-            egui::RichText::new(&param.name)
-                .size(theme().fonts.size_normal)
-                .color(theme().colors.text_secondary),
-        );
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(&param.name)
+                    .size(theme().fonts.size_normal)
+                    .color(theme().colors.text_secondary),
+            );
+            if let Some(role) = mod_role(param) {
+                draw_mod_marker(ui, role);
+            }
+        });
         if WaveformSelector::new(&mut selected)
             .waveforms(waveforms)
             .accent_color(accent)
@@ -133,6 +201,9 @@ pub fn draw_parameter_grid<'d>(
                     .size(theme().fonts.size_normal)
                     .color(theme().colors.text_secondary),
             );
+            if let Some(role) = mod_role(param) {
+                draw_mod_marker(ui, role);
+            }
             ui.add_space(theme().spacing.xs);
             let is_time = matches!(param.widget_hint, WidgetHint::TimeSlider);
             let slider = if is_time && param.range.min > 0.0 {
@@ -165,6 +236,9 @@ pub fn draw_parameter_grid<'d>(
                     .size(theme().fonts.size_normal)
                     .color(theme().colors.text_secondary),
             );
+            if let Some(role) = mod_role(param) {
+                draw_mod_marker(ui, role);
+            }
             let text = choices
                 .get(selected)
                 .map(|c| c.name.clone())
@@ -204,6 +278,9 @@ pub fn draw_parameter_grid<'d>(
                 if ui.checkbox(&mut checked, &param.name).changed() {
                     changes.push((*param, if checked { 1.0 } else { 0.0 }));
                 }
+                if let Some(role) = mod_role(param) {
+                    draw_mod_marker(ui, role);
+                }
             }
         });
     }
@@ -211,7 +288,7 @@ pub fn draw_parameter_grid<'d>(
     // Knobs, in rows.
     if !knob_params.is_empty() {
         ui.add_space(theme().spacing.xs);
-        changes.extend(draw_knobs(ui, &knob_params, accent, &get));
+        changes.extend(draw_knobs(ui, &knob_params, accent, &get, &mod_role));
     }
 
     changes
@@ -225,6 +302,7 @@ pub fn draw_knobs<'d>(
     params: &[&'d ParameterDescriptor],
     accent: Color32,
     get: impl Fn(&ParameterDescriptor) -> f32,
+    mod_role: impl Fn(&ParameterDescriptor) -> Option<ModRole>,
 ) -> Vec<ParamChange<'d>> {
     /// Cap per row so wide panels still read as a grid rather than one long line.
     const MAX_PER_ROW: usize = 5;
@@ -251,10 +329,16 @@ pub fn draw_knobs<'d>(
                     |ui| {
                         let current = get(param);
                         let mut value = current;
-                        Knob::from_descriptor(&mut value, param)
+                        // A modulated knob shows the marker as a corner glyph (the
+                        // same purple language as the label-group markers), kept off
+                        // the label so it never widens the fixed-width grid cell.
+                        let mut knob = Knob::from_descriptor(&mut value, param)
                             .size(knob_size)
-                            .accent_color(accent)
-                            .show(ui);
+                            .accent_color(accent);
+                        if let Some(role) = mod_role(param) {
+                            knob = knob.mod_marker(role.glyph(), theme().colors.accent_purple);
+                        }
+                        knob.show(ui);
                         if (value - current).abs() > f32::EPSILON {
                             changes.push((*param, value));
                         }

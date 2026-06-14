@@ -10,8 +10,11 @@ use eframe::egui::{self, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec
 use egui_remixicon::icons as ri;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
-use synth_core::{ModDestination, ModMatrixParam, ModSource, ModuleType, Param};
-use synth_core::{ModuleCategory, ModuleDescriptor, PortName, PortType};
+use synth_core::{
+    DestAddr, MacroSource, ModuleCategory, ModuleDescriptor, PortDirection, PortName, PortType,
+    SrcAddr,
+};
+use synth_core::{ModMatrixParam, ModuleType, Param};
 use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
 
@@ -24,7 +27,7 @@ use crate::patch::{
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
-    CABLE_SPREAD, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color,
+    CABLE_SPREAD, ModRole, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color,
     closest_point_on_cable, draw_cable, draw_cable_dragging, draw_cable_highlighted,
     draw_flow_particles, draw_module_header, point_near_cable,
 };
@@ -212,36 +215,33 @@ pub(crate) struct PatchAnalysis {
     module_counts: HashMap<ModuleType, u16>,
     /// Modules referenced as a Mod Matrix source.
     mod_matrix_sources: HashSet<ModuleId>,
-    /// Modules referenced as a Mod Matrix destination.
-    mod_matrix_destinations: HashSet<ModuleId>,
+    /// Modules referenced as a Mod Matrix destination, with the set of modulated
+    /// parameter `type_id`s per module (S1.5a) — drives the per-knob marker; the
+    /// keys alone roll up to the module-header badge.
+    mod_matrix_destinations: HashMap<ModuleId, HashSet<String>>,
 }
 
 impl PatchAnalysis {
     /// Build from current patch panels.
     fn from_panels(panels: &HashMap<ModuleId, ModulePanelState>) -> Self {
         let mut module_counts: HashMap<ModuleType, u16> = HashMap::new();
-        let mut positions: HashMap<ModuleType, Vec<ModuleId>> = HashMap::new();
         for id in panels.keys() {
             *module_counts.entry(id.module_type).or_insert(0) += 1;
-            positions.entry(id.module_type).or_default().push(*id);
         }
-        for v in positions.values_mut() {
-            v.sort_by_key(|id| id.instance);
-        }
-        let position_lookup = |mt: ModuleType, pos: usize| -> Option<ModuleId> {
-            positions.get(&mt)?.get(pos).copied()
-        };
 
         let mut mod_matrix_sources: HashSet<ModuleId> = HashSet::new();
-        let mut mod_matrix_destinations: HashSet<ModuleId> = HashSet::new();
+        let mut mod_matrix_destinations: HashMap<ModuleId, HashSet<String>> = HashMap::new();
 
         for (id, panel) in panels {
             if id.module_type != ModuleType::ModMatrix {
                 continue;
             }
 
-            // The grid no longer gates anything: scan all slots. Unconfigured
-            // (None) slots contribute no markers via the resolution below.
+            // Routings are address-based (S1.5c): resolve each slot's source/dest
+            // address (mirrored in `slot_addrs`) to the real module instance it
+            // names, and flag it if that module is present. The legacy f32 index in
+            // `param_values` can't represent arbitrary addresses (`lfo-3.out`), so
+            // reading it here would miss exactly the targets the picker enables.
             for slot in 0..synth_core::MAX_MOD_MATRIX_SLOTS as u8 {
                 let enabled_name = ModMatrixParam::SlotEnabled(slot, true).name();
                 let enabled = panel
@@ -254,22 +254,35 @@ impl PatchAnalysis {
                 }
 
                 let source_name = ModMatrixParam::SlotSource(slot, None).name();
-                if let Some(src_idx) = panel.param_values.get(source_name) {
-                    let src = ModSource::from_index(src_idx.round() as usize);
-                    if let Some((mt, pos)) = src.module_type_and_position()
-                        && let Some(mid) = position_lookup(mt, pos)
-                    {
+                if let Some(addr) = panel.slot_addrs.get(source_name)
+                    && let Some(SrcAddr::Module {
+                        module_type,
+                        instance,
+                        ..
+                    }) = SrcAddr::parse(addr)
+                {
+                    let mid = ModuleId::new(module_type, instance);
+                    if panels.contains_key(&mid) {
                         mod_matrix_sources.insert(mid);
                     }
                 }
 
                 let dest_name = ModMatrixParam::SlotDestination(slot, None).name();
-                if let Some(dst_idx) = panel.param_values.get(dest_name) {
-                    let dst = ModDestination::from_index(dst_idx.round() as usize);
-                    if let Some((mt, pos, _)) = dst.module_target_position()
-                        && let Some(mid) = position_lookup(mt, pos)
-                    {
-                        mod_matrix_destinations.insert(mid);
+                if let Some(addr) = panel.slot_addrs.get(dest_name)
+                    && let Some(dst) = DestAddr::parse(addr)
+                {
+                    let mid = ModuleId::new(dst.module_type, dst.instance);
+                    if panels.contains_key(&mid) {
+                        // Store the `type_id` as an owned `String`, not the interned
+                        // `PortName`: `mod_role_for_param` is called per knob per
+                        // frame with a `&str` type_id, and a `PortName` set would
+                        // force `PortName::intern` (a global write-lock) on every
+                        // lookup. The only cost here is one alloc per routing during
+                        // the already-per-frame rebuild.
+                        mod_matrix_destinations
+                            .entry(mid)
+                            .or_default()
+                            .insert(dst.param.as_str().to_string());
                     }
                 }
             }
@@ -303,8 +316,229 @@ impl PatchAnalysis {
 
     /// `true` if any Mod Matrix slot routes to this module.
     fn is_mod_matrix_destination(&self, module_id: ModuleId) -> bool {
-        self.mod_matrix_destinations.contains(&module_id)
+        self.mod_matrix_destinations.contains_key(&module_id)
     }
+
+    /// The Mod Matrix role of a specific parameter on a module, for the per-knob
+    /// marker (S1.5a). Currently only destinations are tracked at parameter
+    /// granularity (sources are whole-module outputs — the per-parameter *source*
+    /// marker is S1.5b); `param_type_id` is the descriptor `type_id`.
+    fn mod_role_for_param(&self, module_id: ModuleId, param_type_id: &str) -> Option<ModRole> {
+        let is_dest = self
+            .mod_matrix_destinations
+            .get(&module_id)
+            .is_some_and(|params| params.contains(param_type_id));
+        is_dest.then_some(ModRole::Destination)
+    }
+}
+
+/// A single addressing target for the Mod Matrix pickers (S1.5c).
+struct ModAddrTarget {
+    id: ModuleId,
+    /// Display label, e.g. "Filter 1".
+    label: String,
+    /// Modulatable parameters as `(type_id, display label)` — destination picks.
+    dest_params: Vec<(String, String)>,
+    /// Output port names — source picks.
+    source_ports: Vec<String>,
+}
+
+/// Addressing targets available to the Mod Matrix source/destination pickers.
+///
+/// Built once per frame from the patch's cached module descriptors. Where the
+/// legacy 19-choice enum combos reached only ~2 roles per module, this catalog
+/// lets a routing address **any** module's output port (source) or modulatable
+/// parameter (destination), plus the six per-voice macros (S1.5c).
+struct ModAddrCatalog {
+    /// Targets sorted by module-type prefix then instance, for stable menus.
+    modules: Vec<ModAddrTarget>,
+}
+
+impl ModAddrCatalog {
+    /// Build from the patch editor's cached descriptors. The Mod Matrix itself is
+    /// excluded — it is neither a modulation source nor a destination.
+    fn from_descriptors(descriptors: &HashMap<ModuleId, ModuleDescriptor>) -> Self {
+        let mut modules: Vec<ModAddrTarget> = descriptors
+            .iter()
+            .filter(|(id, _)| id.module_type != ModuleType::ModMatrix)
+            .map(|(id, desc)| ModAddrTarget {
+                id: *id,
+                label: format!("{} {}", desc.name, id.instance),
+                dest_params: desc
+                    .parameters
+                    .iter()
+                    .filter(|p| p.is_automatable())
+                    .map(|p| (p.type_id.clone(), p.name.clone()))
+                    .collect(),
+                source_ports: desc
+                    .ports
+                    .iter()
+                    .filter(|p| p.direction == PortDirection::Output)
+                    .map(|p| p.name.to_string())
+                    .collect(),
+            })
+            .collect();
+        modules.sort_by(|a, b| {
+            (a.id.module_type.prefix(), a.id.instance)
+                .cmp(&(b.id.module_type.prefix(), b.id.instance))
+        });
+        Self { modules }
+    }
+
+    /// Look up a target by module type + 1-based instance.
+    fn target(&self, module_type: ModuleType, instance: u16) -> Option<&ModAddrTarget> {
+        self.modules
+            .iter()
+            .find(|t| t.id.module_type == module_type && t.id.instance == instance)
+    }
+
+    /// Friendly label for a stored source address (`"lfo-1.out"` → "LFO 1 · out"),
+    /// falling back to the raw address for a dangling / unknown reference.
+    fn source_label(&self, addr: &str) -> String {
+        match SrcAddr::parse(addr) {
+            Some(SrcAddr::Macro(m)) => macro_label(m).to_string(),
+            Some(SrcAddr::Module {
+                module_type,
+                instance,
+                name,
+            }) => {
+                let base = self.target(module_type, instance).map_or_else(
+                    || format!("{}-{instance}", module_type.prefix()),
+                    |t| t.label.clone(),
+                );
+                format!("{base} · {}", name.as_str())
+            }
+            None => addr.to_string(),
+        }
+    }
+
+    /// Friendly label for a stored destination address (`"flt-1.cutoff"` →
+    /// "Filter 1 · Cutoff"), falling back to the raw address.
+    fn dest_label(&self, addr: &str) -> String {
+        let Some(d) = DestAddr::parse(addr) else {
+            return addr.to_string();
+        };
+        let target = self.target(d.module_type, d.instance);
+        let base = target.map_or_else(
+            || format!("{}-{}", d.module_type.prefix(), d.instance),
+            |t| t.label.clone(),
+        );
+        let param = target
+            .and_then(|t| {
+                t.dest_params
+                    .iter()
+                    .find(|(tid, _)| tid.as_str() == d.param.as_str())
+            })
+            .map_or_else(|| d.param.as_str().to_string(), |(_, name)| name.clone());
+        format!("{base} · {param}")
+    }
+}
+
+/// Display label for a modulation macro source.
+fn macro_label(m: MacroSource) -> &'static str {
+    match m {
+        MacroSource::Velocity => "Velocity",
+        MacroSource::NoteNumber => "Note",
+        MacroSource::Aftertouch => "Aftertouch",
+        MacroSource::ModWheel => "Mod Wheel",
+        MacroSource::PitchBend => "Pitch Bend",
+        MacroSource::PolyAftertouch => "Poly Aftertouch",
+    }
+}
+
+/// Insert or remove a Mod Matrix slot-address mirror entry (S1.5c): `Some` stores
+/// the canonical address, `None` drops the slot back to unconfigured.
+fn sync_slot_addr(slot_addrs: &mut HashMap<String, String>, name: &str, addr: Option<String>) {
+    match addr {
+        Some(s) => {
+            slot_addrs.insert(name.to_string(), s);
+        }
+        None => {
+            slot_addrs.remove(name);
+        }
+    }
+}
+
+/// Render a Mod Matrix **source** picker. Returns `Some(selection)` only when the
+/// user changed it (`None` inner value = cleared to no source).
+fn mod_source_picker(
+    ui: &mut Ui,
+    id_salt: String,
+    width: f32,
+    current: Option<&str>,
+    catalog: &ModAddrCatalog,
+) -> Option<Option<SrcAddr>> {
+    let mut result: Option<Option<SrcAddr>> = None;
+    let text = current.map_or_else(|| "(none)".to_string(), |s| catalog.source_label(s));
+    // Parse `current` once and compare structurally, instead of formatting every
+    // candidate's address string per item per frame.
+    let current_addr = current.and_then(SrcAddr::parse);
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(text)
+        .width(width)
+        .show_ui(ui, |ui| {
+            if ui.selectable_label(current.is_none(), "(none)").clicked() {
+                result = Some(None);
+            }
+            for m in MacroSource::ALL {
+                let addr = SrcAddr::Macro(m);
+                if ui
+                    .selectable_label(current_addr == Some(addr), macro_label(m))
+                    .clicked()
+                {
+                    result = Some(Some(addr));
+                }
+            }
+            for target in &catalog.modules {
+                for port in &target.source_ports {
+                    let addr = SrcAddr::module(target.id.module_type, target.id.instance, port);
+                    let label = format!("{} · {port}", target.label);
+                    if ui
+                        .selectable_label(current_addr == Some(addr), label)
+                        .clicked()
+                    {
+                        result = Some(Some(addr));
+                    }
+                }
+            }
+        });
+    result
+}
+
+/// Render a Mod Matrix **destination** picker. Returns `Some(selection)` only when
+/// the user changed it (`None` inner value = cleared to no destination).
+fn mod_dest_picker(
+    ui: &mut Ui,
+    id_salt: String,
+    width: f32,
+    current: Option<&str>,
+    catalog: &ModAddrCatalog,
+) -> Option<Option<DestAddr>> {
+    let mut result: Option<Option<DestAddr>> = None;
+    let text = current.map_or_else(|| "(none)".to_string(), |s| catalog.dest_label(s));
+    // Parse `current` once and compare structurally (see `mod_source_picker`).
+    let current_addr = current.and_then(DestAddr::parse);
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(text)
+        .width(width)
+        .show_ui(ui, |ui| {
+            if ui.selectable_label(current.is_none(), "(none)").clicked() {
+                result = Some(None);
+            }
+            for target in &catalog.modules {
+                for (type_id, label) in &target.dest_params {
+                    let addr = DestAddr::new(target.id.module_type, target.id.instance, type_id);
+                    let item = format!("{} · {label}", target.label);
+                    if ui
+                        .selectable_label(current_addr == Some(addr), item)
+                        .clicked()
+                    {
+                        result = Some(Some(addr));
+                    }
+                }
+            }
+        });
+    result
 }
 
 /// Module connectivity status for visualization.
@@ -1422,6 +1656,28 @@ impl PatchEditor {
         };
         for param in params {
             let name = param.name();
+
+            // Mod Matrix routings are address-based; mirror the full address into
+            // `slot_addrs` (the lossy f32 mirror below can only hold the legacy
+            // enum index, so arbitrary addresses would vanish from the picker).
+            match param {
+                Param::ModMatrix(ModMatrixParam::SlotSource(_, src)) => {
+                    sync_slot_addr(
+                        &mut panel.slot_addrs,
+                        name,
+                        src.map(|a| a.to_address_string()),
+                    );
+                }
+                Param::ModMatrix(ModMatrixParam::SlotDestination(_, dst)) => {
+                    sync_slot_addr(
+                        &mut panel.slot_addrs,
+                        name,
+                        dst.map(|a| a.to_address_string()),
+                    );
+                }
+                _ => {}
+            }
+
             let new_value = param.as_f32();
             match panel.param_values.get(name) {
                 Some(current) if (*current - new_value).abs() <= f32::EPSILON => continue,
@@ -1513,6 +1769,22 @@ impl PatchEditor {
         self.realign_effect_chain_if_changed(effect_chain_order);
         let analysis = PatchAnalysis::from_panels(&self.panels);
         self.realign_mod_matrix_attachments_if_changed(&analysis);
+
+        // Addressing targets for the Mod Matrix pickers (S1.5c). Built here, before
+        // the `self.panels.get_mut` borrow below, so the picker can address every
+        // other module without re-borrowing `self`. Skip the (allocating) build
+        // entirely when the patch has no Mod Matrix — the catalog has no consumer.
+        let mod_catalog = if self
+            .descriptors
+            .keys()
+            .any(|id| id.module_type == ModuleType::ModMatrix)
+        {
+            ModAddrCatalog::from_descriptors(&self.descriptors)
+        } else {
+            ModAddrCatalog {
+                modules: Vec::new(),
+            }
+        };
 
         let content_size = self.content_size();
 
@@ -1830,15 +2102,14 @@ impl PatchEditor {
                             let is_matrix_source = analysis.is_mod_matrix_source(module_id);
                             let is_matrix_destination =
                                 analysis.is_mod_matrix_destination(module_id);
-                            if is_matrix_source || is_matrix_destination {
+                            if let Some(badge_role) =
+                                ModRole::from_flags(is_matrix_source, is_matrix_destination)
+                            {
                                 let badge_color = t.colors.accent_purple;
-                                let badge_icon = if is_matrix_source && is_matrix_destination {
-                                    ri::ARROW_LEFT_RIGHT_LINE
-                                } else if is_matrix_source {
-                                    ri::ARROW_RIGHT_UP_LINE
-                                } else {
-                                    ri::ARROW_LEFT_DOWN_LINE
-                                };
+                                // Share the icon mapping with the per-knob marker so
+                                // the module roll-up and its parameters never show
+                                // conflicting arrows; the tooltips stay module-level.
+                                let badge_icon = badge_role.glyph();
                                 let badge_tip = match (is_matrix_source, is_matrix_destination) {
                                     (true, true) => "Mod Matrix\nRouted as both source and destination via the Mod Matrix.",
                                     (true, false) => "Mod Matrix Source\nThis module drives one or more Mod Matrix slots.\nLook in the Mod Matrix module for slot details.",
@@ -2030,6 +2301,7 @@ impl PatchEditor {
                                 accent_color,
                                 vis_buffer,
                                 &analysis,
+                                &mod_catalog,
                                 &self.sample_list,
                                 audio_input_snapshot,
                             );
@@ -2069,6 +2341,7 @@ impl PatchEditor {
                                         accent_color,
                                         vis_buffer,
                                         &analysis,
+                                        &mod_catalog,
                                         &self.sample_list,
                                         audio_input_snapshot,
                                     );
@@ -4897,6 +5170,7 @@ fn draw_module_panel_params(
     accent_color: Color32,
     vis_buffer: Option<&synth_engine::visualizers::VisualizationBuffer>,
     analysis: &PatchAnalysis,
+    mod_catalog: &ModAddrCatalog,
     sample_list: &[(u64, String)],
     audio_input_snapshot: &AudioInputSnapshot,
 ) -> PanelParamsResult {
@@ -4905,6 +5179,11 @@ fn draw_module_panel_params(
 
     let mut param_changes = Vec::new();
     let mut audio_input_action = None;
+    // Per-knob Mod Matrix marker (S1.5a): a parameter is marked when a routing
+    // targets this module's matching `type_id`.
+    let module_id = state.id;
+    let mod_role =
+        |p: &synth_core::ParameterDescriptor| analysis.mod_role_for_param(module_id, &p.type_id);
 
     // For Visualizer modules, draw visualization FIRST (before parameters)
     if descriptor.category == ModuleCategory::Visualizer {
@@ -4974,13 +5253,19 @@ fn draw_module_panel_params(
             .collect();
 
         if !knob_params.is_empty() {
-            let changes = super::widgets::draw_knobs(ui, &knob_params, accent_color, |p| {
-                state
-                    .param_values
-                    .get(&p.name)
-                    .copied()
-                    .unwrap_or(p.range.default)
-            });
+            let changes = super::widgets::draw_knobs(
+                ui,
+                &knob_params,
+                accent_color,
+                |p| {
+                    state
+                        .param_values
+                        .get(&p.name)
+                        .copied()
+                        .unwrap_or(p.range.default)
+                },
+                mod_role,
+            );
             for (param, value) in changes {
                 state.param_values.insert(param.name.clone(), value);
                 param_changes.push(param.id.with_f32(value));
@@ -5127,7 +5412,7 @@ fn draw_module_panel_params(
 
     // Special handling for Mod Matrix — custom grid rendering
     if descriptor.type_id.0 == "mod_matrix" {
-        return draw_mod_matrix_grid(ui, state, descriptor, accent_color, analysis);
+        return draw_mod_matrix_grid(ui, state, descriptor, accent_color, mod_catalog);
     }
 
     // Signal Monitor — draw oscilloscope display above parameters
@@ -5186,15 +5471,10 @@ fn draw_module_panel_params(
                 .copied()
                 .unwrap_or(p.range.default)
         },
-        |p, choice| {
-            let is_mm_source = matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotSource(..)));
-            let is_mm_dest = matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotDestination(..)));
-            if is_mm_source || is_mm_dest {
-                is_mod_choice_available(&choice.id, is_mm_source, analysis)
-            } else {
-                true
-            }
-        },
+        // The Mod Matrix has its own picker path (early return above); every other
+        // module's choices are always shown.
+        |_p, _choice| true,
+        mod_role,
     );
     for (param, value) in changes {
         state.param_values.insert(param.name.clone(), value);
@@ -5214,7 +5494,7 @@ fn draw_mod_matrix_grid(
     state: &mut ModulePanelState,
     descriptor: &ModuleDescriptor,
     accent_color: Color32,
-    analysis: &PatchAnalysis,
+    catalog: &ModAddrCatalog,
 ) -> PanelParamsResult {
     use super::widgets::Knob;
 
@@ -5222,27 +5502,24 @@ fn draw_mod_matrix_grid(
 
     // The grid selector is gone — the routing list is presented dynamically.
     // Show every *configured* routing (source or destination set) as a row, plus
-    // one trailing empty row to add the next one. State lives in the 16 fixed
-    // slots; this is purely a derived presentation (no extra session state).
-    let slot_idx_value = |slot_idx: usize, source: bool| -> usize {
+    // one trailing empty row to add the next one. A slot is configured when it
+    // carries a source or destination **address** (`slot_addrs`, S1.5c) — the
+    // legacy f32 index can't represent arbitrary addresses. State lives in the 16
+    // fixed slots; this is purely a derived presentation (no extra session state).
+    let slot_addr = |slot_idx: usize, source: bool| -> Option<String> {
         let pid = if source {
             ModMatrixParam::SlotSource(slot_idx as u8, None)
         } else {
             ModMatrixParam::SlotDestination(slot_idx as u8, None)
         };
-        state
-            .param_values
-            .get(pid.name())
-            .copied()
-            .unwrap_or(0.0)
-            .round() as usize
+        state.slot_addrs.get(pid.name()).cloned()
     };
     let configured: Vec<usize> = (0..synth_core::MAX_MOD_MATRIX_SLOTS)
-        .filter(|&i| slot_idx_value(i, true) != 0 || slot_idx_value(i, false) != 0)
+        .filter(|&i| slot_addr(i, true).is_some() || slot_addr(i, false).is_some())
         .collect();
     let first_free: Option<usize> =
         (0..synth_core::MAX_MOD_MATRIX_SLOTS).find(|&i| !configured.contains(&i));
-    // (the `slot_idx_value` borrow of `state` ends here, before the mutable loop)
+    // (the `slot_addr` borrow of `state` ends here, before the mutable loop)
 
     // Rows to render: configured routings, then one empty "add" row.
     let mut rows: Vec<(usize, bool)> = configured.iter().map(|&i| (i, false)).collect();
@@ -5263,13 +5540,7 @@ fn draw_mod_matrix_grid(
             for (slot_idx, is_add_row) in rows {
                 let slot_num = slot_idx + 1;
 
-                // Find params for this slot
-                let src_param = descriptor.parameters.iter().find(|p| {
-                    matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotSource(s, _)) if s as usize == slot_idx)
-                });
-                let dst_param = descriptor.parameters.iter().find(|p| {
-                    matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotDestination(s, _)) if s as usize == slot_idx)
-                });
+                // Amount + enabled are still plain f32 params.
                 let amt_param = descriptor.parameters.iter().find(|p| {
                     matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotAmount(s, _)) if s as usize == slot_idx)
                 });
@@ -5277,16 +5548,13 @@ fn draw_mod_matrix_grid(
                     matches!(p.id, Param::ModMatrix(ModMatrixParam::SlotEnabled(s, _)) if s as usize == slot_idx)
                 });
 
-                // Read current values up front so we can pick a frame
-                // colour that reflects the slot's overall state.
-                let src_val = src_param.and_then(|p| {
-                    state.param_values.get(&p.name).copied()
-                        .or(Some(p.range.default))
-                });
-                let dst_val = dst_param.and_then(|p| {
-                    state.param_values.get(&p.name).copied()
-                        .or(Some(p.range.default))
-                });
+                // Source/destination are address-based (S1.5c). Read the stored
+                // address strings (owned, so the borrow ends before the picker
+                // writes back below) to drive the frame colour and the pickers.
+                let src_name = ModMatrixParam::SlotSource(slot_idx as u8, None).name();
+                let dst_name = ModMatrixParam::SlotDestination(slot_idx as u8, None).name();
+                let src_addr = state.slot_addrs.get(src_name).cloned();
+                let dst_addr = state.slot_addrs.get(dst_name).cloned();
                 let amount_val = amt_param.and_then(|p| {
                     state.param_values.get(&p.name).copied()
                         .or(Some(p.range.default))
@@ -5296,8 +5564,8 @@ fn draw_mod_matrix_grid(
                     .map(|v| v > 0.5)
                     .unwrap_or(true);
 
-                let has_source = src_val.map(|v| v.round() as usize != 0).unwrap_or(false);
-                let has_dest = dst_val.map(|v| v.round() as usize != 0).unwrap_or(false);
+                let has_source = src_addr.is_some();
+                let has_dest = dst_addr.is_some();
                 let fully_configured = has_source && has_dest;
 
                 // Slot state determines the frame stroke + the row tint:
@@ -5373,40 +5641,23 @@ fn draw_mod_matrix_grid(
                             );
                         });
 
-                        // Source ComboBox
-                        if let Some(sp) = src_param
-                            && let Some(ref choices) = sp.choices
-                        {
-                            let current = src_val.unwrap_or(sp.range.default);
-                            let mut selected = current.round() as usize;
-                            let text = choices
-                                .get(selected)
-                                .map(|c| c.name.clone())
-                                .unwrap_or_else(|| "?".into());
-                            egui::ComboBox::from_id_salt(format!("mm_src_{slot_idx}"))
-                                .selected_text(text)
-                                .width(combo_width)
-                                .show_ui(ui, |ui| {
-                                    for (i, choice) in choices.iter().enumerate() {
-                                        if !is_mod_choice_available(
-                                            &choice.id, true, analysis,
-                                        ) {
-                                            continue;
-                                        }
-                                        if ui
-                                            .selectable_label(selected == i, &choice.name)
-                                            .clicked()
-                                        {
-                                            selected = i;
-                                        }
-                                    }
-                                });
-                            if selected as f32 != current.round() {
-                                state
-                                    .param_values
-                                    .insert(sp.name.clone(), selected as f32);
-                                param_changes.push(sp.id.with_f32(selected as f32));
-                            }
+                        // Source picker — any module output port or per-voice macro.
+                        if let Some(sel) = mod_source_picker(
+                            ui,
+                            format!("mm_src_{slot_idx}"),
+                            combo_width,
+                            src_addr.as_deref(),
+                            catalog,
+                        ) {
+                            sync_slot_addr(
+                                &mut state.slot_addrs,
+                                src_name,
+                                sel.map(|a| a.to_address_string()),
+                            );
+                            param_changes.push(Param::ModMatrix(ModMatrixParam::SlotSource(
+                                slot_idx as u8,
+                                sel,
+                            )));
                         }
 
                         // Signal-flow arrow with the modulation amount inline.
@@ -5431,40 +5682,23 @@ fn draw_mod_matrix_grid(
                             );
                         });
 
-                        // Destination ComboBox
-                        if let Some(dp) = dst_param
-                            && let Some(ref choices) = dp.choices
-                        {
-                            let current = dst_val.unwrap_or(dp.range.default);
-                            let mut selected = current.round() as usize;
-                            let text = choices
-                                .get(selected)
-                                .map(|c| c.name.clone())
-                                .unwrap_or_else(|| "?".into());
-                            egui::ComboBox::from_id_salt(format!("mm_dst_{slot_idx}"))
-                                .selected_text(text)
-                                .width(combo_width)
-                                .show_ui(ui, |ui| {
-                                    for (i, choice) in choices.iter().enumerate() {
-                                        if !is_mod_choice_available(
-                                            &choice.id, false, analysis,
-                                        ) {
-                                            continue;
-                                        }
-                                        if ui
-                                            .selectable_label(selected == i, &choice.name)
-                                            .clicked()
-                                        {
-                                            selected = i;
-                                        }
-                                    }
-                                });
-                            if selected as f32 != current.round() {
-                                state
-                                    .param_values
-                                    .insert(dp.name.clone(), selected as f32);
-                                param_changes.push(dp.id.with_f32(selected as f32));
-                            }
+                        // Destination picker — any modulatable param on any module.
+                        if let Some(sel) = mod_dest_picker(
+                            ui,
+                            format!("mm_dst_{slot_idx}"),
+                            combo_width,
+                            dst_addr.as_deref(),
+                            catalog,
+                        ) {
+                            sync_slot_addr(
+                                &mut state.slot_addrs,
+                                dst_name,
+                                sel.map(|a| a.to_address_string()),
+                            );
+                            param_changes.push(Param::ModMatrix(ModMatrixParam::SlotDestination(
+                                slot_idx as u8,
+                                sel,
+                            )));
                         }
 
                         // Amount knob + Active toggle side by side.
@@ -5530,6 +5764,13 @@ fn draw_mod_matrix_grid(
                 1.0,
             ),
         ] {
+            // Drop the address mirror too, so the slot reads as unconfigured.
+            if let Param::ModMatrix(
+                ModMatrixParam::SlotSource(..) | ModMatrixParam::SlotDestination(..),
+            ) = param
+            {
+                state.slot_addrs.remove(param.name());
+            }
             state.param_values.insert(param.name().to_string(), value);
             param_changes.push(param);
         }
@@ -5538,32 +5779,6 @@ fn draw_mod_matrix_grid(
     PanelParamsResult {
         param_changes,
         audio_input_action: None,
-    }
-}
-
-/// Check if a mod matrix dropdown choice should be shown, based on available modules.
-///
-/// Hides choices that reference modules not present in the patch.
-/// For example, "LFO 2" is hidden if only one LFO exists.
-fn is_mod_choice_available(choice_id: &str, is_source: bool, analysis: &PatchAnalysis) -> bool {
-    if is_source {
-        match choice_id {
-            "lfo1" => analysis.count(ModuleType::Lfo) >= 1,
-            "lfo2" => analysis.count(ModuleType::Lfo) >= 2,
-            "env1" => analysis.count(ModuleType::Envelope) >= 1,
-            "env2" => analysis.count(ModuleType::Envelope) >= 2,
-            _ => true, // none, velocity, note, aftertouch, mod_wheel, pitch_bend
-        }
-    } else {
-        match choice_id {
-            "osc1_pitch" | "osc1_level" => analysis.count(ModuleType::Oscillator) >= 1,
-            "osc2_pitch" => analysis.count(ModuleType::Oscillator) >= 2,
-            "flt1_cutoff" | "flt1_reso" => analysis.count(ModuleType::Filter) >= 1,
-            "flt2_cutoff" => analysis.count(ModuleType::Filter) >= 2,
-            "amp_level" | "amp_pan" => analysis.count(ModuleType::Amplifier) >= 1,
-            "lfo1_rate" | "lfo1_depth" => analysis.count(ModuleType::Lfo) >= 1,
-            _ => true, // none
-        }
     }
 }
 
@@ -5906,19 +6121,25 @@ fn convert_port_type(port_type: synth_core::PortType) -> WidgetPortType {
 mod patch_analysis_tests {
     use super::*;
 
-    fn matrix_panel(slot_setups: &[(usize, ModSource, ModDestination, bool)]) -> ModulePanelState {
+    /// Seed a Mod Matrix panel's slot source/dest **addresses** (S1.5c), mirroring
+    /// what `sync_module_params` writes from the engine. `slot_num` is 1-based.
+    fn matrix_panel(slot_setups: &[(usize, &str, &str, bool)]) -> ModulePanelState {
         let mut state =
             ModulePanelState::new(ModuleId::new(ModuleType::ModMatrix, 1), Pos2::new(0.0, 0.0));
-        // The grid no longer gates anything; PatchAnalysis scans all slots.
         for (slot_num, src, dst, enabled) in slot_setups {
-            state
-                .param_values
-                .insert(format!("Slot {slot_num} Source"), src.index() as f32);
-            state
-                .param_values
-                .insert(format!("Slot {slot_num} Dest"), dst.index() as f32);
+            let slot = (*slot_num - 1) as u8;
+            state.slot_addrs.insert(
+                ModMatrixParam::SlotSource(slot, None).name().to_string(),
+                (*src).to_string(),
+            );
+            state.slot_addrs.insert(
+                ModMatrixParam::SlotDestination(slot, None)
+                    .name()
+                    .to_string(),
+                (*dst).to_string(),
+            );
             state.param_values.insert(
-                format!("Slot {slot_num} Enabled"),
+                ModMatrixParam::SlotEnabled(slot, true).name().to_string(),
                 if *enabled { 1.0 } else { 0.0 },
             );
         }
@@ -5930,22 +6151,16 @@ mod patch_analysis_tests {
         (id, ModulePanelState::new(id, Pos2::ZERO))
     }
 
-    /// `ModSource::Envelope(1)` resolves to the *second* envelope in this
-    /// instrument's panel set, not to `ModuleId(Envelope, 2)`. With
-    /// envelopes at non-canonical instances env-5/env-6 the badge must
-    /// still land on env-6 (and Filter 1 Cutoff on flt-3 — the only
-    /// filter in this instrument).
+    /// Address-based resolution: `env-6.out → flt-3.cutoff` flags exactly env-6
+    /// and flt-3 (the real instances the addresses name), even at non-canonical
+    /// instance numbers. Modules the addresses don't name — and the other
+    /// envelope — must stay unflagged.
     #[test]
-    fn analysis_marks_source_and_destination_positional() {
+    fn analysis_marks_source_and_destination_by_address() {
         let mut panels = HashMap::new();
         panels.insert(
             ModuleId::new(ModuleType::ModMatrix, 2),
-            matrix_panel(&[(
-                1,
-                ModSource::Envelope(1),
-                ModDestination::FilterCutoff(0),
-                true,
-            )]),
+            matrix_panel(&[(1, "env-6.out", "flt-3.cutoff", true)]),
         );
         for (id, state) in [
             stub_panel(ModuleType::Envelope, 5),
@@ -5958,11 +6173,19 @@ mod patch_analysis_tests {
         let analysis = PatchAnalysis::from_panels(&panels);
         assert!(analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Envelope, 6)));
         assert!(analysis.is_mod_matrix_destination(ModuleId::new(ModuleType::Filter, 3)));
-        // The bug we're fixing: env-2/flt-1 don't exist in this instrument,
-        // so they must NOT be flagged.
+        // Per-parameter destination marker (S1.5a): only the addressed param
+        // ("cutoff") is a destination on flt-3, not its other knobs.
+        let flt3 = ModuleId::new(ModuleType::Filter, 3);
+        assert_eq!(
+            analysis.mod_role_for_param(flt3, "cutoff"),
+            Some(ModRole::Destination)
+        );
+        assert_eq!(analysis.mod_role_for_param(flt3, "resonance"), None);
+        // Instances the addresses don't name (and which aren't present) must not
+        // be flagged.
         assert!(!analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Envelope, 2)));
         assert!(!analysis.is_mod_matrix_destination(ModuleId::new(ModuleType::Filter, 1)));
-        // The first envelope is not the slot's target.
+        // The other envelope is not the slot's source.
         assert!(!analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Envelope, 5)));
     }
 
@@ -5973,7 +6196,7 @@ mod patch_analysis_tests {
         let mut panels = HashMap::new();
         panels.insert(
             ModuleId::new(ModuleType::ModMatrix, 1),
-            matrix_panel(&[(1, ModSource::Lfo(0), ModDestination::OscPitch(0), false)]),
+            matrix_panel(&[(1, "lfo-1.out", "osc-1.pitch", false)]),
         );
         for (id, state) in [
             stub_panel(ModuleType::Lfo, 1),

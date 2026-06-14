@@ -28,6 +28,11 @@ pub struct ModulePanelState {
     /// Cached parameter values (indexed by parameter name for lookup).
     /// Key is the parameter name from the descriptor.
     pub param_values: HashMap<String, f32>,
+    /// Mod Matrix slot source/destination **addresses**, keyed by the slot param
+    /// name (`SlotSource(n)` / `SlotDestination(n)`). Mirrors the engine's
+    /// address-based routings (S1.5c) — `param_values` only holds the lossy legacy
+    /// enum index, so arbitrary addresses (`lfo-3.out`) live here instead.
+    pub slot_addrs: HashMap<String, String>,
     /// Envelope position buffer for envelope modules (lock-free GUI sync).
     pub envelope_position: Option<Arc<EnvelopePositionBuffer>>,
     /// Reusable visualization sample buffers (avoids per-frame allocation).
@@ -42,6 +47,7 @@ impl ModulePanelState {
             position,
             size: Vec2::new(250.0, 200.0),
             param_values: HashMap::new(),
+            slot_addrs: HashMap::new(),
             envelope_position: None,
             vis_buf_l: Vec::new(),
             vis_buf_r: Vec::new(),
