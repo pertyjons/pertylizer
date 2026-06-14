@@ -690,10 +690,14 @@ impl PolyModule for Oscillator {
         self.sample_rate = sample_rate;
     }
 
-    fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
-        match dest_index {
-            0 => self.mod_offset_pitch = Semitones::new(self.mod_offset_pitch.as_f32() + value),
-            1 => self.mod_offset_level = BipolarValue::new(self.mod_offset_level.as_f32() + value),
+    fn set_mod_offset(&mut self, target: &str, value: f32) {
+        match target {
+            "pitch" => {
+                self.mod_offset_pitch = Semitones::new(self.mod_offset_pitch.as_f32() + value)
+            }
+            "level" => {
+                self.mod_offset_level = BipolarValue::new(self.mod_offset_level.as_f32() + value)
+            }
             _ => {}
         }
     }

@@ -1083,12 +1083,16 @@ pub trait PolyModule: Describable + Send {
 
     /// Apply a modulation offset from the mod matrix.
     ///
-    /// `dest_index` identifies which parameter to modulate (module-specific):
-    /// - Oscillator: 0 = pitch (semitones), 1 = level
-    /// - Filter: 0 = cutoff (semitones), 1 = resonance
-    /// - Amplifier: 0 = level, 1 = pan
-    /// - LFO: 0 = rate, 1 = depth
-    fn set_mod_offset(&mut self, _dest_index: u8, _value: f32) {
+    /// `target` is a stable, module-agnostic parameter identifier — the param's
+    /// descriptor `type_id` (e.g. `"cutoff"`, `"resonance"`, `"level"`, `"pan"`,
+    /// `"rate"`, `"depth"`), plus `"pitch"` for additive oscillator pitch (which
+    /// has no single knob). A module matches the identifiers it supports and
+    /// ignores the rest. The offset is *additive* and accumulates across multiple
+    /// routings to the same target until [`clear_mod_offsets`](Self::clear_mod_offsets).
+    ///
+    /// `value` is the routing contribution (`amount × source`); the module scales
+    /// it into the parameter's own unit and clamps in `process()`.
+    fn set_mod_offset(&mut self, _target: &str, _value: f32) {
         // Default: no modulation support
     }
 

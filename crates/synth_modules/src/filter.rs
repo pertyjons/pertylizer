@@ -472,17 +472,17 @@ impl PolyModule for Filter {
         self.sample_rate = sample_rate;
     }
 
-    fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
-        match dest_index {
+    fn set_mod_offset(&mut self, target: &str, value: f32) {
+        match target {
             // Cutoff modulation is in semitones. Mod-matrix amount is normalized
             // (-1..1) and envelopes are 0..1, so the raw product is at most 1
             // semitone — inaudible. Scale to ±48 semitones (4 octaves) so a full
             // amount + full envelope yields a usable acid-style sweep.
-            0 => {
+            "cutoff" => {
                 self.mod_offset_cutoff =
                     Semitones::new(self.mod_offset_cutoff.as_f32() + value * 48.0)
             }
-            1 => {
+            "resonance" => {
                 self.mod_offset_resonance =
                     NormalizedValue::new(self.mod_offset_resonance.as_f32() + value)
             }
@@ -819,7 +819,7 @@ mod tests {
 
         // A mod-matrix cutoff offset of +1 octave (value 0.25 → 0.25*48 = 12
         // semitones). With no override it scales the BASE: 1000 → 2000.
-        filter.set_mod_offset(0, 0.25);
+        filter.set_mod_offset("cutoff", 0.25);
         assert!(
             (filter.effective_cutoff().as_f32() - 2000.0).abs() < 5.0,
             "mod offset scales the base when no override: {}",

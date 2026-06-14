@@ -459,20 +459,14 @@ impl ModuleGraph {
 
     /// Apply a modulation offset to the appropriate module(s) for a given destination.
     ///
-    /// Maps `ModDestination` to the correct module type and `set_mod_offset()` index.
-    /// The `instance` in the destination variant determines which module instance
+    /// Resolves `ModDestination` to `(module type, instance, param identifier)` via
+    /// [`ModDestination::module_target_position`] and forwards the param identifier to
+    /// the module's [`set_mod_offset`](synth_core::PolyModule::set_mod_offset). The
+    /// `instance` in the destination variant determines which module instance
     /// (e.g., `OscPitch(0)` targets osc-1, `FilterCutoff(1)` targets flt-2).
     pub fn apply_mod_offset(&mut self, dest: ModDestination, value: f32) {
-        let (module_type, instance, offset_index) = match dest {
-            ModDestination::None => return,
-            ModDestination::OscPitch(i) => (ModuleType::Oscillator, i, 0u8),
-            ModDestination::OscLevel(i) => (ModuleType::Oscillator, i, 1),
-            ModDestination::FilterCutoff(i) => (ModuleType::Filter, i, 0),
-            ModDestination::FilterResonance(i) => (ModuleType::Filter, i, 1),
-            ModDestination::AmpLevel(i) => (ModuleType::Amplifier, i, 0),
-            ModDestination::AmpPan(i) => (ModuleType::Amplifier, i, 1),
-            ModDestination::LfoRate(i) => (ModuleType::Lfo, i, 0),
-            ModDestination::LfoDepth(i) => (ModuleType::Lfo, i, 1),
+        let Some((module_type, instance, param)) = dest.module_target_position() else {
+            return;
         };
 
         // Find the Nth instance of the target module type (0-based)
@@ -480,7 +474,7 @@ impl ModuleGraph {
         // Try exact instance match first
         let target_id = crate::ModuleId::new(module_type, target_instance);
         if let Some(node) = self.nodes.get_mut(&target_id) {
-            node.module.set_mod_offset(offset_index, value);
+            node.module.set_mod_offset(param, value);
             return;
         }
         // Fallback: find first module of matching type (for instance 0)
@@ -491,7 +485,7 @@ impl ModuleGraph {
                 .find(|(id, _)| id.module_type == module_type)
                 .map(|(_, n)| n)
         {
-            node.module.set_mod_offset(offset_index, value);
+            node.module.set_mod_offset(param, value);
         }
     }
 

@@ -338,10 +338,14 @@ impl PolyModule for Lfo {
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
     fn note_off(&mut self) {}
 
-    fn set_mod_offset(&mut self, dest_index: u8, value: f32) {
-        match dest_index {
-            0 => self.mod_offset_rate = BipolarValue::new(self.mod_offset_rate.as_f32() + value),
-            1 => self.mod_offset_depth = BipolarValue::new(self.mod_offset_depth.as_f32() + value),
+    fn set_mod_offset(&mut self, target: &str, value: f32) {
+        match target {
+            "rate" => {
+                self.mod_offset_rate = BipolarValue::new(self.mod_offset_rate.as_f32() + value)
+            }
+            "depth" => {
+                self.mod_offset_depth = BipolarValue::new(self.mod_offset_depth.as_f32() + value)
+            }
             _ => {}
         }
     }
