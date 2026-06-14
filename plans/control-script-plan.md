@@ -110,17 +110,42 @@ Mod Matrix's parameter-offset path (`mmx → flt1.cutoff`, no wire).
   Persistence round-trip landed in S1.2d-2. Dangling references are **disable-and-keep**
   (apply_mod_offset_addr no-ops when the addressed module is absent). Source-side MCP rides
   along with S1.3.
-- [ ] **S1.5a** — GUI: per-parameter **destination** knob marker — **lands with S1.2**.
-  Trivial once routings carry the exact `ParamId` (the analysis already computes the target
-  param; the wrinkle is the enum's `"pitch"` tag, gone after S1.2). See GUI section.
-- [ ] **S1.5b** — GUI: per-parameter **source** marker + the **macro-source rail** —
-  **lands with S1.3**. Per-param sources only mean something once a knob's *value* is a
-  readable source; the macros need a visible home (no `ModuleId` to mark).
-- [ ] **S1.5c** — GUI: **pick-by-addressing** dropdowns (module → param/port, or macro)
-  replacing the fixed enum dropdowns. The per-module badge already exists
-  (`patch_editor.rs:1834`) and becomes a roll-up of the per-param data.
+**Re-planned 2026-06-14** (the GUI section below was written before S1.2/S1.3 landed
+address-based addressing; the GUI never moved to it). The whole patch-editor mod-matrix
+seam is still on the **legacy f32-enum-index** representation — both read (`PatchAnalysis`
+`patch_editor.rs:256`) and write (`draw_mod_matrix_grid` `patch_editor.rs:5212`,
+`param_values: HashMap<String, f32>` can only carry a legacy index, not an address). So
+**S1.5c is foundational, not last**: the markers (a/b) read whatever the address picker
+writes. Corrected ordering — **S1.5c → S1.5a → S1.5b**.
 
-(All S1.5 work is DEFERRED for interactive egui work — not headless-testable.)
+- [x] **S1.5c** — GUI: **pick-by-addressing** for slot source/destination. **SHIPPED.**
+  `slot_addrs: HashMap<String, String>` on `ModulePanelState` mirrors the engine's address
+  routings (`param_values: HashMap<String, f32>` can't hold `"flt-1.cutoff"`). `ModAddrCatalog`
+  (built per frame from the patch's descriptors, gated on a Mod Matrix being present) drives
+  `mod_source_picker`/`mod_dest_picker`: module-instance → param/port, **+ the six macros**.
+  Emits the full `Param::ModMatrix(Slot{Source,Destination}(slot, Some(addr)))`; the legacy
+  enum combos + `is_mod_choice_available` are gone. `PatchAnalysis::from_panels` now resolves
+  `slot_addrs` addresses (absolute instance → `ModuleId`) so the module badge lights for any
+  address (the legacy f32-index path missed `lfo-3`/`flt-3`). **Mirror fix:** the MCP-add path
+  (`reconcile_with_session` `to_add`) mirrors via `sync_module_params`, not a plain f32 copy —
+  the version-gated per-frame sync never re-ran for a freshly-added module, so a Mod Matrix
+  built via MCP showed "(none)" forever. Live-verified in-app.
+- [x] **S1.5a** — GUI: per-parameter **destination** knob marker. **SHIPPED.** `PatchAnalysis`
+  destinations are now `HashMap<ModuleId, HashSet<String>>` (dest param `type_id`s) with
+  `mod_role_for_param`; a `mod_role` closure threads through `draw_parameter_grid`/`draw_knobs`
+  (mixer passes `|_| None`). Marker = purple `ModRole` glyph (shared with the module-header
+  badge via `ModRole::from_flags`/`glyph`); label-group widgets draw an inline coloured icon,
+  knobs paint it in the corner (`Knob::mod_marker`, off the label so the grid cell never
+  widens). Source/`Both` markers are wired through the renderer but unreachable until S1.5b.
+- [ ] **S1.5b** *(after a)* — GUI: per-parameter **source** marker (reuse the S1.5a map,
+  three-state direction) + the **macro-source rail** — a fixed strip of macro chips
+  (`MacroSource::ALL`) each wearing the same source marker, since macros have no `ModuleId`
+  to badge.
+
+The per-module badge already exists (`patch_editor.rs:1834`, three-state `↗`/`↙`/`↔`) and
+becomes a roll-up of the per-param data — keep it.
+
+(All S1.5 work is DEFERRED for interactive egui work — not headless-testable; verify in-app.)
 
 - [x] **S1.8** — Address-only cleanup + faithful MCP report. **SHIPPED `406e60b`.**
   `get_mod_matrix_routings` now echoes the stored address (no lossy round-trip
@@ -143,20 +168,26 @@ Mod Matrix's parameter-offset path (`mmx → flt1.cutoff`, no wire).
 > expressions) is the next build phase.
 
 **S1.1 is shippable alone** — it lifts the destination ceiling (any modulatable param)
-with no UI change. S1.2/S1.3 deliver the full dynamic addressing; the matching GUI markers
-(S1.5a/S1.5b) ride along with them rather than as a separate phase.
+with no UI change. S1.2/S1.3 deliver the full dynamic addressing in engine/persistence/MCP.
+The GUI markers (S1.5a/b) were originally expected to ride along with S1.2/S1.3, but the
+patch editor never moved off the legacy enum — so they are now a distinct phase gated on the
+address picker (**S1.5c first**, see the re-planned checklist + GUI section above).
 
 ### Step 2 — Control Script (the compute layer)
 
 The language is **YAMS** (*Yet Another Modulation Script*). Grammar spiked in
 [`yams-grammar.md`](yams-grammar.md): header `src` bindings (each → a source register) +
 a body that assigns the normalized offset to `out`; rate/context-agnostic so the future
-audio-rate dialect reuses the same grammar; uniform across the tree→VM tiering.
+audio-rate dialect reuses the same grammar. See that doc's Open-questions section for the
+locked semantics (eager eval, reserved built-ins, NaN-sanitized state, per-voice PRNG) and
+the remaining sign-offs (persistence, caps, diagnostics).
 
-- [ ] **S2.1** — `CompiledScript` type + control-rate evaluator: expression tree per
-  destination first (`dest = sigmoid(a*s1 + b*s2)`), grow to a small stack/register
-  **bytecode VM** when state/conditionals/multi-output demand it. Offline compile,
-  immutable `Arc`, allocation-free eval, fixed register file, hard instruction cap.
+- [ ] **S2.1** — `CompiledScript` + control-rate evaluator. Compile **source → CST
+  (`rowan`) → typed AST → flat bytecode**; the RT evaluator is a `for` loop over a
+  pre-allocated voice-local register file (O(1) stack, no AST-walk recursion). Offline
+  compile, immutable `Arc`, allocation-free eval, fixed register file, hard instruction cap,
+  two-layer NaN sanitize. `synth_script` (non-RT compiler + `yamsfmt`) → `CompiledScript`
+  in `synth_core` (RT).
 - [ ] **S2.2** — Make the amount cell **scalar-or-expression**: a routing whose amount is
   an expression evaluates the script (reading its bound sources) instead of a single
   multiply. Same addressing, same offset write.
@@ -194,38 +225,48 @@ affordances, decided 2026-06-14:
   param/port" (or "pick a macro"), over the patch's actual contents — replacing the fixed
   enum dropdowns.
 
-### Per-parameter marker difficulty — LOW, and do it *with* S1.2
+### Current GUI state — still legacy-enum, both read and write (verified 2026-06-14)
 
-Assessed against `PatchAnalysis` (`patch_editor.rs:210`) on 2026-06-14. The data and the
-render hook already exist:
+The headless address work (S1.2/S1.3) never touched the patch editor. The whole mod-matrix
+seam is f32-enum-index:
 
-- **The target param is already computed and thrown away.** The analysis build loop
-  decodes each destination via `ModDestination::module_target_position()`, which returns
-  `(ModuleType, pos, param_tag)` — `param_tag` ∈ `"cutoff" | "resonance" | "level" | "pan"
-  | "rate" | "depth" | "pitch"` (`mod_matrix.rs:442`). Today only `(mt, pos)` is bound to a
-  `ModuleId` and the tag is discarded (`patch_editor.rs:273`, the `_`). Keeping it is a
-  one-char change plus a wider key.
+- **Read (`PatchAnalysis::from_panels`, `patch_editor.rs:256`)** decodes each slot's
+  source/dest as an f32 index via `ModSource::from_index` / `ModDestination::from_index` →
+  `module_target_position()`, then keeps only `(mt, pos)` → `ModuleId` (the param tag at
+  `:269` is discarded with `_`). So today's markers are **module-granularity** and limited to
+  the ~19 legacy roles.
+- **Write (`draw_mod_matrix_grid`, `patch_editor.rs:5212`)** reads slot src/dst as an f32
+  index (`slot_idx_value`, `:5227`), renders combos over `descriptor.choices` (the legacy enum
+  list, filtered by `is_mod_choice_available` `:5548`), and on change writes `selected as f32`
+  back into `param_values` + pushes `sp.id.with_f32(...)`. Arbitrary addresses (a 3rd LFO,
+  `osc-1.detune`) are unreachable from the GUI.
+- **The representation gap is the crux.** `ModulePanelState.param_values` is
+  `HashMap<String, f32>` — it physically cannot hold `"flt-1.cutoff"`. Address picking needs a
+  parallel string channel (proposed: `slot_addrs: HashMap<String, String>` keyed by the slot
+  param name) that overrides the f32 index when present and is what gets sent + persisted.
+  This is the load-bearing part of **S1.5c**, and the reason markers can't precede it.
+
+### Per-parameter marker difficulty — LOW, but **after** S1.5c
+
+The render hook already exists; only the data source changes once addresses are in the panel:
+
+- **The address already carries the exact param.** After S1.5c a routing holds a `DestAddr`
+  (`module_type` + 1-based `instance` + `param` = the descriptor `type_id`) / `SrcAddr`. The
+  marker key is an exact `(ModuleId, ParamKey)` — no `module_target_position` tag decode, no
+  lossy `"cutoff"|…|"pitch"` mapping. **The old "MEDIUM, pitch has no knob" wrinkle is gone**:
+  it was an artifact of retrofitting the legacy enum tag; the address path never had it.
 - **The shared knob renderer already takes per-param closures.** `draw_parameter_grid`
-  (`widgets/param_grid.rs:70`) already accepts `get` and `choice_visible` per-param
-  closures; adding a third `mod_role: Fn(&ParameterDescriptor) -> Option<ModRole>` is
-  idiomatic. The other caller (mixer return-bus inserts) passes `|_| None`.
+  (`widgets/param_grid.rs:70`) accepts `get` and `choice_visible`; add a third
+  `mod_role: Fn(&ParameterDescriptor) -> Option<ModRole>` (the other caller, mixer return-bus
+  inserts, passes `|_| None`).
 - **The module badge becomes a roll-up**, not a removal: `is_mod_matrix_source/
   destination(module_id)` becomes "any param entry for this module".
 
-Change surface: `PatchAnalysis` `HashSet<ModuleId>` → `HashMap<ModuleId,
-HashSet<ParamKey>>` keeping the roll-up accessors (~30 LOC); stop discarding the tag
-(~5 LOC); a new optional closure + per-knob badge in `draw_parameter_grid` (~40–60 LOC);
-thread `analysis` + `module_id` into the call site (`patch_editor.rs:5182`).
-
-**The one wrinkle — and why it vanishes with S1.2.** The `ModDestination` tag maps cleanly
-to a descriptor `type_id` for `cutoff/resonance/level/pan/rate/depth`, but `"pitch"` has
-**no knob** (pitch is set by the note; pitch-mod is an additive semitone offset). So a
-retrofit on today's enum is **MEDIUM** (pitch/level edge cases, lossy tag→knob mapping).
-Once S1.2 stores the **exact `ParamId`** over real modulatable params, the match is true
-by construction — **TRIVIAL**. Therefore: build the per-knob marker **as part of S1.2**,
-not as a standalone retrofit. Per-param *source* markers wait for S1.3 (a source is a whole
-module's output today; per-param sources only mean something once a knob's *value* is a
-readable source).
+Change surface (S1.5a): `PatchAnalysis` `HashSet<ModuleId>` → `HashMap<ModuleId,
+HashSet<ParamKey>>` keeping the roll-up accessors, populated from the parsed `DestAddr`/
+`SrcAddr` instead of the enum tag (~30 LOC); new optional closure + per-knob badge in
+`draw_parameter_grid` (~40–60 LOC); thread `analysis` + `module_id` into the call site
+(`patch_editor.rs:5182`). S1.5b reuses the same map for source markers and adds the macro rail.
 
 ---
 
