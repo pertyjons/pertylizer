@@ -122,6 +122,17 @@ Mod Matrix's parameter-offset path (`mmx → flt1.cutoff`, no wire).
 
 (All S1.5 work is DEFERRED for interactive egui work — not headless-testable.)
 
+- [x] **S1.8** — Address-only cleanup + faithful MCP report. **SHIPPED `406e60b`.**
+  `get_mod_matrix_routings` now echoes the stored address (no lossy round-trip
+  through the legacy enum — `lfo-3.out` / `osc-1.detune` no longer report as
+  `"none"`); dropped the redundant `source_name`/`destination_name` fields and
+  bounded the slot decode to `MAX_MOD_MATRIX_SLOTS`. Added load-time positional
+  migration (`upgrade_legacy_mod_matrix`, wired into `session.apply_patch`): a
+  legacy id (`"env2"`) resolves against the instrument's real instances, so a
+  project on non-canonical instances (env-5/env-6) keeps modulating the right
+  module instead of a different instrument's env-2. The voice now skips disabled
+  routings (it previously applied them). Name kept as **Mod Matrix**.
+
 > **MILESTONE (2026-06-14): Step 1's headless scope is COMPLETE.** Dynamic
 > source **and** destination addressing ship end-to-end — engine, persistence,
 > schema, MCP. A routing can read any module output / macro (incl. a **3rd LFO**)
