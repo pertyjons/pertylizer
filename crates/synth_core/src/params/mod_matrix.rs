@@ -465,7 +465,9 @@ impl ModDestination {
 #[derive(Debug, Clone, Copy)]
 pub struct ModRouting {
     pub source: ModSource,
-    pub destination: ModDestination,
+    /// Destination address, or `None` for an unconfigured routing. Address-based
+    /// (S1.2) so it can target any modulatable param on any module.
+    pub destination: Option<DestAddr>,
     pub amount: BipolarValue,
     pub enabled: bool,
 }
@@ -474,7 +476,7 @@ impl Default for ModRouting {
     fn default() -> Self {
         Self {
             source: ModSource::None,
-            destination: ModDestination::None,
+            destination: None,
             amount: BipolarValue::CENTER,
             enabled: true,
         }
@@ -514,6 +516,32 @@ impl DestAddr {
             instance,
             param: crate::PortName::intern(param),
         }
+    }
+
+    /// Convert a legacy [`ModDestination`] to an address (`None` for `::None`).
+    /// The legacy role index is 0-based; `ModuleId` instances are 1-based.
+    #[must_use]
+    pub fn from_mod_destination(dest: ModDestination) -> Option<Self> {
+        let (mt, pos, param) = dest.module_target_position()?;
+        Some(Self::new(mt, pos as u16 + 1, param))
+    }
+
+    /// The legacy `ModDestination` index this address corresponds to (for the
+    /// enum-combo GUI / numeric `get_param`), or 0 (`None`) if it is not one of
+    /// the 19 legacy roles — arbitrary addresses can't be represented by the
+    /// legacy combo (transitional until the address picker lands).
+    #[must_use]
+    pub fn legacy_index(&self) -> usize {
+        ModDestination::ALL
+            .iter()
+            .position(|d| {
+                d.module_target_position().is_some_and(|(mt, pos, param)| {
+                    mt == self.module_type
+                        && pos as u16 + 1 == self.instance
+                        && param == self.param.as_str()
+                })
+            })
+            .unwrap_or(0)
     }
 
     /// Render to the canonical address string, e.g. `"flt-1.cutoff"`.

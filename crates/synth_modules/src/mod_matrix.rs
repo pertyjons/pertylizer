@@ -17,14 +17,15 @@ use synth_core::{
     ModuleType, Param, ParameterDescriptor, PolyModule, PortName, ProcessContext, WidgetHint,
 };
 use synth_core::{
-    MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModRouting, ModSource,
+    DestAddr, MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModRouting,
+    ModSource,
 };
 use synth_core::{MidiNote, SampleRate, Velocity};
 
 /// Modulation result from one active slot.
 #[derive(Debug, Clone, Copy)]
 pub struct ModulationOutput {
-    pub destination: ModDestination,
+    pub destination: DestAddr,
     pub value: f32,
 }
 
@@ -64,12 +65,10 @@ impl ModMatrix {
     /// (destination, scaled value) for active slots.
     pub fn calculate_modulations(&self) -> impl Iterator<Item = ModulationOutput> + '_ {
         self.slots.iter().filter_map(|slot| {
-            if !slot.enabled
-                || matches!(slot.source, ModSource::None)
-                || matches!(slot.destination, ModDestination::None)
-            {
+            if !slot.enabled || matches!(slot.source, ModSource::None) {
                 return None;
             }
+            let destination = slot.destination?;
             let src_idx = slot.source.index();
             let src_value = if src_idx < self.source_values.len() {
                 self.source_values[src_idx]
@@ -78,7 +77,7 @@ impl ModMatrix {
             };
             let scaled = src_value * slot.amount.as_f32();
             Some(ModulationOutput {
-                destination: slot.destination,
+                destination,
                 value: scaled,
             })
         })
@@ -194,7 +193,10 @@ impl PolyModule for ModMatrix {
                     match mm_param {
                         ModMatrixParam::SlotSource(_, src) => self.slots[slot].source = src,
                         ModMatrixParam::SlotDestination(_, dst) => {
-                            self.slots[slot].destination = dst;
+                            // Legacy enum value arrives via set_param; store it as
+                            // an address. (Arbitrary addresses come via a dedicated
+                            // path once it lands.)
+                            self.slots[slot].destination = DestAddr::from_mod_destination(dst);
                         }
                         ModMatrixParam::SlotAmount(_, amt) => self.slots[slot].amount = amt,
                         ModMatrixParam::SlotEnabled(_, en) => self.slots[slot].enabled = en,
@@ -222,7 +224,8 @@ impl PolyModule for ModMatrix {
                     Some(match mm_param {
                         ModMatrixParam::SlotSource(_, _) => self.slots[slot].source.index() as f32,
                         ModMatrixParam::SlotDestination(_, _) => {
-                            self.slots[slot].destination.index() as f32
+                            // Report the legacy enum index for the enum-combo GUI.
+                            self.slots[slot].destination.map_or(0, |d| d.legacy_index()) as f32
                         }
                         ModMatrixParam::SlotAmount(_, _) => self.slots[slot].amount.as_f32(),
                         ModMatrixParam::SlotEnabled(_, _) => {
@@ -252,7 +255,9 @@ impl PolyModule for ModMatrix {
             )));
             params.push(Param::ModMatrix(ModMatrixParam::SlotDestination(
                 slot,
-                self.slots[i].destination,
+                self.slots[i].destination.map_or(ModDestination::None, |d| {
+                    ModDestination::from_index(d.legacy_index())
+                }),
             )));
             params.push(Param::ModMatrix(ModMatrixParam::SlotAmount(
                 slot,
@@ -298,7 +303,7 @@ mod tests {
         for i in 0..MAX_MOD_MATRIX_SLOTS {
             let slot = mm.slot(i).unwrap();
             assert_eq!(slot.source, ModSource::None);
-            assert_eq!(slot.destination, ModDestination::None);
+            assert_eq!(slot.destination, None);
         }
     }
 
@@ -326,7 +331,10 @@ mod tests {
         // Calculate modulations
         let mods: Vec<_> = mm.calculate_modulations().collect();
         assert_eq!(mods.len(), 1);
-        assert_eq!(mods[0].destination, ModDestination::FilterCutoff(0));
+        assert_eq!(
+            mods[0].destination,
+            DestAddr::new(ModuleType::Filter, 1, "cutoff")
+        );
         assert!((mods[0].value - 0.4).abs() < 0.001); // 0.8 * 0.5 = 0.4
     }
 

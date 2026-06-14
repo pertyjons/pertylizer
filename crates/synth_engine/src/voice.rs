@@ -429,7 +429,7 @@ pub struct Voice {
     mod_matrix_id: Option<crate::ModuleId>,
 
     /// Pre-allocated buffer for mod matrix slot data (avoids per-frame Vec allocation).
-    mod_slots_cache: Vec<(usize, synth_core::ModDestination, f32)>,
+    mod_slots_cache: Vec<(usize, synth_core::DestAddr, f32)>,
 
     /// Temporary mono buffer for graph processing.
     mono_buffer: AudioBuffer,
@@ -954,7 +954,9 @@ impl Voice {
         for i in 0..self.mod_slots_cache.len() {
             let (src_idx, dst, amount) = self.mod_slots_cache[i];
 
-            if src_idx == 0 || matches!(dst, synth_core::ModDestination::None) {
+            // Skip the `None` source (index 0); unconfigured destinations were
+            // already filtered out when the cache was filled.
+            if src_idx == 0 {
                 continue;
             }
             let src_value = if src_idx < source_values.len() {
@@ -963,7 +965,7 @@ impl Voice {
                 0.0
             };
             let scaled = src_value * amount;
-            self.graph.apply_mod_offset(dst, scaled);
+            self.graph.apply_mod_offset_addr(dst, scaled);
         }
     }
 
@@ -980,11 +982,11 @@ impl Voice {
             return;
         };
         for routing in routings {
-            self.mod_slots_cache.push((
-                routing.source.index(),
-                routing.destination,
-                routing.amount.as_f32(),
-            ));
+            // Only cache routings with a configured destination address.
+            if let Some(dest) = routing.destination {
+                self.mod_slots_cache
+                    .push((routing.source.index(), dest, routing.amount.as_f32()));
+            }
         }
     }
 

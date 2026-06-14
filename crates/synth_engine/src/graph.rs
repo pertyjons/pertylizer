@@ -13,7 +13,7 @@ use synth_core::{
     AudioBuffer, InputPorts, ModuleCategory, ModuleDescriptor, PolyModule, PortDirection,
     ProcessContext,
 };
-use synth_core::{MidiNote, ModDestination, PortName, Velocity};
+use synth_core::{MidiNote, PortName, Velocity};
 use synth_core::{ModuleType, Param};
 
 /// A connection between two ports.
@@ -457,35 +457,16 @@ impl ModuleGraph {
         self.nodes.keys().copied()
     }
 
-    /// Apply a modulation offset to the appropriate module(s) for a given destination.
+    /// Apply a modulation offset to the module addressed by `addr`.
     ///
-    /// Resolves `ModDestination` to `(module type, instance, param identifier)` via
-    /// [`ModDestination::module_target_position`] and forwards the param identifier to
-    /// the module's [`set_mod_offset`](synth_core::PolyModule::set_mod_offset). The
-    /// `instance` in the destination variant determines which module instance
-    /// (e.g., `OscPitch(0)` targets osc-1, `FilterCutoff(1)` targets flt-2).
-    pub fn apply_mod_offset(&mut self, dest: ModDestination, value: f32) {
-        let Some((module_type, instance, param)) = dest.module_target_position() else {
-            return;
-        };
-
-        // Find the Nth instance of the target module type (0-based)
-        let target_instance = instance as u16 + 1; // ModuleId instances are 1-based
-        // Try exact instance match first
-        let target_id = crate::ModuleId::new(module_type, target_instance);
+    /// ID-based (S1.2): resolves the exact `ModuleId` from the address's module
+    /// type + 1-based instance and forwards the param identifier to the module's
+    /// [`set_mod_offset`](synth_core::PolyModule::set_mod_offset). No fuzzy
+    /// fallback — a dangling address (the module was removed) is a silent no-op.
+    pub fn apply_mod_offset_addr(&mut self, addr: synth_core::DestAddr, value: f32) {
+        let target_id = crate::ModuleId::new(addr.module_type, addr.instance);
         if let Some(node) = self.nodes.get_mut(&target_id) {
-            node.module.set_mod_offset(param, value);
-            return;
-        }
-        // Fallback: find first module of matching type (for instance 0)
-        if instance == 0
-            && let Some(node) = self
-                .nodes
-                .iter_mut()
-                .find(|(id, _)| id.module_type == module_type)
-                .map(|(_, n)| n)
-        {
-            node.module.set_mod_offset(param, value);
+            node.module.set_mod_offset(addr.param.as_str(), value);
         }
     }
 
