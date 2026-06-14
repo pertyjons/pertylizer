@@ -251,7 +251,6 @@ struct SynthApp {
     // Instrument rack state
     instruments: Vec<InstrumentUiState>,
     active_instrument_id: Option<InstrumentId>,
-    next_instrument_id: u64,
 
     // Navigation state
     active_view: AppView,
@@ -380,7 +379,6 @@ impl SynthApp {
 
         // Start with no instruments — user creates them explicitly via "+ New Instrument"
         let active_instrument_id: Option<InstrumentId> = None;
-        let next_instrument_id = 0;
         let instruments: Vec<InstrumentUiState> = vec![];
         let patch_name = String::new();
 
@@ -417,7 +415,6 @@ impl SynthApp {
             glide_time,
             instruments,
             active_instrument_id,
-            next_instrument_id,
             active_view: AppView::default(),
             awe_enabled: false,
             awe_ui: crate::gui::awe_view::AweUiState::default(),
@@ -530,11 +527,6 @@ impl SynthApp {
             MidiChannel::from_one_indexed(instrument_num as u8).unwrap_or(MidiChannel::CH1);
 
         let new_id = self.session.add_instrument(&new_name).ok()?;
-
-        let id_val = new_id.as_u64() + 1;
-        if id_val > self.next_instrument_id {
-            self.next_instrument_id = id_val;
-        }
 
         self.handle.send(EngineCommand::SetInstrumentMidiChannel {
             instrument_id: new_id,
@@ -5179,12 +5171,6 @@ impl SynthApp {
                 ui_inst.muted = snap.muted;
                 ui_inst.solo = snap.solo;
                 self.instruments.push(ui_inst);
-
-                // Keep next_instrument_id above any MCP-created IDs
-                let id_val = snap.id.as_u64() + 1;
-                if id_val > self.next_instrument_id {
-                    self.next_instrument_id = id_val;
-                }
             }
         }
 
@@ -5543,12 +5529,8 @@ impl SynthApp {
         // 2. Build fresh InstrumentUiState per instrument and populate the
         //    patch editor canvases. Engine state is already loaded; the
         //    patch_editor population reads descriptors from `session`.
-        let mut max_id: u64 = 0;
         for inst_state in &project.instruments {
             let inst_id = inst_state.id;
-            if inst_id.as_u64() > max_id {
-                max_id = inst_id.as_u64();
-            }
 
             let channel =
                 MidiChannel::from_one_indexed(inst_state.channel).unwrap_or(MidiChannel::CH1);
@@ -5635,8 +5617,8 @@ impl SynthApp {
 
         // 4. Active-instrument bookkeeping. `apply_project` already sent
         //    `SetFocusedInstrument` to the engine; we only mirror it
-        //    locally.
-        self.next_instrument_id = max_id + 1;
+        //    locally. (The instrument-ID counter lives in `SynthSession`, which
+        //    `apply_project` already bumped past every loaded ID.)
         let target_id = InstrumentId::new(project.active_instrument_id);
         self.active_instrument_id = if self.instruments.iter().any(|i| i.id == target_id) {
             Some(target_id)
