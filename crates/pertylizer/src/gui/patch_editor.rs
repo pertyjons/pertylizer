@@ -10,7 +10,7 @@ use eframe::egui::{self, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec
 use egui_remixicon::icons as ri;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
-use synth_core::{ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource, ModuleType, Param};
+use synth_core::{ModDestination, ModMatrixParam, ModSource, ModuleType, Param};
 use synth_core::{ModuleCategory, ModuleDescriptor, PortName, PortType};
 use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
@@ -240,13 +240,9 @@ impl PatchAnalysis {
                 continue;
             }
 
-            let grid_size = panel
-                .param_values
-                .get(ModMatrixParam::GridSize(ModMatrixGridSize::default()).name())
-                .map(|v| ModMatrixGridSize::from_index(v.round() as usize))
-                .unwrap_or_default();
-
-            for slot in 0..grid_size.slot_count() as u8 {
+            // The grid no longer gates anything: scan all slots. Unconfigured
+            // (None) slots contribute no markers via the resolution below.
+            for slot in 0..synth_core::MAX_MOD_MATRIX_SLOTS as u8 {
                 let enabled_name = ModMatrixParam::SlotEnabled(slot, true).name();
                 let enabled = panel
                     .param_values
@@ -5224,70 +5220,47 @@ fn draw_mod_matrix_grid(
 
     let mut param_changes = Vec::new();
 
-    // --- Grid Size selector ---
-    let grid_size_param = descriptor
-        .parameters
-        .iter()
-        .find(|p| matches!(p.id, Param::ModMatrix(ModMatrixParam::GridSize(_))));
-
-    let mut grid_size = ModMatrixGridSize::default();
-    if let Some(gs_param) = grid_size_param
-        && let Some(ref choices) = gs_param.choices
-    {
-        let current = state
+    // The grid selector is gone — the routing list is presented dynamically.
+    // Show every *configured* routing (source or destination set) as a row, plus
+    // one trailing empty row to add the next one. State lives in the 16 fixed
+    // slots; this is purely a derived presentation (no extra session state).
+    let slot_idx_value = |slot_idx: usize, source: bool| -> usize {
+        let pid = if source {
+            ModMatrixParam::SlotSource(slot_idx as u8, ModSource::None)
+        } else {
+            ModMatrixParam::SlotDestination(slot_idx as u8, ModDestination::None)
+        };
+        state
             .param_values
-            .get(&gs_param.name)
+            .get(pid.name())
             .copied()
-            .unwrap_or(gs_param.range.default);
-        let mut selected = current.round() as usize;
+            .unwrap_or(0.0)
+            .round() as usize
+    };
+    let configured: Vec<usize> = (0..synth_core::MAX_MOD_MATRIX_SLOTS)
+        .filter(|&i| slot_idx_value(i, true) != 0 || slot_idx_value(i, false) != 0)
+        .collect();
+    let first_free: Option<usize> =
+        (0..synth_core::MAX_MOD_MATRIX_SLOTS).find(|&i| !configured.contains(&i));
+    // (the `slot_idx_value` borrow of `state` ends here, before the mutable loop)
 
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Grid")
-                    .size(theme().fonts.size_normal)
-                    .color(theme().colors.text_secondary),
-            );
-            let text = choices
-                .get(selected)
-                .map(|c| c.name.clone())
-                .unwrap_or_else(|| "?".into());
-            egui::ComboBox::from_id_salt("mod_matrix_grid_size")
-                .selected_text(text)
-                .show_ui(ui, |ui| {
-                    for (i, choice) in choices.iter().enumerate() {
-                        if ui.selectable_label(selected == i, &choice.name).clicked() {
-                            selected = i;
-                        }
-                    }
-                });
-        });
-
-        if selected as f32 != current.round() {
-            state
-                .param_values
-                .insert(gs_param.name.clone(), selected as f32);
-            param_changes.push(gs_param.id.with_f32(selected as f32));
-        }
-
-        grid_size = ModMatrixGridSize::from_index(selected);
+    // Rows to render: configured routings, then one empty "add" row.
+    let mut rows: Vec<(usize, bool)> = configured.iter().map(|&i| (i, false)).collect();
+    if let Some(free) = first_free {
+        rows.push((free, true));
     }
-
-    let dim = grid_size.grid_dimension();
-    let slot_count = grid_size.slot_count();
 
     ui.add_space(theme().spacing.xs);
 
-    // Fixed slot width — avoid ui.available_width() which is unbounded in auto-sized Areas
-    let grid_spacing = 4.0;
-    let slot_width: f32 = 140.0;
+    // Fixed width — avoid ui.available_width() which is unbounded in auto-sized Areas
+    let slot_width: f32 = 220.0;
     let combo_width = (slot_width - 20.0).max(60.0);
 
-    // --- Grid of slots ---
-    egui::Grid::new("mod_matrix_grid")
-        .num_columns(dim)
-        .spacing(egui::vec2(grid_spacing, grid_spacing))
-        .show(ui, |ui| {
-            for slot_idx in 0..slot_count {
+    // Slot to clear (its ✕ was clicked); applied after the render loop.
+    let mut clear_idx: Option<usize> = None;
+
+    ui.vertical(|ui| {
+            for (slot_idx, is_add_row) in rows {
                 let slot_num = slot_idx + 1;
 
                 // Find params for this slot
@@ -5347,35 +5320,57 @@ fn draw_mod_matrix_grid(
                 slot_frame.show(ui, |ui| {
                     ui.set_width(slot_width);
                     ui.vertical(|ui| {
-                        // Slot header: "Slot 1" + state hint on the right.
+                        // Row header: "Routing N" (or "New routing") + ✕ + state hint.
                         ui.horizontal(|ui| {
+                            let header = if is_add_row {
+                                "New routing".to_string()
+                            } else {
+                                format!("Routing {slot_num}")
+                            };
                             ui.label(
-                                egui::RichText::new(format!("Slot {slot_num}"))
+                                egui::RichText::new(header)
                                     .size(theme().fonts.size_small)
                                     .color(content_tint),
                             );
-                            if !enabled || !fully_configured {
-                                let (icon, color, tip) = if !enabled {
-                                    (ri::CLOSE_CIRCLE_LINE, theme().colors.text_dim, "Slot disabled")
-                                } else {
-                                    (
-                                        ri::ALERT_LINE,
-                                        theme().colors.accent_orange,
-                                        "Slot has no effect — set both Source and Destination",
-                                    )
-                                };
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    // Configured rows get a clear (remove) button.
+                                    if !is_add_row
+                                        && ui
+                                            .button(
+                                                egui::RichText::new(ri::DELETE_BIN_LINE)
+                                                    .size(theme().fonts.size_small)
+                                                    .color(theme().colors.text_secondary),
+                                            )
+                                            .on_hover_text("Remove this routing")
+                                            .clicked()
+                                    {
+                                        clear_idx = Some(slot_idx);
+                                    }
+                                    if !is_add_row && (!enabled || !fully_configured) {
+                                        let (icon, color, tip) = if !enabled {
+                                            (
+                                                ri::CLOSE_CIRCLE_LINE,
+                                                theme().colors.text_dim,
+                                                "Routing disabled",
+                                            )
+                                        } else {
+                                            (
+                                                ri::ALERT_LINE,
+                                                theme().colors.accent_orange,
+                                                "Routing has no effect — set both Source and Destination",
+                                            )
+                                        };
                                         ui.label(
                                             egui::RichText::new(icon)
                                                 .size(theme().fonts.size_small)
                                                 .color(color),
                                         )
                                         .on_hover_text(tip);
-                                    },
-                                );
-                            }
+                                    }
+                                },
+                            );
                         });
 
                         // Source ComboBox
@@ -5505,12 +5500,40 @@ fn draw_mod_matrix_grid(
                     });
                 });
 
-                // End row after `dim` columns
-                if (slot_idx + 1) % dim == 0 {
-                    ui.end_row();
-                }
+                ui.add_space(theme().spacing.xs);
             }
         });
+
+    // Apply a clear request: reset the slot to defaults (source/dest None,
+    // amount 0, enabled) so it drops out of the configured list next frame and
+    // starts fresh if the index is later reused by the add-row.
+    if let Some(i) = clear_idx {
+        let slot = i as u8;
+        for (param, value) in [
+            (
+                Param::ModMatrix(ModMatrixParam::SlotSource(slot, ModSource::None)),
+                0.0,
+            ),
+            (
+                Param::ModMatrix(ModMatrixParam::SlotDestination(slot, ModDestination::None)),
+                0.0,
+            ),
+            (
+                Param::ModMatrix(ModMatrixParam::SlotAmount(
+                    slot,
+                    synth_core::BipolarValue::CENTER,
+                )),
+                0.0,
+            ),
+            (
+                Param::ModMatrix(ModMatrixParam::SlotEnabled(slot, true)),
+                1.0,
+            ),
+        ] {
+            state.param_values.insert(param.name().to_string(), value);
+            param_changes.push(param);
+        }
+    }
 
     PanelParamsResult {
         param_changes,
@@ -5886,10 +5909,7 @@ mod patch_analysis_tests {
     fn matrix_panel(slot_setups: &[(usize, ModSource, ModDestination, bool)]) -> ModulePanelState {
         let mut state =
             ModulePanelState::new(ModuleId::new(ModuleType::ModMatrix, 1), Pos2::new(0.0, 0.0));
-        state.param_values.insert(
-            "Grid Size".to_string(),
-            ModMatrixGridSize::Grid4x4.index() as f32,
-        );
+        // The grid no longer gates anything; PatchAnalysis scans all slots.
         for (slot_num, src, dst, enabled) in slot_setups {
             state
                 .param_values

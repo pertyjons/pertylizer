@@ -971,23 +971,13 @@ impl Voice {
     /// Read mod matrix slot configurations into the pre-allocated cache.
     /// Reuses `self.mod_slots_cache` to avoid per-frame Vec allocation.
     fn read_mod_matrix_slots_into_cache(&mut self, mm_id: crate::ModuleId) {
-        use synth_core::{ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource as MS};
+        use synth_core::{ModDestination, ModMatrixParam, ModSource as MS};
 
         self.mod_slots_cache.clear();
 
-        // Read grid size to determine how many slots to process
-        let grid_size_idx = self
-            .graph
-            .get_param(
-                mm_id,
-                &Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::default())),
-            )
-            .map(|v| v as usize)
-            .unwrap_or(ModMatrixGridSize::default().index());
-        let grid_size = ModMatrixGridSize::from_index(grid_size_idx);
-        let slot_count = grid_size.slot_count();
-
-        for i in 0..slot_count {
+        // Process every slot — the grid no longer gates which routings are live
+        // (it's a vestigial param; the GUI presents the list dynamically).
+        for i in 0..synth_core::MAX_MOD_MATRIX_SLOTS {
             let slot = i as u8;
             let src_idx = self
                 .graph

@@ -79,30 +79,29 @@ impl ModMatrix {
 
     /// Calculate all active modulations.
     ///
-    /// Only iterates slots within the current grid size.
-    /// Returns an iterator of (destination, scaled value) for active slots.
+    /// Iterates every slot — the grid no longer gates processing (the routing
+    /// list is presented dynamically in the GUI). Returns an iterator of
+    /// (destination, scaled value) for active slots.
     pub fn calculate_modulations(&self) -> impl Iterator<Item = ModulationOutput> + '_ {
-        self.slots[..self.grid_size.slot_count()]
-            .iter()
-            .filter_map(|slot| {
-                if !slot.enabled
-                    || matches!(slot.source, ModSource::None)
-                    || matches!(slot.destination, ModDestination::None)
-                {
-                    return None;
-                }
-                let src_idx = slot.source.index();
-                let src_value = if src_idx < self.source_values.len() {
-                    self.source_values[src_idx]
-                } else {
-                    0.0
-                };
-                let scaled = src_value * slot.amount.as_f32();
-                Some(ModulationOutput {
-                    destination: slot.destination,
-                    value: scaled,
-                })
+        self.slots.iter().filter_map(|slot| {
+            if !slot.enabled
+                || matches!(slot.source, ModSource::None)
+                || matches!(slot.destination, ModDestination::None)
+            {
+                return None;
+            }
+            let src_idx = slot.source.index();
+            let src_value = if src_idx < self.source_values.len() {
+                self.source_values[src_idx]
+            } else {
+                0.0
+            };
+            let scaled = src_value * slot.amount.as_f32();
+            Some(ModulationOutput {
+                destination: slot.destination,
+                value: scaled,
             })
+        })
     }
 
     /// Get a slot reference.
@@ -356,16 +355,19 @@ mod tests {
         assert_eq!(mods.len(), 0);
     }
 
+    /// The grid no longer gates processing: every configured slot is active
+    /// regardless of the (vestigial) GridSize. A configured slot beyond a small
+    /// grid is now processed (the accepted behavior change of removing the grid).
     #[test]
-    fn test_slots_beyond_grid_size_not_processed() {
+    fn test_all_configured_slots_processed_regardless_of_grid() {
         let mut mm = ModMatrix::new();
 
-        // Set grid size to 1x1 (only slot 0)
+        // A leftover 1x1 grid from an old project — must not gate anything.
         mm.set_param(Param::ModMatrix(ModMatrixParam::GridSize(
             ModMatrixGridSize::Grid1x1,
         )));
 
-        // Set up slot 0 and slot 1
+        // Slot 0 and slot 1 both configured.
         mm.set_param(Param::ModMatrix(ModMatrixParam::SlotSource(
             0,
             ModSource::Velocity,
@@ -395,15 +397,7 @@ mod tests {
         mm.update_source(ModSource::Velocity, 1.0);
         mm.update_source(ModSource::ModWheel, 1.0);
 
-        // Only slot 0 should produce output (grid is 1x1)
-        let mods: Vec<_> = mm.calculate_modulations().collect();
-        assert_eq!(mods.len(), 1);
-        assert_eq!(mods[0].destination, ModDestination::FilterCutoff(0));
-
-        // Now expand to 2x2 — both slots should work
-        mm.set_param(Param::ModMatrix(ModMatrixParam::GridSize(
-            ModMatrixGridSize::Grid2x2,
-        )));
+        // Both slots produce output even though the grid is 1x1.
         let mods: Vec<_> = mm.calculate_modulations().collect();
         assert_eq!(mods.len(), 2);
     }
