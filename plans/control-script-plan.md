@@ -75,6 +75,12 @@ Mod Matrix's parameter-offset path (`mmx → flt1.cutoff`, no wire).
   was reverted — see the S1.1b implementation notes). **SHIPPED `506f1eb`.**
 - [ ] **S1.2** — Dynamic **destination** addressing: a routing's destination is
   `(ModuleId, ParamId)` over the patch's actual modulatable params, not the 19-role enum.
+  **Approach DECIDED 2026-06-14 — load-time migration (keep examples):** the stored dest
+  becomes a **free-form address string** (e.g. `"flt-1.cutoff"`); the loader parses BOTH the
+  new form **and** the old enum ids (`"flt1_cutoff"`) so shipped example projects and old
+  saves auto-upgrade on load — **#6 stays parked, no re-authoring.** Schema for the dest goes
+  from an enum to a (less-restrictive) string, so old values still validate. Same plan for
+  S1.3 sources.
 - [ ] **S1.3** — Dynamic **source** addressing + the shared **macro-source registry**:
   sources are `(ModuleId, port|param)` over the patch **plus** the named per-voice macros.
   Removes the 2-LFO / 2-env ceiling. **Taxonomy (decided):** the *true macros* are exactly
