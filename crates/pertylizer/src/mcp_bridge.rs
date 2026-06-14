@@ -5785,7 +5785,10 @@ fn decode_mod_matrix_slots(
             ModMatrixParam::GridSize(gs) => grid_size = *gs,
             ModMatrixParam::SlotSource(i, src) => {
                 if let Some(s) = slots.get_mut(*i as usize) {
-                    s.source = *src;
+                    // Map the address back to the legacy enum for now; arbitrary
+                    // sources surface as `None` until the MCP source surface lands.
+                    s.source =
+                        src.map_or(ModSource::None, |a| ModSource::from_index(a.legacy_index()));
                 }
             }
             ModMatrixParam::SlotDestination(i, dst) => {
@@ -11482,7 +11485,7 @@ mod mod_matrix_routing_tests {
     use super::*;
     use synth_core::{
         BipolarValue, DestAddr, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
-        ModuleType,
+        ModuleType, SrcAddr,
     };
     use synth_engine::ModuleStateSnapshot;
     use synth_engine::instrument::InstrumentId;
@@ -11551,7 +11554,10 @@ mod mod_matrix_routing_tests {
                 2,
                 vec![
                     Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::Grid1x1)),
-                    Param::ModMatrix(ModMatrixParam::SlotSource(0, ModSource::Envelope(1))),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(
+                        0,
+                        SrcAddr::from_mod_source(ModSource::Envelope(1)),
+                    )),
                     Param::ModMatrix(ModMatrixParam::SlotDestination(
                         0,
                         DestAddr::from_mod_destination(ModDestination::FilterCutoff(0)),
@@ -11603,13 +11609,19 @@ mod mod_matrix_routing_tests {
                 1,
                 vec![
                     Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::Grid1x1)),
-                    Param::ModMatrix(ModMatrixParam::SlotSource(0, ModSource::Lfo(0))),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(
+                        0,
+                        SrcAddr::from_mod_source(ModSource::Lfo(0)),
+                    )),
                     Param::ModMatrix(ModMatrixParam::SlotDestination(
                         0,
                         DestAddr::from_mod_destination(ModDestination::OscPitch(0)),
                     )),
                     // Slot 5 is past 1×1 (1 slot) — must not appear.
-                    Param::ModMatrix(ModMatrixParam::SlotSource(4, ModSource::Envelope(0))),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(
+                        4,
+                        SrcAddr::from_mod_source(ModSource::Envelope(0)),
+                    )),
                     Param::ModMatrix(ModMatrixParam::SlotDestination(
                         4,
                         DestAddr::from_mod_destination(ModDestination::AmpLevel(0)),
@@ -11638,7 +11650,10 @@ mod mod_matrix_routing_tests {
                 1,
                 vec![
                     Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::Grid1x1)),
-                    Param::ModMatrix(ModMatrixParam::SlotSource(0, ModSource::Lfo(0))),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(
+                        0,
+                        SrcAddr::from_mod_source(ModSource::Lfo(0)),
+                    )),
                     Param::ModMatrix(ModMatrixParam::SlotDestination(
                         0,
                         DestAddr::from_mod_destination(ModDestination::OscPitch(0)),
@@ -11665,12 +11680,18 @@ mod mod_matrix_routing_tests {
                 1,
                 vec![
                     Param::ModMatrix(ModMatrixParam::GridSize(ModMatrixGridSize::Grid2x2)),
-                    Param::ModMatrix(ModMatrixParam::SlotSource(0, ModSource::Velocity)),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(
+                        0,
+                        SrcAddr::from_mod_source(ModSource::Velocity),
+                    )),
                     Param::ModMatrix(ModMatrixParam::SlotDestination(
                         0,
                         DestAddr::from_mod_destination(ModDestination::AmpLevel(0)),
                     )),
-                    Param::ModMatrix(ModMatrixParam::SlotSource(1, ModSource::ModWheel)),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(
+                        1,
+                        SrcAddr::from_mod_source(ModSource::ModWheel),
+                    )),
                     Param::ModMatrix(ModMatrixParam::SlotDestination(
                         1,
                         DestAddr::from_mod_destination(ModDestination::FilterCutoff(0)),

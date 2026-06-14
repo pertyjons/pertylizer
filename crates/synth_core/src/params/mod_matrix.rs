@@ -864,7 +864,7 @@ pub enum ModMatrixParam {
     /// Grid size selector.
     GridSize(ModMatrixGridSize),
     /// Source for slot N.
-    SlotSource(u8, ModSource),
+    SlotSource(u8, Option<SrcAddr>),
     /// Destination address for slot N (`None` = unconfigured). Address-based
     /// (S1.2) so it can target any modulatable param on any module.
     SlotDestination(u8, Option<DestAddr>),
@@ -916,7 +916,7 @@ impl ModMatrixParam {
     pub fn as_f32(&self) -> f32 {
         match self {
             Self::GridSize(g) => g.index() as f32,
-            Self::SlotSource(_, s) => s.index() as f32,
+            Self::SlotSource(_, s) => s.map_or(0, |a| a.legacy_index()) as f32,
             Self::SlotDestination(_, d) => d.map_or(0, |a| a.legacy_index()) as f32,
             Self::SlotAmount(_, a) => a.as_f32(),
             Self::SlotEnabled(_, e) => {
@@ -934,9 +934,10 @@ impl ModMatrixParam {
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
             Self::GridSize(_) => Self::GridSize(ModMatrixGridSize::from_index(value as usize)),
-            Self::SlotSource(slot, _) => {
-                Self::SlotSource(*slot, ModSource::from_index(value as usize))
-            }
+            Self::SlotSource(slot, _) => Self::SlotSource(
+                *slot,
+                SrcAddr::from_mod_source(ModSource::from_index(value as usize)),
+            ),
             Self::SlotDestination(slot, _) => Self::SlotDestination(
                 *slot,
                 DestAddr::from_mod_destination(ModDestination::from_index(value as usize)),
@@ -960,7 +961,7 @@ impl ModMatrixParam {
 
 impl Default for ModMatrixParam {
     fn default() -> Self {
-        Self::SlotSource(0, ModSource::default())
+        Self::SlotSource(0, None)
     }
 }
 

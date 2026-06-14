@@ -253,7 +253,7 @@ impl PatchAnalysis {
                     continue;
                 }
 
-                let source_name = ModMatrixParam::SlotSource(slot, ModSource::None).name();
+                let source_name = ModMatrixParam::SlotSource(slot, None).name();
                 if let Some(src_idx) = panel.param_values.get(source_name) {
                     let src = ModSource::from_index(src_idx.round() as usize);
                     if let Some((mt, pos)) = src.module_type_and_position()
@@ -5226,7 +5226,7 @@ fn draw_mod_matrix_grid(
     // slots; this is purely a derived presentation (no extra session state).
     let slot_idx_value = |slot_idx: usize, source: bool| -> usize {
         let pid = if source {
-            ModMatrixParam::SlotSource(slot_idx as u8, ModSource::None)
+            ModMatrixParam::SlotSource(slot_idx as u8, None)
         } else {
             ModMatrixParam::SlotDestination(slot_idx as u8, None)
         };
@@ -5511,7 +5511,7 @@ fn draw_mod_matrix_grid(
         let slot = i as u8;
         for (param, value) in [
             (
-                Param::ModMatrix(ModMatrixParam::SlotSource(slot, ModSource::None)),
+                Param::ModMatrix(ModMatrixParam::SlotSource(slot, None)),
                 0.0,
             ),
             (

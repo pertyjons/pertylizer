@@ -352,6 +352,18 @@ impl ParamValue {
                 synth_core::DestAddr::parse(s),
             ));
         }
+        // Mod-matrix source: parse the address string (new "lfo-1.out" / macro id
+        // / legacy ModSource id like "lfo1").
+        if let (
+            Param::ModMatrix(synth_core::params::ModMatrixParam::SlotSource(slot, _)),
+            Self::Choice(s),
+        ) = (&desc.id, self)
+        {
+            return Param::ModMatrix(synth_core::params::ModMatrixParam::SlotSource(
+                *slot,
+                synth_core::SrcAddr::parse(s),
+            ));
+        }
         desc.id.with_f32(self.to_f32(desc))
     }
 
@@ -370,6 +382,12 @@ impl ParamValue {
             return Self::Choice(
                 dest.map_or_else(|| "none".to_string(), |a| a.to_address_string()),
             );
+        }
+        // Mod-matrix sources likewise serialize as a free-form address string
+        // (a macro id like "velocity", or "lfo-1.out") — so any module output /
+        // macro is a usable source (S1.3).
+        if let Param::ModMatrix(synth_core::params::ModMatrixParam::SlotSource(_, src)) = p {
+            return Self::Choice(src.map_or_else(|| "none".to_string(), |a| a.to_address_string()));
         }
         if let Some(choice) = desc.choice_for_value(p.as_f32()) {
             return Self::Choice(choice.id.clone());
@@ -929,6 +947,45 @@ mod tests {
         assert_eq!(
             ParamValue::Choice("none".to_string()).to_param(&desc),
             Param::ModMatrix(ModMatrixParam::SlotDestination(0, None)),
+        );
+    }
+
+    /// A mod-matrix source serializes as a free-form address string and
+    /// round-trips — including an arbitrary module output (`lfo-3.out`, beyond
+    /// the legacy 2-LFO ceiling) — while macro and legacy ids still work.
+    #[test]
+    fn mod_matrix_arbitrary_source_round_trips() {
+        use synth_core::params::{ModMatrixParam, ModSource};
+        use synth_core::{ModuleType, SrcAddr};
+
+        let desc = ParameterDescriptor::choice(
+            "slot_1_source",
+            Param::ModMatrix(ModMatrixParam::SlotSource(0, None)),
+            "Slot 1 Source",
+            ModSource::to_choices(),
+        );
+
+        // A third LFO — impossible in the legacy 16-source enum.
+        let addr = SrcAddr::module(ModuleType::Lfo, 3, "out");
+        let param = Param::ModMatrix(ModMatrixParam::SlotSource(0, Some(addr)));
+        let value = ParamValue::from_param(&param, &desc);
+        assert!(
+            matches!(&value, ParamValue::Choice(s) if s == "lfo-3.out"),
+            "expected address string, got {value:?}"
+        );
+        assert_eq!(value.to_param(&desc), param);
+
+        // A legacy id upgrades; a macro id stays a macro.
+        assert_eq!(
+            ParamValue::Choice("lfo1".to_string()).to_param(&desc),
+            Param::ModMatrix(ModMatrixParam::SlotSource(
+                0,
+                SrcAddr::from_mod_source(ModSource::Lfo(0)),
+            )),
+        );
+        assert_eq!(
+            ParamValue::Choice("none".to_string()).to_param(&desc),
+            Param::ModMatrix(ModMatrixParam::SlotSource(0, None)),
         );
     }
 

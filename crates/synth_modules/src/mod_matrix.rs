@@ -18,7 +18,6 @@ use synth_core::{
 };
 use synth_core::{
     MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModRouting, ModSource,
-    SrcAddr,
 };
 use synth_core::{MidiNote, SampleRate, Velocity};
 
@@ -83,7 +82,7 @@ impl Describable for ModMatrix {
             desc = desc.parameter(
                 ParameterDescriptor::choice(
                     format!("slot_{slot_num}_source"),
-                    Param::ModMatrix(ModMatrixParam::SlotSource(slot, ModSource::None)),
+                    Param::ModMatrix(ModMatrixParam::SlotSource(slot, None)),
                     format!("Slot {slot_num} Source"),
                     ModSource::to_choices(),
                 )
@@ -152,7 +151,8 @@ impl PolyModule for ModMatrix {
                     }
                     match mm_param {
                         ModMatrixParam::SlotSource(_, src) => {
-                            self.slots[slot].source = SrcAddr::from_mod_source(src);
+                            // The param now carries the source address directly.
+                            self.slots[slot].source = src;
                         }
                         ModMatrixParam::SlotDestination(_, dst) => {
                             // The param now carries the address directly.
@@ -213,9 +213,7 @@ impl PolyModule for ModMatrix {
             let slot = i as u8;
             params.push(Param::ModMatrix(ModMatrixParam::SlotSource(
                 slot,
-                self.slots[i]
-                    .source
-                    .map_or(ModSource::None, |a| ModSource::from_index(a.legacy_index())),
+                self.slots[i].source,
             )));
             params.push(Param::ModMatrix(ModMatrixParam::SlotDestination(
                 slot,
@@ -258,7 +256,7 @@ impl PolyModule for ModMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synth_core::{DestAddr, MacroSource, ModDestination};
+    use synth_core::{DestAddr, MacroSource, ModDestination, SrcAddr};
 
     #[test]
     fn starts_with_unconfigured_routings() {
@@ -278,7 +276,7 @@ mod tests {
         let mut mm = ModMatrix::new();
         mm.set_param(Param::ModMatrix(ModMatrixParam::SlotSource(
             0,
-            ModSource::Velocity,
+            SrcAddr::from_mod_source(ModSource::Velocity),
         )));
         mm.set_param(Param::ModMatrix(ModMatrixParam::SlotDestination(
             0,

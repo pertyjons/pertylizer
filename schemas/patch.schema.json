@@ -1561,7 +1561,9 @@
                   "type": "number"
                 },
                 "slot_10_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 10",
+                  "title": "Slot 10 Source",
+                  "type": "string"
                 },
                 "slot_11_amount": {
                   "default": 0.0,
@@ -1585,7 +1587,9 @@
                   "type": "number"
                 },
                 "slot_11_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 11",
+                  "title": "Slot 11 Source",
+                  "type": "string"
                 },
                 "slot_12_amount": {
                   "default": 0.0,
@@ -1609,7 +1613,9 @@
                   "type": "number"
                 },
                 "slot_12_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 12",
+                  "title": "Slot 12 Source",
+                  "type": "string"
                 },
                 "slot_13_amount": {
                   "default": 0.0,
@@ -1633,7 +1639,9 @@
                   "type": "number"
                 },
                 "slot_13_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 13",
+                  "title": "Slot 13 Source",
+                  "type": "string"
                 },
                 "slot_14_amount": {
                   "default": 0.0,
@@ -1657,7 +1665,9 @@
                   "type": "number"
                 },
                 "slot_14_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 14",
+                  "title": "Slot 14 Source",
+                  "type": "string"
                 },
                 "slot_15_amount": {
                   "default": 0.0,
@@ -1681,7 +1691,9 @@
                   "type": "number"
                 },
                 "slot_15_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 15",
+                  "title": "Slot 15 Source",
+                  "type": "string"
                 },
                 "slot_16_amount": {
                   "default": 0.0,
@@ -1705,7 +1717,9 @@
                   "type": "number"
                 },
                 "slot_16_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 16",
+                  "title": "Slot 16 Source",
+                  "type": "string"
                 },
                 "slot_1_amount": {
                   "default": 0.0,
@@ -1729,7 +1743,9 @@
                   "type": "number"
                 },
                 "slot_1_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 1",
+                  "title": "Slot 1 Source",
+                  "type": "string"
                 },
                 "slot_2_amount": {
                   "default": 0.0,
@@ -1753,7 +1769,9 @@
                   "type": "number"
                 },
                 "slot_2_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 2",
+                  "title": "Slot 2 Source",
+                  "type": "string"
                 },
                 "slot_3_amount": {
                   "default": 0.0,
@@ -1777,7 +1795,9 @@
                   "type": "number"
                 },
                 "slot_3_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 3",
+                  "title": "Slot 3 Source",
+                  "type": "string"
                 },
                 "slot_4_amount": {
                   "default": 0.0,
@@ -1801,7 +1821,9 @@
                   "type": "number"
                 },
                 "slot_4_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 4",
+                  "title": "Slot 4 Source",
+                  "type": "string"
                 },
                 "slot_5_amount": {
                   "default": 0.0,
@@ -1825,7 +1847,9 @@
                   "type": "number"
                 },
                 "slot_5_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 5",
+                  "title": "Slot 5 Source",
+                  "type": "string"
                 },
                 "slot_6_amount": {
                   "default": 0.0,
@@ -1849,7 +1873,9 @@
                   "type": "number"
                 },
                 "slot_6_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 6",
+                  "title": "Slot 6 Source",
+                  "type": "string"
                 },
                 "slot_7_amount": {
                   "default": 0.0,
@@ -1873,7 +1899,9 @@
                   "type": "number"
                 },
                 "slot_7_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 7",
+                  "title": "Slot 7 Source",
+                  "type": "string"
                 },
                 "slot_8_amount": {
                   "default": 0.0,
@@ -1897,7 +1925,9 @@
                   "type": "number"
                 },
                 "slot_8_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 8",
+                  "title": "Slot 8 Source",
+                  "type": "string"
                 },
                 "slot_9_amount": {
                   "default": 0.0,
@@ -1921,7 +1951,9 @@
                   "type": "number"
                 },
                 "slot_9_source": {
-                  "$ref": "#/$defs/SharedEnum1"
+                  "description": "Modulation source for slot 9",
+                  "title": "Slot 9 Source",
+                  "type": "string"
                 }
               },
               "type": "object"
@@ -6648,28 +6680,6 @@
           "type": "object"
         }
       ]
-    },
-    "SharedEnum1": {
-      "description": "Shared enum (16 entries): none, lfo1, lfo2, …",
-      "enum": [
-        "none",
-        "lfo1",
-        "lfo2",
-        "env1",
-        "env2",
-        "velocity",
-        "note",
-        "aftertouch",
-        "mod_wheel",
-        "pitch_bend",
-        "poly_aftertouch",
-        "kinetic_pos",
-        "kinetic_vel",
-        "kinetic_acc",
-        "efl1",
-        "efl2"
-      ],
-      "type": "string"
     },
     "StretchFactor": {
       "description": "Tail stretch factor for late reverb (dimensionless).",
