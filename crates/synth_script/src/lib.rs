@@ -10,6 +10,7 @@
 pub mod ast;
 pub mod compile;
 pub mod diag;
+pub mod fmt;
 pub mod lexer;
 pub mod parser;
 pub mod span;
@@ -17,5 +18,6 @@ pub mod symbols;
 
 pub use compile::{CompileOptions, CompiledProgram, SourceInput, compile};
 pub use diag::{Diagnostic, Severity};
+pub use fmt::format;
 pub use parser::parse;
 pub use span::{LineCol, Span};
