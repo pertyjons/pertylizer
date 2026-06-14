@@ -5684,16 +5684,7 @@ impl SynthBridge for AppSynthBridge {
             });
         };
 
-        let compatible = matches!(
-            (from_pd.port_type, to_pd.port_type),
-            (synth_core::PortType::Audio, synth_core::PortType::Audio)
-                | (synth_core::PortType::Audio, synth_core::PortType::Control)
-                | (synth_core::PortType::Control, synth_core::PortType::Audio)
-                | (synth_core::PortType::Control, synth_core::PortType::Control)
-                | (synth_core::PortType::Gate, synth_core::PortType::Gate)
-                | (synth_core::PortType::Gate, synth_core::PortType::Control)
-                | (synth_core::PortType::Midi, synth_core::PortType::Midi)
-        );
+        let compatible = from_pd.port_type.can_drive(to_pd.port_type);
 
         if compatible {
             let note = if from_pd.port_type != to_pd.port_type {

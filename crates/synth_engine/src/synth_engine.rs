@@ -1038,10 +1038,14 @@ impl SynthEngine {
             } => {
                 self.handle_add_module_instance(instrument_id, id, module);
                 self.update_shared_graph(instrument_id);
+                // Keep the instrument snapshot's module_count in sync; the graph
+                // snapshot alone (above) doesn't carry it.
+                self.update_shared_instruments();
             }
             EngineCommand::RemoveModule { instrument_id, id } => {
                 self.handle_remove_module(instrument_id, id);
                 self.update_shared_graph(instrument_id);
+                self.update_shared_instruments();
             }
             EngineCommand::Connect {
                 instrument_id,

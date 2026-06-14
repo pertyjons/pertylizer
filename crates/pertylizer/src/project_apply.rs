@@ -678,6 +678,11 @@ fn tear_down_all_instruments(session: &SynthSession) {
         let _ = session.clear_graph(inst_id);
         let _ = session.remove_instrument(inst_id);
     }
+    // The per-instrument state above is cleaned by `remove_instrument`, but the
+    // monotonic instrument-ID counter is not — reset it so the next project (or
+    // a fresh New Project) starts numbering from 1 again rather than continuing
+    // from the torn-down project's high-water mark.
+    session.reset_instrument_counter();
 }
 
 /// Push every field of `awe` onto the engine. Uses non-blocking sends because
@@ -865,6 +870,36 @@ mod tests {
             block.fill(0.0);
             engine.process(&mut block, &context);
         }
+    }
+
+    /// New Project must reset the instrument-ID counter: after tearing down a
+    /// project whose instruments climbed the counter, the next `add_instrument`
+    /// should start from a low ID again rather than continuing the high-water
+    /// mark (the bug where a fresh project's first instrument got ID 41).
+    #[test]
+    fn new_project_resets_instrument_id_counter() {
+        let (mut engine, handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let song: SharedSong = Arc::new(PRwLock::new(Song::new("Counter")));
+        let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        ));
+
+        // Climb the counter: three instruments → next free ID is 4.
+        for name in ["a", "b", "c"] {
+            session.add_instrument(name).expect("add_instrument");
+        }
+        drive(&mut engine, 2);
+
+        reset_to_new_project(&session, &song, &sample_library).expect("new project");
+        drive(&mut engine, 2);
+
+        let fresh = session.add_instrument("fresh").expect("add after reset");
+        assert_eq!(
+            fresh,
+            InstrumentId::new(1),
+            "New Project should restart instrument IDs from 1"
+        );
     }
 
     /// Spin up a fresh engine, install two instruments with patches and

@@ -494,6 +494,10 @@ pub struct PatchEditor {
     /// Set after loading a patch/project so saved positions aren't overwritten
     /// by stale egui Area rects during the same frame.
     suppress_position_readback: bool,
+    /// Modules that the in-progress cable drag must NOT connect to because the
+    /// edge would form a cycle. Recomputed once per frame from a single graph
+    /// traversal (see `recompute_drag_cycle_blocked`); empty when not dragging.
+    drag_cycle_blocked: HashSet<ModuleId>,
 }
 
 impl PatchEditor {
@@ -527,6 +531,7 @@ impl PatchEditor {
             prev_effect_chain_order: Vec::new(),
             prev_mod_matrix_attachments: Vec::new(),
             connected_ports_cache: HashMap::new(),
+            drag_cycle_blocked: HashSet::new(),
         }
     }
 
@@ -1505,6 +1510,10 @@ impl PatchEditor {
     ) -> PatchEditorResult {
         let mut result = PatchEditorResult::default();
 
+        // Precompute which modules the active cable drag may not target (cycle
+        // guard), once per frame, so per-port highlighting is a cheap lookup.
+        self.recompute_drag_cycle_blocked();
+
         self.realign_effect_chain_if_changed(effect_chain_order);
         let analysis = PatchAnalysis::from_panels(&self.panels);
         self.realign_mod_matrix_attachments_if_changed(&analysis);
@@ -2445,6 +2454,7 @@ impl PatchEditor {
         direction: WidgetPortDirection,
         ports: &[PortRenderInfo],
         pending_info: Option<(ModuleId, WidgetPortType, WidgetPortDirection)>,
+        cycle_blocked: &HashSet<ModuleId>,
         mut store_position: F,
     ) where
         F: FnMut(&PortRenderInfo, Pos2),
@@ -2479,9 +2489,17 @@ impl PatchEditor {
             for port in ports {
                 let is_highlighted = pending_info
                     .map(|(from_module, from_type, from_dir)| {
+                        // Signal always flows output → input; pick whichever side
+                        // is the output so directional compatibility is correct.
+                        let (out_type, in_type) = if from_dir == WidgetPortDirection::Output {
+                            (from_type, port.port_type)
+                        } else {
+                            (port.port_type, from_type)
+                        };
                         from_module != port.module_id
                             && from_dir != direction
-                            && from_type == port.port_type
+                            && out_type.can_drive(in_type)
+                            && !cycle_blocked.contains(&port.module_id)
                     })
                     .unwrap_or(false);
 
@@ -2540,19 +2558,29 @@ impl PatchEditor {
             .pending_connection
             .as_ref()
             .map(|p| (p.from_module, p.from_type, p.from_direction));
+        // Cycle-blocked targets were computed once for this frame; the highlight
+        // just looks each module up.
+        let cycle_blocked = &self.drag_cycle_blocked;
         let port_positions = &mut self.port_positions;
-        Self::draw_port_column_with(ui, direction, &ports, pending_info, |port, center| {
-            port_positions.insert(
-                (module_id, port.port_name),
-                PortPosition {
-                    module_id,
-                    port_name: port.port_name,
-                    position: center,
-                    port_type: port.port_type,
-                    direction,
-                },
-            );
-        });
+        Self::draw_port_column_with(
+            ui,
+            direction,
+            &ports,
+            pending_info,
+            cycle_blocked,
+            |port, center| {
+                port_positions.insert(
+                    (module_id, port.port_name),
+                    PortPosition {
+                        module_id,
+                        port_name: port.port_name,
+                        position: center,
+                        port_type: port.port_type,
+                        direction,
+                    },
+                );
+            },
+        );
     }
 
     fn draw_group_port_column(
@@ -2588,23 +2616,33 @@ impl PatchEditor {
             .pending_connection
             .as_ref()
             .map(|p| (p.from_module, p.from_type, p.from_direction));
-        Self::draw_port_column_with(ui, direction, &ports, pending_info, |port, center| {
-            new_positions.insert(
-                GroupPortKey {
-                    group_id: group.id,
-                    module_id: port.module_id,
-                    port_name: port.port_name,
-                    direction,
-                },
-                PortPosition {
-                    module_id: port.module_id,
-                    port_name: port.port_name,
-                    position: center,
-                    port_type: port.port_type,
-                    direction,
-                },
-            );
-        });
+        // Group columns expose ports from several member modules; the shared
+        // per-frame set already covers them all.
+        let cycle_blocked = &self.drag_cycle_blocked;
+        Self::draw_port_column_with(
+            ui,
+            direction,
+            &ports,
+            pending_info,
+            cycle_blocked,
+            |port, center| {
+                new_positions.insert(
+                    GroupPortKey {
+                        group_id: group.id,
+                        module_id: port.module_id,
+                        port_name: port.port_name,
+                        direction,
+                    },
+                    PortPosition {
+                        module_id: port.module_id,
+                        port_name: port.port_name,
+                        position: center,
+                        port_type: port.port_type,
+                        direction,
+                    },
+                );
+            },
+        );
     }
 
     fn draw_grid(&self, ui: &mut Ui, rect: Rect) {
@@ -4114,12 +4152,93 @@ impl PatchEditor {
             return false;
         }
 
-        // Must match port types
-        if pending.from_type != target.port_type {
+        // Port types must be compatible in the direction the signal flows
+        // (output → input). Mirrors the engine's compatibility matrix so the
+        // GUI never rejects a connection the engine would accept.
+        let (out_type, in_type) = if pending.from_direction == WidgetPortDirection::Output {
+            (pending.from_type, target.port_type)
+        } else {
+            (target.port_type, pending.from_type)
+        };
+        if !out_type.can_drive(in_type) {
+            return false;
+        }
+
+        // Reject connections that would form a cycle — the engine silently drops
+        // them (see Graph::would_create_cycle), so the GUI must not offer them.
+        let (out_module, in_module) = if pending.from_direction == WidgetPortDirection::Output {
+            (pending.from_module, target.module_id)
+        } else {
+            (target.module_id, pending.from_module)
+        };
+        if self.would_create_cycle(out_module, in_module) {
             return false;
         }
 
         true
+    }
+
+    /// Whether adding an edge `from → to` would create a cycle in the current
+    /// connection graph. Mirrors `synth_engine::graph::Graph::would_create_cycle`
+    /// (the engine silently rejects such edges). Used by `can_connect` at
+    /// drop time; the per-frame highlight uses the precomputed
+    /// `drag_cycle_blocked` set instead, which encodes the same rule in bulk.
+    fn would_create_cycle(&self, from: ModuleId, to: ModuleId) -> bool {
+        if from == to {
+            return true; // Self-loop
+        }
+
+        let mut visited = HashSet::new();
+        let mut stack = vec![to];
+        while let Some(current) = stack.pop() {
+            if current == from {
+                return true; // Path to → from exists; the new edge closes a loop
+            }
+            if visited.insert(current) {
+                for conn in &self.connections {
+                    if conn.from_module == current {
+                        stack.push(conn.to_module);
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Recompute the set of modules the in-progress drag must not connect to
+    /// because the edge would close a cycle. One graph traversal per frame
+    /// (reachability from the drag's source) replaces the previous per-port,
+    /// per-frame `would_create_cycle` DFS. Empty when no drag is active.
+    ///
+    /// Dragging from an *output* of `S` would add `S → m`, so any `m` that can
+    /// already reach `S` (an ancestor of `S`) is blocked — walk edges backward.
+    /// Dragging from an *input* of `S` would add `m → S`, so any `m` reachable
+    /// from `S` (a descendant) is blocked — walk edges forward. `S` itself is
+    /// always blocked (self-loop).
+    fn recompute_drag_cycle_blocked(&mut self) {
+        self.drag_cycle_blocked.clear();
+        let Some(pending) = self.pending_connection.as_ref() else {
+            return;
+        };
+        let source = pending.from_module;
+        let walk_forward = pending.from_direction == WidgetPortDirection::Input;
+
+        self.drag_cycle_blocked.insert(source);
+        let mut stack = vec![source];
+        while let Some(current) = stack.pop() {
+            for conn in &self.connections {
+                let neighbor = if walk_forward {
+                    (conn.from_module == current).then_some(conn.to_module)
+                } else {
+                    (conn.to_module == current).then_some(conn.from_module)
+                };
+                if let Some(next) = neighbor
+                    && self.drag_cycle_blocked.insert(next)
+                {
+                    stack.push(next);
+                }
+            }
+        }
     }
 
     /// Get selected module ID.
@@ -5845,5 +5964,86 @@ mod patch_analysis_tests {
         let analysis = PatchAnalysis::from_panels(&panels);
         assert!(!analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Lfo, 1)));
         assert!(!analysis.is_mod_matrix_destination(ModuleId::new(ModuleType::Oscillator, 1)));
+    }
+
+    /// The patch editor must refuse to highlight / allow a drag that would form
+    /// a cycle, matching the engine's silent rejection. Graph: osc → amp → out.
+    #[test]
+    fn would_create_cycle_matches_engine() {
+        let osc = ModuleId::new(ModuleType::Oscillator, 1);
+        let amp = ModuleId::new(ModuleType::Amplifier, 1);
+        let out = ModuleId::new(ModuleType::StereoOutput, 1);
+
+        let mut editor = PatchEditor::new();
+        editor
+            .connections
+            .push(Connection::new(osc, "out", amp, "in"));
+        editor
+            .connections
+            .push(Connection::new(amp, "left", out, "in_l"));
+
+        // Closing the loop back to an upstream module is a cycle.
+        assert!(editor.would_create_cycle(out, osc));
+        assert!(editor.would_create_cycle(amp, osc));
+        // Self-loop.
+        assert!(editor.would_create_cycle(amp, amp));
+        // A normal downstream edge is fine (parallel edge, no loop).
+        assert!(!editor.would_create_cycle(osc, out));
+        assert!(!editor.would_create_cycle(osc, amp));
+    }
+
+    /// The per-frame highlight set (`recompute_drag_cycle_blocked`) must agree
+    /// with the per-edge `would_create_cycle` check that gates the actual drop.
+    /// Graph: osc → amp → out.
+    #[test]
+    fn drag_cycle_blocked_matches_per_edge_check() {
+        let osc = ModuleId::new(ModuleType::Oscillator, 1);
+        let amp = ModuleId::new(ModuleType::Amplifier, 1);
+        let out = ModuleId::new(ModuleType::StereoOutput, 1);
+
+        let mut editor = PatchEditor::new();
+        editor
+            .connections
+            .push(Connection::new(osc, "out", amp, "in"));
+        editor
+            .connections
+            .push(Connection::new(amp, "left", out, "in_l"));
+
+        let pending = |module, direction| PendingConnection {
+            from_module: module,
+            from_port: "p".into(),
+            from_position: Pos2::ZERO,
+            from_type: WidgetPortType::Audio,
+            from_direction: direction,
+            current_pos: Pos2::ZERO,
+        };
+
+        // Dragging from `out`'s OUTPUT blocks its ancestors (amp, osc) + itself.
+        editor.pending_connection = Some(pending(out, WidgetPortDirection::Output));
+        editor.recompute_drag_cycle_blocked();
+        assert_eq!(
+            editor.drag_cycle_blocked,
+            HashSet::from([out, amp, osc]),
+            "output drag blocks ancestors"
+        );
+
+        // Dragging from `osc`'s INPUT blocks its descendants (amp, out) + itself.
+        editor.pending_connection = Some(pending(osc, WidgetPortDirection::Input));
+        editor.recompute_drag_cycle_blocked();
+        assert_eq!(
+            editor.drag_cycle_blocked,
+            HashSet::from([osc, amp, out]),
+            "input drag blocks descendants"
+        );
+
+        // Dragging from `osc`'s OUTPUT has no ancestors — only the self-loop.
+        editor.pending_connection = Some(pending(osc, WidgetPortDirection::Output));
+        editor.recompute_drag_cycle_blocked();
+        assert_eq!(editor.drag_cycle_blocked, HashSet::from([osc]));
+
+        // No drag → empty.
+        editor.pending_connection = None;
+        editor.recompute_drag_cycle_blocked();
+        assert!(editor.drag_cycle_blocked.is_empty());
     }
 }

@@ -184,6 +184,20 @@ impl SynthSession {
         counters.retain(|&(inst_id, _), _| inst_id != instrument_id);
     }
 
+    /// Reset the instrument-ID counter back to its initial value.
+    ///
+    /// Call this after tearing down all instruments (New Project / load) so the
+    /// next `add_instrument` starts from a low ID again instead of continuing
+    /// from the previous project's high-water mark. `add_instrument_with_id`
+    /// bumps it back up for each loaded instrument, so a subsequent project
+    /// load still preserves saved IDs.
+    pub fn reset_instrument_counter(&self) {
+        *self
+            .instrument_counter
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = 1; // 0 is reserved for the default
+    }
+
     /// Remove an instrument from the engine.
     pub fn remove_instrument(&self, instrument_id: InstrumentId) -> Result<(), SessionError> {
         // Remove all modules belonging to this instrument from the registry

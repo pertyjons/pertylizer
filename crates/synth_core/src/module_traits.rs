@@ -838,6 +838,30 @@ pub enum PortType {
     Midi,
 }
 
+impl PortType {
+    /// Canonical port-compatibility contract: whether a signal leaving an
+    /// output port of `self` may drive an input port of type `dest`.
+    ///
+    /// This is the single source of truth for connection compatibility, shared
+    /// by the MCP `check_connection` validator and the GUI patch editor's
+    /// cable-drag highlighting. Audio and control are interchangeable, a gate
+    /// may feed a control input, and MIDI is MIDI-only. Directional: `Gate →
+    /// Control` is allowed but `Control → Gate` is not.
+    #[must_use]
+    pub fn can_drive(self, dest: Self) -> bool {
+        matches!(
+            (self, dest),
+            (Self::Audio, Self::Audio)
+                | (Self::Audio, Self::Control)
+                | (Self::Control, Self::Audio)
+                | (Self::Control, Self::Control)
+                | (Self::Gate, Self::Gate)
+                | (Self::Gate, Self::Control)
+                | (Self::Midi, Self::Midi)
+        )
+    }
+}
+
 /// Direction of a port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PortDirection {

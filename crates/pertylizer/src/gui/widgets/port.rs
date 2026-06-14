@@ -34,6 +34,28 @@ pub enum WidgetPortType {
     Midi,
 }
 
+impl WidgetPortType {
+    /// The matching `synth_core::PortType` for routing-rule queries.
+    fn to_core(self) -> synth_core::PortType {
+        match self {
+            Self::Audio => synth_core::PortType::Audio,
+            Self::Control => synth_core::PortType::Control,
+            Self::Gate => synth_core::PortType::Gate,
+            Self::Midi => synth_core::PortType::Midi,
+        }
+    }
+
+    /// Whether a signal from an output port of `self` may drive an input port
+    /// of type `dest`. Delegates to the canonical
+    /// [`synth_core::PortType::can_drive`] contract (shared with the MCP
+    /// `check_connection` validator) so the patch editor and the engine-facing
+    /// path never disagree about which connections are legal.
+    #[must_use]
+    pub fn can_drive(self, dest: Self) -> bool {
+        self.to_core().can_drive(dest.to_core())
+    }
+}
+
 /// Port direction for widget rendering.
 ///
 /// For signal routing definitions, see `modules::core::PortDirection`.
@@ -256,5 +278,37 @@ fn draw_convex(painter: &egui::Painter, points: &[Pos2], fill: Color32, stroke: 
             Color32::TRANSPARENT,
             PathStroke::new(stroke.width, stroke.color),
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WidgetPortType::{Audio, Control, Gate, Midi};
+
+    #[test]
+    fn audio_and_control_are_interchangeable() {
+        // The bug: dragging an audio output (e.g. an envelope) onto a control
+        // input (e.g. a VCA cv) must be allowed, and vice versa.
+        assert!(Audio.can_drive(Control));
+        assert!(Control.can_drive(Audio));
+        assert!(Audio.can_drive(Audio));
+        assert!(Control.can_drive(Control));
+    }
+
+    #[test]
+    fn gate_is_directional_with_control() {
+        assert!(Gate.can_drive(Control));
+        assert!(Gate.can_drive(Gate));
+        // A control signal may not drive a gate input.
+        assert!(!Control.can_drive(Gate));
+        assert!(!Audio.can_drive(Gate));
+    }
+
+    #[test]
+    fn midi_is_isolated() {
+        assert!(Midi.can_drive(Midi));
+        assert!(!Midi.can_drive(Audio));
+        assert!(!Midi.can_drive(Control));
+        assert!(!Audio.can_drive(Midi));
     }
 }
