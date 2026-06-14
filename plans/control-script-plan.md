@@ -65,14 +65,14 @@ Mod Matrix's parameter-offset path (`mmx → flt1.cutoff`, no wire).
 - [ ] **S1.0** — Architecture lock: per-voice placement, additive-offset write channel,
   1-block read→write latency, **ID-based vs role-based addressing** decision (see Open
   Questions) — LOCK before coding.
-- [ ] **S1.1** — Widen the write channel: `set_mod_offset(dest_index: u8)` → additive
-  offset **by modulatable param-id**, on every module. Re-express the existing 19
-  destinations on top of it. *Internally* behavior-preserving for current routings —
-  verify bit-for-bit against the acid-bass demo.
-- [ ] **S1.1b** — **Dynamic routing list** (replaces the fixed 16 slots + Grid Size): the
-  module holds a `Vec<Routing>` (`source, destination, amount, enabled`), managed by
-  dedicated add/remove/set/reorder commands — **not** the fixed descriptor-param model.
-  This is the container S1.2/S1.3 addresses fill. See "Data model" section.
+- [x] **S1.1** — Widen the write channel: `set_mod_offset(dest_index: u8)` → keyed by a
+  stable param identifier (the descriptor `type_id`). graph.rs resolves via
+  `module_target_position()`. Behavior-preserving. **SHIPPED `76b84c8`.**
+- [x] **S1.1b** — **Dynamic routing list (revised).** Grid dropped from *processing* (Voice
+  + `calculate_modulations` iterate all 16 slots; `grid_size` vestigial); GUI panel rewritten
+  as a stateless derived list (configured routings + trailing add-row + per-row clear).
+  **Data model / descriptor / schema / save format kept UNCHANGED** (the true-`Vec` attempt
+  was reverted — see the S1.1b implementation notes). **SHIPPED `506f1eb`.**
 - [ ] **S1.2** — Dynamic **destination** addressing: a routing's destination is
   `(ModuleId, ParamId)` over the patch's actual modulatable params, not the 19-role enum.
 - [ ] **S1.3** — Dynamic **source** addressing + the shared **macro-source registry**:
