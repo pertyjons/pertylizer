@@ -453,6 +453,35 @@ impl ModDestination {
 }
 
 // ============================================================================
+// ROUTING
+// ============================================================================
+
+/// A single modulation routing: a source scaled into a destination.
+///
+/// Lives in `synth_core` so the voice can read a module's routings directly via
+/// [`PolyModule::mod_routings`](crate::PolyModule::mod_routings) — a richer
+/// channel than the numeric `get_param` index, which is the path to address-based
+/// destinations ([`DestAddr`]).
+#[derive(Debug, Clone, Copy)]
+pub struct ModRouting {
+    pub source: ModSource,
+    pub destination: ModDestination,
+    pub amount: BipolarValue,
+    pub enabled: bool,
+}
+
+impl Default for ModRouting {
+    fn default() -> Self {
+        Self {
+            source: ModSource::None,
+            destination: ModDestination::None,
+            amount: BipolarValue::CENTER,
+            enabled: true,
+        }
+    }
+}
+
+// ============================================================================
 // DYNAMIC DESTINATION ADDRESS (S1.2)
 // ============================================================================
 

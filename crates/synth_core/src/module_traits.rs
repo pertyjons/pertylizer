@@ -1101,6 +1101,16 @@ pub trait PolyModule: Describable + Send {
         // Default: nothing to clear
     }
 
+    /// Expose this module's modulation routings, if it is a Mod Matrix.
+    ///
+    /// Lets `Voice` read the routing list directly (source, destination, amount)
+    /// rather than probing each field through the numeric `get_param` channel —
+    /// the richer read path that lets a destination be an address rather than an
+    /// `f32` index. Default `None` (the module has no routings).
+    fn mod_routings(&self) -> Option<&[crate::ModRouting]> {
+        None
+    }
+
     /// Apply a transient parameter override from sequencer automation.
     ///
     /// Unlike [`set_param`](Self::set_param), which writes the module's stored

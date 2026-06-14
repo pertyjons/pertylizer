@@ -17,29 +17,9 @@ use synth_core::{
     ModuleType, Param, ParameterDescriptor, PolyModule, PortName, ProcessContext, WidgetHint,
 };
 use synth_core::{
-    MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModSource,
+    MAX_MOD_MATRIX_SLOTS, ModDestination, ModMatrixGridSize, ModMatrixParam, ModRouting, ModSource,
 };
 use synth_core::{MidiNote, SampleRate, Velocity};
-
-/// A single modulation routing slot.
-#[derive(Debug, Clone, Copy)]
-pub struct ModSlot {
-    pub source: ModSource,
-    pub destination: ModDestination,
-    pub amount: BipolarValue,
-    pub enabled: bool,
-}
-
-impl Default for ModSlot {
-    fn default() -> Self {
-        Self {
-            source: ModSource::None,
-            destination: ModDestination::None,
-            amount: BipolarValue::CENTER,
-            enabled: true,
-        }
-    }
-}
 
 /// Modulation result from one active slot.
 #[derive(Debug, Clone, Copy)]
@@ -54,7 +34,7 @@ pub struct ModulationOutput {
 /// but `process()` is a no-op. The actual modulation logic runs from `Voice`.
 #[derive(Clone)]
 pub struct ModMatrix {
-    slots: [ModSlot; MAX_MOD_MATRIX_SLOTS],
+    slots: [ModRouting; MAX_MOD_MATRIX_SLOTS],
     grid_size: ModMatrixGridSize,
     /// Cached source values, indexed by `ModSource::index()`.
     source_values: [f32; 16],
@@ -63,7 +43,7 @@ pub struct ModMatrix {
 impl ModMatrix {
     pub fn new() -> Self {
         Self {
-            slots: [ModSlot::default(); MAX_MOD_MATRIX_SLOTS],
+            slots: [ModRouting::default(); MAX_MOD_MATRIX_SLOTS],
             grid_size: ModMatrixGridSize::default(),
             source_values: [0.0; 16],
         }
@@ -105,7 +85,7 @@ impl ModMatrix {
     }
 
     /// Get a slot reference.
-    pub fn slot(&self, index: usize) -> Option<&ModSlot> {
+    pub fn slot(&self, index: usize) -> Option<&ModRouting> {
         self.slots.get(index)
     }
 }
@@ -298,6 +278,10 @@ impl PolyModule for ModMatrix {
     fn note_off(&mut self) {}
 
     fn set_sample_rate(&mut self, _sample_rate: SampleRate) {}
+
+    fn mod_routings(&self) -> Option<&[ModRouting]> {
+        Some(&self.slots)
+    }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())

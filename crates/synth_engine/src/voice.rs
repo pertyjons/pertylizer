@@ -947,10 +947,9 @@ impl Voice {
             efl_values[1],       // EnvFollower(1)
         ];
 
-        // We can't downcast dyn PolyModule to ModMatrix, so we read the slot config
-        // through get_param and calculate modulations here in Voice.
-
-        // Read mod matrix configuration and apply modulations (uses pre-allocated cache)
+        // Read the routing list directly off the module (richer than the numeric
+        // get_param channel — lets a destination be more than an f32 index) and
+        // apply modulations (uses the pre-allocated cache to stay alloc-free).
         self.read_mod_matrix_slots_into_cache(mm_id);
         for i in 0..self.mod_slots_cache.len() {
             let (src_idx, dst, amount) = self.mod_slots_cache[i];
@@ -968,43 +967,24 @@ impl Voice {
         }
     }
 
-    /// Read mod matrix slot configurations into the pre-allocated cache.
-    /// Reuses `self.mod_slots_cache` to avoid per-frame Vec allocation.
+    /// Snapshot the mod matrix's routing list into the pre-allocated cache.
+    ///
+    /// Copies `(source index, destination, amount)` out of the module's
+    /// `mod_routings()` slice so the immutable borrow of the graph is released
+    /// before the apply loop takes a mutable borrow. Reuses `mod_slots_cache` to
+    /// stay allocation-free on the audio thread.
     fn read_mod_matrix_slots_into_cache(&mut self, mm_id: crate::ModuleId) {
-        use synth_core::{ModDestination, ModMatrixParam, ModSource as MS};
-
         self.mod_slots_cache.clear();
 
-        // Process every slot — the grid no longer gates which routings are live
-        // (it's a vestigial param; the GUI presents the list dynamically).
-        for i in 0..synth_core::MAX_MOD_MATRIX_SLOTS {
-            let slot = i as u8;
-            let src_idx = self
-                .graph
-                .get_param(
-                    mm_id,
-                    &Param::ModMatrix(ModMatrixParam::SlotSource(slot, MS::None)),
-                )
-                .map(|v| v as usize)
-                .unwrap_or(0);
-            let dst_idx = self
-                .graph
-                .get_param(
-                    mm_id,
-                    &Param::ModMatrix(ModMatrixParam::SlotDestination(slot, ModDestination::None)),
-                )
-                .map(|v| v as usize)
-                .unwrap_or(0);
-            let amount = self
-                .graph
-                .get_param(
-                    mm_id,
-                    &Param::ModMatrix(ModMatrixParam::SlotAmount(slot, BipolarValue::CENTER)),
-                )
-                .unwrap_or(0.0);
-
-            let dst = ModDestination::from_index(dst_idx);
-            self.mod_slots_cache.push((src_idx, dst, amount));
+        let Some(routings) = self.graph.get_module(mm_id).and_then(|m| m.mod_routings()) else {
+            return;
+        };
+        for routing in routings {
+            self.mod_slots_cache.push((
+                routing.source.index(),
+                routing.destination,
+                routing.amount.as_f32(),
+            ));
         }
     }
 
