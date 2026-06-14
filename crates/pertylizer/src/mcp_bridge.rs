@@ -980,20 +980,33 @@ impl SynthBridge for AppSynthBridge {
                 })
         });
 
-        // The mod-matrix destination accepts a free-form address string
-        // ("flt-1.cutoff", a legacy id like "flt1_cutoff", or "none") so MCP can
-        // target any modulatable param on any module — the numeric choice path
-        // only reaches the 19 legacy roles. Hand the string to the session, which
-        // parses it (dual-format) in `ParamValue::to_param`.
-        let is_dest_addr = matches!(
-            param_desc.map(|pd| pd.id),
-            Some(Param::ModMatrix(ModMatrixParam::SlotDestination(..)))
-        );
-        let (value, pv) = if let (true, BridgeParamValue::Choice(s)) = (is_dest_addr, &value) {
-            let addr = if s.eq_ignore_ascii_case("none") {
-                None
+        // The mod-matrix source and destination accept a free-form address string
+        // ("lfo-1.out" / "flt-1.cutoff", a macro id, a legacy id, or "none") so
+        // MCP can address any module — the numeric choice path only reaches the
+        // legacy roles. Hand the string to the session, which parses it
+        // (dual-format) in `ParamValue::to_param`.
+        let addr_param = match param_desc.map(|pd| pd.id) {
+            Some(Param::ModMatrix(ModMatrixParam::SlotSource(..))) => Some(true),
+            Some(Param::ModMatrix(ModMatrixParam::SlotDestination(..))) => Some(false),
+            _ => None,
+        };
+        let (value, pv) = if let (Some(is_source), BridgeParamValue::Choice(s)) =
+            (addr_param, &value)
+        {
+            let (legacy_index, display) = if s.eq_ignore_ascii_case("none") {
+                (0.0, "none".to_string())
+            } else if is_source {
+                let a =
+                    synth_core::SrcAddr::parse(s).ok_or_else(|| McpBridgeError::InvalidChoice {
+                        name: param_name.to_string(),
+                        value: s.clone(),
+                        detail: "expected a source address like \"lfo-1.out\" or a macro \
+                                 id (or a legacy id, or \"none\")"
+                            .to_string(),
+                    })?;
+                (a.legacy_index() as f32, a.to_address_string())
             } else {
-                Some(synth_core::DestAddr::parse(s).ok_or_else(|| {
+                let a = synth_core::DestAddr::parse(s).ok_or_else(|| {
                     McpBridgeError::InvalidChoice {
                         name: param_name.to_string(),
                         value: s.clone(),
@@ -1001,13 +1014,10 @@ impl SynthBridge for AppSynthBridge {
                                  (or a legacy id, or \"none\")"
                             .to_string(),
                     }
-                })?)
+                })?;
+                (a.legacy_index() as f32, a.to_address_string())
             };
-            let display = addr.map_or_else(|| "none".to_string(), |a| a.to_address_string());
-            (
-                addr.map_or(0.0, |a| a.legacy_index() as f32),
-                crate::patch::ParamValue::Choice(display),
-            )
+            (legacy_index, crate::patch::ParamValue::Choice(display))
         } else {
             // Resolve the supplied value (number / bool / string choice) to the
             // parameter's native f32, rejecting unknown choices at the boundary
