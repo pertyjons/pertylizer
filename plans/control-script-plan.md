@@ -195,9 +195,9 @@ the remaining sign-offs (persistence, caps, diagnostics).
   cap, two-layer NaN sanitize. `synth_script` (non-RT compiler + `yamsfmt`) → `CompiledScript`
   in `synth_core` (RT). (`rowan` CST deferred — current parser is recursive-descent; revisit
   if `yamsfmt` trivia handling needs it.)
-- [ ] **S2.2** — Make the amount cell **scalar-or-expression**: a routing whose amount is
+- [x] **S2.2** — Make the amount cell **scalar-or-expression**: a routing whose amount is
   an expression evaluates the script (reading its bound sources) instead of a single
-  multiply. Same addressing, same offset write. **IN PROGRESS — sub-steps:**
+  multiply. Same addressing, same offset write. **SHIPPED — sub-steps below all done:**
   - [x] **S2.2a** — `synth_core::script::bound`: RT `BoundScript` (`Arc`-shared script +
     resolved `ScriptInput` addresses + canonical text) + `ScriptContext` + `CompiledProgram::
     into_bound` mapping in `synth_script` (macros → `SrcAddr::Macro` so the voice resolves
@@ -229,10 +229,17 @@ the remaining sign-offs (persistence, caps, diagnostics).
     1-based slot key range-checked to `1..=MAX_MOD_MATRIX_SLOTS`, bad keys + compile errors
     recorded and skipped (disable-and-keep). Unit-tested. A persisted script now reaches the
     engine module — only eval (S2.2c) is left to make it audible.
-  - [ ] **S2.2b-2iv** — Engine **read** channel + save wiring (round-trip persistence).
-    `ModuleStateSnapshot.scripts` from `mod_scripts()` (`bound.source`);
-    `build_patch_from_snapshot` fills `ModuleState.scripts`. Can follow eval — a hand-authored
-    project already exercises load.
+  - [x] **S2.2b-2iv** — Engine **read** channel + save wiring. **SHIPPED `7e4096d`.**
+    `ModuleStateSnapshot.scripts` (1-based key) populated in `update_shared_graph_for_instrument`
+    from `mod_scripts()` (`bound.source`); `SetModScript` now calls `update_shared_graph` (the
+    2ii skip is obsolete now scripts are in the snapshot — mirrors `SetModuleParameter`);
+    `build_patch_from_engine` copies `snapshot.scripts` → `ModuleState.scripts`. Round-trip
+    tested (install → save → JSON carries it). **Known gap:** GUI-panel save paths still write
+    empty scripts (panel carries none until S2.4); canonical MCP/headless save round-trips.
+
+> **S2.2 COMPLETE (2026-06-15).** The amount cell is genuinely scalar-or-expression,
+> end-to-end and round-tripping: persist → compile-on-load → per-voice eval → save.
+> Next: **S2.3** (MCP authoring + inspection), then **S2.4** (GUI editor, deferred).
   - [x] **S2.2c** — Voice eval. **SHIPPED `8bc182a`.** The Voice evaluates a slot's script each
     control block: per-(voice,slot) `RegisterFile`, a stack `[f32; MAX_SOURCES]` filled from the
     script's `ScriptInput`s (Source reuses `resolve_source`; Context = gate/gate_on/age/sr; Zero
