@@ -1722,6 +1722,27 @@ impl PatchEditor {
         }
     }
 
+    /// Mirror a Mod Matrix module's installed control scripts (S2.4) into its
+    /// panel so the expression editor and ƒx markers reflect them. `scripts` is
+    /// the engine snapshot's map keyed by **1-based** slot string; the panel mirror
+    /// (`slot_scripts`) keys by 0-based slot index. Clear-fill: a slot dropped from
+    /// the snapshot (script cleared) vanishes from the mirror. The snapshot is the
+    /// source of truth — `SetModScript` bumps the shared-graph version, so the
+    /// version-gated reconcile re-runs with the script already published.
+    pub fn sync_module_scripts(&mut self, module_id: ModuleId, scripts: &BTreeMap<String, String>) {
+        let Some(panel) = self.panels.get_mut(&module_id) else {
+            return;
+        };
+        panel.slot_scripts.clear();
+        for (slot_key, source) in scripts {
+            if let Ok(one_based) = slot_key.parse::<u8>()
+                && one_based >= 1
+            {
+                panel.slot_scripts.insert(one_based - 1, source.clone());
+            }
+        }
+    }
+
     /// Set the position of a module in the rack view.
     pub fn set_module_position(&mut self, module_id: ModuleId, position: Pos2) {
         if let Some(panel) = self.panels.get_mut(&module_id) {
@@ -2345,6 +2366,9 @@ impl PatchEditor {
                             if panel_result.audio_input_action.is_some() {
                                 result.audio_input_action = panel_result.audio_input_action;
                             }
+                            for (slot, src) in panel_result.mod_script_actions {
+                                result.mod_script_actions.push((module_id, slot, src));
+                            }
                         }
                     } else {
                         // Normal modules: three-column layout (IN ports | content | OUT ports)
@@ -2385,6 +2409,11 @@ impl PatchEditor {
                                     if panel_result.audio_input_action.is_some() {
                                         result.audio_input_action =
                                             panel_result.audio_input_action;
+                                    }
+                                    for (slot, src) in panel_result.mod_script_actions {
+                                        result
+                                            .mod_script_actions
+                                            .push((module_id, slot, src));
                                     }
                                 }
                             });
@@ -5096,6 +5125,11 @@ pub struct PatchEditorResult {
     pub reorder_effects: Vec<(ModuleId, synth_engine::ReorderDirection)>,
     /// Audio input action (monitoring/recording toggle from patch module).
     pub audio_input_action: Option<AudioInputAction>,
+    /// Mod Matrix expression-editor actions (S2.4): `(module_id, 0-based slot,
+    /// source)`. `Some(source)` installs/replaces a YAMS control script on the
+    /// slot; `None` clears it. Routed to `session.set_mod_script` /
+    /// `clear_mod_script` by the backend.
+    pub mod_script_actions: Vec<(ModuleId, u8, Option<String>)>,
 }
 
 /// Actions from the Audio Input module panel.
@@ -5146,6 +5180,11 @@ pub struct PanelParamsResult {
     pub param_changes: Vec<Param>,
     /// Audio input action (if this is an AudioInput module).
     pub audio_input_action: Option<AudioInputAction>,
+    /// Mod Matrix expression-editor actions (S2.4): `(0-based slot, source)`.
+    /// `Some(source)` installs/replaces a YAMS control script; `None` clears the
+    /// slot back to its scalar `Amount`. The caller pairs each with the module id
+    /// and routes to `session.set_mod_script` / `clear_mod_script`.
+    pub mod_script_actions: Vec<(u8, Option<String>)>,
 }
 
 /// Draw visualizer display (oscilloscope or level meter).
@@ -5303,6 +5342,7 @@ fn draw_module_panel_params(
         return PanelParamsResult {
             param_changes,
             audio_input_action: None,
+            mod_script_actions: Vec::new(),
         };
     }
 
@@ -5386,6 +5426,7 @@ fn draw_module_panel_params(
         return PanelParamsResult {
             param_changes,
             audio_input_action: None,
+            mod_script_actions: Vec::new(),
         };
     }
 
@@ -5595,6 +5636,7 @@ fn draw_module_panel_params(
     PanelParamsResult {
         param_changes,
         audio_input_action,
+        mod_script_actions: Vec::new(),
     }
 }
 
@@ -5610,6 +5652,11 @@ fn draw_mod_matrix_grid(
     use super::widgets::Knob;
 
     let mut param_changes = Vec::new();
+    // Expression-editor actions collected this frame (S2.4). Applied by the
+    // caller via `session.set_mod_script` / `clear_mod_script`.
+    let mut mod_script_actions: Vec<(u8, Option<String>)> = Vec::new();
+    // A slot whose ƒx button was clicked this frame — opens its editor popup.
+    let mut open_editor_for: Option<u8> = None;
 
     // The grid selector is gone — the routing list is presented dynamically.
     // Show every *configured* routing (source or destination set) as a row, plus
@@ -5666,6 +5713,9 @@ fn draw_mod_matrix_grid(
                 let dst_name = ModMatrixParam::SlotDestination(slot_idx as u8, None).name();
                 let src_addr = state.slot_addrs.get(src_name).cloned();
                 let dst_addr = state.slot_addrs.get(dst_name).cloned();
+                // Scripted slots (S2.4) override the scalar Amount with a YAMS
+                // expression; read it (owned) here so the borrow ends before the row.
+                let is_scripted = state.slot_scripts.contains_key(&(slot_idx as u8));
                 let amount_val = amt_param.and_then(|p| {
                     state.param_values.get(&p.name).copied()
                         .or(Some(p.range.default))
@@ -5780,7 +5830,9 @@ fn draw_mod_matrix_grid(
                         } else {
                             ri::ARROW_UP_LINE
                         };
-                        let arrow_text = if amount_val.abs() > 0.001 {
+                        let arrow_text = if is_scripted {
+                            format!("{arrow_icon}  ƒx")
+                        } else if amount_val.abs() > 0.001 {
                             format!("{arrow_icon}  {amount_val:+.2}")
                         } else {
                             arrow_icon.to_string()
@@ -5812,17 +5864,27 @@ fn draw_mod_matrix_grid(
                             )));
                         }
 
-                        // Amount knob + Active toggle side by side.
+                        // Amount knob + Active toggle + expression (ƒx) button.
                         ui.horizontal(|ui| {
                             if let Some(ap) = amt_param {
                                 let current = amount_val;
                                 let mut value = current;
-                                Knob::from_descriptor(&mut value, ap)
-                                    .label("Amount")
-                                    .size(theme().sizes.knob_size_small)
-                                    .accent_color(accent_color)
-                                    .show(ui);
-                                if (value - current).abs() > f32::EPSILON {
+                                // A scripted slot ignores the scalar Amount — show
+                                // the knob disabled so it reads as overridden.
+                                let knob_resp = ui
+                                    .add_enabled_ui(!is_scripted, |ui| {
+                                        Knob::from_descriptor(&mut value, ap)
+                                            .label("Amount")
+                                            .size(theme().sizes.knob_size_small)
+                                            .accent_color(accent_color)
+                                            .show(ui);
+                                    })
+                                    .response;
+                                if is_scripted {
+                                    knob_resp.on_hover_text(
+                                        "Overridden by the expression (ƒx) — clear it to use Amount",
+                                    );
+                                } else if (value - current).abs() > f32::EPSILON {
                                     state.param_values.insert(ap.name.clone(), value);
                                     param_changes.push(ap.id.with_f32(value));
                                 }
@@ -5840,6 +5902,29 @@ fn draw_mod_matrix_grid(
                                     param_changes.push(ep.id.with_f32(val));
                                 }
                             }
+
+                            // ƒx — open the expression editor for this slot. Lit
+                            // purple when a script is installed (S2.4). Hidden on
+                            // the trailing add-row (no slot to script yet).
+                            if !is_add_row {
+                                let fx_color = if is_scripted {
+                                    theme().colors.accent_purple
+                                } else {
+                                    theme().colors.text_secondary
+                                };
+                                let tip = if is_scripted {
+                                    "Edit the modulation expression (ƒx active)"
+                                } else {
+                                    "Replace Amount with a YAMS expression"
+                                };
+                                if ui
+                                    .button(egui::RichText::new("ƒx").color(fx_color))
+                                    .on_hover_text(tip)
+                                    .clicked()
+                                {
+                                    open_editor_for = Some(slot_idx as u8);
+                                }
+                            }
                         });
                         ui.add_space(theme().spacing.xxs);
                     });
@@ -5854,6 +5939,14 @@ fn draw_mod_matrix_grid(
     // starts fresh if the index is later reused by the add-row.
     if let Some(i) = clear_idx {
         let slot = i as u8;
+        // Removing the routing also clears any installed expression and closes
+        // its editor, so the slot reads as fully unconfigured next frame.
+        if state.slot_scripts.contains_key(&slot) {
+            mod_script_actions.push((slot, None));
+        }
+        if state.script_editor.as_ref().is_some_and(|e| e.slot == slot) {
+            state.script_editor = None;
+        }
         for (param, value) in [
             (
                 Param::ModMatrix(ModMatrixParam::SlotSource(slot, None)),
@@ -5887,9 +5980,116 @@ fn draw_mod_matrix_grid(
         }
     }
 
+    // Open the expression editor when an ƒx button was clicked, seeding the draft
+    // from the slot's installed script (empty if none).
+    if let Some(slot) = open_editor_for {
+        let draft = state.slot_scripts.get(&slot).cloned().unwrap_or_default();
+        state.script_editor = Some(super::module_panel::ScriptEditorState { slot, draft });
+    }
+
+    // Draw the expression-editor popup (S2.4) if one is open. A floating window so
+    // the routing list stays compact. Compilation runs live (off the audio thread)
+    // for the status line; Apply/Clear push actions the caller routes to the
+    // session, which recompiles + installs the shared script.
+    if let Some(mut editor) = state.script_editor.take() {
+        let ctx = ui.ctx().clone();
+        let mut keep_open = true;
+        let mut closed_by_action = false;
+        egui::Window::new(format!("Slot {} — Expression", editor.slot + 1))
+            .id(egui::Id::new(("mm_expr_editor", state.id, editor.slot)))
+            .collapsible(false)
+            .resizable(true)
+            .open(&mut keep_open)
+            .show(&ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "YAMS expression — assign `out`, e.g. `out = lfo-1.out * velocity`",
+                    )
+                    .size(theme().fonts.size_small)
+                    .color(theme().colors.text_secondary),
+                );
+                ui.add(
+                    egui::TextEdit::multiline(&mut editor.draft)
+                        .code_editor()
+                        .desired_rows(4)
+                        .desired_width(360.0),
+                );
+
+                // Live compile → status line (mirrors `session.set_mod_script`).
+                let trimmed = editor.draft.trim();
+                let status: Result<(), String> = if trimmed.is_empty() {
+                    Err("empty — Apply will clear the slot".to_string())
+                } else {
+                    let (program, diags) = synth_script::compile(
+                        &editor.draft,
+                        &synth_script::CompileOptions::default(),
+                    );
+                    if program.is_some() {
+                        Ok(())
+                    } else {
+                        let msg = diags
+                            .iter()
+                            .filter(|d| d.is_error())
+                            .map(|d| d.message.clone())
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        Err(if msg.is_empty() {
+                            "compile error".to_string()
+                        } else {
+                            msg
+                        })
+                    }
+                };
+                match &status {
+                    Ok(()) => {
+                        ui.label(
+                            egui::RichText::new("✓ compiled")
+                                .size(theme().fonts.size_small)
+                                .color(theme().colors.accent_green),
+                        );
+                    }
+                    Err(e) => {
+                        ui.label(
+                            egui::RichText::new(format!("✗ {e}"))
+                                .size(theme().fonts.size_small)
+                                .color(theme().colors.accent_orange),
+                        );
+                    }
+                }
+
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(status.is_ok(), egui::Button::new("Apply"))
+                        .on_hover_text("Install this expression on the slot")
+                        .clicked()
+                    {
+                        mod_script_actions.push((editor.slot, Some(editor.draft.clone())));
+                        closed_by_action = true;
+                    }
+                    if ui
+                        .button("Clear")
+                        .on_hover_text("Remove the expression, revert to Amount")
+                        .clicked()
+                    {
+                        mod_script_actions.push((editor.slot, None));
+                        closed_by_action = true;
+                    }
+                    if ui.button("Close").clicked() {
+                        closed_by_action = true;
+                    }
+                });
+            });
+        // Persist the editor (with its in-progress draft) across frames unless the
+        // window was closed via its ✕ or an action button.
+        if keep_open && !closed_by_action {
+            state.script_editor = Some(editor);
+        }
+    }
+
     PanelParamsResult {
         param_changes,
         audio_input_action: None,
+        mod_script_actions,
     }
 }
 
@@ -6344,6 +6544,44 @@ mod patch_analysis_tests {
         // A normal downstream edge is fine (parallel edge, no loop).
         assert!(!editor.would_create_cycle(osc, out));
         assert!(!editor.would_create_cycle(osc, amp));
+    }
+
+    /// S2.4: the panel script mirror is snapshot-driven. `sync_module_scripts`
+    /// maps the engine snapshot's 1-based slot keys to the panel's 0-based
+    /// `slot_scripts`, and clear-fills (a slot absent from the snapshot — script
+    /// cleared in the engine — drops from the mirror).
+    #[test]
+    fn sync_module_scripts_maps_one_based_snapshot_and_clear_fills() {
+        let mut editor = PatchEditor::new();
+        let id = ModuleId::new(ModuleType::ModMatrix, 1);
+        editor
+            .panels
+            .insert(id, ModulePanelState::new(id, Pos2::ZERO));
+        // A stale script that the next snapshot omits — must be dropped.
+        editor
+            .panels
+            .get_mut(&id)
+            .unwrap()
+            .slot_scripts
+            .insert(4, "out = 1".to_string());
+
+        let mut snap = std::collections::BTreeMap::new();
+        snap.insert("1".to_string(), "out = velocity".to_string());
+        snap.insert("3".to_string(), "out = lfo-1.out".to_string());
+        editor.sync_module_scripts(id, &snap);
+
+        let scripts = &editor.panels[&id].slot_scripts;
+        assert_eq!(scripts.len(), 2);
+        assert_eq!(scripts.get(&0).map(String::as_str), Some("out = velocity"));
+        assert_eq!(scripts.get(&2).map(String::as_str), Some("out = lfo-1.out"));
+        assert!(
+            !scripts.contains_key(&4),
+            "clear-fill drops scripts absent from the snapshot"
+        );
+
+        // An empty snapshot clears the whole mirror.
+        editor.sync_module_scripts(id, &std::collections::BTreeMap::new());
+        assert!(editor.panels[&id].slot_scripts.is_empty());
     }
 
     /// The per-frame highlight set (`recompute_drag_cycle_blocked`) must agree

@@ -268,8 +268,18 @@ the remaining sign-offs (persistence, caps, diagnostics).
     tool error with diagnostics) / `session.clear_mod_script` (empty source clears). Wired as
     `#[tool]` + dispatch entry + `SetModMatrixScriptParam`. Integration-tested end-to-end.
     (`format_yams` tool not added — `set` already canonicalizes nothing; revisit with S2.4.)
-- [ ] **S2.4** — GUI: expand an amount cell into an expression editor. **DEFERRED** — interactive
-  egui, not headless-testable (verify in-app); also closes the GUI-panel-save scripts gap (S2.2b-2iv).
+- [x] **S2.4** — GUI: expand an amount cell into an expression editor. **SHIPPED.** Each routing
+  row gets an **ƒx** button → floating popup (`egui::Window`) with a `code_editor` multiline field,
+  **live compile** status (`synth_script::compile` off the audio thread → ✓/✗ message) and
+  Apply/Clear/Close. A scripted slot lights ƒx purple, shows `↓ ƒx` on the arrow, and disables the
+  Amount knob ("overridden by expression"). Wiring: new `PanelParamsResult.mod_script_actions` +
+  `PatchEditorResult.mod_script_actions` side-channel → backend routes to `session.set_mod_script` /
+  `clear_mod_script` (compile errors surface to the status bar). Display + round-trip via a new
+  snapshot-driven mirror `ModulePanelState.slot_scripts` (`PatchEditor::sync_module_scripts`, 1-based
+  snapshot key → 0-based panel; clear-fill), populated next to `sync_module_params` in reconcile.
+  **This closes the GUI-panel-save scripts gap (S2.2b-2iv)** — save already round-trips via the engine
+  snapshot. Headless test for the mirror mapping; the editor UI verified in-app. **Closes Step 2's
+  GUI scope.**
 
 ### Follow-ups discovered while building Step 2
 
@@ -279,12 +289,12 @@ the remaining sign-offs (persistence, caps, diagnostics).
   oscillator **silently dropping** `detune`/`frequency` offsets (`_ => {}`). Fixed: `detune` →
   ±1 semitone, `frequency` → ±12 (one octave); legacy `osc-N.pitch` unaffected. Scale lives as
   a documented `const` per target.
-- [ ] **Audit `set_mod_offset` coverage across all modules.** The oscillator fix exposed that
-  S1.1's "any modulatable param is a destination" is **not actually true** — modules implement
-  `set_mod_offset` for only a few hard-coded targets and drop the rest, so the address picker
-  can offer a modulatable param whose offset silently vanishes. Audit every module: for each
-  descriptor param with `modulatable: true`, confirm `set_mod_offset` handles it (or mark it
-  non-modulatable). Headless-testable; the real remaining Step-1 debt.
+- [x] **Audit `set_mod_offset` coverage across all modules.** DONE (2026-06-15, see
+  `plans/set-mod-offset-audit.md`): option-A generic `ParamModOffsets` store landed
+  (`dcea729`) + all 40 voice modules opted-in/triaged one-per-commit on
+  `feat/dynamic-mod-matrix`. Every `modulatable: true` float now either routes through
+  the store or was marked `.modulatable(false)`; only `signal_monitor`+`mod_matrix` have
+  no store (zero modulatable params). Per-module offset tests; workspace green.
 
 > **STEP 2 COMPLETE — non-deferred scope (2026-06-15).** YAMS is a fully working modulation
 > compute layer: language toolchain (S2.1) → scalar-or-expression amount cell, end-to-end and

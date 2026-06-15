@@ -2156,6 +2156,22 @@ impl SynthApp {
                 }
             }
 
+            // Handle Mod Matrix expression-editor actions (S2.4). Compilation
+            // happens in the session (off the audio thread); a compile error is
+            // surfaced to the status bar so the routing keeps its prior behaviour.
+            for (module_id, slot, source) in result.mod_script_actions {
+                let outcome = match &source {
+                    Some(src) => self.session.set_mod_script(active_id, module_id, slot, src),
+                    None => self.session.clear_mod_script(active_id, module_id, slot),
+                };
+                if let Err(e) = outcome {
+                    self.dialog_state.set_status(format!(
+                        "Expression on slot {} not applied: {e}",
+                        slot + 1
+                    ));
+                }
+            }
+
             // Handle module removal
             for module_id in result.modules_to_remove {
                 // Guard: block removing a module that an automation lane still
@@ -5118,6 +5134,7 @@ impl SynthApp {
             for snap in &module_snapshots {
                 if editor_ids.contains(&snap.id) {
                     patch_editor.sync_module_params(snap.id, &snap.parameters);
+                    patch_editor.sync_module_scripts(snap.id, &snap.scripts);
                 }
             }
 
@@ -5137,6 +5154,7 @@ impl SynthApp {
                     // freshly-added module — so a Mod Matrix created via MCP showed
                     // "(none)" in its pickers forever.
                     patch_editor.sync_module_params(module_id, &snap.parameters);
+                    patch_editor.sync_module_scripts(module_id, &snap.scripts);
                 }
             }
 

@@ -33,11 +33,33 @@ pub struct ModulePanelState {
     /// address-based routings (S1.5c) — `param_values` only holds the lossy legacy
     /// enum index, so arbitrary addresses (`lfo-3.out`) live here instead.
     pub slot_addrs: HashMap<String, String>,
+    /// Mod Matrix per-slot YAMS control scripts (Step 2 / S2.4), keyed by the
+    /// **0-based** slot index. Mirror of the engine snapshot's `scripts` map (which
+    /// keys by 1-based slot string); a slot present here renders as scripted (its
+    /// scalar `Amount` is overridden by the expression). Snapshot-driven — see
+    /// `PatchEditor::sync_module_scripts`.
+    pub slot_scripts: HashMap<u8, String>,
+    /// Transient state for the open expression-editor popup (S2.4), if any. At
+    /// most one slot's editor is open per panel.
+    pub script_editor: Option<ScriptEditorState>,
     /// Envelope position buffer for envelope modules (lock-free GUI sync).
     pub envelope_position: Option<Arc<EnvelopePositionBuffer>>,
     /// Reusable visualization sample buffers (avoids per-frame allocation).
     pub vis_buf_l: Vec<f32>,
     pub vis_buf_r: Vec<f32>,
+}
+
+/// Transient UI state for the Mod Matrix expression-editor popup (S2.4).
+///
+/// `draft` is the in-progress YAMS source the user is editing; it is independent
+/// of the installed script (`slot_scripts`) until applied. Compilation status is
+/// recomputed live each frame while the popup is open, so it is not stored here.
+#[derive(Clone)]
+pub struct ScriptEditorState {
+    /// 0-based slot whose amount cell is being edited.
+    pub slot: u8,
+    /// Current editor text.
+    pub draft: String,
 }
 
 impl ModulePanelState {
@@ -48,6 +70,8 @@ impl ModulePanelState {
             size: Vec2::new(250.0, 200.0),
             param_values: HashMap::new(),
             slot_addrs: HashMap::new(),
+            slot_scripts: HashMap::new(),
+            script_editor: None,
             envelope_position: None,
             vis_buf_l: Vec::new(),
             vis_buf_r: Vec::new(),
