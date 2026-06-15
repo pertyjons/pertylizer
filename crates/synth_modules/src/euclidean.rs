@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, EuclideanParam, InputPorts, ModuleCategory, ModuleDescriptor,
-    ModuleType, NormalizedValue, Param, ParameterDescriptor, PolyModule, PortDescriptor,
-    ProcessContext, StepCount, WidgetHint,
+    ModuleType, NormalizedValue, Param, ParamModOffsets, ParameterDescriptor, PolyModule,
+    PortDescriptor, ProcessContext, StepCount, WidgetHint,
 };
 use synth_core::{MidiNote, PortName, SampleRate, Velocity};
 
@@ -23,6 +23,8 @@ pub struct Euclidean {
     pulses: StepCount,
     rotation: StepCount,
     swing: NormalizedValue,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // State
     pattern: [bool; MAX_STEPS],
@@ -47,6 +49,7 @@ impl Euclidean {
             pulses: StepCount::new(4),
             rotation: StepCount::new(0),
             swing: NormalizedValue::MIN,
+            mod_offsets: ParamModOffsets::new(),
 
             pattern: [false; MAX_STEPS],
             current_step: 0,
@@ -251,7 +254,8 @@ impl PolyModule for Euclidean {
         self.samples_per_step = crate::math::samples_per_16th(self.sample_rate.as_f32(), bpm);
 
         let steps = self.steps.as_usize();
-        let swing_amount = self.swing.as_f32() * 0.33; // Max 33% swing
+        // Generic mod offset — per-block constant.
+        let swing_amount = self.mod_offsets.effective("swing", self.swing.as_f32()) * 0.33; // Max 33% swing
 
         for i in 0..num_samples {
             // Check for external clock rising edge
@@ -363,6 +367,10 @@ impl PolyModule for Euclidean {
         ModuleType::Euclidean
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.current_step = 0;
         self.sample_counter = 0.0;
@@ -383,6 +391,46 @@ impl PolyModule for Euclidean {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ctx(n: usize) -> ProcessContext<'static> {
+        ProcessContext {
+            samples: synth_core::SampleCount::new(n),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        }
+    }
+
+    /// `swing` used to be dropped (Euclidean never overrode set_mod_offset); it
+    /// now shifts the internal-clock timing of odd steps through the generic
+    /// store, so a swing offset moves where gates fall.
+    #[test]
+    fn test_euclidean_swing_mod_offset_shifts_timing() {
+        let gates = |offset: f32| -> Vec<f32> {
+            let mut s = Euclidean::new();
+            let desc = s.descriptor();
+            s.mod_offsets_mut().unwrap().populate(&desc);
+            if offset != 0.0 {
+                s.set_mod_offset("swing", offset);
+            }
+            let n = 24_000; // ~4 steps at 120 BPM / 48 kHz
+            let mut out = HashMap::new();
+            out.insert(PortName::GATE, AudioBuffer::new(n));
+            out.insert(PortName::ACCENT, AudioBuffer::new(n));
+            s.process(InputPorts::empty(), &mut out, &ctx(n));
+            (0..n).map(|i| out[&PortName::GATE][i]).collect()
+        };
+        let straight = gates(0.0);
+        let swung = gates(1.0);
+        let diff: f32 = straight
+            .iter()
+            .zip(&swung)
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(
+            diff > 1.0,
+            "swing offset should shift gate timing, diff={diff}"
+        );
+    }
 
     #[test]
     fn test_euclidean_structural_params_not_automatable() {
