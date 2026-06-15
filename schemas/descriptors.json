@@ -7291,7 +7291,7 @@
           "description": "Vertical gain",
           "max": 10.0,
           "min": 0.10000000149011612,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Gain",
           "response_curve": "linear",
           "unit": "none"
@@ -7301,7 +7301,7 @@
           "description": "Time scale (zoom)",
           "max": 0.10000000149011612,
           "min": 0.0010000000474974513,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Time",
           "response_curve": "linear",
           "unit": "none"
@@ -7311,7 +7311,7 @@
           "description": "Trigger level",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Trig",
           "response_curve": "linear",
           "unit": "none"

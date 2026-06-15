@@ -155,6 +155,9 @@ impl Describable for SignalMonitor {
                 .description("Time scale (zoom)")
                 .range(0.001, 0.1)
                 .default(0.01)
+                // Display-only (oscilloscope zoom); the audio is pass-through,
+                // so this is not an audio mod/automation destination.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -166,6 +169,8 @@ impl Describable for SignalMonitor {
                 .description("Vertical gain")
                 .range(0.1, 10.0)
                 .default(1.0)
+                // Display-only (oscilloscope vertical scale) — see `time`.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -177,6 +182,8 @@ impl Describable for SignalMonitor {
                 .description("Trigger level")
                 .range(0.0, 1.0)
                 .default(0.5)
+                // Display-only (oscilloscope trigger threshold) — see `time`.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .port(
