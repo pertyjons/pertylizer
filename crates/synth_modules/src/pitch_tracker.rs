@@ -10,8 +10,8 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, PitchTrackerParam};
@@ -53,6 +53,9 @@ pub struct PitchTracker {
     // State
     sample_rate: SampleRate,
 
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
+
     // Output buffers
     pitch_buffer: AudioBuffer,
     gate_buffer: AudioBuffer,
@@ -73,16 +76,19 @@ impl PitchTracker {
             smoothed_freq: Hertz::new(0.0),
             gate_open: false,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             pitch_buffer: AudioBuffer::new(1024),
             gate_buffer: AudioBuffer::new(1024),
         }
     }
 
     /// Run autocorrelation pitch detection on the ring buffer.
-    fn analyze_pitch(&mut self) {
+    /// `sensitivity`, `min_freq` and `max_freq` are the effective (mod-offset-
+    /// applied) values, resolved once per block by the caller.
+    fn analyze_pitch(&mut self, sensitivity: f32, min_freq: f32, max_freq: f32) {
         let sr = self.sample_rate.as_f32();
-        let min_lag = (sr / self.max_freq.as_f32()) as usize;
-        let max_lag = (sr / self.min_freq.as_f32()).min(RING_BUFFER_SIZE as f32 / 2.0) as usize;
+        let min_lag = (sr / max_freq) as usize;
+        let max_lag = (sr / min_freq).min(RING_BUFFER_SIZE as f32 / 2.0) as usize;
 
         if min_lag >= max_lag || max_lag >= RING_BUFFER_SIZE {
             return;
@@ -176,7 +182,7 @@ impl PitchTracker {
             .clamp(0.0, 1.0);
 
         // Update gate
-        self.gate_open = self.current_confidence > self.sensitivity.as_f32();
+        self.gate_open = self.current_confidence > sensitivity;
     }
 
     /// Helper: compute normalized autocorrelation at a given lag.
@@ -300,7 +306,19 @@ impl PolyModule for PitchTracker {
 
         let input = inputs.get(PortName::IN);
 
-        let smooth = self.smoothing.as_f32();
+        // Generic mod offsets — per-block constants, resolved once here.
+        let eff_sensitivity = self
+            .mod_offsets
+            .effective("sensitivity", self.sensitivity.as_f32());
+        let eff_min_freq = self
+            .mod_offsets
+            .effective("min_freq", self.min_freq.as_f32());
+        let eff_max_freq = self
+            .mod_offsets
+            .effective("max_freq", self.max_freq.as_f32());
+        let smooth = self
+            .mod_offsets
+            .effective("smoothing", self.smoothing.as_f32());
 
         for i in 0..num_samples {
             let sample = input.map_or(0.0, |buf| buf[i]);
@@ -313,7 +331,7 @@ impl PolyModule for PitchTracker {
             self.hop_counter += 1;
             if self.hop_counter >= ANALYSIS_HOP {
                 self.hop_counter = 0;
-                self.analyze_pitch();
+                self.analyze_pitch(eff_sensitivity, eff_min_freq, eff_max_freq);
             }
 
             // Smooth the frequency output
@@ -379,6 +397,10 @@ impl PolyModule for PitchTracker {
 
     fn module_type(&self) -> ModuleType {
         ModuleType::PitchTracker
+    }
+
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
     }
 
     fn reset(&mut self) {
@@ -470,5 +492,49 @@ mod tests {
                 i
             );
         }
+    }
+
+    /// `sensitivity` is a working mod destination via the generic store: with a
+    /// clean tone, driving the threshold to 0 opens the gate while driving it to
+    /// its max (confidence can never exceed it) keeps the gate closed.
+    #[test]
+    fn sensitivity_mod_offset_suppresses_gate() {
+        use std::f32::consts::PI;
+        let num = 4096;
+        let sr = SampleRate::DVD_QUALITY.as_f32();
+        let mut in_buf = AudioBuffer::new(num);
+        for i in 0..num {
+            in_buf[i] = (2.0 * PI * 220.0 * i as f32 / sr).sin() * 0.8;
+        }
+        let context = ProcessContext {
+            samples: SampleCount::new(num),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+
+        let render = |offset: f32| -> usize {
+            let mut pt = PitchTracker::new();
+            let desc = pt.descriptor();
+            pt.mod_offsets_mut().unwrap().populate(&desc);
+            if offset != 0.0 {
+                pt.set_mod_offset("sensitivity", offset);
+            }
+            let mut outputs = HashMap::new();
+            outputs.insert(PortName::PITCH_CV, AudioBuffer::new(num));
+            outputs.insert(PortName::GATE, AudioBuffer::new(num));
+            let input_refs = [(PortName::IN, &in_buf)];
+            pt.process(InputPorts::new(&input_refs), &mut outputs, &context);
+            let gate = &outputs[&PortName::GATE];
+            (0..num).filter(|&i| gate[i] > 0.5).count()
+        };
+
+        let base = render(-1.0); // sensitivity → 0, any confidence opens the gate
+        assert!(
+            base > 0,
+            "zero threshold should open the gate on a clean tone"
+        );
+
+        let suppressed = render(1.0); // sensitivity → 1.0, gate cannot open
+        assert_eq!(suppressed, 0, "max sensitivity should keep gate closed");
     }
 }
