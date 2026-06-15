@@ -11,7 +11,9 @@
 //! applies the scaled offsets before graph processing.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use synth_core::script::BoundScript;
 use synth_core::{
     AudioBuffer, BipolarValue, Describable, InputPorts, ModuleCategory, ModuleDescriptor,
     ModuleType, Param, ParameterDescriptor, PolyModule, PortName, ProcessContext, WidgetHint,
@@ -31,6 +33,12 @@ use synth_core::{MidiNote, SampleRate, Velocity};
 #[derive(Clone)]
 pub struct ModMatrix {
     slots: [ModRouting; MAX_MOD_MATRIX_SLOTS],
+    /// Per-slot compiled control script (Step 2), parallel to `slots`. When
+    /// `scripts[i]` is `Some`, slot `i`'s offset is the script's output instead
+    /// of the scalar `source × amount` (decision #1). Shared immutably behind an
+    /// `Arc` — cloning the module (per voice) only bumps the refcount, never
+    /// deep-copies the bytecode. Kept off the `Copy` `ModRouting` (decision #4).
+    scripts: [Option<Arc<BoundScript>>; MAX_MOD_MATRIX_SLOTS],
     grid_size: ModMatrixGridSize,
 }
 
@@ -38,6 +46,8 @@ impl ModMatrix {
     pub fn new() -> Self {
         Self {
             slots: [ModRouting::default(); MAX_MOD_MATRIX_SLOTS],
+            // `Option<Arc<_>>` is not `Copy`, so the `[x; N]` form is unavailable.
+            scripts: std::array::from_fn(|_| None),
             grid_size: ModMatrixGridSize::default(),
         }
     }
@@ -248,6 +258,16 @@ impl PolyModule for ModMatrix {
         Some(&self.slots)
     }
 
+    fn mod_scripts(&self) -> Option<&[Option<Arc<BoundScript>>]> {
+        Some(&self.scripts)
+    }
+
+    fn set_mod_script(&mut self, slot: usize, script: Option<Arc<BoundScript>>) {
+        if let Some(cell) = self.scripts.get_mut(slot) {
+            *cell = script;
+        }
+    }
+
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
     }
@@ -297,6 +317,49 @@ mod tests {
             Some(DestAddr::new(ModuleType::Filter, 1, "cutoff"))
         );
         assert!((routings[0].amount.as_f32() - 0.5).abs() < 1e-6);
+    }
+
+    /// A slot's compiled control script is stored beside the routing, read back
+    /// via `mod_scripts`, cleared with `None`, and survives a `box_clone` (each
+    /// voice shares the same `Arc`, never a deep copy).
+    #[test]
+    fn slot_script_is_stored_cleared_and_cloned() {
+        use std::sync::Arc;
+        use synth_core::script::{BoundScript, CompiledScript, Op};
+
+        let mut mm = ModMatrix::new();
+        assert!(mm.mod_scripts().unwrap().iter().all(Option::is_none));
+
+        // A trivial `out = 0.5` program (one constant, no sources/state).
+        let script = Arc::new(BoundScript::new(
+            CompiledScript::new(vec![Op::PushConst(0)], vec![0.5], 0, 0),
+            Vec::new(),
+            "out = 0.5".to_string(),
+        ));
+        mm.set_mod_script(2, Some(Arc::clone(&script)));
+
+        let scripts = mm.mod_scripts().unwrap();
+        assert!(scripts[0].is_none());
+        assert_eq!(
+            scripts[2].as_deref().map(|b| b.source.as_str()),
+            Some("out = 0.5")
+        );
+
+        // box_clone shares the Arc (refcount rises, no deep copy).
+        let cloned = mm.box_clone();
+        assert_eq!(
+            cloned.mod_scripts().unwrap()[2]
+                .as_deref()
+                .map(|b| b.source.as_str()),
+            Some("out = 0.5")
+        );
+        assert!(Arc::strong_count(&script) >= 3);
+
+        // Clearing removes it.
+        mm.set_mod_script(2, None);
+        assert!(mm.mod_scripts().unwrap()[2].is_none());
+        // Out-of-range slot is a safe no-op.
+        mm.set_mod_script(999, Some(script));
     }
 
     /// A source that the legacy enum could not express — a third LFO — is now a

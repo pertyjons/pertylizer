@@ -1111,6 +1111,28 @@ pub trait PolyModule: Describable + Send {
         None
     }
 
+    /// Expose this module's per-slot compiled control scripts (YAMS), if it is a
+    /// Mod Matrix (Step 2). Parallel to [`mod_routings`](Self::mod_routings): when
+    /// `mod_scripts()[i]` is `Some`, slot `i`'s offset is the script's output
+    /// instead of the scalar `source × amount` (decision #1 — the script owns the
+    /// value, the routing still owns the destination). Shared immutably behind an
+    /// `Arc`; the per-voice mutable state lives in the `Voice`. Default `None`.
+    fn mod_scripts(&self) -> Option<&[Option<std::sync::Arc<crate::script::BoundScript>>]> {
+        None
+    }
+
+    /// Install (or clear, with `None`) the compiled control script for one slot.
+    ///
+    /// The `Arc<BoundScript>` cannot ride the numeric [`set_param`](Self::set_param)
+    /// channel, so the load / authoring path sets it here directly. Off the audio
+    /// thread (compiled on load). Default: no-op (module has no script slots).
+    fn set_mod_script(
+        &mut self,
+        _slot: usize,
+        _script: Option<std::sync::Arc<crate::script::BoundScript>>,
+    ) {
+    }
+
     /// Apply a transient parameter override from sequencer automation.
     ///
     /// Unlike [`set_param`](Self::set_param), which writes the module's stored
