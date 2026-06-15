@@ -12,8 +12,8 @@
 
 use std::collections::HashMap;
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{
     BipolarValue, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Seconds, TimeScale,
@@ -81,6 +81,8 @@ pub struct Mseg {
     /// Previous trigger value for edge detection.
     prev_trigger: NormalizedValue,
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -129,6 +131,7 @@ impl Mseg {
             prev_gate: NormalizedValue::MIN,
             prev_trigger: NormalizedValue::MIN,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -275,7 +278,11 @@ impl Mseg {
     #[inline]
     fn effective_time(&self, seg_idx: u8) -> f32 {
         let raw_time = self.segments[seg_idx as usize].time.as_f32();
-        raw_time * self.time_scale.as_f32()
+        // Generic mod offset on the global time scale.
+        raw_time
+            * self
+                .mod_offsets
+                .effective("time_scale", self.time_scale.as_f32())
     }
 
     /// Advance to the next segment, handling sustain and looping.
@@ -398,6 +405,8 @@ impl Describable for Mseg {
                 .range(1.0, 16.0)
                 .default(4.0)
                 .unit(ParameterUnit::None)
+                // Structural/sizing count: not a continuous modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -410,6 +419,8 @@ impl Describable for Mseg {
                 .range(0.0, 15.0)
                 .default(2.0)
                 .unit(ParameterUnit::None)
+                // Discrete segment index: not a continuous modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -422,6 +433,8 @@ impl Describable for Mseg {
                 .range(0.0, 1.0)
                 .default(0.0)
                 .unit(ParameterUnit::None)
+                // Boolean toggle, not a continuous modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Toggle),
             )
             .parameter(
@@ -629,6 +642,10 @@ impl PolyModule for Mseg {
         ModuleType::Mseg
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.state = MsegState::Idle;
         self.phase = Phase::ZERO;
@@ -666,6 +683,49 @@ mod tests {
             sample_rate: SampleRate::DVD_QUALITY,
             ..ProcessContext::default()
         }
+    }
+
+    /// `time_scale` used to be dropped (Mseg never overrode set_mod_offset); it
+    /// now scales every segment's duration through the generic store, so a
+    /// routing changes how fast the envelope progresses.
+    #[test]
+    fn test_mseg_time_scale_mod_offset_changes_rate() {
+        let render = |offset: f32| -> Vec<f32> {
+            let mut m = Mseg::new();
+            let desc = m.descriptor();
+            m.mod_offsets_mut().unwrap().populate(&desc);
+            if offset != 0.0 {
+                m.set_mod_offset("time_scale", offset);
+            }
+            m.note_on(MidiNote::new(60), Velocity::MAX);
+            let n = 2048;
+            let mut out = HashMap::new();
+            out.insert(PortName::OUT, AudioBuffer::new(n));
+            m.process(InputPorts::empty(), &mut out, &make_context(n));
+            (0..n).map(|i| out[&PortName::OUT][i]).collect()
+        };
+        let base = render(0.0);
+        let slowed = render(0.5); // larger time_scale → slower envelope
+        let diff: f32 = base.iter().zip(&slowed).map(|(a, b)| (a - b).abs()).sum();
+        assert!(
+            diff > 0.1,
+            "time_scale offset should change envelope rate, diff={diff}"
+        );
+
+        // Clearing reverts to the baseline trajectory.
+        let mut m = Mseg::new();
+        let desc = m.descriptor();
+        m.mod_offsets_mut().unwrap().populate(&desc);
+        m.set_mod_offset("time_scale", 0.5);
+        m.clear_mod_offsets();
+        m.note_on(MidiNote::new(60), Velocity::MAX);
+        let n = 2048;
+        let mut out = HashMap::new();
+        out.insert(PortName::OUT, AudioBuffer::new(n));
+        m.process(InputPorts::empty(), &mut out, &make_context(n));
+        let reverted: Vec<f32> = (0..n).map(|i| out[&PortName::OUT][i]).collect();
+        let back: f32 = base.iter().zip(&reverted).map(|(a, b)| (a - b).abs()).sum();
+        assert!(back < 1e-3, "clearing reverts time_scale, residual={back}");
     }
 
     #[test]
