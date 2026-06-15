@@ -12,8 +12,8 @@ use std::collections::HashMap;
 
 use synth_core::{AmFormantParam, ModuleType, Param};
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
 
@@ -46,6 +46,8 @@ pub struct AmFormant {
     // Cached
     sample_rate: SampleRate,
     inv_sample_rate: f32,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Pre-allocated output buffer
     output_buffer: AudioBuffer,
@@ -66,6 +68,7 @@ impl AmFormant {
 
             sample_rate: SampleRate::DVD_QUALITY,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
+            mod_offsets: ParamModOffsets::new(),
 
             output_buffer: AudioBuffer::new(1024),
         }
@@ -179,12 +182,21 @@ impl PolyModule for AmFormant {
             return;
         }
 
+        // `vowel` is read inside interpolated_formants; apply its generic mod
+        // offset just for that call, then restore.
+        let saved_vowel = self.vowel;
+        self.vowel = NormalizedValue::new(self.mod_offsets.effective("vowel", self.vowel.as_f32()));
         let (formant_freqs, formant_gains) = self.interpolated_formants();
+        self.vowel = saved_vowel;
 
         // CarrierRatio maps 0..1 to 0.25..4.0 (exponential scaling)
-        let ratio = 0.25 * (16.0_f32).powf(self.carrier_ratio.as_f32());
-        let depth = self.depth.as_f32();
-        let level = self.level.as_f32();
+        let ratio = 0.25
+            * (16.0_f32).powf(
+                self.mod_offsets
+                    .effective("carrier_ratio", self.carrier_ratio.as_f32()),
+            );
+        let depth = self.mod_offsets.effective("depth", self.depth.as_f32());
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
         let inv_sr = self.inv_sample_rate;
         let mod_freq = self.note_freq.as_f32();
 
@@ -267,6 +279,10 @@ impl PolyModule for AmFormant {
         ModuleType::AmFormant
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.carrier_phases = [Phase::ZERO; NUM_BANDS];
         self.modulator_phase = Phase::ZERO;
@@ -300,6 +316,48 @@ mod tests {
         let amf = AmFormant::new();
         assert!((amf.note_freq.as_f32() - 0.0).abs() < f32::EPSILON);
         assert_eq!(amf.carrier_phases, [Phase::ZERO; NUM_BANDS]);
+    }
+
+    /// `level` is a working mod destination via the generic store, and the
+    /// transiently-applied `vowel` field is restored after the block.
+    #[test]
+    fn level_mod_offset_scales_output_and_vowel_restores() {
+        let mut amf = AmFormant::new();
+        let desc = amf.descriptor();
+        amf.mod_offsets_mut().unwrap().populate(&desc);
+        amf.note_on(MidiNote::A4, Velocity::MAX);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        fn peak(amf: &mut AmFormant, ctx: &ProcessContext) -> f32 {
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            amf.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        let base = peak(&mut amf, &ctx);
+        assert!(base > 1e-3, "base output present, got {base}");
+
+        let vowel_before = amf.vowel.as_f32();
+        amf.set_mod_offset("level", -0.8);
+        amf.set_mod_offset("vowel", 0.5); // exercise the transient field
+        let quieter = peak(&mut amf, &ctx);
+        assert!(
+            (amf.vowel.as_f32() - vowel_before).abs() < 1e-6,
+            "vowel field must be restored after process"
+        );
+        assert!(
+            quieter < base * 0.6,
+            "level offset should reduce output: {quieter} vs {base}"
+        );
+
+        amf.clear_mod_offsets();
+        let reverted = peak(&mut amf, &ctx);
+        assert!(reverted > quieter, "clearing restores level");
     }
 
     #[test]
