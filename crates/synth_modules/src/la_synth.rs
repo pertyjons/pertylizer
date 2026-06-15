@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{
     LaSynthParam, MidiNote, Milliseconds, NormalizedValue, PortName, SampleRate, Velocity,
@@ -40,6 +40,8 @@ pub struct LaSynth {
 
     // One-pole lowpass for brightness
     filter_state: f32,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Buffers
     output_buffer: AudioBuffer,
@@ -61,6 +63,7 @@ impl LaSynth {
             active: false,
             noise_state: 0x1234_5678,
             filter_state: 0.0,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         };
         s.update_times();
@@ -232,6 +235,40 @@ impl PolyModule for LaSynth {
 
         let input = inputs.get(PortName::IN);
 
+        // All five params are read inside generate_attack / the timing math,
+        // which run per sample in the loop below, so apply their effective
+        // (modulated) values to the fields for the block and restore after. The
+        // single loop has no early return. Timing params additionally need
+        // update_times() to recompute the cached sample counts.
+        let saved = (
+            self.attack_type,
+            self.attack_time,
+            self.attack_level,
+            self.crossfade_time,
+            self.brightness,
+        );
+        self.attack_type = NormalizedValue::new(
+            self.mod_offsets
+                .effective("attack_type", self.attack_type.as_f32()),
+        );
+        self.attack_time = Milliseconds::new(
+            self.mod_offsets
+                .effective("attack_time", self.attack_time.as_f32()),
+        );
+        self.attack_level = NormalizedValue::new(
+            self.mod_offsets
+                .effective("attack_level", self.attack_level.as_f32()),
+        );
+        self.crossfade_time = Milliseconds::new(
+            self.mod_offsets
+                .effective("x_fade_time", self.crossfade_time.as_f32()),
+        );
+        self.brightness = NormalizedValue::new(
+            self.mod_offsets
+                .effective("brightness", self.brightness.as_f32()),
+        );
+        self.update_times();
+
         for i in 0..num_samples {
             let sustain = input.map_or(0.0, |buf| buf[i]);
 
@@ -264,6 +301,16 @@ impl PolyModule for LaSynth {
                 self.output_buffer[i] = sustain;
             }
         }
+
+        // Restore base params + recompute the base sample counts.
+        (
+            self.attack_type,
+            self.attack_time,
+            self.attack_level,
+            self.crossfade_time,
+            self.brightness,
+        ) = saved;
+        self.update_times();
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
@@ -316,6 +363,10 @@ impl PolyModule for LaSynth {
         ModuleType::LaSynth
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.phase = 0.0;
         self.active = false;
@@ -348,6 +399,52 @@ mod tests {
         let la = LaSynth::new();
         assert_eq!(la.attack_type.as_f32(), 0.0);
         assert_eq!(la.attack_time.as_f32(), 30.0);
+    }
+
+    /// `brightness` is a working mod destination via the generic store: it
+    /// changes the attack transient's one-pole cutoff. The transiently-applied
+    /// fields are restored after the block (no drift).
+    #[test]
+    fn brightness_mod_offset_changes_attack_and_restores() {
+        let mut la = LaSynth::new();
+        let desc = la.descriptor();
+        la.mod_offsets_mut().unwrap().populate(&desc);
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(64),
+            ..ProcessContext::default()
+        };
+        // Render the attack transient (no sustain input) into a fresh buffer.
+        fn attack_wave(la: &mut LaSynth, ctx: &ProcessContext) -> Vec<f32> {
+            la.note_on(MidiNote::new(60), Velocity::MAX);
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(64));
+            la.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i]).collect()
+        }
+
+        let base = attack_wave(&mut la, &ctx);
+        let bright_before = la.brightness.as_f32();
+        la.set_mod_offset("brightness", -0.4);
+        let darker = attack_wave(&mut la, &ctx);
+        assert!(
+            (la.brightness.as_f32() - bright_before).abs() < 1e-6,
+            "brightness field must be restored after process"
+        );
+        let diff: f32 = base.iter().zip(&darker).map(|(a, b)| (a - b).abs()).sum();
+        assert!(
+            diff > 1e-3,
+            "brightness mod should change the attack, diff = {diff}"
+        );
+
+        la.clear_mod_offsets();
+        let reverted = attack_wave(&mut la, &ctx);
+        let back: f32 = base.iter().zip(&reverted).map(|(a, b)| (a - b).abs()).sum();
+        assert!(
+            back < 1e-3,
+            "clearing reverts brightness, residual = {back}"
+        );
     }
 
     #[test]
