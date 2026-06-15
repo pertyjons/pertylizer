@@ -14,8 +14,9 @@ use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{
     BipolarValue, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity, Waveform,
@@ -37,6 +38,8 @@ pub struct RingMod {
     carrier_phase: Phase,
     note_freq: Hertz,
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Buffers
     output_buffer: AudioBuffer,
@@ -53,6 +56,7 @@ impl RingMod {
             carrier_phase: Phase::ZERO,
             note_freq: Hertz::A4,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -60,12 +64,21 @@ impl RingMod {
     /// Compute the effective carrier frequency based on parameters.
     #[inline]
     fn effective_carrier_freq(&self) -> Hertz {
+        // Generic mod destinations (all per-block constants here).
+        let freq_ratio = self
+            .mod_offsets
+            .effective("freq_ratio", self.freq_ratio.as_f32());
+        let carrier_base = self
+            .mod_offsets
+            .effective("carrier_freq", self.carrier_freq.as_f32());
         // Freq ratio maps 0.0-1.0 to 0.25x-4.0x multiplier
-        let ratio = 0.25 * (16.0_f32).powf(self.freq_ratio.as_f32());
+        let ratio = 0.25 * (16.0_f32).powf(freq_ratio);
 
         // Keyboard tracking: interpolate between fixed and note-relative
-        let tracking = self.track_keyboard.as_f32();
-        let fixed = self.carrier_freq.as_f32() * ratio;
+        let tracking = self
+            .mod_offsets
+            .effective("key_track", self.track_keyboard.as_f32());
+        let fixed = carrier_base * ratio;
         let tracked = self.note_freq.as_f32() * ratio;
 
         Hertz::new(fixed * (1.0 - tracking) + tracked * tracking)
@@ -205,7 +218,7 @@ impl PolyModule for RingMod {
         let freq_cv = inputs.get(PortName::FREQ_CV);
 
         let carrier_freq = self.effective_carrier_freq();
-        let mix = self.mix.as_f32();
+        let mix = self.mod_offsets.effective("mix", self.mix.as_f32());
 
         for i in 0..num_samples {
             let in_sample = input.map_or(0.0, |buf| buf[i]);
@@ -276,6 +289,10 @@ impl PolyModule for RingMod {
         ModuleType::RingMod
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.carrier_phase = Phase::ZERO;
     }
@@ -303,6 +320,25 @@ mod tests {
         let rm = RingMod::new();
         assert_eq!(rm.carrier_freq.as_f32(), 440.0);
         assert_eq!(rm.carrier_waveform, Waveform::Sine);
+    }
+
+    /// `freq_ratio` is now a working mod destination: a positive offset raises
+    /// the effective carrier frequency through its 0.25x–4x mapping.
+    #[test]
+    fn freq_ratio_mod_offset_raises_carrier() {
+        let mut rm = RingMod::new();
+        let desc = rm.descriptor();
+        rm.mod_offsets_mut().unwrap().populate(&desc);
+
+        let base = rm.effective_carrier_freq().as_f32();
+        rm.set_mod_offset("freq_ratio", 0.3);
+        let modded = rm.effective_carrier_freq().as_f32();
+        assert!(
+            modded > base * 1.05,
+            "freq_ratio mod should raise carrier: {modded} vs {base}"
+        );
+        rm.clear_mod_offsets();
+        assert!((rm.effective_carrier_freq().as_f32() - base).abs() < 0.001);
     }
 
     #[test]
