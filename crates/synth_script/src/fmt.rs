@@ -7,7 +7,9 @@
 //! rowan-CST path (decision #11). Comments are reattached by line: an own-line
 //! comment leads the following statement (a leading comment block is always
 //! followed by exactly one blank line before its statement); a trailing comment
-//! stays on its code line and never forces a blank line.
+//! stays on its code line and never forces a blank line. The final `out`
+//! statement is set off by a blank line whenever any code precedes it, so the end
+//! of the program is visually clear (a lone `out` gets none).
 //!
 //! `format` is idempotent: `format(format(x)) == format(x)`.
 //!
@@ -145,6 +147,9 @@ fn render(program: &Program, comments: &[Comment], lines: &LineMap) -> String {
         });
     }
 
+    // The final `out` statement is the last one (locals are pushed before it).
+    let out_index = program.output.is_some().then(|| stmts.len() - 1);
+
     let mut out: Vec<String> = Vec::new();
     let mut next = 0usize; // index into comments (sorted by line)
     for (i, stmt) in stmts.iter().enumerate() {
@@ -152,6 +157,12 @@ fn render(program: &Program, comments: &[Comment], lines: &LineMap) -> String {
         let (sline, eline) = (*sline, *eline);
         // Exactly one blank line between the `src` header and the body.
         if i == body_start && body_start > 0 {
+            out.push(String::new());
+        }
+        // Set the final `out` off with a blank line when any code precedes it, so
+        // the end of the program is visually clear. Skipped if a blank is already
+        // there (e.g. the src/body separator) to avoid doubling.
+        if Some(i) == out_index && i > 0 && out.last().is_some_and(|l| !l.is_empty()) {
             out.push(String::new());
         }
         // Own-line comments that precede this statement, then exactly one blank
@@ -389,9 +400,24 @@ mod tests {
     #[test]
     fn trailing_comment_does_not_force_blank_line() {
         // A comment on a code line stays on that line and does NOT insert a blank
-        // before the next statement -- only own-line comment blocks do.
-        let out = fmt("let a = 1 # first\nout = a");
-        assert_eq!(out, "let a = 1  # first\nout = a\n");
+        // before the next statement -- only own-line comment blocks do. (`let b`
+        // follows `let a` with no blank; the blank before `out` is the separate
+        // end-of-program rule, not the trailing comment.)
+        let out = fmt("let a = 1 # first\nlet b = 2\nout = a + b");
+        assert_eq!(out, "let a = 1  # first\nlet b = 2\n\nout = a + b\n");
+    }
+
+    #[test]
+    fn out_set_off_by_blank_when_code_precedes() {
+        // The final `out` gets a blank line before it when code precedes it, so
+        // the end of the program is clear.
+        assert_eq!(fmt("let d = 0.5\nout = d"), "let d = 0.5\n\nout = d\n");
+    }
+
+    #[test]
+    fn out_alone_has_no_leading_blank() {
+        // ... but only if there is code before it: a lone `out` is not.
+        assert_eq!(fmt("out = velocity"), "out = velocity\n");
     }
 
     #[test]
