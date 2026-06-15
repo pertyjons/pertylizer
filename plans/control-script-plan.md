@@ -254,16 +254,26 @@ the remaining sign-offs (persistence, caps, diagnostics).
 > param offset. A routing's amount cell is now genuinely scalar-**or-expression**.
 > Remaining S2.2: **S2.2b-2iv** (save/snapshot for round-trip persistence). Then
 > **S2.3** (MCP authoring) and **S2.4** (GUI editor, deferred).
-- [ ] **S2.3** — MCP authoring + inspection. **IN PROGRESS:**
+- [x] **S2.3** — MCP authoring + inspection. **SHIPPED.**
   - [x] **S2.3a** — Inspection. **SHIPPED `ac99faa`.** `get_mod_matrix_routings` reports each
     slot's `script` source (`MatrixRoutingInfo.script: Option<String>`, skip-if-none); the bridge
     threads `ModuleStateSnapshot.scripts` into `collect_mod_matrix_routings`, which iterates the
     union of param + scripted slots (a script-only slot is surfaced). Script-free output unchanged.
-  - [ ] **S2.3b** — Authoring. A new MCP tool `set_mod_matrix_script { instrument_id, module_id,
-    slot, source }` (and clear via empty/None) → `SynthBridge` trait method → `AppSynthBridge` →
-    `session.set_mod_script` (compile-error → tool error). Wire the `#[tool]` + dispatch entry +
-    param struct in `synth_mcp/server.rs`. Optionally a `format_yams` tool (`synth_script::format`).
-- [ ] **S2.4** — GUI: expand an amount cell into an expression editor (DEFERRED).
+  - [x] **S2.3b** — Authoring. **SHIPPED `2b15ee1`.** MCP tool `set_mod_matrix_script
+    { instrument_id, module_id, slot (1-based), source }` → `SynthBridge::set_mod_matrix_script`
+    → `AppSynthBridge` (range-check, 1-based→0-based) → `session.set_mod_script` (compile error →
+    tool error with diagnostics) / `session.clear_mod_script` (empty source clears). Wired as
+    `#[tool]` + dispatch entry + `SetModMatrixScriptParam`. Integration-tested end-to-end.
+    (`format_yams` tool not added — `set` already canonicalizes nothing; revisit with S2.4.)
+- [ ] **S2.4** — GUI: expand an amount cell into an expression editor. **DEFERRED** — interactive
+  egui, not headless-testable (verify in-app); also closes the GUI-panel-save scripts gap (S2.2b-2iv).
+
+> **STEP 2 COMPLETE — non-deferred scope (2026-06-15).** YAMS is a fully working modulation
+> compute layer: language toolchain (S2.1) → scalar-or-expression amount cell, end-to-end and
+> round-tripping (S2.2) → MCP authoring + inspection (S2.3). The **only** remaining item is the
+> **S2.4 GUI editor, explicitly DEFERRED** for an interactive egui session (it needs in-app
+> verification, like the S1.5 markers did). The autonomous build loop has shipped everything
+> headless-verifiable in this plan.
 
 ---
 
