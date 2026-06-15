@@ -215,15 +215,22 @@ the remaining sign-offs (persistence, caps, diagnostics).
     each module object's `additionalProperties` *unset* (defaults true), so a `scripts` key
     validates with **no gen_schemas change** — both schema tests stay green. Round-trip
     unit-tested. No save/load wiring yet (field always empty).
-  - [ ] **S2.2b-2ii** — Engine plumbing (both directions): `EngineCommand::SetModScript
-    { instrument, module, slot, script: Option<Arc<BoundScript>> }` → audio thread calls
-    `set_mod_script` (the Arc is `Send`); and `ModuleStateSnapshot.scripts` populated from
-    `mod_scripts()` (`bound.source`) for the save side.
-  - [ ] **S2.2b-2iii** — pertylizer wiring + `synth_script` dep (**not yet a dependency**;
-    add it — non-RT authoring consumer). Load: `apply_patch` compiles each `ModuleState.scripts`
-    text via `synth_script::compile` → `into_bound` → session sends `SetModScript`. Save:
-    `build_patch_from_snapshot` fills `ModuleState.scripts` from `snapshot.scripts`. Round-trip
-    via a hand-crafted project JSON (no MCP/GUI authoring until S2.3/S2.4).
+  - [x] **S2.2b-2ii** — Engine **write** channel. **SHIPPED `a219688`.** `EngineCommand::
+    SetModScript { instrument_id, module_id, slot, script: Option<Arc<BoundScript>> }` →
+    `handle_set_mod_script` (mirrors `handle_set_module_param`: template voice graph + every
+    live voice) → `ModuleGraph::set_mod_script` → `module.set_mod_script`. Arc cloned per voice
+    (atomic refcount, no deep-copy). Wired through the 3 exhaustive `EngineCommand` matches
+    (Debug prints source text; `try_clone` Arc-clones; hub `can_modify_params`). Dispatch
+    skips `update_shared_graph` (scripts not in that snapshot — correct). Graph unit-tested.
+  - [ ] **S2.2b-2iii** — pertylizer **load** wiring + `synth_script` dep (**not yet a
+    dependency** — add it, non-RT authoring consumer). `apply_patch` compiles each
+    `ModuleState.scripts` text via `synth_script::compile` → `into_bound` → a session method
+    sends `SetModScript`. Compile errors = disable-and-keep (skip the slot, keep the project).
+    Test via a hand-crafted project JSON (no MCP/GUI authoring until S2.3/S2.4).
+  - [ ] **S2.2b-2iv** — Engine **read** channel + save wiring (round-trip persistence).
+    `ModuleStateSnapshot.scripts` from `mod_scripts()` (`bound.source`);
+    `build_patch_from_snapshot` fills `ModuleState.scripts`. Can follow eval — a hand-authored
+    project already exercises load.
   - [ ] **S2.2c** — Voice eval: per-slot per-voice `RegisterFile`; fill `sources` from
     `ScriptInput` (Source via existing `resolve_source`; Context via gate/gate_on/age/sr);
     `script.eval` → offset → `apply_mod_offset_addr`. When a slot has a script, it **replaces**
