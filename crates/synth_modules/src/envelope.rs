@@ -5,8 +5,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{
     BipolarValue, MidiNote, NormalizedValue, PortName, SampleRate, Seconds, Velocity,
@@ -147,6 +148,8 @@ pub struct Envelope {
     override_decay: Option<Seconds>,
     override_sustain: Option<NormalizedValue>,
     override_release: Option<Seconds>,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 }
 
 impl Envelope {
@@ -173,6 +176,7 @@ impl Envelope {
             override_decay: None,
             override_sustain: None,
             override_release: None,
+            mod_offsets: ParamModOffsets::new(),
         }
     }
 
@@ -446,6 +450,44 @@ impl PolyModule for Envelope {
         let gate_reader = inputs.reader(PortName::GATE, 0.0);
         let velocity_reader = inputs.reader(PortName::VELOCITY, 1.0);
 
+        // The ADSR params + curves + vel_sens are read per sample inside
+        // process_sample / trigger, so apply their generic mod offsets to the
+        // fields for the block and restore after (single loop, no early return).
+        // Sequencer automation overrides (override_*) still take precedence over
+        // the mod offset for attack/decay/sustain/release, since process_sample
+        // reads override-or-base.
+        let saved = (
+            self.attack,
+            self.decay,
+            self.sustain,
+            self.release,
+            self.velocity_sensitivity,
+            self.attack_curve,
+            self.decay_curve,
+            self.release_curve,
+        );
+        self.attack = Seconds::new(self.mod_offsets.effective("attack", self.attack.as_f32()));
+        self.decay = Seconds::new(self.mod_offsets.effective("decay", self.decay.as_f32()));
+        self.sustain =
+            NormalizedValue::new(self.mod_offsets.effective("sustain", self.sustain.as_f32()));
+        self.release = Seconds::new(self.mod_offsets.effective("release", self.release.as_f32()));
+        self.velocity_sensitivity = NormalizedValue::new(
+            self.mod_offsets
+                .effective("vel_sens", self.velocity_sensitivity.as_f32()),
+        );
+        self.attack_curve = BipolarValue::new(
+            self.mod_offsets
+                .effective("atk_curve", self.attack_curve.as_f32()),
+        );
+        self.decay_curve = BipolarValue::new(
+            self.mod_offsets
+                .effective("dec_curve", self.decay_curve.as_f32()),
+        );
+        self.release_curve = BipolarValue::new(
+            self.mod_offsets
+                .effective("rel_curve", self.release_curve.as_f32()),
+        );
+
         for i in 0..context.samples.as_usize() {
             if gate_reader.is_connected() {
                 let gate_val = gate_reader[i];
@@ -459,6 +501,18 @@ impl PolyModule for Envelope {
             }
             self.output_buffer[i] = self.process_sample();
         }
+
+        // Restore the base params so next block re-applies offsets from scratch.
+        (
+            self.attack,
+            self.decay,
+            self.sustain,
+            self.release,
+            self.velocity_sensitivity,
+            self.attack_curve,
+            self.decay_curve,
+            self.release_curve,
+        ) = saved;
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
@@ -520,6 +574,10 @@ impl PolyModule for Envelope {
         ModuleType::Envelope
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.stage = EnvelopeStage::Idle;
         self.level = NormalizedValue::MIN;
@@ -579,6 +637,58 @@ mod tests {
     fn test_envelope_creation() {
         let env = Envelope::new();
         assert_eq!(env.stage, EnvelopeStage::Idle);
+    }
+
+    /// `sustain` is a working mod destination via the generic store: with the
+    /// gate held high the output settles at the (modulated) sustain level, and
+    /// the base field is restored after the block.
+    #[test]
+    fn sustain_mod_offset_changes_level_and_restores() {
+        use std::collections::HashMap;
+        let mut env = Envelope::new();
+        let desc = env.descriptor();
+        env.mod_offsets_mut().unwrap().populate(&desc);
+
+        // ~6000 samples: long enough to pass attack (0.01s) + decay (0.1s) @ 48k.
+        let n = 6000;
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(n),
+            ..ProcessContext::default()
+        };
+        fn settled(env: &mut Envelope, ctx: &ProcessContext, n: usize) -> f32 {
+            env.reset();
+            let mut gate = AudioBuffer::new(n);
+            for i in 0..n {
+                gate[i] = 1.0; // hold gate high
+            }
+            let in_ports = [(PortName::GATE, &gate)];
+            let inputs = InputPorts::new(&in_ports);
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(n));
+            env.process(inputs, &mut outs, ctx);
+            outs[&PortName::OUT][n - 1]
+        }
+
+        let base = settled(&mut env, &ctx, n); // sustaining at a positive level
+        assert!(base > 0.5, "envelope sustaining, got {base}");
+
+        let sustain_before = env.sustain.as_f32();
+        env.set_mod_offset("sustain", -0.4);
+        let lowered = settled(&mut env, &ctx, n);
+        assert!(
+            (env.sustain.as_f32() - sustain_before).abs() < 1e-6,
+            "sustain field must be restored after process"
+        );
+        assert!(
+            lowered < base - 0.1,
+            "sustain offset should lower the level: {lowered} vs {base}"
+        );
+
+        env.clear_mod_offsets();
+        assert!(
+            (settled(&mut env, &ctx, n) - base).abs() < 0.05,
+            "clearing reverts sustain"
+        );
     }
 
     #[test]
