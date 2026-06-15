@@ -233,11 +233,20 @@ the remaining sign-offs (persistence, caps, diagnostics).
     `ModuleStateSnapshot.scripts` from `mod_scripts()` (`bound.source`);
     `build_patch_from_snapshot` fills `ModuleState.scripts`. Can follow eval — a hand-authored
     project already exercises load.
-  - [ ] **S2.2c** — Voice eval: per-slot per-voice `RegisterFile`; fill `sources` from
-    `ScriptInput` (Source via existing `resolve_source`; Context via gate/gate_on/age/sr);
-    `script.eval` → offset → `apply_mod_offset_addr`. When a slot has a script, it **replaces**
-    `source*amount` (decision #1 — script owns the value, routing owns the dest). State resets
-    on note-on; PRNG re-seeds per voice index.
+  - [x] **S2.2c** — Voice eval. **SHIPPED `8bc182a`.** The Voice evaluates a slot's script each
+    control block: per-(voice,slot) `RegisterFile`, a stack `[f32; MAX_SOURCES]` filled from the
+    script's `ScriptInput`s (Source reuses `resolve_source`; Context = gate/gate_on/age/sr; Zero
+    = 0), `eval` → offset → `apply_mod_offset_addr`. A scripted slot **replaces** `source×amount`
+    (decision #1); script-free matrices take the exact old scalar path (317 engine tests green).
+    State resets + PRNG re-seeds per (voice,slot) on note-on. RT-safe (no alloc/lock/log/panic).
+    End-to-end tested (a `out = -1` script silences the amp). `age` reads block-start (~1 block on
+    block 0 — the steal-priority age bump precedes process; not worth perturbing).
+
+> **MILESTONE (2026-06-15): YAMS scripts are AUDIBLE end-to-end.** persist
+> (`ModuleState.scripts`) → compile-on-load (`SetModScript`) → per-voice eval →
+> param offset. A routing's amount cell is now genuinely scalar-**or-expression**.
+> Remaining S2.2: **S2.2b-2iv** (save/snapshot for round-trip persistence). Then
+> **S2.3** (MCP authoring) and **S2.4** (GUI editor, deferred).
 - [ ] **S2.3** — MCP authoring (source text or structured route list) + inspection.
 - [ ] **S2.4** — GUI: expand an amount cell into an expression editor (DEFERRED).
 
