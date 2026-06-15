@@ -1,0 +1,549 @@
+{
+  "file_type": "project",
+  "version": "1.0",
+  "instruments": [
+    {
+      "id": 2,
+      "name": "YAMS Script Demo",
+      "channel": 1,
+      "volume": 0.9,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description": "Demo synth voice for the YAMS scripts. Signal path: osc-1 (saw) -> flt-1 (LP) -> amp-1 -> out-1; env-1 -> amp-1.cv. lfo-1 (~5 Hz) is a shared script source (cable-free - read via the address lfo-1.out). mmx-1 carries 8 YAMS-scripted routings: (1) flt cutoff = lag(velocity,40ms); (2) osc detune = LFO vibrato whose depth mod_wheel opens via lerp; (3) amp level = lfo*env tremolo; (4) flt resonance = sin(phasor(3)*tau) wobble gated by a velocity ternary; (5) amp pan = phasor auto-pan widening over age via smoothstep; (6) lfo rate = sah(white(), clock) stepped randomness; (7) flt drive = slew-shaped LFO; (8) osc level = white() shimmer. lfo-2 is a dedicated vibrato LFO (-> osc-1.fm) whose depth is automated 0->1->0 (because the mod_wheel macro is not sequencer-automatable).",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "patch": {
+        "name": "YAMS Script Demo",
+        "version": "1.0",
+        "description": "Saw bass with a lowpass filter, built as a live showcase of YAMS scripts. The core tone is deliberately simple (osc-1 sawtooth -> flt-1 LP 600 Hz, res 0.3 -> amp-1, ADSR envelope for volume) so the modulation is what you hear. All motion comes from mmx-1's eight scripted slots, and they respond to playing: hard velocity opens the filter (slot 1, lag-smoothed) and boosts the resonance wobble (slot 4, velocity ternary); longer notes let the auto-pan (slot 5) and tremolo (slot 3) sweep. lfo-1 acts as a shared modulation engine for several scripts. Pitch instability/grit comes from white noise on the oscillator level (slot 8) and slew-shaped drive (slot 7), while sah (slot 6) jumps the LFO rate in random steps. The vibrato has its own LFO (lfo-2 -> osc FM) with automated depth. Edit any script via the fx button on its row to hear it shape the sound live.",
+        "modules": [
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "anti_alias": "polyblep",
+              "detune": 0.0,
+              "fm_amt": 0.05,
+              "fm_mode": "exponential",
+              "frequency": 110.0,
+              "level": 1.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": "sawtooth",
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 600.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "env_amt": 0.25,
+              "key_track": 0.0,
+              "model": "standard",
+              "morph": 0.0,
+              "resonance": 0.3,
+              "type": "lowpass"
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 448.0,
+              "y": 320.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.01,
+              "dec_curve": 0.0,
+              "decay": 0.25,
+              "rel_curve": 0.0,
+              "release": 0.4,
+              "sustain": 0.6,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "lfo-1",
+            "type": "lfo",
+            "position": {
+              "x": 1600.0,
+              "y": 1696.0
+            },
+            "parameters": {
+              "depth": 1.0,
+              "phase": 0.0,
+              "rate": 5.0,
+              "waveform": "sine"
+            }
+          },
+          {
+            "id": "lfo-2",
+            "type": "lfo",
+            "position": {
+              "x": 32.0,
+              "y": 384.0
+            },
+            "parameters": {
+              "depth": 0.0,
+              "phase": 0.0,
+              "rate": 5.5,
+              "waveform": "sine"
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 832.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1184.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "mmx-1",
+            "type": "mod_matrix",
+            "position": {
+              "x": 1600.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "grid_size": "2x2",
+              "slot_10_amount": 0.0,
+              "slot_10_dest": "none",
+              "slot_10_enabled": 1.0,
+              "slot_10_source": "none",
+              "slot_11_amount": 0.0,
+              "slot_11_dest": "none",
+              "slot_11_enabled": 1.0,
+              "slot_11_source": "none",
+              "slot_12_amount": 0.0,
+              "slot_12_dest": "none",
+              "slot_12_enabled": 1.0,
+              "slot_12_source": "none",
+              "slot_13_amount": 0.0,
+              "slot_13_dest": "none",
+              "slot_13_enabled": 1.0,
+              "slot_13_source": "none",
+              "slot_14_amount": 0.0,
+              "slot_14_dest": "none",
+              "slot_14_enabled": 1.0,
+              "slot_14_source": "none",
+              "slot_15_amount": 0.0,
+              "slot_15_dest": "none",
+              "slot_15_enabled": 1.0,
+              "slot_15_source": "none",
+              "slot_16_amount": 0.0,
+              "slot_16_dest": "none",
+              "slot_16_enabled": 1.0,
+              "slot_16_source": "none",
+              "slot_1_amount": 0.0,
+              "slot_1_dest": "flt-1.cutoff",
+              "slot_1_enabled": 1.0,
+              "slot_1_source": "none",
+              "slot_2_amount": 0.0,
+              "slot_2_dest": "osc-1.detune",
+              "slot_2_enabled": 1.0,
+              "slot_2_source": "none",
+              "slot_3_amount": 0.0,
+              "slot_3_dest": "amp-1.level",
+              "slot_3_enabled": 1.0,
+              "slot_3_source": "none",
+              "slot_4_amount": 0.0,
+              "slot_4_dest": "flt-1.resonance",
+              "slot_4_enabled": 1.0,
+              "slot_4_source": "none",
+              "slot_5_amount": 0.0,
+              "slot_5_dest": "amp-1.pan",
+              "slot_5_enabled": 1.0,
+              "slot_5_source": "none",
+              "slot_6_amount": 0.0,
+              "slot_6_dest": "lfo-1.rate",
+              "slot_6_enabled": 1.0,
+              "slot_6_source": "none",
+              "slot_7_amount": 0.0,
+              "slot_7_dest": "flt-1.drive",
+              "slot_7_enabled": 1.0,
+              "slot_7_source": "none",
+              "slot_8_amount": 0.0,
+              "slot_8_dest": "osc-1.level",
+              "slot_8_enabled": 1.0,
+              "slot_8_source": "none",
+              "slot_9_amount": 0.0,
+              "slot_9_dest": "none",
+              "slot_9_enabled": 1.0,
+              "slot_9_source": "none"
+            },
+            "scripts": {
+              "1": "# Velocity -> filter brightness, smoothed (lag) so it glides instead of stepping.\nout = lag(velocity, 40ms)",
+              "2": "# Pitch vibrato (LFO -> detune); the mod wheel opens the depth from subtle to wide.\nsrc vib = lfo-1.out\nout = vib * lerp(0.05, 0.4, mod_wheel)",
+              "3": "# Tremolo that fades with the note: LFO times the envelope, so it tapers on release.\nsrc lfo = lfo-1.out\nsrc eg = env-1.out\nout = lfo * eg * 0.4",
+              "4": "# Built-in 3 Hz resonance wobble (phasor + sin); only strong on hard hits (velocity > 0.7).\nlet lfo2 = sin(phasor(3) * tau) * 0.5\nout = velocity > 0.7 ? lfo2 : lfo2 * 0.2",
+              "5": "# Slow auto-pan that widens as the note ages (smoothstep ramps it in over 1.5 s).\nout = sin(phasor(0.3) * tau) * smoothstep(0, 1.5, age) * 0.7",
+              "6": "# Sample & hold: grab a new random value 4x/sec (clocked by a sine zero-crossing)\n# and use it to jump the main LFO's rate around in steps.\nout = sah(white(), sin(phasor(4) * tau)) * 0.3",
+              "7": "# Slew limiter on the LFO: slow rise (2/s), fast fall (8/s) makes an asymmetric\n# ramp that animates the filter drive.\nsrc lfo = lfo-1.out\nout = slew(lfo, 2, 8) * 0.4",
+              "8": "# White noise on the oscillator level - a subtle amplitude shimmer / analog instability.\nout = white() * 0.08"
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "lfo-2",
+              "out"
+            ],
+            "to": [
+              "osc-1",
+              "fm"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "left"
+            ],
+            "to": [
+              "out-1",
+              "in_l"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "right"
+            ],
+            "to": [
+              "out-1",
+              "in_r"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 2050.0,
+            "height": 2196.0
+          }
+        }
+      }
+    }
+  ],
+  "active_instrument_id": 2,
+  "author": {
+    "name": "Per Jonsson",
+    "email": "pertyjons@gmail.com"
+  },
+  "song": {
+    "name": "YAMS Script Demo",
+    "author": "Per Jonsson (built via MCP with Claude)",
+    "description": "Demonstration project for YAMS control scripts on the Mod Matrix (control-script Step 2 / S2.4). YAMS is a small expression language: instead of scalar amount x source, any Mod Matrix slot can run a script whose `out` value becomes the modulation offset - evaluated per voice and per control block in real time. The project has ONE instrument (\"YAMS Script Demo\") with 8 scripted routings, each showing different language features (macros like velocity/mod_wheel, context like age, stateful functions lag/phasor/sah/slew, white noise via white, math, ternaries), plus an automation lane that sweeps the vibrato depth. An 8-beat bassline loop (112 BPM) plays so the modulation is audible. Open the fx button on a Mod Matrix row in the patch editor to view/edit the scripts.",
+    "patterns": [
+      {
+        "id": 0,
+        "name": "YAMS Demo Riff",
+        "description": "8-beat bassline riff in A minor (A1-G2), 112 BPM, looped 0->8. Velocity is deliberately varied (58-122) so the velocity-driven scripts are audible: hard hits (118/122) open the filter and light up the resonance wobble, soft ones (58-68) leave it dark. Longer notes (E2 on beat 2, C2 on beat 6) give the age-based auto-pan and tremolo room to sweep. The pattern also carries the automation lane module:lfo:2:depth (0->1->0, S-curve) that swells the vibrato depth in and out each loop.",
+        "length": 7680,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 720,
+            "pitch": 33,
+            "velocity": 0.92913383,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 480,
+            "pitch": 33,
+            "velocity": 0.4566929,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1440,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.72440946,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 1920,
+            "duration": 960,
+            "pitch": 40,
+            "velocity": 0.88188976,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 2880,
+            "duration": 480,
+            "pitch": 38,
+            "velocity": 0.53543305,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 3360,
+            "duration": 480,
+            "pitch": 36,
+            "velocity": 0.7559055,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 6,
+            "start": 3840,
+            "duration": 720,
+            "pitch": 33,
+            "velocity": 0.96062994,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 7,
+            "start": 4800,
+            "duration": 480,
+            "pitch": 43,
+            "velocity": 0.503937,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 8,
+            "start": 5280,
+            "duration": 480,
+            "pitch": 40,
+            "velocity": 0.81889766,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 9,
+            "start": 5760,
+            "duration": 1440,
+            "pitch": 36,
+            "velocity": 0.8346457,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 10,
+            "start": 7200,
+            "duration": 480,
+            "pitch": 40,
+            "velocity": 0.6456693,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [
+          {
+            "target": {
+              "Module": {
+                "instrument": 2,
+                "module_type": "lfo",
+                "instance": 2,
+                "param_id": "depth"
+              }
+            },
+            "points": [
+              {
+                "tick": 0,
+                "value": 0.0,
+                "curve": "SCurve"
+              },
+              {
+                "tick": 3840,
+                "value": 1.0,
+                "curve": "SCurve"
+              },
+              {
+                "tick": 7200,
+                "value": 0.0,
+                "curve": "SCurve"
+              }
+            ]
+          }
+        ],
+        "processors": [],
+        "next_note_id": 11
+      }
+    ],
+    "next_pattern_id": 1,
+    "tracks": [
+      {
+        "id": 0,
+        "name": "YAMS Demo",
+        "description": "",
+        "instrument": 2,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      }
+    ],
+    "next_track_id": 1,
+    "arrangement": [
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 0,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      }
+    ],
+    "tempo_changes": [],
+    "time_signature_changes": [],
+    "default_tempo": 112.0,
+    "default_time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 64,
+      "ticks_per_row": 240
+    },
+    "next_return_bus_id": 0
+  },
+  "global": {
+    "master_volume": 1.0,
+    "octave_offset": -1,
+    "glide_time": 0.0
+  }
+}

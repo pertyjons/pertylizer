@@ -438,6 +438,19 @@ arrow badge with tooltip). What remains is the in-canvas visual + navigation pol
   Two-way matrix↔graph navigation — was Phase 4 of the (now-completed, removed)
   mod-matrix-routing-visibility plan; Phases 1–3 (MCP surface, framed zone, header badges)
   shipped in v0.289.0.
+- [ ] **Reflect YAMS-script sources in the per-knob source markers + macro rail (S2.4 follow-up).**
+  After the expression editor shipped, a scripted Mod Matrix slot has no slot *source* address —
+  its sources live inside the script (`src lfo = lfo-1.out`, plus macros like `velocity`/`mod_wheel`).
+  `PatchAnalysis::from_panels` (`gui/patch_editor.rs`) only reads `slot_addrs` source/dest, so the
+  modules/macros a script reads are **not** marked (the S1.5a/b source glyphs + macro-source rail stay
+  dark for script-only sources). Fix: for each entry in `panel.slot_scripts`, extract its referenced
+  sources and fold them into `mod_matrix_sources` / `mod_matrix_macros` alongside the scalar slot
+  sources. Cleanest extraction is `synth_script::compile(text)` → `program.into_bound(text).inputs`
+  (a `Vec<ScriptInput>`; `ScriptInput::Source(SrcAddr::Module{..})` → resolve to `ModuleId` like the
+  existing slot-source path, `SrcAddr::Macro(m)` → `mod_matrix_macros`). **Caveat:** `from_panels`
+  runs per frame, so compiling every scripted slot each frame is wasteful — cache the extracted
+  source set per (slot, script-text) and invalidate when `slot_scripts` changes, rather than
+  recompiling unconditionally.
 
 ---
 

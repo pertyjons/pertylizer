@@ -5727,7 +5727,9 @@ fn draw_mod_matrix_grid(
 
                 let has_source = src_addr.is_some();
                 let has_dest = dst_addr.is_some();
-                let fully_configured = has_source && has_dest;
+                // A scripted slot supplies its own sources (via the expression), so
+                // it routes with only a destination. A scalar slot needs both ends.
+                let fully_configured = has_dest && (has_source || is_scripted);
 
                 // Slot state determines the frame stroke + the row tint:
                 //  - Active (enabled + both ends): purple accent, full opacity
@@ -5783,6 +5785,12 @@ fn draw_mod_matrix_grid(
                                                 ri::CLOSE_CIRCLE_LINE,
                                                 theme().colors.text_dim,
                                                 "Routing disabled",
+                                            )
+                                        } else if is_scripted {
+                                            (
+                                                ri::ALERT_LINE,
+                                                theme().colors.accent_orange,
+                                                "Expression has no effect — set a Destination",
                                             )
                                         } else {
                                             (
@@ -5995,10 +6003,13 @@ fn draw_mod_matrix_grid(
         let ctx = ui.ctx().clone();
         let mut keep_open = true;
         let mut closed_by_action = false;
-        egui::Window::new(format!("Slot {} — Expression", editor.slot + 1))
+        egui::Window::new(format!("Slot {} - Expression", editor.slot + 1))
             .id(egui::Id::new(("mm_expr_editor", state.id, editor.slot)))
             .collapsible(false)
             .resizable(true)
+            .default_size(egui::vec2(520.0, 340.0))
+            .min_width(320.0)
+            .min_height(200.0)
             .open(&mut keep_open)
             .show(&ctx, |ui| {
                 ui.label(
@@ -6008,11 +6019,17 @@ fn draw_mod_matrix_grid(
                     .size(theme().fonts.size_small)
                     .color(theme().colors.text_secondary),
                 );
-                ui.add(
+                // The editor fills the window: it takes the full width and all the
+                // height left after reserving room for the status line + button row,
+                // so dragging the window corner grows the text area. Long scripts
+                // scroll within the code editor.
+                let reserved = 52.0;
+                let editor_height = (ui.available_height() - reserved).max(80.0);
+                ui.add_sized(
+                    egui::vec2(ui.available_width(), editor_height),
                     egui::TextEdit::multiline(&mut editor.draft)
                         .code_editor()
-                        .desired_rows(4)
-                        .desired_width(360.0),
+                        .desired_rows(4),
                 );
 
                 // Live compile → status line (mirrors `session.set_mod_script`).
@@ -6060,11 +6077,12 @@ fn draw_mod_matrix_grid(
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(status.is_ok(), egui::Button::new("Apply"))
-                        .on_hover_text("Install this expression on the slot")
+                        .on_hover_text("Install this expression on the slot (keeps editing)")
                         .clicked()
                     {
+                        // Install but leave the popup open so the user can keep
+                        // iterating (Close / ✕ dismisses it).
                         mod_script_actions.push((editor.slot, Some(editor.draft.clone())));
-                        closed_by_action = true;
                     }
                     if ui
                         .button("Clear")
