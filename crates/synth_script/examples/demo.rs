@@ -32,7 +32,7 @@ fn show_valid(src: &str) {
     }
     match format(src) {
         Ok(canon) => {
-            print!("├─ yamsfmt\n");
+            println!("├─ yamsfmt");
             for line in canon.lines() {
                 println!("│  {line}");
             }

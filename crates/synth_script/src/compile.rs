@@ -18,9 +18,10 @@ use crate::symbols::{
     resolve_fn,
 };
 use synth_core::script::{
-    Builtin, CompiledScript, MAX_INSTRUCTIONS, MAX_LOCALS, MAX_NESTING_DEPTH, MAX_SOURCE_LEN,
-    MAX_SOURCES, MAX_STATE, Op, safe_div,
+    BoundScript, Builtin, CompiledScript, MAX_INSTRUCTIONS, MAX_LOCALS, MAX_NESTING_DEPTH,
+    MAX_SOURCE_LEN, MAX_SOURCES, MAX_STATE, Op, ScriptContext, ScriptInput, safe_div,
 };
+use synth_core::{MacroSource, SrcAddr};
 
 /// One value the engine fills into a source register before evaluation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -41,6 +42,59 @@ pub enum SourceInput {
 pub struct CompiledProgram {
     pub script: CompiledScript,
     pub inputs: Vec<SourceInput>,
+}
+
+impl CompiledProgram {
+    /// Bind this program to engine-resolvable addresses, producing the RT-side
+    /// [`BoundScript`] the voice runs. `source` is the canonical YAMS text kept
+    /// with it for persistence and inspection. A module input whose prefix is not
+    /// a known module type binds to [`ScriptInput::Zero`] (reads `0.0`) rather
+    /// than failing — disable-and-keep, consistent with Step 1's dangling-address
+    /// policy (decision #3).
+    #[must_use]
+    pub fn into_bound(self, source: String) -> BoundScript {
+        let inputs = self.inputs.iter().map(input_to_runtime).collect();
+        BoundScript::new(self.script, inputs, source)
+    }
+}
+
+/// Map one compiler source input to the runtime [`ScriptInput`] the voice fills.
+fn input_to_runtime(input: &SourceInput) -> ScriptInput {
+    match input {
+        SourceInput::Macro(m) => ScriptInput::Source(SrcAddr::Macro(macro_to_runtime(*m))),
+        SourceInput::Context(c) => ScriptInput::Context(context_to_runtime(*c)),
+        SourceInput::Module {
+            module,
+            instance,
+            member,
+        } => {
+            // Reconstruct the canonical address and let `SrcAddr::parse` resolve
+            // the prefix → module type (the same parser the scalar path uses), so
+            // an unknown prefix degrades to a zero register instead of erroring.
+            let addr = format!("{module}-{instance}.{member}");
+            SrcAddr::parse(&addr).map_or(ScriptInput::Zero, ScriptInput::Source)
+        }
+    }
+}
+
+fn macro_to_runtime(m: Macro) -> MacroSource {
+    match m {
+        Macro::Velocity => MacroSource::Velocity,
+        Macro::ModWheel => MacroSource::ModWheel,
+        Macro::Aftertouch => MacroSource::Aftertouch,
+        Macro::PitchBend => MacroSource::PitchBend,
+        Macro::Note => MacroSource::NoteNumber,
+        Macro::PolyAt => MacroSource::PolyAftertouch,
+    }
+}
+
+fn context_to_runtime(c: Context) -> ScriptContext {
+    match c {
+        Context::Gate => ScriptContext::Gate,
+        Context::GateOn => ScriptContext::GateOn,
+        Context::Age => ScriptContext::Age,
+        Context::Sr => ScriptContext::Sr,
+    }
 }
 
 /// Compile-time options supplied by the engine.
@@ -570,6 +624,58 @@ mod tests {
         let prog = compile_ok("out = velocity * 0.6");
         assert_eq!(prog.inputs, vec![SourceInput::Macro(Macro::Velocity)]);
         assert!(approx(eval(&prog, |_| 0.5), 0.3));
+    }
+
+    #[test]
+    fn into_bound_maps_each_input_kind() {
+        // One module source, one macro, one context var — register order is
+        // preserved one-to-one into the runtime input list.
+        let src = "src lfo = lfo-1.out\nout = lfo * velocity + gate";
+        let prog = compile_ok(src);
+        let original = prog.inputs.clone();
+        let bound = prog.into_bound(src.to_string());
+
+        assert_eq!(bound.source, src);
+        assert_eq!(bound.inputs.len(), original.len());
+        for (orig, rt) in original.iter().zip(&bound.inputs) {
+            match (orig, rt) {
+                (
+                    SourceInput::Macro(Macro::Velocity),
+                    ScriptInput::Source(SrcAddr::Macro(MacroSource::Velocity)),
+                )
+                | (
+                    SourceInput::Context(Context::Gate),
+                    ScriptInput::Context(ScriptContext::Gate),
+                ) => {}
+                (
+                    SourceInput::Module { module, member, .. },
+                    ScriptInput::Source(addr @ SrcAddr::Module { .. }),
+                ) if module == "lfo" && member == "out" => {
+                    assert_eq!(addr.to_address_string(), "lfo-1.out");
+                }
+                other => panic!("unexpected mapping: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn into_bound_macro_names_map_to_runtime() {
+        // `note`/`poly_at` are the two non-identity macro renames.
+        let bound = compile_ok("out = note + poly_at").into_bound(String::new());
+        assert!(bound.inputs.contains(&ScriptInput::Source(SrcAddr::Macro(
+            MacroSource::NoteNumber
+        ))));
+        assert!(bound.inputs.contains(&ScriptInput::Source(SrcAddr::Macro(
+            MacroSource::PolyAftertouch
+        ))));
+    }
+
+    #[test]
+    fn into_bound_unknown_module_prefix_is_zero() {
+        // An unknown module prefix is not a compile error (decision #3); it binds
+        // to a zero register so the routing is kept and inert, not dropped.
+        let bound = compile_ok("src x = zzz-1.out\nout = x").into_bound(String::new());
+        assert_eq!(bound.inputs, vec![ScriptInput::Zero]);
     }
 
     #[test]
