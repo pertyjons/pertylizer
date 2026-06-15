@@ -188,15 +188,32 @@ audio-rate dialect reuses the same grammar. See that doc's Open-questions sectio
 locked semantics (eager eval, reserved built-ins, NaN-sanitized state, per-voice PRNG) and
 the remaining sign-offs (persistence, caps, diagnostics).
 
-- [ ] **S2.1** — `CompiledScript` + control-rate evaluator. Compile **source → CST
-  (`rowan`) → typed AST → flat bytecode**; the RT evaluator is a `for` loop over a
-  pre-allocated voice-local register file (O(1) stack, no AST-walk recursion). Offline
-  compile, immutable `Arc`, allocation-free eval, fixed register file, hard instruction cap,
-  two-layer NaN sanitize. `synth_script` (non-RT compiler + `yamsfmt`) → `CompiledScript`
-  in `synth_core` (RT).
+- [x] **S2.1** — `CompiledScript` + control-rate evaluator. **SHIPPED** (merged `54cbcdf`,
+  5 reviewed steps `9f1ff82..d852772`). Compile **source → AST → flat bytecode**; the RT
+  evaluator is a `for` loop over a pre-allocated voice-local register file (O(1) stack).
+  Offline compile, immutable, allocation-free eval, fixed register file, hard instruction
+  cap, two-layer NaN sanitize. `synth_script` (non-RT compiler + `yamsfmt`) → `CompiledScript`
+  in `synth_core` (RT). (`rowan` CST deferred — current parser is recursive-descent; revisit
+  if `yamsfmt` trivia handling needs it.)
 - [ ] **S2.2** — Make the amount cell **scalar-or-expression**: a routing whose amount is
   an expression evaluates the script (reading its bound sources) instead of a single
-  multiply. Same addressing, same offset write.
+  multiply. Same addressing, same offset write. **IN PROGRESS — sub-steps:**
+  - [x] **S2.2a** — `synth_core::script::bound`: RT `BoundScript` (`Arc`-shared script +
+    resolved `ScriptInput` addresses + canonical text) + `ScriptContext` + `CompiledProgram::
+    into_bound` mapping in `synth_script` (macros → `SrcAddr::Macro` so the voice resolves
+    them via the existing scalar path; module refs round-trip `SrcAddr::parse`, unknown →
+    `Zero`). **SHIPPED `fed674a`.** Headless, unit-tested.
+  - [ ] **S2.2b** — `ModMatrix` stores `scripts: [Option<Arc<BoundScript>>; 16]` **beside**
+    `slots` (routing stays `Copy` — decision #4; the script never lives on it). Accessor
+    `mod_scripts()`. Persist a per-slot `script: Option<String>` (canonical YAMS text);
+    compile-on-load in the pertylizer load path (off the audio thread, has `synth_script`).
+    **Watch the schema/example wall** (S1.1b note): keep the descriptor/schema a superset so
+    `example_files_validate_against_schemas` stays green.
+  - [ ] **S2.2c** — Voice eval: per-slot per-voice `RegisterFile`; fill `sources` from
+    `ScriptInput` (Source via existing `resolve_source`; Context via gate/gate_on/age/sr);
+    `script.eval` → offset → `apply_mod_offset_addr`. When a slot has a script, it **replaces**
+    `source*amount` (decision #1 — script owns the value, routing owns the dest). State resets
+    on note-on; PRNG re-seeds per voice index.
 - [ ] **S2.3** — MCP authoring (source text or structured route list) + inspection.
 - [ ] **S2.4** — GUI: expand an amount cell into an expression editor (DEFERRED).
 
