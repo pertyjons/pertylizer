@@ -208,14 +208,22 @@ the remaining sign-offs (persistence, caps, diagnostics).
     two additive default methods: `mod_scripts()` (the slice, read by the voice) and
     `set_mod_script(slot, Option<Arc<_>>)` (the off-audio-thread install channel, since the
     `Arc` can't ride the f32 `set_param` path). **SHIPPED `d017ae8`.** Storage only, unit-tested.
-  - [ ] **S2.2b-2** — Persistence + compile-on-load. Add an optional `scripts` map to
-    `ModuleState` (patch.rs) — **separate from the descriptor-driven `parameters` BTreeMap** so
-    it dodges the schema/example wall (an optional field; old projects default-empty, scriptless
-    projects skip-serialize → `example_files_validate_against_schemas` stays green). Save path
-    fills it from `module.mod_scripts()` (`bound.source`); load path compiles each text via
-    `synth_script::compile` → `into_bound` → `set_mod_script`. **NOTE: pertylizer does NOT yet
-    depend on `synth_script` — add it** (non-RT authoring consumer, per crate-placement). Hook
-    compile-on-load into the session/project apply path (off the audio thread).
+  - [x] **S2.2b-2i** — Persistence data model + schema. **SHIPPED `0efdc51`.** `ModuleState`
+    gains optional `scripts: BTreeMap<String,String>` (1-based slot key, matching `slot_N_*`),
+    separate from the descriptor-driven `parameters`. serde `default` + `skip_serializing_if=
+    empty`. **Schema wall was a non-issue**: the descriptor-driven `ModuleState` `oneOf` leaves
+    each module object's `additionalProperties` *unset* (defaults true), so a `scripts` key
+    validates with **no gen_schemas change** — both schema tests stay green. Round-trip
+    unit-tested. No save/load wiring yet (field always empty).
+  - [ ] **S2.2b-2ii** — Engine plumbing (both directions): `EngineCommand::SetModScript
+    { instrument, module, slot, script: Option<Arc<BoundScript>> }` → audio thread calls
+    `set_mod_script` (the Arc is `Send`); and `ModuleStateSnapshot.scripts` populated from
+    `mod_scripts()` (`bound.source`) for the save side.
+  - [ ] **S2.2b-2iii** — pertylizer wiring + `synth_script` dep (**not yet a dependency**;
+    add it — non-RT authoring consumer). Load: `apply_patch` compiles each `ModuleState.scripts`
+    text via `synth_script::compile` → `into_bound` → session sends `SetModScript`. Save:
+    `build_patch_from_snapshot` fills `ModuleState.scripts` from `snapshot.scripts`. Round-trip
+    via a hand-crafted project JSON (no MCP/GUI authoring until S2.3/S2.4).
   - [ ] **S2.2c** — Voice eval: per-slot per-voice `RegisterFile`; fill `sources` from
     `ScriptInput` (Source via existing `resolve_source`; Context via gate/gate_on/age/sr);
     `script.eval` → offset → `apply_mod_offset_addr`. When a slot has a script, it **replaces**
