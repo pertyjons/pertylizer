@@ -7145,7 +7145,7 @@
           "description": "Follow MIDI note pitch",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Pitch Track",
           "response_curve": "linear",
           "unit": "none"
@@ -7179,7 +7179,7 @@
           "description": "Assigned sample (selected via the sample picker)",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Sample",
           "response_curve": "linear",
           "unit": "none"

@@ -10,9 +10,9 @@ use std::sync::Arc;
 use synth_core::ChannelCount;
 use synth_core::{
     AudioBuffer, Cents, Describable, Gain, InputPorts, MidiNote, ModuleCategory, ModuleDescriptor,
-    ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit, PlayDirection,
-    PolyModule, PortDescriptor, PortName, ProcessContext, SampleId, SampleRate, SamplerParam,
-    SamplerPlayMode, Velocity, WidgetHint,
+    ModuleType, NormalizedValue, Param, ParamModOffsets, ParameterDescriptor, ParameterUnit,
+    PlayDirection, PolyModule, PortDescriptor, PortName, ProcessContext, SampleId, SampleRate,
+    SamplerParam, SamplerPlayMode, Velocity, WidgetHint,
 };
 use synth_sampler::playback::{PlaybackState, SamplePlayer};
 use synth_sampler::types::{CropRegion, LoopRegion};
@@ -44,6 +44,10 @@ pub struct Sampler {
     // Playback state
     player: Option<SamplePlayer>,
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    /// `level` is resolved per block; `fine_tune` / `start_offset` /
+    /// `velocity_sensitivity` are sampled at note-on (they configure the player).
+    mod_offsets: ParamModOffsets,
 
     // Pre-allocated output buffer (stereo interleaved for player)
     render_buffer: Vec<f32>,
@@ -73,6 +77,7 @@ impl Sampler {
 
             player: None,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
 
             // Pre-allocate for up to 8192 stereo frames. Grow-only: if a larger
             // block is encountered the Vec will resize once and stay at that size.
@@ -153,6 +158,8 @@ impl Describable for Sampler {
                 .description("Follow MIDI note pitch")
                 .range(0.0, 1.0)
                 .default(1.0)
+                // Boolean toggle, not a continuous modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Toggle),
             )
             .parameter(
@@ -203,6 +210,8 @@ impl Describable for Sampler {
                     "Sample",
                 )
                 .description("Assigned sample (selected via the sample picker)")
+                // Discrete sample selector, not a continuous modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Hidden),
             )
             .parameter(
@@ -268,7 +277,7 @@ impl PolyModule for Sampler {
             let still_active = player.render(&mut self.render_buffer[..render_len], n_samples);
 
             // Mix stereo to mono for the output port (L+R)/2
-            let level = self.level.as_f32();
+            let level = self.mod_offsets.effective("level", self.level.as_f32());
             for i in 0..n_samples {
                 let left = self.render_buffer[i * 2];
                 let right = self.render_buffer[i * 2 + 1];
@@ -345,6 +354,10 @@ impl PolyModule for Sampler {
         ModuleType::Sampler
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.player = None;
     }
@@ -364,6 +377,16 @@ impl PolyModule for Sampler {
             return;
         };
 
+        // Note-on-time params: sampled through the generic mod store at trigger,
+        // so a routing active at note-on configures this note's player.
+        let fine_tune = self.mod_offsets.effective("fine_tune", self.fine_tune.0);
+        let start_offset = self
+            .mod_offsets
+            .effective("start_offset", self.start_offset.as_f32());
+        let vel_amount = self
+            .mod_offsets
+            .effective("velocity_sensitivity", self.velocity_sensitivity.as_f32());
+
         let loop_region = if self.play_mode == SamplerPlayMode::Loop {
             self.sample_loop
         } else {
@@ -380,13 +403,12 @@ impl PolyModule for Sampler {
 
         // Apply pitch: either tracking (follows MIDI note) or just fine-tune
         if self.pitch_tracking {
-            player.set_pitch(note, self.root_note, f64::from(self.fine_tune.0));
-        } else if self.fine_tune.0.abs() > 0.001 {
-            player.set_fine_tune(f64::from(self.fine_tune.0));
+            player.set_pitch(note, self.root_note, f64::from(fine_tune));
+        } else if fine_tune.abs() > 0.001 {
+            player.set_fine_tune(f64::from(fine_tune));
         }
 
         // Set velocity
-        let vel_amount = self.velocity_sensitivity.as_f32();
         let vel_gain = 1.0 - vel_amount + vel_amount * velocity.as_f32();
         player.set_velocity(Velocity::new(vel_gain));
 
@@ -401,8 +423,8 @@ impl PolyModule for Sampler {
         }
 
         // Apply start offset
-        if self.start_offset.as_f32() > 0.001 {
-            player.set_start_offset(f64::from(self.start_offset.as_f32()));
+        if start_offset > 0.001 {
+            player.set_start_offset(f64::from(start_offset));
         }
 
         self.player = Some(player);
@@ -430,5 +452,64 @@ impl PolyModule for Sampler {
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx(n: usize) -> ProcessContext<'static> {
+        ProcessContext {
+            samples: synth_core::SampleCount::new(n),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        }
+    }
+
+    /// A sampler with the mod store populated and a constant-0.5 stereo sample
+    /// loaded at root pitch, so playback is a steady tone.
+    fn loaded_sampler() -> Sampler {
+        let mut s = Sampler::new();
+        let desc = s.descriptor();
+        s.mod_offsets_mut().unwrap().populate(&desc);
+        let data: Arc<[f32]> = vec![0.5_f32; 4096 * 2].into();
+        s.load_sample(data, ChannelCount::Stereo, 4096, None, None, MidiNote(60));
+        s
+    }
+
+    fn render_energy(s: &mut Sampler, n: usize) -> f32 {
+        let mut out = HashMap::new();
+        out.insert(PortName::OUT, AudioBuffer::new(n));
+        s.process(InputPorts::empty(), &mut out, &ctx(n));
+        (0..n).map(|i| out[&PortName::OUT][i].abs()).sum::<f32>()
+    }
+
+    /// `level` used to be dropped (Sampler never overrode set_mod_offset); it now
+    /// scales the per-block output through the generic store. Driving it to 0
+    /// silences playback; clearing reverts.
+    #[test]
+    fn test_sampler_level_mod_offset_scales_output() {
+        let mut s = loaded_sampler();
+        s.note_on(MidiNote(60), Velocity::new(1.0));
+
+        // Warm up past any player fade-in so the steady-state level is reached.
+        let _ = render_energy(&mut s, 256);
+        let base = render_energy(&mut s, 64);
+        assert!(base > 0.01, "baseline should produce sound, base={base}");
+
+        s.set_mod_offset("level", -1.0); // level → 0 = silence
+        let quiet = render_energy(&mut s, 64);
+        assert!(
+            quiet < base * 0.01,
+            "level offset should silence output: base={base}, quiet={quiet}"
+        );
+
+        s.clear_mod_offsets();
+        let restored = render_energy(&mut s, 64);
+        assert!(
+            (restored - base).abs() < base * 0.1,
+            "clearing reverts level: base={base}, restored={restored}"
+        );
     }
 }
