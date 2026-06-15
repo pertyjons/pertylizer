@@ -41,7 +41,7 @@
           "description": "Phase randomization on note-on",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Randomize",
           "response_curve": "linear",
           "unit": "none"
@@ -8020,7 +8020,7 @@
           "description": "Octave offset (-2 to +2)",
           "max": 2.0,
           "min": -2.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Octave",
           "response_curve": "linear",
           "unit": "semitones"
