@@ -9,8 +9,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{
     BipolarValue, FilterState, Gain, Hertz, MidiNote, NormalizedValue, PortName, SampleRate,
@@ -52,6 +53,9 @@ pub struct Filter {
     mod_offset_cutoff: Semitones,
     /// Resonance modulation offset (additive, 0-1 range).
     mod_offset_resonance: NormalizedValue,
+    /// Generic mod-matrix offsets for the non-cutoff/resonance params
+    /// (drive, morph, key_track, env_amt, cv_amt). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Transient automation overrides (replace the base value while active,
     // cleared on transport stop; the base param is never mutated).
@@ -89,6 +93,7 @@ impl Filter {
             karlsen: KarlsenFilter::new(),
             mod_offset_cutoff: Semitones::ZERO,
             mod_offset_resonance: NormalizedValue::MIN,
+            mod_offsets: ParamModOffsets::new(),
             override_cutoff: None,
             override_resonance: None,
             cutoff_smoothed: 1000.0,
@@ -366,6 +371,34 @@ impl PolyModule for Filter {
         #[allow(clippy::cast_precision_loss)]
         let inv_n = if n > 0 { 1.0 / n as f32 } else { 0.0 };
 
+        // Apply the generic mod-matrix offsets to the per-block-constant params
+        // (drive, morph, key_track, env_amt, cv_amt) for the duration of the
+        // block, then restore. These are read deep inside the per-sample helpers
+        // across five filter models, so resolving them into the fields here is
+        // simpler and just as RT-safe as threading five extra arguments through.
+        // The single loop below has no early return, so the restore always runs.
+        let saved = (
+            self.drive,
+            self.morph,
+            self.key_tracking,
+            self.env_amount,
+            self.cutoff_mod_amount,
+        );
+        self.drive = Gain::new(self.mod_offsets.effective("drive", self.drive.as_f32()));
+        self.morph = NormalizedValue::new(self.mod_offsets.effective("morph", self.morph.as_f32()));
+        self.key_tracking = NormalizedValue::new(
+            self.mod_offsets
+                .effective("key_track", self.key_tracking.as_f32()),
+        );
+        self.env_amount = BipolarValue::new(
+            self.mod_offsets
+                .effective("env_amt", self.env_amount.as_f32()),
+        );
+        self.cutoff_mod_amount = BipolarValue::new(
+            self.mod_offsets
+                .effective("cv_amt", self.cutoff_mod_amount.as_f32()),
+        );
+
         // Scale CV input to semitones. The Mod Matrix path uses ×48 (4 octaves
         // at full scale); applying the same scale here means a direct cable from
         // an envelope is just as expressive as routing through the matrix.
@@ -388,6 +421,15 @@ impl PolyModule for Filter {
         }
         // Carry the target as the next block's start for boundary continuity.
         self.cutoff_smoothed = cutoff_target;
+
+        // Restore the base params so next block re-applies offsets from scratch.
+        (
+            self.drive,
+            self.morph,
+            self.key_tracking,
+            self.env_amount,
+            self.cutoff_mod_amount,
+        ) = saved;
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
@@ -458,6 +500,10 @@ impl PolyModule for Filter {
         ModuleType::Filter
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.reset_filter_states();
     }
@@ -486,13 +532,16 @@ impl PolyModule for Filter {
                 self.mod_offset_resonance =
                     NormalizedValue::new(self.mod_offset_resonance.as_f32() + value)
             }
-            _ => {}
+            // drive, morph, key_track, env_amt, cv_amt go through the generic
+            // store, each scaled through its own descriptor range.
+            other => self.mod_offsets.add(other, value),
         }
     }
 
     fn clear_mod_offsets(&mut self) {
         self.mod_offset_cutoff = Semitones::ZERO;
         self.mod_offset_resonance = NormalizedValue::MIN;
+        self.mod_offsets.clear();
     }
 
     fn set_param_override(&mut self, param: Param) {
@@ -748,6 +797,63 @@ mod tests {
         let filter = Filter::new();
         assert_eq!(filter.filter_type, FilterMode::Lowpass);
         assert!((filter.cutoff.as_f32() - 1000.0).abs() < 0.001);
+    }
+
+    /// `drive` used to hit the dropped `_ => {}` arm; it now flows through the
+    /// generic store. Driving it up audibly saturates the (Screamer) output, and
+    /// clearing reverts. Also confirms the base field is restored each block (no
+    /// drift): a second render with the offset still set matches the first.
+    #[test]
+    fn drive_mod_offset_saturates_and_restores() {
+        let mut filter = Filter::new();
+        // Standard model applies drive as an explicit soft-clip pre-gain, so a
+        // larger drive visibly changes the (lowpass-passed) DC output level.
+        filter.model = FilterModel::Standard;
+        let desc = filter.descriptor();
+        filter.mod_offsets_mut().unwrap().populate(&desc);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(128),
+            ..ProcessContext::default()
+        };
+        // Render with steady DC input; return the last (most-settled) sample.
+        fn settled(filter: &mut Filter, ctx: &ProcessContext) -> f32 {
+            let mut buf = AudioBuffer::new(128);
+            for i in 0..128 {
+                buf[i] = 0.8;
+            }
+            let in_ports = [(PortName::IN, &buf)];
+            let mut last = 0.0;
+            // A few blocks to let the SVF integrator + de-zipper ramp settle.
+            for _ in 0..6 {
+                let inputs = InputPorts::new(&in_ports);
+                let mut outs = HashMap::new();
+                outs.insert(PortName::OUT, AudioBuffer::new(128));
+                filter.process(inputs, &mut outs, ctx);
+                last = outs[&PortName::OUT][127];
+            }
+            last
+        }
+
+        let base = settled(&mut filter, &ctx);
+
+        filter.set_mod_offset("drive", 1.0);
+        let driven = settled(&mut filter, &ctx);
+        // The base field is restored after each block, so it is never permanently
+        // mutated by the offset.
+        assert!(
+            (filter.drive.as_f32() - Gain::UNITY.as_f32()).abs() < 1e-6,
+            "drive field must be restored after process, got {}",
+            filter.drive.as_f32()
+        );
+        assert!(
+            (driven - base).abs() > 1e-3,
+            "drive offset should change the saturated output: {driven} vs {base}"
+        );
+
+        filter.clear_mod_offsets();
+        let reverted = settled(&mut filter, &ctx);
+        assert!((reverted - base).abs() < 1e-3, "clearing reverts drive");
     }
 
     #[test]
