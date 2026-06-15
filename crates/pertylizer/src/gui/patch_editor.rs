@@ -6075,6 +6075,17 @@ fn draw_mod_matrix_grid(
                 }
 
                 ui.horizontal(|ui| {
+                    // Format runs the canonical yamsfmt formatter and replaces the
+                    // draft with its output. Enabled only when the script is valid
+                    // (the formatter parses first; a broken script can't be formatted).
+                    if ui
+                        .add_enabled(status.is_ok(), egui::Button::new("Format"))
+                        .on_hover_text("Reformat the expression (yamsfmt)")
+                        .clicked()
+                        && let Ok(formatted) = synth_script::format(&editor.draft)
+                    {
+                        editor.draft = formatted;
+                    }
                     if ui
                         .add_enabled(status.is_ok(), egui::Button::new("Apply"))
                         .on_hover_text("Install this expression on the slot (keeps editing)")

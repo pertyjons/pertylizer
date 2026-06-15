@@ -267,7 +267,8 @@ the remaining sign-offs (persistence, caps, diagnostics).
     → `AppSynthBridge` (range-check, 1-based→0-based) → `session.set_mod_script` (compile error →
     tool error with diagnostics) / `session.clear_mod_script` (empty source clears). Wired as
     `#[tool]` + dispatch entry + `SetModMatrixScriptParam`. Integration-tested end-to-end.
-    (`format_yams` tool not added — `set` already canonicalizes nothing; revisit with S2.4.)
+    (`format_yams` MCP tool still not added; the `yamsfmt` formatter is now wired into the
+    GUI editor instead — see the **Format** button under S2.4.)
 - [x] **S2.4** — GUI: expand an amount cell into an expression editor. **SHIPPED.** Each routing
   row gets an **ƒx** button → floating popup (`egui::Window`) with a `code_editor` multiline field,
   **live compile** status (`synth_script::compile` off the audio thread → ✓/✗ message) and
