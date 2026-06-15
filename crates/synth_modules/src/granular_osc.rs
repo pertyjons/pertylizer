@@ -16,8 +16,8 @@ use synth_core::module_traits::ChoiceOption;
 use synth_core::{
     AudioBuffer, BipolarValue, Describable, Gain, GrainSource, GrainWindow, GranularParam, Hertz,
     InputPorts, Milliseconds, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
-    SampleRate, WidgetHint,
+    ParamModOffsets, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName,
+    ProcessContext, SampleRate, WidgetHint,
 };
 use synth_core::{MidiNote, Velocity};
 
@@ -125,6 +125,8 @@ pub struct GranularOsc {
     playhead: f32,
     samples_until_next_grain: f32,
     rng: Xorshift32,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -154,6 +156,7 @@ impl GranularOsc {
             playhead: 0.0,
             samples_until_next_grain: 0.0,
             rng: Xorshift32::new(42),
+            mod_offsets: ParamModOffsets::new(),
 
             output_buffer: AudioBuffer::new(1024),
         };
@@ -346,6 +349,8 @@ impl Describable for GranularOsc {
                 .description("Freeze source buffer playback (0 = off, 1 = on)")
                 .range(0.0, 1.0)
                 .default(0.0)
+                // Discrete on/off toggle, not a continuous automation target.
+                .modulatable(false)
                 .widget(WidgetHint::Toggle),
             )
             .parameter(
@@ -420,11 +425,44 @@ impl PolyModule for GranularOsc {
         }
 
         let sr = self.sample_rate.as_f32();
-        let level = self.level.as_f32();
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
 
         // Density: grains per second (1-100 range mapped from 0-1)
-        let grains_per_second = 1.0 + self.density.as_f32() * 99.0;
+        let grains_per_second =
+            1.0 + self.mod_offsets.effective("density", self.density.as_f32()) * 99.0;
         let samples_between_grains = sr / grains_per_second;
+
+        // The remaining mod destinations (grain_size, position, pos_spread,
+        // pitch_spread, pan_spread) are read inside spawn_grain, called from the
+        // loop below. Apply their effective values to the fields for the block
+        // and restore after (single loop, no early return).
+        let saved = (
+            self.grain_size,
+            self.position,
+            self.position_spread,
+            self.pitch_spread,
+            self.pan_spread,
+        );
+        self.grain_size = Milliseconds::new(
+            self.mod_offsets
+                .effective("grain_size", self.grain_size.as_f32()),
+        );
+        self.position = NormalizedValue::new(
+            self.mod_offsets
+                .effective("position", self.position.as_f32()),
+        );
+        self.position_spread = NormalizedValue::new(
+            self.mod_offsets
+                .effective("pos_spread", self.position_spread.as_f32()),
+        );
+        self.pitch_spread = NormalizedValue::new(
+            self.mod_offsets
+                .effective("pitch_spread", self.pitch_spread.as_f32()),
+        );
+        self.pan_spread = NormalizedValue::new(
+            self.mod_offsets
+                .effective("pan_spread", self.pan_spread.as_f32()),
+        );
 
         // Base playback rate (note pitch relative to the buffer's native pitch). The
         // shared playhead advances at this rate; per-grain Pitch Spread detunes around it.
@@ -489,6 +527,15 @@ impl PolyModule for GranularOsc {
                 self.playhead -= source_len_f;
             }
         }
+
+        // Restore the base params so next block re-applies offsets from scratch.
+        (
+            self.grain_size,
+            self.position,
+            self.position_spread,
+            self.pitch_spread,
+            self.pan_spread,
+        ) = saved;
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
@@ -562,6 +609,10 @@ impl PolyModule for GranularOsc {
         ModuleType::GranularOsc
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         for grain in &mut self.grains {
             grain.active = false;
@@ -593,6 +644,51 @@ impl PolyModule for GranularOsc {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use synth_core::Velocity;
+
+    /// `level` is a working mod destination via the generic store, and the
+    /// transiently-applied spawn-time params are restored after each block.
+    #[test]
+    fn level_mod_offset_scales_and_params_restore() {
+        let mut osc = GranularOsc::new();
+        let desc = osc.descriptor();
+        osc.mod_offsets_mut().unwrap().populate(&desc);
+        osc.note_on(MidiNote::A4, Velocity::MAX);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(512),
+            ..ProcessContext::default()
+        };
+        fn rms(osc: &mut GranularOsc, ctx: &ProcessContext) -> f32 {
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(512));
+            osc.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i] * b[i]).sum::<f32>().sqrt()
+        }
+
+        let base = rms(&mut osc, &ctx);
+        assert!(base > 1e-4, "base output present, got {base}");
+
+        // Drive level to ~0 (Gain 0..2, base 1.0 → norm 0.5; -1.0 offset clamps
+        // to 0 → silence). Unambiguous despite the grain stream's variation.
+        let pos_before = osc.position.as_f32();
+        osc.set_mod_offset("level", -1.0);
+        osc.set_mod_offset("position", 0.3); // exercise a transient spawn param
+        let silent = rms(&mut osc, &ctx);
+        assert!(
+            (osc.position.as_f32() - pos_before).abs() < 1e-6,
+            "position field must be restored after process"
+        );
+        assert!(
+            silent < base * 0.05,
+            "level→0 should silence output: {silent}"
+        );
+
+        osc.clear_mod_offsets();
+        let reverted = rms(&mut osc, &ctx);
+        assert!(reverted > silent, "clearing restores level");
+    }
 
     /// A freshly-constructed GranularOsc must already have a populated source
     /// buffer. Otherwise the offline `analyze_note` preview path renders
