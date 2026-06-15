@@ -23,8 +23,8 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{Cents, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, VoiceSynthParam};
@@ -205,6 +205,8 @@ pub struct VoiceSynth {
     // Cached
     sample_rate: SampleRate,
     inv_sample_rate: f32,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Pre-allocated output buffers
     out_buffer: AudioBuffer,
@@ -232,6 +234,7 @@ impl VoiceSynth {
             note_freq: Hertz::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
+            mod_offsets: ParamModOffsets::new(),
             out_buffer: AudioBuffer::new(1024),
             out_l_buffer: AudioBuffer::new(1024),
             out_r_buffer: AudioBuffer::new(1024),
@@ -248,10 +251,11 @@ impl VoiceSynth {
         crate::formant_tables::formant_shift_factor(self.formant_shift.as_f32())
     }
 
-    /// Glottal open quotient in 0.3..0.9 (0.5 normalized → 0.6).
+    /// Glottal open quotient in 0.3..0.9 from a (mod-resolved) normalized value
+    /// (0.5 normalized → 0.6).
     #[inline]
-    fn open_quotient(&self) -> f32 {
-        0.3 + self.open_quotient.as_f32() * 0.6
+    fn open_quotient_value(norm: f32) -> f32 {
+        0.3 + norm * 0.6
     }
 
     /// Number of active unison sub-voices (1..=MAX_UNISON).
@@ -265,8 +269,12 @@ impl VoiceSynth {
     /// so it is idempotent and cheap to call every block.
     fn derive_decorrelation(&mut self) {
         let active = self.active_voices;
-        let detune = self.unison_detune.as_f32();
-        let spread = self.unison_spread.as_f32();
+        let detune = self
+            .mod_offsets
+            .effective("unison_detune", self.unison_detune.as_f32());
+        let spread = self
+            .mod_offsets
+            .effective("unison_spread", self.unison_spread.as_f32());
         let note = self.note_freq.as_f32();
 
         for (v, voice) in self.voices[..active].iter_mut().enumerate() {
@@ -388,6 +396,9 @@ impl Describable for VoiceSynth {
                 .description("Choir size: 1 (solo) to 16 decorrelated voices")
                 .range(0.0, 1.0)
                 .default(0.0)
+                // Structural/sizing param: sub-voices appear/disappear, so it is
+                // not a continuous modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -477,23 +488,39 @@ impl PolyModule for VoiceSynth {
         self.derive_decorrelation();
         let active = self.active_voices;
 
+        // Generic mod-matrix offsets — all per-block constants, resolved once.
+        let vowel_base = self.mod_offsets.effective("vowel", self.vowel.as_f32());
+
         if !vowel_cv_connected {
-            self.current_vowel = self.vowel.as_f32();
+            self.current_vowel = vowel_base;
         }
 
         let inv_sr = self.inv_sample_rate;
         let sr = self.sample_rate.as_f32();
-        let shift = self.shift_factor();
-        let level = self.level.as_f32();
-        let oq = self.open_quotient();
+        let shift = crate::formant_tables::formant_shift_factor(
+            self.mod_offsets
+                .effective("formant_shift", self.formant_shift.as_f32()),
+        );
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
+        let oq = Self::open_quotient_value(
+            self.mod_offsets
+                .effective("open_quotient", self.open_quotient.as_f32()),
+        );
         let base_freq = self.note_freq.as_f32();
-        let breath_base = self.breathiness.as_f32();
-        let vib_depth_cents = self.vibrato_depth.as_f32();
-        let vib_inc = self.vibrato_rate.as_f32() * inv_sr;
+        let breath_base = self
+            .mod_offsets
+            .effective("breathiness", self.breathiness.as_f32());
+        let vib_depth_cents = self
+            .mod_offsets
+            .effective("vibrato_depth", self.vibrato_depth.as_f32());
+        let vib_inc = self
+            .mod_offsets
+            .effective("vibrato_rate", self.vibrato_rate.as_f32())
+            * inv_sr;
         let unison_norm = 1.0 / (active as f32).sqrt();
 
         // Spectral tilt: one-pole lowpass; tilt == 0 is a true bypass.
-        let tilt_amt = self.tilt.as_f32();
+        let tilt_amt = self.mod_offsets.effective("tilt", self.tilt.as_f32());
         let tilt_active = tilt_amt > 0.0;
         let tilt_fc = 10000.0 * (1.0 - tilt_amt) + 1200.0 * tilt_amt;
         let tilt_coef = crate::math::one_pole_lp_coef(tilt_fc, inv_sr);
@@ -508,7 +535,7 @@ impl PolyModule for VoiceSynth {
         for i in 0..num_samples {
             // Vowel CV modulation (shared, gated coefficient recompute).
             if vowel_cv_connected {
-                let target = (self.vowel.as_f32() + vowel_cv[i] * 0.5).clamp(0.0, 1.0);
+                let target = (vowel_base + vowel_cv[i] * 0.5).clamp(0.0, 1.0);
                 if (target - self.current_vowel).abs() > 0.001 {
                     self.current_vowel = target;
                     for voice in self.voices[..active].iter_mut() {
@@ -643,6 +670,10 @@ impl PolyModule for VoiceSynth {
 
     fn module_type(&self) -> ModuleType {
         ModuleType::VoiceSynth
+    }
+
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
     }
 
     fn reset(&mut self) {
@@ -913,6 +944,44 @@ mod tests {
             "Mid-note unison increase should decorrelate channels, diff={diff}"
         );
         assert!(max.is_finite() && max <= 1.5, "Output bounded, max={max}");
+    }
+
+    /// `level` used to be dropped (VoiceSynth never overrode set_mod_offset); it
+    /// now scales the output through the generic store. Driving it to 0 silences
+    /// the voice; clearing reverts.
+    #[test]
+    fn test_voice_synth_level_mod_offset_scales_output() {
+        let energy = |v: &mut VoiceSynth| {
+            let mut outputs = outputs_stereo(1024);
+            v.process(InputPorts::empty(), &mut outputs, &ctx(1024));
+            (0..1024)
+                .map(|i| outputs[&PortName::OUT][i].abs())
+                .sum::<f32>()
+        };
+
+        let mut v = VoiceSynth::new();
+        let desc = v.descriptor();
+        v.mod_offsets_mut().unwrap().populate(&desc);
+
+        v.note_on(MidiNote::new(57), Velocity::new(0.8));
+        let base = energy(&mut v);
+        assert!(base > 0.01, "baseline should produce sound, base={base}");
+
+        v.set_mod_offset("level", -1.0); // level → 0 = silence
+        v.note_on(MidiNote::new(57), Velocity::new(0.8));
+        let quiet = energy(&mut v);
+        assert!(
+            quiet < base * 0.01,
+            "level offset should silence output: base={base}, quiet={quiet}"
+        );
+
+        v.clear_mod_offsets();
+        v.note_on(MidiNote::new(57), Velocity::new(0.8));
+        let restored = energy(&mut v);
+        assert!(
+            (restored - base).abs() < base * 0.1,
+            "clearing reverts level: base={base}, restored={restored}"
+        );
     }
 
     #[test]
