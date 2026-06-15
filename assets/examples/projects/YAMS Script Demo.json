@@ -93,7 +93,7 @@
             "type": "lfo",
             "position": {
               "x": 1600.0,
-              "y": 1696.0
+              "y": 256.0
             },
             "parameters": {
               "depth": 1.0,
@@ -219,14 +219,14 @@
               "slot_9_source": "none"
             },
             "scripts": {
-              "1": "# Velocity -> filter brightness, smoothed (lag) so it glides instead of stepping.\nout = lag(velocity, 40ms)",
-              "2": "# Pitch vibrato (LFO -> detune); the mod wheel opens the depth from subtle to wide.\nsrc vib = lfo-1.out\nout = vib * lerp(0.05, 0.4, mod_wheel)",
-              "3": "# Tremolo that fades with the note: LFO times the envelope, so it tapers on release.\nsrc lfo = lfo-1.out\nsrc eg = env-1.out\nout = lfo * eg * 0.4",
-              "4": "# Built-in 3 Hz resonance wobble (phasor + sin); only strong on hard hits (velocity > 0.7).\nlet lfo2 = sin(phasor(3) * tau) * 0.5\nout = velocity > 0.7 ? lfo2 : lfo2 * 0.2",
-              "5": "# Slow auto-pan that widens as the note ages (smoothstep ramps it in over 1.5 s).\nout = sin(phasor(0.3) * tau) * smoothstep(0, 1.5, age) * 0.7",
-              "6": "# Sample & hold: grab a new random value 4x/sec (clocked by a sine zero-crossing)\n# and use it to jump the main LFO's rate around in steps.\nout = sah(white(), sin(phasor(4) * tau)) * 0.3",
-              "7": "# Slew limiter on the LFO: slow rise (2/s), fast fall (8/s) makes an asymmetric\n# ramp that animates the filter drive.\nsrc lfo = lfo-1.out\nout = slew(lfo, 2, 8) * 0.4",
-              "8": "# White noise on the oscillator level - a subtle amplitude shimmer / analog instability.\nout = white() * 0.08"
+              "1": "# Velocity -> filter brightness, smoothed (lag) so it glides instead of stepping.\n\nout = lag(velocity, 40ms)\n",
+              "2": "# Pitch vibrato (LFO -> detune); the mod wheel opens the depth from subtle to wide.\n\nsrc vib = lfo-1.out\n\nout = vib * lerp(0.05, 0.4, mod_wheel)\n",
+              "3": "# Tremolo that fades with the note: LFO times the envelope, so it tapers on release.\n\nsrc lfo = lfo-1.out\nsrc eg = env-1.out\n\nout = lfo * eg * 0.4\n",
+              "4": "# Built-in 3 Hz resonance wobble (phasor + sin); only strong on hard hits (velocity > 0.7).\n\nlet lfo2 = sin(phasor(3) * tau) * 0.5\n\nout = velocity > 0.7 ? lfo2 : lfo2 * 0.2\n",
+              "5": "# Slow auto-pan that widens as the note ages (smoothstep ramps it in over 1.5 s).\n\nout = sin(phasor(0.3) * tau) * smoothstep(0, 1.5, age) * 0.7\n",
+              "6": "# Sample & hold: grab a new random value 4x/sec (clocked by a sine zero-crossing)\n# and use it to jump the main LFO's rate around in steps.\n\nout = sah(white(), sin(phasor(4) * tau)) * 0.3\n",
+              "7": "# Slew limiter on the LFO: slow rise (2/s), fast fall (8/s) makes an asymmetric\n# ramp that animates the filter drive.\n\nsrc lfo = lfo-1.out\n\nout = slew(lfo, 2, 8) * 0.4\n",
+              "8": "# White noise on the oscillator level - a subtle amplitude shimmer / analog instability.\n\nout = white() * 0.08\n"
             }
           }
         ],
