@@ -193,8 +193,11 @@ the remaining sign-offs (persistence, caps, diagnostics).
   evaluator is a `for` loop over a pre-allocated voice-local register file (O(1) stack).
   Offline compile, immutable, allocation-free eval, fixed register file, hard instruction
   cap, two-layer NaN sanitize. `synth_script` (non-RT compiler + `yamsfmt`) → `CompiledScript`
-  in `synth_core` (RT). (`rowan` CST deferred — current parser is recursive-descent; revisit
-  if `yamsfmt` trivia handling needs it.)
+  in `synth_core` (RT). **Parser tech DECIDED 2026-06-15:** keep the hand-written
+  recursive-descent parser + AST-based `yamsfmt`; the `rowan` lossless-CST option (grammar
+  decision #11) is **rejected, not deferred** — it would add the first third-party dependency
+  to the deliberately dep-light `synth_script` and a full parser rewrite, for formatter polish
+  the current AST output doesn't need.
 - [x] **S2.2** — Make the amount cell **scalar-or-expression**: a routing whose amount is
   an expression evaluates the script (reading its bound sources) instead of a single
   multiply. Same addressing, same offset write. **SHIPPED — sub-steps below all done:**

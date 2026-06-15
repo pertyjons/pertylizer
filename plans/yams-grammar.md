@@ -244,9 +244,9 @@ out = lag(mod_wheel, 50ms) + sah(white(), gate_on) * 0.3
 ## Canonical formatting (`yamsfmt`)
 
 YAMS has **one** canonical form. Like `rustfmt`/`gofmt` there is **no config and no
-opt-out** — you never think about layout. The formatter walks the **lossless CST**
-(`rowan`, which retains every token, space, and comment — see decision #11), then prints
-the canonical form; it never changes meaning.
+opt-out** — you never think about layout. The formatter walks the **AST** and prints the
+canonical form; it never changes meaning. (A lossless-CST formatter was considered and
+**rejected** — see decision #11.)
 
 **Mandatory, not advisory.** The *persisted* form is always canonical: the GUI editor
 formats on commit/blur, the MCP author path stores the formatted text, and there is no
@@ -374,8 +374,8 @@ Gap analysis before implementation. Recommendations written in; **LOCKED** = dec
   recursion, bytecode length *is* the exact instruction count, so the cap is a **compile-time
   length gate** — a script that exceeds any cap is a compile error (routing disable-and-keep,
   source kept), never silently truncated.
-- **[LOCKED] 9 — Diagnostics model.** Errors carry **spans** (free from the rowan CST — every
-  node has a text range). **Report all errors, not first-only** — better for an editor and
+- **[LOCKED] 9 — Diagnostics model.** Errors carry **spans** (the lexer/parser tag every token
+  and AST node with a text range). **Report all errors, not first-only** — better for an editor and
   for LLM authoring (fix everything in one pass). Cheap here: statements are
   `separator`-separated and independent, so parse recovery = "skip to the next separator and
   continue"; semantic errors (unknown identifier, builtin-shadowing, arity mismatch) are
@@ -390,14 +390,18 @@ Gap analysis before implementation. Recommendations written in; **LOCKED** = dec
 - **[LOCKED] 10 — Crate placement.** `synth_script` (non-RT: parser + `yamsfmt` + compiler;
   depended on by GUI/MCP) produces a `CompiledScript` that lives in `synth_core` (RT type:
   flat bytecode + evaluator + register file; depended on by `synth_engine`/voice). Keeps the
-  parser's heavy deps out of the audio crate. The pipeline is **source → CST → typed AST →
-  bytecode**; the RT evaluator only ever sees the bytecode.
-- **[LOCKED] 11 — Test strategy + parser tech.** Use a **lossless CST** (e.g. `rowan`, the
-  library behind rust-analyzer) for the `synth_script` parser, so `yamsfmt` preserves
-  comments/trivia and editor syntax-highlighting comes nearly free — lossless formatting
-  from a bare AST is notoriously hard. Tests: golden-file `yamsfmt` idempotency
-  (`fmt(fmt(x)) == fmt(x)`) + parser round-trip, plus **numeric snapshot tests of the
-  evaluator** (guarding the `analyze_*` "offline reader sees state the engine never wrote"
+  parser's heavy deps out of the audio crate. The pipeline is **source → tokens → typed AST →
+  bytecode** (no CST — see #11); the RT evaluator only ever sees the bytecode.
+- **[REJECTED 2026-06-15] 11 — Parser tech (was: lossless CST).** The original plan was a
+  **lossless CST** (`rowan`, the library behind rust-analyzer) so `yamsfmt` preserves
+  comments/trivia and editor highlighting comes nearly free. **Decided against it:** it would
+  add the first third-party dependency to the deliberately dep-light `synth_script` plus a full
+  parser rewrite, and the shipped **hand-written recursive-descent parser + AST-based `yamsfmt`**
+  is good enough — it already handles comments and is idempotent. Known AST-formatter limits we
+  accept: minimal (not author-preserved) parentheses, no 80-column wrapping, and comments
+  re-indented to their following statement. **Test strategy kept:** golden-file `yamsfmt`
+  idempotency (`fmt(fmt(x)) == fmt(x)`) + parser round-trip, plus **numeric snapshot tests of
+  the evaluator** (guarding the `analyze_*` "offline reader sees state the engine never wrote"
   bug class).
 - **[PARKED] 12 — Pitch destinations / `mod_scale` hint.** *Deferred — revisit after S2.1.*
   A normalized offset on a pitch destination is not exact semitones without an optional
