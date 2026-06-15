@@ -13,8 +13,8 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{
     BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Octaves, Phase, PortName,
@@ -38,6 +38,8 @@ pub struct WavetableOsc {
     phase: Phase,
     note_freq: Hertz,
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Buffers
     output_buffer: AudioBuffer,
@@ -54,6 +56,7 @@ impl WavetableOsc {
             phase: Phase::ZERO,
             note_freq: Hertz::A4,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -68,8 +71,9 @@ impl WavetableOsc {
             freq *= (2.0_f32).powi(self.octave.as_i32());
         }
 
-        // Apply detune in cents
-        let detune_cents = self.detune.as_f32();
+        // Apply detune in cents (modulatable via the generic store — its ±cents
+        // range makes a normalized offset land in musical cents).
+        let detune_cents = self.mod_offsets.effective("detune", self.detune.as_f32());
         if detune_cents.abs() > 0.001 {
             freq *= crate::math::cents_to_ratio(detune_cents);
         }
@@ -136,6 +140,9 @@ impl Describable for WavetableOsc {
                 .range(-2.0, 2.0)
                 .default(0.0)
                 .unit(ParameterUnit::Semitones) // Using semitones as closest unit
+                // Quantized to integer octaves in `effective_freq`, so a smooth
+                // mod offset is meaningless — not a mod destination.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -184,8 +191,11 @@ impl PolyModule for WavetableOsc {
 
         let bank = get_wavetable(self.table);
         let base_freq = self.effective_freq();
-        let base_position = self.position.as_f32();
-        let level = self.level.as_f32();
+        // Effective (modulated) values, once per block.
+        let base_position = self
+            .mod_offsets
+            .effective("position", self.position.as_f32());
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
 
         for i in 0..num_samples {
             // Apply FM
@@ -262,6 +272,10 @@ impl PolyModule for WavetableOsc {
         ModuleType::WavetableOsc
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.phase = Phase::ZERO;
     }
@@ -283,6 +297,25 @@ impl PolyModule for WavetableOsc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `detune` is now a working pitch mod destination (it used to be dropped):
+    /// a normalized offset shifts the effective frequency, clearing reverts.
+    #[test]
+    fn detune_mod_offset_shifts_pitch() {
+        let mut o = WavetableOsc::new();
+        let desc = o.descriptor();
+        o.mod_offsets_mut().unwrap().populate(&desc);
+        o.note_on(MidiNote::A4, Velocity::MAX);
+
+        let base = o.effective_freq().as_f32();
+        o.set_mod_offset("detune", 0.5); // +half the cents range → pitch up
+        assert!(
+            o.effective_freq().as_f32() > base * 1.001,
+            "detune mod should raise pitch"
+        );
+        o.clear_mod_offsets();
+        assert!((o.effective_freq().as_f32() - base).abs() < 0.5);
+    }
 
     #[test]
     fn test_wavetable_osc_creation() {
