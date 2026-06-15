@@ -56,6 +56,18 @@ The song arrangement view: tracks (Drums, Bass, Pad, Lead, Strings, etc.)
 laid out on a horizontal timeline with their pattern clips, plus a piano-roll
 preview of the selected pattern at the bottom.
 
+### `pattern-1.png`
+
+![Pattern 1](pattern-1.png)
+
+The vertical *Tracker* pattern editor (an alternative to the piano roll, toggled
+top-left). The selected pattern is shown as rows of note and voice columns next to
+an inline automation lane — here a Filter Cutoff curve (the green V-shape). The
+left panel lists the patterns of an *Expression & Note-Processor Demo* song, each
+exercising a note processor or per-note expression: arpeggios, ornaments
+(flam/drag/ruff/roll), chords, glide, legato, probability, scale-quantize and
+humanize.
+
 ## Acoustic World Engine (AWE)
 
 ### `awe-1.png`
