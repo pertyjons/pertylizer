@@ -465,6 +465,18 @@ pub trait SynthBridge: Send + Sync + 'static {
         instrument_id: u64,
     ) -> Result<Vec<MatrixRoutingInfo>, McpBridgeError>;
 
+    /// Install (or clear) a YAMS control script on a Mod Matrix slot (Step 2).
+    /// `slot` is **1-based** (matching `get_mod_matrix_routings`). A non-empty
+    /// `source` is compiled (a compile error is returned); an empty `source`
+    /// clears the slot, reverting it to scalar `amount × source`.
+    fn set_mod_matrix_script(
+        &self,
+        instrument_id: u64,
+        module_id: &str,
+        slot: u8,
+        source: &str,
+    ) -> Result<(), McpBridgeError>;
+
     /// Get a single parameter value.
     fn get_parameter(
         &self,

@@ -797,6 +797,28 @@ impl SynthSession {
         Ok(())
     }
 
+    /// Clear a Mod Matrix `slot`'s control script (0-based), reverting the slot
+    /// to its scalar `amount × source` behaviour. Sends `SetModScript` with
+    /// `None` — an empty source can't take the compile path ([`Self::set_mod_script`])
+    /// because YAMS requires an `out` statement.
+    pub fn clear_mod_script(
+        &self,
+        instrument_id: InstrumentId,
+        module_id: ModuleId,
+        slot: u8,
+    ) -> Result<(), SessionError> {
+        let cmd = EngineCommand::SetModScript {
+            instrument_id: Some(instrument_id),
+            module_id,
+            slot,
+            script: None,
+        };
+        if !self.command_sender.send(cmd) {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
     // ------------------------------------------------------------------
     // Patch loading (GUI-independent)
     // ------------------------------------------------------------------

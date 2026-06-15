@@ -724,6 +724,20 @@ pub struct GetParameterParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetModMatrixScriptParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: u64,
+    #[schemars(description = "Mod Matrix module ID, e.g. 'mmx-1'")]
+    pub module_id: String,
+    #[schemars(description = "1-based slot number (1..=16), matching get_mod_matrix_routings")]
+    pub slot: u8,
+    #[schemars(
+        description = "YAMS control-script source (e.g. 'src lfo = lfo-1.out\\nout = lfo * velocity'). The script's `out` becomes the slot's offset, replacing amount × source. An empty string clears the slot back to scalar behaviour."
+    )]
+    pub source: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteOnInput {
     #[schemars(description = "MIDI note number (0-127, where 60 = middle C)")]
     pub note: u8,
@@ -3458,6 +3472,7 @@ impl SynthMcpServer {
             "get_module_info" => get_module_info(ModuleParam),
             "get_connections" => get_connections(InstrumentIdParam),
             "get_mod_matrix_routings" => get_mod_matrix_routings(InstrumentIdParam),
+            "set_mod_matrix_script" => set_mod_matrix_script(SetModMatrixScriptParam),
             "get_parameter" => get_parameter(GetParameterParam),
             "get_engine_status" => get_engine_status(NoParams),
             "get_graph_diagnostics" => get_graph_diagnostics(InstrumentIdParam),
@@ -4042,6 +4057,23 @@ impl SynthMcpServer {
     async fn get_mod_matrix_routings(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.get_mod_matrix_routings(params.0.instrument_id) {
             Ok(routings) => to_json(&routings),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Install or clear a YAMS control script on a Mod Matrix slot (Step 2). With a non-empty `source`, the script is compiled (a compile error is returned with diagnostics) and its `out` value becomes the slot's modulation offset, replacing amount × source. An empty `source` clears the slot back to scalar behaviour. `slot` is 1-based (1..=16), matching get_mod_matrix_routings. YAMS reads `src`-bound module outputs/params (e.g. `src lfo = lfo-1.out`) plus macros (velocity, mod_wheel, …) and context (gate, age, sr), and assigns a normalized offset to `out`."
+    )]
+    async fn set_mod_matrix_script(&self, params: Parameters<SetModMatrixScriptParam>) -> String {
+        let p = params.0;
+        match self
+            .bridge
+            .set_mod_matrix_script(p.instrument_id, &p.module_id, p.slot, &p.source)
+        {
+            Ok(()) if p.source.trim().is_empty() => {
+                format!("OK: cleared script on {} slot {}", p.module_id, p.slot)
+            }
+            Ok(()) => format!("OK: installed script on {} slot {}", p.module_id, p.slot),
             Err(e) => format!("Error: {e}"),
         }
     }

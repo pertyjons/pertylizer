@@ -553,6 +553,51 @@ impl SynthBridge for AppSynthBridge {
             .collect())
     }
 
+    fn set_mod_matrix_script(
+        &self,
+        instrument_id: u64,
+        module_id: &str,
+        slot: u8,
+        source: &str,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let inst_id = InstrumentId::new(instrument_id);
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+
+        // The tool's `slot` is 1-based (matching the routings report); the engine
+        // is 0-based. Range-check against the real slot count.
+        let max = synth_core::MAX_MOD_MATRIX_SLOTS as u8;
+        if !(1..=max).contains(&slot) {
+            return Err(McpBridgeError::Other(format!(
+                "slot {slot} out of range (expected 1..={max})"
+            )));
+        }
+        let slot0 = slot - 1;
+
+        let to_bridge_err = |e: crate::session::SessionError| match e {
+            crate::session::SessionError::ScriptCompile(msg) => {
+                McpBridgeError::Other(format!("script compile error: {msg}"))
+            }
+            _ => McpBridgeError::CommandSendFailed {
+                command: "set_mod_matrix_script",
+            },
+        };
+
+        // An empty (or whitespace-only) source clears the slot — YAMS can't
+        // compile an empty program, so this is a distinct command, not a compile.
+        if source.trim().is_empty() {
+            self.session
+                .clear_mod_script(inst_id, mid, slot0)
+                .map_err(to_bridge_err)
+        } else {
+            self.session
+                .set_mod_script(inst_id, mid, slot0, source)
+                .map_err(to_bridge_err)
+        }
+    }
+
     fn get_parameter(
         &self,
         instrument_id: u64,
