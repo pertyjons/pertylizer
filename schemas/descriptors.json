@@ -6572,7 +6572,7 @@
           "description": "Harmonic bandwidth spread (wider = lusher)",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Bandwidth",
           "response_curve": "squared",
           "unit": "none"
@@ -6582,7 +6582,7 @@
           "description": "Base frequency for wavetable generation",
           "max": 2000.0,
           "min": 20.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Base Freq",
           "response_curve": "exponential",
           "unit": "hertz"
@@ -6592,7 +6592,7 @@
           "description": "Random per-harmonic frequency shift",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Detune",
           "response_curve": "linear",
           "unit": "none"
@@ -6612,7 +6612,7 @@
           "description": "Harmonic rolloff per octave",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Tilt",
           "response_curve": "linear",
           "unit": "none"

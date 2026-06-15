@@ -14,8 +14,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, PadSynthParam, Param};
@@ -50,6 +51,10 @@ pub struct PadSynth {
     phase_increment: f64,
     active: bool,
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets. Only `level` is a control-rate destination —
+    /// bandwidth/tilt/detune/base_freq bake into the wavetable at note_on and
+    /// can't be modulated mid-note without an (RT-unsafe) table rebuild.
+    mod_offsets: ParamModOffsets,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -72,6 +77,7 @@ impl PadSynth {
             phase_increment: 0.0,
             active: false,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
 
             output_buffer: AudioBuffer::new(1024),
         }
@@ -223,6 +229,9 @@ impl Describable for PadSynth {
                 .range(0.0, 1.0)
                 .default(0.4)
                 .curve(ResponseCurve::Squared)
+                // Bakes into the wavetable at note_on (no mid-note rebuild), so
+                // it is not a control-rate mod/automation destination.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -234,6 +243,8 @@ impl Describable for PadSynth {
                 .description("Harmonic rolloff per octave")
                 .range(0.0, 1.0)
                 .default(0.5)
+                // Wavetable-build param (see bandwidth) — not control-rate.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -245,6 +256,8 @@ impl Describable for PadSynth {
                 .description("Random per-harmonic frequency shift")
                 .range(0.0, 1.0)
                 .default(0.0)
+                // Wavetable-build param (see bandwidth) — not control-rate.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -258,6 +271,8 @@ impl Describable for PadSynth {
                 .default(261.63)
                 .unit(ParameterUnit::Hertz)
                 .curve(ResponseCurve::Exponential)
+                // Wavetable-build param (see bandwidth) — not control-rate.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -300,7 +315,7 @@ impl PolyModule for PadSynth {
             return;
         }
 
-        let level = self.level.as_f32();
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
         let inc = self.phase_increment;
 
         for i in 0..num_samples {
@@ -357,6 +372,10 @@ impl PolyModule for PadSynth {
         ModuleType::PadSynth
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.phase = 0.0;
         self.active = false;
@@ -402,6 +421,49 @@ mod tests {
         let pad = PadSynth::new();
         assert!((pad.bandwidth.as_f32() - 0.4).abs() < 0.001);
         assert!(!pad.active);
+    }
+
+    /// `level` is a working control-rate mod destination via the generic store;
+    /// the wavetable-build params are marked non-modulatable.
+    #[test]
+    fn level_mod_offset_scales_output() {
+        let mut pad = PadSynth::new();
+        let desc = pad.descriptor();
+        pad.mod_offsets_mut().unwrap().populate(&desc);
+        // Only `level` should be registered as modulatable.
+        assert!(
+            !desc
+                .parameters
+                .iter()
+                .any(|p| p.type_id == "bandwidth" && p.modulatable)
+        );
+
+        pad.note_on(MidiNote::new(60), Velocity::new(0.8));
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        fn peak(pad: &mut PadSynth, ctx: &ProcessContext) -> f32 {
+            pad.phase = 0.0; // start each measurement at the same table phase
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            pad.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        let base = peak(&mut pad, &ctx);
+        assert!(base > 1e-3, "base output present, got {base}");
+
+        pad.set_mod_offset("level", -0.8);
+        let quieter = peak(&mut pad, &ctx);
+        assert!(
+            quieter < base * 0.5,
+            "level offset should reduce output: {quieter} vs {base}"
+        );
+
+        pad.clear_mod_offsets();
+        assert!((peak(&mut pad, &ctx) - base).abs() < base * 0.1);
     }
 
     #[test]
