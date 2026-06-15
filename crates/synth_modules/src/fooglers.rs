@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{FooglersParam, ModuleType, Param};
 use synth_core::{MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
@@ -33,6 +33,8 @@ pub struct Fooglers {
     write_pos: usize,
     /// One-pole lowpass state for damping.
     damp_state: f32,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
     output_buffer: AudioBuffer,
 }
 
@@ -48,6 +50,7 @@ impl Fooglers {
             buffer: [0.0; BUFFER_SIZE],
             write_pos: 0,
             damp_state: 0.0,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -148,16 +151,22 @@ impl PolyModule for Fooglers {
         self.output_buffer.resize(context.samples.as_usize());
 
         let audio_in = inputs.reader(PortName::IN, 0.0);
-        let feedback = self.feedback.as_f32().min(0.99);
-        let damp_coeff = self.damping.as_f32();
-        let level = self.level.as_f32();
+        // Generic mod offsets — all per-block constants, resolved once here.
+        let feedback = self
+            .mod_offsets
+            .effective("feedback", self.feedback.as_f32())
+            .min(0.99);
+        let damp_coeff = self.mod_offsets.effective("damping", self.damping.as_f32());
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
+        let tap1 = self.mod_offsets.effective("tap1", self.tap1.as_f32());
+        let tap2 = self.mod_offsets.effective("tap2", self.tap2.as_f32());
 
         for i in 0..context.samples.as_usize() {
             let input = audio_in[i];
 
             // Read from two taps
-            let tap1_val = self.read_tap(self.tap1.as_f32());
-            let tap2_val = self.read_tap(self.tap2.as_f32());
+            let tap1_val = self.read_tap(tap1);
+            let tap2_val = self.read_tap(tap2);
 
             // Mix taps
             let tap_mix = (tap1_val + tap2_val) * 0.5;
@@ -226,6 +235,10 @@ impl PolyModule for Fooglers {
         ModuleType::Fooglers
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.buffer = [0.0; BUFFER_SIZE];
         self.write_pos = 0;
@@ -243,5 +256,53 @@ impl PolyModule for Fooglers {
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `level` is a working mod destination via the generic store: a negative
+    /// offset reduces the resonator output, and clearing restores it.
+    #[test]
+    fn level_mod_offset_scales_output() {
+        let mut f = Fooglers::new();
+        let desc = f.descriptor();
+        f.mod_offsets_mut().unwrap().populate(&desc);
+        f.note_on(MidiNote::A4, Velocity::MAX);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(512),
+            ..ProcessContext::default()
+        };
+        fn rms(f: &mut Fooglers, ctx: &ProcessContext) -> f32 {
+            // Excite with a steady input so the feedback network rings.
+            let mut buf = AudioBuffer::new(512);
+            for i in 0..512 {
+                buf[i] = 0.3;
+            }
+            let in_ports = [(PortName::IN, &buf)];
+            let inputs = InputPorts::new(&in_ports);
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(512));
+            f.process(inputs, &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i] * b[i]).sum::<f32>().sqrt()
+        }
+
+        let base = rms(&mut f, &ctx);
+        assert!(base > 1e-3, "base output present, got {base}");
+
+        f.set_mod_offset("level", -0.9);
+        let quieter = rms(&mut f, &ctx);
+        assert!(
+            quieter < base * 0.5,
+            "level offset should reduce output: {quieter} vs {base}"
+        );
+
+        f.clear_mod_offsets();
+        let reverted = rms(&mut f, &ctx);
+        assert!(reverted > quieter, "clearing restores level");
     }
 }
