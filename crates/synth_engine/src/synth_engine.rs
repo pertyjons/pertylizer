@@ -964,6 +964,9 @@ impl SynthEngine {
                 script,
             } => {
                 self.handle_set_mod_script(instrument_id, module_id, slot as usize, script);
+                // Refresh the shared snapshot so the new script is visible to the
+                // save path (`ModuleStateSnapshot.scripts`).
+                self.update_shared_graph(instrument_id);
             }
 
             // Reset/clear
@@ -2490,6 +2493,18 @@ impl SynthEngine {
                     descriptor.name.to_string(),
                 );
                 snapshot.parameters = module.get_params();
+                // Publish per-slot control scripts (Step 2) for the save path.
+                // Allocation is fine here — this is the UI/save snapshot, never
+                // the audio thread. 1-based slot key matches the persisted form.
+                if let Some(scripts) = module.mod_scripts() {
+                    for (slot, entry) in scripts.iter().enumerate() {
+                        if let Some(bound) = entry {
+                            snapshot
+                                .scripts
+                                .insert((slot + 1).to_string(), bound.source.clone());
+                        }
+                    }
+                }
                 snapshot.bypass_state = if graph.is_bypassed(id) {
                     synth_core::BypassState::Bypassed
                 } else {

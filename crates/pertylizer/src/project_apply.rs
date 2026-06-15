@@ -409,7 +409,8 @@ fn build_patch_from_engine(
             module_type: module.module_type,
             position: Position::default(),
             parameters: param_map,
-            scripts: std::collections::BTreeMap::new(),
+            // Per-slot control scripts (Step 2) round-trip via the snapshot.
+            scripts: module.scripts.clone(),
         });
     }
 
@@ -901,6 +902,70 @@ mod tests {
             fresh,
             InstrumentId::new(1),
             "New Project should restart instrument IDs from 1"
+        );
+    }
+
+    /// A YAMS control script installed on a Mod Matrix slot survives the engine
+    /// → snapshot → save path: `set_mod_script` refreshes the shared snapshot
+    /// (`ModuleStateSnapshot.scripts`), and `build_patch_from_engine` persists it
+    /// into the project's `ModuleState.scripts` by 1-based slot key (S2.2b-2iv).
+    #[test]
+    fn save_project_round_trips_control_scripts() {
+        let (mut engine, handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let song: SharedSong = Arc::new(PRwLock::new(Song::new("Scripts")));
+        let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        ));
+
+        let id = InstrumentId::new(0);
+        session
+            .add_instrument_with_id(id, "Scripted")
+            .expect("add instrument");
+        // Host the script on a Mod Matrix module.
+        let mut patch = minimal_patch("Scripted Patch");
+        patch.add_module(ModuleBuilder::new(1, ModuleType::ModMatrix).build());
+        let _ = session.apply_patch(id, &patch);
+
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate(TEST_SR),
+            buffer_size: synth_core::BufferSize(256),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+        drive(&mut engine, 4);
+
+        // Install on slot 1 (0-based 0), then drain so the snapshot refreshes.
+        session
+            .set_mod_script(
+                id,
+                "mmx-1".parse().expect("mmx id"),
+                0,
+                "out = velocity * 0.5",
+            )
+            .expect("set_mod_script");
+        drive(&mut engine, 4);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("scripts.json");
+        save_project_to(
+            &path,
+            &session,
+            &song,
+            &sample_library,
+            ProjectBuildOptions::default(),
+        )
+        .expect("save_project_to");
+
+        let json = std::fs::read_to_string(&path).expect("read saved project");
+        let compact = serde_json::from_str::<serde_json::Value>(&json)
+            .expect("parse saved project")
+            .to_string();
+        assert!(
+            compact.contains(r#""scripts":{"1":"out = velocity * 0.5"}"#),
+            "saved project must round-trip the control script; got: {compact}"
         );
     }
 

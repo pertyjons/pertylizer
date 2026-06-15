@@ -3,7 +3,7 @@
 //! This module provides thread-safe shared state that can be read by multiple
 //! GUI clients while being updated by the audio engine.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -241,6 +241,11 @@ pub struct ModuleStateSnapshot {
     pub connectivity: ModuleConnectivityStatus,
     /// Current parameter values (each Param contains both type and value).
     pub parameters: Vec<Param>,
+    /// Per-slot YAMS control-script source text (Step 2), keyed by 1-based slot
+    /// number — the read side of the script channel, mirroring the engine
+    /// module's `mod_scripts()` so the save path can persist them. Empty for
+    /// every module except a Mod Matrix with installed scripts.
+    pub scripts: BTreeMap<String, String>,
     /// Number of connections to each input port.
     pub input_connection_counts: HashMap<PortName, usize>,
     /// Number of connections from each output port.
@@ -269,6 +274,7 @@ impl ModuleStateSnapshot {
             solo_state: SoloState::Normal,
             connectivity: ModuleConnectivityStatus::Disconnected,
             parameters: Vec::new(),
+            scripts: BTreeMap::new(),
             input_connection_counts: HashMap::new(),
             output_connection_counts: HashMap::new(),
             cpu_usage: CpuUsage::default(),
