@@ -203,12 +203,19 @@ the remaining sign-offs (persistence, caps, diagnostics).
     into_bound` mapping in `synth_script` (macros → `SrcAddr::Macro` so the voice resolves
     them via the existing scalar path; module refs round-trip `SrcAddr::parse`, unknown →
     `Zero`). **SHIPPED `fed674a`.** Headless, unit-tested.
-  - [ ] **S2.2b** — `ModMatrix` stores `scripts: [Option<Arc<BoundScript>>; 16]` **beside**
-    `slots` (routing stays `Copy` — decision #4; the script never lives on it). Accessor
-    `mod_scripts()`. Persist a per-slot `script: Option<String>` (canonical YAMS text);
-    compile-on-load in the pertylizer load path (off the audio thread, has `synth_script`).
-    **Watch the schema/example wall** (S1.1b note): keep the descriptor/schema a superset so
-    `example_files_validate_against_schemas` stays green.
+  - [x] **S2.2b-1** — `ModMatrix` stores `scripts: [Option<Arc<BoundScript>>; 16]` **beside**
+    `slots` (routing stays `Copy` — decision #4; script never lives on it). `PolyModule` gains
+    two additive default methods: `mod_scripts()` (the slice, read by the voice) and
+    `set_mod_script(slot, Option<Arc<_>>)` (the off-audio-thread install channel, since the
+    `Arc` can't ride the f32 `set_param` path). **SHIPPED `d017ae8`.** Storage only, unit-tested.
+  - [ ] **S2.2b-2** — Persistence + compile-on-load. Add an optional `scripts` map to
+    `ModuleState` (patch.rs) — **separate from the descriptor-driven `parameters` BTreeMap** so
+    it dodges the schema/example wall (an optional field; old projects default-empty, scriptless
+    projects skip-serialize → `example_files_validate_against_schemas` stays green). Save path
+    fills it from `module.mod_scripts()` (`bound.source`); load path compiles each text via
+    `synth_script::compile` → `into_bound` → `set_mod_script`. **NOTE: pertylizer does NOT yet
+    depend on `synth_script` — add it** (non-RT authoring consumer, per crate-placement). Hook
+    compile-on-load into the session/project apply path (off the audio thread).
   - [ ] **S2.2c** — Voice eval: per-slot per-voice `RegisterFile`; fill `sources` from
     `ScriptInput` (Source via existing `resolve_source`; Context via gate/gate_on/age/sr);
     `script.eval` → offset → `apply_mod_offset_addr`. When a slot has a script, it **replaces**
