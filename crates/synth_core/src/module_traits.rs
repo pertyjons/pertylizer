@@ -1092,6 +1092,14 @@ impl ParamModOffsets {
         }
     }
 
+    /// `true` if any registered param currently carries a non-zero offset.
+    /// Modules that cache derived state behind a dirty flag use this to force a
+    /// recompute for the block while modulation is live (RT-safe linear scan).
+    #[must_use]
+    pub fn any_active(&self) -> bool {
+        self.entries.iter().any(|e| e.offset != 0.0)
+    }
+
     /// The effective native value for `type_id` given its `base` (already
     /// override-resolved) value: `denormalize(clamp(normalize(base) + offset))`
     /// through the param's own range+curve. Returns `base` unchanged when the

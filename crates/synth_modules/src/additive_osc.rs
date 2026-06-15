@@ -10,8 +10,8 @@
 use std::collections::HashMap;
 use synth_core::{
     AdditiveParam, AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor,
-    ModuleType, Param, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor,
-    ProcessContext, WidgetHint,
+    ModuleType, Param, ParamModOffsets, ParameterDescriptor, ParameterUnit, PolyModule,
+    PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{BipolarValue, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 
@@ -36,6 +36,8 @@ pub struct AdditiveOsc {
     sample_rate: SampleRate,
     inv_sample_rate: f32,
     amplitudes_dirty: bool,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Buffer
     output_buffer: AudioBuffer,
@@ -57,6 +59,7 @@ impl AdditiveOsc {
             sample_rate: SampleRate::DVD_QUALITY,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
             amplitudes_dirty: true,
+            mod_offsets: ParamModOffsets::new(),
 
             output_buffer: AudioBuffer::new(1024),
         }
@@ -69,9 +72,15 @@ impl AdditiveOsc {
         }
         self.amplitudes_dirty = false;
 
-        let tilt = self.tilt.as_f32() * 2.0; // 0-2 range: 0=flat, 1=normal, 2=steep
-        let odd_even = self.odd_even.as_f32(); // 0=odd, 0.5=equal, 1=even
-        let brightness = self.brightness.as_f32();
+        // Spectral shaping params are mod destinations via the generic store.
+        // 0..1 range, so a normalized offset maps directly onto the param.
+        let tilt = self.mod_offsets.effective("tilt", self.tilt.as_f32()) * 2.0; // 0-2: 0=flat, 1=normal, 2=steep
+        let odd_even = self
+            .mod_offsets
+            .effective("odd_even", self.odd_even.as_f32()); // 0=odd, 0.5=equal, 1=even
+        let brightness = self
+            .mod_offsets
+            .effective("brightness", self.brightness.as_f32());
 
         for i in 0..NUM_HARMONICS {
             let harmonic_num = (i + 1) as f32;
@@ -91,9 +100,8 @@ impl AdditiveOsc {
 
     /// Get the frequency for a given harmonic with stretch applied.
     #[inline]
-    fn harmonic_freq(&self, harmonic_index: usize, base_freq: Hertz) -> f32 {
+    fn harmonic_freq(&self, harmonic_index: usize, base_freq: Hertz, stretch: f32) -> f32 {
         let n = (harmonic_index + 1) as f32;
-        let stretch = self.stretch.as_f32();
         // Stretch factor: slightly detune higher harmonics
         // stretch=0: pure harmonic, stretch=1: significant inharmonicity
         let stretch_factor = 1.0 + stretch * 0.01 * (n - 1.0) * (n - 1.0);
@@ -182,6 +190,9 @@ impl Describable for AdditiveOsc {
                 .description("Phase randomization on note-on")
                 .range(0.0, 1.0)
                 .default(0.1)
+                // Only consumed in `randomize_phases` at note-on to seed phases;
+                // a continuous mod offset has no audible effect mid-note.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -221,10 +232,17 @@ impl PolyModule for AdditiveOsc {
         let num_samples = context.samples.as_usize();
         self.output_buffer.resize(num_samples);
 
+        // Spectral params (tilt/odd_even/brightness) cache into `amplitudes`
+        // behind a dirty flag; while any mod offset is live, force a recompute
+        // so the modulation is reflected this block.
+        if self.mod_offsets.any_active() {
+            self.amplitudes_dirty = true;
+        }
         self.update_amplitudes();
 
         let freq_cv = inputs.get(PortName::FREQ_CV);
-        let level = self.level.as_f32();
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
+        let stretch = self.mod_offsets.effective("stretch", self.stretch.as_f32());
         let nyquist = self.sample_rate.as_f32() * 0.5;
         let inv_sr = self.inv_sample_rate;
 
@@ -245,7 +263,7 @@ impl PolyModule for AdditiveOsc {
                     continue;
                 }
 
-                let freq = self.harmonic_freq(h, base_freq);
+                let freq = self.harmonic_freq(h, base_freq, stretch);
 
                 // Skip harmonics above Nyquist
                 if freq >= nyquist {
@@ -324,6 +342,10 @@ impl PolyModule for AdditiveOsc {
         ModuleType::AdditiveOsc
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.phases.fill(0.0);
     }
@@ -345,6 +367,61 @@ impl PolyModule for AdditiveOsc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Generic mod offsets reach both the per-block `level` and the cached
+    /// spectral params (here `tilt`, which forces an amplitude recompute).
+    #[test]
+    fn mod_offsets_scale_level_and_tilt() {
+        use synth_core::SampleCount;
+        let mut osc = AdditiveOsc::new();
+        let desc = osc.descriptor();
+        osc.mod_offsets_mut().unwrap().populate(&desc);
+        osc.note_on(MidiNote::A4, Velocity::MAX);
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        fn peak(osc: &mut AdditiveOsc, ctx: &ProcessContext) -> f32 {
+            let mut outs = std::collections::HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            osc.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        let base = peak(&mut osc, &ctx);
+        assert!(base > 0.01, "base output present, got {base}");
+
+        // Lower level via a negative offset → quieter.
+        osc.set_mod_offset("level", -0.8);
+        let quieter = peak(&mut osc, &ctx);
+        assert!(
+            quieter < base,
+            "level mod should reduce output: {quieter} vs {base}"
+        );
+        osc.clear_mod_offsets();
+
+        // Tilt offset reshapes the dominant harmonics (recompute path). Peak is
+        // normalized, so compare the full waveform instead.
+        fn wave(osc: &mut AdditiveOsc, ctx: &ProcessContext) -> Vec<f32> {
+            let mut outs = std::collections::HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            osc.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i]).collect()
+        }
+        osc.reset();
+        let before = wave(&mut osc, &ctx);
+        osc.set_mod_offset("tilt", 0.4);
+        osc.reset();
+        let after = wave(&mut osc, &ctx);
+        let diff: f32 = before.iter().zip(&after).map(|(a, b)| (a - b).abs()).sum();
+        assert!(
+            diff > 1e-3,
+            "tilt mod should alter the waveform, total diff = {diff}"
+        );
+    }
 
     #[test]
     fn test_additive_osc_creation() {
