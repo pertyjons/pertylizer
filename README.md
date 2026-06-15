@@ -44,13 +44,17 @@ A quick tour of what's inside — each item is described in more detail in its o
 
 - **Modular synthesis** — 70 module types (including 25 effects), patched freely over a DAG-based audio graph with live
   cable visualization, plus 68 built-in patches to start from
+- **Deep modulation** — a dynamic Mod Matrix wires any module output or per-voice macro to any modulatable parameter,
+  and any routing's amount can be a live **YAMS** control script (`out = lag(velocity, 40ms)`) instead of a fixed value
 - **Real-time GUI** — an immediate-mode egui interface for building instruments, wiring modules, and tweaking
   parameters while everything keeps playing
 - **MIDI** — hardware MIDI input with velocity, pitch bend, mod wheel, and aftertouch
 - **Acoustic World Engine** — physics-based spatial audio with room simulation, early reflections, late reverb, room
   modes, and per-voice 3D placement
 - **Pattern sequencer** — pattern-based composition with song arrangement, real-time recording, and per-pattern
-  automation lanes
+  automation lanes, edited in the piano roll or a vertical **tracker** view
+- **Note processors & expression** — non-destructive per-track articulation (arpeggiator, ornaments, chord + strum,
+  scale-quantize, humanize) plus per-note glide, legato, vibrato, probability, and gate
 - **Sample bank** — a simple sampler for importing, cropping, looping, and playing back your own samples
 - **Audio input & recording** — record voice or live audio (mic/line-in) straight into the sample bank, or route the
   live input through an Audio Input module directly into a patch's module chain to process it with filters and effects
@@ -75,8 +79,8 @@ to load and pull apart:
 
 ## Screenshots
 
-See [`screenshots/README.md`](screenshots/README.md) for a visual tour of the patch editor, sequencer, Acoustic World
-Engine, and 3D visualizer.
+See [`screenshots/README.md`](screenshots/README.md) for a visual tour of the patch editor, the Mod Matrix YAMS script
+editor, the sequencer and tracker, the Acoustic World Engine, and 3D visualizer.
 
 ## Synthesis & Sound Design
 
@@ -102,6 +106,20 @@ A handful of modules reach well past the usual subtractive toolkit:
 - **Spectral Processing** — phase vocoder, spectral blur, and partitioned convolution
 - **Physical Modeling** — body resonance, mechanical noise, LA synth (bell/drum), modal resonator
 - **Generative Sequencing** — Euclidean rhythm generator, Turing machine, random gates
+- **Voice & Formant Synthesis** — a source–filter voice synth, a Kelly–Lochbaum vocal tract, and FOF/CHANT granular
+  formant synthesis for vowel and choir-like tones
+
+### Modulation
+
+Modulation is first-class: a dynamic Mod Matrix connects sources to destinations by address, and any routing can run a
+small script in place of a fixed amount.
+
+- **Dynamic Mod Matrix** — route any module output (`lfo-3.out`, `env-2.out`) or per-voice macro (velocity, mod wheel,
+  aftertouch, pitch bend, note) to any modulatable parameter on any module; every continuous parameter is a working
+  destination
+- **YAMS control scripts** — optionally replace a routing's scalar amount with a small real-time expression language —
+  macros and context (note `age`, `gate`), stateful operators (`lag`, `slew`, `sah`, `phasor`), math, and ternaries —
+  compiled and evaluated per voice, editable live in the patch editor with compile and auto-format feedback
 
 ## Acoustic World Engine (AWE)
 
@@ -127,6 +145,12 @@ result straight to disk.
 - **Pattern repeat** — loops an individual pattern during playback; toggle in the piano roll toolbar
 - **Recording** — real-time MIDI recording with count-in, quantize grid, and overdub mode
 - **Automation lanes** — per-pattern parameter automation
+- **Tracker editor** — a vertical, tracker-style per-pattern view (toggle with the piano roll) with note, voice,
+  automation, and per-note expression columns
+- **Note processors** — non-destructive, per-track generative articulation applied as the pattern plays: arpeggiator,
+  timed-repeat ornaments (flam/drag/ruff/roll/grace), chord + strum, scale-quantize, and humanize
+- **Per-note expression** — glide/portamento, legato ties, vibrato, trigger probability, ghost/accent velocity, and
+  gate length, set per note
 - **WAV export** — offline render of the full song to WAV, faster than real-time, with selectable bit depth (16/24-bit,
   32-bit float), sample rate (44.1/48/96 kHz), duration, and reverb/delay tail
 
@@ -160,6 +184,8 @@ A few principles hold the whole thing together:
 
 - **Modular patching** — connect modules freely via a DAG-based audio graph with cable visualization
 - **Multitimbral** — per-instrument voice allocation and effect chains
+- **Mixing & routing** — per-instrument, return-bus, and master effect chains, with sends (including bus-to-bus) and
+  per-channel level/pan/mute/solo
 - **Real-time safe** — lock-free audio thread with zero allocations, locks, or panics
 - **MIDI** — hardware MIDI input with velocity, pitch bend, mod wheel, aftertouch
 - **Audio input** — monitor and record mic/line-in into the sample bank, or feed it live into a patch via the Audio
