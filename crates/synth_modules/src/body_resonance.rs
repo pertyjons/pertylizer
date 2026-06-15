@@ -6,8 +6,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{BodyResonanceParam, ModuleType, Param};
 use synth_core::{FilterState, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
@@ -29,6 +30,8 @@ pub struct BodyResonance {
 
     // Sample rate
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -48,6 +51,7 @@ impl BodyResonance {
             filter3_state: [FilterState::ZERO; 2],
 
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -173,11 +177,18 @@ impl PolyModule for BodyResonance {
         self.output_buffer.resize(context.samples.as_usize());
 
         let input = inputs.get(PortName::IN);
-        let base_freq = self.frequency.as_f32();
-        let q = 0.5 + self.resonance.as_f32() * 10.0; // Q from 0.5 to 10.5
-        let size = self.size.as_f32();
-        let brightness = self.brightness.as_f32();
-        let mix = self.mix.as_f32();
+        // Generic mod offsets — all per-block constants, resolved once here.
+        let base_freq = self.mod_offsets.effective("freq", self.frequency.as_f32());
+        let q = 0.5
+            + self
+                .mod_offsets
+                .effective("resonance", self.resonance.as_f32())
+                * 10.0; // Q 0.5..10.5
+        let size = self.mod_offsets.effective("size", self.size.as_f32());
+        let brightness = self
+            .mod_offsets
+            .effective("bright", self.brightness.as_f32());
+        let mix = self.mod_offsets.effective("mix", self.mix.as_f32());
 
         // Calculate frequencies for three resonant modes
         // Smaller body = higher frequencies, larger spread
@@ -263,6 +274,10 @@ impl PolyModule for BodyResonance {
         ModuleType::BodyResonance
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.filter1_state = [FilterState::ZERO; 2];
         self.filter2_state = [FilterState::ZERO; 2];
@@ -281,5 +296,56 @@ impl PolyModule for BodyResonance {
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// `mix` used to be dropped (BodyResonance never overrode set_mod_offset);
+    /// it now blends dry/wet via the generic store. Driving it to 0 makes the
+    /// output equal the dry input; clearing reverts.
+    #[test]
+    fn mix_mod_offset_blends_output() {
+        let mut br = BodyResonance::new();
+        let desc = br.descriptor();
+        br.mod_offsets_mut().unwrap().populate(&desc);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        fn render(br: &mut BodyResonance, ctx: &ProcessContext) -> Vec<f32> {
+            let mut buf = AudioBuffer::new(256);
+            for i in 0..256 {
+                buf[i] = if i % 8 < 4 { 0.5 } else { -0.5 };
+            }
+            let in_ports = [(PortName::IN, &buf)];
+            let inputs = InputPorts::new(&in_ports);
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            br.process(inputs, &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i]).collect()
+        }
+
+        br.reset();
+        let base = render(&mut br, &ctx);
+        br.set_mod_offset("mix", -1.0); // mix → 0 = fully dry
+        br.reset();
+        let dry = render(&mut br, &ctx);
+        let diff: f32 = base.iter().zip(&dry).map(|(a, b)| (a - b).abs()).sum();
+        assert!(
+            diff > 1e-3,
+            "mix offset should change the blend, diff = {diff}"
+        );
+
+        br.clear_mod_offsets();
+        br.reset();
+        let reverted = render(&mut br, &ctx);
+        let back: f32 = base.iter().zip(&reverted).map(|(a, b)| (a - b).abs()).sum();
+        assert!(back < 1e-3, "clearing reverts mix, residual = {back}");
     }
 }
