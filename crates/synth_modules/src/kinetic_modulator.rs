@@ -6,8 +6,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
+    ResponseCurve, WidgetHint,
 };
 use synth_core::{
     EasingCurve, KineticLoopMode, KineticParam, ModuleType, Param, easing_acceleration,
@@ -44,6 +45,8 @@ pub struct KineticModulator {
     output_vel: f32,
     /// Latest acceleration output.
     output_acc: f32,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
     /// Output buffer for audio graph compatibility.
     output_buffer: AudioBuffer,
 }
@@ -64,6 +67,7 @@ impl KineticModulator {
             output_pos: 0.0,
             output_vel: 0.0,
             output_acc: 0.0,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -134,6 +138,8 @@ impl Describable for KineticModulator {
                 .description("Output range (0 = 0..1, 1 = -1..+1)")
                 .range(0.0, 1.0)
                 .default(0.0)
+                // Boolean mode toggle, not a continuous modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Toggle),
             )
             .parameter(
@@ -145,6 +151,8 @@ impl Describable for KineticModulator {
                 .description("Restart on gate (0 = off, 1 = on)")
                 .range(0.0, 1.0)
                 .default(1.0)
+                // Boolean toggle read only at note-on, not a continuous target.
+                .modulatable(false)
                 .widget(WidgetHint::Toggle),
             )
             .port(
@@ -164,9 +172,15 @@ impl PolyModule for KineticModulator {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
-        let dur_secs = self.duration.as_f32().max(0.001);
+        // Generic mod offsets — per-block constants.
+        let dur_secs = self
+            .mod_offsets
+            .effective("duration", self.duration.as_f32())
+            .max(0.001);
         let phase_inc = 1.0 / (dur_secs * self.sample_rate.as_f32());
-        let overshoot_val = self.overshoot.as_f32();
+        let overshoot_val = self
+            .mod_offsets
+            .effective("overshoot", self.overshoot.as_f32());
 
         for i in 0..context.samples.as_usize() {
             if self.active {
@@ -291,6 +305,10 @@ impl PolyModule for KineticModulator {
         ModuleType::KineticModulator
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.phase = 0.0;
         self.active = false;
@@ -381,6 +399,61 @@ mod tests {
         // Should have completed
         assert!(!km.active);
         assert!((km.phase - 1.0).abs() < 0.01);
+    }
+
+    /// `duration` used to be dropped (KineticModulator never overrode
+    /// set_mod_offset); it now scales the phase-advance rate through the generic
+    /// store, so a routing changes the sweep speed and the output trajectory.
+    #[test]
+    fn test_kinetic_duration_mod_offset_changes_rate() {
+        let render = |offset: f32| -> Vec<f32> {
+            let mut km = KineticModulator::new();
+            let desc = km.descriptor();
+            km.mod_offsets_mut().unwrap().populate(&desc);
+            km.set_param(Param::Kinetic(KineticParam::Duration(Seconds::new(2.0))));
+            if offset != 0.0 {
+                km.set_mod_offset("duration", offset);
+            }
+            km.note_on(MidiNote::A4, Velocity::MAX);
+            let n = 512;
+            let mut out = HashMap::new();
+            out.insert(PortName::OUT, AudioBuffer::new(n));
+            let context = ProcessContext {
+                sample_rate: SampleRate::DVD_QUALITY,
+                samples: SampleCount::new(n),
+                ..ProcessContext::default()
+            };
+            km.process(InputPorts::empty(), &mut out, &context);
+            (0..n).map(|i| out[&PortName::OUT][i]).collect()
+        };
+        let base = render(0.0);
+        let faster = render(-0.5); // shorter duration → faster sweep
+        let diff: f32 = base.iter().zip(&faster).map(|(a, b)| (a - b).abs()).sum();
+        assert!(
+            diff > 0.01,
+            "duration offset should change sweep rate, diff={diff}"
+        );
+
+        // Clearing the offset reverts to the baseline trajectory.
+        let mut km = KineticModulator::new();
+        let desc = km.descriptor();
+        km.mod_offsets_mut().unwrap().populate(&desc);
+        km.set_param(Param::Kinetic(KineticParam::Duration(Seconds::new(2.0))));
+        km.set_mod_offset("duration", -0.5);
+        km.clear_mod_offsets();
+        km.note_on(MidiNote::A4, Velocity::MAX);
+        let n = 512;
+        let mut out = HashMap::new();
+        out.insert(PortName::OUT, AudioBuffer::new(n));
+        let context = ProcessContext {
+            sample_rate: SampleRate::DVD_QUALITY,
+            samples: SampleCount::new(n),
+            ..ProcessContext::default()
+        };
+        km.process(InputPorts::empty(), &mut out, &context);
+        let reverted: Vec<f32> = (0..n).map(|i| out[&PortName::OUT][i]).collect();
+        let back: f32 = base.iter().zip(&reverted).map(|(a, b)| (a - b).abs()).sum();
+        assert!(back < 1e-3, "clearing reverts duration, residual={back}");
     }
 
     #[test]

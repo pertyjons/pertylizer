@@ -1988,7 +1988,7 @@
           "description": "Output range (0 = 0..1, 1 = -1..+1)",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Bipolar",
           "response_curve": "linear",
           "unit": "none"
@@ -2101,7 +2101,7 @@
           "description": "Restart on gate (0 = off, 1 = on)",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Retrigger",
           "response_curve": "linear",
           "unit": "none"
