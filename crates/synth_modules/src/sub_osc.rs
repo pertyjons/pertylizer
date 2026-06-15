@@ -13,8 +13,9 @@ use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
+    WidgetHint,
 };
 use synth_core::{Gain, Hertz, MidiNote, Phase, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, SubOscOctave, SubOscParam, SubOscWaveform};
@@ -31,6 +32,8 @@ pub struct SubOscillator {
     phase: Phase,
     base_frequency: Hertz,
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -45,6 +48,7 @@ impl SubOscillator {
             phase: Phase::ZERO,
             base_frequency: Hertz::A4,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -77,7 +81,8 @@ impl SubOscillator {
         let dt = freq.phase_increment(self.sample_rate);
         self.phase = self.phase.advance(dt);
 
-        sample * self.level.as_f32()
+        // Level (and its mod offset) is applied once per block in `process`.
+        sample
     }
 }
 
@@ -145,8 +150,10 @@ impl PolyModule for SubOscillator {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
+        // Effective level = base + normalized mod offset, once per block.
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
         for i in 0..context.samples.as_usize() {
-            self.output_buffer[i] = self.generate_sample();
+            self.output_buffer[i] = self.generate_sample() * level;
         }
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
@@ -188,6 +195,10 @@ impl PolyModule for SubOscillator {
         ModuleType::SubOscillator
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.phase = Phase::ZERO;
     }
@@ -222,6 +233,45 @@ mod tests {
     fn test_octave_divisor() {
         assert_eq!(SubOscOctave::MinusOne.divisor(), 2.0);
         assert_eq!(SubOscOctave::MinusTwo.divisor(), 4.0);
+    }
+
+    /// `level` is now a working mod destination via the generic store: a
+    /// normalized offset raises the output level, and clearing reverts. (The
+    /// graph normally calls `populate`; the test does it directly.)
+    #[test]
+    fn level_mod_offset_scales_output() {
+        let mut sub = SubOscillator::new();
+        let desc = sub.descriptor();
+        sub.mod_offsets_mut().unwrap().populate(&desc);
+        sub.note_on(MidiNote::A4, Velocity::MAX);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        fn peak(sub: &mut SubOscillator, ctx: &ProcessContext) -> f32 {
+            let mut outs = std::collections::HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            sub.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        // Base level 0.5 → square output peaks ~0.5.
+        let base = peak(&mut sub, &ctx);
+        assert!(base > 0.1 && base < 0.99, "base ~0.5, got {base}");
+
+        // +0.5 normalized on level (0..1) → effective level 1.0 → louder.
+        sub.set_mod_offset("level", 0.5);
+        let modded = peak(&mut sub, &ctx);
+        assert!(
+            modded > base + 0.1,
+            "mod should raise level: {modded} vs {base}"
+        );
+
+        // Clearing reverts to base.
+        sub.clear_mod_offsets();
+        assert!((peak(&mut sub, &ctx) - base).abs() < 0.05);
     }
 
     #[test]
