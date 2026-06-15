@@ -4037,7 +4037,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Get all active Mod Matrix routings across every Mod Matrix module in the instrument. Slot rows include semantic source IDs (e.g. 'lfo-1', 'env-2', or 'velocity'/'mod_wheel' for non-module sources) and dotted destination IDs (e.g. 'flt-1.cutoff'), plus amount in -1..1 and enabled flag. Inactive slots (None → None) are filtered out."
+        description = "Get all active Mod Matrix routings across every Mod Matrix module in the instrument. Slot rows include semantic source IDs (e.g. 'lfo-1', 'env-2', or 'velocity'/'mod_wheel' for non-module sources) and dotted destination IDs (e.g. 'flt-1.cutoff'), plus amount in -1..1 and enabled flag. A slot with a YAMS control script (Step 2) also reports its `script` source text — then the offset is the script's output, not amount × source. Inactive slots (None → None, no script) are filtered out."
     )]
     async fn get_mod_matrix_routings(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.get_mod_matrix_routings(params.0.instrument_id) {

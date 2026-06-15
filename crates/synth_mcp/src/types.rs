@@ -78,11 +78,16 @@ pub struct MatrixRoutingInfo {
     /// Destination address `"<module-id>.<param>"` (e.g. `"flt-1.cutoff"`), or
     /// `"none"` when the slot has no destination.
     pub destination: String,
-    /// Modulation amount in `-1.0..=1.0`.
+    /// Modulation amount in `-1.0..=1.0`. Ignored when the slot has a `script`
+    /// (the script computes the offset directly — Step 2, decision #1).
     pub amount: f32,
     /// Whether the slot is enabled (an enabled slot can still be inactive
     /// if source or destination is `None`).
     pub enabled: bool,
+    /// The slot's YAMS control script source text (Step 2), if any. When set,
+    /// the slot's offset is the script's `out` rather than `amount × source`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
 }
 
 /// Information about a parameter.

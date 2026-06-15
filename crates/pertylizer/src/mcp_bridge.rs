@@ -440,7 +440,7 @@ impl SynthBridge for AppSynthBridge {
                 // live slot table for matrix modules themselves.
                 let is_mod_matrix = m.module_type == ModuleType::ModMatrix;
                 let mod_matrix_routings = if is_mod_matrix {
-                    Some(collect_mod_matrix_routings(&m.parameters))
+                    Some(collect_mod_matrix_routings(&m.parameters, &m.scripts))
                 } else {
                     None
                 };
@@ -549,7 +549,7 @@ impl SynthBridge for AppSynthBridge {
         Ok(modules
             .iter()
             .filter(|m| m.module_type == ModuleType::ModMatrix)
-            .flat_map(|m| collect_mod_matrix_routings(&m.parameters))
+            .flat_map(|m| collect_mod_matrix_routings(&m.parameters, &m.scripts))
             .collect())
     }
 
@@ -6780,25 +6780,47 @@ fn parse_module_type(token: &str) -> Option<synth_core::ModuleType> {
 /// (`"lfo-3.out"`, `"velocity"`, `"flt-1.cutoff"`) — so arbitrary addresses are
 /// named directly rather than lost to a legacy-enum round-trip. Fully-empty
 /// routings (no source and no destination) are skipped.
-fn collect_mod_matrix_routings(params: &[Param]) -> Vec<MatrixRoutingInfo> {
-    decode_mod_matrix_slots(params)
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| s.source.is_some() || s.destination.is_some())
-        .map(|(i, s)| {
-            let source = s
+fn collect_mod_matrix_routings(
+    params: &[Param],
+    scripts: &std::collections::BTreeMap<String, String>,
+) -> Vec<MatrixRoutingInfo> {
+    let decoded = decode_mod_matrix_slots(params);
+    // `decode_mod_matrix_slots` only densifies up to the highest *param* slot, so
+    // a script-only slot (no source/dest params) can sit beyond it — extend the
+    // iteration to cover the highest 1-based scripted slot too.
+    let max_scripted = scripts
+        .keys()
+        .filter_map(|k| k.parse::<usize>().ok())
+        .filter(|n| (1..=synth_core::MAX_MOD_MATRIX_SLOTS).contains(n))
+        .max()
+        .unwrap_or(0);
+    let count = decoded.len().max(max_scripted);
+
+    (0..count)
+        .filter_map(|i| {
+            let slot = decoded.get(i).cloned().unwrap_or_default();
+            // Scripts are keyed by 1-based slot number (matching the report's
+            // `slot` field), mirroring the persisted `ModuleState.scripts`.
+            let script = scripts.get(&(i + 1).to_string()).cloned();
+            // Report a slot with a source/dest OR a script (a scripted slot may
+            // have no scalar source — the script supplies the value).
+            if slot.source.is_none() && slot.destination.is_none() && script.is_none() {
+                return None;
+            }
+            let source = slot
                 .source
                 .map_or_else(|| "none".to_string(), |a| a.to_address_string());
-            let destination = s
+            let destination = slot
                 .destination
                 .map_or_else(|| "none".to_string(), |a| a.to_address_string());
-            MatrixRoutingInfo {
+            Some(MatrixRoutingInfo {
                 slot: i as u8 + 1,
                 source,
                 destination,
-                amount: s.amount,
-                enabled: s.enabled,
-            }
+                amount: slot.amount,
+                enabled: slot.enabled,
+                script,
+            })
         })
         .collect()
 }
@@ -11517,6 +11539,41 @@ mod mod_matrix_routing_tests {
         snap
     }
 
+    /// The routings report surfaces a slot's YAMS control script (S2.3a): the
+    /// `script` text rides alongside the addresses, and a slot that has *only* a
+    /// script (no scalar source/dest) is still reported — the script owns the value.
+    #[test]
+    fn routings_report_includes_control_script() {
+        // A scripted slot that also has a destination.
+        let mut mmx = matrix_snapshot(
+            1,
+            vec![
+                Param::ModMatrix(ModMatrixParam::SlotDestination(
+                    0,
+                    Some(DestAddr::new(ModuleType::Filter, 1, "cutoff")),
+                )),
+                Param::ModMatrix(ModMatrixParam::SlotEnabled(0, true)),
+            ],
+        );
+        mmx.scripts
+            .insert("1".to_string(), "out = velocity * 0.5".to_string());
+        let routings = collect_mod_matrix_routings(&mmx.parameters, &mmx.scripts);
+        assert_eq!(routings.len(), 1);
+        assert_eq!(routings[0].slot, 1);
+        assert_eq!(routings[0].destination, "flt-1.cutoff");
+        assert_eq!(routings[0].script.as_deref(), Some("out = velocity * 0.5"));
+
+        // A slot with ONLY a script (no source/dest) is still surfaced.
+        let mut only = matrix_snapshot(1, vec![]);
+        only.scripts.insert("3".to_string(), "out = 1".to_string());
+        let r = collect_mod_matrix_routings(&only.parameters, &only.scripts);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].slot, 3);
+        assert_eq!(r[0].script.as_deref(), Some("out = 1"));
+        // A script-free slot reports no script.
+        assert!(r.iter().all(|x| x.slot != 1));
+    }
+
     /// The report echoes the stored absolute address faithfully — no
     /// report-time positional remap (legacy positional ids are upgraded at
     /// *load* instead; see `patch::upgrade_legacy_mod_matrix`). An instrument on
@@ -11546,7 +11603,8 @@ mod mod_matrix_routing_tests {
         ];
 
         let idx = InstrumentModuleIndex::from_snapshots(&modules);
-        let routings = collect_mod_matrix_routings(&modules.last().unwrap().parameters);
+        let last = modules.last().unwrap();
+        let routings = collect_mod_matrix_routings(&last.parameters, &last.scripts);
         assert_eq!(routings.len(), 1);
         let r = &routings[0];
         assert_eq!(r.source, "env-6.out");
@@ -11604,7 +11662,8 @@ mod mod_matrix_routing_tests {
             ),
         ];
 
-        let routings = collect_mod_matrix_routings(&modules.last().unwrap().parameters);
+        let last = modules.last().unwrap();
+        let routings = collect_mod_matrix_routings(&last.parameters, &last.scripts);
         assert_eq!(routings.len(), 2);
         assert_eq!(routings[0].slot, 1);
         assert_eq!(routings[0].source, "lfo-1.out");
@@ -11676,7 +11735,8 @@ mod mod_matrix_routing_tests {
             ),
         ];
 
-        let routings = collect_mod_matrix_routings(&modules.last().unwrap().parameters);
+        let last = modules.last().unwrap();
+        let routings = collect_mod_matrix_routings(&last.parameters, &last.scripts);
         assert_eq!(routings.len(), 2);
         assert_eq!(routings[0].source, "velocity");
         assert_eq!(routings[1].source, "mod_wheel");
