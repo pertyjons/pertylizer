@@ -10,8 +10,9 @@ use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{
     BipolarValue, BufferIndex, FrameCount, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName,
@@ -38,6 +39,8 @@ pub struct MathOscillator {
     // Standard state
     phase: Phase,
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Chaos/Lorenz state (raw f32 - mathematical state, not audio domain)
     lorenz_x: f32,
@@ -75,6 +78,7 @@ impl MathOscillator {
             level: Gain::UNITY,
             phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             lorenz_x: 0.1,
             lorenz_y: 0.0,
             lorenz_z: 0.0,
@@ -102,15 +106,24 @@ impl MathOscillator {
         fastrand::f32() * 2.0 - 1.0
     }
 
+    /// Convenience for tests/internal callers: generate using the current
+    /// stored `var_a/b/c` (no mod offset, no CV).
+    #[cfg(test)]
+    fn generate_sample_from_vars(&mut self) -> f32 {
+        let (a, b, c) = (
+            self.var_a.as_f32(),
+            self.var_b.as_f32(),
+            self.var_c.as_f32(),
+        );
+        self.generate_sample(a, b, c)
+    }
+
     /// Generate a sample using the current algorithm.
     #[inline]
     #[allow(clippy::many_single_char_names)] // Mathematical variables: t, a, b, c
-    fn generate_sample(&mut self) -> f32 {
+    fn generate_sample(&mut self, a: f32, b: f32, c: f32) -> f32 {
         let t = self.phase.as_f32();
         let dt = self.frequency.phase_increment(self.sample_rate);
-        let a = self.var_a.as_f32();
-        let b = self.var_b.as_f32();
-        let c = self.var_c.as_f32();
 
         let sample = match self.algo {
             // ================================================================
@@ -425,8 +438,8 @@ impl MathOscillator {
         // Advance phase
         self.phase = self.phase.advance(dt);
 
-        // Final clamp and apply level
-        sample.clamp(-1.0, 1.0) * self.level.as_f32()
+        // Final clamp (level applied by the caller after modulation).
+        sample.clamp(-1.0, 1.0)
     }
 
     /// Reset chaos/iteration state for deterministic note starts.
@@ -569,30 +582,31 @@ impl PolyModule for MathOscillator {
         let mod_a = inputs.get(PortName::PARAM_A);
         let mod_b = inputs.get(PortName::PARAM_B);
 
+        // Generic mod-matrix offsets, resolved once per block. frequency folds
+        // into the FM base; param_a/b/c form the base the per-sample Mod A/B CV
+        // adds on top of; level scales the output.
+        let eff_base_freq = Hertz::new(
+            self.mod_offsets
+                .effective("frequency", self.base_frequency.as_f32()),
+        );
+        let base_a = self.mod_offsets.effective("param_a", self.var_a.as_f32());
+        let base_b = self.mod_offsets.effective("param_b", self.var_b.as_f32());
+        let c = self.mod_offsets.effective("param_c", self.var_c.as_f32());
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
+
         for i in 0..context.samples.as_usize() {
-            // Apply FM
-            if let Some(fm) = fm_input {
-                let fm_val = fm[i];
-                // FM modulates frequency exponentially relative to base frequency
-                self.frequency = self.base_frequency.apply_fm(BipolarValue::new(fm_val));
-            }
+            // Apply FM relative to the (modulated) base frequency.
+            self.frequency = if let Some(fm) = fm_input {
+                eff_base_freq.apply_fm(BipolarValue::new(fm[i]))
+            } else {
+                eff_base_freq
+            };
 
-            // Apply param modulation
-            let base_a = self.var_a;
-            let base_b = self.var_b;
+            // Per-sample Mod A/B CV adds on top of the modulated param base.
+            let a = mod_a.map_or(base_a, |ma| (base_a + ma[i] * 0.5).clamp(0.0, 1.0));
+            let b = mod_b.map_or(base_b, |mb| (base_b + mb[i] * 0.5).clamp(0.0, 1.0));
 
-            if let Some(ma) = mod_a {
-                self.var_a = NormalizedValue::new((base_a.as_f32() + ma[i] * 0.5).clamp(0.0, 1.0));
-            }
-            if let Some(mb) = mod_b {
-                self.var_b = NormalizedValue::new((base_b.as_f32() + mb[i] * 0.5).clamp(0.0, 1.0));
-            }
-
-            self.output_buffer[i] = self.generate_sample();
-
-            // Restore base values
-            self.var_a = base_a;
-            self.var_b = base_b;
+            self.output_buffer[i] = self.generate_sample(a, b, c) * level;
         }
 
         // Copy to output
@@ -650,6 +664,10 @@ impl PolyModule for MathOscillator {
         ModuleType::MathOscillator
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.reset_state();
         self.delay_line.fill(0.0);
@@ -687,6 +705,41 @@ mod tests {
         assert!((osc.frequency.as_f32() - 440.0).abs() < 0.001);
     }
 
+    /// `level` is a working mod destination: a negative offset reduces the
+    /// rendered output peak, and clearing restores it.
+    #[test]
+    fn level_mod_offset_scales_output() {
+        let mut osc = MathOscillator::new();
+        let desc = osc.descriptor();
+        osc.mod_offsets_mut().unwrap().populate(&desc);
+        osc.note_on(MidiNote::A4, Velocity::MAX);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        fn peak(osc: &mut MathOscillator, ctx: &ProcessContext) -> f32 {
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            osc.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        let base = peak(&mut osc, &ctx);
+        assert!(base > 0.01, "base output present, got {base}");
+
+        osc.set_mod_offset("level", -0.8);
+        let quieter = peak(&mut osc, &ctx);
+        assert!(
+            quieter < base * 0.5,
+            "level mod should reduce output: {quieter} vs {base}"
+        );
+
+        osc.clear_mod_offsets();
+        assert!((peak(&mut osc, &ctx) - base).abs() < base * 0.1);
+    }
+
     #[test]
     fn test_all_algorithms_produce_output() {
         let mut osc = MathOscillator::new();
@@ -704,7 +757,7 @@ mod tests {
             // Generate 100 samples and check they're in range
             let mut has_nonzero = false;
             for _ in 0..100 {
-                let sample = osc.generate_sample();
+                let sample = osc.generate_sample_from_vars();
                 assert!(
                     (-2.0..=2.0).contains(&sample),
                     "Algorithm {:?} produced out-of-range sample: {}",
@@ -740,7 +793,7 @@ mod tests {
         let mut sum_sq = 0.0_f64;
         let mut sum = 0.0_f64;
         for _ in 0..n {
-            let s = osc.generate_sample();
+            let s = osc.generate_sample_from_vars();
             peak = peak.max(s.abs());
             sum_sq += (s as f64) * (s as f64);
             sum += s as f64;
@@ -801,7 +854,7 @@ mod tests {
             osc.var_b = NormalizedValue::CENTER;
             // After one sample each layer's phase has advanced by exactly
             // one phase increment (initial phases are 0).
-            let _ = osc.generate_sample();
+            let _ = osc.generate_sample_from_vars();
             osc.shepard_phases
         }
 
@@ -882,7 +935,7 @@ mod tests {
         for s in 0..(sr * 2) {
             osc.var_a = NormalizedValue::new((s as f32 / sr as f32).rem_euclid(1.0));
             osc.var_b = NormalizedValue::new(((s as f32 / sr as f32) * 0.5 + 0.25).clamp(0.0, 1.0));
-            let v = osc.generate_sample();
+            let v = osc.generate_sample_from_vars();
             assert!(v.is_finite(), "non-finite at s={s}");
             assert!(v.abs() <= 1.0, "out of range at s={s}: {v}");
         }
