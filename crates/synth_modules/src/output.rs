@@ -15,8 +15,9 @@ use synth_core::{
     StereoSample, Velocity,
 };
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 
 /// Stereo output module - the final destination in the audio graph.
@@ -51,6 +52,8 @@ pub struct StereoOutput {
     dither_error_l: f32,
     /// Dither error feedback state for right channel (internal filter state, raw f32 OK)
     dither_error_r: f32,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 }
 
 impl StereoOutput {
@@ -68,6 +71,7 @@ impl StereoOutput {
             dither_enabled: false,
             dither_error_l: 0.0,
             dither_error_r: 0.0,
+            mod_offsets: ParamModOffsets::new(),
         }
     }
 
@@ -119,9 +123,9 @@ impl StereoOutput {
         )
     }
 
-    /// Calculate pan coefficients (equal power panning).
-    fn pan_coefficients(&self) -> (Gain, Gain) {
-        Gain::from_pan(self.pan)
+    /// Calculate pan coefficients (equal power panning) for a given pan position.
+    fn pan_coefficients(pan: BipolarValue) -> (Gain, Gain) {
+        Gain::from_pan(pan)
     }
 }
 
@@ -187,6 +191,8 @@ impl Describable for StereoOutput {
                     .description("Enable soft limiter to prevent clipping")
                     .range(0.0, 1.0)
                     .default(1.0)
+                    // Boolean toggle, not a continuous modulation target.
+                    .modulatable(false)
                     .widget(WidgetHint::Toggle),
             )
             .parameter(
@@ -194,6 +200,8 @@ impl Describable for StereoOutput {
                     .description("Mute output")
                     .range(0.0, 1.0)
                     .default(0.0)
+                    // Boolean toggle, not a continuous modulation target.
+                    .modulatable(false)
                     .widget(WidgetHint::Toggle),
             )
             .parameter(
@@ -205,6 +213,8 @@ impl Describable for StereoOutput {
                 .description("Enable 24-bit noise-shaped dithering")
                 .range(0.0, 1.0)
                 .default(0.0)
+                // Boolean toggle, not a continuous modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Toggle),
             )
             .tag("output")
@@ -232,8 +242,14 @@ impl PolyModule for StereoOutput {
         let left_in = inputs.reader(PortName::IN_L, 0.0);
         let right_in = inputs.reader(PortName::IN_R, 0.0);
 
-        // Calculate pan coefficients
-        let (pan_l, pan_r) = self.pan_coefficients();
+        // Generic mod offsets — per-block constants (whole-mix tremolo / auto-pan).
+        let eff_master = self
+            .mod_offsets
+            .effective("master", self.master_level.as_f32());
+        let eff_pan = self.mod_offsets.effective("pan", self.pan.as_f32());
+
+        // Calculate pan coefficients from the effective (mod-applied) pan.
+        let (pan_l, pan_r) = Self::pan_coefficients(BipolarValue::new(eff_pan));
 
         // Reset peaks
         let mut peak_l = Amplitude::ZERO;
@@ -266,8 +282,8 @@ impl PolyModule for StereoOutput {
             } else {
                 // Apply master level with pan
                 let gained = input.apply_stereo_gain(
-                    Gain::new(self.master_level.as_f32() * pan_l.as_f32()),
-                    Gain::new(self.master_level.as_f32() * pan_r.as_f32()),
+                    Gain::new(eff_master * pan_l.as_f32()),
+                    Gain::new(eff_master * pan_r.as_f32()),
                 );
                 // Apply soft limiting
                 self.soft_limit_stereo(gained)
@@ -378,6 +394,10 @@ impl PolyModule for StereoOutput {
         ModuleType::StereoOutput
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.peak_l = Amplitude::ZERO;
         self.peak_r = Amplitude::ZERO;
@@ -436,17 +456,17 @@ mod tests {
 
         // Center pan should be equal
         output.pan = BipolarValue::CENTER;
-        let (l, r) = output.pan_coefficients();
+        let (l, r) = StereoOutput::pan_coefficients(output.pan);
         assert!((l.as_f32() - r.as_f32()).abs() < 0.01);
 
         // Full left should have higher left coefficient
         output.pan = BipolarValue::MIN;
-        let (l, r) = output.pan_coefficients();
+        let (l, r) = StereoOutput::pan_coefficients(output.pan);
         assert!(l.as_f32() > r.as_f32());
 
         // Full right should have higher right coefficient
         output.pan = BipolarValue::MAX;
-        let (l, r) = output.pan_coefficients();
+        let (l, r) = StereoOutput::pan_coefficients(output.pan);
         assert!(r.as_f32() > l.as_f32());
     }
 
@@ -481,5 +501,41 @@ mod tests {
         assert!(muted_output.iter().all(|&s| s == 0.0));
         // Unmuted should have signal
         assert!(unmuted_output.iter().any(|&s| s != 0.0));
+    }
+
+    /// `master` is a working mod destination via the generic store (whole-mix
+    /// tremolo): driving it to 0 silences the output, and clearing reverts.
+    #[test]
+    fn master_mod_offset_scales_output() {
+        let context = ProcessContext::default();
+        let mut test_buf = AudioBuffer::new(context.samples.as_usize());
+        for i in 0..context.samples.as_usize() {
+            test_buf[i] = 0.5;
+        }
+        let input_slice: [(PortName, &AudioBuffer); 1] = [(PortName::intern("in"), &test_buf)];
+
+        let render = |offset: f32| -> f32 {
+            let mut output = StereoOutput::new();
+            let desc = output.descriptor();
+            output.mod_offsets_mut().unwrap().populate(&desc);
+            if offset != 0.0 {
+                output.set_mod_offset("master", offset);
+            }
+            output.process(InputPorts::new(&input_slice), &mut HashMap::new(), &context);
+            output
+                .get_output()
+                .iter()
+                .map(|s| s.abs())
+                .fold(0.0_f32, f32::max)
+        };
+
+        let base = render(0.0);
+        assert!(base > 1e-3, "default master should pass signal, got {base}");
+
+        let silent = render(-1.0); // master → 0
+        assert!(
+            silent < base * 0.05,
+            "master→0 should silence output: {silent}"
+        );
     }
 }

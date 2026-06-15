@@ -7399,7 +7399,7 @@
           "description": "Enable 24-bit noise-shaped dithering",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Dither",
           "response_curve": "linear",
           "unit": "none"
@@ -7409,7 +7409,7 @@
           "description": "Enable soft limiter to prevent clipping",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Limit",
           "response_curve": "linear",
           "unit": "none"
@@ -7429,7 +7429,7 @@
           "description": "Mute output",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Mute",
           "response_curve": "linear",
           "unit": "none"
