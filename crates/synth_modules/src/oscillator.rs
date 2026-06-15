@@ -30,6 +30,18 @@ static MINBLEP_TABLE: LazyLock<synth_dsp::oscillators::MinBlepTable> =
 /// Maximum number of unison voices per oscillator.
 const MAX_UNISON_VOICES: usize = 7;
 
+/// Mod-matrix pitch scaling for the `detune` target: how many semitones a
+/// full-scale (`±1`) modulation offset shifts the oscillator. Matches the detune
+/// knob's own `±100 ¢` range (= ±1 semitone), so a normalized routing on `detune`
+/// spans exactly that — the same musical unit as the knob.
+///
+/// This is the legacy native-unit (semitone) write path, like the dedicated
+/// `pitch` target and the filter cutoff. It happens to equal the plan's locked
+/// normalized-through-range contract *only because* detune's positive travel is
+/// exactly 1 semitone; if the detune range ever changes, this should move to a
+/// per-descriptor `mod_scale` hint (control-script-plan.md, scaling contract #2).
+const DETUNE_MOD_SEMITONES: f32 = 1.0;
+
 /// A band-limited oscillator with optional intra-voice unison.
 #[derive(Clone)]
 pub struct Oscillator {
@@ -692,8 +704,15 @@ impl PolyModule for Oscillator {
 
     fn set_mod_offset(&mut self, target: &str, value: f32) {
         match target {
+            // `pitch`, `detune` (and later `frequency`) are all pitch shifts, so
+            // they accumulate into the shared semitone offset applied in
+            // `calculate_frequency`; the per-target scale sets the musical range.
             "pitch" => {
                 self.mod_offset_pitch = Semitones::new(self.mod_offset_pitch.as_f32() + value)
+            }
+            "detune" => {
+                self.mod_offset_pitch =
+                    Semitones::new(self.mod_offset_pitch.as_f32() + value * DETUNE_MOD_SEMITONES)
             }
             "level" => {
                 self.mod_offset_level = BipolarValue::new(self.mod_offset_level.as_f32() + value)
@@ -752,6 +771,30 @@ mod tests {
         assert!(!auto("fm_mode"));
         // Structural/sizing param is excluded (modulatable(false)).
         assert!(!auto("unison"));
+    }
+
+    /// A mod-matrix routing to `osc.detune` actually shifts pitch now (it used
+    /// to hit the `_ => {}` arm and vanish). Full-scale (`+1`) = +1 semitone,
+    /// matching the detune knob's own ±100 ¢ range; clearing reverts.
+    #[test]
+    fn detune_mod_offset_shifts_pitch_one_semitone_full_scale() {
+        let mut osc = Oscillator::new();
+        osc.set_param(Param::Oscillator(OscillatorParam::Frequency(Hertz::new(
+            440.0,
+        ))));
+        let base = osc.actual_frequency().as_f32();
+
+        osc.set_mod_offset("detune", 1.0);
+        let modded = osc.actual_frequency().as_f32();
+        let semitone = 2f32.powf(1.0 / 12.0);
+        assert!(
+            (modded / base - semitone).abs() < 1e-3,
+            "detune +1 should raise pitch one semitone: ratio {}",
+            modded / base
+        );
+
+        osc.clear_mod_offsets();
+        assert!((osc.actual_frequency().as_f32() - base).abs() < 0.5);
     }
 
     #[test]
