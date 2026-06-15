@@ -9,8 +9,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{FormantFilterParam, ModuleType, Param};
 use synth_core::{Gain, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
@@ -86,6 +87,8 @@ pub struct FormantFilter {
     coeffs: [BandpassCoeffs; NUM_BANDS],
     /// Current interpolated gains per band
     gains: [Gain; NUM_BANDS],
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
     output_buffer: AudioBuffer,
 }
 
@@ -100,6 +103,7 @@ impl FormantFilter {
             states: [BandpassState::default(); NUM_BANDS],
             coeffs: [BandpassCoeffs::default(); NUM_BANDS],
             gains: [Gain::new(1.0), Gain::new(0.5), Gain::new(0.25)],
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         };
         f.update_coeffs();
@@ -216,7 +220,21 @@ impl PolyModule for FormantFilter {
         let audio_in = inputs.reader(PortName::IN, 0.0);
         let vowel_cv = inputs.reader(PortName::intern("vowel_cv"), 0.0);
 
-        let mix = self.mix.as_f32();
+        let mix = self.mod_offsets.effective("mix", self.mix.as_f32());
+
+        // vowel/cutoff/resonance bake into the band coefficients via
+        // update_coeffs; apply their effective values to the fields for the
+        // block, recompute coeffs, then restore + recompute after. (The vowel_cv
+        // path inside the loop already recomputes coeffs per change, so the base
+        // is restored relative to the saved value.) Single loop, no early return.
+        let saved = (self.vowel, self.cutoff, self.resonance);
+        self.vowel = NormalizedValue::new(self.mod_offsets.effective("vowel", self.vowel.as_f32()));
+        self.cutoff = Hertz::new(self.mod_offsets.effective("cutoff", self.cutoff.as_f32()));
+        self.resonance = NormalizedValue::new(
+            self.mod_offsets
+                .effective("resonance", self.resonance.as_f32()),
+        );
+        self.update_coeffs();
 
         for i in 0..context.samples.as_usize() {
             // Apply vowel CV modulation
@@ -245,6 +263,10 @@ impl PolyModule for FormantFilter {
 
             self.output_buffer[i] = input * (1.0 - mix) + wet * mix;
         }
+
+        // Restore base params + recompute base coefficients for the next block.
+        (self.vowel, self.cutoff, self.resonance) = saved;
+        self.update_coeffs();
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
@@ -297,6 +319,10 @@ impl PolyModule for FormantFilter {
         ModuleType::FormantFilter
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         for state in &mut self.states {
             state.reset();
@@ -314,6 +340,57 @@ impl PolyModule for FormantFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    /// `vowel` used to be dropped (FormantFilter never overrode set_mod_offset);
+    /// it now flows through the generic store and reshapes the formant bands. The
+    /// base field is restored after each block.
+    #[test]
+    fn vowel_mod_offset_reshapes_and_restores() {
+        let mut ff = FormantFilter::new();
+        let desc = ff.descriptor();
+        ff.mod_offsets_mut().unwrap().populate(&desc);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        fn render(ff: &mut FormantFilter, ctx: &ProcessContext) -> Vec<f32> {
+            let mut buf = AudioBuffer::new(256);
+            for i in 0..256 {
+                buf[i] = if i % 6 < 3 { 0.5 } else { -0.5 };
+            }
+            let in_ports = [(PortName::IN, &buf)];
+            let inputs = InputPorts::new(&in_ports);
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            ff.process(inputs, &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i]).collect()
+        }
+
+        ff.reset();
+        let base = render(&mut ff, &ctx);
+        let vowel_before = ff.vowel.as_f32();
+        ff.set_mod_offset("vowel", 0.6);
+        ff.reset();
+        let shifted = render(&mut ff, &ctx);
+        assert!(
+            (ff.vowel.as_f32() - vowel_before).abs() < 1e-6,
+            "vowel field must be restored after process"
+        );
+        let diff: f32 = base.iter().zip(&shifted).map(|(a, b)| (a - b).abs()).sum();
+        assert!(
+            diff > 1e-3,
+            "vowel mod should reshape output, diff = {diff}"
+        );
+
+        ff.clear_mod_offsets();
+        ff.reset();
+        let reverted = render(&mut ff, &ctx);
+        let back: f32 = base.iter().zip(&reverted).map(|(a, b)| (a - b).abs()).sum();
+        assert!(back < 1e-3, "clearing reverts vowel, residual = {back}");
+    }
 
     #[test]
     fn test_formant_filter_vowel_range() {
