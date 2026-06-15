@@ -31,6 +31,21 @@ Generators, Output, Wav Module).
 A larger patch with multiple oscillators, filters, an envelope, a Mod Matrix
 and a Chorus — illustrating richer modulation routing.
 
+## Mod Matrix — YAMS Control Scripts
+
+### `yams-1.png`
+
+![YAMS 1](yams-1.png)
+
+The *YAMS Script Demo* instrument with the Mod Matrix expression editor open. Each
+Mod Matrix routing (right-hand panel) can run a small YAMS control script instead of
+a scalar amount — the script's `out` value becomes the modulation offset, evaluated
+per voice in real time. The popup edits slot 5's script
+(`out = sin(phasor(0.3) * tau) * smoothstep(0, 1.5, age) * 0.7`, a note-age auto-pan)
+with a live compile status and Format / Apply / Clear / Close buttons. A scripted
+routing lights its ƒx marker, and the script reads its sources (LFOs, envelopes,
+macros like `velocity`/`age`) straight from the expression.
+
 ## Sequencer / Arrangement
 
 ### `seq-1.png`
