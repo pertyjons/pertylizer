@@ -346,6 +346,21 @@ impl ModuleGraph {
         }
     }
 
+    /// Install (or clear, with `None`) a Mod Matrix slot's compiled control
+    /// script (Step 2). No-op when the module is absent or is not a Mod Matrix
+    /// (the default `set_mod_script` ignores it). The `Arc` is shared, not
+    /// deep-copied.
+    pub fn set_mod_script(
+        &mut self,
+        module: ModuleId,
+        slot: usize,
+        script: Option<std::sync::Arc<synth_core::script::BoundScript>>,
+    ) {
+        if let Some(node) = self.nodes.get_mut(&module) {
+            node.module.set_mod_script(slot, script);
+        }
+    }
+
     /// Set bypass state for a module.
     pub fn set_bypass(&mut self, module_id: ModuleId, bypass: bool) {
         if bypass {
@@ -901,6 +916,41 @@ mod tests {
         let osc3 = graph.add_module(Box::new(Oscillator::new()));
         assert_eq!(osc3.instance, 3, "instance numbers must not be reused");
         assert!(graph.get_module(osc2).is_some());
+    }
+
+    /// `set_mod_script` installs a slot's compiled script onto a Mod Matrix
+    /// node (visible via `mod_scripts`), clears it with `None`, and is a safe
+    /// no-op for an absent module — the write half of the YAMS engine channel.
+    #[test]
+    fn set_mod_script_installs_clears_and_ignores_absent() {
+        use std::sync::Arc;
+        use synth_core::script::{BoundScript, CompiledScript, Op};
+        use synth_modules::ModMatrix;
+
+        let mut graph = ModuleGraph::new();
+        let mmx = graph.add_module(Box::new(ModMatrix::new()));
+
+        let script = Arc::new(BoundScript::new(
+            CompiledScript::new(vec![Op::PushConst(0)], vec![0.5], 0, 0),
+            Vec::new(),
+            "out = 0.5".to_string(),
+        ));
+        graph.set_mod_script(mmx, 1, Some(Arc::clone(&script)));
+
+        let scripts = graph.get_module(mmx).and_then(|m| m.mod_scripts()).unwrap();
+        assert_eq!(
+            scripts[1].as_deref().map(|b| b.source.as_str()),
+            Some("out = 0.5")
+        );
+        assert!(scripts[0].is_none());
+
+        // Clearing the slot removes it.
+        graph.set_mod_script(mmx, 1, None);
+        assert!(graph.get_module(mmx).and_then(|m| m.mod_scripts()).unwrap()[1].is_none());
+
+        // An absent module is a silent no-op (no panic).
+        let ghost = ModuleId::new(ModuleType::ModMatrix, 99);
+        graph.set_mod_script(ghost, 0, Some(script));
     }
 
     #[test]

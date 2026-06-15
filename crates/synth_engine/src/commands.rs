@@ -423,6 +423,19 @@ pub enum EngineCommand {
         param: Param,
     },
 
+    /// Install (or clear, with `None`) a Mod Matrix slot's compiled YAMS
+    /// control script (Step 2). Compiled off the audio thread (on load /
+    /// authoring); the audio thread only stores the shared `Arc`, applying it to
+    /// the module template and every voice. `slot` is the 0-based routing index.
+    /// - `instrument_id: Some(id)` - target an instrument's voice graph
+    /// - `instrument_id: None` - target the global module graph (master bus)
+    SetModScript {
+        instrument_id: Option<InstrumentId>,
+        module_id: ModuleId,
+        slot: u8,
+        script: Option<std::sync::Arc<synth_core::script::BoundScript>>,
+    },
+
     // === Module control ===
     /// Add a pre-created module instance to a graph (real-time safe).
     /// - `instrument_id: Some(id)` - Add to an instrument's voice graph
@@ -1114,6 +1127,19 @@ impl std::fmt::Debug for EngineCommand {
                 .field("instrument_id", instrument_id)
                 .field("module_id", module_id)
                 .field("param", param)
+                .finish(),
+            Self::SetModScript {
+                instrument_id,
+                module_id,
+                slot,
+                script,
+            } => f
+                .debug_struct("SetModScript")
+                .field("instrument_id", instrument_id)
+                .field("module_id", module_id)
+                .field("slot", slot)
+                // Show the source text, not the bytecode.
+                .field("script", &script.as_ref().map(|s| s.source.as_str()))
                 .finish(),
             Self::AddModuleInstance {
                 instrument_id, id, ..

@@ -438,6 +438,18 @@ impl EngineCommand {
                 module_id: *module_id,
                 param: *param,
             },
+            // The script is a shared `Arc` — cloning bumps the refcount.
+            Self::SetModScript {
+                instrument_id,
+                module_id,
+                slot,
+                script,
+            } => Self::SetModScript {
+                instrument_id: *instrument_id,
+                module_id: *module_id,
+                slot: *slot,
+                script: script.clone(),
+            },
             Self::RemoveModule { instrument_id, id } => Self::RemoveModule {
                 instrument_id: *instrument_id,
                 id: *id,

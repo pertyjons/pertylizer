@@ -328,6 +328,7 @@ impl EngineHub {
             // Parameter changes
             EngineCommand::SetVoiceParameter { .. }
             | EngineCommand::SetModuleParameter { .. }
+            | EngineCommand::SetModScript { .. }
             | EngineCommand::SetEffectParameter { .. }
             | EngineCommand::SetMasterVolume(_)
             | EngineCommand::SetGlideTime(_)

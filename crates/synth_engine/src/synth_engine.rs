@@ -957,6 +957,14 @@ impl SynthEngine {
                 self.handle_set_module_param(instrument_id, module_id, param);
                 self.update_shared_graph(instrument_id);
             }
+            EngineCommand::SetModScript {
+                instrument_id,
+                module_id,
+                slot,
+                script,
+            } => {
+                self.handle_set_mod_script(instrument_id, module_id, slot as usize, script);
+            }
 
             // Reset/clear
             EngineCommand::Reset => {
@@ -2010,6 +2018,34 @@ impl SynthEngine {
             }
             None => {
                 self.module_graph.set_param(module_id, param);
+            }
+        }
+    }
+
+    /// Install (or clear) a Mod Matrix slot's compiled control script, mirroring
+    /// `handle_set_module_param`: apply to the instrument's template voice graph
+    /// **and** every live voice so a held note picks it up immediately. The `Arc`
+    /// is cloned per target (a cheap refcount bump, no bytecode copy).
+    fn handle_set_mod_script(
+        &mut self,
+        instrument_id: Option<InstrumentId>,
+        module_id: ModuleId,
+        slot: usize,
+        script: Option<std::sync::Arc<synth_core::script::BoundScript>>,
+    ) {
+        match instrument_id {
+            Some(inst_id) => {
+                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                    instrument
+                        .voice_graph_mut()
+                        .set_mod_script(module_id, slot, script.clone());
+                    for voice in instrument.allocator_mut().voices_mut() {
+                        voice.graph.set_mod_script(module_id, slot, script.clone());
+                    }
+                }
+            }
+            None => {
+                self.module_graph.set_mod_script(module_id, slot, script);
             }
         }
     }
