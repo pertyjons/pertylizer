@@ -6,8 +6,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
+    ResponseCurve, WidgetHint,
 };
 use synth_core::{
     FilterState, Gain, Hertz, MidiNote, Milliseconds, NormalizedValue, SampleRate, Velocity,
@@ -36,6 +37,8 @@ pub struct MechanicalNoise {
 
     // Sample rate
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -57,17 +60,27 @@ impl MechanicalNoise {
             current_velocity: NormalizedValue::MIN,
 
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
 
     /// Trigger a mechanical noise burst.
     fn trigger(&mut self, velocity: Velocity) {
-        let vel_factor = 1.0 - self.velocity_sens.as_f32() * (1.0 - velocity.as_f32());
+        // vel_sens and duration are trigger-time params; apply their generic mod
+        // offsets here (effective value at note-on), not per sample.
+        let vel_sens = self
+            .mod_offsets
+            .effective("vel_sens", self.velocity_sens.as_f32());
+        let vel_factor = 1.0 - vel_sens * (1.0 - velocity.as_f32());
         self.current_velocity = NormalizedValue::new(vel_factor);
         self.current_sample = 0;
         // Ensure at least 1 sample to prevent division by zero in generate_noise()
-        self.envelope_samples = self.duration.to_samples(self.sample_rate).max(1);
+        let duration = Milliseconds::new(
+            self.mod_offsets
+                .effective("duration", self.duration.as_f32()),
+        );
+        self.envelope_samples = duration.to_samples(self.sample_rate).max(1);
         self.filter_state = FilterState::ZERO;
     }
 
@@ -224,9 +237,18 @@ impl PolyModule for MechanicalNoise {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
+        // cutoff + level are read per-sample inside generate_noise; apply their
+        // effective values to the fields for the block and restore after (single
+        // loop, no early return).
+        let saved = (self.cutoff, self.level);
+        self.cutoff = Hertz::new(self.mod_offsets.effective("cutoff", self.cutoff.as_f32()));
+        self.level = Gain::new(self.mod_offsets.effective("level", self.level.as_f32()));
+
         for i in 0..context.samples.as_usize() {
             self.output_buffer[i] = self.generate_noise();
         }
+
+        (self.cutoff, self.level) = saved;
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
@@ -273,6 +295,10 @@ impl PolyModule for MechanicalNoise {
         ModuleType::MechanicalNoise
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.current_sample = self.envelope_samples;
         self.filter_state = FilterState::ZERO;
@@ -301,5 +327,53 @@ impl PolyModule for MechanicalNoise {
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// `level` is a working mod destination via the generic store: driving it to
+    /// 0 silences the burst, the base field is restored after the block, and
+    /// clearing reverts.
+    #[test]
+    fn level_mod_offset_scales_output_and_restores() {
+        let mut mn = MechanicalNoise::new();
+        let desc = mn.descriptor();
+        mn.mod_offsets_mut().unwrap().populate(&desc);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        fn burst_rms(mn: &mut MechanicalNoise, ctx: &ProcessContext) -> f32 {
+            mn.note_on(MidiNote::A4, Velocity::MAX); // KeyDown default → triggers
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            mn.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i] * b[i]).sum::<f32>().sqrt()
+        }
+
+        let base = burst_rms(&mut mn, &ctx);
+        assert!(base > 1e-4, "base burst present, got {base}");
+
+        let level_before = mn.level.as_f32();
+        mn.set_mod_offset("level", -1.0);
+        let silent = burst_rms(&mut mn, &ctx);
+        assert!(
+            (mn.level.as_f32() - level_before).abs() < 1e-6,
+            "level field must be restored after process"
+        );
+        assert!(
+            silent < base * 0.05,
+            "level→0 should silence the burst: {silent}"
+        );
+
+        mn.clear_mod_offsets();
+        let reverted = burst_rms(&mut mn, &ctx);
+        assert!(reverted > silent, "clearing restores level");
     }
 }
