@@ -6825,7 +6825,7 @@
           "description": "Random seed for reproducibility",
           "max": 65535.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Seed",
           "response_curve": "linear",
           "unit": "none"

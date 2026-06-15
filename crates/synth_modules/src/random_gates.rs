@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ModuleType,
-    NormalizedValue, Param, ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext,
-    RandomGatesParam, WidgetHint,
+    NormalizedValue, Param, ParamModOffsets, ParameterDescriptor, PolyModule, PortDescriptor,
+    ProcessContext, RandomGatesParam, WidgetHint,
 };
 use synth_core::{MidiNote, PortName, SampleRate, Velocity};
 
@@ -34,6 +34,9 @@ pub struct RandomGates {
     // Edge detection
     prev_clock: f32,
 
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
+
     // Buffers
     gate_buffer: AudioBuffer,
     cv_buffer: AudioBuffer,
@@ -57,6 +60,8 @@ impl RandomGates {
             cv_value: NormalizedValue::MIN,
 
             prev_clock: 0.0,
+
+            mod_offsets: ParamModOffsets::new(),
 
             gate_buffer: AudioBuffer::new(1024),
             cv_buffer: AudioBuffer::new(1024),
@@ -104,6 +109,8 @@ impl Describable for RandomGates {
                 .description("Random seed for reproducibility")
                 .range(0.0, 65535.0)
                 .default(42.0)
+                // Structural RNG seed: not a continuous modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -152,12 +159,21 @@ impl PolyModule for RandomGates {
 
         let clock = inputs.get(PortName::CLOCK);
 
+        // Generic mod offsets — all per-block constants, resolved once here.
+        let eff_density = self.mod_offsets.effective("density", self.density.as_f32());
+        let eff_burst = self
+            .mod_offsets
+            .effective("burst", self.burst_probability.as_f32());
+        let eff_gate_len = self
+            .mod_offsets
+            .effective("gate_len", self.gate_length.as_f32());
+
         // Calculate step timing from BPM (16th notes)
         let bpm = context.tempo.as_f32().max(20.0);
         self.samples_per_step = crate::math::samples_per_16th(self.sample_rate.as_f32(), bpm);
 
         // Gate length in samples
-        let gate_samples = self.gate_length.as_f32() * self.samples_per_step * 0.9 + 10.0;
+        let gate_samples = eff_gate_len * self.samples_per_step * 0.9 + 10.0;
 
         for i in 0..num_samples {
             // Clock detection
@@ -189,14 +205,14 @@ impl PolyModule for RandomGates {
                     self.cv_value = NormalizedValue::new(self.next_random());
                 } else {
                     // Normal density check
-                    let trigger = self.next_random() < self.density.as_f32();
+                    let trigger = self.next_random() < eff_density;
                     if trigger {
                         self.gate_active = true;
                         self.gate_remaining = gate_samples;
                         self.cv_value = NormalizedValue::new(self.next_random());
 
                         // Check for burst
-                        if self.next_random() < self.burst_probability.as_f32() {
+                        if self.next_random() < eff_burst {
                             self.burst_remaining = 2 + (self.next_random() * 3.0) as u8; // 2-4 burst gates
                         }
                     }
@@ -270,6 +286,10 @@ impl PolyModule for RandomGates {
         ModuleType::RandomGates
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.step_counter = 0.0;
         self.gate_active = false;
@@ -297,6 +317,41 @@ mod tests {
     fn test_random_gates_creation() {
         let rg = RandomGates::new();
         assert_eq!(rg.seed, 42);
+    }
+
+    /// `density` is a working mod destination via the generic store: driving it
+    /// to 0 stops all gate triggers, and clearing reverts.
+    #[test]
+    fn density_mod_offset_gates_output() {
+        // Many samples so several free-running steps elapse within the block.
+        let n = 64000;
+        let render = |offset: f32| -> f32 {
+            let mut rg = RandomGates::new();
+            let desc = rg.descriptor();
+            rg.mod_offsets_mut().unwrap().populate(&desc);
+            if offset != 0.0 {
+                rg.set_mod_offset("density", offset);
+            }
+            let ctx = ProcessContext {
+                samples: synth_core::SampleCount::new(n),
+                ..ProcessContext::default()
+            };
+            let mut outs = HashMap::new();
+            outs.insert(PortName::GATE, AudioBuffer::new(n));
+            outs.insert(PortName::CV, AudioBuffer::new(n));
+            rg.process(InputPorts::empty(), &mut outs, &ctx);
+            let b = &outs[&PortName::GATE];
+            (0..b.len()).map(|i| b[i]).sum::<f32>()
+        };
+
+        let base = render(0.0);
+        assert!(
+            base > 0.0,
+            "default density should produce gates, got {base}"
+        );
+
+        let silent = render(-1.0); // density → 0
+        assert_eq!(silent, 0.0, "density→0 should produce no gates: {silent}");
     }
 
     #[test]
