@@ -1021,6 +1021,93 @@ pub trait Describable {
     fn descriptor(&self) -> ModuleDescriptor;
 }
 
+/// Generic per-module accumulator of Mod Matrix offsets — the default
+/// `set_mod_offset` channel so a module gets every `modulatable` parameter
+/// modulated without hand-writing a `match` arm per param (the scaling contract's
+/// option A: normalized-through-range).
+///
+/// One entry per modulatable param, [`populate`](Self::populate)d **once off the
+/// audio thread** from the module's descriptor (which caches each param's
+/// `range`+`curve`, so the apply path never rebuilds the descriptor). The
+/// hot-path ops ([`add`](Self::add)/[`clear`](Self::clear)/[`effective`](Self::effective))
+/// are a linear scan of a tiny fixed `Vec` plus `f32` math — no allocation, no
+/// lock, no panic — and run on the audio thread. A module that wants a *musical*
+/// scale for a specific target (e.g. pitch in exact semitones) overrides
+/// `set_mod_offset` for that target and delegates the rest here.
+#[derive(Debug, Clone, Default)]
+pub struct ParamModOffsets {
+    entries: Vec<ParamOffset>,
+}
+
+#[derive(Debug, Clone)]
+struct ParamOffset {
+    /// Descriptor `type_id` — the module-agnostic param identifier the Mod Matrix
+    /// addresses. Sourced from the descriptor on **both** the store side and the
+    /// address side, so the two can never drift (no hand-typed literal).
+    type_id: String,
+    range: ValueRange,
+    curve: ResponseCurve,
+    /// Accumulated normalized offset for this block (`Σ amount × source`).
+    offset: f32,
+}
+
+impl ParamModOffsets {
+    /// Empty store (no modulatable params registered yet).
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Register one entry per `modulatable` param from `desc`, caching its
+    /// `range`+`curve`. **Off the audio thread** (allocates) — the graph calls
+    /// this when the module is added, since it already holds the descriptor.
+    pub fn populate(&mut self, desc: &ModuleDescriptor) {
+        self.entries.clear();
+        self.entries.reserve(desc.parameters.len());
+        for p in &desc.parameters {
+            if p.modulatable {
+                self.entries.push(ParamOffset {
+                    type_id: p.type_id.clone(),
+                    range: p.range,
+                    curve: p.response_curve,
+                    offset: 0.0,
+                });
+            }
+        }
+    }
+
+    /// Accumulate a normalized offset for `type_id` (audio thread, RT-safe).
+    /// Unknown / non-modulatable identifiers are ignored.
+    pub fn add(&mut self, type_id: &str, value: f32) {
+        if let Some(e) = self.entries.iter_mut().find(|e| e.type_id == type_id) {
+            e.offset += value;
+        }
+    }
+
+    /// Zero every accumulated offset (called each block, RT-safe).
+    pub fn clear(&mut self) {
+        for e in &mut self.entries {
+            e.offset = 0.0;
+        }
+    }
+
+    /// The effective native value for `type_id` given its `base` (already
+    /// override-resolved) value: `denormalize(clamp(normalize(base) + offset))`
+    /// through the param's own range+curve. Returns `base` unchanged when the
+    /// param is unregistered or has no offset (RT-safe).
+    #[must_use]
+    pub fn effective(&self, type_id: &str, base: f32) -> f32 {
+        match self.entries.iter().find(|e| e.type_id == type_id) {
+            Some(e) if e.offset != 0.0 => {
+                let norm = e.curve.normalize(base, e.range) + e.offset;
+                e.curve.denormalize(norm.clamp(0.0, 1.0), e.range)
+            }
+            _ => base,
+        }
+    }
+}
+
 /// Trait for voice modules (oscillators, filters, envelopes).
 ///
 /// Voice modules are instantiated per-voice in a polyphonic synth.
@@ -1092,13 +1179,33 @@ pub trait PolyModule: Describable + Send {
     ///
     /// `value` is the routing contribution (`amount × source`); the module scales
     /// it into the parameter's own unit and clamps in `process()`.
-    fn set_mod_offset(&mut self, _target: &str, _value: f32) {
-        // Default: no modulation support
+    fn set_mod_offset(&mut self, target: &str, value: f32) {
+        // Default: route through the generic store if the module exposes one
+        // (normalized-through-range; populated from the descriptor). A module that
+        // needs a musical per-target scale overrides this and may still delegate
+        // the rest here. No store → no-op (legacy behaviour).
+        if let Some(offsets) = self.mod_offsets_mut() {
+            offsets.add(target, value);
+        }
     }
 
     /// Clear all modulation offsets back to zero.
     fn clear_mod_offsets(&mut self) {
-        // Default: nothing to clear
+        if let Some(offsets) = self.mod_offsets_mut() {
+            offsets.clear();
+        }
+    }
+
+    /// Expose this module's generic [`ParamModOffsets`] store, if it has one.
+    ///
+    /// A module opts into descriptor-driven modulation of **every** `modulatable`
+    /// param by holding a `ParamModOffsets` field and returning it here; the graph
+    /// [`populate`](ParamModOffsets::populate)s it from the descriptor at add time,
+    /// and `process()` reads effective values via
+    /// [`effective`](ParamModOffsets::effective). Default `None` (no generic
+    /// modulation; a module may still hand-implement `set_mod_offset`).
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        None
     }
 
     /// Expose this module's modulation routings, if it is a Mod Matrix.
@@ -1457,5 +1564,49 @@ mod tests {
             vec![ChoiceOption::new("a", "A"), ChoiceOption::new("b", "B")],
         );
         assert!(!choice.is_automatable());
+    }
+
+    /// `ParamModOffsets` populates from a descriptor (modulatable params only),
+    /// applies a normalized offset through each param's range, accumulates, and
+    /// clears — the generic `set_mod_offset` channel (migration step 1).
+    #[test]
+    fn param_mod_offsets_populate_apply_accumulate_clear() {
+        let dummy =
+            || Param::Oscillator(crate::params::OscillatorParam::Detune(crate::Cents::ZERO));
+        let desc = ModuleDescriptor::new("test", "Test")
+            // Modulatable linear param 0..10.
+            .parameter(ParameterDescriptor::float("amt", dummy(), "Amt").range(0.0, 10.0))
+            // Non-modulatable: must NOT be registered.
+            .parameter(
+                ParameterDescriptor::float("fixed", dummy(), "Fixed")
+                    .range(0.0, 1.0)
+                    .modulatable(false),
+            );
+
+        let mut off = ParamModOffsets::new();
+        off.populate(&desc);
+
+        // No offset yet → base passes through unchanged.
+        assert!((off.effective("amt", 5.0) - 5.0).abs() < 1e-4);
+
+        // base 5 (norm 0.5 on 0..10 linear) + 0.25 → norm 0.75 → 7.5.
+        off.add("amt", 0.25);
+        assert!(
+            (off.effective("amt", 5.0) - 7.5).abs() < 1e-4,
+            "got {}",
+            off.effective("amt", 5.0)
+        );
+        // Accumulates additively: +0.25 more → norm 1.0 → clamped → 10.0.
+        off.add("amt", 0.25);
+        assert!((off.effective("amt", 5.0) - 10.0).abs() < 1e-4);
+
+        // A non-modulatable param was never registered → base unchanged.
+        assert!((off.effective("fixed", 0.3) - 0.3).abs() < 1e-6);
+        // An unknown id → base unchanged.
+        assert!((off.effective("nope", 1.0) - 1.0).abs() < 1e-6);
+
+        // Clear resets every offset.
+        off.clear();
+        assert!((off.effective("amt", 5.0) - 5.0).abs() < 1e-4);
     }
 }

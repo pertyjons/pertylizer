@@ -159,12 +159,17 @@ impl ModuleGraph {
     }
 
     /// Add a module to the graph.
-    pub fn add_module(&mut self, module: Box<dyn PolyModule>) -> ModuleId {
+    pub fn add_module(&mut self, mut module: Box<dyn PolyModule>) -> ModuleId {
         let module_type = module.module_type();
         let instance = self.next_instance(module_type);
         let id = ModuleId::new(module_type, instance);
 
         let descriptor = module.descriptor();
+        // Populate the module's generic mod-offset store (if any) from its
+        // descriptor — off the audio thread, once per module instance.
+        if let Some(offsets) = module.mod_offsets_mut() {
+            offsets.populate(&descriptor);
+        }
 
         // Create output buffers
         let mut outputs = HashMap::new();
@@ -188,8 +193,12 @@ impl ModuleGraph {
     }
 
     /// Add a module with a specific ID.
-    pub fn add_module_with_id(&mut self, id: ModuleId, module: Box<dyn PolyModule>) {
+    pub fn add_module_with_id(&mut self, id: ModuleId, mut module: Box<dyn PolyModule>) {
         let descriptor = module.descriptor();
+        // Populate the generic mod-offset store (if any) — off the audio thread.
+        if let Some(offsets) = module.mod_offsets_mut() {
+            offsets.populate(&descriptor);
+        }
 
         let mut outputs = HashMap::new();
         for port in &descriptor.ports {
