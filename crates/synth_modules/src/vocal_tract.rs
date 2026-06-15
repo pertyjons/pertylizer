@@ -18,8 +18,8 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, VocalTractParam};
@@ -146,6 +146,8 @@ pub struct VocalTract {
 
     // Cached
     inv_sample_rate: f32,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Pre-allocated output buffer
     output_buffer: AudioBuffer,
@@ -170,6 +172,7 @@ impl VocalTract {
             tract: KellyLochbaumTract::new(N_MAX_SECTIONS),
             note_freq: Hertz::ZERO,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         };
         v.build_nose();
@@ -227,7 +230,9 @@ impl VocalTract {
     /// amount), and a lip aperture (rounding) at the mouth end.
     fn rebuild_profile(&mut self) {
         let tongue = self.current_tongue;
-        let constriction = self.constriction.as_f32();
+        let constriction = self
+            .mod_offsets
+            .effective("constriction", self.constriction.as_f32());
         // Lip aperture: 1 = spread (no narrowing), 0 = fully rounded.
         let lip_scale = LIP_ROUND + (1.0 - LIP_ROUND) * self.current_lips;
         let n = self.tract.active_len();
@@ -311,6 +316,9 @@ impl Describable for VocalTract {
                 )
                 .range(0.0, 1.0)
                 .default(0.5)
+                // Structural: selects a discrete waveguide section count
+                // (voice type), so it is not a continuous modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -391,15 +399,22 @@ impl PolyModule for VocalTract {
         let lips_cv_connected = lips_cv.is_connected();
         let nasality_cv_connected = nasality_cv.is_connected();
 
+        // Generic mod-matrix offsets — articulator bases resolved once here.
+        let tongue_base = self.mod_offsets.effective("tongue", self.tongue.as_f32());
+        let lips_base = self.mod_offsets.effective("lips", self.lips.as_f32());
+        let nasality_base = self
+            .mod_offsets
+            .effective("nasality", self.nasality.as_f32());
+
         // Without CV an articulator tracks its knob; rebuild once for this block.
         if !tongue_cv_connected {
-            self.current_tongue = self.tongue.as_f32();
+            self.current_tongue = tongue_base;
         }
         if !lips_cv_connected {
-            self.current_lips = self.lips.as_f32();
+            self.current_lips = lips_base;
         }
         if !nasality_cv_connected {
-            self.current_nasality = self.nasality.as_f32();
+            self.current_nasality = nasality_base;
         }
         // Tract length is a structural per-voice control (no CV): apply it once
         // per block before rebuilding the area profile over the active length.
@@ -409,11 +424,13 @@ impl PolyModule for VocalTract {
 
         let inv_sr = self.inv_sample_rate;
         let inc = (self.note_freq.as_f32() * inv_sr).max(1e-5);
-        let level = self.level.as_f32();
-        let breath = self.breathiness.as_f32();
-        let base_tongue = self.tongue.as_f32();
-        let base_lips = self.lips.as_f32();
-        let base_nasality = self.nasality.as_f32();
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
+        let breath = self
+            .mod_offsets
+            .effective("breathiness", self.breathiness.as_f32());
+        let base_tongue = tongue_base;
+        let base_lips = lips_base;
+        let base_nasality = nasality_base;
 
         for i in 0..num_samples {
             // CVs move the articulators; rebuild only on a real change, and
@@ -534,6 +551,10 @@ impl PolyModule for VocalTract {
 
     fn module_type(&self) -> ModuleType {
         ModuleType::VocalTract
+    }
+
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
     }
 
     fn reset(&mut self) {
@@ -727,6 +748,45 @@ mod tests {
         assert_eq!(active(0.0), N_MIN_SECTIONS);
         assert_eq!(active(0.5), N_NOMINAL_SECTIONS);
         assert_eq!(active(1.0), N_MAX_SECTIONS);
+    }
+
+    /// `level` used to be dropped (VocalTract never overrode set_mod_offset); it
+    /// now scales the output through the generic store. Driving it to 0 silences
+    /// the voice; clearing reverts.
+    #[test]
+    fn test_vocal_tract_level_mod_offset_scales_output() {
+        let energy = |v: &mut VocalTract| {
+            let mut outputs = HashMap::new();
+            outputs.insert(PortName::OUT, AudioBuffer::new(2048));
+            v.process(InputPorts::empty(), &mut outputs, &ctx(2048));
+            (0..2048)
+                .map(|i| outputs[&PortName::OUT][i].abs())
+                .sum::<f32>()
+        };
+
+        let mut v = VocalTract::new();
+        let desc = v.descriptor();
+        v.mod_offsets_mut().unwrap().populate(&desc);
+
+        v.note_on(MidiNote::new(50), Velocity::new(1.0));
+        let base = energy(&mut v);
+        assert!(base > 0.01, "baseline should produce sound, base={base}");
+
+        v.set_mod_offset("level", -1.0); // level → 0 = silence
+        v.note_on(MidiNote::new(50), Velocity::new(1.0));
+        let quiet = energy(&mut v);
+        assert!(
+            quiet < base * 0.01,
+            "level offset should silence output: base={base}, quiet={quiet}"
+        );
+
+        v.clear_mod_offsets();
+        v.note_on(MidiNote::new(50), Velocity::new(1.0));
+        let restored = energy(&mut v);
+        assert!(
+            (restored - base).abs() < base * 0.1,
+            "clearing reverts level: base={base}, restored={restored}"
+        );
     }
 
     #[test]

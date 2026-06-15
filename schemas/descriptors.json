@@ -7707,7 +7707,7 @@
           "description": "Tract length / voice type (0 = short → soprano/child, 0.5 = neutral, 1 = long → bass). Scales all formants.",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Length",
           "response_curve": "linear",
           "unit": "none"
