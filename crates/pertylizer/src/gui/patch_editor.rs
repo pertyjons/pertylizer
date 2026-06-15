@@ -1723,7 +1723,7 @@ impl PatchEditor {
     }
 
     /// Mirror a Mod Matrix module's installed control scripts (S2.4) into its
-    /// panel so the expression editor and ƒx markers reflect them. `scripts` is
+    /// panel so the expression editor and fx markers reflect them. `scripts` is
     /// the engine snapshot's map keyed by **1-based** slot string; the panel mirror
     /// (`slot_scripts`) keys by 0-based slot index. Clear-fill: a slot dropped from
     /// the snapshot (script cleared) vanishes from the mirror. The snapshot is the
@@ -5655,7 +5655,7 @@ fn draw_mod_matrix_grid(
     // Expression-editor actions collected this frame (S2.4). Applied by the
     // caller via `session.set_mod_script` / `clear_mod_script`.
     let mut mod_script_actions: Vec<(u8, Option<String>)> = Vec::new();
-    // A slot whose ƒx button was clicked this frame — opens its editor popup.
+    // A slot whose fx button was clicked this frame — opens its editor popup.
     let mut open_editor_for: Option<u8> = None;
 
     // The grid selector is gone — the routing list is presented dynamically.
@@ -5790,13 +5790,13 @@ fn draw_mod_matrix_grid(
                                             (
                                                 ri::ALERT_LINE,
                                                 theme().colors.accent_orange,
-                                                "Expression has no effect — set a Destination",
+                                                "Expression has no effect - set a Destination",
                                             )
                                         } else {
                                             (
                                                 ri::ALERT_LINE,
                                                 theme().colors.accent_orange,
-                                                "Routing has no effect — set both Source and Destination",
+                                                "Routing has no effect - set both Source and Destination",
                                             )
                                         };
                                         ui.label(
@@ -5839,7 +5839,7 @@ fn draw_mod_matrix_grid(
                             ri::ARROW_UP_LINE
                         };
                         let arrow_text = if is_scripted {
-                            format!("{arrow_icon}  ƒx")
+                            format!("{arrow_icon}  {}", ri::FUNCTION_FILL)
                         } else if amount_val.abs() > 0.001 {
                             format!("{arrow_icon}  {amount_val:+.2}")
                         } else {
@@ -5872,7 +5872,7 @@ fn draw_mod_matrix_grid(
                             )));
                         }
 
-                        // Amount knob + Active toggle + expression (ƒx) button.
+                        // Amount knob + Active toggle + expression (fx) button.
                         ui.horizontal(|ui| {
                             if let Some(ap) = amt_param {
                                 let current = amount_val;
@@ -5890,7 +5890,7 @@ fn draw_mod_matrix_grid(
                                     .response;
                                 if is_scripted {
                                     knob_resp.on_hover_text(
-                                        "Overridden by the expression (ƒx) — clear it to use Amount",
+                                        "Overridden by the expression - clear it to use Amount",
                                     );
                                 } else if (value - current).abs() > f32::EPSILON {
                                     state.param_values.insert(ap.name.clone(), value);
@@ -5911,9 +5911,9 @@ fn draw_mod_matrix_grid(
                                 }
                             }
 
-                            // ƒx — open the expression editor for this slot. Lit
-                            // purple when a script is installed (S2.4). Hidden on
-                            // the trailing add-row (no slot to script yet).
+                            // Expression (function) icon - opens the editor for this
+                            // slot. Lit purple when a script is installed (S2.4).
+                            // Hidden on the trailing add-row (no slot to script yet).
                             if !is_add_row {
                                 let fx_color = if is_scripted {
                                     theme().colors.accent_purple
@@ -5921,12 +5921,12 @@ fn draw_mod_matrix_grid(
                                     theme().colors.text_secondary
                                 };
                                 let tip = if is_scripted {
-                                    "Edit the modulation expression (ƒx active)"
+                                    "Edit the modulation expression (active)"
                                 } else {
                                     "Replace Amount with a YAMS expression"
                                 };
                                 if ui
-                                    .button(egui::RichText::new("ƒx").color(fx_color))
+                                    .button(egui::RichText::new(ri::FUNCTION_FILL).color(fx_color))
                                     .on_hover_text(tip)
                                     .clicked()
                                 {
@@ -5988,7 +5988,7 @@ fn draw_mod_matrix_grid(
         }
     }
 
-    // Open the expression editor when an ƒx button was clicked, seeding the draft
+    // Open the expression editor when an fx button was clicked, seeding the draft
     // from the slot's installed script (empty if none).
     if let Some(slot) = open_editor_for {
         let draft = state.slot_scripts.get(&slot).cloned().unwrap_or_default();
@@ -6014,7 +6014,7 @@ fn draw_mod_matrix_grid(
             .show(&ctx, |ui| {
                 ui.label(
                     egui::RichText::new(
-                        "YAMS expression — assign `out`, e.g. `out = lfo-1.out * velocity`",
+                        "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`",
                     )
                     .size(theme().fonts.size_small)
                     .color(theme().colors.text_secondary),
@@ -6035,7 +6035,7 @@ fn draw_mod_matrix_grid(
                 // Live compile → status line (mirrors `session.set_mod_script`).
                 let trimmed = editor.draft.trim();
                 let status: Result<(), String> = if trimmed.is_empty() {
-                    Err("empty — Apply will clear the slot".to_string())
+                    Err("empty - Apply will clear the slot".to_string())
                 } else {
                     let (program, diags) = synth_script::compile(
                         &editor.draft,
@@ -6060,14 +6060,14 @@ fn draw_mod_matrix_grid(
                 match &status {
                     Ok(()) => {
                         ui.label(
-                            egui::RichText::new("✓ compiled")
+                            egui::RichText::new(format!("{}  compiled", ri::CHECKBOX_CIRCLE_LINE))
                                 .size(theme().fonts.size_small)
                                 .color(theme().colors.accent_green),
                         );
                     }
                     Err(e) => {
                         ui.label(
-                            egui::RichText::new(format!("✗ {e}"))
+                            egui::RichText::new(format!("{}  {e}", ri::ERROR_WARNING_LINE))
                                 .size(theme().fonts.size_small)
                                 .color(theme().colors.accent_orange),
                         );
