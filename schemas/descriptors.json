@@ -1962,7 +1962,7 @@
           "description": "Invert panning direction",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Invert",
           "response_curve": "linear",
           "unit": "none"

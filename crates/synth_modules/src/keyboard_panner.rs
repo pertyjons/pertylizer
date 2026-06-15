@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{
     BipolarValue, MidiNote, NormalizedValue, Polarity, PortName, SampleRate, StereoBalance,
@@ -29,6 +29,8 @@ pub struct KeyboardPanner {
 
     // Sample rate
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Output buffers
     output_left: AudioBuffer,
@@ -46,6 +48,7 @@ impl KeyboardPanner {
             current_pan: StereoBalance::CENTER,
 
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             output_left: AudioBuffer::new(1024),
             output_right: AudioBuffer::new(1024),
         }
@@ -54,17 +57,25 @@ impl KeyboardPanner {
     /// Calculate pan position from MIDI note.
     fn calculate_pan(&mut self, note: MidiNote) {
         let note_val = note.as_u8() as f32;
-        let center = self.center_note.as_u8() as f32;
+        // spread/center/curve are recomputed only here (at note-on), so their
+        // generic mod offsets are sampled at that moment — there is no held-note
+        // state to sweep per block.
+        let center = self
+            .mod_offsets
+            .effective("center", f32::from(self.center_note.as_u8()));
 
         // Normalize to -1.0 to 1.0 range based on keyboard position
         // Typical piano range is 21 (A0) to 108 (C8)
         let normalized = (note_val - center) / 44.0; // 44 semitones = ~4 octaves each side
 
         // Apply curve
-        let curved = crate::math::bipolar_curve(normalized, self.curve.as_f32());
+        let curved = crate::math::bipolar_curve(
+            normalized,
+            self.mod_offsets.effective("curve", self.curve.as_f32()),
+        );
 
         // Apply spread
-        let spread = self.spread.as_f32();
+        let spread = self.mod_offsets.effective("spread", self.spread.as_f32());
         let pan = curved * spread * self.polarity.multiplier();
 
         self.current_pan = StereoBalance::new(pan);
@@ -138,6 +149,8 @@ impl Describable for KeyboardPanner {
                 .range(0.0, 1.0)
                 .default(0.0)
                 .unit(ParameterUnit::None)
+                // Discrete polarity toggle, not a continuous automation target.
+                .modulatable(false)
                 .widget(WidgetHint::Toggle),
             )
             .port(PortDescriptor::audio_input("in", "In").description("Mono input"))
@@ -217,6 +230,10 @@ impl PolyModule for KeyboardPanner {
         ModuleType::KeyboardPanner
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.current_pan = StereoBalance::CENTER;
     }
@@ -235,5 +252,41 @@ impl PolyModule for KeyboardPanner {
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `spread` used to be dropped (KeyboardPanner never overrode
+    /// set_mod_offset); it now scales the note-derived pan via the generic store
+    /// (sampled at note-on). Driving it to 0 centers the pan.
+    #[test]
+    fn spread_mod_offset_scales_pan() {
+        let mut kp = KeyboardPanner::new();
+        let desc = kp.descriptor();
+        kp.mod_offsets_mut().unwrap().populate(&desc);
+
+        // A high note pans off-center with the default spread.
+        kp.note_on(MidiNote::new(96), Velocity::MAX);
+        let base = kp.current_pan.as_f32();
+        assert!(base.abs() > 0.05, "note pans off-center, got {base}");
+
+        // spread → 0 centers the pan.
+        kp.set_mod_offset("spread", -1.0);
+        kp.note_on(MidiNote::new(96), Velocity::MAX);
+        assert!(
+            kp.current_pan.as_f32().abs() < base.abs() * 0.5,
+            "spread→0 should center the pan, got {}",
+            kp.current_pan.as_f32()
+        );
+
+        kp.clear_mod_offsets();
+        kp.note_on(MidiNote::new(96), Velocity::MAX);
+        assert!(
+            (kp.current_pan.as_f32() - base).abs() < 1e-4,
+            "clearing reverts spread"
+        );
     }
 }
