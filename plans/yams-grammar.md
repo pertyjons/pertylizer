@@ -403,13 +403,17 @@ Gap analysis before implementation. Recommendations written in; **LOCKED** = dec
   idempotency (`fmt(fmt(x)) == fmt(x)`) + parser round-trip, plus **numeric snapshot tests of
   the evaluator** (guarding the `analyze_*` "offline reader sees state the engine never wrote"
   bug class).
-- **[PARKED] 12 — Pitch destinations / `mod_scale` hint.** *Deferred — revisit after S2.1.*
-  A normalized offset on a pitch destination is not exact semitones without an optional
-  descriptor `mod_scale` hint (`Normalized` default / `Semitones`), read by the write path
-  (`apply_mod_offset_addr`). This is a **Step-1-inherited debt, not YAMS-specific**: the
-  legacy 19 roles had semitone scaling baked in for pitch, so the address-based path is a
-  *regression* for pitch until the hint lands. Small, self-contained (a descriptor field +
-  one branch on the write side), touches neither the language nor the VM — so it ships as a
-  fast-follow pitch-parity fix, not a v1 blocker. Everything else (cutoff, amp, pan, FX
-  params) works without it. `semis(x)`/`mtof(x)` help on the frequency side but do not
-  replace the hint. **No v1 action.**
+- **[RESOLVED 2026-06-15] 12 — Pitch destinations.** *The original framing was wrong:* the
+  write side (`apply_mod_offset_addr`) does **no** scaling — it forwards the normalized value
+  to `module.set_mod_offset(param, value)`, and **each module hard-codes the per-target
+  interpretation** (filter `cutoff` = `value × 48` semitones, etc.). So a descriptor
+  `mod_scale` hint read "on the write side" never fit. The *actual* gap was that the
+  oscillator's `set_mod_offset` only implemented `pitch`/`level` and **silently dropped**
+  everything else — so a routing the picker offers (`osc-N.detune` / `osc-N.frequency`) looked
+  valid but did nothing. **Fixed (option B, `d81697f`+`218b3f1`):** `detune` → ±1 semitone
+  (its ±100¢ knob range = fine vibrato), `frequency` → ±12 semitones (coarse octave sweep),
+  both folding into the existing `mod_offset_pitch` accumulator; legacy `osc-N.pitch` still
+  works. Per-target scale lives as a documented `const` in the module (the de-facto `mod_scale`
+  hint, no descriptor field needed). **Broader follow-up (NOT done):** other modules likely
+  drop unimplemented `set_mod_offset` targets too — S1.1's "any modulatable param is a
+  destination" needs a per-module audit (see plan).

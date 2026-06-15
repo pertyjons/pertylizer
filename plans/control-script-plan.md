@@ -271,6 +271,21 @@ the remaining sign-offs (persistence, caps, diagnostics).
 - [ ] **S2.4** — GUI: expand an amount cell into an expression editor. **DEFERRED** — interactive
   egui, not headless-testable (verify in-app); also closes the GUI-panel-save scripts gap (S2.2b-2iv).
 
+### Follow-ups discovered while building Step 2
+
+- [x] **Pitch mod destinations (was parked grammar #12).** **DONE `d81697f`+`218b3f1`.** The
+  parked "descriptor `mod_scale` hint on the write side" framing didn't fit — scaling is
+  per-module (each `set_mod_offset` hard-codes per-target units), and the real gap was the
+  oscillator **silently dropping** `detune`/`frequency` offsets (`_ => {}`). Fixed: `detune` →
+  ±1 semitone, `frequency` → ±12 (one octave); legacy `osc-N.pitch` unaffected. Scale lives as
+  a documented `const` per target.
+- [ ] **Audit `set_mod_offset` coverage across all modules.** The oscillator fix exposed that
+  S1.1's "any modulatable param is a destination" is **not actually true** — modules implement
+  `set_mod_offset` for only a few hard-coded targets and drop the rest, so the address picker
+  can offer a modulatable param whose offset silently vanishes. Audit every module: for each
+  descriptor param with `modulatable: true`, confirm `set_mod_offset` handles it (or mark it
+  non-modulatable). Headless-testable; the real remaining Step-1 debt.
+
 > **STEP 2 COMPLETE — non-deferred scope (2026-06-15).** YAMS is a fully working modulation
 > compute layer: language toolchain (S2.1) → scalar-or-expression amount cell, end-to-end and
 > round-tripping (S2.2) → MCP authoring + inspection (S2.3). The **only** remaining item is the
