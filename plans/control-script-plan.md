@@ -137,10 +137,16 @@ writes. Corrected ordering — **S1.5c → S1.5a → S1.5b**.
   badge via `ModRole::from_flags`/`glyph`); label-group widgets draw an inline coloured icon,
   knobs paint it in the corner (`Knob::mod_marker`, off the label so the grid cell never
   widens). Source/`Both` markers are wired through the renderer but unreachable until S1.5b.
-- [ ] **S1.5b** *(after a)* — GUI: per-parameter **source** marker (reuse the S1.5a map,
-  three-state direction) + the **macro-source rail** — a fixed strip of macro chips
-  (`MacroSource::ALL`) each wearing the same source marker, since macros have no `ModuleId`
-  to badge.
+- [x] **S1.5b** *(after a)* — GUI: per-parameter **source** marker + the **macro-source
+  rail**. **SHIPPED.** `PatchAnalysis.mod_matrix_sources` is now `HashMap<ModuleId,
+  HashSet<String>>` (parallel to destinations), populated from each slot's `SrcAddr::Module`
+  `name`; `mod_role_for_param` combines source+dest into the three-state `ModRole::from_flags`
+  (`Source`/`Destination`/`Both`), so a source param (`osc-1.detune`) marks its knob while an
+  output port (`lfo-3.out`) only rolls up to the module badge. `SrcAddr::Macro` sources land in
+  a new `mod_matrix_macros: HashSet<MacroSource>` (added `Hash` to `MacroSource`) driving
+  `draw_macro_source_rail`: a fixed foreground strip of all six `MacroSource::ALL` chips, each
+  wearing the same purple `ModRole::Source` glyph when wired (gated on a Mod Matrix being
+  present). **This closes Step 1's GUI scope — S1.5a/b/c all shipped.** Verify in-app.
 
 The per-module badge already exists (`patch_editor.rs:1834`, three-state `↗`/`↙`/`↔`) and
 becomes a roll-up of the per-param data — keep it.
@@ -161,10 +167,10 @@ becomes a roll-up of the per-param data — keep it.
 > **MILESTONE (2026-06-14): Step 1's headless scope is COMPLETE.** Dynamic
 > source **and** destination addressing ship end-to-end — engine, persistence,
 > schema, MCP. A routing can read any module output / macro (incl. a **3rd LFO**)
-> and target any modulatable param on any module; old projects auto-upgrade; the
-> GUI combo still edits the legacy roles. The **only** remaining Step 1 work is the
-> GUI address picker + per-knob markers + macro rail (S1.5a/b/c), all DEFERRED for
-> an interactive egui session (not headless-testable). Step 2 (Control Script /
+> and target any modulatable param on any module; old projects auto-upgrade. The
+> GUI now picks **by address** (S1.5c) and shows the topology: per-knob
+> source/destination markers (S1.5a/b) + the macro-source rail (S1.5b).
+> **Step 1 is now COMPLETE — GUI included.** Step 2 (Control Script /
 > expressions) is the next build phase.
 
 **S1.1 is shippable alone** — it lifts the destination ceiling (any modulatable param)

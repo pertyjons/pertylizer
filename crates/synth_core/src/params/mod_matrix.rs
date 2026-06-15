@@ -609,7 +609,7 @@ impl<'de> Deserialize<'de> for DestAddr {
 
 /// A *true macro* source — a named per-voice scalar with no `ModuleId`
 /// (it is not a module output). The six decided macros.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MacroSource {
     Velocity,
     NoteNumber,

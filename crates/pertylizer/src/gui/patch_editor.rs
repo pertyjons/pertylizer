@@ -213,12 +213,18 @@ fn draw_module_zone<'a>(
 pub(crate) struct PatchAnalysis {
     /// How many of each module type exist.
     module_counts: HashMap<ModuleType, u16>,
-    /// Modules referenced as a Mod Matrix source.
-    mod_matrix_sources: HashSet<ModuleId>,
+    /// Modules referenced as a Mod Matrix source, with the set of source
+    /// port/param `name`s per module (S1.5b) — drives the per-knob source marker
+    /// when a `name` matches a parameter `type_id` (a `detune` param); output
+    /// ports like `out` have no knob, so they only roll up to the header badge.
+    mod_matrix_sources: HashMap<ModuleId, HashSet<String>>,
     /// Modules referenced as a Mod Matrix destination, with the set of modulated
     /// parameter `type_id`s per module (S1.5a) — drives the per-knob marker; the
     /// keys alone roll up to the module-header badge.
     mod_matrix_destinations: HashMap<ModuleId, HashSet<String>>,
+    /// Macros (`velocity`, `mod_wheel`, …) used as a Mod Matrix source (S1.5b).
+    /// Macros have no `ModuleId` to badge, so they get the macro-source rail.
+    mod_matrix_macros: HashSet<MacroSource>,
 }
 
 impl PatchAnalysis {
@@ -229,8 +235,9 @@ impl PatchAnalysis {
             *module_counts.entry(id.module_type).or_insert(0) += 1;
         }
 
-        let mut mod_matrix_sources: HashSet<ModuleId> = HashSet::new();
+        let mut mod_matrix_sources: HashMap<ModuleId, HashSet<String>> = HashMap::new();
         let mut mod_matrix_destinations: HashMap<ModuleId, HashSet<String>> = HashMap::new();
+        let mut mod_matrix_macros: HashSet<MacroSource> = HashSet::new();
 
         for (id, panel) in panels {
             if id.module_type != ModuleType::ModMatrix {
@@ -254,16 +261,30 @@ impl PatchAnalysis {
                 }
 
                 let source_name = ModMatrixParam::SlotSource(slot, None).name();
-                if let Some(addr) = panel.slot_addrs.get(source_name)
-                    && let Some(SrcAddr::Module {
-                        module_type,
-                        instance,
-                        ..
-                    }) = SrcAddr::parse(addr)
-                {
-                    let mid = ModuleId::new(module_type, instance);
-                    if panels.contains_key(&mid) {
-                        mod_matrix_sources.insert(mid);
+                if let Some(addr) = panel.slot_addrs.get(source_name) {
+                    match SrcAddr::parse(addr) {
+                        Some(SrcAddr::Module {
+                            module_type,
+                            instance,
+                            name,
+                        }) => {
+                            let mid = ModuleId::new(module_type, instance);
+                            if panels.contains_key(&mid) {
+                                // Owned `String` for the same reason as destinations:
+                                // `mod_role_for_param` looks up by `&str` per knob per
+                                // frame, so avoid a `PortName::intern` global lock.
+                                mod_matrix_sources
+                                    .entry(mid)
+                                    .or_default()
+                                    .insert(name.as_str().to_string());
+                            }
+                        }
+                        // A macro source has no `ModuleId` to badge — record it for the
+                        // macro-source rail instead.
+                        Some(SrcAddr::Macro(m)) => {
+                            mod_matrix_macros.insert(m);
+                        }
+                        None => {}
                     }
                 }
 
@@ -292,6 +313,7 @@ impl PatchAnalysis {
             module_counts,
             mod_matrix_sources,
             mod_matrix_destinations,
+            mod_matrix_macros,
         }
     }
 
@@ -311,7 +333,7 @@ impl PatchAnalysis {
 
     /// `true` if any Mod Matrix slot routes from this module.
     fn is_mod_matrix_source(&self, module_id: ModuleId) -> bool {
-        self.mod_matrix_sources.contains(&module_id)
+        self.mod_matrix_sources.contains_key(&module_id)
     }
 
     /// `true` if any Mod Matrix slot routes to this module.
@@ -319,16 +341,27 @@ impl PatchAnalysis {
         self.mod_matrix_destinations.contains_key(&module_id)
     }
 
+    /// `true` if a Mod Matrix slot reads this macro as its source (S1.5b) —
+    /// drives the macro-source rail chip.
+    fn is_macro_source(&self, macro_source: MacroSource) -> bool {
+        self.mod_matrix_macros.contains(&macro_source)
+    }
+
     /// The Mod Matrix role of a specific parameter on a module, for the per-knob
-    /// marker (S1.5a). Currently only destinations are tracked at parameter
-    /// granularity (sources are whole-module outputs — the per-parameter *source*
-    /// marker is S1.5b); `param_type_id` is the descriptor `type_id`.
+    /// marker (S1.5a/b). Both directions are tracked at parameter granularity: a
+    /// source `name` that is a parameter (`detune`) marks that knob; a destination
+    /// param marks its knob; a param that is both gets the `Both` glyph.
+    /// `param_type_id` is the descriptor `type_id`.
     fn mod_role_for_param(&self, module_id: ModuleId, param_type_id: &str) -> Option<ModRole> {
+        let is_source = self
+            .mod_matrix_sources
+            .get(&module_id)
+            .is_some_and(|params| params.contains(param_type_id));
         let is_dest = self
             .mod_matrix_destinations
             .get(&module_id)
             .is_some_and(|params| params.contains(param_type_id));
-        is_dest.then_some(ModRole::Destination)
+        ModRole::from_flags(is_source, is_dest)
     }
 }
 
@@ -1774,11 +1807,11 @@ impl PatchEditor {
         // the `self.panels.get_mut` borrow below, so the picker can address every
         // other module without re-borrowing `self`. Skip the (allocating) build
         // entirely when the patch has no Mod Matrix — the catalog has no consumer.
-        let mod_catalog = if self
+        let has_mod_matrix = self
             .descriptors
             .keys()
-            .any(|id| id.module_type == ModuleType::ModMatrix)
-        {
+            .any(|id| id.module_type == ModuleType::ModMatrix);
+        let mod_catalog = if has_mod_matrix {
             ModAddrCatalog::from_descriptors(&self.descriptors)
         } else {
             ModAddrCatalog {
@@ -2428,12 +2461,87 @@ impl PatchEditor {
 
         self.handle_canvas_background_input(ui, &canvas_response, area_origin, scroll_offset);
 
-        // Draw toolbar in foreground layer (always on top, positioned relative to visible area)
+        // Macro-source rail (S1.5b): a fixed strip of macro chips above the
+        // scrolling canvas. Only meaningful when a Mod Matrix can read them.
+        if has_mod_matrix {
+            self.draw_macro_source_rail(ui, instrument_id, visible_rect, &analysis);
+        }
 
         // Clear suppress flag — next frame will resume normal position tracking
         self.suppress_position_readback = false;
 
         result
+    }
+
+    /// Draw the macro-source rail (S1.5b): a fixed strip of the six per-voice
+    /// macro sources, each chip wearing the same purple source marker as a module
+    /// header when a Mod Matrix slot reads it. Macros have no `ModuleId` to badge,
+    /// so this rail is their home in the source topology. Anchored to the patch
+    /// canvas's top-left, in the foreground above the scrolling module Areas.
+    fn draw_macro_source_rail(
+        &self,
+        ui: &Ui,
+        instrument_id: u64,
+        visible_rect: Rect,
+        analysis: &PatchAnalysis,
+    ) {
+        let t = theme();
+        let inset = Vec2::splat(t.spacing.panel_padding);
+        egui::Area::new(egui::Id::new(("macro_source_rail", instrument_id)))
+            .order(Order::Foreground)
+            .fixed_pos(visible_rect.min + inset)
+            .constrain_to(visible_rect)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::new()
+                    .fill(t.colors.bg_panel)
+                    .stroke(egui::Stroke::new(1.0, t.colors.border))
+                    .corner_radius(4.0)
+                    .inner_margin(t.spacing.widget_spacing)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("Macros")
+                                    .size(t.fonts.size_small)
+                                    .color(t.colors.text_dim),
+                            );
+                            for m in MacroSource::ALL {
+                                let active = analysis.is_macro_source(m);
+                                let color = if active {
+                                    t.colors.accent_purple
+                                } else {
+                                    t.colors.text_dim
+                                };
+                                let tip = if active {
+                                    format!(
+                                        "{}\nDrives one or more Mod Matrix slots.",
+                                        macro_label(m)
+                                    )
+                                } else {
+                                    format!("{}\nAvailable as a Mod Matrix source.", macro_label(m))
+                                };
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 2.0;
+                                    ui.label(
+                                        egui::RichText::new(macro_label(m))
+                                            .size(t.fonts.size_small)
+                                            .color(color),
+                                    );
+                                    // Same Source glyph as the module-header badge,
+                                    // shown only when the macro is actually wired.
+                                    if active {
+                                        ui.label(
+                                            egui::RichText::new(ModRole::Source.glyph())
+                                                .size(t.fonts.size_small)
+                                                .color(t.colors.accent_purple),
+                                        );
+                                    }
+                                })
+                                .response
+                                .on_hover_text(tip);
+                            }
+                        });
+                    });
+            });
     }
 
     /// Draw a vertical column of ports (input or output side).
@@ -5179,8 +5287,9 @@ fn draw_module_panel_params(
 
     let mut param_changes = Vec::new();
     let mut audio_input_action = None;
-    // Per-knob Mod Matrix marker (S1.5a): a parameter is marked when a routing
-    // targets this module's matching `type_id`.
+    // Per-knob Mod Matrix marker (S1.5a/b): a parameter is marked when a routing
+    // targets this module's matching `type_id` (destination) or reads it as a
+    // source param — the three-state direction comes from `mod_role_for_param`.
     let module_id = state.id;
     let mod_role =
         |p: &synth_core::ParameterDescriptor| analysis.mod_role_for_param(module_id, &p.type_id);
