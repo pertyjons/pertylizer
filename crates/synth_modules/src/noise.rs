@@ -15,8 +15,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
+    WidgetHint,
 };
 use synth_core::{FilterState, Gain, MidiNote, SampleRate, Velocity};
 use synth_core::{ModuleType, NoiseParam, NoiseType, Param};
@@ -51,6 +52,9 @@ pub struct NoiseGenerator {
     // Sample rate
     sample_rate: SampleRate,
 
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
+
     // Output buffer
     output_buffer: AudioBuffer,
 }
@@ -69,6 +73,7 @@ impl NoiseGenerator {
             lfsr_state: LFSR_SEED,
             chip_lfsr_state: CHIP_LFSR_SEED,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -201,10 +206,9 @@ impl NoiseGenerator {
             NoiseType::Chip => self.chip_noise(),
         };
 
-        // Soft clip to prevent extreme values
-        let clipped = sample.clamp(-1.0, 1.0);
-
-        clipped * self.level.as_f32()
+        // Soft clip to prevent extreme values. Level (and its mod offset) is
+        // applied once per block in `process`.
+        sample.clamp(-1.0, 1.0)
     }
 }
 
@@ -262,8 +266,10 @@ impl PolyModule for NoiseGenerator {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
+        // Effective level = base + normalized mod offset, once per block.
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
         for i in 0..context.samples.as_usize() {
-            self.output_buffer[i] = self.generate_sample();
+            self.output_buffer[i] = self.generate_sample() * level;
         }
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
@@ -302,6 +308,10 @@ impl PolyModule for NoiseGenerator {
         ModuleType::Noise
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         // Reset all filter states to avoid clicks
         self.pink_rows.fill(FilterState::ZERO);
@@ -336,6 +346,45 @@ mod tests {
     fn test_noise_creation() {
         let noise = NoiseGenerator::new();
         assert_eq!(noise.noise_type, NoiseType::White);
+    }
+
+    /// `level` is a working mod destination via the generic store: a normalized
+    /// offset raises the (stochastic) output energy, clearing reverts. White
+    /// noise → compare mean-abs over a large block (stable, level-proportional).
+    #[test]
+    fn level_mod_offset_scales_output() {
+        let mut n = NoiseGenerator::new(); // White by default
+        let desc = n.descriptor();
+        n.mod_offsets_mut().unwrap().populate(&desc);
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(2048),
+            ..ProcessContext::default()
+        };
+        fn mean_abs(n: &mut NoiseGenerator, ctx: &ProcessContext) -> f32 {
+            let mut outs = std::collections::HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(2048));
+            n.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i].abs()).sum::<f32>() / b.len() as f32
+        }
+
+        let base = mean_abs(&mut n, &ctx); // level 0.8
+        assert!(base > 0.05, "noise must be audible: {base}");
+
+        // +0.5 normalized on level (0..1): 0.8 → effective 1.0 (+25%).
+        n.set_mod_offset("level", 0.5);
+        let modded = mean_abs(&mut n, &ctx);
+        assert!(
+            modded > base * 1.1,
+            "mod should raise level: {modded} vs {base}"
+        );
+
+        n.clear_mod_offsets();
+        let cleared = mean_abs(&mut n, &ctx);
+        assert!(
+            (cleared / base - 1.0).abs() < 0.2,
+            "clear reverts: {cleared} vs {base}"
+        );
     }
 
     #[test]
