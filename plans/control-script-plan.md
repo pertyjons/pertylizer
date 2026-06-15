@@ -254,7 +254,15 @@ the remaining sign-offs (persistence, caps, diagnostics).
 > param offset. A routing's amount cell is now genuinely scalar-**or-expression**.
 > Remaining S2.2: **S2.2b-2iv** (save/snapshot for round-trip persistence). Then
 > **S2.3** (MCP authoring) and **S2.4** (GUI editor, deferred).
-- [ ] **S2.3** — MCP authoring (source text or structured route list) + inspection.
+- [ ] **S2.3** — MCP authoring + inspection. **IN PROGRESS:**
+  - [x] **S2.3a** — Inspection. **SHIPPED `ac99faa`.** `get_mod_matrix_routings` reports each
+    slot's `script` source (`MatrixRoutingInfo.script: Option<String>`, skip-if-none); the bridge
+    threads `ModuleStateSnapshot.scripts` into `collect_mod_matrix_routings`, which iterates the
+    union of param + scripted slots (a script-only slot is surfaced). Script-free output unchanged.
+  - [ ] **S2.3b** — Authoring. A new MCP tool `set_mod_matrix_script { instrument_id, module_id,
+    slot, source }` (and clear via empty/None) → `SynthBridge` trait method → `AppSynthBridge` →
+    `session.set_mod_script` (compile-error → tool error). Wire the `#[tool]` + dispatch entry +
+    param struct in `synth_mcp/server.rs`. Optionally a `format_yams` tool (`synth_script::format`).
 - [ ] **S2.4** — GUI: expand an amount cell into an expression editor (DEFERRED).
 
 ---
