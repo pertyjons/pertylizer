@@ -42,6 +42,15 @@ const MAX_UNISON_VOICES: usize = 7;
 /// per-descriptor `mod_scale` hint (control-script-plan.md, scaling contract #2).
 const DETUNE_MOD_SEMITONES: f32 = 1.0;
 
+/// Mod-matrix pitch scaling for the `frequency` target: a full-scale (`±1`)
+/// offset shifts the oscillator by ±12 semitones (one octave) — a deliberately
+/// wide musical range, since the base `frequency` param is Hz on a log curve and
+/// a raw normalized offset there would be a meaningless octave-ish smear. `detune`
+/// stays narrow (±1 semitone) for fine vibrato; `frequency` is the coarse-sweep
+/// target. (Decided ±12 with the user; widen/narrow here if a different feel is
+/// wanted.)
+const FREQUENCY_MOD_SEMITONES: f32 = 12.0;
+
 /// A band-limited oscillator with optional intra-voice unison.
 #[derive(Clone)]
 pub struct Oscillator {
@@ -704,15 +713,19 @@ impl PolyModule for Oscillator {
 
     fn set_mod_offset(&mut self, target: &str, value: f32) {
         match target {
-            // `pitch`, `detune` (and later `frequency`) are all pitch shifts, so
-            // they accumulate into the shared semitone offset applied in
-            // `calculate_frequency`; the per-target scale sets the musical range.
+            // `pitch`, `detune` and `frequency` are all pitch shifts, so they
+            // accumulate into the shared semitone offset applied in
+            // `actual_frequency`; the per-target scale sets the musical range.
             "pitch" => {
                 self.mod_offset_pitch = Semitones::new(self.mod_offset_pitch.as_f32() + value)
             }
             "detune" => {
                 self.mod_offset_pitch =
                     Semitones::new(self.mod_offset_pitch.as_f32() + value * DETUNE_MOD_SEMITONES)
+            }
+            "frequency" => {
+                self.mod_offset_pitch =
+                    Semitones::new(self.mod_offset_pitch.as_f32() + value * FREQUENCY_MOD_SEMITONES)
             }
             "level" => {
                 self.mod_offset_level = BipolarValue::new(self.mod_offset_level.as_f32() + value)
@@ -795,6 +808,28 @@ mod tests {
 
         osc.clear_mod_offsets();
         assert!((osc.actual_frequency().as_f32() - base).abs() < 0.5);
+    }
+
+    /// A routing to `osc.frequency` is the coarse pitch-sweep target: full-scale
+    /// (`+1`) raises pitch a full octave (±12 semitones). Previously dropped.
+    #[test]
+    fn frequency_mod_offset_sweeps_one_octave_full_scale() {
+        let mut osc = Oscillator::new();
+        osc.set_param(Param::Oscillator(OscillatorParam::Frequency(Hertz::new(
+            220.0,
+        ))));
+        let base = osc.actual_frequency().as_f32();
+
+        osc.set_mod_offset("frequency", 1.0);
+        assert!(
+            (osc.actual_frequency().as_f32() / base - 2.0).abs() < 1e-3,
+            "frequency +1 should raise pitch one octave: ratio {}",
+            osc.actual_frequency().as_f32() / base
+        );
+        // Negative full-scale drops an octave.
+        osc.clear_mod_offsets();
+        osc.set_mod_offset("frequency", -1.0);
+        assert!((osc.actual_frequency().as_f32() / base - 0.5).abs() < 1e-3);
     }
 
     #[test]
