@@ -9,8 +9,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{DriftGeneratorParam, ModuleType, Param};
 use synth_core::{Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
@@ -28,6 +29,8 @@ pub struct DriftGenerator {
     target: f32,
     /// Phase for controlling when to pick new target
     phase: Phase,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
     output_buffer: AudioBuffer,
 }
 
@@ -41,6 +44,7 @@ impl DriftGenerator {
             current: 0.0,
             target: 0.0,
             phase: Phase::ZERO,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -124,11 +128,18 @@ impl PolyModule for DriftGenerator {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
-        let phase_inc = self.rate.phase_increment(self.sample_rate);
+        // Generic mod offsets — all per-block constants, resolved once here.
+        let eff_rate = Hertz::new(self.mod_offsets.effective("rate", self.rate.as_f32()));
+        let smoothness = self
+            .mod_offsets
+            .effective("smoothness", self.smoothness.as_f32());
+        let depth = self.mod_offsets.effective("depth", self.depth.as_f32());
+
+        let phase_inc = eff_rate.phase_increment(self.sample_rate);
         // Smoothness controls the slew rate (0.0 = instant, 1.0 = very slow)
-        let slew = 1.0 - self.smoothness.as_f32() * 0.999;
+        let slew = 1.0 - smoothness * 0.999;
         // One-pole coefficient: lower = smoother
-        let coeff = slew * self.rate.as_f32() / self.sample_rate.as_f32() * 100.0;
+        let coeff = slew * eff_rate.as_f32() / self.sample_rate.as_f32() * 100.0;
         let coeff = coeff.clamp(0.0001, 1.0);
 
         for i in 0..context.samples.as_usize() {
@@ -143,7 +154,7 @@ impl PolyModule for DriftGenerator {
             // Smooth interpolation toward target (one-pole lowpass)
             self.current += (self.target - self.current) * coeff;
 
-            self.output_buffer[i] = self.current * self.depth.as_f32();
+            self.output_buffer[i] = self.current * depth;
         }
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
@@ -185,6 +196,10 @@ impl PolyModule for DriftGenerator {
         ModuleType::DriftGenerator
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.current = 0.0;
         self.target = 0.0;
@@ -202,6 +217,46 @@ impl PolyModule for DriftGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `depth` is a working mod destination via the generic store: driving it to
+    /// 0 silences the drift output, and clearing reverts.
+    #[test]
+    fn depth_mod_offset_scales_output() {
+        let mut drift = DriftGenerator::new();
+        let desc = drift.descriptor();
+        drift.mod_offsets_mut().unwrap().populate(&desc);
+        drift.depth = NormalizedValue::MAX;
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        // Seed a fixed drift value (current == target so it holds) to isolate the
+        // depth scaling from the random walk.
+        fn peak(drift: &mut DriftGenerator, ctx: &ProcessContext) -> f32 {
+            drift.current = 0.6;
+            drift.target = 0.6;
+            drift.phase = Phase::ZERO;
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            drift.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        let base = peak(&mut drift, &ctx);
+        assert!(base > 1e-3, "base drift present, got {base}");
+
+        drift.set_mod_offset("depth", -1.0);
+        let silent = peak(&mut drift, &ctx);
+        assert!(
+            silent < base * 0.05,
+            "depth→0 should silence drift: {silent}"
+        );
+
+        drift.clear_mod_offsets();
+        assert!(peak(&mut drift, &ctx) > silent, "clearing restores depth");
+    }
 
     #[test]
     fn test_drift_generator_output_bounded() {
