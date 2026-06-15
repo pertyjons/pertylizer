@@ -222,11 +222,13 @@ the remaining sign-offs (persistence, caps, diagnostics).
     (atomic refcount, no deep-copy). Wired through the 3 exhaustive `EngineCommand` matches
     (Debug prints source text; `try_clone` Arc-clones; hub `can_modify_params`). Dispatch
     skips `update_shared_graph` (scripts not in that snapshot — correct). Graph unit-tested.
-  - [ ] **S2.2b-2iii** — pertylizer **load** wiring + `synth_script` dep (**not yet a
-    dependency** — add it, non-RT authoring consumer). `apply_patch` compiles each
-    `ModuleState.scripts` text via `synth_script::compile` → `into_bound` → a session method
-    sends `SetModScript`. Compile errors = disable-and-keep (skip the slot, keep the project).
-    Test via a hand-crafted project JSON (no MCP/GUI authoring until S2.3/S2.4).
+  - [x] **S2.2b-2iii** — pertylizer **load** wiring. **SHIPPED `c675f41`.** pertylizer now deps
+    `synth_script`. `SynthSession::set_mod_script` compiles off-thread (`compile` → `into_bound`
+    → `Arc`) and sends `SetModScript`; compile error → `SessionError::ScriptCompile` (all diags)
+    before sending. `apply_patch` installs each `ModuleState.scripts` entry after the param loop;
+    1-based slot key range-checked to `1..=MAX_MOD_MATRIX_SLOTS`, bad keys + compile errors
+    recorded and skipped (disable-and-keep). Unit-tested. A persisted script now reaches the
+    engine module — only eval (S2.2c) is left to make it audible.
   - [ ] **S2.2b-2iv** — Engine **read** channel + save wiring (round-trip persistence).
     `ModuleStateSnapshot.scripts` from `mod_scripts()` (`bound.source`);
     `build_patch_from_snapshot` fills `ModuleState.scripts`. Can follow eval — a hand-authored
