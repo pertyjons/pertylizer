@@ -5,7 +5,9 @@
 //! emits the *minimal necessary* parentheses rather than preserving the
 //! author's — full author-paren + lossless-trivia preservation is the deferred
 //! rowan-CST path (decision #11). Comments are reattached by line: an own-line
-//! comment leads the following statement; a trailing comment stays on its line.
+//! comment leads the following statement (a leading comment block is always
+//! followed by exactly one blank line before its statement); a trailing comment
+//! stays on its code line and never forces a blank line.
 //!
 //! `format` is idempotent: `format(format(x)) == format(x)`.
 //!
@@ -152,10 +154,16 @@ fn render(program: &Program, comments: &[Comment], lines: &LineMap) -> String {
         if i == body_start && body_start > 0 {
             out.push(String::new());
         }
-        // Own-line comments that precede this statement.
+        // Own-line comments that precede this statement, then exactly one blank
+        // line separating the comment block from the statement it documents.
+        let mut led_by_comment = false;
         while next < comments.len() && comments[next].own_line && comments[next].line < sline {
             out.push(comments[next].text.clone());
             next += 1;
+            led_by_comment = true;
+        }
+        if led_by_comment {
+            out.push(String::new());
         }
         // The statement, plus a trailing comment if one sits on its last line.
         let mut line = text.clone();
@@ -359,14 +367,31 @@ mod tests {
 
     #[test]
     fn own_line_comment_leads_statement() {
+        // A leading own-line comment is always followed by one blank line.
         let out = fmt("# header\nout = 1");
-        assert_eq!(out, "# header\nout = 1\n");
+        assert_eq!(out, "# header\n\nout = 1\n");
+    }
+
+    #[test]
+    fn comment_block_gets_exactly_one_blank_line() {
+        // One or more own-line comments -> exactly one blank line before the
+        // statement they document (no matter how many comment lines).
+        let out = fmt("# line one\n# line two\nout = velocity");
+        assert_eq!(out, "# line one\n# line two\n\nout = velocity\n");
     }
 
     #[test]
     fn trailing_comment_stays_on_line() {
         let out = fmt("out = velocity   #the velocity");
         assert_eq!(out, "out = velocity  # the velocity\n");
+    }
+
+    #[test]
+    fn trailing_comment_does_not_force_blank_line() {
+        // A comment on a code line stays on that line and does NOT insert a blank
+        // before the next statement -- only own-line comment blocks do.
+        let out = fmt("let a = 1 # first\nout = a");
+        assert_eq!(out, "let a = 1  # first\nout = a\n");
     }
 
     #[test]
