@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{BipolarValue, MidiNote, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, VectorMixerParam};
@@ -26,6 +26,8 @@ pub struct VectorMixer {
 
     // State
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Buffers
     output_buffer: AudioBuffer,
@@ -37,6 +39,7 @@ impl VectorMixer {
             x: BipolarValue::CENTER,
             y: BipolarValue::CENTER,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -140,10 +143,14 @@ impl PolyModule for VectorMixer {
         let x_cv = inputs.get(PortName::X_CV);
         let y_cv = inputs.get(PortName::Y_CV);
 
+        // Generic mod offsets on the XY base (per-block); the CV ports add on top.
+        let x_base = self.mod_offsets.effective("x", self.x.as_f32());
+        let y_base = self.mod_offsets.effective("y", self.y.as_f32());
+
         for i in 0..num_samples {
             // Apply CV modulation to XY
-            let mut x_val = self.x.as_f32();
-            let mut y_val = self.y.as_f32();
+            let mut x_val = x_base;
+            let mut y_val = y_base;
 
             if let Some(cv) = x_cv {
                 x_val = (x_val + cv[i]).clamp(-1.0, 1.0);
@@ -200,6 +207,10 @@ impl PolyModule for VectorMixer {
         ModuleType::VectorMixer
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         // No internal state to reset beyond parameters
     }
@@ -226,6 +237,44 @@ mod tests {
         let vm = VectorMixer::new();
         assert_eq!(vm.x.as_f32(), 0.0);
         assert_eq!(vm.y.as_f32(), 0.0);
+    }
+
+    /// `x` used to be dropped (VectorMixer never overrode set_mod_offset); it now
+    /// shifts the XY blend toward the right corners via the generic store.
+    #[test]
+    fn x_mod_offset_shifts_blend() {
+        let mut vm = VectorMixer::new();
+        let desc = vm.descriptor();
+        vm.mod_offsets_mut().unwrap().populate(&desc);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(8),
+            ..ProcessContext::default()
+        };
+        // Only corner B (top-right) gets signal, so output rises as X → +1.
+        fn out_b(vm: &mut VectorMixer, ctx: &ProcessContext) -> f32 {
+            let mut buf = AudioBuffer::new(8);
+            for i in 0..8 {
+                buf[i] = 1.0;
+            }
+            let in_ports = [(PortName::IN_B, &buf)];
+            let inputs = InputPorts::new(&in_ports);
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(8));
+            vm.process(inputs, &mut outs, ctx);
+            outs[&PortName::OUT][0]
+        }
+
+        let base = out_b(&mut vm, &ctx); // X=0 centered
+        vm.set_mod_offset("x", 0.5); // pan toward right corners (B/D)
+        let shifted = out_b(&mut vm, &ctx);
+        assert!(
+            shifted > base + 1e-3,
+            "x offset should raise corner-B weight: {shifted} vs {base}"
+        );
+
+        vm.clear_mod_offsets();
+        assert!((out_b(&mut vm, &ctx) - base).abs() < 1e-4);
     }
 
     #[test]
