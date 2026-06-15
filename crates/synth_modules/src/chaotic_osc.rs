@@ -9,8 +9,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{ChaoticOscParam, ChaoticSystem, ModuleType, Param};
 use synth_core::{Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
@@ -27,6 +28,8 @@ pub struct ChaoticOsc {
     x: f32,
     y: f32,
     z: f32,
+    /// Generic mod-matrix offsets (rate, chaos, depth). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
     output_buffer: AudioBuffer,
     output_buffer_y: AudioBuffer,
 }
@@ -42,6 +45,7 @@ impl ChaoticOsc {
             x: 0.1,
             y: 0.0,
             z: 0.0,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
             output_buffer_y: AudioBuffer::new(1024),
         }
@@ -174,10 +178,15 @@ impl PolyModule for ChaoticOsc {
         self.output_buffer.resize(num_samples);
         self.output_buffer_y.resize(num_samples);
 
-        // dt scaled by rate and sample rate
-        let base_dt = self.rate.as_f32() / self.sample_rate.as_f32();
-
-        let depth = self.depth.as_f32();
+        // Generic mod offsets (per-block constants). `chaos` is read deep inside
+        // the per-system step functions, so apply its effective value to the
+        // field for the block and restore after — the single loop has no early
+        // return. rate/depth are read here and wrapped inline.
+        let base_dt =
+            self.mod_offsets.effective("rate", self.rate.as_f32()) / self.sample_rate.as_f32();
+        let depth = self.mod_offsets.effective("depth", self.depth.as_f32());
+        let saved_chaos = self.chaos;
+        self.chaos = NormalizedValue::new(self.mod_offsets.effective("chaos", self.chaos.as_f32()));
 
         for i in 0..num_samples {
             match self.system {
@@ -194,6 +203,9 @@ impl PolyModule for ChaoticOsc {
             self.output_buffer[i] = (norm_x * depth).clamp(-1.0, 1.0);
             self.output_buffer_y[i] = (norm_y * depth).clamp(-1.0, 1.0);
         }
+
+        // Restore the base chaos so next block re-applies the offset from scratch.
+        self.chaos = saved_chaos;
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
@@ -242,6 +254,10 @@ impl PolyModule for ChaoticOsc {
         ModuleType::ChaoticOsc
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.x = 0.1;
         self.y = 0.0;
@@ -259,6 +275,49 @@ impl PolyModule for ChaoticOsc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `depth` is a working mod destination via the generic store: a negative
+    /// offset shrinks the output, and the transiently-applied `chaos` field is
+    /// restored after each block (no drift).
+    #[test]
+    fn depth_mod_offset_scales_output_and_chaos_restores() {
+        let mut osc = ChaoticOsc::new();
+        let desc = osc.descriptor();
+        osc.mod_offsets_mut().unwrap().populate(&desc);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        fn peak(osc: &mut ChaoticOsc, ctx: &ProcessContext) -> f32 {
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            osc.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        let base = peak(&mut osc, &ctx);
+        assert!(base > 1e-3, "base output present, got {base}");
+
+        osc.set_mod_offset("depth", -0.8);
+        let chaos_before = osc.chaos.as_f32();
+        let quieter = peak(&mut osc, &ctx);
+        osc.set_mod_offset("chaos", 0.5); // also exercise the transient field
+        let _ = peak(&mut osc, &ctx);
+        assert!(
+            (osc.chaos.as_f32() - chaos_before).abs() < 1e-6,
+            "chaos field must be restored after process"
+        );
+        assert!(
+            quieter < base,
+            "depth offset should reduce output: {quieter} vs {base}"
+        );
+
+        osc.clear_mod_offsets();
+        let reverted = peak(&mut osc, &ctx);
+        assert!(reverted > quieter, "clearing restores depth");
+    }
 
     #[test]
     fn test_chaotic_osc_does_not_diverge() {
