@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use synth_core::{AmplifierParam, MixerParam, ModuleType, Param};
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{
     BipolarValue, ClipMode, Gain, LimitMode, MidiNote, MuteState, PortName, SampleRate, Velocity,
@@ -335,8 +335,16 @@ pub struct Mixer {
     master_level: Gain,
     mute_state: MuteState,
     limit_mode: LimitMode,
+    /// Generic mod-matrix offsets (master + the 8 channel levels).
+    mod_offsets: ParamModOffsets,
     output_buffer: AudioBuffer,
 }
+
+/// Descriptor `type_id`s for the 8 channel gains, as static strings so the
+/// process loop can look up mod offsets without allocating (`format!`).
+const MIXER_CHANNEL_IDS: [&str; 8] = [
+    "input_1", "input_2", "input_3", "input_4", "input_5", "input_6", "input_7", "input_8",
+];
 
 impl Mixer {
     pub fn new() -> Self {
@@ -345,6 +353,7 @@ impl Mixer {
             master_level: Gain::UNITY,
             mute_state: MuteState::Unmuted,
             limit_mode: LimitMode::Disabled,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -428,13 +437,20 @@ impl PolyModule for Mixer {
             // Use static PortName constants - zero allocation in hot path
             for (idx, port_name) in PortName::MIXER_INPUTS.iter().enumerate() {
                 if let Some(input) = inputs.get(*port_name) {
-                    let level = self.levels[idx].as_f32();
+                    // Per-channel gain with its generic mod offset (per-block
+                    // constant; the const id array keeps the lookup alloc-free).
+                    let level = self
+                        .mod_offsets
+                        .effective(MIXER_CHANNEL_IDS[idx], self.levels[idx].as_f32());
                     for j in 0..context.samples.as_usize() {
                         self.output_buffer[j] += input[j] * level;
                     }
                 }
             }
-            self.output_buffer.scale(self.master_level.as_f32());
+            let master = self
+                .mod_offsets
+                .effective("master", self.master_level.as_f32());
+            self.output_buffer.scale(master);
 
             // Apply limiting if enabled
             if self.limit_mode.is_enabled() {
@@ -522,6 +538,10 @@ impl PolyModule for Mixer {
         ModuleType::Mixer
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.output_buffer.clear();
     }
@@ -542,6 +562,51 @@ mod tests {
     fn test_amplifier_creation() {
         let amp = Amplifier::new();
         assert!((amp.level.as_f32() - 1.0).abs() < 0.001);
+    }
+
+    /// The mixer's `master` gain used to be dropped (Mixer never overrode
+    /// set_mod_offset); it now scales the mixed output via the generic store.
+    #[test]
+    fn mixer_master_mod_offset_scales_output() {
+        let mut mixer = Mixer::new();
+        let desc = mixer.descriptor();
+        mixer.mod_offsets_mut().unwrap().populate(&desc);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(64),
+            ..ProcessContext::default()
+        };
+        fn peak(mixer: &mut Mixer, ctx: &ProcessContext) -> f32 {
+            let mut buf = AudioBuffer::new(64);
+            for i in 0..64 {
+                buf[i] = 0.5;
+            }
+            let in_ports = [(PortName::MIXER_INPUTS[0], &buf)];
+            let inputs = InputPorts::new(&in_ports);
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(64));
+            mixer.process(inputs, &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        let base = peak(&mut mixer, &ctx);
+        assert!(
+            (base - 0.5).abs() < 1e-4,
+            "unity master passes input, got {base}"
+        );
+
+        // master range 0..2, base 1.0 → normalize 0.5; -0.25 offset → 0.25 norm
+        // → 0.5 gain → half output.
+        mixer.set_mod_offset("master", -0.25);
+        let quieter = peak(&mut mixer, &ctx);
+        assert!(
+            quieter < base * 0.75,
+            "master offset should reduce output: {quieter} vs {base}"
+        );
+
+        mixer.clear_mod_offsets();
+        assert!((peak(&mut mixer, &ctx) - base).abs() < 1e-4);
     }
 
     #[test]
