@@ -14,8 +14,9 @@
 use std::collections::HashMap;
 use synth_core::{
     AudioBuffer, BipolarValue, Describable, FractalOscParam, Hertz, InputPorts, MidiNote,
-    ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor,
-    PolyModule, PortDescriptor, PortName, ProcessContext, SampleRate, Velocity, WidgetHint,
+    ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param, ParamModOffsets,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortName, ProcessContext, SampleRate,
+    Velocity, WidgetHint,
 };
 
 /// Maximum number of Weierstrass partials.
@@ -36,6 +37,8 @@ pub struct FractalOscillator {
     note_freq: Hertz,
     sample_rate: SampleRate,
     inv_sample_rate: f32,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Pre-allocated output buffers
     output_buffer_left: AudioBuffer,
@@ -55,6 +58,7 @@ impl FractalOscillator {
             note_freq: Hertz::A4,
             sample_rate: SampleRate::DVD_QUALITY,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
+            mod_offsets: ParamModOffsets::new(),
 
             output_buffer_left: AudioBuffer::new(1024),
             output_buffer_right: AudioBuffer::new(1024),
@@ -63,15 +67,14 @@ impl FractalOscillator {
 
     /// Map normalized roughness (0–1) to clamped `a` range [0.0, 0.99].
     #[inline]
-    fn actual_roughness(&self) -> f32 {
-        (self.roughness.as_f32() * 0.99).clamp(0.0, 0.99)
+    fn actual_roughness(norm: f32) -> f32 {
+        (norm * 0.99).clamp(0.0, 0.99)
     }
 
     /// Map normalized fractal spacing (0–1) to `b` range [1.01, 10.0].
     #[inline]
-    fn actual_spacing(&self) -> f32 {
-        let t = self.fractal_spacing.as_f32();
-        (1.01 + t * (10.0 - 1.01)).clamp(1.01, 10.0)
+    fn actual_spacing(norm: f32) -> f32 {
+        (1.01 + norm * (10.0 - 1.01)).clamp(1.01, 10.0)
     }
 
     /// Generate one stereo sample pair using the Weierstrass additive loop.
@@ -256,14 +259,26 @@ impl PolyModule for FractalOscillator {
         self.output_buffer_right.resize(num_samples);
 
         let freq_cv = inputs.get(PortName::FREQ_CV);
-        let level = self.level.as_f32();
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
         let nyquist = self.sample_rate.as_f32() * 0.5;
 
-        // Map normalized params to DSP ranges
-        let a = self.actual_roughness();
-        let b = self.actual_spacing();
-        let dispersion = self.dispersion.as_f32().clamp(0.0, 1.0);
-        let spread = self.spread.as_f32().clamp(0.0, 1.0);
+        // Map normalized params (each through its generic mod offset) to DSP ranges
+        let a = Self::actual_roughness(
+            self.mod_offsets
+                .effective("roughness", self.roughness.as_f32()),
+        );
+        let b = Self::actual_spacing(
+            self.mod_offsets
+                .effective("spacing", self.fractal_spacing.as_f32()),
+        );
+        let dispersion = self
+            .mod_offsets
+            .effective("dispersion", self.dispersion.as_f32())
+            .clamp(0.0, 1.0);
+        let spread = self
+            .mod_offsets
+            .effective("spread", self.spread.as_f32())
+            .clamp(0.0, 1.0);
 
         // Pre-compute pan gains for even/odd partials (constant across samples)
         let (even_pan_l, even_pan_r) = crate::math::equal_power_pan(-spread);
@@ -332,6 +347,10 @@ impl PolyModule for FractalOscillator {
         ModuleType::FractalOsc
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.phases.fill(0.0);
     }
@@ -363,6 +382,42 @@ mod tests {
         let osc = FractalOscillator::new();
         assert_eq!(osc.note_freq.as_f32(), 440.0);
         assert_eq!(osc.phases, [0.0; NUM_PARTIALS]);
+    }
+
+    /// `level` is a working mod destination via the generic store: a negative
+    /// offset reduces the output peak, and clearing restores it.
+    #[test]
+    fn level_mod_offset_scales_output() {
+        let mut osc = FractalOscillator::new();
+        let desc = osc.descriptor();
+        osc.mod_offsets_mut().unwrap().populate(&desc);
+        osc.note_on(MidiNote::A4, Velocity::MAX);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        fn peak(osc: &mut FractalOscillator, ctx: &ProcessContext) -> f32 {
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT_L, AudioBuffer::new(256));
+            outs.insert(PortName::OUT_R, AudioBuffer::new(256));
+            osc.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT_L];
+            (0..b.len()).map(|i| b[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        let base = peak(&mut osc, &ctx);
+        assert!(base > 1e-3, "base output present, got {base}");
+
+        osc.set_mod_offset("level", -0.8);
+        let quieter = peak(&mut osc, &ctx);
+        assert!(
+            quieter < base * 0.5,
+            "level offset should reduce output: {quieter} vs {base}"
+        );
+
+        osc.clear_mod_offsets();
+        assert!((peak(&mut osc, &ctx) - base).abs() < base * 0.1);
     }
 
     #[test]
