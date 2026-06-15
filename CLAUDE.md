@@ -43,6 +43,33 @@ git commit -m "<short description of changes>"
 3. Review `plans/TODO.md` and mark completed tasks.
 4. Update the version number in `crates/pertylizer/Cargo.toml`, then run
    `cargo build` so `Cargo.lock` is synced.
+5. Commit the bump to `main` as `Release vX.Y.Z: <summary>` (follow the
+   `git commit` checklist above).
+6. **Tag and push — this is what publishes the release:**
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+### Releases (GitHub Actions)
+
+`.github/workflows/build.yml` triggers **only on pushed `v*` git tags** — never
+on plain commits. So you can push as many small version-less commits to `main`
+as you like without triggering anything; a release happens **only** when you push
+a tag.
+
+When a `v*` tag is pushed the workflow builds Linux/macOS/Windows, then the
+`release` job publishes a GitHub release. Key facts:
+
+- **The tag name is the source of truth for the version.** The release version is
+  derived from the tag (`v0.313.0` → `0.313.0`), *not* from `Cargo.toml`. Always
+  tag with the exact version you bumped `Cargo.toml` to.
+- **The tag must point at a commit that already contains** the bumped
+  `Cargo.toml` and the matching `## [x.y.z]` entry in `docs/history.md` — the
+  release notes are extracted from that section. Tag *after* the `new version`
+  commit is on `main`.
+- There is no manual (`workflow_dispatch`) trigger; the only way to run a build or
+  release is to push a tag.
 
 ### `docs/history.md` style
 

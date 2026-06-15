@@ -1,7 +1,9 @@
 name: Build & Test
 
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -96,19 +98,19 @@ jobs:
   release:
     name: Release
     needs: [ubuntu, macos, windows]
-    if: github.ref == 'refs/heads/main'
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v5
 
-      - name: Get version from Cargo.toml
+      - name: Get version from tag
         id: version
         run: |
-          VERSION=$(grep '^version' crates/pertylizer/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          TAG="${GITHUB_REF_NAME}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Check if release already exists
         id: check
