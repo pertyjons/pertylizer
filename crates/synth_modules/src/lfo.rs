@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{
     BeatDivision, BipolarValue, Hertz, MidiNote, NormalizedValue, Phase, PortName, RetriggerMode,
@@ -44,6 +45,8 @@ pub struct Lfo {
     mod_offset_rate: BipolarValue,
     /// Depth offset (additive, from mod matrix).
     mod_offset_depth: BipolarValue,
+    /// Generic mod-matrix offsets for the non-rate/depth params (phase).
+    mod_offsets: ParamModOffsets,
     output_buffer: AudioBuffer,
 }
 
@@ -67,6 +70,7 @@ impl Lfo {
             prev_retrigger: NormalizedValue::MIN,
             mod_offset_rate: BipolarValue::CENTER,
             mod_offset_depth: BipolarValue::CENTER,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -77,9 +81,9 @@ impl Lfo {
     }
 
     #[inline]
-    fn generate_sample(&mut self, effective_rate: Hertz) -> f32 {
+    fn generate_sample(&mut self, effective_rate: Hertz, effective_phase_offset: f32) -> f32 {
         let phase_inc = effective_rate.phase_increment(self.sample_rate);
-        let phase = self.phase.advance(self.phase_offset.as_f32()).as_f32();
+        let phase = self.phase.advance(effective_phase_offset).as_f32();
         let phase_wrapped = Phase::new_unchecked(phase);
 
         let raw = match self.waveform {
@@ -217,6 +221,11 @@ impl PolyModule for Lfo {
         // In tempo sync mode, derive phase directly from beat position for lock
         let use_beat_sync = self.sync_mode.is_tempo_sync() && context.is_playing;
 
+        // `phase` is a mod destination via the generic store (per-block constant).
+        let eff_phase_offset = self
+            .mod_offsets
+            .effective("phase", self.phase_offset.as_f32());
+
         for i in 0..context.samples.as_usize() {
             // Always track retrigger input for edge detection, but only act on it
             // when retrigger_mode is enabled. This prevents stale prev_retrigger
@@ -239,7 +248,7 @@ impl PolyModule for Lfo {
                 // Phase cycles through one LFO cycle per sync_division beats
                 let lfo_phase = (current_beat / self.sync_division.as_f32()).rem_euclid(1.0);
                 self.phase = Phase::new(lfo_phase);
-                self.output_buffer[i] = self.generate_sample(Hertz::new(1.0)); // Rate doesn't matter in sync
+                self.output_buffer[i] = self.generate_sample(Hertz::new(1.0), eff_phase_offset); // Rate doesn't matter in sync
             } else {
                 let base_rate = if self.sync_mode.is_tempo_sync() {
                     Hertz::new(context.tempo.as_f32() / 60.0 / self.sync_division.as_f32())
@@ -262,7 +271,7 @@ impl PolyModule for Lfo {
                     base_rate
                 };
 
-                self.output_buffer[i] = self.generate_sample(effective_rate);
+                self.output_buffer[i] = self.generate_sample(effective_rate, eff_phase_offset);
             }
         }
 
@@ -329,6 +338,10 @@ impl PolyModule for Lfo {
         ModuleType::Lfo
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.phase = Phase::ZERO;
         self.sh_value = 0.0;
@@ -346,13 +359,15 @@ impl PolyModule for Lfo {
             "depth" => {
                 self.mod_offset_depth = BipolarValue::new(self.mod_offset_depth.as_f32() + value)
             }
-            _ => {}
+            // phase goes through the generic store (scaled through its range).
+            other => self.mod_offsets.add(other, value),
         }
     }
 
     fn clear_mod_offsets(&mut self) {
         self.mod_offset_rate = BipolarValue::CENTER;
         self.mod_offset_depth = BipolarValue::CENTER;
+        self.mod_offsets.clear();
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
@@ -368,5 +383,39 @@ mod tests {
     fn test_lfo_creation() {
         let lfo = Lfo::new();
         assert_eq!(lfo.waveform, LfoWaveform::Sine);
+    }
+
+    /// `phase` used to hit the dropped `_ => {}` arm; it now flows through the
+    /// generic store and shifts where the sine LFO starts. A sine at phase 0
+    /// begins near 0; a phase offset moves the first sample, and clearing
+    /// reverts.
+    #[test]
+    fn phase_mod_offset_shifts_waveform() {
+        let mut lfo = Lfo::new();
+        let desc = lfo.descriptor();
+        lfo.mod_offsets_mut().unwrap().populate(&desc);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(1),
+            ..ProcessContext::default()
+        };
+        fn first(lfo: &mut Lfo, ctx: &ProcessContext) -> f32 {
+            lfo.reset();
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(1));
+            lfo.process(InputPorts::empty(), &mut outs, ctx);
+            outs[&PortName::OUT][0]
+        }
+
+        let base = first(&mut lfo, &ctx); // sine at phase ~0 → near 0
+        lfo.set_mod_offset("phase", 0.25); // quarter turn → toward the peak
+        let shifted = first(&mut lfo, &ctx);
+        assert!(
+            (shifted - base).abs() > 0.1,
+            "phase offset should shift the LFO output: {shifted} vs {base}"
+        );
+
+        lfo.clear_mod_offsets();
+        assert!((first(&mut lfo, &ctx) - base).abs() < 1e-4);
     }
 }
