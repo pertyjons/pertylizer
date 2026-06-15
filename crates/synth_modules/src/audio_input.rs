@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use synth_core::AmplifierParam;
 use synth_core::{
     AudioBuffer, Describable, Gain, InputPorts, MidiNote, ModuleCategory, ModuleDescriptor,
-    ModuleType, Param, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName,
-    ProcessContext, SampleRate, Velocity, WidgetHint,
+    ModuleType, Param, ParamModOffsets, ParameterDescriptor, ParameterUnit, PolyModule,
+    PortDescriptor, PortName, ProcessContext, SampleRate, Velocity, WidgetHint,
 };
 
 /// Audio input module — routes live audio input into the voice graph.
@@ -21,6 +21,8 @@ pub struct AudioInput {
     level: Gain,
     /// Sample rate.
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
     /// Output buffer.
     output_buffer: AudioBuffer,
 }
@@ -30,6 +32,7 @@ impl AudioInput {
         Self {
             level: Gain::new(1.0),
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -76,7 +79,7 @@ impl PolyModule for AudioInput {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(n_samples);
 
-        let level = self.level.as_f32();
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
 
         if let Some(audio_input) = context.audio_input {
             // Mix stereo input to mono (L+R)/2 and apply level
@@ -129,6 +132,10 @@ impl PolyModule for AudioInput {
         ModuleType::AudioInput
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {}
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {
@@ -141,5 +148,50 @@ impl PolyModule for AudioInput {
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `level` is a working mod destination via the generic store: a negative
+    /// offset reduces the passed-through input level, and clearing reverts.
+    #[test]
+    fn level_mod_offset_scales_output() {
+        let mut ai = AudioInput::new();
+        let desc = ai.descriptor();
+        ai.mod_offsets_mut().unwrap().populate(&desc);
+
+        // 64 interleaved stereo samples (all 0.5) → 32 mono frames.
+        let stereo = [0.5f32; 64];
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(32),
+            audio_input: Some(&stereo),
+            ..ProcessContext::default()
+        };
+        fn peak(ai: &mut AudioInput, ctx: &ProcessContext) -> f32 {
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(32));
+            ai.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        let base = peak(&mut ai, &ctx);
+        assert!(
+            (base - 0.5).abs() < 1e-4,
+            "unity level passes input, got {base}"
+        );
+
+        ai.set_mod_offset("level", -0.5);
+        let quieter = peak(&mut ai, &ctx);
+        assert!(
+            quieter < base * 0.6,
+            "level offset should reduce output: {quieter} vs {base}"
+        );
+
+        ai.clear_mod_offsets();
+        assert!((peak(&mut ai, &ctx) - base).abs() < 1e-4);
     }
 }
