@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ModuleType,
-    NormalizedValue, Param, ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext,
-    StepCount, TuringMachineParam, TuringScale, WidgetHint,
+    NormalizedValue, Param, ParamModOffsets, ParameterDescriptor, PolyModule, PortDescriptor,
+    ProcessContext, StepCount, TuringMachineParam, TuringScale, WidgetHint,
 };
 use synth_core::{MidiNote, PortName, SampleRate, Velocity};
 
@@ -42,6 +42,9 @@ pub struct TuringMachine {
     // Edge detection
     prev_clock: f32,
 
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
+
     // Buffers
     pitch_buffer: AudioBuffer,
     gate_buffer: AudioBuffer,
@@ -66,6 +69,8 @@ impl TuringMachine {
 
             prev_clock: 0.0,
 
+            mod_offsets: ParamModOffsets::new(),
+
             pitch_buffer: AudioBuffer::new(1024),
             gate_buffer: AudioBuffer::new(1024),
         }
@@ -77,9 +82,9 @@ impl TuringMachine {
         crate::math::xorshift32(&mut self.rng_state)
     }
 
-    /// Advance the shift register by one step.
-    fn step(&mut self) {
-        let mutation = self.mutation_rate.as_f32();
+    /// Advance the shift register by one step. `mutation` and `range` are the
+    /// effective (mod-offset-applied) values, resolved once per block.
+    fn step(&mut self, mutation: f32, range: f32) {
         let length = self.length.as_u8();
         let mask = if length >= 16 {
             0xFFFF
@@ -111,13 +116,13 @@ impl TuringMachine {
 
         // Convert register to CV
         let raw_value = (self.shift_register as f32) / (mask as f32);
-        self.current_cv = NormalizedValue::new(self.quantize_to_scale(raw_value));
+        self.current_cv = NormalizedValue::new(self.quantize_to_scale(raw_value, range));
         self.gate_active = true;
     }
 
-    /// Quantize a 0.0-1.0 value to a scale.
-    fn quantize_to_scale(&self, value: f32) -> f32 {
-        let range_semitones = self.range.as_f32() * 24.0; // Up to 2 octaves
+    /// Quantize a 0.0-1.0 value to a scale. `range` is the effective output range.
+    fn quantize_to_scale(&self, value: f32, range: f32) -> f32 {
+        let range_semitones = range * 24.0; // Up to 2 octaves
         let semitone = value * range_semitones;
 
         let intervals: &[u8] = match self.scale {
@@ -212,6 +217,12 @@ impl PolyModule for TuringMachine {
 
         let clock = inputs.get(PortName::CLOCK);
 
+        // Generic mod offsets — per-block constants, resolved once here.
+        let eff_mutation = self
+            .mod_offsets
+            .effective("mutation", self.mutation_rate.as_f32());
+        let eff_range = self.mod_offsets.effective("range", self.range.as_f32());
+
         // Calculate step timing from BPM
         let bpm = context.tempo.as_f32().max(20.0);
         self.samples_per_step = crate::math::samples_per_16th(self.sample_rate.as_f32(), bpm);
@@ -238,7 +249,7 @@ impl PolyModule for TuringMachine {
             };
 
             if advance {
-                self.step();
+                self.step(eff_mutation, eff_range);
             }
 
             // Gate: short pulse on step
@@ -304,6 +315,10 @@ impl PolyModule for TuringMachine {
         ModuleType::TuringMachine
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.step_counter = 0.0;
         self.gate_active = false;
@@ -334,18 +349,59 @@ mod tests {
     fn test_turing_machine_step() {
         let mut tm = TuringMachine::new();
         tm.mutation_rate = NormalizedValue::new(0.0); // Locked
+        let m = tm.mutation_rate.as_f32();
+        let r = tm.range.as_f32();
         let first_cv = {
-            tm.step();
+            tm.step(m, r);
             tm.current_cv
         };
         // Step 16 times to cycle through register
         for _ in 0..16 {
-            tm.step();
+            tm.step(m, r);
         }
         // Should repeat when locked
         assert!(
             (tm.current_cv.as_f32() - first_cv.as_f32()).abs() < 0.01,
             "Locked Turing Machine should repeat"
+        );
+    }
+
+    /// `range` is a working mod destination via the generic store: driving it to
+    /// 0 collapses every quantized pitch to 0, and clearing reverts.
+    #[test]
+    fn range_mod_offset_collapses_pitch() {
+        // Many samples so several free-running steps elapse within the block.
+        let n = 64000;
+        let render = |offset: f32| -> f32 {
+            let mut tm = TuringMachine::new();
+            let desc = tm.descriptor();
+            tm.mod_offsets_mut().unwrap().populate(&desc);
+            tm.mutation_rate = NormalizedValue::MAX; // keep the register churning
+            if offset != 0.0 {
+                tm.set_mod_offset("range", offset);
+            }
+            let ctx = ProcessContext {
+                samples: synth_core::SampleCount::new(n),
+                ..ProcessContext::default()
+            };
+            let mut outs = HashMap::new();
+            outs.insert(PortName::PITCH, AudioBuffer::new(n));
+            outs.insert(PortName::GATE, AudioBuffer::new(n));
+            tm.process(InputPorts::empty(), &mut outs, &ctx);
+            let b = &outs[&PortName::PITCH];
+            (0..b.len()).map(|i| b[i].abs()).sum::<f32>()
+        };
+
+        let base = render(0.0);
+        assert!(
+            base > 0.0,
+            "default range should produce pitch CV, got {base}"
+        );
+
+        let collapsed = render(-1.0); // range → 0
+        assert_eq!(
+            collapsed, 0.0,
+            "range→0 should collapse pitch to 0: {collapsed}"
         );
     }
 }
