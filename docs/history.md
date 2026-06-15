@@ -1,5 +1,82 @@
 # Version History
 
+## [0.313.0] - 2026-06-15
+
+### Dynamic Mod Matrix — address-based routing (Step 1)
+
+- **Any source to any destination.** The Mod Matrix is now address-based: any
+  module output (`lfo-3.out`, `env-2.out`) or per-voice macro (velocity, mod
+  wheel, aftertouch, pitch bend, note) can route to *any* modulatable parameter on
+  *any* module — no more fixed 19-destination / 16-source / 3-LFO ceilings.
+- **Addresses persist as free-form strings** (dual-format parse: new
+  `flt-1.cutoff`, legacy enum id, macro id), with both destinations and sources
+  settable by address over MCP.
+- **Legacy projects auto-upgrade** at load — positional ids (`env2`) resolve
+  against the instrument's real module instances, so old routings keep working.
+- **GUI** gained per-slot address pickers, per-knob destination and source
+  markers, and a macro-source rail showing which macros are wired.
+
+### YAMS — control-script language on the amount cell (Step 2)
+
+- **New `synth_script` crate.** A small expression language ("YAMS"): lexer →
+  recursive-descent parser/AST → bytecode VM → compiler → the `yamsfmt` canonical
+  formatter. A routing's amount cell is now scalar **or** a script whose `out`
+  value becomes the modulation offset, replacing `source × amount`.
+- **Per-voice, real-time evaluation.** Scripts read module outputs and macros plus
+  context (note `age`, `gate`), stateful operators (`lag`, `slew`, `sah`,
+  `phasor`, …), math, and ternaries; compiled off-thread and evaluated per voice
+  per control block, RT-safe.
+- **Persistence + MCP.** Scripts round-trip through save/load (compile-on-load),
+  with `set_mod_matrix_script` to author and `get_mod_matrix_routings` to report.
+- **GUI expression editor.** Each routing row has an *ƒx* button opening a
+  resizable popup with a code editor, live compile status, and Format / Apply /
+  Clear / Close; a scripted slot disables its Amount knob and lights the marker.
+- **`yamsfmt` formatting** — one blank line after a leading comment block and one
+  before the final `out` (when code precedes it) so program structure reads
+  clearly; comments are preserved and formatting is idempotent.
+- **Pitch destinations** — the oscillator's `detune` (±1 semitone) and `frequency`
+  (±1 octave) are now working pitch-modulation destinations.
+
+### Modulation — every modulatable parameter is a real destination
+
+- **Generic `set_mod_offset` (`ParamModOffsets`).** An audit found that 36 of 40
+  voice modules silently dropped Mod Matrix offsets — "any modulatable param is a
+  destination" was not actually true. A descriptor-driven offset store now
+  realizes the normalized-through-range scaling contract once, and **all 40 voice
+  modules** were opted in or triaged one per commit: every modulatable parameter
+  is now a working destination, while genuinely non-musical params (structural
+  counts, seeds, IO/display, mod-matrix self-routing) are marked non-modulatable
+  so the picker stops offering dead targets.
+
+### Tracker — pattern editor T2 + T3
+
+- **T2 — editing.** Step-entry note input + delete, numeric automation entry,
+  voice and automation column add/remove, and auto-follow scroll-away — all with
+  undo; notes display by their stored lane.
+- **T3 — expression & note-processor columns.** Read-only and editable per-note
+  expression sub-columns (with undo), a read-only note-processor output column
+  (one per processor stage), Expr columns on by default, and header tooltips on
+  every column.
+
+### Fixes
+
+- **Granular** — fixed 2-octave-low tuning (rate vs. source-buffer base), a
+  shared-playhead bug causing pitch-dependent grain dropouts, and now follows the
+  render sample rate from `ProcessContext`. Extracted shared `voice_common`
+  (choir/unison decorrelation).
+- **Patch editor** — corrected the port-compatibility highlight, added a
+  connection cycle guard, reset instrument IDs on New Project, and removed the
+  vestigial `next_instrument_id` GUI mirror.
+
+### Examples & docs
+
+- **New example projects** — `YAMS Script Demo` (eight commented scripted Mod
+  Matrix routings plus an automated vibrato lane) and `Expression &
+  Note-Processor Demo`.
+- **README + screenshots** updated for the dynamic Mod Matrix, YAMS scripts, note
+  processors, tracker view, voice/formant synthesis, and mixing — with new
+  `yams-1.png` and `pattern-1.png` shots.
+
 ## [0.312.0] - 2026-06-12
 
 ### FOF — CHANT-style granular formant voice (third voice engine)
