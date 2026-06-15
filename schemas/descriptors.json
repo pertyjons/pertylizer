@@ -1462,7 +1462,7 @@
           "description": "Choir size: 1 (solo) to 16 decorrelated voices",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Unison Voices",
           "response_curve": "linear",
           "unit": "none"

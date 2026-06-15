@@ -30,8 +30,8 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{Cents, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 use synth_core::{FofParam, ModuleType, Param};
@@ -292,6 +292,8 @@ pub struct Fof {
     // Cached
     sample_rate: SampleRate,
     inv_sample_rate: f32,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Pre-allocated output buffers
     out_buffer: AudioBuffer,
@@ -319,6 +321,7 @@ impl Fof {
             active_voices: 1,
             sample_rate: SampleRate::DVD_QUALITY,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
+            mod_offsets: ParamModOffsets::new(),
             out_buffer: AudioBuffer::new(1024),
             out_l_buffer: AudioBuffer::new(1024),
             out_r_buffer: AudioBuffer::new(1024),
@@ -327,10 +330,11 @@ impl Fof {
         f
     }
 
-    /// Excitation time `tex` in samples for the current Skirt setting (≥ 1).
+    /// Excitation time `tex` in samples for the given (mod-resolved) Skirt
+    /// setting (≥ 1).
     #[inline]
-    fn tex_samples(&self) -> u32 {
-        let secs = TEX_MIN_SECS + self.skirt.as_f32() * (TEX_MAX_SECS - TEX_MIN_SECS);
+    fn tex_samples(&self, skirt: f32) -> u32 {
+        let secs = TEX_MIN_SECS + skirt * (TEX_MAX_SECS - TEX_MIN_SECS);
         (secs * self.sample_rate.as_f32()).round().max(1.0) as u32
     }
 
@@ -341,12 +345,18 @@ impl Fof {
     }
 
     /// Compute the per-band grain targets for the given vowel position, applying
-    /// the formant shift, the bandwidth scale, and this voice's formant jitter.
-    fn band_targets(&self, vowel: f32, jitter: f32) -> [BandTarget; NUM_BANDS] {
+    /// the (mod-resolved) formant shift, the bandwidth scale, and this voice's
+    /// formant jitter.
+    fn band_targets(
+        &self,
+        vowel: f32,
+        jitter: f32,
+        formant_shift: f32,
+        bandwidth: f32,
+    ) -> [BandTarget; NUM_BANDS] {
         let (freqs, bws, gains) = crate::formant_tables::interpolate_vowel(vowel);
-        let scale =
-            crate::formant_tables::formant_shift_factor(self.formant_shift.as_f32()) * jitter;
-        let bw_scale = bandwidth_scale(self.bandwidth.as_f32());
+        let scale = crate::formant_tables::formant_shift_factor(formant_shift) * jitter;
+        let bw_scale = bandwidth_scale(bandwidth);
         let sr = self.sample_rate.as_f32();
         let inv_sr = self.inv_sample_rate;
 
@@ -368,8 +378,12 @@ impl Fof {
     /// it is idempotent and cheap to call every block.
     fn derive_decorrelation(&mut self) {
         let active = self.active_voices;
-        let detune = self.unison_detune.as_f32();
-        let spread = self.unison_spread.as_f32();
+        let detune = self
+            .mod_offsets
+            .effective("unison_detune", self.unison_detune.as_f32());
+        let spread = self
+            .mod_offsets
+            .effective("unison_spread", self.unison_spread.as_f32());
         let note = self.note_freq.as_f32();
 
         for (v, voice) in self.voices[..active].iter_mut().enumerate() {
@@ -495,6 +509,9 @@ impl Describable for Fof {
                 .description("Choir size: 1 (solo) to 16 decorrelated voices")
                 .range(0.0, 1.0)
                 .default(0.0)
+                // Structural/sizing param: sub-voices appear/disappear, so it is
+                // not a continuous modulation target.
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -585,17 +602,33 @@ impl PolyModule for Fof {
         self.derive_decorrelation();
         let active = self.active_voices;
 
+        // Generic mod-matrix offsets — all per-block constants, resolved once.
+        let vowel_base = self.mod_offsets.effective("vowel", self.vowel.as_f32());
+        let formant_shift = self
+            .mod_offsets
+            .effective("formant_shift", self.formant_shift.as_f32());
+        let bandwidth = self
+            .mod_offsets
+            .effective("bandwidth", self.bandwidth.as_f32());
+
         if !vowel_cv_connected {
-            self.current_vowel = self.vowel.as_f32();
+            self.current_vowel = vowel_base;
         }
 
         let inv_sr = self.inv_sample_rate;
-        let level = self.level.as_f32();
+        let level = self.mod_offsets.effective("level", self.level.as_f32());
         let base_freq = self.note_freq.as_f32();
-        let tex = self.tex_samples();
-        let breath_base = self.breathiness.as_f32();
-        let vib_depth_cents = self.vibrato_depth.as_f32();
-        let vib_inc = self.vibrato_rate.as_f32() * inv_sr;
+        let tex = self.tex_samples(self.mod_offsets.effective("skirt", self.skirt.as_f32()));
+        let breath_base = self
+            .mod_offsets
+            .effective("breathiness", self.breathiness.as_f32());
+        let vib_depth_cents = self
+            .mod_offsets
+            .effective("vibrato_depth", self.vibrato_depth.as_f32());
+        let vib_inc = self
+            .mod_offsets
+            .effective("vibrato_rate", self.vibrato_rate.as_f32())
+            * inv_sr;
         let unison_norm = 1.0 / (active as f32).sqrt();
         let out_gain = FOF_GAIN * level;
         let breath_lp_coef = crate::math::one_pole_lp_coef(BREATH_LP_FC, inv_sr);
@@ -606,7 +639,12 @@ impl PolyModule for Fof {
         let mut targets = [[BandTarget::default(); NUM_BANDS]; MAX_UNISON];
         let mut norms = [1.0_f32; MAX_UNISON];
         for v in 0..active {
-            targets[v] = self.band_targets(self.current_vowel, self.voices[v].formant_jitter);
+            targets[v] = self.band_targets(
+                self.current_vowel,
+                self.voices[v].formant_jitter,
+                formant_shift,
+                bandwidth,
+            );
             norms[v] = grain_norm(&targets[v]);
         }
 
@@ -629,12 +667,16 @@ impl PolyModule for Fof {
         for i in 0..num_samples {
             // Vowel CV: recompute per-voice targets/norms on a position shift.
             if vowel_cv_connected {
-                let target_vowel =
-                    (self.vowel.as_f32() + vowel_cv[i] * VOWEL_CV_DEPTH).clamp(0.0, 1.0);
+                let target_vowel = (vowel_base + vowel_cv[i] * VOWEL_CV_DEPTH).clamp(0.0, 1.0);
                 if (target_vowel - self.current_vowel).abs() > 0.001 {
                     self.current_vowel = target_vowel;
                     for v in 0..active {
-                        targets[v] = self.band_targets(target_vowel, self.voices[v].formant_jitter);
+                        targets[v] = self.band_targets(
+                            target_vowel,
+                            self.voices[v].formant_jitter,
+                            formant_shift,
+                            bandwidth,
+                        );
                         norms[v] = grain_norm(&targets[v]);
                     }
                 }
@@ -772,6 +814,10 @@ impl PolyModule for Fof {
 
     fn module_type(&self) -> ModuleType {
         ModuleType::Fof
+    }
+
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
     }
 
     fn reset(&mut self) {
@@ -1108,6 +1154,36 @@ mod tests {
             "Mid-note unison increase should decorrelate channels, diff={diff}"
         );
         assert!(max.is_finite() && max <= 1.5, "Output bounded, max={max}");
+    }
+
+    /// `level` used to be dropped (FOF never overrode set_mod_offset); it now
+    /// scales the output through the generic store. Driving it to 0 silences the
+    /// voice; clearing reverts.
+    #[test]
+    fn test_fof_level_mod_offset_scales_output() {
+        let mut f = Fof::new();
+        let desc = f.descriptor();
+        f.mod_offsets_mut().unwrap().populate(&desc);
+
+        f.note_on(MidiNote::new(57), Velocity::new(0.8));
+        let base = total_energy(&mut f, 1024);
+        assert!(base > 0.01, "baseline should produce sound, base={base}");
+
+        f.set_mod_offset("level", -1.0); // level → 0 = silence
+        f.note_on(MidiNote::new(57), Velocity::new(0.8));
+        let quiet = total_energy(&mut f, 1024);
+        assert!(
+            quiet < base * 0.01,
+            "level offset should silence output: base={base}, quiet={quiet}"
+        );
+
+        f.clear_mod_offsets();
+        f.note_on(MidiNote::new(57), Velocity::new(0.8));
+        let restored = total_energy(&mut f, 1024);
+        assert!(
+            (restored - base).abs() < base * 0.1,
+            "clearing reverts level: base={base}, restored={restored}"
+        );
     }
 
     #[test]
