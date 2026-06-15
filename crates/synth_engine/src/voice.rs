@@ -17,13 +17,20 @@
 use crate::ModuleId;
 use crate::graph::ModuleGraph;
 use synth_core::params::LfoWaveform;
+use synth_core::script::{EvalContext, MAX_SOURCES, RegisterFile, ScriptContext, ScriptInput};
 use synth_core::tuning::TuningTable;
 use synth_core::{AudioBuffer, Phase, PortName, ProcessContext};
 use synth_core::{
-    BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds,
-    Semitones, Velocity,
+    BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, SampleRate,
+    Seconds, Semitones, Velocity,
 };
-use synth_core::{ModuleType, OscillatorParam, Param};
+use synth_core::{MAX_MOD_MATRIX_SLOTS, ModuleType, OscillatorParam, Param};
+
+/// Global seed for per-voice control-script PRNG state. Combined with a
+/// per-(voice, slot) index so simultaneous voices — and different slots within a
+/// voice — produce decorrelated `rand`/`white` streams, while a retrigger
+/// re-seeds identically (deterministic). See [`Voice::reset_script_state`].
+const SCRIPT_PRNG_SEED: u64 = 0x59A5_5EED_2C0D_E001;
 
 /// Unique identifier for a voice within an instrument's voice pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,6 +63,19 @@ struct MacroValues {
     mod_wheel: f32,
     pitch_bend: f32,
     poly_aftertouch: f32,
+}
+
+/// Per-voice control-script context values (Step 2) — the predefined `gate`,
+/// `gate_on`, `age`, `sr` identifiers, filled once per block.
+struct ScriptCtx {
+    /// `1.0` while the note is held (Active), else `0.0`.
+    gate: f32,
+    /// `1.0` only on the first block after note-on, else `0.0`.
+    gate_on: f32,
+    /// Seconds since note-on (block start).
+    age: f32,
+    /// Control rate in Hz.
+    sr: f32,
 }
 
 /// Voice state with embedded data - "Make Invalid States Unrepresentable".
@@ -442,6 +462,15 @@ pub struct Voice {
     /// Pre-allocated buffer for mod matrix slot data (avoids per-frame Vec allocation).
     mod_slots_cache: Vec<(f32, synth_core::DestAddr, f32)>,
 
+    /// Per-slot per-voice control-script state (Step 2), one [`RegisterFile`] per
+    /// Mod Matrix slot. Pre-allocated (no audio-thread allocation); the immutable
+    /// `Arc<BoundScript>` lives on the module, this is the mutable half. Re-seeded
+    /// and zeroed on note-on by [`Self::reset_script_state`].
+    script_regs: [RegisterFile; MAX_MOD_MATRIX_SLOTS],
+    /// `true` only during the first process block after note-on — the `gate_on`
+    /// context value. Set in `note_on_expr`, cleared after the mod-matrix pass.
+    note_on_block: bool,
+
     /// Temporary mono buffer for graph processing.
     mono_buffer: AudioBuffer,
 
@@ -476,6 +505,8 @@ impl Voice {
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: TuningTable::default(),
+            script_regs: Self::new_script_regs(id),
+            note_on_block: false,
         }
     }
 
@@ -511,6 +542,33 @@ impl Voice {
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: TuningTable::default(),
+            script_regs: Self::new_script_regs(id),
+            note_on_block: false,
+        }
+    }
+
+    /// A per-(voice, slot) index folding the voice id and slot so no two
+    /// (voice, slot) pairs share a control-script PRNG seed.
+    fn script_seed_index(id: VoiceId, slot: usize) -> u32 {
+        id.0.wrapping_mul(MAX_MOD_MATRIX_SLOTS as u32)
+            .wrapping_add(slot as u32)
+    }
+
+    /// Build a fresh per-slot register-file array for `id`.
+    fn new_script_regs(id: VoiceId) -> [RegisterFile; MAX_MOD_MATRIX_SLOTS] {
+        std::array::from_fn(|slot| {
+            RegisterFile::new(Self::script_seed_index(id, slot), SCRIPT_PRNG_SEED)
+        })
+    }
+
+    /// Zero each control-script's persistent state and re-seed its PRNG for the
+    /// current voice id (decision #4: state resets on note-on; the PRNG re-seeds
+    /// rather than zeroing, so a retrigger is deterministic yet simultaneous
+    /// voices stay decorrelated).
+    fn reset_script_state(&mut self) {
+        let id = self.id;
+        for (slot, regs) in self.script_regs.iter_mut().enumerate() {
+            regs.reset(Self::script_seed_index(id, slot), SCRIPT_PRNG_SEED);
         }
     }
 
@@ -618,6 +676,11 @@ impl Voice {
             start_time: time,
         };
         self.age = SampleCount::ZERO;
+
+        // Control scripts: zero per-slot state and re-seed the PRNG for this
+        // note; flag the first block so `gate_on` reads 1.0 (Step 2).
+        self.reset_script_state();
+        self.note_on_block = true;
 
         // Notify all modules in the graph
         self.graph.note_on(note, velocity);
@@ -803,6 +866,9 @@ impl Voice {
     pub fn reset(&mut self) {
         self.state = VoiceState::Idle;
         self.age = SampleCount::ZERO;
+        // Drop the `gate_on` pulse so a Mod Matrix attached to this voice later
+        // can't read a stale `gate_on = 1` for a note that already ended.
+        self.note_on_block = false;
         self.glide = GlideState::default();
         self.vibrato = None;
         self.vibrato_phase = Phase::ZERO;
@@ -846,17 +912,11 @@ impl Voice {
 
         // === Mod Matrix: update sources and apply modulations ===
         if let Some(mm_id) = self.mod_matrix_id {
-            // Update performance controller sources on the mod matrix module
-            if let Some(mm_module) = self.graph.get_module_mut(mm_id) {
-                // Downcast to ModMatrix to call update_source
-                // We use set_param indirectly — but update_source needs direct access.
-                // Since PolyModule doesn't expose update_source, we read LFO/Env outputs
-                // from graph and use a two-phase approach:
-                // Phase 1: Gather source values
-                // Phase 2: Apply modulations to graph
-                let _ = mm_module; // drop borrow
-            }
-            self.apply_mod_matrix(mm_id);
+            // Control rate = evaluations per second = sample_rate / block_size;
+            // drives time-based script ops (`lag`, `phasor`) and the `sr` var.
+            let block = samples.as_usize().max(1) as f32;
+            let control_rate = context.sample_rate.as_f32() / block;
+            self.apply_mod_matrix(mm_id, control_rate, context.sample_rate);
         }
 
         // Ensure buffers are sized correctly
@@ -918,7 +978,12 @@ impl Voice {
 
     /// Apply modulation matrix: resolve each routing's source (macro / module
     /// output / param) and add the scaled offset to its destination.
-    fn apply_mod_matrix(&mut self, mm_id: crate::ModuleId) {
+    fn apply_mod_matrix(
+        &mut self,
+        mm_id: crate::ModuleId,
+        control_rate: f32,
+        sample_rate: SampleRate,
+    ) {
         // Per-voice macro source values.
         let macros = MacroValues {
             velocity: self.state.velocity().map(|v| v.as_f32()).unwrap_or(0.0),
@@ -933,9 +998,24 @@ impl Voice {
             poly_aftertouch: self.poly_aftertouch.as_f32(),
         };
 
-        // Resolve each routing's source value into the pre-allocated cache while
-        // the graph is borrowed immutably; then apply (mutable) from the cache.
-        self.resolve_routings_into_cache(mm_id, &macros);
+        // Per-voice control-script context (Step 2).
+        let sctx = ScriptCtx {
+            gate: f32::from(matches!(self.state, VoiceState::Active { .. })),
+            gate_on: f32::from(self.note_on_block),
+            // `age` is the block-start elapsed time. The instrument bumps `age`
+            // just *before* `process_audio`, so block 0 already reads ~one block
+            // (sub-5 ms), not exactly 0 — accepted: moving the increment would
+            // perturb the voice-stealing priority that also reads `age`.
+            age: self.age.to_seconds(sample_rate).as_f32(),
+            sr: control_rate,
+        };
+
+        // Resolve each routing's source value (scalar) or script output into the
+        // pre-allocated cache while the graph is borrowed immutably; then apply
+        // (mutable) from the cache.
+        self.resolve_routings_into_cache(mm_id, &macros, &sctx);
+        // `gate_on` is a one-block pulse — consume it after this block's scripts.
+        self.note_on_block = false;
         for i in 0..self.mod_slots_cache.len() {
             let (src_value, dst, amount) = self.mod_slots_cache[i];
             self.graph.apply_mod_offset_addr(dst, src_value * amount);
@@ -992,23 +1072,75 @@ impl Voice {
     /// borrow of the graph (reading source ports/params) is released before the
     /// apply loop takes a mutable borrow. Reuses `mod_slots_cache` to stay
     /// allocation-free on the audio thread.
-    fn resolve_routings_into_cache(&mut self, mm_id: crate::ModuleId, macros: &MacroValues) {
+    fn resolve_routings_into_cache(
+        &mut self,
+        mm_id: crate::ModuleId,
+        macros: &MacroValues,
+        sctx: &ScriptCtx,
+    ) {
         self.mod_slots_cache.clear();
 
-        let Some(routings) = self.graph.get_module(mm_id).and_then(|m| m.mod_routings()) else {
+        let Some(module) = self.graph.get_module(mm_id) else {
             return;
         };
-        for routing in routings {
-            // Only enabled routings with both a source and a destination.
+        let Some(routings) = module.mod_routings() else {
+            return;
+        };
+        // Parallel per-slot scripts (Step 2). `None` for every slot on a Mod
+        // Matrix with no scripts — then this is exactly the old scalar path.
+        let scripts = module.mod_scripts();
+        let eval_ctx = EvalContext::new(sctx.sr);
+
+        for (slot, routing) in routings.iter().enumerate() {
+            // Both paths need an enabled routing with a destination (the routing
+            // owns the address; a script only owns the value — decision #1).
             if !routing.enabled {
                 continue;
             }
-            let (Some(source), Some(dest)) = (routing.source, routing.destination) else {
+            let Some(dest) = routing.destination else {
                 continue;
             };
-            let value = Self::resolve_source(&self.graph, source, macros);
-            self.mod_slots_cache
-                .push((value, dest, routing.amount.as_f32()));
+
+            // A slot with a script: its `out` IS the normalized offset, replacing
+            // the scalar `source × amount`. Sources read disjoint `self` fields
+            // (graph shared, `script_regs[slot]` mutable) so no borrow conflict.
+            if let Some(script) = scripts.and_then(|s| s.get(slot)).and_then(Option::as_ref) {
+                let mut sources = [0.0f32; MAX_SOURCES];
+                let n = script.inputs.len().min(MAX_SOURCES);
+                for (j, input) in script.inputs.iter().take(MAX_SOURCES).enumerate() {
+                    sources[j] = Self::resolve_script_input(&self.graph, input, macros, sctx);
+                }
+                let offset =
+                    script
+                        .script
+                        .eval(&sources[..n], &mut self.script_regs[slot], &eval_ctx);
+                self.mod_slots_cache.push((offset, dest, 1.0));
+            } else if let Some(source) = routing.source {
+                let value = Self::resolve_source(&self.graph, source, macros);
+                self.mod_slots_cache
+                    .push((value, dest, routing.amount.as_f32()));
+            }
+        }
+    }
+
+    /// Resolve a single control-script source register (Step 2): a module/macro
+    /// address (reused from the scalar path so values never diverge), a per-voice
+    /// context var, or an unresolvable binding (reads `0.0`).
+    fn resolve_script_input(
+        graph: &ModuleGraph,
+        input: &ScriptInput,
+        macros: &MacroValues,
+        sctx: &ScriptCtx,
+    ) -> f32 {
+        match input {
+            ScriptInput::Source(src) => Self::resolve_source(graph, *src, macros),
+            ScriptInput::Context(c) => match c {
+                ScriptContext::Gate => sctx.gate,
+                ScriptContext::GateOn => sctx.gate_on,
+                ScriptContext::Age => sctx.age,
+                ScriptContext::Sr => sctx.sr,
+            },
+            ScriptInput::Zero => 0.0,
         }
     }
 
@@ -1046,6 +1178,8 @@ impl Voice {
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: self.tuning_table.clone(),
+            script_regs: Self::new_script_regs(self.id),
+            note_on_block: false,
         }
     }
 
@@ -1295,6 +1429,78 @@ mod tests {
         assert!(
             peak(&mut voice, &ctx) > 0.01,
             "clearing must restore audible output"
+        );
+    }
+
+    /// A control script's output actually drives the Mod Matrix offset (S2.2c):
+    /// a slot scripted `out = -1` targeting the amp's `level` pushes the param to
+    /// its floor and silences the voice; clearing the script restores audio.
+    #[test]
+    fn control_script_drives_mod_matrix_offset() {
+        use synth_core::script::{BoundScript, CompiledScript, Op};
+        use synth_core::{DestAddr, ModMatrixParam, SampleCount, SampleRate};
+        use synth_modules::{Amplifier, ModMatrix, Oscillator};
+
+        let mut voice = Voice::new(VoiceId::new(0));
+        let osc = voice.graph.add_module(Box::new(Oscillator::new()));
+        let amp = voice.graph.add_module(Box::new(Amplifier::new()));
+        let mmx = voice.graph.add_module(Box::new(ModMatrix::new()));
+        voice
+            .graph
+            .connect(osc, "out", amp, "in")
+            .expect("osc -> amp");
+        // Cache mod_matrix_id + output_module_id so process_audio runs the matrix.
+        voice.update_output_cache();
+
+        // Slot 0 targets amp.level; the script supplies the value (decision #1).
+        voice.graph.set_param(
+            mmx,
+            Param::ModMatrix(ModMatrixParam::SlotDestination(
+                0,
+                Some(DestAddr::new(ModuleType::Amplifier, 1, "level")),
+            )),
+        );
+        voice
+            .graph
+            .set_param(mmx, Param::ModMatrix(ModMatrixParam::SlotEnabled(0, true)));
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        voice.note_on(MidiNote::A4, Velocity::MAX, SamplePosition::ZERO);
+
+        fn peak(v: &mut Voice, ctx: &ProcessContext<'_>) -> f32 {
+            let mut l = AudioBuffer::new(256);
+            let mut r = AudioBuffer::new(256);
+            v.process_audio(&mut l, &mut r, ctx);
+            (0..256).map(|i| l[i].abs()).fold(0.0_f32, f32::max)
+        }
+
+        // No script installed → amp at unity → audible (settle the level ramp).
+        let _ = peak(&mut voice, &ctx);
+        assert!(peak(&mut voice, &ctx) > 0.01, "baseline must be audible");
+
+        // `out = -1` pushes the normalized level offset to its floor → silence.
+        let silence = std::sync::Arc::new(BoundScript::new(
+            CompiledScript::new(vec![Op::PushConst(0)], vec![-1.0], 0, 0),
+            Vec::new(),
+            "out = -1".to_string(),
+        ));
+        voice.graph.set_mod_script(mmx, 0, Some(silence));
+        let _ = peak(&mut voice, &ctx); // settle the de-zipper ramp
+        assert!(
+            peak(&mut voice, &ctx) < 1e-3,
+            "the script offset must silence the amp"
+        );
+
+        // Clearing the script restores audio.
+        voice.graph.set_mod_script(mmx, 0, None);
+        let _ = peak(&mut voice, &ctx);
+        assert!(
+            peak(&mut voice, &ctx) > 0.01,
+            "clearing the script must restore audio"
         );
     }
 }
