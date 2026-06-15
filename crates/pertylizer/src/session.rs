@@ -38,6 +38,9 @@ pub enum SessionError {
 
     #[error("failed to send engine command")]
     SendFailed,
+
+    #[error("control-script compile error: {0}")]
+    ScriptCompile(String),
 }
 
 /// Thread-safe session that owns the module lifecycle.
@@ -752,6 +755,48 @@ impl SynthSession {
         Ok(())
     }
 
+    /// Compile a YAMS control script and install it on a Mod Matrix `slot`
+    /// (0-based), replacing the slot's scalar `source × amount` with the script's
+    /// output (Step 2, decision #1). Compilation runs here — **off the audio
+    /// thread** — and only the shared `Arc<BoundScript>` crosses to the engine
+    /// via [`EngineCommand::SetModScript`]. A compile error returns
+    /// [`SessionError::ScriptCompile`] with all diagnostics so the caller can
+    /// disable-and-keep (skip this slot, keep the rest of the project).
+    pub fn set_mod_script(
+        &self,
+        instrument_id: InstrumentId,
+        module_id: ModuleId,
+        slot: u8,
+        source: &str,
+    ) -> Result<(), SessionError> {
+        // The control rate the engine actually runs at drives `lag` coefficient
+        // folding; the default (48 kHz / 64-sample blocks) is the common case and
+        // a mismatch only nudges constant-time smoothing — recompile on a real
+        // rate change is a later refinement.
+        let (program, diags) =
+            synth_script::compile(source, &synth_script::CompileOptions::default());
+        let Some(program) = program else {
+            let msg = diags
+                .iter()
+                .filter(|d| d.is_error())
+                .map(|d| d.message.clone())
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(SessionError::ScriptCompile(msg));
+        };
+        let bound = Arc::new(program.into_bound(source.to_string()));
+        let cmd = EngineCommand::SetModScript {
+            instrument_id: Some(instrument_id),
+            module_id,
+            slot,
+            script: Some(bound),
+        };
+        if !self.command_sender.send(cmd) {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
     // ------------------------------------------------------------------
     // Patch loading (GUI-independent)
     // ------------------------------------------------------------------
@@ -818,6 +863,33 @@ impl SynthSession {
                             result
                                 .errors
                                 .push(format!("{} param '{}': {e}", module_id, param_name));
+                        }
+                    }
+
+                    // Install Step-2 control scripts (compiled here, off the
+                    // audio thread). Keys are 1-based slot numbers (matching the
+                    // `slot_N_*` params); a bad key or a compile error is recorded
+                    // and skipped (disable-and-keep — the rest of the project still
+                    // loads). Applied after params so the routing already exists.
+                    for (slot_key, source) in &module_state.scripts {
+                        // Range-check against the real slot count so a numeric but
+                        // out-of-[1,16] key is reported, not silently dropped by the
+                        // engine's bounds guard.
+                        let max_slot = synth_core::MAX_MOD_MATRIX_SLOTS as u8;
+                        let slot = match slot_key.parse::<u8>() {
+                            Ok(n) if (1..=max_slot).contains(&n) => n - 1,
+                            _ => {
+                                result.errors.push(format!(
+                                    "{module_id} script: invalid slot key '{slot_key}' (expected 1..={max_slot})"
+                                ));
+                                continue;
+                            }
+                        };
+                        if let Err(e) = self.set_mod_script(instrument_id, module_id, slot, source)
+                        {
+                            result
+                                .errors
+                                .push(format!("{module_id} slot {slot_key} script: {e}"));
                         }
                     }
                 }
@@ -962,4 +1034,43 @@ pub struct ApplyPatchResult {
     pub module_ids: Vec<Option<String>>,
     /// Non-fatal errors encountered during loading.
     pub errors: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use synth_engine::SynthEngine;
+
+    /// A session wired to a live (but undriven) engine — enough to exercise the
+    /// command-sending API. The engine is kept alive so the command ring buffer
+    /// has a consumer.
+    fn test_session() -> (SynthEngine, SynthSession) {
+        let (engine, handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        (engine, session)
+    }
+
+    /// A valid YAMS script compiles off-thread and the install command is sent;
+    /// an invalid one fails with `ScriptCompile` (carrying diagnostics) *before*
+    /// anything is sent, so the caller can disable-and-keep.
+    #[test]
+    fn set_mod_script_compiles_then_sends_or_reports() {
+        let (_engine, session) = test_session();
+        let mmx = ModuleId::new(ModuleType::ModMatrix, 1);
+
+        // Valid: queued (the engine no-ops if the module is absent — the write
+        // channel was tested separately).
+        assert!(
+            session
+                .set_mod_script(InstrumentId::FIRST, mmx, 0, "out = velocity * 0.5")
+                .is_ok()
+        );
+
+        // Invalid: surfaced as a compile error, not a silent drop.
+        let err = session.set_mod_script(InstrumentId::FIRST, mmx, 0, "out = velocity *");
+        assert!(
+            matches!(err, Err(SessionError::ScriptCompile(_))),
+            "expected ScriptCompile, got {err:?}"
+        );
+    }
 }

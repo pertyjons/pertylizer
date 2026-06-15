@@ -31,6 +31,7 @@ synth_modules = { path = "../synth_modules" }
 synth_awe = { path = "../synth_awe" }
 synth_engine = { path = "../synth_engine" }
 synth_sampler = { path = "../synth_sampler" }
+synth_script = { path = "../synth_script" } # YAMS control-script compiler (non-RT, load/authoring)
 
 # Audio I/O
 cpal = { workspace = true }
