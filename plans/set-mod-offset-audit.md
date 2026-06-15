@@ -92,3 +92,124 @@ This is **not** a mechanical per-module loop — it's an architecture choice:
 **Recommendation: A** (it's the scaling contract finally realized, and the only
 option that scales to 40 modules without 40 inconsistent hand-rolled scales). If A
 is too big a refactor to take on now, **C** is the pragmatic interim.
+
+---
+
+# Concrete design for Option A — generic `set_mod_offset`
+
+**Goal:** one mechanism so *any* `modulatable` param gets a normalized-through-curve
+offset (the locked scaling contract #2 option A), instead of 40 hand-rolled
+`set_mod_offset` impls. Musical exceptions (osc pitch = semitones, filter cutoff =
+±48) stay as per-module overrides.
+
+## 1. A small RT-safe offset store (`synth_core`)
+
+```rust
+/// Per-module accumulator of normalized mod-matrix offsets, one entry per
+/// modulatable param. Populated once (off the audio thread) from the module's
+/// descriptor — caches each param's range+curve so the apply path never rebuilds
+/// the descriptor. All hot-path ops are alloc-free and lock-free (linear scan of
+/// a tiny fixed list + f32 math) — RT-safe.
+pub struct ParamModOffsets {
+    entries: Vec<ParamOffset>, // sized once at populate(); ≤ ~12 per module
+}
+struct ParamOffset { type_id: String, range: ValueRange, curve: ResponseCurve, offset: f32 }
+
+impl ParamModOffsets {
+    /// Off-thread, called by the graph when the module is added (it has the
+    /// cached descriptor). Registers every `modulatable` param.
+    pub fn populate(&mut self, desc: &ModuleDescriptor) { /* push modulatable params */ }
+
+    pub fn add(&mut self, type_id: &str, value: f32) {        // audio thread, RT-safe
+        if let Some(e) = self.entries.iter_mut().find(|e| e.type_id == type_id) { e.offset += value; }
+    }
+    pub fn clear(&mut self) { for e in &mut self.entries { e.offset = 0.0; } } // each block
+
+    /// Effective native value = denormalize(clamp(normalize(base) + offset)).
+    pub fn effective(&self, type_id: &str, base: f32) -> f32 {     // at read sites, RT-safe
+        match self.entries.iter().find(|e| e.type_id == type_id) {
+            Some(e) if e.offset != 0.0 =>
+                e.curve.denormalize((e.curve.normalize(base, e.range) + e.offset).clamp(0.0, 1.0), e.range),
+            _ => base,
+        }
+    }
+}
+```
+
+## 2. `PolyModule` default impls delegate to the store
+
+```rust
+trait PolyModule {
+    /// Modules with mod-destinations expose their store (one line). Default None.
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> { None }
+
+    fn set_mod_offset(&mut self, target: &str, value: f32) {            // default
+        if let Some(o) = self.mod_offsets_mut() { o.add(target, value); }
+    }
+    fn clear_mod_offsets(&mut self) {                                   // default
+        if let Some(o) = self.mod_offsets_mut() { o.clear(); }
+    }
+}
+```
+
+## 3. The graph populates the store (off audio thread, descriptor already cached)
+
+```rust
+// graph.rs add_module / add_module_with_id, after building `descriptor`:
+if let Some(o) = module.mod_offsets_mut() { o.populate(&descriptor); }
+```
+
+## 4. Per-module change (the only real per-module work)
+
+Each module:
+1. add field `mod_offsets: ParamModOffsets` (+ `Default` in `new()`),
+2. `fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> { Some(&mut self.mod_offsets) }`,
+3. **wrap each modulatable param read** in `process()`:
+   `let cutoff = self.mod_offsets.effective("cutoff", base_cutoff);`
+
+Steps 1–2 are mechanical (2 lines). Step 3 is the genuine cost — it touches each
+read site, so it requires reading each module's `process()`. But the pattern is
+uniform (no per-param scale to invent).
+
+## 5. Musical exceptions coexist
+
+A module that wants exact semitones overrides `set_mod_offset` for *those* targets
+and delegates the rest:
+
+```rust
+fn set_mod_offset(&mut self, target: &str, value: f32) {
+    match target {
+        "pitch" | "detune" | "frequency" => { /* semitone math → mod_offset_pitch */ }
+        "level" => { /* existing */ }
+        other => self.mod_offsets.add(other, value), // generic for pwm, fm_amt, x_mod, …
+    }
+}
+```
+So the osc keeps its B1/B2 semitone pitch handling and gains PWM/FM/cross-mod for free.
+
+## 6. RT-safety
+
+- `populate()` (alloc) runs in `add_module` — **off** the audio thread.
+- `add` / `clear` / `effective` are linear scans of a ≤12-entry `Vec` + f32 math —
+  no alloc, no lock, no panic. Same RT cost class as today's `match target {}`.
+- `clamp` keeps it in range (the contract's clamp); the curve handles musicality.
+
+## 7. Migration (incremental, low-risk)
+
+1. Land `ParamModOffsets` + the `PolyModule` defaults + the graph populate hook
+   (no behaviour change — no module exposes a store yet). One commit, reviewable.
+2. Convert modules **one per commit** (or small groups), each: add the field +
+   accessor, wrap reads, drop now-redundant hand-rolled offset fields. The 4
+   existing overriders keep their musical arms and delegate the rest.
+3. Separately, mark genuinely non-musical floats `.modulatable(false)` (structural:
+   `unison`, `octave` step, `randomize` seed, IO modules) so the picker stops
+   offering dead targets.
+
+## 8. Honest cost & what it does NOT solve
+
+- ~40 modules still need step-3 read-site wrapping — mechanical but real, several
+  commits. (A is *less* code and *consistent* vs B's per-param arms, not zero.)
+- It does not auto-decide which params *should* be modulatable — the
+  `.modulatable(false)` triage (step 3 of migration) is still a judgment pass.
+- A few modules read params in tight inner loops; for those, call `effective()`
+  once per block (cache the value), not per sample.
