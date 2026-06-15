@@ -10,8 +10,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{EnvelopeFollowerParam, ModuleType, Param};
 use synth_core::{
@@ -29,6 +30,8 @@ pub struct EnvelopeFollower {
     // State
     envelope: FilterState,
     sample_rate: SampleRate,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Buffers
     output_buffer: AudioBuffer,
@@ -42,6 +45,7 @@ impl EnvelopeFollower {
             sensitivity: NormalizedValue::new(0.5),
             envelope: FilterState::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -124,9 +128,17 @@ impl PolyModule for EnvelopeFollower {
 
         let input = inputs.get(PortName::IN);
 
-        let attack_coeff = self.attack.to_exp_coeff(self.sample_rate);
-        let release_coeff = self.release.to_exp_coeff(self.sample_rate);
-        let sensitivity_scale = self.sensitivity.as_f32() * 4.0;
+        // Generic mod offsets — all per-block constants, resolved once here.
+        let attack_coeff =
+            Milliseconds::new(self.mod_offsets.effective("attack", self.attack.as_f32()))
+                .to_exp_coeff(self.sample_rate);
+        let release_coeff =
+            Milliseconds::new(self.mod_offsets.effective("release", self.release.as_f32()))
+                .to_exp_coeff(self.sample_rate);
+        let sensitivity_scale = self
+            .mod_offsets
+            .effective("sensitivity", self.sensitivity.as_f32())
+            * 4.0;
 
         for i in 0..num_samples {
             let in_sample = input.map_or(0.0, |buf| buf[i]);
@@ -189,6 +201,10 @@ impl PolyModule for EnvelopeFollower {
         ModuleType::EnvelopeFollower
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.envelope = FilterState::ZERO;
     }
@@ -210,6 +226,46 @@ impl PolyModule for EnvelopeFollower {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `sensitivity` is a working mod destination via the generic store: it
+    /// scales the tracked output level, and clearing reverts.
+    #[test]
+    fn sensitivity_mod_offset_scales_output() {
+        let mut ef = EnvelopeFollower::new();
+        let desc = ef.descriptor();
+        ef.mod_offsets_mut().unwrap().populate(&desc);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(512),
+            ..ProcessContext::default()
+        };
+        fn level(ef: &mut EnvelopeFollower, ctx: &ProcessContext) -> f32 {
+            ef.reset();
+            let mut buf = AudioBuffer::new(512);
+            for i in 0..512 {
+                buf[i] = 0.1; // small steady input, well below the sensitivity clamp
+            }
+            let in_ports = [(PortName::IN, &buf)];
+            let inputs = InputPorts::new(&in_ports);
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(512));
+            ef.process(inputs, &mut outs, ctx);
+            outs[&PortName::OUT][511]
+        }
+
+        let base = level(&mut ef, &ctx);
+        assert!(base > 1e-3, "base tracks input, got {base}");
+
+        ef.set_mod_offset("sensitivity", -0.4);
+        let lower = level(&mut ef, &ctx);
+        assert!(
+            lower < base * 0.9,
+            "sensitivity offset should lower output: {lower} vs {base}"
+        );
+
+        ef.clear_mod_offsets();
+        assert!((level(&mut ef, &ctx) - base).abs() < base * 0.05);
+    }
 
     #[test]
     fn test_envelope_follower_creation() {
