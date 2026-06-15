@@ -133,6 +133,14 @@ pub struct ModuleState {
     /// Parameter values.
     #[serde(default)]
     pub parameters: BTreeMap<String, ParamValue>,
+    /// Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number
+    /// (`"1"`..`"16"`, matching the `slot_N_*` parameter naming). Held **separate
+    /// from `parameters`** because a script is canonical source text compiled on
+    /// load — not a descriptor-driven `f32`/choice param — so it must dodge the
+    /// descriptor-keyed schema. Optional and skipped when empty, so scriptless
+    /// projects (every existing one) are byte-identical and still schema-valid.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub scripts: BTreeMap<String, String>,
 }
 
 /// Unique ID for a group within a patch.
@@ -914,6 +922,7 @@ impl ModuleBuilder {
                 module_type,
                 position: Position::default(),
                 parameters: BTreeMap::new(),
+                scripts: BTreeMap::new(),
             },
         }
     }
@@ -1013,7 +1022,38 @@ mod tests {
             module_type,
             position: Position::default(),
             parameters: BTreeMap::new(),
+            scripts: BTreeMap::new(),
         }
+    }
+
+    /// A per-slot YAMS script round-trips through JSON by its 1-based slot key,
+    /// an empty `scripts` map is omitted (scriptless projects stay byte-identical),
+    /// and an old project with no `scripts` field loads to an empty map.
+    #[test]
+    fn module_scripts_persist_round_trip() {
+        let mut ms = module_state("mmx-1", ModuleType::ModMatrix);
+        // Empty → skipped from the serialized form.
+        let json_empty = serde_json::to_string(&ms).expect("serialize");
+        assert!(
+            !json_empty.contains("scripts"),
+            "empty scripts must be skipped, got: {json_empty}"
+        );
+
+        // A script on slot 3 round-trips by its 1-based key.
+        ms.scripts
+            .insert("3".to_string(), "out = velocity * 0.5".to_string());
+        let json = serde_json::to_string(&ms).expect("serialize");
+        let back: ModuleState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            back.scripts.get("3").map(String::as_str),
+            Some("out = velocity * 0.5")
+        );
+
+        // An old project lacking the field deserializes to an empty map (default).
+        let legacy =
+            r#"{"id":"mmx-1","type":"mod_matrix","position":{"x":0.0,"y":0.0},"parameters":{}}"#;
+        let loaded: ModuleState = serde_json::from_str(legacy).expect("deserialize legacy");
+        assert!(loaded.scripts.is_empty());
     }
 
     /// Legacy positional mod-matrix ids upgrade to the *positionally correct*

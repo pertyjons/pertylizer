@@ -409,6 +409,7 @@ fn build_patch_from_engine(
             module_type: module.module_type,
             position: Position::default(),
             parameters: param_map,
+            scripts: std::collections::BTreeMap::new(),
         });
     }
 
@@ -481,6 +482,7 @@ fn build_effect_states(effects: &[synth_engine::ReturnEffectSnapshot]) -> Vec<Mo
                 module_type: fx.module_type,
                 position: Position::default(),
                 parameters: map_params_to_values(&descriptor.parameters, &fx.parameters),
+                scripts: std::collections::BTreeMap::new(),
             })
         })
         .collect()

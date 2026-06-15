@@ -681,6 +681,7 @@ pub fn create_patch_from_editor(
                 module_type: module_id.module_type,
                 position: Position::new(position.x, position.y),
                 parameters: param_map,
+                scripts: std::collections::BTreeMap::new(),
             });
         }
     }
