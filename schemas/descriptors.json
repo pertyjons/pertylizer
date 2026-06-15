@@ -2762,7 +2762,7 @@
           "description": "Modulation amount for slot 10",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 10 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -2876,7 +2876,7 @@
           "description": "Enable/disable slot 10",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 10 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -2975,7 +2975,7 @@
           "description": "Modulation amount for slot 11",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 11 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -3089,7 +3089,7 @@
           "description": "Enable/disable slot 11",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 11 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -3188,7 +3188,7 @@
           "description": "Modulation amount for slot 12",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 12 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -3302,7 +3302,7 @@
           "description": "Enable/disable slot 12",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 12 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -3401,7 +3401,7 @@
           "description": "Modulation amount for slot 13",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 13 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -3515,7 +3515,7 @@
           "description": "Enable/disable slot 13",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 13 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -3614,7 +3614,7 @@
           "description": "Modulation amount for slot 14",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 14 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -3728,7 +3728,7 @@
           "description": "Enable/disable slot 14",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 14 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -3827,7 +3827,7 @@
           "description": "Modulation amount for slot 15",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 15 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -3941,7 +3941,7 @@
           "description": "Enable/disable slot 15",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 15 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -4040,7 +4040,7 @@
           "description": "Modulation amount for slot 16",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 16 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -4154,7 +4154,7 @@
           "description": "Enable/disable slot 16",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 16 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -4253,7 +4253,7 @@
           "description": "Modulation amount for slot 1",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 1 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -4367,7 +4367,7 @@
           "description": "Enable/disable slot 1",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 1 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -4466,7 +4466,7 @@
           "description": "Modulation amount for slot 2",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 2 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -4580,7 +4580,7 @@
           "description": "Enable/disable slot 2",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 2 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -4679,7 +4679,7 @@
           "description": "Modulation amount for slot 3",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 3 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -4793,7 +4793,7 @@
           "description": "Enable/disable slot 3",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 3 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -4892,7 +4892,7 @@
           "description": "Modulation amount for slot 4",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 4 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -5006,7 +5006,7 @@
           "description": "Enable/disable slot 4",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 4 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -5105,7 +5105,7 @@
           "description": "Modulation amount for slot 5",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 5 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -5219,7 +5219,7 @@
           "description": "Enable/disable slot 5",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 5 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -5318,7 +5318,7 @@
           "description": "Modulation amount for slot 6",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 6 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -5432,7 +5432,7 @@
           "description": "Enable/disable slot 6",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 6 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -5531,7 +5531,7 @@
           "description": "Modulation amount for slot 7",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 7 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -5645,7 +5645,7 @@
           "description": "Enable/disable slot 7",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 7 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -5744,7 +5744,7 @@
           "description": "Modulation amount for slot 8",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 8 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -5858,7 +5858,7 @@
           "description": "Enable/disable slot 8",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 8 Enabled",
           "response_curve": "linear",
           "unit": "none"
@@ -5957,7 +5957,7 @@
           "description": "Modulation amount for slot 9",
           "max": 1.0,
           "min": -1.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 9 Amount",
           "response_curve": "linear",
           "unit": "none"
@@ -6071,7 +6071,7 @@
           "description": "Enable/disable slot 9",
           "max": 1.0,
           "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "Slot 9 Enabled",
           "response_curve": "linear",
           "unit": "none"

@@ -117,6 +117,8 @@ impl Describable for ModMatrix {
                 )
                 .range(-1.0, 1.0)
                 .default(0.0)
+                // The matrix's own routing config — not a self-referential mod target.
+                .modulatable(false)
                 .widget(WidgetHint::Knob)
                 .description(format!("Modulation amount for slot {slot_num}")),
             );
@@ -129,6 +131,8 @@ impl Describable for ModMatrix {
                 )
                 .range(0.0, 1.0)
                 .default(1.0)
+                // Boolean toggle (the matrix's own routing config): not modulatable.
+                .modulatable(false)
                 .description(format!("Enable/disable slot {slot_num}")),
             );
         }
