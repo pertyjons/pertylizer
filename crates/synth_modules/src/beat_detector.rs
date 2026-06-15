@@ -9,8 +9,9 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{BeatDetectorParam, ModuleType, Param};
 use synth_core::{Hertz, MidiNote, Milliseconds, NormalizedValue, PortName, SampleRate, Velocity};
@@ -30,6 +31,8 @@ pub struct BeatDetector {
     gate: f32,
     /// Hold counter in samples
     hold_counter: u32,
+    /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
     output_buffer: AudioBuffer,
     gate_buffer: AudioBuffer,
 }
@@ -45,6 +48,7 @@ impl BeatDetector {
             prev_envelope: 0.0,
             gate: 0.0,
             hold_counter: 0,
+            mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
             gate_buffer: AudioBuffer::new(1024),
         }
@@ -129,12 +133,24 @@ impl PolyModule for BeatDetector {
 
         let audio_in = inputs.reader(PortName::IN, 0.0);
 
+        // Generic mod offsets — all per-block constants, resolved once here.
         // Envelope follower coefficient from filter frequency
-        let coeff = self.filter_freq.to_exp_coeff(self.sample_rate);
+        let coeff = Hertz::new(
+            self.mod_offsets
+                .effective("filter_freq", self.filter_freq.as_f32()),
+        )
+        .to_exp_coeff(self.sample_rate);
         // Threshold from sensitivity (map 0..1 to usable range)
-        let threshold_high = 1.0 - self.sensitivity.as_f32() * 0.9;
+        let threshold_high = 1.0
+            - self
+                .mod_offsets
+                .effective("sensitivity", self.sensitivity.as_f32())
+                * 0.9;
         let threshold_low = threshold_high * 0.6; // Schmitt trigger hysteresis
-        let hold_samples = (self.hold_time.as_f32() * self.sample_rate.as_f32() / 1000.0) as u32;
+        let hold_ms = self
+            .mod_offsets
+            .effective("hold_time", self.hold_time.as_f32());
+        let hold_samples = (hold_ms * self.sample_rate.as_f32() / 1000.0) as u32;
 
         let gate_name = PortName::intern("gate");
 
@@ -209,6 +225,10 @@ impl PolyModule for BeatDetector {
         ModuleType::BeatDetector
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.envelope = 0.0;
         self.prev_envelope = 0.0;
@@ -221,5 +241,58 @@ impl PolyModule for BeatDetector {
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `sensitivity` is a working mod destination via the generic store: raising
+    /// it lowers the Schmitt-trigger threshold, so a steady input triggers the
+    /// gate where the base setting does not.
+    #[test]
+    fn sensitivity_mod_offset_changes_gating() {
+        let mut bd = BeatDetector::new();
+        let desc = bd.descriptor();
+        bd.mod_offsets_mut().unwrap().populate(&desc);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(2048),
+            ..ProcessContext::default()
+        };
+        // Moderate steady input; the envelope settles to ~0.3.
+        fn gate_high(bd: &mut BeatDetector, ctx: &ProcessContext) -> bool {
+            bd.reset();
+            let mut buf = AudioBuffer::new(2048);
+            for i in 0..2048 {
+                buf[i] = if i % 4 < 2 { 0.3 } else { -0.3 };
+            }
+            let in_ports = [(PortName::IN, &buf)];
+            let inputs = InputPorts::new(&in_ports);
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(2048));
+            outs.insert(PortName::intern("gate"), AudioBuffer::new(2048));
+            bd.process(inputs, &mut outs, ctx);
+            let g = &outs[&PortName::intern("gate")];
+            (0..g.len()).any(|i| g[i] > 0.5)
+        }
+
+        // Low base sensitivity → high threshold → the 0.3 envelope never triggers.
+        bd.sensitivity = NormalizedValue::new(0.1);
+        assert!(
+            !gate_high(&mut bd, &ctx),
+            "base sensitivity should not trigger"
+        );
+
+        // A large positive offset lowers the threshold enough to trigger.
+        bd.set_mod_offset("sensitivity", 1.0);
+        assert!(
+            gate_high(&mut bd, &ctx),
+            "sensitivity offset should enable the gate"
+        );
+
+        bd.clear_mod_offsets();
+        assert!(!gate_high(&mut bd, &ctx), "clearing reverts sensitivity");
     }
 }
