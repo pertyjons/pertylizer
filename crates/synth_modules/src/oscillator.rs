@@ -12,8 +12,9 @@ use std::collections::HashMap;
 
 use synth_core::{AntiAliasMode, FmMode, ModuleType, OscillatorParam, Param};
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
-    ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{
     BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName,
@@ -95,6 +96,9 @@ pub struct Oscillator {
     mod_offset_pitch: Semitones,
     /// Level offset (additive, from mod matrix).
     mod_offset_level: BipolarValue,
+    /// Generic mod-matrix offsets for the non-pitch/level params
+    /// (pulse_width, fm_amt, x_mod). See [`ParamModOffsets`].
+    mod_offsets: ParamModOffsets,
 
     // Transient automation overrides (replace the base value while active,
     // cleared on transport stop; the base param is never mutated).
@@ -138,6 +142,7 @@ impl Oscillator {
             prev_sync: NormalizedValue::MIN,
             mod_offset_pitch: Semitones::ZERO,
             mod_offset_level: BipolarValue::CENTER,
+            mod_offsets: ParamModOffsets::new(),
             override_detune: None,
             override_pulse_width: None,
             output_buffer: AudioBuffer::new(1024),
@@ -510,8 +515,20 @@ impl PolyModule for Oscillator {
         let base_freq = self.actual_frequency();
 
         // An automation override replaces the base pulse width while active;
-        // the base param is left untouched.
-        let pulse_width = self.override_pulse_width.unwrap_or(self.pulse_width);
+        // the base param is left untouched. The generic mod offset (if any)
+        // applies on top of whichever base is in effect. fm_amt and x_mod are
+        // likewise per-block constants resolved once here.
+        let pulse_width_base = self.override_pulse_width.unwrap_or(self.pulse_width);
+        let pulse_width = PulseWidthParam::new(
+            self.mod_offsets
+                .effective("pulse_width", pulse_width_base.as_f32()),
+        );
+        let fm_amount = self
+            .mod_offsets
+            .effective("fm_amt", self.fm_amount.as_f32());
+        let cross_mod_amount = self
+            .mod_offsets
+            .effective("x_mod", self.cross_mod_amount.as_f32());
 
         // Hoist the unmodulated form so the audio loop's else-branch is a
         // straight copy rather than re-clamping per sample. `PulseWidth`'s
@@ -520,10 +537,10 @@ impl PolyModule for Oscillator {
         let pulse_width_unmodulated = NormalizedValue::new_unchecked(pulse_width.as_f32());
 
         for i in 0..n_samples {
-            let fm = fm_reader[i] * self.fm_amount.as_f32();
+            let fm = fm_reader[i] * fm_amount;
 
             // Cross-modulation: adds to FM signal
-            let cross_mod = cross_mod_reader[i] * self.cross_mod_amount.as_f32();
+            let cross_mod = cross_mod_reader[i] * cross_mod_amount;
 
             let total_fm = fm + cross_mod;
 
@@ -687,6 +704,10 @@ impl PolyModule for Oscillator {
         ModuleType::Oscillator
     }
 
+    fn mod_offsets_mut(&mut self) -> Option<&mut ParamModOffsets> {
+        Some(&mut self.mod_offsets)
+    }
+
     fn reset(&mut self) {
         self.unison_phases = [Phase::ZERO; MAX_UNISON_VOICES];
         self.prev_sync = NormalizedValue::MIN;
@@ -730,13 +751,16 @@ impl PolyModule for Oscillator {
             "level" => {
                 self.mod_offset_level = BipolarValue::new(self.mod_offset_level.as_f32() + value)
             }
-            _ => {}
+            // pulse_width, fm_amt, x_mod go through the generic store, which
+            // scales each through its own descriptor range.
+            other => self.mod_offsets.add(other, value),
         }
     }
 
     fn clear_mod_offsets(&mut self) {
         self.mod_offset_pitch = Semitones::ZERO;
         self.mod_offset_level = BipolarValue::CENTER;
+        self.mod_offsets.clear();
     }
 
     fn set_param_override(&mut self, param: Param) {
@@ -869,6 +893,51 @@ mod tests {
         assert!((osc.actual_frequency().as_f32() - 440.0).abs() < 0.5);
         assert!(osc.override_detune.is_none());
         assert!(osc.override_pulse_width.is_none());
+    }
+
+    /// `pulse_width` used to hit the dropped `_ => {}` arm; it now flows through
+    /// the generic store and reshapes the pulse waveform. (fm_amt and x_mod ride
+    /// the same delegation.)
+    #[test]
+    fn pulse_width_mod_offset_reshapes_waveform() {
+        let mut osc = Oscillator::new();
+        osc.waveform = Waveform::Pulse;
+        let desc = osc.descriptor();
+        osc.mod_offsets_mut().unwrap().populate(&desc);
+        osc.note_on(MidiNote::A4, Velocity::MAX);
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        fn render(osc: &mut Oscillator, ctx: &ProcessContext) -> Vec<f32> {
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            osc.process(InputPorts::empty(), &mut outs, ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i]).collect()
+        }
+
+        osc.reset();
+        let before = render(&mut osc, &ctx);
+        osc.set_mod_offset("pulse_width", 0.4);
+        osc.reset();
+        let after = render(&mut osc, &ctx);
+        let diff: f32 = before.iter().zip(&after).map(|(a, b)| (a - b).abs()).sum();
+        assert!(
+            diff > 1e-3,
+            "pulse_width mod should reshape output, diff = {diff}"
+        );
+
+        osc.clear_mod_offsets();
+        osc.reset();
+        let reverted = render(&mut osc, &ctx);
+        let back: f32 = before
+            .iter()
+            .zip(&reverted)
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(back < 1e-3, "clearing should revert, residual = {back}");
     }
 
     #[test]
