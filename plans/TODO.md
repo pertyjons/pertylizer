@@ -205,12 +205,6 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
 - [ ] Visual indicator on mapped parameters
 - [ ] Save/load MIDI mappings with patch or settings
 
-### 1.3 Module presets
-
-- [ ] Save/load parameter presets per module type (not the whole patch)
-- [ ] Preset browser in module context menu or header
-- [ ] Ship default presets for common module types
-
 ### 1.5 Settings & utilities
 
 - [ ] Add Browse button in Settings dialog to change patches directory
@@ -284,15 +278,25 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
 
 ### 2.1 Tempo automation
 
-- [ ] **Expose + edit the tempo map** (`Song::set_tempo_at` / `tempo_changes`): MCP tools
-  and a GUI tempo-track/curve editor, with interpolation between adjacent tempo points
-  (accelerando/ritardando ramps) rather than the current step changes. The engine tempo
-  map already exists and the GUI uses `set_tempo_at`, but MCP only exposes `set_song_tempo`
-  (global default), there is no tempo-map editor, and changes are step-only. This is the real
-  "tempo automation" feature — built on the tempo map, not a generic automation lane. (The old
-  `Global(Tempo)` automation lane was removed 2026-06-01: tempo changes the playback time grid
-  itself, so it can't be a per-block value, and a lane would be a second source of truth competing
-  with the tempo map.)
+> **Not to be confused with the deleted `Global(Tempo)` automation lane.** Two different
+> things shared the "tempo automation" name. (1) The generic `AutomationTarget::Global(Tempo)`
+> automation *lane* was a no-op and was **removed for good** on 2026-06-01 — tempo changes the
+> playback time grid itself, so it can't be a per-block lane value, and a lane would be a second
+> source of truth competing with the tempo map. That is the dead code; it is **not** coming back.
+> (2) The **tempo map** below is a separate, live mechanism and *is* the real feature to finish.
+
+- [ ] **Expose + edit the tempo map** (`Song::set_tempo_at` / `tempo_at` / `tempo_changes`,
+  `song.rs:686`). The tempo map already exists and is partly wired: the engine reads it, and the
+  arrangement view already draws tempo changes (`gui/sequencer/arrangement.rs:1299`) and can set
+  them (`arrangement.rs:1010` → `set_tempo_at`). What remains:
+    1. **MCP tools** for the map — today MCP only exposes `set_song_tempo` (the global default);
+       there is no way to add/move/remove tempo points in the map via MCP.
+    2. **A dedicated GUI tempo-track/curve editor** — the current editing is rudimentary, not a
+       proper tempo lane.
+    3. **Interpolation between adjacent points** (accelerando/ritardando ramps). `tempo_at`
+       (`song.rs:697`) is **step-only** — it returns the previous point's bpm with no ramping.
+  This is the real "tempo automation" feature — built on the tempo map, not a generic
+  automation lane.
 
 ### 2.2 Section markers
 
