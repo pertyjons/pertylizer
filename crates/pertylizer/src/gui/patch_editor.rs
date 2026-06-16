@@ -2345,22 +2345,28 @@ impl PatchEditor {
                             }
 
                             // Overflow menu (⋯) — per-module actions. Currently
-                            // just "Edit description"; built to grow.
+                            // just "Edit description"; built to grow. Uses a
+                            // frameless custom button so it matches the other
+                            // header icons (the default `menu_button` is boxed).
                             let mut open_desc_editor = false;
-                            ui.menu_button(
-                                egui::RichText::new(ri::MORE_FILL)
-                                    .color(t.colors.text_dim)
-                                    .size(14.0),
-                                |ui| {
-                                    if ui
-                                        .button(format!("{}  Edit description…", ri::EDIT_LINE))
-                                        .clicked()
-                                    {
-                                        open_desc_editor = true;
-                                        ui.close();
-                                    }
-                                },
-                            );
+                            egui::containers::menu::MenuButton::from_button(
+                                egui::Button::new(
+                                    egui::RichText::new(ri::MORE_FILL)
+                                        .color(t.colors.text_dim)
+                                        .size(14.0),
+                                )
+                                .frame(false)
+                                .min_size(button_min_size),
+                            )
+                            .ui(ui, |ui| {
+                                if ui
+                                    .button(format!("{}  Edit description…", ri::EDIT_LINE))
+                                    .clicked()
+                                {
+                                    open_desc_editor = true;
+                                    ui.close();
+                                }
+                            });
                             if open_desc_editor {
                                 let draft = self
                                     .panels
