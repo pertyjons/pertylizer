@@ -65,9 +65,10 @@ path so MCP and GUI writes share validation and undo. Type-level descriptors (`M
 
 ### Current status of description fields
 
-Phase 1 (`InstrumentState`/`Patch`/`AwePresetFile`) and Phase 2 (`Song`/`Pattern`/`SequencerTrack`/`Sample`)
-are shipped — those entities have their `description` field plus MCP read + write tool and GUI editing.
-The remaining gap is **Phase 3: per-module-instance descriptions** (a different concept from the type docs).
+Phase 1 (`InstrumentState`/`Patch`/`AwePresetFile`), Phase 2 (`Song`/`Pattern`/`SequencerTrack`/`Sample`)
+and **Phase 3 (per-module-instance descriptions)** are shipped — every entity below has its `description`
+field plus MCP read + write tool and GUI editing. The only remaining items are the cross-cutting polish
+tasks at the end of this section (diagnostics surfacing + tooltips).
 
 | Entity                       | Field exists?                        | MCP read | MCP write       |
 |------------------------------|--------------------------------------|----------|-----------------|
@@ -78,20 +79,26 @@ The remaining gap is **Phase 3: per-module-instance descriptions** (a different 
 | `Pattern`                    | ✅                                    | ✅        | ✅               |
 | `SequencerTrack`             | ✅                                    | ✅        | ✅               |
 | `Sample` entry (`SampleMeta`)| ✅                                    | ✅        | ✅               |
-| Module *instance* (in patch) | ❌ — separate from `ModuleDescriptor` | ❌        | ❌               |
+| Module *instance* (in patch) | ✅ `patch.rs:144` (separate from type) | ✅        | ✅               |
 | `ModuleDescriptor` (type)    | ✅ `module_traits.rs:869`             | ✅        | n/a (hardcoded) |
 | `ParameterDescriptor` (type) | ✅ `module_traits.rs:586`             | ✅        | n/a             |
 | `PortDescriptor` (type)      | ✅                                    | ✅        | n/a             |
 | `ChoiceOption` (type)        | ✅ `module_traits.rs:557` (Option)    | partial  | n/a             |
 
-### Phase 3 — per-module-instance notes (different concept from type docs)
+### Phase 3 — per-module-instance notes (different concept from type docs) — SHIPPED
 
-- [ ] Add per-instance `description: String` on placed modules in a patch (e.g. annotate "this LFO is the
+Shipped in `9c9dd4b` (data model + engine mirror + persistence), `91adce0` (MCP read + write),
+`fc5bd4b` (GUI editing + info popup). Bridge test `set_module_description_round_trips_via_bridge`.
+
+- [x] Add per-instance `description: String` on placed modules in a patch (e.g. annotate "this LFO is the
   wobble modulator" on a specific `lfo-1` instance). Distinct from `ModuleDescriptor.description` which
-  documents the module *type* and is shared across all instances.
-- [ ] Surface in `get_module_info` (MCP read); add `set_module_description(instrument_id, module_id, description)`
-  MCP tool (MCP write). Accept `""` to clear.
-- [ ] Editable from GUI (module header context menu)
+  documents the module *type* and is shared across all instances. **Done** — `ModuleState.description`
+  (`patch.rs:144`).
+- [x] Surface in `get_module_info` (MCP read); add `set_module_description(instrument_id, module_id, description)`
+  MCP tool (MCP write). Accept `""` to clear. **Done** — `mcp_bridge.rs:910` (clears on `""`, rejects
+  over-length + unknown module id).
+- [x] Editable from GUI (module header context menu). **Done** — "Edit description" popup + read-only info
+  popup wired through `module_description_actions` → `session.set_module_description`.
 
 #### Persistence (must round-trip on save/load)
 
@@ -99,26 +106,28 @@ Module-instance descriptions **must** survive serialization, both at the project
 level — otherwise AI-applied notes silently vanish on save/reload. Same pattern as
 `Patch.description` and the planned color persistence below.
 
-- [ ] **Project save** — every module instance's description persisted inside its containing patch
-  in the project JSON. Round-trip test: MCP-set description on `lfo-1` → `save_project` →
-  `new_project` → `load_project` → `get_module_info` returns the same text.
-- [ ] **Standalone patch save** — the per-instance description travels with the .json patch file
-  when the user invokes "Save Patch…". A patch saved by AI must carry its module notes into other
-  projects that load it.
-- [ ] **Project / patch load → engine mirror** — on load, copy each saved module description into
+- [x] **Project save** — every module instance's description persisted inside its containing patch
+  in the project JSON. **Done** — `ModuleState.description` with `#[serde(default,
+  skip_serializing_if = "String::is_empty")]`, so empty stays byte-identical/schema-valid.
+- [x] **Standalone patch save** — the per-instance description travels with the .json patch file
+  when the user invokes "Save Patch…". **Done** — same `ModuleState` struct serializes for standalone
+  patches.
+- [x] **Project / patch load → engine mirror** — on load, copy each saved module description into
   the engine's runtime mirror so subsequent MCP reads see what was loaded, not stale defaults.
-  Mirror the `Patch.description` → `Instrument.description` plumbing used in Phase 1.
-- [ ] **No partial states** — do not ship `set_module_description` without the full save/load path;
-  document as known-broken until both halves land.
+  **Done** — engine `set_module_description` (`synth_engine.rs` / `instrument.rs`).
+- [x] **No partial states** — **Done** — data + MCP + GUI + save/load all landed together
+  (`9c9dd4b`→`91adce0`→`fc5bd4b`); no half-wired ship.
 
 ### Cross-cutting
 
 - [ ] Include all instance-level descriptions in `get_graph_diagnostics` / `analyze_note` output so AI sees
-  intent alongside structure
-- [ ] Surface descriptions as tooltips on the corresponding GUI elements
-- [ ] Decide on max length (suggest 500 chars soft, 2000 hard) — long enough for a paragraph, short enough to
-  stay readable in tooltips
-- [ ] Persistence format: inline in the existing JSON containers (no sidecar files)
+  intent alongside structure — **still open** (module-instance descriptions not surfaced there yet)
+- [ ] Surface descriptions as tooltips on the corresponding GUI elements — **still open** for the
+  module-instance description (the read-only info popup shows it, but not a hover tooltip)
+- [x] Decide on max length (suggest 500 chars soft, 2000 hard). **Done** — `MAX_MODULE_DESCRIPTION_LEN =
+  2000` hard cap enforced at the bridge (`mcp_bridge.rs:49`); 500 soft is advisory only.
+- [x] Persistence format: inline in the existing JSON containers (no sidecar files). **Done** — inline on
+  `ModuleState` in the patch JSON.
 
 ---
 
