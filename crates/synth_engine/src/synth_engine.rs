@@ -2846,13 +2846,12 @@ impl SynthEngine {
     /// Apply `Global(..)` automation events for this block.
     ///
     /// `MasterVolume` writes the engine master gain (mirroring
-    /// `handle_set_master_volume`: local field + shared atomic). `Swing` has no
-    /// engine implementation yet. Tempo is intentionally not a global automation
-    /// param — it lives in the song's tempo map (`Song::tempo_at`, consumed by
-    /// the sequencer's `cached_tempo`), the single source of truth for the
-    /// playback rate. Track automation is handled in the sequencer (see
-    /// `SequencerEngine::track_auto`); instrument automation in
-    /// `route_sequencer_events`.
+    /// `handle_set_master_volume`: local field + shared atomic). Tempo and swing
+    /// are intentionally not global automation params — both alter the playback
+    /// time grid rather than a per-block value (tempo lives in the song's tempo
+    /// map `Song::tempo_at`, swing in `Pattern::apply_swing`). Track automation
+    /// is handled in the sequencer (see `SequencerEngine::track_auto`);
+    /// instrument automation in `route_sequencer_events`.
     fn apply_global_automation(&mut self) {
         for event in &self.sequencer_event_buffer {
             if let SequencerEvent::Parameter {
@@ -2867,7 +2866,6 @@ impl SynthEngine {
                         self.master_volume = gain;
                         self.state.master_volume.store(gain);
                     }
-                    GlobalParam::Swing => {}
                 }
             }
         }

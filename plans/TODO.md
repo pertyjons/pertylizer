@@ -4,12 +4,15 @@
 
 ### 0.1 Misc findings
 
-- [ ] **Swing / Track-Solo automation unimplemented.** Most automation targets now
+- [x] **Swing / Track-Solo automation unimplemented.** Most automation targets now
   reach the engine (instrument macros, generic `AutomationTarget::Module`, Track
   Volume/Pan/Mute, Global MasterVolume — all shipped via channel-strip Phases 1–2).
-  `Global(Tempo)` was removed in favour of the tempo map (see §2.1). Still no engine
-  implementation for `Global(Swing)` and `Track(Solo)` — lanes drawn for those targets
-  are silent no-ops. Either wire them or drop the variants.
+  `Global(Tempo)` was removed in favour of the tempo map (see §2.1). **Resolved by
+  dropping the variants** — `GlobalParam::Swing` and `TrackParam::Solo` were silent
+  no-op lanes. Swing alters note timing (`Pattern::apply_swing`), not a per-block
+  scalar, so it follows the same reasoning that removed `Global(Tempo)`; Solo is an
+  inherently cross-track concept (Mute already covers per-track silencing). Removed
+  the enum variants, their engine match arms, and regenerated the project schema.
 - [x] **★ HIGH: expand Sub Oscillator waveform set from 3 to 6.** `SubOscWaveform`
   (`crates/synth_core/src/params/sub_osc.rs:13`) currently exposes only
   `Sine / Square / Pulse25`, while the main `Oscillator` exposes 6

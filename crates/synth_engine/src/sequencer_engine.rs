@@ -798,7 +798,6 @@ impl SequencerEngine {
                             entry.pan = Some(BipolarValue::new(value.as_f32() * 2.0 - 1.0));
                         }
                         TrackParam::Mute => entry.muted = Some(value.as_f32() >= 0.5),
-                        TrackParam::Solo => {} // cross-track concept — deferred
                     }
                 } else {
                     events.push(SequencerEvent::Parameter {
