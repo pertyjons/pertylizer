@@ -1199,6 +1199,22 @@ impl PianoRollCoords {
     }
 }
 
+/// Bundle of the long-lived locals every piano-roll sub-section threads through:
+/// the song snapshot, live engine handle, view state, undo manager and instrument
+/// list. Lets the extracted toolbar / shortcut / interaction helpers take one
+/// `&mut ctx` instead of 6+ positional parameters. Each helper re-exposes the
+/// fields under their original names, so the moved bodies stay byte-for-byte
+/// unchanged (same trick `handle_piano_roll_interaction` uses for the bundled
+/// `PianoRollCoords` transforms).
+struct PianoRollCtx<'a> {
+    data: &'a PianoRollData,
+    song: &'a Arc<RwLock<Song>>,
+    view_state: &'a mut SequencerViewState,
+    handle: &'a mut EngineHandle,
+    undo_manager: &'a mut crate::undo::UndoManager,
+    instruments: &'a [crate::gui::instrument_rack::InstrumentUiState],
+}
+
 /// Draw the piano roll in a bottom panel.
 /// Returns false if the close button was clicked.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -1214,458 +1230,17 @@ pub(crate) fn draw_piano_roll(
     undo_manager: &mut crate::undo::UndoManager,
 ) -> bool {
     let t = theme();
-    let mut keep_open = true;
-
-    // ── Toolbar ──
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-
-        // Pattern name (editable via rename context menu)
-        if view_state.editing_pattern_name.as_ref().map(|(id, _)| *id) == Some(data.pattern_id) {
-            if let Some((_, ref mut name_buf)) = view_state.editing_pattern_name {
-                let resp = ui.add(
-                    egui::TextEdit::singleline(name_buf)
-                        .desired_width(120.0)
-                        .font(egui::FontId::proportional(14.0)),
-                );
-                if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    commit_pattern_rename(song, undo_manager, data.pattern_id, name_buf.clone());
-                    view_state.editing_pattern_name = None;
-                } else if !resp.has_focus() {
-                    resp.request_focus();
-                }
-            }
-        } else {
-            let name_resp = ui.add(
-                egui::Label::new(
-                    RichText::new(&data.pattern_name)
-                        .size(14.0)
-                        .color(t.colors.accent_cyan),
-                )
-                .sense(Sense::click()),
-            );
-            if name_resp.double_clicked() {
-                view_state.editing_pattern_name =
-                    Some((data.pattern_id, data.pattern_name.clone()));
-            }
-        }
-
-        // Pattern description (editable inline; utility metadata, no undo)
-        if view_state
-            .editing_pattern_description
-            .as_ref()
-            .map(|(id, _)| *id)
-            == Some(data.pattern_id)
-        {
-            if let Some((_, ref mut desc_buf)) = view_state.editing_pattern_description {
-                let resp = ui.add(
-                    egui::TextEdit::singleline(desc_buf)
-                        .desired_width(180.0)
-                        .hint_text("Description")
-                        .font(egui::FontId::proportional(12.0)),
-                );
-                // Commit on every change so switching patterns mid-edit can't
-                // strand the buffer; lost_focus (incl. Enter on a singleline)
-                // ends the edit session.
-                if resp.changed() {
-                    commit_pattern_description(song, data.pattern_id, desc_buf.clone());
-                }
-                if resp.lost_focus() {
-                    view_state.editing_pattern_description = None;
-                } else if !resp.has_focus() {
-                    resp.request_focus();
-                }
-            }
-        } else {
-            let desc_text = if data.pattern_description.is_empty() {
-                RichText::new("+ description")
-                    .size(12.0)
-                    .italics()
-                    .color(t.colors.text_dim)
-            } else {
-                RichText::new(&data.pattern_description)
-                    .size(12.0)
-                    .color(t.colors.text_secondary)
-            };
-            let desc_resp = ui
-                .add(egui::Label::new(desc_text).sense(Sense::click()))
-                .on_hover_text("Double-click to edit pattern description");
-            if desc_resp.double_clicked() {
-                view_state.editing_pattern_description =
-                    Some((data.pattern_id, data.pattern_description.clone()));
-            }
-        }
-
-        // Pattern length (whole bars)
-        {
-            let ticks_per_bar = data.time_sig.ticks_per_bar().max(1);
-            let mut bars = (data.length_ticks.0 / ticks_per_bar).max(1) as i32;
-            let bars_resp = ui
-                .add(
-                    egui::DragValue::new(&mut bars)
-                        .range(1..=64)
-                        .speed(0.1)
-                        .suffix(" bars"),
-                )
-                .on_hover_text("Pattern length in bars");
-            if bars_resp.drag_started() || bars_resp.gained_focus() {
-                view_state.pattern_length_drag_start = Some((data.pattern_id, data.length_ticks));
-            }
-            if bars_resp.changed() {
-                let new_len = SeqDuration(bars.max(1) as u32 * ticks_per_bar);
-                let pid = data.pattern_id;
-                let mut song_w = song.write();
-                if let Some(pat) = song_w.pattern_mut(pid) {
-                    pat.length = new_len;
-                }
-            }
-            if (bars_resp.drag_stopped() || bars_resp.lost_focus())
-                && let Some((pid, old_len)) = view_state.pattern_length_drag_start.take()
-            {
-                let new_len = SeqDuration(bars.max(1) as u32 * ticks_per_bar);
-                if pid == data.pattern_id && old_len != new_len {
-                    undo_manager.push(crate::undo::UndoAction::SetPatternLength {
-                        pattern_id: pid,
-                        old_length: old_len,
-                        new_length: new_len,
-                    });
-                }
-            }
-        }
-
-        draw_pattern_instrument_transport(
-            ui,
+    let keep_open = {
+        let mut ctx = PianoRollCtx {
             data,
-            handle,
             song,
-            view_state,
+            view_state: &mut *view_state,
+            handle: &mut *handle,
+            undo_manager: &mut *undo_manager,
             instruments,
-            is_playing,
-        );
-        ui.separator();
-
-        ui.label(
-            RichText::new(format!("{} notes", data.notes.len())).color(t.colors.text_secondary),
-        );
-
-        if !view_state.selected_notes.is_empty() {
-            ui.label(
-                RichText::new(format!("{} selected", view_state.selected_notes.len()))
-                    .color(t.colors.accent_yellow),
-            );
-        }
-
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .button(RichText::new(egui_remixicon::icons::CLOSE_LINE).color(t.colors.accent_red))
-                .on_hover_text("Close piano roll")
-                .clicked()
-            {
-                keep_open = false;
-            }
-
-            let help_btn = ui
-                .button(
-                    RichText::new(egui_remixicon::icons::QUESTION_LINE).color(t.colors.text_dim),
-                )
-                .on_hover_text("Keyboard shortcuts");
-            egui::Popup::from_toggle_button_response(&help_btn).show(|ui| {
-                ui.set_min_width(320.0);
-                ui.label(RichText::new("Piano-roll keyboard shortcuts").strong());
-                ui.add_space(t.spacing.xs);
-                egui::Grid::new("pr_shortcuts_grid")
-                    .num_columns(2)
-                    .spacing([16.0, 4.0])
-                    .show(ui, |ui| {
-                        let rows: &[(&str, &str)] = &[
-                            ("Space", "Play / Pause"),
-                            ("Delete · Backspace", "Delete selected notes"),
-                            ("Escape", "Clear selection · exit step entry"),
-                            ("Ctrl+A", "Select all notes"),
-                            ("Ctrl+C", "Copy selection"),
-                            ("Ctrl+X", "Cut selection"),
-                            ("Ctrl+V", "Paste at playhead"),
-                            ("Ctrl+D", "Duplicate selection after"),
-                            ("↑ · ↓", "Transpose ±1 semitone"),
-                            ("Shift+↑ · Shift+↓", "Transpose ±1 octave"),
-                            ("Ctrl+scroll", "Horizontal zoom"),
-                            ("Ctrl+Shift+scroll", "Vertical zoom"),
-                            (
-                                "STEP key letters",
-                                concat!("A·W·S·E·D·F·T·G·Y·H·U·J ", "\u{ea6e}", " C..B"),
-                            ),
-                        ];
-                        for (k, d) in rows {
-                            ui.label(RichText::new(*k).monospace().color(t.colors.accent_cyan));
-                            ui.label(*d);
-                            ui.end_row();
-                        }
-                    });
-            });
-        });
-    });
-
-    ui.add_space(t.spacing.xxs);
-
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-
-        // Tool selector
-        let select_label = if view_state.edit_tool == EditTool::Select {
-            RichText::new("Select").color(t.colors.accent_primary)
-        } else {
-            RichText::new("Select").color(t.colors.text_secondary)
         };
-        if ui.button(select_label).clicked() {
-            view_state.edit_tool = EditTool::Select;
-        }
-
-        let draw_label = if view_state.edit_tool == EditTool::Draw {
-            RichText::new("Draw").color(t.colors.accent_primary)
-        } else {
-            RichText::new("Draw").color(t.colors.text_secondary)
-        };
-        if ui.button(draw_label).clicked() {
-            view_state.edit_tool = EditTool::Draw;
-        }
-
-        ui.separator();
-
-        // Automation lane selector (shared with the tracker view).
-        draw_automation_target_selector(ui, view_state, data, instruments);
-
-        ui.separator();
-
-        // ── Grid resolution selector ──
-        let grid_label = GRID_RESOLUTIONS
-            .iter()
-            .find(|(_, t)| *t == view_state.draw_grid_resolution)
-            .map_or("Grid", |(l, _)| l);
-        egui::ComboBox::from_id_salt("grid_res")
-            .selected_text(grid_label)
-            .width(50.0)
-            .show_ui(ui, |ui| {
-                for &(label, ticks) in GRID_RESOLUTIONS {
-                    if ui
-                        .selectable_label(view_state.draw_grid_resolution == ticks, label)
-                        .clicked()
-                    {
-                        view_state.draw_grid_resolution = ticks;
-                    }
-                }
-            });
-
-        // ── Note length preset selector ──
-        let len_label = GRID_RESOLUTIONS
-            .iter()
-            .find(|(_, t)| *t == view_state.draw_note_length)
-            .map_or("L:Drag", |(l, _)| l);
-        egui::ComboBox::from_id_salt("note_len")
-            .selected_text(if view_state.draw_note_length == 0 {
-                "L:Drag"
-            } else {
-                len_label
-            })
-            .width(55.0)
-            .show_ui(ui, |ui| {
-                if ui
-                    .selectable_label(view_state.draw_note_length == 0, "Drag")
-                    .clicked()
-                {
-                    view_state.draw_note_length = 0;
-                }
-                for &(label, ticks) in &GRID_RESOLUTIONS[1..] {
-                    if ui
-                        .selectable_label(view_state.draw_note_length == ticks, label)
-                        .clicked()
-                    {
-                        view_state.draw_note_length = ticks;
-                    }
-                }
-            });
-
-        // ── Default velocity ──
-        ui.label(RichText::new("Vel:").color(t.colors.text_dim).size(10.0));
-        let mut vel_pct = (view_state.default_velocity.as_f32() * 100.0).round();
-        if ui
-            .add(
-                egui::DragValue::new(&mut vel_pct)
-                    .range(1.0..=100.0)
-                    .speed(1.0)
-                    .suffix(" %"),
-            )
-            .changed()
-        {
-            view_state.default_velocity = Velocity::new((vel_pct / 100.0).max(0.01));
-        }
-
-        // ── Quantize button ──
-        if ui
-            .add_enabled(
-                !view_state.selected_notes.is_empty(),
-                egui::Button::new(RichText::new("Q").color(t.colors.accent_primary)),
-            )
-            .on_hover_text(format!(
-                "Quantize selected (strength {:.0}%)",
-                view_state.quantize_strength.as_f32() * 100.0
-            ))
-            .clicked()
-        {
-            let grid = view_state.effective_grid(data.ticks_per_row);
-            let strength = view_state.quantize_strength;
-            let selected = view_state.selected_notes.clone();
-            batch_transform_with_undo(song, data.pattern_id, &selected, undo_manager, |pattern| {
-                pattern.quantize_selected(&selected, grid, strength)
-            });
-        }
-
-        // ── Quantize strength (small drag value) ──
-        let mut q_str_pct = (view_state.quantize_strength.as_f32() * 100.0).round();
-        if ui
-            .add(
-                egui::DragValue::new(&mut q_str_pct)
-                    .range(0.0..=100.0)
-                    .speed(1.0)
-                    .suffix(" %")
-                    .prefix("Str:"),
-            )
-            .on_hover_text("Quantize strength")
-            .changed()
-        {
-            view_state.quantize_strength = NormalizedValue::new(q_str_pct / 100.0);
-        }
-
-        // ── Humanize button ──
-        if ui
-            .add_enabled(
-                !view_state.selected_notes.is_empty(),
-                egui::Button::new(RichText::new("H").color(t.colors.text_secondary)),
-            )
-            .on_hover_text("Humanize selected notes (random timing/velocity)")
-            .clicked()
-        {
-            let selected = view_state.selected_notes.clone();
-            batch_transform_with_undo(song, data.pattern_id, &selected, undo_manager, |pattern| {
-                pattern.humanize_notes(&selected, SeqDuration(15), NormalizedValue::new(0.05));
-            });
-        }
-
-        ui.separator();
-
-        // ── Swing control ──
-        ui.label(RichText::new("Sw:").color(t.colors.text_dim).size(10.0));
-        let mut sw_pct = (view_state.swing_amount.as_f32() * 100.0).round();
-        if ui
-            .add(
-                egui::DragValue::new(&mut sw_pct)
-                    .range(0.0..=100.0)
-                    .speed(1.0)
-                    .suffix(" %"),
-            )
-            .on_hover_text("Swing amount (offset even subdivisions)")
-            .changed()
-        {
-            view_state.swing_amount = NormalizedValue::new(sw_pct / 100.0);
-        }
-        if ui
-            .add_enabled(
-                !view_state.selected_notes.is_empty() && view_state.swing_amount.as_f32() > 0.0,
-                egui::Button::new(RichText::new("Apply").color(t.colors.text_secondary)),
-            )
-            .on_hover_text("Apply swing to selected notes")
-            .clicked()
-        {
-            let grid = view_state.effective_grid(data.ticks_per_row);
-            let amount = view_state.swing_amount;
-            let selected = view_state.selected_notes.clone();
-            batch_transform_with_undo(song, data.pattern_id, &selected, undo_manager, |pattern| {
-                pattern.apply_swing(&selected, grid, amount)
-            });
-        }
-
-        // ── Scale velocities ──
-        ui.add(
-            egui::DragValue::new(&mut view_state.velocity_scale_pct)
-                .range(1..=200_u32)
-                .speed(1.0)
-                .suffix(" %")
-                .prefix("Vel×"),
-        )
-        .on_hover_text("Velocity scale factor");
-        if ui
-            .add_enabled(
-                !view_state.selected_notes.is_empty() && view_state.velocity_scale_pct != 100,
-                egui::Button::new(RichText::new("Scale").color(t.colors.text_secondary)),
-            )
-            .on_hover_text("Scale velocities of selected notes")
-            .clicked()
-        {
-            let mut changes: Vec<(NoteId, Velocity, Velocity)> = Vec::new();
-            {
-                let mut song_w = song.write();
-                if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
-                    for nid in &view_state.selected_notes {
-                        if let Some(note) = pattern.note(*nid) {
-                            changes.push((*nid, note.velocity, note.velocity));
-                        }
-                    }
-                    pattern.scale_velocities(
-                        &view_state.selected_notes,
-                        view_state.velocity_scale_pct as f32 / 100.0,
-                    );
-                    for entry in &mut changes {
-                        if let Some(note) = pattern.note(entry.0) {
-                            entry.2 = note.velocity;
-                        }
-                    }
-                }
-            }
-            if changes.iter().any(|(_, o, n)| o != n) {
-                undo_manager.push(crate::undo::UndoAction::SetVelocitiesBatch {
-                    pattern_id: data.pattern_id,
-                    changes,
-                });
-            }
-            view_state.velocity_scale_pct = 100;
-        }
-
-        // ── Step entry toggle ──
-        let step_color = if view_state.step_entry_mode {
-            t.colors.accent_primary
-        } else {
-            t.colors.text_dim
-        };
-        if ui
-            .button(RichText::new("STEP").color(step_color))
-            .on_hover_text("Step entry mode")
-            .clicked()
-        {
-            view_state.step_entry_mode = !view_state.step_entry_mode;
-            if view_state.step_entry_mode {
-                view_state.step_cursor_tick = PatternTick::ZERO;
-            }
-        }
-
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.small_button("+").on_hover_text("Zoom in").clicked() {
-                view_state.pr_zoom_x = (view_state.pr_zoom_x * 1.25).min(4.0);
-                view_state.pr_zoom_y = (view_state.pr_zoom_y * 1.25).min(3.0);
-            }
-            if ui.small_button("1x").on_hover_text("Reset zoom").clicked() {
-                view_state.pr_zoom_x = 1.0;
-                view_state.pr_zoom_y = 1.0;
-            }
-            if ui
-                .small_button("-")
-                .on_hover_text("Zoom out (Ctrl+scroll = horizontal, Ctrl+Shift+scroll = vertical)")
-                .clicked()
-            {
-                view_state.pr_zoom_x = (view_state.pr_zoom_x * 0.8).max(0.25);
-                view_state.pr_zoom_y = (view_state.pr_zoom_y * 0.8).max(0.5);
-            }
-            ui.label(RichText::new("Zoom").color(t.colors.text_dim).size(10.0));
-        });
-    });
+        draw_piano_roll_toolbar(&mut ctx, ui, is_playing)
+    };
 
     ui.separator();
 
@@ -2572,18 +2147,22 @@ pub(crate) fn draw_piano_roll(
             }
 
             // ── Mouse interaction ──
-            handle_piano_roll_interaction(
-                &response,
-                ui,
+            let mut ctx = PianoRollCtx {
                 data,
                 song,
-                view_state,
-                handle,
+                view_state: &mut *view_state,
+                handle: &mut *handle,
+                undo_manager: &mut *undo_manager,
+                instruments,
+            };
+            handle_piano_roll_interaction(
+                &mut ctx,
+                &response,
+                ui,
                 grid_rect,
                 auto_rect,
                 auto_y,
                 &coords,
-                undo_manager,
             );
         });
 
@@ -2601,6 +2180,35 @@ pub(crate) fn draw_piano_roll(
     } else {
         view_state.pr_last_auto_scroll_offset = None;
     }
+
+    {
+        let mut ctx = PianoRollCtx {
+            data,
+            song,
+            view_state: &mut *view_state,
+            handle: &mut *handle,
+            undo_manager: &mut *undo_manager,
+            instruments,
+        };
+        handle_piano_roll_shortcuts(&mut ctx, ui, is_playing, playhead_tick);
+    }
+
+    keep_open
+}
+
+/// Handle mouse clicks and drags in the piano roll.
+#[allow(clippy::too_many_arguments)]
+fn handle_piano_roll_shortcuts(
+    ctx: &mut PianoRollCtx<'_>,
+    ui: &mut egui::Ui,
+    is_playing: bool,
+    playhead_tick: Option<PatternTick>,
+) {
+    let data = ctx.data;
+    let song = ctx.song;
+    let view_state = &mut *ctx.view_state;
+    let handle = &mut *ctx.handle;
+    let undo_manager = &mut *ctx.undo_manager;
 
     // ── Keyboard shortcuts ──
     let ctx = ui.ctx();
@@ -2783,25 +2391,490 @@ pub(crate) fn draw_piano_roll(
             }
         }
     }
+}
+
+fn draw_piano_roll_toolbar(
+    ctx: &mut PianoRollCtx<'_>,
+    ui: &mut egui::Ui,
+    is_playing: bool,
+) -> bool {
+    let data = ctx.data;
+    let song = ctx.song;
+    let view_state = &mut *ctx.view_state;
+    let handle = &mut *ctx.handle;
+    let undo_manager = &mut *ctx.undo_manager;
+    let instruments = ctx.instruments;
+    let t = theme();
+    let mut keep_open = true;
+
+    // ── Toolbar ──
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+
+        // Pattern name (editable via rename context menu)
+        if view_state.editing_pattern_name.as_ref().map(|(id, _)| *id) == Some(data.pattern_id) {
+            if let Some((_, ref mut name_buf)) = view_state.editing_pattern_name {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(name_buf)
+                        .desired_width(120.0)
+                        .font(egui::FontId::proportional(14.0)),
+                );
+                if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    commit_pattern_rename(song, undo_manager, data.pattern_id, name_buf.clone());
+                    view_state.editing_pattern_name = None;
+                } else if !resp.has_focus() {
+                    resp.request_focus();
+                }
+            }
+        } else {
+            let name_resp = ui.add(
+                egui::Label::new(
+                    RichText::new(&data.pattern_name)
+                        .size(14.0)
+                        .color(t.colors.accent_cyan),
+                )
+                .sense(Sense::click()),
+            );
+            if name_resp.double_clicked() {
+                view_state.editing_pattern_name =
+                    Some((data.pattern_id, data.pattern_name.clone()));
+            }
+        }
+
+        // Pattern description (editable inline; utility metadata, no undo)
+        if view_state
+            .editing_pattern_description
+            .as_ref()
+            .map(|(id, _)| *id)
+            == Some(data.pattern_id)
+        {
+            if let Some((_, ref mut desc_buf)) = view_state.editing_pattern_description {
+                let resp = ui.add(
+                    egui::TextEdit::singleline(desc_buf)
+                        .desired_width(180.0)
+                        .hint_text("Description")
+                        .font(egui::FontId::proportional(12.0)),
+                );
+                // Commit on every change so switching patterns mid-edit can't
+                // strand the buffer; lost_focus (incl. Enter on a singleline)
+                // ends the edit session.
+                if resp.changed() {
+                    commit_pattern_description(song, data.pattern_id, desc_buf.clone());
+                }
+                if resp.lost_focus() {
+                    view_state.editing_pattern_description = None;
+                } else if !resp.has_focus() {
+                    resp.request_focus();
+                }
+            }
+        } else {
+            let desc_text = if data.pattern_description.is_empty() {
+                RichText::new("+ description")
+                    .size(12.0)
+                    .italics()
+                    .color(t.colors.text_dim)
+            } else {
+                RichText::new(&data.pattern_description)
+                    .size(12.0)
+                    .color(t.colors.text_secondary)
+            };
+            let desc_resp = ui
+                .add(egui::Label::new(desc_text).sense(Sense::click()))
+                .on_hover_text("Double-click to edit pattern description");
+            if desc_resp.double_clicked() {
+                view_state.editing_pattern_description =
+                    Some((data.pattern_id, data.pattern_description.clone()));
+            }
+        }
+
+        // Pattern length (whole bars)
+        {
+            let ticks_per_bar = data.time_sig.ticks_per_bar().max(1);
+            let mut bars = (data.length_ticks.0 / ticks_per_bar).max(1) as i32;
+            let bars_resp = ui
+                .add(
+                    egui::DragValue::new(&mut bars)
+                        .range(1..=64)
+                        .speed(0.1)
+                        .suffix(" bars"),
+                )
+                .on_hover_text("Pattern length in bars");
+            if bars_resp.drag_started() || bars_resp.gained_focus() {
+                view_state.pattern_length_drag_start = Some((data.pattern_id, data.length_ticks));
+            }
+            if bars_resp.changed() {
+                let new_len = SeqDuration(bars.max(1) as u32 * ticks_per_bar);
+                let pid = data.pattern_id;
+                let mut song_w = song.write();
+                if let Some(pat) = song_w.pattern_mut(pid) {
+                    pat.length = new_len;
+                }
+            }
+            if (bars_resp.drag_stopped() || bars_resp.lost_focus())
+                && let Some((pid, old_len)) = view_state.pattern_length_drag_start.take()
+            {
+                let new_len = SeqDuration(bars.max(1) as u32 * ticks_per_bar);
+                if pid == data.pattern_id && old_len != new_len {
+                    undo_manager.push(crate::undo::UndoAction::SetPatternLength {
+                        pattern_id: pid,
+                        old_length: old_len,
+                        new_length: new_len,
+                    });
+                }
+            }
+        }
+
+        draw_pattern_instrument_transport(
+            ui,
+            data,
+            handle,
+            song,
+            view_state,
+            instruments,
+            is_playing,
+        );
+        ui.separator();
+
+        ui.label(
+            RichText::new(format!("{} notes", data.notes.len())).color(t.colors.text_secondary),
+        );
+
+        if !view_state.selected_notes.is_empty() {
+            ui.label(
+                RichText::new(format!("{} selected", view_state.selected_notes.len()))
+                    .color(t.colors.accent_yellow),
+            );
+        }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .button(RichText::new(egui_remixicon::icons::CLOSE_LINE).color(t.colors.accent_red))
+                .on_hover_text("Close piano roll")
+                .clicked()
+            {
+                keep_open = false;
+            }
+
+            let help_btn = ui
+                .button(
+                    RichText::new(egui_remixicon::icons::QUESTION_LINE).color(t.colors.text_dim),
+                )
+                .on_hover_text("Keyboard shortcuts");
+            egui::Popup::from_toggle_button_response(&help_btn).show(|ui| {
+                ui.set_min_width(320.0);
+                ui.label(RichText::new("Piano-roll keyboard shortcuts").strong());
+                ui.add_space(t.spacing.xs);
+                egui::Grid::new("pr_shortcuts_grid")
+                    .num_columns(2)
+                    .spacing([16.0, 4.0])
+                    .show(ui, |ui| {
+                        let rows: &[(&str, &str)] = &[
+                            ("Space", "Play / Pause"),
+                            ("Delete · Backspace", "Delete selected notes"),
+                            ("Escape", "Clear selection · exit step entry"),
+                            ("Ctrl+A", "Select all notes"),
+                            ("Ctrl+C", "Copy selection"),
+                            ("Ctrl+X", "Cut selection"),
+                            ("Ctrl+V", "Paste at playhead"),
+                            ("Ctrl+D", "Duplicate selection after"),
+                            ("↑ · ↓", "Transpose ±1 semitone"),
+                            ("Shift+↑ · Shift+↓", "Transpose ±1 octave"),
+                            ("Ctrl+scroll", "Horizontal zoom"),
+                            ("Ctrl+Shift+scroll", "Vertical zoom"),
+                            (
+                                "STEP key letters",
+                                concat!("A·W·S·E·D·F·T·G·Y·H·U·J ", "\u{ea6e}", " C..B"),
+                            ),
+                        ];
+                        for (k, d) in rows {
+                            ui.label(RichText::new(*k).monospace().color(t.colors.accent_cyan));
+                            ui.label(*d);
+                            ui.end_row();
+                        }
+                    });
+            });
+        });
+    });
+
+    ui.add_space(t.spacing.xxs);
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+
+        // Tool selector
+        let select_label = if view_state.edit_tool == EditTool::Select {
+            RichText::new("Select").color(t.colors.accent_primary)
+        } else {
+            RichText::new("Select").color(t.colors.text_secondary)
+        };
+        if ui.button(select_label).clicked() {
+            view_state.edit_tool = EditTool::Select;
+        }
+
+        let draw_label = if view_state.edit_tool == EditTool::Draw {
+            RichText::new("Draw").color(t.colors.accent_primary)
+        } else {
+            RichText::new("Draw").color(t.colors.text_secondary)
+        };
+        if ui.button(draw_label).clicked() {
+            view_state.edit_tool = EditTool::Draw;
+        }
+
+        ui.separator();
+
+        // Automation lane selector (shared with the tracker view).
+        draw_automation_target_selector(ui, view_state, data, instruments);
+
+        ui.separator();
+
+        // ── Grid resolution selector ──
+        let grid_label = GRID_RESOLUTIONS
+            .iter()
+            .find(|(_, t)| *t == view_state.draw_grid_resolution)
+            .map_or("Grid", |(l, _)| l);
+        egui::ComboBox::from_id_salt("grid_res")
+            .selected_text(grid_label)
+            .width(50.0)
+            .show_ui(ui, |ui| {
+                for &(label, ticks) in GRID_RESOLUTIONS {
+                    if ui
+                        .selectable_label(view_state.draw_grid_resolution == ticks, label)
+                        .clicked()
+                    {
+                        view_state.draw_grid_resolution = ticks;
+                    }
+                }
+            });
+
+        // ── Note length preset selector ──
+        let len_label = GRID_RESOLUTIONS
+            .iter()
+            .find(|(_, t)| *t == view_state.draw_note_length)
+            .map_or("L:Drag", |(l, _)| l);
+        egui::ComboBox::from_id_salt("note_len")
+            .selected_text(if view_state.draw_note_length == 0 {
+                "L:Drag"
+            } else {
+                len_label
+            })
+            .width(55.0)
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(view_state.draw_note_length == 0, "Drag")
+                    .clicked()
+                {
+                    view_state.draw_note_length = 0;
+                }
+                for &(label, ticks) in &GRID_RESOLUTIONS[1..] {
+                    if ui
+                        .selectable_label(view_state.draw_note_length == ticks, label)
+                        .clicked()
+                    {
+                        view_state.draw_note_length = ticks;
+                    }
+                }
+            });
+
+        // ── Default velocity ──
+        ui.label(RichText::new("Vel:").color(t.colors.text_dim).size(10.0));
+        let mut vel_pct = (view_state.default_velocity.as_f32() * 100.0).round();
+        if ui
+            .add(
+                egui::DragValue::new(&mut vel_pct)
+                    .range(1.0..=100.0)
+                    .speed(1.0)
+                    .suffix(" %"),
+            )
+            .changed()
+        {
+            view_state.default_velocity = Velocity::new((vel_pct / 100.0).max(0.01));
+        }
+
+        // ── Quantize button ──
+        if ui
+            .add_enabled(
+                !view_state.selected_notes.is_empty(),
+                egui::Button::new(RichText::new("Q").color(t.colors.accent_primary)),
+            )
+            .on_hover_text(format!(
+                "Quantize selected (strength {:.0}%)",
+                view_state.quantize_strength.as_f32() * 100.0
+            ))
+            .clicked()
+        {
+            let grid = view_state.effective_grid(data.ticks_per_row);
+            let strength = view_state.quantize_strength;
+            let selected = view_state.selected_notes.clone();
+            batch_transform_with_undo(song, data.pattern_id, &selected, undo_manager, |pattern| {
+                pattern.quantize_selected(&selected, grid, strength)
+            });
+        }
+
+        // ── Quantize strength (small drag value) ──
+        let mut q_str_pct = (view_state.quantize_strength.as_f32() * 100.0).round();
+        if ui
+            .add(
+                egui::DragValue::new(&mut q_str_pct)
+                    .range(0.0..=100.0)
+                    .speed(1.0)
+                    .suffix(" %")
+                    .prefix("Str:"),
+            )
+            .on_hover_text("Quantize strength")
+            .changed()
+        {
+            view_state.quantize_strength = NormalizedValue::new(q_str_pct / 100.0);
+        }
+
+        // ── Humanize button ──
+        if ui
+            .add_enabled(
+                !view_state.selected_notes.is_empty(),
+                egui::Button::new(RichText::new("H").color(t.colors.text_secondary)),
+            )
+            .on_hover_text("Humanize selected notes (random timing/velocity)")
+            .clicked()
+        {
+            let selected = view_state.selected_notes.clone();
+            batch_transform_with_undo(song, data.pattern_id, &selected, undo_manager, |pattern| {
+                pattern.humanize_notes(&selected, SeqDuration(15), NormalizedValue::new(0.05));
+            });
+        }
+
+        ui.separator();
+
+        // ── Swing control ──
+        ui.label(RichText::new("Sw:").color(t.colors.text_dim).size(10.0));
+        let mut sw_pct = (view_state.swing_amount.as_f32() * 100.0).round();
+        if ui
+            .add(
+                egui::DragValue::new(&mut sw_pct)
+                    .range(0.0..=100.0)
+                    .speed(1.0)
+                    .suffix(" %"),
+            )
+            .on_hover_text("Swing amount (offset even subdivisions)")
+            .changed()
+        {
+            view_state.swing_amount = NormalizedValue::new(sw_pct / 100.0);
+        }
+        if ui
+            .add_enabled(
+                !view_state.selected_notes.is_empty() && view_state.swing_amount.as_f32() > 0.0,
+                egui::Button::new(RichText::new("Apply").color(t.colors.text_secondary)),
+            )
+            .on_hover_text("Apply swing to selected notes")
+            .clicked()
+        {
+            let grid = view_state.effective_grid(data.ticks_per_row);
+            let amount = view_state.swing_amount;
+            let selected = view_state.selected_notes.clone();
+            batch_transform_with_undo(song, data.pattern_id, &selected, undo_manager, |pattern| {
+                pattern.apply_swing(&selected, grid, amount)
+            });
+        }
+
+        // ── Scale velocities ──
+        ui.add(
+            egui::DragValue::new(&mut view_state.velocity_scale_pct)
+                .range(1..=200_u32)
+                .speed(1.0)
+                .suffix(" %")
+                .prefix("Vel×"),
+        )
+        .on_hover_text("Velocity scale factor");
+        if ui
+            .add_enabled(
+                !view_state.selected_notes.is_empty() && view_state.velocity_scale_pct != 100,
+                egui::Button::new(RichText::new("Scale").color(t.colors.text_secondary)),
+            )
+            .on_hover_text("Scale velocities of selected notes")
+            .clicked()
+        {
+            let mut changes: Vec<(NoteId, Velocity, Velocity)> = Vec::new();
+            {
+                let mut song_w = song.write();
+                if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                    for nid in &view_state.selected_notes {
+                        if let Some(note) = pattern.note(*nid) {
+                            changes.push((*nid, note.velocity, note.velocity));
+                        }
+                    }
+                    pattern.scale_velocities(
+                        &view_state.selected_notes,
+                        view_state.velocity_scale_pct as f32 / 100.0,
+                    );
+                    for entry in &mut changes {
+                        if let Some(note) = pattern.note(entry.0) {
+                            entry.2 = note.velocity;
+                        }
+                    }
+                }
+            }
+            if changes.iter().any(|(_, o, n)| o != n) {
+                undo_manager.push(crate::undo::UndoAction::SetVelocitiesBatch {
+                    pattern_id: data.pattern_id,
+                    changes,
+                });
+            }
+            view_state.velocity_scale_pct = 100;
+        }
+
+        // ── Step entry toggle ──
+        let step_color = if view_state.step_entry_mode {
+            t.colors.accent_primary
+        } else {
+            t.colors.text_dim
+        };
+        if ui
+            .button(RichText::new("STEP").color(step_color))
+            .on_hover_text("Step entry mode")
+            .clicked()
+        {
+            view_state.step_entry_mode = !view_state.step_entry_mode;
+            if view_state.step_entry_mode {
+                view_state.step_cursor_tick = PatternTick::ZERO;
+            }
+        }
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.small_button("+").on_hover_text("Zoom in").clicked() {
+                view_state.pr_zoom_x = (view_state.pr_zoom_x * 1.25).min(4.0);
+                view_state.pr_zoom_y = (view_state.pr_zoom_y * 1.25).min(3.0);
+            }
+            if ui.small_button("1x").on_hover_text("Reset zoom").clicked() {
+                view_state.pr_zoom_x = 1.0;
+                view_state.pr_zoom_y = 1.0;
+            }
+            if ui
+                .small_button("-")
+                .on_hover_text("Zoom out (Ctrl+scroll = horizontal, Ctrl+Shift+scroll = vertical)")
+                .clicked()
+            {
+                view_state.pr_zoom_x = (view_state.pr_zoom_x * 0.8).max(0.25);
+                view_state.pr_zoom_y = (view_state.pr_zoom_y * 0.8).max(0.5);
+            }
+            ui.label(RichText::new("Zoom").color(t.colors.text_dim).size(10.0));
+        });
+    });
 
     keep_open
 }
 
-/// Handle mouse clicks and drags in the piano roll.
-#[allow(clippy::too_many_arguments)]
 fn handle_piano_roll_interaction(
+    ctx: &mut PianoRollCtx<'_>,
     response: &egui::Response,
     ui: &egui::Ui,
-    data: &PianoRollData,
-    song: &Arc<RwLock<Song>>,
-    view_state: &mut SequencerViewState,
-    handle: &mut EngineHandle,
     grid_rect: Rect,
     auto_rect: Option<Rect>,
     auto_y: f32,
     coords: &PianoRollCoords,
-    undo_manager: &mut crate::undo::UndoManager,
 ) {
+    let data = ctx.data;
+    let song = ctx.song;
+    let view_state = &mut *ctx.view_state;
+    let handle = &mut *ctx.handle;
+    let undo_manager = &mut *ctx.undo_manager;
     // Re-expose the bundled transforms under the names the body already uses, so
     // the handler logic is untouched by the parameter consolidation. The `&dyn
     // Fn` bindings keep the call shape for the sub-helpers that take closures.
