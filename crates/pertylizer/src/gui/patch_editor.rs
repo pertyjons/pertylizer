@@ -2231,6 +2231,12 @@ impl PatchEditor {
                                 .on_hover_text(badge_tip);
                             }
 
+                            // Divider: everything to the left is a status
+                            // indicator (not clickable); everything to the right
+                            // (power, chain reorder, info, menu, close) is an
+                            // interactive control.
+                            ui.separator();
+
                             // Power/bypass button
                             let (power_icon, power_color) = if is_bypassed {
                                 (ri::VOLUME_MUTE_FILL, t.colors.text_dim)
@@ -2377,8 +2383,9 @@ impl PatchEditor {
                                     Some(DescriptionEditorState { module_id, draft });
                             }
 
-                            // Close/delete button (always visible)
-                            ui.separator();
+                            // Close/delete button (always visible). Grouped with
+                            // the other interactive controls under the single
+                            // divider above — no separate divider here.
                             if ui
                                 .add(
                                     egui::Button::new(
