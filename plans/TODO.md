@@ -136,25 +136,25 @@ engine-ownership refactors noted below.
 
 | Entity            | Field exists?                        | MCP read | MCP write |
 |-------------------|--------------------------------------|----------|-----------|
-| `InstrumentState` | ✅ `patch.rs:700` `Option<HexColor>`  | ❌        | ❌         |
-| `Patch`           | ✅ `patch.rs:255` `Option<HexColor>`  | ❌        | ❌         |
-| `Group`           | ✅ `patch.rs:316` `Option<HexColor>`  | ❌        | ❌         |
+| `InstrumentState` | ✅ `patch.rs` `Option<HexColor>`      | ✅        | ✅         |
+| `Patch`           | ✅ `patch.rs` `Option<HexColor>`      | ✅        | ✅         |
+| `Group`           | ✅ `patch.rs` `Option<HexColor>`      | ❌        | ❌ (dropped) |
 | `SequencerTrack`  | ✅ in song JSON `{r, g, b}` per track | ✅        | ✅         |
 
 ### Work to do
 
-- [ ] Surface color on `get_instrument_info` / `list_instruments` (MCP read); add
+- [x] Surface color on `get_instrument_info` / `list_instruments` (MCP read); add
   `set_instrument_color(instrument_id, color)` MCP tool. Accept `"#RRGGBB"` / `"#RRGGBBAA"` and
-  `""`/`null` to clear back to "auto" / default. **Blocked: needs engine-ownership refactor** —
-  instrument color is GUI-only (`InstrumentUiState.color`) and never transits the engine snapshot
-  (`project_apply.rs` hardcodes `color: None`). Make it engine-owned like `description` (new
-  `EngineCommand` + `Instrument` runtime field + snapshot + save/load mirror). Own PR.
-- [ ] Surface patch color on the same getters as a separate `patch_color` field, mirroring how
+  `""` to clear back to "auto" / default. **Done** — made engine-owned like `description`
+  (`EngineCommand::SetInstrumentColor` + `Instrument.color` runtime field + snapshot + save/load
+  mirror). `8598a6d`.
+- [x] Surface patch color on the same getters as a separate `patch_color` field, mirroring how
   `patch_description` is exposed alongside `description`. Add `set_patch_color` MCP tool.
-  **Blocked: `Patch.color` does not exist yet** — add the field first, then mirror the description flow.
-- [ ] Surface group color on `get_instrument_info` (or wherever groups are listed); add
-  `set_group_color` MCP tool. **Group color is GUI-only** (no engine path) — needs MCP to mutate
-  the `PatchEditor` group state directly. Own PR.
+  **Done** — added `Patch.color` field + engine `patch_color` mirror + round-trip (incl. standalone
+  "Save Patch…"). `5ca35a5`.
+- [~] ~~Surface group color~~ — **dropped**: the group concept is slated to be removed/reworked, so
+  wiring a GUI-only MCP side-channel for it (groups have no engine path; only live in `PatchEditor`)
+  is not worth it. Revisit only if groups survive the rework.
 - [ ] Decide whether AI-friendly named palettes are useful (`"warm-orange"`, `"cool-blue"`) on top of
   raw hex — same pattern as `set_awe_preset` vs `set_awe_parameter`. Out of scope for v1; raw hex
   is enough.
@@ -166,20 +166,17 @@ Color writes via MCP **must** survive serialization, both at the project and sta
 pattern used for `Patch.description` (runtime mirror in the engine, project load copies in, project
 save reads back).
 
-- [ ] **Project save** — all four entities' colors persisted in the project JSON. Verify by
-  round-tripping: MCP-set a color → `save_project` → `new_project` → `load_project` → color is the
-  same. `InstrumentState.color`, `SequencerTrack` color and `Group.color` already serialize via
-  serde; mainly need to confirm the engine-side runtime mirror is read back into the snapshot at
-  save time (mirror the `description` plumbing).
-- [ ] **Standalone patch save** — `Patch.color` travels with the .json patch file when the user
-  invokes "Save Patch…" from the instrument-edit window. Important because a patch saved by AI
-  should carry its color into other projects that load it.
-- [ ] **Project load → engine mirror** — on `load_project`, push each saved color into the engine's
-  runtime mirror (analogous to how `Patch.description` is copied into `Instrument.description` at
-  load time) so subsequent MCP reads see what was loaded, not stale defaults.
-- [ ] **No partial states** — if any color setter is added without the corresponding save+load path
-  wired, document it as known-broken until both halves land; do not ship a setter that only
-  updates the live engine but not the project file.
+- [x] **Project save** — instrument + patch colors persisted in the project JSON. The engine-side
+  runtime mirror (`Instrument.color` / `Instrument.patch_color`) is read back into the snapshot at
+  save time and `snapshot_to_instrument_state` writes `InstrumentState.color` / `Patch.color`.
+  (`SequencerTrack` color was already done.) Group color dropped.
+- [x] **Standalone patch save** — `Patch.color` travels with the .json patch file: `create_patch_from_editor`
+  pulls `patch_color` from the engine snapshot when "Save Patch…" is invoked.
+- [x] **Project load → engine mirror** — on load, each saved instrument/patch color is pushed into the
+  engine runtime mirror (`set_instrument_color` / `set_patch_color`) so subsequent MCP reads see what
+  was loaded, not stale defaults.
+- [x] **No partial states** — both setters ship with their save+load paths wired (verified by the
+  schema round-trip + full test suite). Group color was dropped rather than shipped half-wired.
 
 ### Use case (motivation)
 
