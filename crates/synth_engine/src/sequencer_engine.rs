@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
+use ringbuf::traits::Producer;
 
 use synth_core::{BipolarValue, Bpm, NormalizedValue, SampleCount, SampleRate, Semitones};
 use synth_sequencer::{
@@ -246,6 +247,15 @@ pub struct SequencerEngine {
     loop_end: Tick,
     /// Last emitted automation values (for deduplication).
     last_automation_values: HashMap<AutomationTarget, NormalizedValue>,
+    /// Off-thread drop channel for cleared dedup keys. An `AutomationTarget::Module`
+    /// key owns a `ParamId(Arc<str>)`; if the source lane was removed mid-playback
+    /// the engine's cached clone can be the last `Arc`, and dropping it inline
+    /// (`HashMap::clear`) would free the backing buffer on the audio thread. We
+    /// instead move each key into this ring buffer, whose consumer drops it on
+    /// the main thread (`EngineHandle::cleanup_dropped_modules`). `None` in
+    /// headless/test contexts with no channel wired — there the keys drop inline,
+    /// acceptable off the real-time path.
+    automation_trash: Option<ringbuf::HeapProd<AutomationTarget>>,
     /// Live per-track automation overrides, consumed by the channel-bus stage.
     /// Cleared alongside `last_automation_values` at every transport reset.
     track_auto: HashMap<TrackId, TrackAutoOverride>,
@@ -301,6 +311,7 @@ impl SequencerEngine {
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
             last_automation_values: HashMap::with_capacity(32),
+            automation_trash: None,
             track_auto: HashMap::with_capacity(32),
             scratch_notes: Vec::with_capacity(synth_sequencer::MAX_EXPANSION_EVENTS_PER_TICK),
             scratch_automation: Vec::with_capacity(16),
@@ -339,6 +350,7 @@ impl SequencerEngine {
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
             last_automation_values: HashMap::with_capacity(32),
+            automation_trash: None,
             track_auto: HashMap::with_capacity(32),
             scratch_notes: Vec::with_capacity(synth_sequencer::MAX_EXPANSION_EVENTS_PER_TICK),
             scratch_automation: Vec::with_capacity(16),
@@ -349,6 +361,14 @@ impl SequencerEngine {
             preview_instrument: SeqInstrumentId(0),
             roll_nonce: 0,
         }
+    }
+
+    /// Wire the off-thread drop channel for cleared automation dedup keys.
+    /// Without it the keys drop inline; with it they are moved to the consumer
+    /// (drained on the main thread) so a final `Arc<str>` free never lands on
+    /// the audio thread. Call once after construction.
+    pub fn set_automation_trash(&mut self, producer: ringbuf::HeapProd<AutomationTarget>) {
+        self.automation_trash = Some(producer);
     }
 
     /// Set the solo-pattern filter. When `Some(id)`, only notes from
@@ -451,7 +471,7 @@ impl SequencerEngine {
         // Generate NoteOff events for all active notes
         let events = self.release_all_notes();
         self.active_notes.clear();
-        self.last_automation_values.clear();
+        self.clear_automation_dedup();
         self.track_auto.clear();
 
         events
@@ -461,7 +481,7 @@ impl SequencerEngine {
     pub fn seek(&mut self, tick: Tick) -> Vec<SequencerEvent> {
         let events = self.release_all_notes();
         self.active_notes.clear();
-        self.last_automation_values.clear();
+        self.clear_automation_dedup();
         self.track_auto.clear();
         self.current_tick = tick;
         self.tick_accumulator = 0.0;
@@ -553,7 +573,7 @@ impl SequencerEngine {
             if self.looping && self.current_tick >= self.loop_end {
                 self.release_all_notes_into(events);
                 self.active_notes.clear();
-                self.last_automation_values.clear();
+                self.clear_automation_dedup();
                 self.track_auto.clear();
                 self.current_tick = self.loop_start;
                 // Advance the probability roll nonce so a looped section re-rolls
@@ -570,7 +590,7 @@ impl SequencerEngine {
                 // all_notes_off (see SynthEngine::process).
                 self.release_all_notes_into(events);
                 self.active_notes.clear();
-                self.last_automation_values.clear();
+                self.clear_automation_dedup();
                 self.track_auto.clear();
                 self.play_state = PlayState::Stopped;
                 self.current_tick = self.cursor_tick;
@@ -623,6 +643,26 @@ impl SequencerEngine {
             self.cached_tempo = song.tempo_at(self.current_tick);
             self.cached_structure_gen = song.structure_generation();
             self.cached_song_length = song.calculate_length();
+        }
+    }
+
+    /// Clear the automation dedup map at a transport reset without freeing its
+    /// keys on the audio thread. Each `AutomationTarget` key may own the last
+    /// `Arc<str>` of a `ParamId` whose source lane was removed mid-playback;
+    /// dropping it inline would free on the audio thread. Move the keys into the
+    /// off-thread drop channel instead (values are `Copy`). Falls back to an
+    /// inline drop only when no channel is wired (headless/tests) or the channel
+    /// is momentarily full — both bounded and rare.
+    fn clear_automation_dedup(&mut self) {
+        match &mut self.automation_trash {
+            Some(trash) => {
+                for (target, _) in self.last_automation_values.drain() {
+                    // On a full channel `try_push` hands the target back, which
+                    // then drops here — the residual rare case the docs note.
+                    let _ = trash.try_push(target);
+                }
+            }
+            None => self.last_automation_values.clear(),
         }
     }
 
@@ -1479,5 +1519,50 @@ mod tests {
         assert_eq!(seq.expansion_drops(), excess as u64);
         let _ = seq.stop();
         assert_eq!(seq.expansion_drops(), 0, "stop resets the drop counter");
+    }
+
+    #[test]
+    fn transport_reset_routes_dedup_keys_to_off_thread_channel() {
+        use ringbuf::HeapRb;
+        use ringbuf::traits::{Consumer, Split};
+
+        // Wire an automation-trash channel like SynthEngine::new does.
+        let rb = HeapRb::<AutomationTarget>::new(8);
+        let (producer, mut consumer) = rb.split();
+        let mut seq = SequencerEngine::new(SampleRate::DVD_QUALITY);
+        seq.set_automation_trash(producer);
+
+        // Seed the dedup map with a Module target — the variant that owns a
+        // ParamId(Arc<str>) whose final drop must not land on the audio thread.
+        let target = AutomationTarget::Module {
+            instrument: SeqInstrumentId(1),
+            module_type: synth_core::ModuleType::Filter,
+            instance: 1,
+            param_id: synth_sequencer::ParamId::from("cutoff"),
+        };
+        seq.last_automation_values
+            .insert(target.clone(), NormalizedValue::new(0.5));
+
+        // A transport reset must move the key into the channel (to be dropped on
+        // the consumer thread), not free it inline on the audio thread.
+        let _ = seq.seek(Tick::ZERO);
+        assert!(
+            seq.last_automation_values.is_empty(),
+            "reset clears the dedup map"
+        );
+        assert_eq!(
+            consumer.try_pop(),
+            Some(target),
+            "the dedup key is routed to the off-thread drop channel"
+        );
+
+        // Without a channel wired, the fallback clears inline (no panic).
+        let mut headless = SequencerEngine::new(SampleRate::DVD_QUALITY);
+        headless.last_automation_values.insert(
+            AutomationTarget::Global(synth_sequencer::GlobalParam::MasterVolume),
+            NormalizedValue::new(0.25),
+        );
+        let _ = headless.seek(Tick::ZERO);
+        assert!(headless.last_automation_values.is_empty());
     }
 }

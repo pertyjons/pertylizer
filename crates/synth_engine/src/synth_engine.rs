@@ -135,6 +135,10 @@ pub struct EngineHandle {
     return_consumer: ringbuf::HeapCons<DroppedModule>,
     /// Receive dropped instruments from audio thread (for main thread cleanup).
     instrument_return_consumer: ringbuf::HeapCons<Box<Instrument>>,
+    /// Receive cleared automation dedup keys from the audio thread so their
+    /// `ParamId(Arc<str>)` frees here, on the main thread, never on the audio
+    /// thread (see `SequencerEngine::clear_automation_dedup`).
+    automation_trash_consumer: ringbuf::HeapCons<AutomationTarget>,
     /// Shared state for reading meters, etc.
     pub state: Arc<EngineState>,
     /// Visualization buffers keyed by module ID (shared with engine via Arc).
@@ -180,6 +184,9 @@ impl EngineHandle {
         while self.instrument_return_consumer.try_pop().is_some() {
             // Instrument is dropped here on the main thread - no audio glitches!
         }
+        // Clean up cleared automation dedup keys — their ParamId(Arc<str>) frees
+        // here on the main thread, never on the audio thread.
+        while self.automation_trash_consumer.try_pop().is_some() {}
     }
 
     /// Send a note on event to the default channel.
@@ -504,9 +511,15 @@ impl SynthEngine {
         let instrument_return_rb = HeapRb::<Box<Instrument>>::new(RETURN_BUFFER_SIZE);
         let (instrument_return_producer, instrument_return_consumer) = instrument_return_rb.split();
 
+        // Create return buffer for cleared automation dedup keys, whose
+        // `ParamId(Arc<str>)` must not run its (possibly final) drop on the
+        // audio thread (see `SequencerEngine::clear_automation_dedup`).
+        let automation_trash_rb = HeapRb::<AutomationTarget>::new(RETURN_BUFFER_SIZE);
+        let (automation_trash_producer, automation_trash_consumer) = automation_trash_rb.split();
+
         let instrument_mapping = InstrumentMapping::new();
 
-        let engine = Self {
+        let mut engine = Self {
             command_consumer,
             event_producer,
             note_event_producer,
@@ -548,6 +561,12 @@ impl SynthEngine {
             callback_count: 0,
         };
 
+        // Hand the sequencer the producer end of the automation-trash channel so
+        // its transport-reset clears free `ParamId` arcs off the audio thread.
+        engine
+            .sequencer
+            .set_automation_trash(automation_trash_producer);
+
         // Initialize shared state (empty — no instruments yet)
         engine.update_shared_instruments();
 
@@ -556,6 +575,7 @@ impl SynthEngine {
             event_consumer,
             return_consumer,
             instrument_return_consumer,
+            automation_trash_consumer,
             state,
             visualization_buffers: HashMap::new(),
             note_event_consumer: Some(note_event_consumer),
