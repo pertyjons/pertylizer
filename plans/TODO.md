@@ -28,11 +28,6 @@
   `WaveformType::from_id` (mappings for `triangle`/`sawtooth`/`dsf_saw` —
   already exist). No save-format bump required; existing `"sine"` / `"square"`
   / `"pulse25"` keep loading.
-- [ ] **Follow-up: remove dead modules inside patch graphs.** Modules not
-  reverse-reachable from `StereoOutput` (and any sidechain source) through
-  `connections` should also be pruned in `optimize_project` (which today only
-  removes unused patterns/tracks/instruments/samples, not unreachable modules
-  inside a patch graph). Needs graph traversal per instrument.
 - [x] **Follow-up: stale `list_instruments` readback inside one `batch_execute`.** The primary
   bridge-race (set/get validation failing with `"instrument not found"` right after
   `apply_example_patch`) was fixed by adding a synchronous `alive_instruments` mirror on
@@ -124,10 +119,13 @@ level — otherwise AI-applied notes silently vanish on save/reload. Same patter
 
 ### Cross-cutting
 
-- [ ] Include all instance-level descriptions in `get_graph_diagnostics` / `analyze_note` output so AI sees
-  intent alongside structure — **still open** (module-instance descriptions not surfaced there yet)
-- [ ] Surface descriptions as tooltips on the corresponding GUI elements — **still open** for the
-  module-instance description (the read-only info popup shows it, but not a hover tooltip)
+- [x] Include all instance-level descriptions in `get_graph_diagnostics` / `analyze_note` output so AI sees
+  intent alongside structure. **Done** — shared `collect_module_descriptions` helper; diagnostics append
+  one `Info` "Module <id> (<name>) intent: …" per annotated module (after the health summary), and
+  `analyze_note` carries a `module_descriptions` array. Test
+  `module_descriptions_surface_in_graph_diagnostics`.
+- [x] Surface descriptions as tooltips on the corresponding GUI elements. **Done** — the module
+  instance description is shown via the header info icon.
 - [x] Decide on max length (suggest 500 chars soft, 2000 hard). **Done** — `MAX_MODULE_DESCRIPTION_LEN =
   2000` hard cap enforced at the bridge (`mcp_bridge.rs:49`); 500 soft is advisory only.
 - [x] Persistence format: inline in the existing JSON containers (no sidecar files). **Done** — inline on

@@ -792,6 +792,23 @@ impl SynthBridge for AppSynthBridge {
             });
         }
 
+        // Surface per-instance descriptions so an AI agent sees the patch's
+        // intent alongside the structural diagnostics above. Appended after the
+        // health check so the "looks healthy" summary still reflects problems
+        // only, not the presence of annotations.
+        for module in &modules {
+            if !module.description.is_empty() {
+                diagnostics.push(GraphDiagnostic {
+                    severity: DiagnosticSeverity::Info,
+                    module_id: Some(module.id.to_string()),
+                    message: format!(
+                        "Module {} ({}) intent: {}",
+                        module.id, module.name, module.description
+                    ),
+                });
+            }
+        }
+
         Ok(diagnostics)
     }
 
@@ -4012,7 +4029,7 @@ impl SynthBridge for AppSynthBridge {
         tail_ms: u32,
         expected_note: Option<u8>,
     ) -> Result<synth_mcp::types::AnalyzeNoteResult, McpBridgeError> {
-        analyze_rendered_note(
+        let mut result = analyze_rendered_note(
             &self.session,
             &self.sample_library,
             instrument_id,
@@ -4021,7 +4038,18 @@ impl SynthBridge for AppSynthBridge {
             duration_ms,
             tail_ms,
             expected_note,
-        )
+        )?;
+        // Attach the patch's intent so the agent can correlate the measured
+        // signal with why each module is there. Done here (not in the shared
+        // buffer-analysis path) so the velocity/range sweeps don't repeat the
+        // lookup per step.
+        let modules = self
+            .session
+            .state()
+            .shared_graph
+            .get_modules_for_instrument(InstrumentId::new(instrument_id));
+        result.module_descriptions = collect_module_descriptions(&modules);
+        Ok(result)
     }
 
     fn analyze_harmony(
@@ -6020,6 +6048,25 @@ fn collect_mod_matrix_destinations(
     active_mod_matrix_slots(modules)
         .filter_map(|s| s.destination.and_then(|dst| resolve_destination(dst, idx)))
         .map(|(id, _)| id)
+        .collect()
+}
+
+/// Collect the per-instance descriptions of an instrument's modules. Only
+/// modules carrying a non-empty description are returned, in snapshot order.
+/// Shared by `get_graph_diagnostics` and `analyze_note` so an AI agent sees the
+/// patch's *intent* alongside its structural / signal analysis.
+fn collect_module_descriptions(
+    modules: &[synth_engine::ModuleStateSnapshot],
+) -> Vec<synth_mcp::types::ModuleDescriptionEntry> {
+    modules
+        .iter()
+        .filter(|m| !m.description.is_empty())
+        .map(|m| synth_mcp::types::ModuleDescriptionEntry {
+            module_id: m.id.to_string(),
+            module_type: m.module_type.name().to_string(),
+            name: m.name.clone(),
+            description: m.description.clone(),
+        })
         .collect()
 }
 
@@ -11143,6 +11190,10 @@ pub fn analyze_rendered_buffer(
         sustain_window_start_ms: Some(sustain_window_start_ms),
         release_window_start_ms: Some(release_window_start_ms),
         warnings: rendered.warnings.clone(),
+        // Populated by the `analyze_note` bridge method, which has session
+        // access; the sweep tools reuse this buffer-analysis path and don't
+        // pay the per-step description lookup.
+        module_descriptions: Vec::new(),
     }
 }
 

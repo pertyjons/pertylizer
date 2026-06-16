@@ -279,6 +279,7 @@ mod tests {
             sustain_window_start_ms: None,
             release_window_start_ms: None,
             warnings: vec![],
+            module_descriptions: vec![],
         }
     }
 

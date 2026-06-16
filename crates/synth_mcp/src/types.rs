@@ -79,6 +79,23 @@ pub struct ModuleInfo {
     pub mod_matrix_routings: Option<Vec<MatrixRoutingInfo>>,
 }
 
+/// A module instance plus its free-text per-instance description (intent).
+/// Surfaced alongside structural output (`get_graph_diagnostics`,
+/// `analyze_note`) so an AI agent sees *why* a module is there, not just *what*
+/// it is. Only modules with a non-empty description are listed.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModuleDescriptionEntry {
+    /// Module ID string (e.g. "lfo-1").
+    pub module_id: String,
+    /// Module type name (e.g. "Lfo").
+    pub module_type: String,
+    /// Human-readable instance name.
+    pub name: String,
+    /// Free-text per-instance description (e.g. "wobble LFO for the filter
+    /// cutoff"). Distinct from the module *type* doc.
+    pub description: String,
+}
+
 /// One row of a Mod Matrix's routing table.
 #[derive(Debug, Clone, Serialize)]
 pub struct MatrixRoutingInfo {
@@ -1241,6 +1258,13 @@ pub struct AnalyzeNoteResult {
     /// An empty vector is omitted from the JSON.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub warnings: Vec<String>,
+    /// Per-instance descriptions of the instrument's modules — the *intent*
+    /// behind the patch, surfaced alongside the rendered-signal analysis so an
+    /// agent can correlate what it measured with why each module is there.
+    /// Only modules with a non-empty description appear; an empty vector is
+    /// omitted from the JSON.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub module_descriptions: Vec<ModuleDescriptionEntry>,
 }
 
 // === AWE (Acoustic World Engine) types ===

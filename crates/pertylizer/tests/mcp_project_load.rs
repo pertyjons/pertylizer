@@ -520,6 +520,53 @@ fn set_module_description_round_trips_via_bridge() {
 }
 
 #[test]
+fn module_descriptions_surface_in_graph_diagnostics() {
+    use synth_mcp::types::DiagnosticSeverity;
+
+    let mut rig = build_headless_rig();
+
+    let inst = rig
+        .bridge
+        .create_instrument("Lead")
+        .expect("create instrument");
+    let add_msg = rig.bridge.add_module(inst.id, "lfo").expect("add lfo");
+    let module_id = add_msg
+        .rsplit(' ')
+        .next()
+        .expect("module id token")
+        .to_string();
+    rig.pump(8);
+
+    // No annotation yet — no "intent:" diagnostic.
+    let before = rig
+        .bridge
+        .get_graph_diagnostics(inst.id)
+        .expect("diagnostics");
+    assert!(
+        !before.iter().any(|d| d.message.contains("intent:")),
+        "no intent diagnostic before a description is set"
+    );
+
+    rig.bridge
+        .set_module_description(inst.id, &module_id, "wobble LFO for the cutoff")
+        .expect("set module description");
+    rig.pump(4);
+
+    // The description now appears as an Info diagnostic tagged with the module.
+    let after = rig
+        .bridge
+        .get_graph_diagnostics(inst.id)
+        .expect("diagnostics");
+    let intent = after
+        .iter()
+        .find(|d| d.message.contains("intent:"))
+        .expect("intent diagnostic present after a description is set");
+    assert!(matches!(intent.severity, DiagnosticSeverity::Info));
+    assert_eq!(intent.module_id.as_deref(), Some(module_id.as_str()));
+    assert!(intent.message.contains("wobble LFO for the cutoff"));
+}
+
+#[test]
 fn save_project_works_without_gui() {
     let mut rig = build_headless_rig();
 

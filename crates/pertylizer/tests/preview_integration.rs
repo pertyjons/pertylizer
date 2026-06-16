@@ -446,6 +446,7 @@ fn analyze_note_result_schema_is_extensible() {
         sustain_window_start_ms: Some(500.0),
         release_window_start_ms: Some(1025.0),
         warnings: vec!["test warning".to_string()],
+        module_descriptions: vec![],
     };
 
     let json = serde_json::to_string(&r).expect("serialize");
@@ -460,6 +461,11 @@ fn analyze_note_result_schema_is_extensible() {
     assert!(
         !json.contains("\"trimmed_tail_windows\""),
         "None fields should not serialize"
+    );
+    // Empty module_descriptions vec is omitted from the JSON.
+    assert!(
+        !json.contains("\"module_descriptions\""),
+        "empty module_descriptions should not serialize"
     );
 }
 
