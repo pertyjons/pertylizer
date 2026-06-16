@@ -1651,6 +1651,20 @@ pub struct SetPatchDescriptionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetModuleDescriptionParam {
+    #[schemars(description = "Instrument ID that owns the module")]
+    pub instrument_id: u64,
+    #[schemars(description = "Module ID, e.g. \"lfo-1\" or \"flt-2\"")]
+    pub module_id: String,
+    #[schemars(
+        description = "Free-text per-instance description (what this specific module instance is \
+        for — e.g. \"wobble LFO for the filter cutoff\"). Distinct from get_module_type_info, \
+        which documents the module *type*. Pass \"\" to clear. Max 2000 characters."
+    )]
+    pub description: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetSongDescriptionParam {
     #[schemars(
         description = "Free-text description of the song's intent / mood / production notes. \
@@ -3513,6 +3527,7 @@ impl SynthMcpServer {
             "rename_instrument" => rename_instrument(RenameInstrumentParam),
             "set_instrument_description" => set_instrument_description(SetInstrumentDescriptionParam),
             "set_patch_description" => set_patch_description(SetPatchDescriptionParam),
+            "set_module_description" => set_module_description(SetModuleDescriptionParam),
             "set_awe_description" => set_awe_description(SetAweDescriptionParam),
             "set_sidechain_source" => set_sidechain_source(SetSidechainSourceParam),
             "set_instrument_mixer" => set_instrument_mixer(SetInstrumentMixerParam),
@@ -5031,6 +5046,41 @@ impl SynthMcpServer {
                 } else {
                     format!(
                         "OK: set instrument {} patch description ({} chars)",
+                        params.0.instrument_id,
+                        params.0.description.chars().count()
+                    )
+                }
+            }
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set or clear the free-text description on a specific module instance \
+        (what this particular module is for — e.g. \"wobble LFO for the filter cutoff\"). \
+        Distinct from get_module_type_info, which documents the module *type*. The description \
+        travels with the patch when saved and is readable via get_module_info / list_modules. \
+        Pass \"\" to clear. Max 2000 characters; rejected if the module does not exist."
+    )]
+    async fn set_module_description(
+        &self,
+        params: Parameters<SetModuleDescriptionParam>,
+    ) -> String {
+        match self.bridge.set_module_description(
+            params.0.instrument_id,
+            &params.0.module_id,
+            &params.0.description,
+        ) {
+            Ok(()) => {
+                if params.0.description.is_empty() {
+                    format!(
+                        "OK: cleared description on module {} (instrument {})",
+                        params.0.module_id, params.0.instrument_id
+                    )
+                } else {
+                    format!(
+                        "OK: set description on module {} (instrument {}, {} chars)",
+                        params.0.module_id,
                         params.0.instrument_id,
                         params.0.description.chars().count()
                     )

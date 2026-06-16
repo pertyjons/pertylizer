@@ -52,6 +52,11 @@ pub struct ModuleInfo {
     pub name: String,
     /// Whether the module is bypassed.
     pub bypassed: bool,
+    /// Free-text per-instance description (intent for this specific module
+    /// instance — e.g. "wobble LFO for the filter cutoff"). Distinct from the
+    /// module *type* doc returned by `get_module_type_info`. Empty when unset.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// Current parameters.
     pub parameters: Vec<ParameterInfo>,
     /// Input port names.

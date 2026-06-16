@@ -444,6 +444,82 @@ fn description_and_color_setters_round_trip_via_bridge() {
 }
 
 #[test]
+fn set_module_description_round_trips_via_bridge() {
+    let mut rig = build_headless_rig();
+
+    let inst = rig
+        .bridge
+        .create_instrument("Lead")
+        .expect("create instrument");
+    // `add_module` returns a human message ("OK: LFO added as lfo-1"); the id
+    // is the last token.
+    let add_msg = rig
+        .bridge
+        .add_module(inst.id, "lfo")
+        .expect("add lfo module");
+    let module_id = add_msg
+        .rsplit(' ')
+        .next()
+        .expect("module id token")
+        .to_string();
+    // Drain AddInstrument / AddModule so the module shows up in the snapshot.
+    rig.pump(8);
+
+    // Set, then read back via get_module_info.
+    rig.bridge
+        .set_module_description(inst.id, &module_id, "wobble LFO for the cutoff")
+        .expect("set module description");
+    rig.pump(4);
+    let info = rig
+        .bridge
+        .get_module_info(inst.id, &module_id)
+        .expect("get_module_info");
+    assert_eq!(info.description, "wobble LFO for the cutoff");
+
+    // It also surfaces on list_modules.
+    let listed = rig.bridge.list_modules(inst.id).expect("list_modules");
+    assert_eq!(
+        listed
+            .iter()
+            .find(|m| m.id == module_id)
+            .unwrap()
+            .description,
+        "wobble LFO for the cutoff"
+    );
+
+    // Clearing with "" empties it.
+    rig.bridge
+        .set_module_description(inst.id, &module_id, "")
+        .expect("clear module description");
+    rig.pump(4);
+    let cleared = rig
+        .bridge
+        .get_module_info(inst.id, &module_id)
+        .expect("get_module_info after clear");
+    assert!(
+        cleared.description.is_empty(),
+        "description should be cleared"
+    );
+
+    // A description over the hard limit is rejected.
+    let too_long = "x".repeat(2001);
+    assert!(
+        rig.bridge
+            .set_module_description(inst.id, &module_id, &too_long)
+            .is_err(),
+        "over-length description must be rejected"
+    );
+
+    // An unknown module id is rejected (no phantom map entry).
+    assert!(
+        rig.bridge
+            .set_module_description(inst.id, "lfo-999", "ghost")
+            .is_err(),
+        "unknown module must be rejected"
+    );
+}
+
+#[test]
 fn save_project_works_without_gui() {
     let mut rig = build_headless_rig();
 

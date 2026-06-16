@@ -114,6 +114,15 @@ pub enum McpBridgeError {
     #[error("{kind} name must not be empty")]
     EmptyName { kind: &'static str },
 
+    /// A free-text description exceeded the hard length limit.
+    #[error("description too long: {len} chars (max {max})")]
+    DescriptionTooLong {
+        /// The length of the supplied description, in characters.
+        len: usize,
+        /// The hard maximum.
+        max: usize,
+    },
+
     /// Invalid AWE parameter name.
     #[error(
         "unknown AWE parameter '{0}'. Valid parameters: dry_wet, early_late_balance, modes_amount, \

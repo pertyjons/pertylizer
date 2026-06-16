@@ -554,6 +554,17 @@ pub trait SynthBridge: Send + Sync + 'static {
         description: &str,
     ) -> Result<(), McpBridgeError>;
 
+    /// Set or clear the free-text description on a specific module instance
+    /// (intent for this module — e.g. "wobble LFO for the cutoff"). Distinct
+    /// from the module *type* doc. Pass `""` to clear. Rejected if the module
+    /// does not exist or the description exceeds the hard length limit.
+    fn set_module_description(
+        &self,
+        instrument_id: u64,
+        module_id: &str,
+        description: &str,
+    ) -> Result<(), McpBridgeError>;
+
     /// Set or clear the sidechain source instrument id. Pass `None` to
     /// disable sidechain routing into this instrument's compressors.
     /// Self-routing is rejected.
@@ -2356,6 +2367,7 @@ mod insert_anchor_tests {
             module_type: type_name.to_string(),
             name: id.to_string(),
             bypassed: false,
+            description: String::new(),
             parameters: vec![],
             input_ports: vec![],
             output_ports: vec![],

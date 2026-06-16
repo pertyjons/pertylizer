@@ -42,6 +42,12 @@ use crate::session::SynthSession;
 /// than via real audio/CV cables.
 const MATRIX_VIRTUAL_PORT: &str = "matrix";
 
+/// Hard cap on a per-module-instance description (characters). Long enough for
+/// a paragraph of intent, short enough to stay readable in tooltips. The TODO
+/// suggests a 500-char soft / 2000-char hard split; only the hard limit is
+/// enforced (the soft limit is advisory).
+const MAX_MODULE_DESCRIPTION_LEN: usize = 2000;
+
 /// The committed `.pertyproj` JSON Schema, embedded at build time. Surfaced by
 /// `get_project_schema` so external tools validate or diff project files against
 /// the exact on-disk artifact — returning this (rather than a live `schema_for!`
@@ -463,6 +469,7 @@ impl SynthBridge for AppSynthBridge {
                     module_type: m.module_type.name().to_string(),
                     name: m.name.clone(),
                     bypassed: m.bypass_state == synth_core::BypassState::Bypassed,
+                    description: m.description.clone(),
                     parameters: m
                         .parameters
                         .iter()
@@ -858,6 +865,40 @@ impl SynthBridge for AppSynthBridge {
         };
         self.session
             .set_patch_description(InstrumentId::new(instrument_id), value)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
+    }
+
+    fn set_module_description(
+        &self,
+        instrument_id: u64,
+        module_id: &str,
+        description: &str,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let len = description.chars().count();
+        if len > MAX_MODULE_DESCRIPTION_LEN {
+            return Err(McpBridgeError::DescriptionTooLong {
+                len,
+                max: MAX_MODULE_DESCRIPTION_LEN,
+            });
+        }
+        let inst_id = InstrumentId::new(instrument_id);
+        let mid: ModuleId = module_id
+            .parse()
+            .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
+        // Reject unknown modules up-front so a typo can't seed a phantom entry
+        // in the engine's description map (which would resurface if a module
+        // were later created with that id).
+        if self.session.module_descriptor(inst_id, mid).is_none() {
+            return Err(McpBridgeError::ModuleNotFound(module_id.to_string()));
+        }
+        let value = if description.is_empty() {
+            None
+        } else {
+            Some(description)
+        };
+        self.session
+            .set_module_description(inst_id, mid, value)
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 
