@@ -125,6 +125,15 @@ pub struct Song {
     return_busses: Vec<ReturnBus>,
     #[serde(default)]
     next_return_bus_id: u16,
+
+    /// Monotonic counter bumped on every mutation that can change
+    /// [`Self::calculate_length`] (arrangement placements or pattern lengths).
+    /// Lets the audio engine cache the song length and recompute it only when
+    /// this value changes, instead of rescanning the whole arrangement every
+    /// tick. Not persisted — resets to 0 on load, where the engine refreshes
+    /// its cache unconditionally (see `SequencerEngine::set_song`).
+    #[serde(skip)]
+    structure_generation: u64,
 }
 
 impl Song {
@@ -147,7 +156,24 @@ impl Song {
             row_resolution: RowResolution::default(),
             return_busses: Vec::new(),
             next_return_bus_id: 0,
+            structure_generation: 0,
         }
+    }
+
+    /// Current structural generation — bumped whenever a mutation may have
+    /// changed [`Self::calculate_length`] (arrangement placements or pattern
+    /// lengths). The audio engine caches the song length and recomputes it only
+    /// when this value changes. See the field docs.
+    #[must_use]
+    pub fn structure_generation(&self) -> u64 {
+        self.structure_generation
+    }
+
+    /// Mark the length-affecting structure as changed so cached derivations
+    /// (the engine's song length) recompute on next read. Conservative: callers
+    /// bump even when a change is merely possible (e.g. a `&mut Pattern` handout).
+    fn bump_structure(&mut self) {
+        self.structure_generation = self.structure_generation.wrapping_add(1);
     }
 
     /// Set the author (builder pattern).
@@ -178,6 +204,7 @@ impl Song {
         let id = PatternId(self.next_pattern_id);
         self.next_pattern_id = self.next_pattern_id.saturating_add(1);
         self.patterns.push(Pattern::new(id, length));
+        self.bump_structure();
         id
     }
 
@@ -189,6 +216,10 @@ impl Song {
 
     /// Get a mutable pattern by ID.
     pub fn pattern_mut(&mut self, id: PatternId) -> Option<&mut Pattern> {
+        // A caller with `&mut Pattern` may change `pattern.length`, which feeds
+        // `calculate_length()`. We cannot observe whether they actually do, so
+        // conservatively mark the structure dirty on every handout.
+        self.bump_structure();
         self.patterns.iter_mut().find(|p| p.id == id)
     }
 
@@ -277,6 +308,7 @@ impl Song {
     pub fn delete_pattern(&mut self, id: PatternId) -> Option<Pattern> {
         // Also remove from arrangement
         self.arrangement.retain(|p| p.pattern_id != id);
+        self.bump_structure();
         let pos = self.patterns.iter().position(|p| p.id == id)?;
         Some(self.patterns.remove(pos))
     }
@@ -295,6 +327,7 @@ impl Song {
             self.next_pattern_id = pattern.id.0.saturating_add(1);
         }
         self.patterns.push(pattern);
+        self.bump_structure();
         true
     }
 
@@ -317,6 +350,7 @@ impl Song {
         new_pattern.processors = source.processors.clone();
 
         self.patterns.push(new_pattern);
+        self.bump_structure();
         Some(new_id)
     }
 
@@ -358,6 +392,7 @@ impl Song {
         let start = placement.start;
         let pos = self.arrangement.partition_point(|p| p.start <= start);
         self.arrangement.insert(pos, placement);
+        self.bump_structure();
         true
     }
 
@@ -403,6 +438,7 @@ impl Song {
     pub fn delete_track(&mut self, id: TrackId) -> Option<SequencerTrack> {
         // Also remove placements on this track
         self.arrangement.retain(|p| p.track_id != id);
+        self.bump_structure();
         let pos = self.tracks.iter().position(|t| t.id == id)?;
         Some(self.tracks.remove(pos))
     }
@@ -519,6 +555,7 @@ impl Song {
         // Insert sorted by start time
         let pos = self.arrangement.partition_point(|p| p.start <= start);
         self.arrangement.insert(pos, placement);
+        self.bump_structure();
         true
     }
 
@@ -536,6 +573,7 @@ impl Song {
 
         if let Some(idx) = pos {
             let _ = self.arrangement.remove(idx);
+            self.bump_structure();
             true
         } else {
             false
@@ -560,6 +598,7 @@ impl Song {
             self.arrangement[idx].start = to_start;
             // Re-sort by start time
             self.arrangement.sort_by_key(|p| p.start);
+            self.bump_structure();
             true
         } else {
             false
@@ -575,13 +614,17 @@ impl Song {
         start: Tick,
         length: Option<Duration>,
     ) -> bool {
-        for p in &mut self.arrangement {
-            if p.pattern_id == pattern_id && p.track_id == track_id && p.start == start {
-                p.length_override = length;
-                return true;
-            }
+        let pos = self
+            .arrangement
+            .iter()
+            .position(|p| p.pattern_id == pattern_id && p.track_id == track_id && p.start == start);
+        if let Some(idx) = pos {
+            self.arrangement[idx].length_override = length;
+            self.bump_structure();
+            true
+        } else {
+            false
         }
-        false
     }
 
     /// Get all placements.
@@ -800,6 +843,7 @@ impl Song {
             .map(|p| p.name.clone())
             .collect();
         self.patterns.retain(|p| used_patterns.contains(&p.id));
+        self.bump_structure();
 
         // Remove unused tracks
         let removed_tracks: Vec<String> = self
@@ -991,6 +1035,48 @@ mod tests {
         song.place_pattern(pattern_id, track_id, Tick(3840));
 
         assert_eq!(song.calculate_length().0, 7680);
+    }
+
+    #[test]
+    fn structure_generation_tracks_length_affecting_mutations() {
+        let mut song = Song::new("Test");
+
+        // Read-only access never advances the generation, so the engine's
+        // cached length stays valid across plain `calculate_length` reads.
+        let g0 = song.structure_generation();
+        let _ = song.calculate_length();
+        assert_eq!(song.structure_generation(), g0, "reads must not bump");
+
+        // Each mutation that can change `calculate_length` advances it.
+        let pattern_id = song.create_pattern(Duration(960));
+        let g_after_pattern = song.structure_generation();
+        assert!(g_after_pattern > g0, "create_pattern must bump");
+
+        let track_id = song.create_track("Track");
+
+        assert!(song.place_pattern(pattern_id, track_id, Tick(0)));
+        let g_after_place = song.structure_generation();
+        assert!(g_after_place > g_after_pattern, "place_pattern must bump");
+
+        assert!(song.set_placement_length(pattern_id, track_id, Tick(0), Some(Duration(1920)),));
+        let g_after_len = song.structure_generation();
+        assert!(
+            g_after_len > g_after_place,
+            "set_placement_length must bump"
+        );
+
+        // A `&mut Pattern` handout conservatively bumps even though we cannot
+        // see whether the caller changed `pattern.length`.
+        let _ = song.pattern_mut(pattern_id);
+        assert!(
+            song.structure_generation() > g_after_len,
+            "pattern_mut must bump conservatively"
+        );
+
+        // A failed lookup that placed nothing must not change the result the
+        // engine reads — calculate_length still reflects the override.
+        assert!(!song.move_placement(pattern_id, track_id, Tick(9999), track_id, Tick(0)));
+        assert_eq!(song.calculate_length().0, 1920);
     }
 
     #[test]

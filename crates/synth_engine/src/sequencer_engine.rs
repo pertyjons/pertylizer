@@ -233,6 +233,11 @@ pub struct SequencerEngine {
     /// Cached song length (end tick of last placement) used to auto-stop
     /// playback when looping is disabled.
     cached_song_length: Tick,
+    /// `Song::structure_generation()` value that `cached_song_length` was
+    /// computed from. The per-tick refresh only rescans the arrangement when
+    /// the song's generation moves past this, turning an O(arrangement ×
+    /// patterns) scan-per-tick into a `u64` compare-per-tick.
+    cached_structure_gen: u64,
     /// Whether we're looping.
     looping: bool,
     /// Loop start position.
@@ -291,6 +296,7 @@ impl SequencerEngine {
             active_notes: Vec::with_capacity(64),
             cached_tempo: default_tempo,
             cached_song_length: Tick::ZERO,
+            cached_structure_gen: 0,
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
@@ -309,9 +315,13 @@ impl SequencerEngine {
 
     /// Create a sequencer engine with a shared song reference.
     pub fn with_song(song: Arc<RwLock<Song>>, sample_rate: SampleRate) -> Self {
-        let (cached_tempo, cached_song_length) = {
+        let (cached_tempo, cached_song_length, cached_structure_gen) = {
             let s = song.read();
-            (s.default_tempo, s.calculate_length())
+            (
+                s.default_tempo,
+                s.calculate_length(),
+                s.structure_generation(),
+            )
         };
 
         Self {
@@ -324,6 +334,7 @@ impl SequencerEngine {
             active_notes: Vec::with_capacity(64),
             cached_tempo,
             cached_song_length,
+            cached_structure_gen,
             looping: false,
             loop_start: Tick::ZERO,
             loop_end: Tick::ZERO,
@@ -586,10 +597,31 @@ impl SequencerEngine {
         }
     }
 
-    /// Refresh the cached tempo and song length from the song.
+    /// Refresh the cached tempo (always — it tracks `current_tick`) and the
+    /// cached song length (only when the song's structural generation has
+    /// advanced). Gating the length recompute behind the generation turns an
+    /// O(arrangement × patterns) rescan-per-tick into a `u64` compare-per-tick,
+    /// while still picking up structural edits made mid-playback.
     fn update_cached_state(&mut self) {
         if let Some(song) = self.song.try_read() {
             self.cached_tempo = song.tempo_at(self.current_tick);
+            let generation = song.structure_generation();
+            if generation != self.cached_structure_gen {
+                self.cached_structure_gen = generation;
+                self.cached_song_length = song.calculate_length();
+            }
+        }
+    }
+
+    /// Unconditionally recompute the cached tempo, song length, and structural
+    /// generation from the current song. Used when swapping in a new song,
+    /// whose generation counter is unrelated to the previous one — so the
+    /// generation gate in [`Self::update_cached_state`] can't be trusted to
+    /// detect the change (the two counters may coincide).
+    fn force_refresh_cached_state(&mut self) {
+        if let Some(song) = self.song.try_read() {
+            self.cached_tempo = song.tempo_at(self.current_tick);
+            self.cached_structure_gen = song.structure_generation();
             self.cached_song_length = song.calculate_length();
         }
     }
@@ -887,7 +919,10 @@ impl SequencerEngine {
         self.current_tick = Tick::ZERO;
         self.cursor_tick = Tick::ZERO;
         self.song = song;
-        self.update_cached_state();
+        // A swapped-in song carries its own generation counter unrelated to the
+        // previous song's, so the generation gate could miss a recompute when
+        // the two counters happen to coincide. Force the cache to match.
+        self.force_refresh_cached_state();
     }
 }
 
