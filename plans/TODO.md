@@ -223,38 +223,40 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
   `gui/patch_editor.rs`, `gui/egui_backend.rs`)
 - [ ] Add `param_sample_id(name, id)` to `ModuleStateBuilder` in `pertylizer/src/patch.rs` for symmetry with
   `param_f` / `param_i` / `param_b` / `param_choice` (no current callers — for API completeness)
-- [ ] **Bundle piano-roll coordinate plumbing into a `PianoRollCoords` struct.**
-  `handle_piano_roll_interaction` (`gui/sequencer/mod.rs`) currently takes 17 parameters and
-  `draw_arrangement` takes 9. Four of those (`x_to_tick`, `y_to_pitch`, `tick_to_x`, `pitch_to_y`) plus
-  `view_pitch_min`/`view_pitch_max`/`note_row_height` are one coherent concept — a piano-roll coordinate
-  transform. Extracting a struct collapses 7 args → 1 and removes the need to thread `note_row_height`
-  through `note_at_pos` separately.
-- [ ] **Context-struct refactor to finish decomposing `draw_piano_roll` / `draw_arrangement`.**
-  The GUI cleanup branch (`cleanup/gui-dead-duplicate-code`) fully decomposed `App::ui`
-  (~1900 → ~400 lines, ~16 methods) and extracted the *low-parameter* sub-sections of the two
-  sequencer god-functions: `draw_arrangement_toolbar` (3 params) and
-  `draw_piano_roll_selection_inspector` (5 params). The remaining sections —
-  `draw_piano_roll`'s two toolbar rows + note-grid painter, and `draw_arrangement`'s track-header
-  panel + timeline painter + ~330-line context menu — each touch 6–8 of the *same* locals
-  (`data`, `song`, `view_state`, `handle`, `undo_manager`, `instruments`). Mechanical extraction
-  there trips `clippy::too_many_arguments` and would force `#[allow]` on every helper, trading one
-  long function for many parameter-heavy ones — not a clear win. The clean path is to bundle the
-  shared state into context structs, e.g.
-  `struct PianoRollCtx<'a> { data: &'a PianoRollData, song: &'a Arc<RwLock<Song>>,
-  view_state: &'a mut SequencerViewState, handle: &'a mut EngineHandle,
-  undo_manager: &'a mut UndoManager, instruments: &'a [InstrumentUiState] }` (and an analogous
-  `ArrangementCtx<'a>`), thread one `&mut ctx` into each extracted sub-function, then split the
-  bodies. This is a design-level change (borrow-splitting the `&mut` fields across sub-calls needs
-  care) and has no GUI behaviour tests to catch regressions, so it warrants its own focused
-  session rather than being rushed. Once the ctx structs exist, the toolbar rows / grid / header /
-  timeline / context-menu sections drop out as 1–2-arg methods. Relatedly subsumes the
-  `PianoRollCoords` item above (coords can live on `PianoRollCtx`).
+- [x] **Bundle piano-roll coordinate plumbing into a `PianoRollCoords` struct.**
+  **Done** (`498243d`) — `PianoRollCoords` bundles the 4 grid↔(tick,pitch) transforms +
+  `view_pitch_min`/`view_pitch_max`/`note_row_height`; `handle_piano_roll_interaction` went
+  17→11 params (and later 11→7 once `PianoRollCtx` landed, see below).
+- [~] **Context-struct refactor to finish decomposing `draw_piano_roll` / `draw_arrangement`.**
+  **Mostly shipped + merged to main 2026-06-16** (`498243d..5578d1f`):
+    1. **File split** — `gui/sequencer/mod.rs` 6963 → 1154 lines, carved into `transport.rs`,
+       `arrangement.rs`, `piano_roll.rs`, `automation.rs` (`894a518`). Children use
+       `use super::*`; shared snapshot DTOs + tick helpers stay in `mod.rs` so child modules read
+       their private fields without field-visibility surgery.
+    2. **`PianoRollCtx<'a>`** (`e0c0af4`) — bundles the 6 shared locals; extracted
+       `draw_piano_roll_toolbar` + `handle_piano_roll_shortcuts`, and
+       `handle_piano_roll_interaction` dropped 11 → 7 params. (`PianoRollCtx::new()` collapses the
+       construction sites; `5578d1f`.)
+    3. **`ArrangementCtx<'a>`** (`d7054a8`) — same bundle (minus `handle`, unused so far);
+       extracted the ~456-line `draw_arrangement_track_headers`.
+
+  Zero-rewrite recipe: each helper re-exposes the ctx fields as locals with their original names/
+  types, so moved bodies stay byte-for-byte unchanged. A high-effort `/code-review` (8 angles)
+  found zero correctness bugs.
+
+  **RESIDUAL (deliberately deferred):** the two geometry-coupled painter cores — `draw_piano_roll`'s
+  note-grid `ScrollArea` closure and `draw_arrangement`'s timeline painter + its ~330-line
+  `response.context_menu` — stay inline. They depend on painter-local coordinate transforms
+  (`tick_to_x`, `ruler_rect`, `snap_tick`…), not just the 6 ctx fields, so clean extraction needs
+  those plumbed too; no GUI tests, so left for a focused follow-up. When the arrangement timeline is
+  extracted, add `handle` back to `ArrangementCtx`.
 - [ ] **Deduplicate "Set Length" write+undo in the arrangement context menu.**
-  `gui/sequencer/mod.rs` "Set Length…" submenu has the same ~22-line "read old length → write new → push
+  `gui/sequencer/arrangement.rs` "Set Length…" submenu has the same ~22-line "read old length → write new → push
   `SetPatternLength` undo" block in two places: the free-input `DragValue` + Apply branch and the preset
   buttons loop. Extract `fn apply_pattern_length(song, undo_manager, pat_id, new_len)`.
 - [ ] **Unify `SeqInstrumentId` ↔ `InstrumentId` raw conversions.**
-  ~9 sites in `gui/sequencer/mod.rs` do `inst.id.0 == seq_id.0 as u64` and a few do the reverse
+  ~9 sites across `gui/sequencer/{mod,arrangement,piano_roll}.rs` (split out of the old `mod.rs`)
+  do `inst.id.0 == seq_id.0 as u64` and a few do the reverse
   `SeqInstrumentId::new(inst.id.0 as u16)` (lossy `u64 → u16` cast is silent). Pick one of: add
   `impl From<SeqInstrumentId> for InstrumentId` + `TryFrom<InstrumentId> for SeqInstrumentId`, or add a
   single `find_instrument_by_seq_id(&[InstrumentUiState], SeqInstrumentId) -> Option<&InstrumentUiState>`
@@ -331,7 +333,7 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
        placement — see `pattern.automation` collection at line ~360.
 - [ ] **Mini-note visualization should mirror the loop.** `NoteMiniature.start_frac` is currently
   fraction-of-pattern-length. For loop-within semantics the rendering in
-  `gui/sequencer/mod.rs` (mini-note loop, near the `inst_color_cache` use) should repeat the miniature
+  `gui/sequencer/arrangement.rs` (mini-note loop, near the `inst_color_cache` use) should repeat the miniature
   across the placement's `effective_length / pattern.length` iterations, so the user sees what they hear.
 - [ ] **Add a toggle on `PatternPlacement`** (`loop_mode: PlacementLoopMode { Clip, Repeat }`, default
   `Repeat` to match DAW expectations). Surface in the placement context menu and in the right-edge
