@@ -1630,6 +1630,25 @@ pub struct SetInstrumentDescriptionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct InstrumentColorInput {
+    #[schemars(description = "Instrument ID to recolor")]
+    pub instrument_id: u64,
+    #[schemars(
+        description = "Accent color as \"#RRGGBB\" or \"#RRGGBBAA\". Pass \"\" to clear back \
+        to the default/auto tint. Lets you paint instruments so the mixer / arrangement is \
+        visually scannable (e.g. red kick, blue pad). Surfaces in list_instruments / \
+        get_instrument_info."
+    )]
+    pub color: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInstrumentColorParam {
+    #[schemars(description = "Array of per-instrument color updates")]
+    pub items: Vec<InstrumentColorInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetAweDescriptionParam {
     #[schemars(
         description = "Free-text description of the AWE state's acoustic character. \
@@ -3526,6 +3545,7 @@ impl SynthMcpServer {
             "delete_instrument" => delete_instrument(DeleteInstrumentsParam),
             "rename_instrument" => rename_instrument(RenameInstrumentParam),
             "set_instrument_description" => set_instrument_description(SetInstrumentDescriptionParam),
+            "set_instrument_color" => set_instrument_color(SetInstrumentColorParam),
             "set_patch_description" => set_patch_description(SetPatchDescriptionParam),
             "set_module_description" => set_module_description(SetModuleDescriptionParam),
             "set_awe_description" => set_awe_description(SetAweDescriptionParam),
@@ -5023,6 +5043,28 @@ impl SynthMcpServer {
             }
         }
         batch_msg(ok_count, "instrument descriptions set", &[], &errors)
+    }
+
+    #[tool(
+        description = "Set or clear the accent color of one or more instruments from a \
+        \"#RRGGBB\" / \"#RRGGBBAA\" hex string (pass \"\" to clear back to the default/auto \
+        tint). Never affects audio; paints instruments so the mixer / arrangement is visually \
+        scannable (e.g. red kick, blue pad, green bass) and is read back via list_instruments / \
+        get_instrument_info. The color travels with the project on save."
+    )]
+    async fn set_instrument_color(&self, params: Parameters<SetInstrumentColorParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self
+                .bridge
+                .set_instrument_color(it.instrument_id, &it.color)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+            }
+        }
+        batch_msg(ok_count, "instrument colors set", &[], &errors)
     }
 
     #[tool(

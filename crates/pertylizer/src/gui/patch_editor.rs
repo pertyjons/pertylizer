@@ -108,16 +108,7 @@ fn collapsed_group_size(group: &ModuleGroup) -> Vec2 {
 }
 
 pub(crate) fn parse_hex_color(hex: &str) -> Option<Color32> {
-    let s = hex.trim_start_matches('#');
-    let bytes = match s.len() {
-        6 => u32::from_str_radix(s, 16).ok().map(|v| (v << 8) | 0xFF),
-        8 => u32::from_str_radix(s, 16).ok(),
-        _ => None,
-    }?;
-    let r = ((bytes >> 24) & 0xFF) as u8;
-    let g = ((bytes >> 16) & 0xFF) as u8;
-    let b = ((bytes >> 8) & 0xFF) as u8;
-    let a = (bytes & 0xFF) as u8;
+    let (r, g, b, a) = crate::patch::parse_hex_rgba(hex)?;
     Some(Color32::from_rgba_unmultiplied(r, g, b, a))
 }
 

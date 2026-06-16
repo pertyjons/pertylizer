@@ -365,7 +365,7 @@ fn snapshot_to_instrument_state(snap: &InstrumentSnapshot, mut patch: Patch) -> 
         oversampling: snap.oversampling.factor() as u8,
         category: snap.category.as_u8(),
         description: snap.description.clone(),
-        color: None,
+        color: snap.color.clone(),
         allocation_mode: snap.allocation_mode,
         stealing_strategy: snap.stealing_strategy,
         max_voices: snap.max_voices,
@@ -603,6 +603,14 @@ fn apply_instrument_metadata(
         log_err(
             "set_instrument_description",
             session.set_instrument_description(inst_id, &inst_state.description),
+        );
+    }
+    if let Some(color) = inst_state.color.as_deref()
+        && !color.is_empty()
+    {
+        log_err(
+            "set_instrument_color",
+            session.set_instrument_color(inst_id, Some(color)),
         );
     }
     if let Some(patch_desc) = inst_state.patch.description.as_deref()

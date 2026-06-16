@@ -158,6 +158,53 @@ pub struct GroupId(pub u32);
 /// Hex color string for UI (e.g., "#RRGGBB" or "#RRGGBBAA").
 pub type HexColor = String;
 
+/// Parse a hex color string into `(r, g, b, a)` bytes.
+///
+/// Accepts `"#RRGGBB"` (alpha defaults to `FF`) or `"#RRGGBBAA"`, with or
+/// without the leading `#`, and rejects any other length or non-hex-digit
+/// content (including a leading `+`/`-` that `from_str_radix` would otherwise
+/// allow). Lives here (not in the `gui-egui`-gated `gui` module) so both the
+/// MCP bridge and the GUI parser share one definition of "valid" and cannot
+/// drift apart.
+#[must_use]
+pub fn parse_hex_rgba(hex: &str) -> Option<(u8, u8, u8, u8)> {
+    let s = hex.trim().trim_start_matches('#');
+    if !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    match s.len() {
+        6 => {
+            let v = u32::from_str_radix(s, 16).ok()?;
+            Some((
+                ((v >> 16) & 0xFF) as u8,
+                ((v >> 8) & 0xFF) as u8,
+                (v & 0xFF) as u8,
+                0xFF,
+            ))
+        }
+        8 => {
+            let v = u32::from_str_radix(s, 16).ok()?;
+            Some((
+                ((v >> 24) & 0xFF) as u8,
+                ((v >> 16) & 0xFF) as u8,
+                ((v >> 8) & 0xFF) as u8,
+                (v & 0xFF) as u8,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Validate and normalize a hex color to canonical uppercase `"#RRGGBBAA"`.
+///
+/// Thin wrapper over [`parse_hex_rgba`]; produces the same canonical form the
+/// GUI writes via `color32_to_hex`.
+#[must_use]
+pub fn normalize_hex_color(hex: &str) -> Option<HexColor> {
+    let (r, g, b, a) = parse_hex_rgba(hex)?;
+    Some(format!("#{r:02X}{g:02X}{b:02X}{a:02X}"))
+}
+
 /// A port exposed on a group boundary.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ExposedPortState {

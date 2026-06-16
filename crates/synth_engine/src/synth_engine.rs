@@ -750,6 +750,19 @@ impl SynthEngine {
                 }
                 self.update_shared_instruments();
             }
+            EngineCommand::SetInstrumentColor {
+                instrument_id,
+                color,
+            } => {
+                if let Some(inst) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|i| i.id() == instrument_id)
+                {
+                    inst.set_color(color);
+                }
+                self.update_shared_instruments();
+            }
             EngineCommand::SetModuleDescription {
                 instrument_id,
                 module_id,
@@ -2603,6 +2616,7 @@ impl SynthEngine {
                     name: inst.name().to_string(),
                     description: inst.description().to_string(),
                     patch_description: inst.patch_description().map(str::to_owned),
+                    color: inst.color().map(str::to_owned),
                     sidechain_source_id: inst.sidechain_source_id(),
                     category: inst.category(),
                     midi_channel: synth_core::MidiChannel::new(

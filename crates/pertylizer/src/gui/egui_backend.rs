@@ -3398,6 +3398,7 @@ impl SynthApp {
         let mut send_vel_filter = false;
         let mut send_description = false;
         let mut send_patch_description = false;
+        let mut send_color = false;
         let mut send_sidechain: Option<Option<InstrumentId>> = None;
         // Other-instrument list captured before the mutable borrow.
         let other_instruments: Vec<(InstrumentId, String)> = self
@@ -3505,10 +3506,12 @@ impl SynthApp {
                     {
                         inst.color = Some(crate::gui::patch_editor::color32_to_hex(color));
                         other_changed = true;
+                        send_color = true;
                     }
                     if inst.color.is_some() && ui.button("Clear").clicked() {
                         inst.color = None;
                         other_changed = true;
+                        send_color = true;
                     }
                 });
 
@@ -3878,6 +3881,15 @@ impl SynthApp {
                 eprintln!("Failed to set patch description {target_id:?}: {e}");
             }
         }
+        if send_color {
+            let color = self.instruments[idx].color.clone();
+            if let Err(e) = self
+                .session
+                .set_instrument_color(target_id, color.as_deref())
+            {
+                eprintln!("Failed to set instrument color {target_id:?}: {e}");
+            }
+        }
         if let Some(source) = send_sidechain
             && let Err(e) = self.session.set_sidechain_source(target_id, source)
         {
@@ -3896,6 +3908,7 @@ impl SynthApp {
             || send_vel_filter
             || send_description
             || send_patch_description
+            || send_color
             || send_sidechain.is_some()
         {
             self.mark_dirty();
@@ -5247,6 +5260,7 @@ impl SynthApp {
                 .unwrap_or(ui_inst.channel);
                 ui_inst.description = snap.description.clone();
                 ui_inst.patch_description = snap.patch_description.clone().unwrap_or_default();
+                ui_inst.color = snap.color.clone();
                 ui_inst.category = snap.category;
                 ui_inst.sidechain_source_id = snap.sidechain_source_id;
             }

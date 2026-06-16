@@ -337,6 +337,7 @@ impl AppSynthBridge {
             name: snap.name.clone(),
             description: snap.description.clone(),
             patch_description: snap.patch_description.clone(),
+            color: snap.color.clone().unwrap_or_default(),
             sidechain_source_id: snap.sidechain_source_id.map(|id| id.as_u64()),
             category: snap.category.name().to_owned(),
             midi_channel: snap.midi_channel.as_u8(),
@@ -807,6 +808,7 @@ impl SynthBridge for AppSynthBridge {
             name: name.to_string(),
             description: String::new(),
             patch_description: None,
+            color: String::new(),
             sidechain_source_id: None,
             midi_channel: 1,
             volume: 1.0,
@@ -849,6 +851,25 @@ impl SynthBridge for AppSynthBridge {
         self.validate_instrument(instrument_id)?;
         self.session
             .set_instrument_description(InstrumentId::new(instrument_id), description)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
+    }
+
+    fn set_instrument_color(&self, instrument_id: u64, color: &str) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        // Empty clears back to "auto"; otherwise validate + normalize to
+        // canonical "#RRGGBBAA" so MCP-set and GUI-set colors round-trip
+        // identically.
+        let normalized = if color.is_empty() {
+            None
+        } else {
+            Some(crate::patch::normalize_hex_color(color).ok_or_else(|| {
+                McpBridgeError::Other(format!(
+                    "invalid color {color:?}; expected \"#RRGGBB\" or \"#RRGGBBAA\""
+                ))
+            })?)
+        };
+        self.session
+            .set_instrument_color(InstrumentId::new(instrument_id), normalized.as_deref())
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 

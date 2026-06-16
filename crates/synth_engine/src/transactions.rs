@@ -565,6 +565,13 @@ impl EngineCommand {
                 instrument_id: *instrument_id,
                 description: description.clone(),
             },
+            Self::SetInstrumentColor {
+                instrument_id,
+                color,
+            } => Self::SetInstrumentColor {
+                instrument_id: *instrument_id,
+                color: color.clone(),
+            },
             Self::SetPatchDescription {
                 instrument_id,
                 description,

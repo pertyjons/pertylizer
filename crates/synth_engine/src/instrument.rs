@@ -402,6 +402,11 @@ pub struct Instrument {
     /// that travels with the patch when saved. `None` when no
     /// description was set or loaded.
     patch_description: Option<String>,
+    /// Optional accent color as a hex string (e.g. "#FF8800FF"). Never affects
+    /// audio; mirrored in `InstrumentSnapshot` so MCP can read+write the color
+    /// and the save path can persist it into `InstrumentState.color`. `None`
+    /// when no color was set or loaded ("auto" / default tint).
+    color: Option<String>,
     /// Free-text per-module-instance descriptions, keyed by `ModuleId`. Never
     /// affects audio; published into each `ModuleStateSnapshot.description` so
     /// MCP can read+write per-module intent and the save path can persist it.
@@ -479,6 +484,7 @@ impl Instrument {
             name: name.into(),
             description: String::new(),
             patch_description: None,
+            color: None,
             module_descriptions: HashMap::new(),
             sidechain_source_id: None,
             category: InstrumentCategory::default(),
@@ -518,6 +524,7 @@ impl Instrument {
             name: name.into(),
             description: String::new(),
             patch_description: None,
+            color: None,
             module_descriptions: HashMap::new(),
             sidechain_source_id: None,
             category: InstrumentCategory::default(),
@@ -587,6 +594,18 @@ impl Instrument {
     #[inline]
     pub fn set_patch_description(&mut self, description: Option<String>) {
         self.patch_description = description;
+    }
+
+    /// Get the accent color (hex string), if any.
+    #[inline]
+    pub fn color(&self) -> Option<&str> {
+        self.color.as_deref()
+    }
+
+    /// Set or clear the accent color. `None` clears back to "auto" / default.
+    #[inline]
+    pub fn set_color(&mut self, color: Option<String>) {
+        self.color = color;
     }
 
     /// Get the free-text description for a specific module instance, if set.
