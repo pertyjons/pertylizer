@@ -265,6 +265,22 @@ sub-columns first (per-field, behind a toggle), NP lanes after / as appetite all
 
 ---
 
+## T4 — UX & Visual Polish (Proposed Improvements)
+
+- [ ] **Vertical Zoom Y Controls in Toolbar** — Add `+`, `1x`, `-` small buttons right-aligned on the second toolbar row of the tracker to modify `view_state.pr_zoom_y` directly.
+- [ ] **Dynamic Font Scaling** — Scale cell text `font_size` proportionally to `view_state.pr_zoom_y` (e.g., `(11.0 * pr_zoom_y).clamp(9.0, 20.0)`) to prevent text clipping or disappearing on zoom.
+- [ ] **Context Menus for Cells and Column Headers** — Add egui `.context_menu(|ui| { ... })` on responses:
+  - Voice cells: Delete, toggle legato/glide.
+  - Expression cells: Set/clear values.
+  - Automation cells: Set/clear values.
+  - Column headers: Delete column, clear column data.
+- [ ] **Row Hover Highlight** — Draw a very subtle background tint behind the row currently under the mouse pointer to ease horizontal coordinate scanning across many columns.
+- [ ] **Takt/Bar Separator Lines** — Draw a solid horizontal divider line under the row (e.g. using `colors.row_dim`) whenever a row starts a new bar (e.g., `row_tick.is_multiple_of(ticks_per_beat * 4)`).
+- [ ] **Focus State Cursor Indicator** — Check if the tracker has keyboard focus using `ui.memory(|m| m.has_focus(table_id))` (and requesting focus on click/navigation). Draw the cursor outline as dashed or a dimmer color when unfocused.
+- [ ] **Info/Help Icon Popup** — Add a `❓` small button (using `ri::INFORMATION_LINE` or similar) in the toolbar displaying a clean cheat-sheet popup of keyboard navigation, note entry, expression editing, and automation.
+
+---
+
 ## Cross-cutting
 
 - **No second source of truth.** The tracker reads and writes the *same* `Pattern`

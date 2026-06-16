@@ -206,18 +206,18 @@ partial states — a processor whose config is live but unpersisted is not shipp
 
 The shared machinery every generator plugs into. Build it once.
 
-- [ ] Define a `NoteProcessor` abstraction that takes *(source notes in a window,
+- [x] Define a `NoteProcessor` abstraction that takes *(source notes in a window,
   transport/tempo, a bounded output sink)* and emits `NoteOn`/`NoteOff` (and, where
   relevant, the Phase C expression block) into the sequencer event stream. Generated
   notes are **first-class** — they carry velocity, gate %, legato/glide, and
   expression so they reuse Phase B/C, not a parallel path.
-- [ ] Implement the expansion point chosen in NP0 (audio-thread bounded buffer, or
+- [x] Implement the expansion point chosen in NP0 (audio-thread bounded buffer, or
   snapshot step). Pre-allocate the output buffer to a hard cap (e.g. max
   notes-per-tick) and **`log`/drop with a documented policy** if a pathological
   config (e.g. a 1 ms roll) overflows it — never allocate to grow.
-- [ ] "Freeze to notes" command: run a processor once over its region and replace it
+- [x] "Freeze to notes" command: run a processor once over its region and replace it
   with the concrete notes (the Model-A escape hatch). Undoable.
-- [ ] Lock the chaining order (X-cut) in the engine so a track with multiple
+- [x] Lock the chaining order (X-cut) in the engine so a track with multiple
   processors is deterministic.
 
 ---
@@ -228,19 +228,19 @@ The single highest-value item; ship the plan here if appetite is limited. Region
 track-scoped (Decision 2). Trill/mordent/turn fall out as **presets of this same
 generator** — do not build them separately.
 
-- [ ] Arp over the currently-held notes in its region: **mode** (up / down / up-down /
+- [x] Arp over the currently-held notes in its region: **mode** (up / down / up-down /
   down-up / as-played / random / chord), **rate** (sync division: 1/4…1/32, dotted,
   triplet), **octave range** (1–4), **gate %** (reuses primitive 3), **swing**,
   **note order / step pattern**.
-- [ ] **Latch** option (hold the last chord) and **velocity mode** (as-played /
+- [x] **Latch** option (hold the last chord) and **velocity mode** (as-played /
   ramp / pattern).
-- [ ] Tempo-sync via the transport already feeding `SequencerEngine`; respect host
+- [x] Tempo-sync via the transport already feeding `SequencerEngine`; respect host
   swing.
-- [ ] **Trill / mordent / turn = arp presets.** Trill = a 2-note up-down arp at a
+- [x] **Trill / mordent / turn = arp presets.** Trill = a 2-note up-down arp at a
   fast rate over `{note, note+interval}`; mordent = a single fast alternation;
   turn = a 4-step figure. Expose these as one-click presets on the per-note ornament
   menu (NP6) that instantiate a constrained arp — *not* a second code path.
-- [ ] Export payoff (ties into the `sid-analyzer` origin of the parent roadmap):
+- [x] Export payoff (ties into the `sid-analyzer` origin of the parent roadmap):
   an arpeggio that today replays as machine-gun re-triggered notes can instead be
   authored as *one chord + an arp processor*.
 
@@ -251,22 +251,22 @@ generator** — do not build them separately.
 Per-note scope (Decision 2). All are **one generator**: emit N copies of the note
 offset in time, with a velocity/spacing curve.
 
-- [ ] A timed-repeat ornament on `Note`: **count** (flam = 1 grace + main; drag = 2;
+- [x] A timed-repeat ornament on `Note`: **count** (flam = 1 grace + main; drag = 2;
   ruff = 3; roll = N), **spacing** (absolute ms or synced), **spacing curve**
   (accelerating/decelerating/even), **velocity curve** (crescendo/decrescendo),
   **lead-in vs centred** (grace notes before the beat vs on it).
-- [ ] **Grace note / acciaccatura** = a count-1 timed-repeat with a pitch offset on
+- [x] **Grace note / acciaccatura** = a count-1 timed-repeat with a pitch offset on
   the grace and a very short gate — same generator, pitch-offset param.
-- [ ] RT-safety: a roll's count must be bounded by the NP1 cap.
+- [x] RT-safety: a roll's count must be bounded by the NP1 cap.
 
 ---
 
 ## NP4 — Chord + strum
 
-- [ ] **Chord generator** (region-scoped): expand a single source note into a chord
+- [x] **Chord generator** (region-scoped): expand a single source note into a chord
   by interval set / named quality (maj/min/7/sus…), optionally scale-aware (composes
   with NP5 scale-quantize). Feeds the arp naturally (chord → arp is the classic chain).
-- [ ] **Strum** (per-note/cluster scope): offset the onsets of a chord's notes by a
+- [x] **Strum** (per-note/cluster scope): offset the onsets of a chord's notes by a
   small per-note delay (up/down/in/out, time spread, optional velocity spread). Strum
   is just chord-expansion + a time offset per generated note — reuse NP1's emit path.
 
@@ -277,11 +277,11 @@ offset in time, with a velocity/spacing curve.
 These transform notes rather than multiplying them, but they are still generators
 (non-destructive, playback-time) so they live in the same rack.
 
-- [ ] **Scale-quantize**: snap generated/source pitches to a scale (root + scale
+- [x] **Scale-quantize**: snap generated/source pitches to a scale (root + scale
   table). Especially valuable *upstream* of the arp and chord generators so randomized
   or interval-built notes stay in key. Reuse any tuning table work (`plans/TODO.md
   §3.2` Scala support) if it lands.
-- [ ] **Humanize**: bounded random offsets on timing, velocity, and (optionally)
+- [x] **Humanize**: bounded random offsets on timing, velocity, and (optionally)
   micro-pitch, with a seed so a render is reproducible (mirror the offline-render
   determinism constraint used elsewhere — no `Math.random()` on the audio thread; use
   a seeded PRNG seeded per region/placement).
@@ -309,12 +309,12 @@ These transform notes rather than multiplying them, but they are still generator
 Mirror the existing effect-chain MCP shape (`add_*_effect` / `set_*_effect_parameter`
 / `reorder_*_effect`) so AI composition can drive generators:
 
-- [ ] `add_note_processor(pattern_id, kind, params)` / `remove_note_processor` /
+- [x] `add_note_processor(pattern_id, kind, params)` / `remove_note_processor` /
   `set_note_processor_parameter` / `reorder_note_processor` (rack lives on `Pattern`,
   addressed by `pattern_id` + index).
-- [ ] `set_note_ornament(pattern_id, note_id, ornament)` / clear with `""`/`null`.
-- [ ] `freeze_note_processor(...)` → bakes to notes (the Model-A escape hatch over MCP).
-- [ ] Surface configured processors/ornaments in the relevant `list_*` / `get_*_info`
+- [x] `set_note_ornament(pattern_id, note_id, ornament)` / clear with `""`/`null`.
+- [x] `freeze_note_processor(...)` → bakes to notes (the Model-A escape hatch over MCP).
+- [x] Surface configured processors/ornaments in the relevant `list_*` / `get_*_info`
   readers so AI can read existing intent (parallels the description/color MCP work).
 
 ---
@@ -331,9 +331,9 @@ the final result.) Document on the `NoteProcessor` engine; lock with a test.
 Same discipline as `Patch.description` / color: processors and ornaments must survive
 project save/load **and** standalone-pattern operations, or AI/user-authored
 articulation silently vanishes.
-- [ ] Project save/load round-trip test: add an arp + a per-note trill → `save_project`
+- [x] Project save/load round-trip test: add an arp + a per-note trill → `save_project`
   → `new_project` → `load_project` → both are present and play identically.
-- [ ] No partial states: do not ship a processor whose config is set live but not
+- [x] No partial states: do not ship a processor whose config is set live but not
   persisted; document as known-broken until both halves land.
 
 ### RT-safety (the hard constraint)
