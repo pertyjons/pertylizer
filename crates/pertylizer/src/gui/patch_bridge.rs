@@ -628,6 +628,21 @@ pub fn create_patch_from_editor(
         })
         .unwrap_or_default();
 
+    // Per-instance descriptions live only in the engine snapshot (not the GUI
+    // module cache), so pull them here too — otherwise a standalone "Save
+    // Patch…" would drop descriptions set via MCP.
+    let engine_descriptions: HashMap<String, String> = engine_state
+        .map(|(state, inst_id)| {
+            state
+                .shared_graph
+                .get_modules_for_instrument(inst_id)
+                .into_iter()
+                .filter(|m| !m.description.is_empty())
+                .map(|m| (m.id.to_string(), m.description.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
     let effect_chain_order: Vec<String> = engine_state
         .and_then(|(state, inst_id)| {
             state
@@ -680,6 +695,10 @@ pub fn create_patch_from_editor(
                 id: module_id.to_string(),
                 module_type: module_id.module_type,
                 position: Position::new(position.x, position.y),
+                description: engine_descriptions
+                    .get(&module_id.to_string())
+                    .cloned()
+                    .unwrap_or_default(),
                 parameters: param_map,
                 scripts: std::collections::BTreeMap::new(),
             });

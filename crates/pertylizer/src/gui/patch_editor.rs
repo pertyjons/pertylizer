@@ -1101,6 +1101,7 @@ impl PatchEditor {
                     id: mid.to_string(),
                     module_type: mid.module_type,
                     position: Position::new(pos.x - min.x, pos.y - min.y),
+                    description: String::new(),
                     parameters: param_map,
                     scripts: std::collections::BTreeMap::new(),
                 });
@@ -4689,6 +4690,7 @@ impl PatchEditor {
                     id: id.to_string(),
                     module_type: id.module_type,
                     position: Position::new(position.x, position.y),
+                    description: String::new(),
                     parameters,
                     scripts: std::collections::BTreeMap::new(),
                 });

@@ -231,6 +231,11 @@ pub struct ModuleStateSnapshot {
     pub module_type: ModuleType,
     /// Module name.
     pub name: String,
+    /// Free-text per-instance description (read side of the description
+    /// channel, mirroring the owning instrument's `module_description` map so
+    /// the save path can persist it into `ModuleState.description`). Empty when
+    /// no description was set or loaded.
+    pub description: String,
     /// Whether module is bypassed.
     pub bypass_state: BypassState,
     /// Whether module is muted.
@@ -269,6 +274,7 @@ impl ModuleStateSnapshot {
             instrument_id,
             module_type,
             name,
+            description: String::new(),
             bypass_state: BypassState::Active,
             mute_state: MuteState::Unmuted,
             solo_state: SoloState::Normal,

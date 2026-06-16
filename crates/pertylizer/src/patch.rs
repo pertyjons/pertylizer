@@ -130,6 +130,12 @@ pub struct ModuleState {
     pub module_type: ModuleType,
     /// Position in the rack view.
     pub position: Position,
+    /// Free-text per-instance note (e.g. "this LFO is the wobble modulator").
+    /// Distinct from `ModuleDescriptor.description`, which documents the module
+    /// *type* and is shared across all instances. Optional and skipped when
+    /// empty, so existing projects/patches stay byte-identical and schema-valid.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// Parameter values.
     #[serde(default)]
     pub parameters: BTreeMap<String, ParamValue>,
@@ -921,6 +927,7 @@ impl ModuleBuilder {
                 id,
                 module_type,
                 position: Position::default(),
+                description: String::new(),
                 parameters: BTreeMap::new(),
                 scripts: BTreeMap::new(),
             },
@@ -929,6 +936,12 @@ impl ModuleBuilder {
 
     pub fn position(mut self, x: f32, y: f32) -> Self {
         self.state.position = Position::new(x, y);
+        self
+    }
+
+    /// Set the per-instance description (free-text intent for this module).
+    pub fn description(mut self, description: &str) -> Self {
+        self.state.description = description.to_string();
         self
     }
 
@@ -1021,6 +1034,7 @@ mod tests {
             id: id.to_string(),
             module_type,
             position: Position::default(),
+            description: String::new(),
             parameters: BTreeMap::new(),
             scripts: BTreeMap::new(),
         }
@@ -1054,6 +1068,38 @@ mod tests {
             r#"{"id":"mmx-1","type":"mod_matrix","position":{"x":0.0,"y":0.0},"parameters":{}}"#;
         let loaded: ModuleState = serde_json::from_str(legacy).expect("deserialize legacy");
         assert!(loaded.scripts.is_empty());
+    }
+
+    /// A per-instance `description` round-trips through JSON, an empty
+    /// description is omitted from the serialized form (so existing
+    /// projects stay byte-identical), and an old project with no
+    /// `description` field loads to an empty string.
+    #[test]
+    fn module_description_persists_round_trip() {
+        let mut ms = module_state("lfo-1", ModuleType::Lfo);
+        // Empty → skipped from the serialized form.
+        let json_empty = serde_json::to_string(&ms).expect("serialize");
+        assert!(
+            !json_empty.contains("description"),
+            "empty description must be skipped, got: {json_empty}"
+        );
+
+        // A non-empty description round-trips.
+        ms.description = "wobble modulator for the filter cutoff".to_string();
+        let json = serde_json::to_string(&ms).expect("serialize");
+        let back: ModuleState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.description, "wobble modulator for the filter cutoff");
+
+        // An old project lacking the field deserializes to an empty string.
+        let legacy = r#"{"id":"lfo-1","type":"lfo","position":{"x":0.0,"y":0.0},"parameters":{}}"#;
+        let loaded: ModuleState = serde_json::from_str(legacy).expect("deserialize legacy");
+        assert!(loaded.description.is_empty());
+
+        // The builder sets it too.
+        let built = ModuleBuilder::new(2, ModuleType::Lfo)
+            .description("vibrato")
+            .build();
+        assert_eq!(built.description, "vibrato");
     }
 
     /// Legacy positional mod-matrix ids upgrade to the *positionally correct*

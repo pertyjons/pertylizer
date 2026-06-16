@@ -750,6 +750,22 @@ impl SynthEngine {
                 }
                 self.update_shared_instruments();
             }
+            EngineCommand::SetModuleDescription {
+                instrument_id,
+                module_id,
+                description,
+            } => {
+                if let Some(inst) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|i| i.id() == instrument_id)
+                {
+                    inst.set_module_description(module_id, description);
+                    // Republish the module graph so the snapshot's
+                    // `description` reflects the change for MCP/GUI reads.
+                    self.update_shared_graph(Some(instrument_id));
+                }
+            }
             EngineCommand::SetSidechainSource {
                 instrument_id,
                 source,
@@ -2081,6 +2097,7 @@ impl SynthEngine {
             instrument.set_enabled(false);
             instrument.voice_graph_mut().clear();
             instrument.effect_chain_mut().clear();
+            instrument.clear_module_descriptions();
             instrument.rebuild_voices();
         }
         self.master_effects.clear();
@@ -2267,6 +2284,7 @@ impl SynthEngine {
             Some(inst_id) => {
                 if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
                     instrument.effect_chain_mut().remove_effect(id);
+                    instrument.remove_module_description(id);
                     let count = count_effects(instrument);
                     self.state.effect_count.store(count);
                 }
@@ -2367,6 +2385,7 @@ impl SynthEngine {
             Some(inst_id) => {
                 if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
                     instrument.voice_graph_mut().remove_module(id);
+                    instrument.remove_module_description(id);
                     instrument.rebuild_voices();
                 }
             }
@@ -2493,6 +2512,11 @@ impl SynthEngine {
                     descriptor.name.to_string(),
                 );
                 snapshot.parameters = module.get_params();
+                // Publish the per-instance description (read side of the
+                // description channel) for MCP/GUI reads and the save path.
+                if let Some(desc) = instrument.module_description(id) {
+                    snapshot.description = desc.to_string();
+                }
                 // Publish per-slot control scripts (Step 2) for the save path.
                 // Allocation is fine here — this is the UI/save snapshot, never
                 // the audio thread. 1-based slot key matches the persisted form.
@@ -2530,6 +2554,9 @@ impl SynthEngine {
                     descriptor.name.to_string(),
                 );
                 snapshot.parameters = effect_slot.effect.get_params();
+                if let Some(desc) = instrument.module_description(effect_slot.module_id) {
+                    snapshot.description = desc.to_string();
+                }
                 snapshot.bypass_state = if effect_slot.state.is_bypassed() {
                     synth_core::BypassState::Bypassed
                 } else {

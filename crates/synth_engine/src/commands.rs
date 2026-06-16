@@ -262,6 +262,16 @@ pub enum EngineCommand {
         description: Option<String>,
     },
 
+    /// Set or clear the free-text description on a specific module instance
+    /// within an instrument's patch. Never affects audio; surfaces in
+    /// `ModuleStateSnapshot` for MCP/GUI reads and persists with the patch.
+    /// `description = None` (or empty) clears it.
+    SetModuleDescription {
+        instrument_id: InstrumentId,
+        module_id: ModuleId,
+        description: Option<String>,
+    },
+
     /// Set or clear the sidechain source for an instrument. When set,
     /// the engine routes the source instrument's output into this
     /// instrument's compressors / sidechain-capable modules with
@@ -1016,6 +1026,16 @@ impl std::fmt::Debug for EngineCommand {
             } => f
                 .debug_struct("SetPatchDescription")
                 .field("instrument_id", instrument_id)
+                .field("description", description)
+                .finish(),
+            Self::SetModuleDescription {
+                instrument_id,
+                module_id,
+                description,
+            } => f
+                .debug_struct("SetModuleDescription")
+                .field("instrument_id", instrument_id)
+                .field("module_id", module_id)
                 .field("description", description)
                 .finish(),
             Self::SetSidechainSource {

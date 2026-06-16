@@ -13,6 +13,7 @@
 //! This prevents common errors like mixing up instrument IDs with other identifiers.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::effect_chain::EffectChain;
@@ -401,6 +402,12 @@ pub struct Instrument {
     /// that travels with the patch when saved. `None` when no
     /// description was set or loaded.
     patch_description: Option<String>,
+    /// Free-text per-module-instance descriptions, keyed by `ModuleId`. Never
+    /// affects audio; published into each `ModuleStateSnapshot.description` so
+    /// MCP can read+write per-module intent and the save path can persist it.
+    /// Distinct from the module *type* doc on `ModuleDescriptor`. Entries are
+    /// pruned when the owning module is removed.
+    module_descriptions: HashMap<crate::ModuleId, String>,
     /// Instrument that feeds this instrument's sidechain inputs (e.g.
     /// compressors with `sidechain_enabled` set). `None` = no sidechain.
     /// Audio routing is the engine's responsibility — see
@@ -472,6 +479,7 @@ impl Instrument {
             name: name.into(),
             description: String::new(),
             patch_description: None,
+            module_descriptions: HashMap::new(),
             sidechain_source_id: None,
             category: InstrumentCategory::default(),
             midi_channel: MidiChannel::default(),
@@ -510,6 +518,7 @@ impl Instrument {
             name: name.into(),
             description: String::new(),
             patch_description: None,
+            module_descriptions: HashMap::new(),
             sidechain_source_id: None,
             category: InstrumentCategory::default(),
             midi_channel: MidiChannel::default(),
@@ -578,6 +587,45 @@ impl Instrument {
     #[inline]
     pub fn set_patch_description(&mut self, description: Option<String>) {
         self.patch_description = description;
+    }
+
+    /// Get the free-text description for a specific module instance, if set.
+    #[inline]
+    pub fn module_description(&self, module_id: crate::ModuleId) -> Option<&str> {
+        self.module_descriptions.get(&module_id).map(String::as_str)
+    }
+
+    /// Set or clear a module instance's description. `None` (or an empty
+    /// string) removes the entry so empty descriptions never persist.
+    #[inline]
+    pub fn set_module_description(
+        &mut self,
+        module_id: crate::ModuleId,
+        description: Option<String>,
+    ) {
+        match description {
+            Some(desc) if !desc.is_empty() => {
+                self.module_descriptions.insert(module_id, desc);
+            }
+            _ => {
+                self.module_descriptions.remove(&module_id);
+            }
+        }
+    }
+
+    /// Drop a module instance's stored description (called when the module is
+    /// removed from the graph so the map doesn't accumulate stale entries).
+    #[inline]
+    pub fn remove_module_description(&mut self, module_id: crate::ModuleId) {
+        self.module_descriptions.remove(&module_id);
+    }
+
+    /// Drop all stored module descriptions (called when the whole graph is
+    /// cleared so descriptions don't resurface on modules later given the same
+    /// `ModuleId`).
+    #[inline]
+    pub fn clear_module_descriptions(&mut self) {
+        self.module_descriptions.clear();
     }
 
     /// Get the sidechain source instrument id, if any.

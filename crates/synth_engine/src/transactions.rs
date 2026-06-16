@@ -572,6 +572,15 @@ impl EngineCommand {
                 instrument_id: *instrument_id,
                 description: description.clone(),
             },
+            Self::SetModuleDescription {
+                instrument_id,
+                module_id,
+                description,
+            } => Self::SetModuleDescription {
+                instrument_id: *instrument_id,
+                module_id: *module_id,
+                description: description.clone(),
+            },
             Self::SetSidechainSource {
                 instrument_id,
                 source,

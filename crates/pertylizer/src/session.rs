@@ -281,6 +281,27 @@ impl SynthSession {
         Ok(())
     }
 
+    /// Set or clear the free-text description on a specific module instance.
+    /// `None` (or an empty string) clears it.
+    pub fn set_module_description(
+        &self,
+        instrument_id: InstrumentId,
+        module_id: ModuleId,
+        description: Option<&str>,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetModuleDescription {
+                instrument_id,
+                module_id,
+                description: description.map(str::to_owned),
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
     /// Set or clear the transport loop region.
     ///
     /// Routes through `EngineCommand::SetLoop`. The engine mirrors the new
@@ -913,6 +934,18 @@ impl SynthSession {
                                 .errors
                                 .push(format!("{module_id} slot {slot_key} script: {e}"));
                         }
+                    }
+
+                    // Restore the per-instance description into the engine
+                    // mirror so subsequent MCP/GUI reads see the loaded intent.
+                    if !module_state.description.is_empty()
+                        && let Err(e) = self.set_module_description(
+                            instrument_id,
+                            module_id,
+                            Some(&module_state.description),
+                        )
+                    {
+                        result.errors.push(format!("{module_id} description: {e}"));
                     }
                 }
                 Err(e) => {

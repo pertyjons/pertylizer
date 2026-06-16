@@ -5507,6 +5507,7 @@ impl SynthApp {
                     id: id_str,
                     module_type: module_id.module_type,
                     position: crate::patch::Position::new(position.x, position.y),
+                    description: String::new(),
                     parameters: param_map,
                     scripts: std::collections::BTreeMap::new(),
                 });

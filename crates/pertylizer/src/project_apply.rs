@@ -408,6 +408,8 @@ fn build_patch_from_engine(
             id: module.id.to_string(),
             module_type: module.module_type,
             position: Position::default(),
+            // Per-instance description round-trips via the snapshot.
+            description: module.description.clone(),
             parameters: param_map,
             // Per-slot control scripts (Step 2) round-trip via the snapshot.
             scripts: module.scripts.clone(),
@@ -482,6 +484,7 @@ fn build_effect_states(effects: &[synth_engine::ReturnEffectSnapshot]) -> Vec<Mo
                 id: fx.module_id.to_string(),
                 module_type: fx.module_type,
                 position: Position::default(),
+                description: String::new(),
                 parameters: map_params_to_values(&descriptor.parameters, &fx.parameters),
                 scripts: std::collections::BTreeMap::new(),
             })
