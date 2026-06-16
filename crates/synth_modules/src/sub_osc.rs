@@ -5,7 +5,7 @@
 //!
 //! Features:
 //! - -1 or -2 octave transposition
-//! - Square, Sine, or 25% Pulse waveforms
+//! - Sine, Triangle, Saw, Square, 25% Pulse, or DSF Saw waveforms
 //! - Level control
 //! - Follows note input
 
@@ -17,7 +17,7 @@ use synth_core::{
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
     WidgetHint,
 };
-use synth_core::{Gain, Hertz, MidiNote, Phase, SampleRate, Velocity};
+use synth_core::{Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, SubOscOctave, SubOscParam, SubOscWaveform};
 
 /// Sub-oscillator for bass reinforcement.
@@ -61,6 +61,8 @@ impl SubOscillator {
 
         let sample = match self.waveform {
             SubOscWaveform::Sine => (phase * TAU).sin(),
+            SubOscWaveform::Triangle => self.phase.triangle(),
+            SubOscWaveform::Sawtooth => self.phase.sawtooth(),
             SubOscWaveform::Square => {
                 if phase < 0.5 {
                     1.0
@@ -74,6 +76,19 @@ impl SubOscillator {
                 } else {
                     -1.0
                 }
+            }
+            SubOscWaveform::DsfSaw => {
+                // Band-limited sawtooth (harmonic sum) — alias-free even though
+                // the other shapes are naive; cheap here because sub frequencies
+                // are low so the harmonic count stays small.
+                #[allow(clippy::cast_possible_truncation)]
+                let num_harmonics =
+                    (self.sample_rate.as_f32() / (2.0 * freq.as_f32())).max(1.0) as u32;
+                synth_dsp::oscillators::dsf_sawtooth(
+                    self.phase,
+                    num_harmonics,
+                    NormalizedValue::new(0.95),
+                )
             }
         };
 
@@ -272,6 +287,33 @@ mod tests {
         // Clearing reverts to base.
         sub.clear_mod_offsets();
         assert!((peak(&mut sub, &ctx) - base).abs() < 0.05);
+    }
+
+    /// Every waveform in `SubOscWaveform::ALL` (now 6) must render audible,
+    /// non-silent output — guards the new Triangle/Sawtooth/DsfSaw shapes.
+    #[test]
+    fn all_waveforms_produce_signal() {
+        for wf in SubOscWaveform::ALL {
+            let mut sub = SubOscillator::new();
+            sub.set_param(Param::SubOsc(SubOscParam::Waveform(wf)));
+            sub.note_on(MidiNote::A4, Velocity::MAX);
+
+            let ctx = ProcessContext {
+                samples: synth_core::SampleCount::new(256),
+                ..ProcessContext::default()
+            };
+            let mut outs = std::collections::HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            sub.process(InputPorts::empty(), &mut outs, &ctx);
+
+            let b = &outs[&PortName::OUT];
+            let peak = (0..b.len()).map(|i| b[i].abs()).fold(0.0_f32, f32::max);
+            assert!(
+                peak > 0.01,
+                "{} should produce signal, peak {peak}",
+                wf.name()
+            );
+        }
     }
 
     #[test]

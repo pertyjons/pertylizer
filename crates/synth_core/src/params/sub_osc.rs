@@ -14,20 +14,36 @@ pub enum SubOscWaveform {
     /// Pure sine - smooth, fundamental bass
     #[default]
     Sine,
+    /// Triangle wave - soft, rounded bass with a few odd harmonics
+    Triangle,
+    /// Sawtooth wave - bright, full harmonic spectrum
+    Sawtooth,
     /// Square wave - punchy, full harmonics
     Square,
     /// 25% pulse - hollow, distinctive character
     Pulse25,
+    /// Band-limited DSF sawtooth - bright but alias-free
+    DsfSaw,
 }
 
 impl SubOscWaveform {
-    pub const ALL: [Self; 3] = [Self::Sine, Self::Square, Self::Pulse25];
+    pub const ALL: [Self; 6] = [
+        Self::Sine,
+        Self::Triangle,
+        Self::Sawtooth,
+        Self::Square,
+        Self::Pulse25,
+        Self::DsfSaw,
+    ];
 
     pub fn name(&self) -> &'static str {
         match self {
             Self::Sine => "Sine",
+            Self::Triangle => "Triangle",
+            Self::Sawtooth => "Saw",
             Self::Square => "Square",
             Self::Pulse25 => "Pulse 25%",
+            Self::DsfSaw => "DSF Saw",
         }
     }
 
@@ -35,16 +51,22 @@ impl SubOscWaveform {
     pub fn description(&self) -> &'static str {
         match self {
             Self::Sine => "Pure sine — a smooth, clean fundamental for deep bass.",
+            Self::Triangle => "Triangle — soft and rounded, with gentle odd harmonics.",
+            Self::Sawtooth => "Sawtooth — bright, with the full harmonic series.",
             Self::Square => "Square wave — punchy, with full odd harmonics.",
             Self::Pulse25 => "25% pulse — a hollow, reedy character.",
+            Self::DsfSaw => "DSF saw — bright like a sawtooth but band-limited (alias-free).",
         }
     }
 
     pub fn id(&self) -> &'static str {
         match self {
             Self::Sine => "sine",
+            Self::Triangle => "triangle",
+            Self::Sawtooth => "sawtooth",
             Self::Square => "square",
             Self::Pulse25 => "pulse25",
+            Self::DsfSaw => "dsf_saw",
         }
     }
 

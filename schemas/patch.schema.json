@@ -910,8 +910,11 @@
                   "description": "Sub-oscillator waveform",
                   "enum": [
                     "sine",
+                    "triangle",
+                    "sawtooth",
                     "square",
-                    "pulse25"
+                    "pulse25",
+                    "dsf_saw"
                   ],
                   "title": "Waveform",
                   "type": "string"

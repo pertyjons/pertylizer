@@ -7487,6 +7487,16 @@
               "name": "Sine"
             },
             {
+              "description": "Triangle — soft and rounded, with gentle odd harmonics.",
+              "id": "triangle",
+              "name": "Triangle"
+            },
+            {
+              "description": "Sawtooth — bright, with the full harmonic series.",
+              "id": "sawtooth",
+              "name": "Saw"
+            },
+            {
               "description": "Square wave — punchy, with full odd harmonics.",
               "id": "square",
               "name": "Square"
@@ -7495,6 +7505,11 @@
               "description": "25% pulse — a hollow, reedy character.",
               "id": "pulse25",
               "name": "Pulse 25%"
+            },
+            {
+              "description": "DSF saw — bright like a sawtooth but band-limited (alias-free).",
+              "id": "dsf_saw",
+              "name": "DSF Saw"
             }
           ],
           "default": "square",

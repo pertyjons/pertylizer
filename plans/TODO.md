@@ -10,7 +10,7 @@
   `Global(Tempo)` was removed in favour of the tempo map (see §2.1). Still no engine
   implementation for `Global(Swing)` and `Track(Solo)` — lanes drawn for those targets
   are silent no-ops. Either wire them or drop the variants.
-- [ ] **★ HIGH: expand Sub Oscillator waveform set from 3 to 6.** `SubOscWaveform`
+- [x] **★ HIGH: expand Sub Oscillator waveform set from 3 to 6.** `SubOscWaveform`
   (`crates/synth_core/src/params/sub_osc.rs:13`) currently exposes only
   `Sine / Square / Pulse25`, while the main `Oscillator` exposes 6
   (`Sine / Triangle / Sawtooth / Square / Pulse / DsfSaw`). Add the three
