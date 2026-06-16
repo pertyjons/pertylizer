@@ -39,6 +39,11 @@ pub struct ModulePanelState {
     /// scalar `Amount` is overridden by the expression). Snapshot-driven — see
     /// `PatchEditor::sync_module_scripts`.
     pub slot_scripts: HashMap<u8, String>,
+    /// Per-instance free-text description, mirrored from the engine snapshot
+    /// (`ModuleStateSnapshot.description`). Seeds the "Edit description" popup
+    /// and the info popup; empty when unset. Snapshot-driven — see
+    /// `PatchEditor::sync_module_description`.
+    pub description: String,
     /// Transient state for the open expression-editor popup (S2.4), if any. At
     /// most one slot's editor is open per panel.
     pub script_editor: Option<ScriptEditorState>,
@@ -71,6 +76,7 @@ impl ModulePanelState {
             param_values: HashMap::new(),
             slot_addrs: HashMap::new(),
             slot_scripts: HashMap::new(),
+            description: String::new(),
             script_editor: None,
             envelope_position: None,
             vis_buf_l: Vec::new(),

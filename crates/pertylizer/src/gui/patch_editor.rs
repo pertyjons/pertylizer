@@ -761,6 +761,23 @@ pub struct PatchEditor {
     /// edge would form a cycle. Recomputed once per frame from a single graph
     /// traversal (see `recompute_drag_cycle_blocked`); empty when not dragging.
     drag_cycle_blocked: HashSet<ModuleId>,
+    /// Open "Edit description" popup, if any (at most one at a time). Carries
+    /// the target module and the in-progress draft until OK/Cancel.
+    description_editor: Option<DescriptionEditorState>,
+    /// Module whose read-only info popup (ⓘ) is open, if any.
+    info_popup: Option<ModuleId>,
+    /// Per-frame screen rect of each module's `Area`, captured during the
+    /// render loop so the description / info popups can be positioned next to
+    /// (not over) their module.
+    module_rects: HashMap<ModuleId, egui::Rect>,
+}
+
+/// Transient state for the open "Edit description" popup. `draft` is the
+/// in-progress text, independent of the installed description until applied.
+#[derive(Clone)]
+struct DescriptionEditorState {
+    module_id: ModuleId,
+    draft: String,
 }
 
 impl PatchEditor {
@@ -795,6 +812,9 @@ impl PatchEditor {
             prev_mod_matrix_attachments: Vec::new(),
             connected_ports_cache: HashMap::new(),
             drag_cycle_blocked: HashSet::new(),
+            description_editor: None,
+            info_popup: None,
+            module_rects: HashMap::new(),
         }
     }
 
@@ -868,6 +888,9 @@ impl PatchEditor {
         self.needs_reposition.clear();
         self.connected_ports_cache.clear();
         self.suppress_position_readback = true;
+        self.description_editor = None;
+        self.info_popup = None;
+        self.module_rects.clear();
     }
 
     /// Get module data for saving.
@@ -904,6 +927,18 @@ impl PatchEditor {
     pub fn remove_module(&mut self, id: ModuleId) {
         self.panels.remove(&id);
         self.descriptors.remove(&id);
+        self.module_rects.remove(&id);
+        // Close any description/info popup that targeted this module.
+        if self.info_popup == Some(id) {
+            self.info_popup = None;
+        }
+        if self
+            .description_editor
+            .as_ref()
+            .is_some_and(|e| e.module_id == id)
+        {
+            self.description_editor = None;
+        }
         // Clear saved canvas size hint so the canvas can shrink
         self.min_canvas_size = None;
         self.z_order.retain(|&mid| mid != id);
@@ -1744,6 +1779,18 @@ impl PatchEditor {
         }
     }
 
+    /// Mirror a module's per-instance description from the engine snapshot into
+    /// its panel so the info popup and the "Edit description" editor seed from
+    /// the live value. Snapshot is the source of truth (`SetModuleDescription`
+    /// bumps the shared-graph version, re-running the reconcile).
+    pub fn sync_module_description(&mut self, module_id: ModuleId, description: &str) {
+        if let Some(panel) = self.panels.get_mut(&module_id)
+            && panel.description != description
+        {
+            panel.description = description.to_string();
+        }
+    }
+
     /// Set the position of a module in the rack view.
     pub fn set_module_position(&mut self, module_id: ModuleId, position: Pos2) {
         if let Some(panel) = self.panels.get_mut(&module_id) {
@@ -2272,6 +2319,58 @@ impl PatchEditor {
                                 }
                             }
 
+                            // Info (ⓘ) — toggles a read-only popup with the
+                            // module's type documentation + this instance's note.
+                            let info_open = self.info_popup == Some(module_id);
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(ri::INFORMATION_LINE)
+                                            .color(if info_open {
+                                                t.colors.text_secondary
+                                            } else {
+                                                t.colors.text_dim
+                                            })
+                                            .size(13.0),
+                                    )
+                                    .frame(false)
+                                    .min_size(button_min_size),
+                                )
+                                .on_hover_text(
+                                    "Module info\nType documentation + this instance's note.",
+                                )
+                                .clicked()
+                            {
+                                self.info_popup = if info_open { None } else { Some(module_id) };
+                            }
+
+                            // Overflow menu (⋯) — per-module actions. Currently
+                            // just "Edit description"; built to grow.
+                            let mut open_desc_editor = false;
+                            ui.menu_button(
+                                egui::RichText::new(ri::MORE_FILL)
+                                    .color(t.colors.text_dim)
+                                    .size(14.0),
+                                |ui| {
+                                    if ui
+                                        .button(format!("{}  Edit description…", ri::EDIT_LINE))
+                                        .clicked()
+                                    {
+                                        open_desc_editor = true;
+                                        ui.close();
+                                    }
+                                },
+                            );
+                            if open_desc_editor {
+                                let draft = self
+                                    .panels
+                                    .get(&module_id)
+                                    .map(|p| p.description.clone())
+                                    .unwrap_or_default();
+                                self.description_editor =
+                                    Some(DescriptionEditorState { module_id, draft });
+                            }
+
                             // Close/delete button (always visible)
                             ui.separator();
                             if ui
@@ -2435,6 +2534,12 @@ impl PatchEditor {
                 });
             });
 
+            // Remember the module's on-screen rect so the description / info
+            // popups can be anchored beside it (not over it).
+            if let Some(area_rect) = ui.memory(|mem| mem.area_rect(window_id)) {
+                self.module_rects.insert(module_id, area_rect);
+            }
+
             // Handle area interaction — Area always returns InnerResponse (no Option)
             // Update logical position and size from screen rect, snapped to grid.
             // Skip during the frame a patch/project was just loaded — egui's Area rects
@@ -2498,10 +2603,134 @@ impl PatchEditor {
             self.draw_macro_source_rail(ui, instrument_id, visible_rect, &analysis);
         }
 
+        // Module description / info popups (drawn last so they float above the
+        // canvas; descriptors are already restored above so type docs resolve).
+        self.draw_module_popups(ui, &mut result);
+
         // Clear suppress flag — next frame will resume normal position tracking
         self.suppress_position_readback = false;
 
         result
+    }
+
+    /// Draw the read-only info popup (ⓘ) and the "Edit description" editor when
+    /// open. Both are floating windows anchored beside their module (via the
+    /// per-frame `module_rects`); the editor pushes its result through
+    /// `module_description_actions` on OK, the info popup is read-only.
+    fn draw_module_popups(&mut self, ui: &mut Ui, result: &mut PatchEditorResult) {
+        let ctx = ui.ctx().clone();
+        let t = theme();
+
+        // Read-only info popup: module id, type name + type documentation, and
+        // this instance's note.
+        if let Some(mid) = self.info_popup {
+            let anchor = self
+                .module_rects
+                .get(&mid)
+                .map(|r| r.right_top() + egui::vec2(12.0, 0.0));
+            let (type_name, type_desc) = self
+                .descriptors
+                .get(&mid)
+                .map(|d| (d.name.to_string(), d.description.to_string()))
+                .unwrap_or_default();
+            let instance_desc = self
+                .panels
+                .get(&mid)
+                .map(|p| p.description.clone())
+                .unwrap_or_default();
+            let mut keep_open = true;
+            let mut win = egui::Window::new(format!("{}  {mid}", ri::INFORMATION_LINE))
+                .id(egui::Id::new(("module_info_popup", mid)))
+                .collapsible(false)
+                .resizable(false)
+                .open(&mut keep_open);
+            if let Some(pos) = anchor {
+                win = win.default_pos(pos);
+            }
+            win.show(&ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(format!("Type: {type_name}"))
+                        .strong()
+                        .color(t.colors.text_secondary),
+                );
+                ui.separator();
+                ui.label(
+                    egui::RichText::new("Type documentation")
+                        .size(t.fonts.size_small)
+                        .color(t.colors.text_dim),
+                );
+                ui.label(if type_desc.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    type_desc
+                });
+                ui.separator();
+                ui.label(
+                    egui::RichText::new("Instance note")
+                        .size(t.fonts.size_small)
+                        .color(t.colors.text_dim),
+                );
+                ui.label(if instance_desc.is_empty() {
+                    "(no description set)".to_string()
+                } else {
+                    instance_desc
+                });
+            });
+            if !keep_open {
+                self.info_popup = None;
+            }
+        }
+
+        // "Edit description" editor: a small popup near the module with OK /
+        // Cancel, styled like the expression editor.
+        if let Some(mut editor) = self.description_editor.take() {
+            let mid = editor.module_id;
+            let anchor = self
+                .module_rects
+                .get(&mid)
+                .map(|r| r.right_top() + egui::vec2(12.0, 0.0));
+            let mut keep_open = true;
+            let mut closed = false;
+            let mut win = egui::Window::new(format!("{}  Edit description - {mid}", ri::EDIT_LINE))
+                .id(egui::Id::new(("module_desc_editor", mid)))
+                .collapsible(false)
+                .resizable(true)
+                .default_size(egui::vec2(360.0, 160.0))
+                .min_width(260.0)
+                .min_height(120.0)
+                .open(&mut keep_open);
+            if let Some(pos) = anchor {
+                win = win.default_pos(pos);
+            }
+            win.show(&ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("Per-instance note — what this specific module is for.")
+                        .size(t.fonts.size_small)
+                        .color(t.colors.text_secondary),
+                );
+                let reserved = 40.0;
+                let editor_height = (ui.available_height() - reserved).max(60.0);
+                ui.add_sized(
+                    egui::vec2(ui.available_width(), editor_height),
+                    egui::TextEdit::multiline(&mut editor.draft).desired_rows(3),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("OK").clicked() {
+                        result
+                            .module_description_actions
+                            .push((mid, editor.draft.clone()));
+                        closed = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        closed = true;
+                    }
+                });
+            });
+            // Persist the in-progress draft across frames unless dismissed.
+            if keep_open && !closed {
+                self.description_editor = Some(editor);
+            }
+        }
     }
 
     /// Draw the macro-source rail (S1.5b): a fixed strip of the six per-voice
@@ -5132,6 +5361,10 @@ pub struct PatchEditorResult {
     /// slot; `None` clears it. Routed to `session.set_mod_script` /
     /// `clear_mod_script` by the backend.
     pub mod_script_actions: Vec<(ModuleId, u8, Option<String>)>,
+    /// Per-module-instance description edits from the "Edit description" popup:
+    /// `(module_id, new_description)`. Empty string clears. Routed to
+    /// `session.set_module_description` by the backend.
+    pub module_description_actions: Vec<(ModuleId, String)>,
 }
 
 /// Actions from the Audio Input module panel.
@@ -6613,6 +6846,30 @@ mod patch_analysis_tests {
         // An empty snapshot clears the whole mirror.
         editor.sync_module_scripts(id, &std::collections::BTreeMap::new());
         assert!(editor.panels[&id].slot_scripts.is_empty());
+    }
+
+    /// The panel description mirror is snapshot-driven: `sync_module_description`
+    /// copies the engine snapshot's value in (seeding the info popup + editor),
+    /// and an empty snapshot value clears it. A missing panel is a no-op.
+    #[test]
+    fn sync_module_description_mirrors_snapshot() {
+        let mut editor = PatchEditor::new();
+        let id = ModuleId::new(ModuleType::Lfo, 1);
+        editor
+            .panels
+            .insert(id, ModulePanelState::new(id, Pos2::ZERO));
+
+        editor.sync_module_description(id, "wobble LFO for the cutoff");
+        assert_eq!(editor.panels[&id].description, "wobble LFO for the cutoff");
+
+        // A cleared snapshot value empties the mirror.
+        editor.sync_module_description(id, "");
+        assert!(editor.panels[&id].description.is_empty());
+
+        // Syncing an unknown module is a no-op (no panic, no insert).
+        let ghost = ModuleId::new(ModuleType::Lfo, 99);
+        editor.sync_module_description(ghost, "ignored");
+        assert!(!editor.panels.contains_key(&ghost));
     }
 
     /// The per-frame highlight set (`recompute_drag_cycle_blocked`) must agree

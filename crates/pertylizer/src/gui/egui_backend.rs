@@ -2172,6 +2172,18 @@ impl SynthApp {
                 }
             }
 
+            // Module-instance description edits from the "Edit description" popup.
+            // An empty string clears (the engine treats empty as None).
+            for (module_id, description) in result.module_description_actions {
+                if let Err(e) =
+                    self.session
+                        .set_module_description(active_id, module_id, Some(&description))
+                {
+                    self.dialog_state
+                        .set_status(format!("Description on {module_id} not applied: {e}"));
+                }
+            }
+
             // Handle module removal
             for module_id in result.modules_to_remove {
                 // Guard: block removing a module that an automation lane still
@@ -5135,6 +5147,7 @@ impl SynthApp {
                 if editor_ids.contains(&snap.id) {
                     patch_editor.sync_module_params(snap.id, &snap.parameters);
                     patch_editor.sync_module_scripts(snap.id, &snap.scripts);
+                    patch_editor.sync_module_description(snap.id, &snap.description);
                 }
             }
 
@@ -5155,6 +5168,7 @@ impl SynthApp {
                     // "(none)" in its pickers forever.
                     patch_editor.sync_module_params(module_id, &snap.parameters);
                     patch_editor.sync_module_scripts(module_id, &snap.scripts);
+                    patch_editor.sync_module_description(module_id, &snap.description);
                 }
             }
 
