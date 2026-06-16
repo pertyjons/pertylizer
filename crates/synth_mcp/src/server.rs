@@ -1649,6 +1649,24 @@ pub struct SetInstrumentColorParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PatchColorInput {
+    #[schemars(description = "Instrument ID whose patch color to set")]
+    pub instrument_id: u64,
+    #[schemars(
+        description = "Patch-level accent color as \"#RRGGBB\" or \"#RRGGBBAA\" (distinct from \
+        set_instrument_color — this travels with the patch when saved). Pass \"\" to clear. \
+        Surfaces in list_instruments / get_instrument_info as patch_color."
+    )]
+    pub color: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetPatchColorParam {
+    #[schemars(description = "Array of per-instrument patch-color updates")]
+    pub items: Vec<PatchColorInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetAweDescriptionParam {
     #[schemars(
         description = "Free-text description of the AWE state's acoustic character. \
@@ -3546,6 +3564,7 @@ impl SynthMcpServer {
             "rename_instrument" => rename_instrument(RenameInstrumentParam),
             "set_instrument_description" => set_instrument_description(SetInstrumentDescriptionParam),
             "set_instrument_color" => set_instrument_color(SetInstrumentColorParam),
+            "set_patch_color" => set_patch_color(SetPatchColorParam),
             "set_patch_description" => set_patch_description(SetPatchDescriptionParam),
             "set_module_description" => set_module_description(SetModuleDescriptionParam),
             "set_awe_description" => set_awe_description(SetAweDescriptionParam),
@@ -5065,6 +5084,25 @@ impl SynthMcpServer {
             }
         }
         batch_msg(ok_count, "instrument colors set", &[], &errors)
+    }
+
+    #[tool(
+        description = "Set or clear the patch-level accent color of one or more instruments from a \
+        \"#RRGGBB\" / \"#RRGGBBAA\" hex string (pass \"\" to clear). Distinct from \
+        set_instrument_color: this color travels with the patch when it is saved/exported, so a \
+        shared patch carries its own suggested tint. Never affects audio; read back via \
+        list_instruments / get_instrument_info as patch_color."
+    )]
+    async fn set_patch_color(&self, params: Parameters<SetPatchColorParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.set_patch_color(it.instrument_id, &it.color) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+            }
+        }
+        batch_msg(ok_count, "patch colors set", &[], &errors)
     }
 
     #[tool(

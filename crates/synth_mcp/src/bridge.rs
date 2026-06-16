@@ -551,6 +551,12 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// audio; surfaces in `InstrumentInfo.color` and is persisted on save.
     fn set_instrument_color(&self, instrument_id: u64, color: &str) -> Result<(), McpBridgeError>;
 
+    /// Set or clear the patch-level accent color on an instrument's currently
+    /// loaded patch (distinct from `set_instrument_color`). Accepts
+    /// `"#RRGGBB"` / `"#RRGGBBAA"`; pass `""` to clear. Travels with the patch
+    /// when saved; surfaces in `InstrumentInfo.patch_color`.
+    fn set_patch_color(&self, instrument_id: u64, color: &str) -> Result<(), McpBridgeError>;
+
     /// Set or clear the patch-level description on an instrument's
     /// currently-loaded patch. Pass `""` to clear (treated as `None`).
     fn set_patch_description(

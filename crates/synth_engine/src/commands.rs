@@ -270,6 +270,15 @@ pub enum EngineCommand {
         color: Option<String>,
     },
 
+    /// Set or clear the patch-level accent color on an instrument's currently
+    /// loaded patch (distinct from `SetInstrumentColor`). Travels with the
+    /// patch when saved; surfaces in `InstrumentSnapshot.patch_color`. `None`
+    /// clears.
+    SetPatchColor {
+        instrument_id: InstrumentId,
+        color: Option<String>,
+    },
+
     /// Set or clear the free-text description on a specific module instance
     /// within an instrument's patch. Never affects audio; surfaces in
     /// `ModuleStateSnapshot` for MCP/GUI reads and persists with the patch.
@@ -1041,6 +1050,14 @@ impl std::fmt::Debug for EngineCommand {
                 color,
             } => f
                 .debug_struct("SetInstrumentColor")
+                .field("instrument_id", instrument_id)
+                .field("color", color)
+                .finish(),
+            Self::SetPatchColor {
+                instrument_id,
+                color,
+            } => f
+                .debug_struct("SetPatchColor")
                 .field("instrument_id", instrument_id)
                 .field("color", color)
                 .finish(),

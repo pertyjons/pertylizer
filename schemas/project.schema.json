@@ -7587,6 +7587,13 @@
           ],
           "description": "Author information."
         },
+        "color": {
+          "description": "Optional accent color as a hex string (e.g. \"#FF8800FF\"), distinct from\nthe per-instance `InstrumentState.color`. Travels with the patch so a\nshared/exported patch carries its own suggested tint. Set via MCP\n(`set_patch_color`); `None` when unset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "connections": {
           "description": "Connections between modules.",
           "items": {

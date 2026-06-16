@@ -317,6 +317,7 @@ impl EngineHub {
             | EngineCommand::SetInstrumentDescription { .. }
             | EngineCommand::SetPatchDescription { .. }
             | EngineCommand::SetInstrumentColor { .. }
+            | EngineCommand::SetPatchColor { .. }
             | EngineCommand::SetModuleDescription { .. }
             | EngineCommand::SetSidechainSource { .. } => perms.can_modify_topology,
 

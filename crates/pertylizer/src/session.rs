@@ -296,6 +296,22 @@ impl SynthSession {
         Ok(())
     }
 
+    /// Set or clear an instrument's patch-level accent color (hex string).
+    /// `None` clears.
+    pub fn set_patch_color(
+        &self,
+        instrument_id: InstrumentId,
+        color: Option<&str>,
+    ) -> Result<(), SessionError> {
+        if !self.command_sender.send(EngineCommand::SetPatchColor {
+            instrument_id,
+            color: color.map(str::to_owned),
+        }) {
+            return Err(SessionError::SendFailed);
+        }
+        Ok(())
+    }
+
     /// Set or clear the free-text description on a specific module instance.
     /// `None` (or an empty string) clears it.
     pub fn set_module_description(

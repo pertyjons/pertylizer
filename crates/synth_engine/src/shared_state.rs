@@ -358,6 +358,9 @@ pub struct InstrumentSnapshot {
     /// color is set ("auto" / default tint). Read side of the color channel —
     /// the save path persists it into `InstrumentState.color`.
     pub color: Option<String>,
+    /// Patch-level accent color (separate from the per-instance `color` above).
+    /// `None` when unset. The save path persists it into `Patch.color`.
+    pub patch_color: Option<String>,
     /// Sidechain source — when set, this instrument's
     /// sidechain-capable modules read audio from the source instrument.
     pub sidechain_source_id: Option<InstrumentId>,

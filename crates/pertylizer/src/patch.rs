@@ -78,6 +78,12 @@ pub struct Patch {
     /// Description of the patch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Optional accent color as a hex string (e.g. "#FF8800FF"), distinct from
+    /// the per-instance `InstrumentState.color`. Travels with the patch so a
+    /// shared/exported patch carries its own suggested tint. Set via MCP
+    /// (`set_patch_color`); `None` when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<HexColor>,
     /// Detailed explanation of how the patch works.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
@@ -658,6 +664,7 @@ impl Patch {
             author: None,
             version: "1.0".to_string(),
             description: None,
+            color: None,
             notes: None,
             tags: Vec::new(),
             modules: Vec::new(),

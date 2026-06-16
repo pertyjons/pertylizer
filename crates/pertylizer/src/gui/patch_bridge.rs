@@ -643,7 +643,12 @@ pub fn create_patch_from_editor(
         })
         .unwrap_or_default();
 
-    let effect_chain_order: Vec<String> = engine_state
+    // Pull the per-instrument fields that live only in the engine snapshot
+    // (not the GUI module cache) in a single locked lookup: the effect-chain
+    // order and the patch-level color. Pulling the color here means a standalone
+    // "Save Patch…" keeps a color set via MCP; doing it in one read avoids a
+    // second lock acquisition that could observe a different snapshot.
+    let (effect_chain_order, patch_color): (Vec<String>, Option<String>) = engine_state
         .and_then(|(state, inst_id)| {
             state
                 .instrument_snapshots
@@ -651,10 +656,13 @@ pub fn create_patch_from_editor(
                 .iter()
                 .find(|s| s.id == inst_id)
                 .map(|s| {
-                    s.effect_chain_order
-                        .iter()
-                        .map(ModuleId::to_string)
-                        .collect()
+                    (
+                        s.effect_chain_order
+                            .iter()
+                            .map(ModuleId::to_string)
+                            .collect(),
+                        s.patch_color.clone(),
+                    )
                 })
         })
         .unwrap_or_default();
@@ -726,6 +734,7 @@ pub fn create_patch_from_editor(
     ));
 
     patch.settings.effect_chain_order = effect_chain_order;
+    patch.color = patch_color;
 
     patch
 }

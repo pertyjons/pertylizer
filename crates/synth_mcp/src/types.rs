@@ -21,6 +21,10 @@ pub struct InstrumentInfo {
     /// empty. Set via `set_instrument_color`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub color: String,
+    /// Patch-level accent color as "#RRGGBBAA" (separate from `color`) — `""`
+    /// when not set. Skipped from JSON when empty. Set via `set_patch_color`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub patch_color: String,
     /// Sidechain source instrument id, or `None` when no sidechain is
     /// configured. Skipped from JSON when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

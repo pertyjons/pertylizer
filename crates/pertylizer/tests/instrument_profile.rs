@@ -51,6 +51,7 @@ fn instrument_snapshot(seq: u16, name: &str, category: InstrumentCategory) -> In
         description: String::new(),
         patch_description: None,
         color: None,
+        patch_color: None,
         sidechain_source_id: None,
         category,
         midi_channel: MidiChannel::CH1,

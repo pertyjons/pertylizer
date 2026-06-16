@@ -338,6 +338,7 @@ impl AppSynthBridge {
             description: snap.description.clone(),
             patch_description: snap.patch_description.clone(),
             color: snap.color.clone().unwrap_or_default(),
+            patch_color: snap.patch_color.clone().unwrap_or_default(),
             sidechain_source_id: snap.sidechain_source_id.map(|id| id.as_u64()),
             category: snap.category.name().to_owned(),
             midi_channel: snap.midi_channel.as_u8(),
@@ -350,6 +351,25 @@ impl AppSynthBridge {
             effect_count: snap.effect_count,
         }
     }
+}
+
+/// Translate an MCP color argument into the engine's `Option<String>` form.
+///
+/// An empty string clears the color (`None`); otherwise the input is validated
+/// and normalized to canonical `"#RRGGBBAA"` so MCP-set and GUI-set colors
+/// round-trip identically. Shared by `set_instrument_color` and
+/// `set_patch_color`.
+fn normalize_color_arg(color: &str) -> Result<Option<String>, McpBridgeError> {
+    if color.is_empty() {
+        return Ok(None);
+    }
+    crate::patch::normalize_hex_color(color)
+        .map(Some)
+        .ok_or_else(|| {
+            McpBridgeError::Other(format!(
+                "invalid color {color:?}; expected \"#RRGGBB\" or \"#RRGGBBAA\""
+            ))
+        })
 }
 
 /// Whether a module type can originate audio on its own — the test behind the
@@ -809,6 +829,7 @@ impl SynthBridge for AppSynthBridge {
             description: String::new(),
             patch_description: None,
             color: String::new(),
+            patch_color: String::new(),
             sidechain_source_id: None,
             midi_channel: 1,
             volume: 1.0,
@@ -856,20 +877,17 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_instrument_color(&self, instrument_id: u64, color: &str) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        // Empty clears back to "auto"; otherwise validate + normalize to
-        // canonical "#RRGGBBAA" so MCP-set and GUI-set colors round-trip
-        // identically.
-        let normalized = if color.is_empty() {
-            None
-        } else {
-            Some(crate::patch::normalize_hex_color(color).ok_or_else(|| {
-                McpBridgeError::Other(format!(
-                    "invalid color {color:?}; expected \"#RRGGBB\" or \"#RRGGBBAA\""
-                ))
-            })?)
-        };
+        let normalized = normalize_color_arg(color)?;
         self.session
             .set_instrument_color(InstrumentId::new(instrument_id), normalized.as_deref())
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
+    }
+
+    fn set_patch_color(&self, instrument_id: u64, color: &str) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let normalized = normalize_color_arg(color)?;
+        self.session
+            .set_patch_color(InstrumentId::new(instrument_id), normalized.as_deref())
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 

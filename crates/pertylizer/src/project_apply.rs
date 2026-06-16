@@ -352,6 +352,7 @@ pub fn build_project_from_engine(
 /// snapshot — no `InstrumentUiState` involvement.
 fn snapshot_to_instrument_state(snap: &InstrumentSnapshot, mut patch: Patch) -> InstrumentState {
     patch.description = snap.patch_description.clone();
+    patch.color = snap.patch_color.clone();
     InstrumentState {
         id: snap.id,
         name: snap.name.clone(),
@@ -391,6 +392,7 @@ fn build_patch_from_engine(
 ) -> Patch {
     let mut patch = Patch::new(&snap.name);
     patch.description = snap.patch_description.clone();
+    patch.color = snap.patch_color.clone();
 
     // Emit modules in stable order: `ModuleId: Ord` sorts by (module_type,
     // instance). Same ordering as the GUI's `create_patch_from_editor`, so
@@ -619,6 +621,14 @@ fn apply_instrument_metadata(
         log_err(
             "set_patch_description",
             session.set_patch_description(inst_id, Some(patch_desc)),
+        );
+    }
+    if let Some(patch_color) = inst_state.patch.color.as_deref()
+        && !patch_color.is_empty()
+    {
+        log_err(
+            "set_patch_color",
+            session.set_patch_color(inst_id, Some(patch_color)),
         );
     }
     if let Some(src) = inst_state.sidechain_source_id {
