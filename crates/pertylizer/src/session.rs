@@ -245,6 +245,27 @@ impl SynthSession {
         Ok(())
     }
 
+    /// Write-through a field on the cached instrument snapshot so a read-back
+    /// (`list_instruments` / `get_instrument_info`) inside the same
+    /// `batch_execute` sees the change before the audio thread rebuilds the
+    /// snapshot (~one buffer later). The queued `EngineCommand` stays the source
+    /// of truth for the audio itself; this only keeps the read-side metadata from
+    /// lagging during that window. Same race rationale as
+    /// [`Self::alive_instruments`].
+    ///
+    /// No-op when the instrument is not in the snapshot yet — it will pick up the
+    /// value on the next audio-thread rebuild.
+    fn patch_instrument_snapshot(
+        &self,
+        instrument_id: InstrumentId,
+        patch: impl FnOnce(&mut InstrumentSnapshot),
+    ) {
+        let mut snapshots = self.state.instrument_snapshots.write();
+        if let Some(snapshot) = snapshots.iter_mut().find(|s| s.id == instrument_id) {
+            patch(snapshot);
+        }
+    }
+
     /// Set an instrument's free-text description / intent.
     pub fn set_instrument_description(
         &self,
@@ -260,6 +281,9 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
+        self.patch_instrument_snapshot(instrument_id, |s| {
+            s.description = description.to_string();
+        });
         Ok(())
     }
 
@@ -275,6 +299,9 @@ impl SynthSession {
         }) {
             return Err(SessionError::SendFailed);
         }
+        self.patch_instrument_snapshot(instrument_id, |s| {
+            s.color = color.map(str::to_string);
+        });
         Ok(())
     }
 
@@ -293,6 +320,9 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
+        self.patch_instrument_snapshot(instrument_id, |s| {
+            s.patch_description = description.map(str::to_owned);
+        });
         Ok(())
     }
 
@@ -309,6 +339,9 @@ impl SynthSession {
         }) {
             return Err(SessionError::SendFailed);
         }
+        self.patch_instrument_snapshot(instrument_id, |s| {
+            s.patch_color = color.map(str::to_owned);
+        });
         Ok(())
     }
 
@@ -372,6 +405,9 @@ impl SynthSession {
         }) {
             return Err(SessionError::SendFailed);
         }
+        self.patch_instrument_snapshot(instrument_id, |s| {
+            s.sidechain_source_id = source;
+        });
         Ok(())
     }
 
@@ -390,6 +426,7 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
+        self.patch_instrument_snapshot(instrument_id, |s| s.volume = volume);
         Ok(())
     }
 
@@ -408,6 +445,7 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
+        self.patch_instrument_snapshot(instrument_id, |s| s.pan = pan);
         Ok(())
     }
 
@@ -426,6 +464,10 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
+        self.patch_instrument_snapshot(instrument_id, |s| {
+            s.enabled = !muted;
+            s.muted = muted;
+        });
         Ok(())
     }
 
@@ -444,6 +486,10 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
+        self.patch_instrument_snapshot(instrument_id, |s| {
+            s.enabled = enabled;
+            s.muted = !enabled;
+        });
         Ok(())
     }
 
@@ -462,6 +508,7 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
+        self.patch_instrument_snapshot(instrument_id, |s| s.category = category);
         Ok(())
     }
 
@@ -477,6 +524,7 @@ impl SynthSession {
         }) {
             return Err(SessionError::SendFailed);
         }
+        self.patch_instrument_snapshot(instrument_id, |s| s.solo = solo);
         Ok(())
     }
 
@@ -495,6 +543,10 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
+        // Mirror the engine's snapshot conversion exactly (1-indexed display).
+        self.patch_instrument_snapshot(instrument_id, |s| {
+            s.midi_channel = synth_core::MidiChannel::new(channel.as_zero_indexed() + 1);
+        });
         Ok(())
     }
 

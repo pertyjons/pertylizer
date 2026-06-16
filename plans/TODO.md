@@ -33,17 +33,18 @@
   `connections` should also be pruned in `optimize_project` (which today only
   removes unused patterns/tracks/instruments/samples, not unreachable modules
   inside a patch graph). Needs graph traversal per instrument.
-- [ ] **Follow-up: stale `list_instruments` readback inside one `batch_execute`.** The primary
+- [x] **Follow-up: stale `list_instruments` readback inside one `batch_execute`.** The primary
   bridge-race (set/get validation failing with `"instrument not found"` right after
   `apply_example_patch`) was fixed by adding a synchronous `alive_instruments` mirror on
-  `SynthSession`. What's left: `list_instruments`, `get_instrument_info`, and other readers that
-  pull `volume`/`pan`/`mute` etc. still read `EngineState::instrument_snapshots`, which is only
-  rebuilt on the audio thread. So `set_instrument_volume(5, 0.8)` followed by `list_instruments`
-  in the same batch still reports the old `volume: 1.0` until the audio thread ticks (~one buffer,
-  5–10 ms at 44.1 kHz / 256 samples). The audio itself is already correct; only the metadata is
-  stale. Fix by layering write-through onto the `set_instrument_*` handlers in `session.rs` — patch
-  `instrument_snapshots[i].volume` (etc.) under the same write lock as the queued `EngineCommand`.
-  Maintenance burden: every new `set_*` tool needs to remember the write-through.
+  `SynthSession`. What was left: `list_instruments`, `get_instrument_info`, and other readers that
+  pull `volume`/`pan`/`mute` etc. read `EngineState::instrument_snapshots`, only rebuilt on the
+  audio thread, so a same-batch `set_instrument_volume` → `list_instruments` reported the stale
+  value until the audio thread ticked. **Done** — added a single `patch_instrument_snapshot(id,
+  |s| …)` write-through helper on `SynthSession` and wired it into every `set_instrument_*` setter
+  (volume/pan/mute/enabled/solo/category/midi_channel/description/color/patch_*/sidechain), each
+  mirroring the engine's `update_shared_instruments` field mapping exactly. The closure helper keeps
+  the maintenance burden to one line per new setter. Regression test
+  `set_instrument_writes_through_to_snapshot_before_audio_tick`.
 
 --- 
 

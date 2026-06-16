@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock as PlRwLock;
 use synth_core::audio::SampleRate as HwSampleRate;
-use synth_core::{AudioCallbackContext, AudioProcessor};
+use synth_core::{AudioCallbackContext, AudioProcessor, BipolarValue, Gain};
 use synth_engine::SynthEngine;
 use synth_mcp::bridge::SynthBridge;
 use synth_sequencer::Song;
@@ -559,4 +559,67 @@ fn save_project_works_without_gui() {
         matches!(status, Some(Ok(_))),
         "last_project_io_status should be Ok after successful save, got {status:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Write-through: `set_instrument_*` must update the cached snapshot
+// synchronously so a read-back in the same `batch_execute` (before the audio
+// thread rebuilds the snapshot) sees the new value, not the stale one.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn set_instrument_writes_through_to_snapshot_before_audio_tick() {
+    let mut rig = build_headless_rig();
+    let session = Arc::clone(&rig._session);
+
+    // Create an instrument and let the audio thread publish its snapshot entry.
+    let id = session.add_instrument("Lead").expect("add instrument");
+    rig.pump(2);
+    assert!(
+        session.list_instruments().iter().any(|s| s.id == id),
+        "instrument should be in the snapshot after pumping"
+    );
+
+    // Mutate several fields, then read back WITHOUT pumping — this is exactly
+    // the window where the old code returned stale snapshot values.
+    session
+        .set_instrument_volume(id, Gain::new(0.5))
+        .expect("set volume");
+    session
+        .set_instrument_pan(id, BipolarValue::new(-0.5))
+        .expect("set pan");
+    session.set_instrument_mute(id, true).expect("mute");
+
+    let stale = session
+        .list_instruments()
+        .into_iter()
+        .find(|s| s.id == id)
+        .expect("instrument still present");
+    assert!(
+        (stale.volume.as_f32() - 0.5).abs() < 1.0e-6,
+        "volume should be written through before any audio tick, got {}",
+        stale.volume.as_f32()
+    );
+    assert!(
+        (stale.pan.as_f32() + 0.5).abs() < 1.0e-6,
+        "pan should be written through, got {}",
+        stale.pan.as_f32()
+    );
+    assert!(stale.muted, "mute should be written through");
+    assert!(!stale.enabled, "enabled must mirror !muted in the snapshot");
+
+    // After the audio thread ticks, the engine-rebuilt snapshot agrees with the
+    // write-through (no divergence / flicker back to a wrong value).
+    rig.pump(2);
+    let settled = session
+        .list_instruments()
+        .into_iter()
+        .find(|s| s.id == id)
+        .expect("present after pump");
+    assert!(
+        (settled.volume.as_f32() - 0.5).abs() < 1.0e-6,
+        "audio thread should agree on volume, got {}",
+        settled.volume.as_f32()
+    );
+    assert!(settled.muted, "audio thread should agree on mute");
 }
