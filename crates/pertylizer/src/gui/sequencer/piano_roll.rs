@@ -1215,6 +1215,28 @@ struct PianoRollCtx<'a> {
     instruments: &'a [crate::gui::instrument_rack::InstrumentUiState],
 }
 
+impl<'a> PianoRollCtx<'a> {
+    /// Bundle the threaded locals. Keeps the field list in one place so the
+    /// reborrow-per-call sites stay one line each.
+    fn new(
+        data: &'a PianoRollData,
+        song: &'a Arc<RwLock<Song>>,
+        view_state: &'a mut SequencerViewState,
+        handle: &'a mut EngineHandle,
+        undo_manager: &'a mut crate::undo::UndoManager,
+        instruments: &'a [crate::gui::instrument_rack::InstrumentUiState],
+    ) -> Self {
+        Self {
+            data,
+            song,
+            view_state,
+            handle,
+            undo_manager,
+            instruments,
+        }
+    }
+}
+
 /// Draw the piano roll in a bottom panel.
 /// Returns false if the close button was clicked.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -1231,14 +1253,7 @@ pub(crate) fn draw_piano_roll(
 ) -> bool {
     let t = theme();
     let keep_open = {
-        let mut ctx = PianoRollCtx {
-            data,
-            song,
-            view_state: &mut *view_state,
-            handle: &mut *handle,
-            undo_manager: &mut *undo_manager,
-            instruments,
-        };
+        let mut ctx = PianoRollCtx::new(data, song, view_state, handle, undo_manager, instruments);
         draw_piano_roll_toolbar(&mut ctx, ui, is_playing)
     };
 
@@ -2147,14 +2162,7 @@ pub(crate) fn draw_piano_roll(
             }
 
             // ── Mouse interaction ──
-            let mut ctx = PianoRollCtx {
-                data,
-                song,
-                view_state: &mut *view_state,
-                handle: &mut *handle,
-                undo_manager: &mut *undo_manager,
-                instruments,
-            };
+            let mut ctx = PianoRollCtx::new(data, song, view_state, handle, undo_manager, instruments);
             handle_piano_roll_interaction(
                 &mut ctx,
                 &response,
@@ -2182,14 +2190,7 @@ pub(crate) fn draw_piano_roll(
     }
 
     {
-        let mut ctx = PianoRollCtx {
-            data,
-            song,
-            view_state: &mut *view_state,
-            handle: &mut *handle,
-            undo_manager: &mut *undo_manager,
-            instruments,
-        };
+        let mut ctx = PianoRollCtx::new(data, song, view_state, handle, undo_manager, instruments);
         handle_piano_roll_shortcuts(&mut ctx, ui, is_playing, playhead_tick);
     }
 
@@ -2211,8 +2212,8 @@ fn handle_piano_roll_shortcuts(
     let undo_manager = &mut *ctx.undo_manager;
 
     // ── Keyboard shortcuts ──
-    let ctx = ui.ctx();
-    if ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
+    let egui_ctx = ui.ctx();
+    if egui_ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
         delete_selected_notes(
             song,
             data.pattern_id,
@@ -2220,14 +2221,14 @@ fn handle_piano_roll_shortcuts(
             undo_manager,
         );
     }
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    if egui_ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         view_state.selected_notes.clear();
         view_state.drag = None;
         view_state.step_entry_mode = false;
     }
 
     // ── Ctrl+A — select all notes ──
-    if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
+    if egui_ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
         view_state.selected_notes.clear();
         for note in &data.notes {
             view_state.selected_notes.insert(note.note_id);
@@ -2235,14 +2236,14 @@ fn handle_piano_roll_shortcuts(
     }
 
     // ── Ctrl+C — copy selected notes ──
-    if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C))
+    if egui_ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C))
         && !view_state.selected_notes.is_empty()
     {
         copy_selected_notes(data, &view_state.selected_notes, &mut view_state.clipboard);
     }
 
     // ── Ctrl+X — cut selected notes ──
-    if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::X))
+    if egui_ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::X))
         && !view_state.selected_notes.is_empty()
     {
         copy_selected_notes(data, &view_state.selected_notes, &mut view_state.clipboard);
@@ -2255,7 +2256,7 @@ fn handle_piano_roll_shortcuts(
     }
 
     // ── Ctrl+V — paste at playhead or start ──
-    if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V))
+    if egui_ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V))
         && !view_state.clipboard.notes.is_empty()
     {
         let paste_tick = playhead_tick.unwrap_or(PatternTick(0));
@@ -2270,7 +2271,7 @@ fn handle_piano_roll_shortcuts(
     }
 
     // ── Ctrl+D — duplicate selected notes ──
-    if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::D))
+    if egui_ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::D))
         && !view_state.selected_notes.is_empty()
     {
         copy_selected_notes(data, &view_state.selected_notes, &mut view_state.clipboard);
@@ -2295,9 +2296,9 @@ fn handle_piano_roll_shortcuts(
 
     // ── Arrow Up/Down — transpose selected notes ──
     if !view_state.selected_notes.is_empty() {
-        let shift = ctx.input(|i| i.modifiers.shift);
-        let up = ctx.input(|i| i.key_pressed(egui::Key::ArrowUp));
-        let down = ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
+        let shift = egui_ctx.input(|i| i.modifiers.shift);
+        let up = egui_ctx.input(|i| i.key_pressed(egui::Key::ArrowUp));
+        let down = egui_ctx.input(|i| i.key_pressed(egui::Key::ArrowDown));
         if up || down {
             let semitones = match (up, shift) {
                 (true, false) => Semitones::new(1.0),
@@ -2333,7 +2334,7 @@ fn handle_piano_roll_shortcuts(
     }
 
     // ── Space — toggle play/pause ──
-    if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
+    if egui_ctx.input(|i| i.key_pressed(egui::Key::Space)) {
         if is_playing {
             handle.send(EngineCommand::Pause);
         } else {
@@ -2351,7 +2352,7 @@ fn handle_piano_roll_shortcuts(
         };
 
         // Collect pressed key in a single input lock acquisition
-        let pressed_note = ctx.input(|i| {
+        let pressed_note = egui_ctx.input(|i| {
             if i.modifiers.command || i.modifiers.ctrl {
                 return None;
             }
