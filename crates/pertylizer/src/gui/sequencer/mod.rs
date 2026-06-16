@@ -4076,6 +4076,71 @@ fn draw_pattern_instrument_transport(
     }
 }
 
+/// Piano-roll coordinate transforms between grid pixels and `(tick, pitch)`.
+///
+/// Bundles the seven view scalars that the four transform closures used to
+/// capture, so they travel as one `Copy` value instead of four `&dyn Fn`
+/// arguments plus three loose scalars (collapsing
+/// `handle_piano_roll_interaction`'s parameter list). The methods reproduce the
+/// former closures verbatim.
+#[derive(Clone, Copy)]
+struct PianoRollCoords {
+    /// Left edge of the note grid (x of tick 0), in screen pixels.
+    grid_x: f32,
+    /// Top edge of the note grid (y of the top visible row), in screen pixels.
+    grid_y: f32,
+    /// Pattern ticks per beat (quarter note).
+    ticks_per_beat: u32,
+    /// Horizontal scale: screen pixels per beat.
+    pr_pixels_per_beat: f32,
+    /// Height of one pitch row, in screen pixels.
+    note_row_height: f32,
+    /// Lowest visible pitch (clamps `y_to_pitch`).
+    view_pitch_min: Pitch,
+    /// Highest visible pitch (grid row 0).
+    view_pitch_max: Pitch,
+}
+
+impl PianoRollCoords {
+    /// Tick → x screen position.
+    fn tick_to_x(&self, tick_val: PatternTick) -> f32 {
+        if self.ticks_per_beat == 0 {
+            return self.grid_x;
+        }
+        let beats = tick_val.0 as f32 / self.ticks_per_beat as f32;
+        self.grid_x + beats * self.pr_pixels_per_beat
+    }
+
+    /// Pitch → y screen position (higher pitch = lower y, piano style).
+    fn pitch_to_y(&self, pitch: Pitch) -> f32 {
+        let row = self
+            .view_pitch_max
+            .as_midi()
+            .saturating_sub(pitch.as_midi());
+        self.grid_y + row as f32 * self.note_row_height
+    }
+
+    /// x screen position → tick (clamped at 0).
+    fn x_to_tick(&self, x: f32) -> PatternTick {
+        #[allow(clippy::cast_possible_truncation)]
+        let tick =
+            ((x - self.grid_x) / self.pr_pixels_per_beat * self.ticks_per_beat as f32).max(0.0);
+        PatternTick(tick as u32)
+    }
+
+    /// y screen position → pitch (clamped to the visible range).
+    fn y_to_pitch(&self, y: f32) -> Pitch {
+        #[allow(clippy::cast_possible_truncation)]
+        let row = ((y - self.grid_y) / self.note_row_height).floor().max(0.0) as u8;
+        let midi = self
+            .view_pitch_max
+            .as_midi()
+            .saturating_sub(row)
+            .clamp(self.view_pitch_min.as_midi(), self.view_pitch_max.as_midi());
+        Pitch::new(midi).unwrap_or(Pitch::MIDDLE_C)
+    }
+}
+
 /// Draw the piano roll in a bottom panel.
 /// Returns false if the close button was clicked.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -4703,38 +4768,20 @@ pub(crate) fn draw_piano_roll(
             // Reserve a ruler strip at the top; the grid starts below it.
             let grid_y = origin.y + RULER_HEIGHT;
 
-            // Helper: tick to x position
-            let tick_to_x = |tick_val: PatternTick| -> f32 {
-                if ticks_per_beat == 0 {
-                    return grid_x;
-                }
-                let beats = tick_val.0 as f32 / ticks_per_beat as f32;
-                grid_x + beats * pr_pixels_per_beat
+            // All four grid↔(tick,pitch) transforms live on this one value (see
+            // `PianoRollCoords`). The closures below just delegate so the rest of
+            // this function — and the interaction handler — keep their call shape.
+            let coords = PianoRollCoords {
+                grid_x,
+                grid_y,
+                ticks_per_beat,
+                pr_pixels_per_beat,
+                note_row_height,
+                view_pitch_min,
+                view_pitch_max,
             };
-
-            // Helper: pitch to y position (higher pitch = lower y, piano style)
-            let pitch_to_y = |pitch: Pitch| -> f32 {
-                let row = view_pitch_max.as_midi().saturating_sub(pitch.as_midi());
-                grid_y + row as f32 * note_row_height
-            };
-
-            // Inverse: x to tick
-            let x_to_tick = |x: f32| -> PatternTick {
-                #[allow(clippy::cast_possible_truncation)]
-                let tick = ((x - grid_x) / pr_pixels_per_beat * ticks_per_beat as f32).max(0.0);
-                PatternTick(tick as u32)
-            };
-
-            // Inverse: y to pitch (clamped to visible range)
-            let y_to_pitch = |y: f32| -> Pitch {
-                #[allow(clippy::cast_possible_truncation)]
-                let row = ((y - grid_y) / note_row_height).floor().max(0.0) as u8;
-                let midi = view_pitch_max
-                    .as_midi()
-                    .saturating_sub(row)
-                    .clamp(view_pitch_min.as_midi(), view_pitch_max.as_midi());
-                Pitch::new(midi).unwrap_or(Pitch::MIDDLE_C)
-            };
+            let tick_to_x = |tick_val: PatternTick| coords.tick_to_x(tick_val);
+            let pitch_to_y = |pitch: Pitch| coords.pitch_to_y(pitch);
 
             // Grid rect for checking if pointer is in the note grid area
             let grid_rect = Rect::from_min_size(
@@ -5477,13 +5524,7 @@ pub(crate) fn draw_piano_roll(
                 grid_rect,
                 auto_rect,
                 auto_y,
-                &x_to_tick,
-                &y_to_pitch,
-                &tick_to_x,
-                &pitch_to_y,
-                view_pitch_min,
-                view_pitch_max,
-                note_row_height,
+                &coords,
                 undo_manager,
             );
         });
@@ -5700,15 +5741,24 @@ fn handle_piano_roll_interaction(
     grid_rect: Rect,
     auto_rect: Option<Rect>,
     auto_y: f32,
-    x_to_tick: &dyn Fn(f32) -> PatternTick,
-    y_to_pitch: &dyn Fn(f32) -> Pitch,
-    tick_to_x: &dyn Fn(PatternTick) -> f32,
-    pitch_to_y: &dyn Fn(Pitch) -> f32,
-    view_pitch_min: Pitch,
-    view_pitch_max: Pitch,
-    note_row_height: f32,
+    coords: &PianoRollCoords,
     undo_manager: &mut crate::undo::UndoManager,
 ) {
+    // Re-expose the bundled transforms under the names the body already uses, so
+    // the handler logic is untouched by the parameter consolidation. The `&dyn
+    // Fn` bindings keep the call shape for the sub-helpers that take closures.
+    let tick_to_x_impl = |t: PatternTick| coords.tick_to_x(t);
+    let pitch_to_y_impl = |p: Pitch| coords.pitch_to_y(p);
+    let x_to_tick_impl = |x: f32| coords.x_to_tick(x);
+    let y_to_pitch_impl = |y: f32| coords.y_to_pitch(y);
+    let tick_to_x: &dyn Fn(PatternTick) -> f32 = &tick_to_x_impl;
+    let pitch_to_y: &dyn Fn(Pitch) -> f32 = &pitch_to_y_impl;
+    let x_to_tick: &dyn Fn(f32) -> PatternTick = &x_to_tick_impl;
+    let y_to_pitch: &dyn Fn(f32) -> Pitch = &y_to_pitch_impl;
+    let view_pitch_min = coords.view_pitch_min;
+    let view_pitch_max = coords.view_pitch_max;
+    let note_row_height = coords.note_row_height;
+
     let shift_held = ui.input(|i| i.modifiers.shift);
 
     // ── Automation click handling ──
