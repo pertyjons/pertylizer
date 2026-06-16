@@ -217,6 +217,22 @@ fn draw_arrangement_toolbar(
     ui.separator();
 }
 
+/// Bundle of the long-lived locals the arrangement view threads through: the
+/// song snapshot, view state, undo manager and instrument list. Mirrors
+/// [`super::piano_roll`]'s `PianoRollCtx` so extracted sub-sections (e.g. the
+/// track-header panel) take one `&mut ctx` instead of many positional
+/// parameters; each helper re-exposes the fields under their original names so
+/// the moved bodies stay byte-for-byte unchanged. (The live `EngineHandle` is
+/// still threaded directly — the timeline painter that needs it is not yet
+/// extracted.)
+struct ArrangementCtx<'a> {
+    data: &'a ArrangementData,
+    song: &'a Arc<RwLock<Song>>,
+    view_state: &'a mut SequencerViewState,
+    undo_manager: &'a mut crate::undo::UndoManager,
+    instruments: &'a [crate::gui::instrument_rack::InstrumentUiState],
+}
+
 /// Draw the arrangement view with track headers and timeline.
 /// Returns `Some(PatternId)` if a placement was double-clicked.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -297,462 +313,16 @@ pub(super) fn draw_arrangement(
         .map(|s| s.offset.y)
         .unwrap_or(0.0);
 
-    // ── Track header panel (left side, uses egui widgets) ──
-    egui::Panel::left("seq_track_headers")
-        .exact_size(TRACK_HEADER_WIDTH)
-        .resizable(false)
-        .show_inside(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-
-            // Ruler corner placeholder (pinned, outside the scroll area)
-            ui.allocate_space(Vec2::new(TRACK_HEADER_WIDTH, RULER_HEIGHT));
-
-            egui::ScrollArea::vertical()
-                .id_salt("seq_track_headers_scroll")
-                .auto_shrink([false, false])
-                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .scroll_source(egui::scroll_area::ScrollSource::NONE)
-                .vertical_scroll_offset(header_v_offset)
-                .show(ui, |ui| {
-                    for (i, track) in data.tracks.iter().enumerate() {
-                        let is_selected = view_state.selected_track == Some(track.id);
-                        let is_highlighted = view_state.highlighted_track == Some(track.id);
-                        let bg = if is_selected {
-                            TRACK_HEADER_SELECTED_FILL
-                        } else if is_highlighted {
-                            TRACK_HIGHLIGHT_FILL
-                        } else if i % 2 == 0 {
-                            t.colors.bg_module
-                        } else {
-                            t.colors.bg_panel
-                        };
-
-                        let frame = egui::Frame::new()
-                            .fill(bg)
-                            .stroke(if is_selected {
-                                Stroke::new(1.0, t.colors.accent_cyan)
-                            } else {
-                                Stroke::NONE
-                            })
-                            .inner_margin(egui::Margin::symmetric(4, 2));
-
-                        frame.show(ui, |ui| {
-                            ui.set_min_height(TRACK_ROW_HEIGHT - 4.0);
-                            ui.set_max_height(TRACK_ROW_HEIGHT - 4.0);
-                            ui.set_min_width(ui.available_width());
-
-                            // Color indicator + name row
-                            ui.horizontal(|ui| {
-                                // Color indicator
-                                let (color_rect, _) = ui.allocate_exact_size(
-                                    Vec2::new(4.0, TRACK_ROW_HEIGHT - 8.0),
-                                    Sense::hover(),
-                                );
-                                ui.painter().rect_filled(color_rect, 2.0, track.color);
-
-                                ui.vertical(|ui| {
-                                    // Track name (editable on click)
-                                    if view_state.editing_track_name.as_ref().map(|(id, _)| *id)
-                                        == Some(track.id)
-                                    {
-                                        if let Some((_, ref mut name_buf)) =
-                                            view_state.editing_track_name
-                                        {
-                                            let resp = ui.add(
-                                                egui::TextEdit::singleline(name_buf)
-                                                    .desired_width(80.0)
-                                                    .font(egui::FontId::proportional(12.0)),
-                                            );
-                                            if resp.lost_focus()
-                                                || ui.input(|i| i.key_pressed(egui::Key::Enter))
-                                            {
-                                                let new_name = name_buf.clone();
-                                                let tid = track.id;
-                                                let old_name = track.name.clone();
-                                                let mut applied = false;
-                                                {
-                                                    let mut song_w = song.write();
-                                                    if let Some(t) = song_w.track_mut(tid)
-                                                        && t.name != new_name
-                                                    {
-                                                        t.name = new_name.clone();
-                                                        applied = true;
-                                                    }
-                                                }
-                                                if applied {
-                                                    undo_manager.push(
-                                                        crate::undo::UndoAction::RenameTrack {
-                                                            track_id: tid,
-                                                            old_name,
-                                                            new_name,
-                                                        },
-                                                    );
-                                                }
-                                                view_state.editing_track_name = None;
-                                            } else if !resp.has_focus() {
-                                                // Grab focus only on the first
-                                                // frame so clicking elsewhere
-                                                // commits naturally via
-                                                // lost_focus.
-                                                resp.request_focus();
-                                            }
-                                        }
-                                    } else {
-                                        let name_resp = ui.add(
-                                            egui::Label::new(
-                                                RichText::new(&track.name)
-                                                    .size(12.0)
-                                                    .color(t.colors.text_primary),
-                                            )
-                                            .sense(Sense::click()),
-                                        );
-                                        if name_resp.clicked() {
-                                            view_state.selected_track = Some(track.id);
-                                        }
-                                        if name_resp.double_clicked() {
-                                            view_state.editing_track_name =
-                                                Some((track.id, track.name.clone()));
-                                        }
-
-                                        // Right-click context menu on track name
-                                        name_resp.context_menu(|ui| {
-                                            if ui.button("Rename").clicked() {
-                                                view_state.editing_track_name =
-                                                    Some((track.id, track.name.clone()));
-                                                ui.close();
-                                            }
-                                            if ui
-                                                .button(
-                                                    RichText::new("Delete Track")
-                                                        .color(t.colors.accent_red),
-                                                )
-                                                .clicked()
-                                            {
-                                                let mut captured: Option<(
-                                                    synth_sequencer::SequencerTrack,
-                                                    usize,
-                                                    Vec<synth_sequencer::PatternPlacement>,
-                                                )> = None;
-                                                {
-                                                    let mut song_w = song.write();
-                                                    let idx = song_w
-                                                        .tracks()
-                                                        .position(|t| t.id == track.id)
-                                                        .unwrap_or(0);
-                                                    let placements: Vec<_> = song_w
-                                                        .arrangement()
-                                                        .iter()
-                                                        .filter(|p| p.track_id == track.id)
-                                                        .cloned()
-                                                        .collect();
-                                                    if let Some(deleted) =
-                                                        song_w.delete_track(track.id)
-                                                    {
-                                                        captured = Some((deleted, idx, placements));
-                                                    }
-                                                }
-                                                if let Some((trk, idx, plcs)) = captured {
-                                                    undo_manager.push(
-                                                        crate::undo::UndoAction::DeleteTrack {
-                                                            track: trk,
-                                                            track_index: idx,
-                                                            placements: plcs,
-                                                        },
-                                                    );
-                                                }
-                                                ui.close();
-                                            }
-                                        });
-                                    }
-
-                                    // Instrument selector row
-                                    let inst_label = instruments
-                                        .iter()
-                                        .find(|inst| inst.id.0 == track.instrument_id.0 as u64)
-                                        .map_or_else(
-                                            || "— (none) —".to_owned(),
-                                            |inst| inst.name.clone(),
-                                        );
-                                    egui::ComboBox::from_id_salt(
-                                        ui.id().with(("track_instr", track.id.0)),
-                                    )
-                                    .selected_text(RichText::new(&inst_label).size(11.0))
-                                    .width(116.0)
-                                    .show_ui(ui, |ui| {
-                                        for inst in instruments {
-                                            let seq_id = SeqInstrumentId::new(inst.id.0 as u16);
-                                            let selected = track.instrument_id == seq_id;
-                                            if ui.selectable_label(selected, &inst.name).clicked()
-                                                && let mut song_w = song.write()
-                                                && let Some(trk) = song_w.track_mut(track.id)
-                                            {
-                                                trk.instrument = seq_id;
-                                            }
-                                        }
-                                    });
-
-                                    // Mute / Solo row
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 2.0;
-                                        // Mute button
-                                        let m_color = if track.mute {
-                                            t.colors.accent_red
-                                        } else {
-                                            t.colors.text_dim
-                                        };
-                                        if ui
-                                            .button(RichText::new("M").size(10.0).color(m_color))
-                                            .on_hover_text("Mute")
-                                            .clicked()
-                                            && let mut song_w = song.write()
-                                            && let Some(trk) = song_w.track_mut(track.id)
-                                        {
-                                            trk.toggle_mute();
-                                        }
-
-                                        // Solo button
-                                        let s_color = if track.solo {
-                                            t.colors.accent_yellow
-                                        } else {
-                                            t.colors.text_dim
-                                        };
-                                        if ui
-                                            .button(RichText::new("S").size(10.0).color(s_color))
-                                            .on_hover_text("Solo")
-                                            .clicked()
-                                            && let mut song_w = song.write()
-                                            && let Some(trk) = song_w.track_mut(track.id)
-                                        {
-                                            trk.toggle_solo();
-                                        }
-
-                                        // Reorder buttons (move up / down)
-                                        let track_count_local = data.tracks.len();
-                                        let up_enabled = i > 0;
-                                        let down_enabled = i + 1 < track_count_local;
-                                        if ui
-                                            .add_enabled(
-                                                up_enabled,
-                                                egui::Button::new(
-                                                    RichText::new(ri::ARROW_UP_S_LINE)
-                                                        .size(10.0)
-                                                        .color(t.colors.text_secondary),
-                                                ),
-                                            )
-                                            .on_hover_text("Move track up")
-                                            .clicked()
-                                            && i > 0
-                                        {
-                                            song.write().reorder_track(i, i - 1);
-                                        }
-                                        if ui
-                                            .add_enabled(
-                                                down_enabled,
-                                                egui::Button::new(
-                                                    RichText::new(ri::ARROW_DOWN_S_LINE)
-                                                        .size(10.0)
-                                                        .color(t.colors.text_secondary),
-                                                ),
-                                            )
-                                            .on_hover_text("Move track down")
-                                            .clicked()
-                                        {
-                                            song.write().reorder_track(i, i + 1);
-                                        }
-
-                                        // Properties button (volume / pan / colour)
-                                        let prop_btn = ui
-                                            .button(
-                                                RichText::new(ri::MORE_FILL)
-                                                    .size(10.0)
-                                                    .color(t.colors.text_secondary),
-                                            )
-                                            .on_hover_text(
-                                                "Track properties (volume, pan, colour)",
-                                            );
-                                        egui::Popup::from_toggle_button_response(&prop_btn).show(
-                                            |ui| {
-                                                ui.set_min_width(220.0);
-                                                ui.label(
-                                                    RichText::new("Track properties").strong(),
-                                                );
-                                                ui.add_space(t.spacing.xs);
-
-                                                // Volume
-                                                let mut vol = track.volume.as_f32();
-                                                ui.horizontal(|ui| {
-                                                    ui.label(
-                                                        RichText::new("Vol")
-                                                            .color(t.colors.text_dim),
-                                                    );
-                                                    if ui
-                                                        .add(
-                                                            egui::Slider::new(&mut vol, 0.0..=1.0)
-                                                                .show_value(true)
-                                                                .fixed_decimals(2),
-                                                        )
-                                                        .changed()
-                                                        && let mut song_w = song.write()
-                                                        && let Some(trk) =
-                                                            song_w.track_mut(track.id)
-                                                    {
-                                                        trk.volume = NormalizedValue::new(vol);
-                                                    }
-                                                });
-
-                                                let mut pan_bi = track.pan.as_f32();
-                                                ui.horizontal(|ui| {
-                                                    ui.label(
-                                                        RichText::new("Pan")
-                                                            .color(t.colors.text_dim),
-                                                    );
-                                                    if ui
-                                                        .add(
-                                                            egui::Slider::new(
-                                                                &mut pan_bi,
-                                                                -1.0..=1.0,
-                                                            )
-                                                            .show_value(true)
-                                                            .fixed_decimals(2),
-                                                        )
-                                                        .changed()
-                                                        && let mut song_w = song.write()
-                                                        && let Some(trk) =
-                                                            song_w.track_mut(track.id)
-                                                    {
-                                                        trk.pan = BipolarValue::new(pan_bi);
-                                                    }
-                                                });
-
-                                                // Description (utility metadata, no undo).
-                                                // Buffered so edits survive the per-frame
-                                                // snapshot rebuild; committed on lost focus.
-                                                ui.add_space(t.spacing.xs);
-                                                ui.label(
-                                                    RichText::new("Description")
-                                                        .color(t.colors.text_dim),
-                                                );
-                                                let editing_this = view_state
-                                                    .editing_track_description
-                                                    .as_ref()
-                                                    .map(|(id, _)| *id)
-                                                    == Some(track.id);
-                                                if editing_this {
-                                                    if let Some((_, ref mut desc_buf)) =
-                                                        view_state.editing_track_description
-                                                    {
-                                                        let resp = ui.add(
-                                                            egui::TextEdit::multiline(desc_buf)
-                                                                .desired_rows(2)
-                                                                .desired_width(f32::INFINITY)
-                                                                .hint_text("Description"),
-                                                        );
-                                                        // Commit on every change so a popup
-                                                        // dismissal (click-outside) can never
-                                                        // strand an in-progress edit; lost_focus
-                                                        // just ends the edit session.
-                                                        if resp.changed() {
-                                                            let new_desc = desc_buf.clone();
-                                                            let mut song_w = song.write();
-                                                            if let Some(trk) =
-                                                                song_w.track_mut(track.id)
-                                                                && trk.description != new_desc
-                                                            {
-                                                                trk.description = new_desc;
-                                                            }
-                                                        }
-                                                        if resp.lost_focus() {
-                                                            view_state.editing_track_description =
-                                                                None;
-                                                        } else if !resp.has_focus() {
-                                                            resp.request_focus();
-                                                        }
-                                                    }
-                                                } else {
-                                                    let desc_text = if track.description.is_empty()
-                                                    {
-                                                        RichText::new("(click to add)")
-                                                            .italics()
-                                                            .color(t.colors.text_dim)
-                                                    } else {
-                                                        RichText::new(&track.description)
-                                                            .color(t.colors.text_secondary)
-                                                    };
-                                                    if ui
-                                                        .add(
-                                                            egui::Label::new(desc_text)
-                                                                .sense(Sense::click()),
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        view_state.editing_track_description = Some(
-                                                            (track.id, track.description.clone()),
-                                                        );
-                                                    }
-                                                }
-
-                                                ui.add_space(t.spacing.xs);
-                                                ui.label(
-                                                    RichText::new("Colour")
-                                                        .color(t.colors.text_dim),
-                                                );
-                                                ui.horizontal_wrapped(|ui| {
-                                                    for preset in
-                                                        synth_sequencer::TrackColor::presets()
-                                                    {
-                                                        let c = Color32::from_rgb(
-                                                            preset.r, preset.g, preset.b,
-                                                        );
-                                                        let selected = track.track_color == *preset;
-                                                        let stroke = if selected {
-                                                            Stroke::new(2.0, t.colors.accent_cyan)
-                                                        } else {
-                                                            Stroke::NONE
-                                                        };
-                                                        let (rect, resp) = ui.allocate_exact_size(
-                                                            Vec2::new(18.0, 18.0),
-                                                            Sense::click(),
-                                                        );
-                                                        ui.painter().rect_filled(rect, 3.0, c);
-                                                        ui.painter().rect_stroke(
-                                                            rect,
-                                                            3.0,
-                                                            stroke,
-                                                            egui::StrokeKind::Inside,
-                                                        );
-                                                        if resp.clicked()
-                                                            && let mut song_w = song.write()
-                                                            && let Some(trk) =
-                                                                song_w.track_mut(track.id)
-                                                        {
-                                                            trk.color = *preset;
-                                                        }
-                                                    }
-                                                });
-                                            },
-                                        );
-                                    });
-                                });
-                            });
-                        });
-                    }
-
-                    // "+" button to add track
-                    ui.add_space(t.spacing.xs);
-                    if ui
-                        .button(
-                            RichText::new(format!("{} Add Track", ri::ADD_LINE))
-                                .size(11.0)
-                                .color(t.colors.accent_green),
-                        )
-                        .clicked()
-                    {
-                        let mut song_w = song.write();
-                        let count = song_w.track_count();
-                        let _ = song_w.create_track(format!("Track {}", count + 1));
-                    }
-                });
-        });
+    {
+        let mut ctx = ArrangementCtx {
+            data,
+            song,
+            view_state: &mut *view_state,
+            undo_manager: &mut *undo_manager,
+            instruments,
+        };
+        draw_arrangement_track_headers(&mut ctx, ui, header_v_offset);
+    }
 
     // ── Timeline area (right side, uses painter for performance) ──
     // The scroll area's actual ID = ui.make_persistent_id(Id::new(salt))
@@ -1804,4 +1374,475 @@ pub(super) fn draw_arrangement(
     }
 
     double_clicked_pattern
+}
+
+fn draw_arrangement_track_headers(
+    ctx: &mut ArrangementCtx<'_>,
+    ui: &mut egui::Ui,
+    header_v_offset: f32,
+) {
+    use egui_remixicon::icons as ri;
+    let data = ctx.data;
+    let song = ctx.song;
+    let view_state = &mut *ctx.view_state;
+    let undo_manager = &mut *ctx.undo_manager;
+    let instruments = ctx.instruments;
+    let t = theme();
+
+    // ── Track header panel (left side, uses egui widgets) ──
+    egui::Panel::left("seq_track_headers")
+        .exact_size(TRACK_HEADER_WIDTH)
+        .resizable(false)
+        .show_inside(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+
+            // Ruler corner placeholder (pinned, outside the scroll area)
+            ui.allocate_space(Vec2::new(TRACK_HEADER_WIDTH, RULER_HEIGHT));
+
+            egui::ScrollArea::vertical()
+                .id_salt("seq_track_headers_scroll")
+                .auto_shrink([false, false])
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .scroll_source(egui::scroll_area::ScrollSource::NONE)
+                .vertical_scroll_offset(header_v_offset)
+                .show(ui, |ui| {
+                    for (i, track) in data.tracks.iter().enumerate() {
+                        let is_selected = view_state.selected_track == Some(track.id);
+                        let is_highlighted = view_state.highlighted_track == Some(track.id);
+                        let bg = if is_selected {
+                            TRACK_HEADER_SELECTED_FILL
+                        } else if is_highlighted {
+                            TRACK_HIGHLIGHT_FILL
+                        } else if i % 2 == 0 {
+                            t.colors.bg_module
+                        } else {
+                            t.colors.bg_panel
+                        };
+
+                        let frame = egui::Frame::new()
+                            .fill(bg)
+                            .stroke(if is_selected {
+                                Stroke::new(1.0, t.colors.accent_cyan)
+                            } else {
+                                Stroke::NONE
+                            })
+                            .inner_margin(egui::Margin::symmetric(4, 2));
+
+                        frame.show(ui, |ui| {
+                            ui.set_min_height(TRACK_ROW_HEIGHT - 4.0);
+                            ui.set_max_height(TRACK_ROW_HEIGHT - 4.0);
+                            ui.set_min_width(ui.available_width());
+
+                            // Color indicator + name row
+                            ui.horizontal(|ui| {
+                                // Color indicator
+                                let (color_rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(4.0, TRACK_ROW_HEIGHT - 8.0),
+                                    Sense::hover(),
+                                );
+                                ui.painter().rect_filled(color_rect, 2.0, track.color);
+
+                                ui.vertical(|ui| {
+                                    // Track name (editable on click)
+                                    if view_state.editing_track_name.as_ref().map(|(id, _)| *id)
+                                        == Some(track.id)
+                                    {
+                                        if let Some((_, ref mut name_buf)) =
+                                            view_state.editing_track_name
+                                        {
+                                            let resp = ui.add(
+                                                egui::TextEdit::singleline(name_buf)
+                                                    .desired_width(80.0)
+                                                    .font(egui::FontId::proportional(12.0)),
+                                            );
+                                            if resp.lost_focus()
+                                                || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                            {
+                                                let new_name = name_buf.clone();
+                                                let tid = track.id;
+                                                let old_name = track.name.clone();
+                                                let mut applied = false;
+                                                {
+                                                    let mut song_w = song.write();
+                                                    if let Some(t) = song_w.track_mut(tid)
+                                                        && t.name != new_name
+                                                    {
+                                                        t.name = new_name.clone();
+                                                        applied = true;
+                                                    }
+                                                }
+                                                if applied {
+                                                    undo_manager.push(
+                                                        crate::undo::UndoAction::RenameTrack {
+                                                            track_id: tid,
+                                                            old_name,
+                                                            new_name,
+                                                        },
+                                                    );
+                                                }
+                                                view_state.editing_track_name = None;
+                                            } else if !resp.has_focus() {
+                                                // Grab focus only on the first
+                                                // frame so clicking elsewhere
+                                                // commits naturally via
+                                                // lost_focus.
+                                                resp.request_focus();
+                                            }
+                                        }
+                                    } else {
+                                        let name_resp = ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&track.name)
+                                                    .size(12.0)
+                                                    .color(t.colors.text_primary),
+                                            )
+                                            .sense(Sense::click()),
+                                        );
+                                        if name_resp.clicked() {
+                                            view_state.selected_track = Some(track.id);
+                                        }
+                                        if name_resp.double_clicked() {
+                                            view_state.editing_track_name =
+                                                Some((track.id, track.name.clone()));
+                                        }
+
+                                        // Right-click context menu on track name
+                                        name_resp.context_menu(|ui| {
+                                            if ui.button("Rename").clicked() {
+                                                view_state.editing_track_name =
+                                                    Some((track.id, track.name.clone()));
+                                                ui.close();
+                                            }
+                                            if ui
+                                                .button(
+                                                    RichText::new("Delete Track")
+                                                        .color(t.colors.accent_red),
+                                                )
+                                                .clicked()
+                                            {
+                                                let mut captured: Option<(
+                                                    synth_sequencer::SequencerTrack,
+                                                    usize,
+                                                    Vec<synth_sequencer::PatternPlacement>,
+                                                )> = None;
+                                                {
+                                                    let mut song_w = song.write();
+                                                    let idx = song_w
+                                                        .tracks()
+                                                        .position(|t| t.id == track.id)
+                                                        .unwrap_or(0);
+                                                    let placements: Vec<_> = song_w
+                                                        .arrangement()
+                                                        .iter()
+                                                        .filter(|p| p.track_id == track.id)
+                                                        .cloned()
+                                                        .collect();
+                                                    if let Some(deleted) =
+                                                        song_w.delete_track(track.id)
+                                                    {
+                                                        captured = Some((deleted, idx, placements));
+                                                    }
+                                                }
+                                                if let Some((trk, idx, plcs)) = captured {
+                                                    undo_manager.push(
+                                                        crate::undo::UndoAction::DeleteTrack {
+                                                            track: trk,
+                                                            track_index: idx,
+                                                            placements: plcs,
+                                                        },
+                                                    );
+                                                }
+                                                ui.close();
+                                            }
+                                        });
+                                    }
+
+                                    // Instrument selector row
+                                    let inst_label = instruments
+                                        .iter()
+                                        .find(|inst| inst.id.0 == track.instrument_id.0 as u64)
+                                        .map_or_else(
+                                            || "— (none) —".to_owned(),
+                                            |inst| inst.name.clone(),
+                                        );
+                                    egui::ComboBox::from_id_salt(
+                                        ui.id().with(("track_instr", track.id.0)),
+                                    )
+                                    .selected_text(RichText::new(&inst_label).size(11.0))
+                                    .width(116.0)
+                                    .show_ui(ui, |ui| {
+                                        for inst in instruments {
+                                            let seq_id = SeqInstrumentId::new(inst.id.0 as u16);
+                                            let selected = track.instrument_id == seq_id;
+                                            if ui.selectable_label(selected, &inst.name).clicked()
+                                                && let mut song_w = song.write()
+                                                && let Some(trk) = song_w.track_mut(track.id)
+                                            {
+                                                trk.instrument = seq_id;
+                                            }
+                                        }
+                                    });
+
+                                    // Mute / Solo row
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 2.0;
+                                        // Mute button
+                                        let m_color = if track.mute {
+                                            t.colors.accent_red
+                                        } else {
+                                            t.colors.text_dim
+                                        };
+                                        if ui
+                                            .button(RichText::new("M").size(10.0).color(m_color))
+                                            .on_hover_text("Mute")
+                                            .clicked()
+                                            && let mut song_w = song.write()
+                                            && let Some(trk) = song_w.track_mut(track.id)
+                                        {
+                                            trk.toggle_mute();
+                                        }
+
+                                        // Solo button
+                                        let s_color = if track.solo {
+                                            t.colors.accent_yellow
+                                        } else {
+                                            t.colors.text_dim
+                                        };
+                                        if ui
+                                            .button(RichText::new("S").size(10.0).color(s_color))
+                                            .on_hover_text("Solo")
+                                            .clicked()
+                                            && let mut song_w = song.write()
+                                            && let Some(trk) = song_w.track_mut(track.id)
+                                        {
+                                            trk.toggle_solo();
+                                        }
+
+                                        // Reorder buttons (move up / down)
+                                        let track_count_local = data.tracks.len();
+                                        let up_enabled = i > 0;
+                                        let down_enabled = i + 1 < track_count_local;
+                                        if ui
+                                            .add_enabled(
+                                                up_enabled,
+                                                egui::Button::new(
+                                                    RichText::new(ri::ARROW_UP_S_LINE)
+                                                        .size(10.0)
+                                                        .color(t.colors.text_secondary),
+                                                ),
+                                            )
+                                            .on_hover_text("Move track up")
+                                            .clicked()
+                                            && i > 0
+                                        {
+                                            song.write().reorder_track(i, i - 1);
+                                        }
+                                        if ui
+                                            .add_enabled(
+                                                down_enabled,
+                                                egui::Button::new(
+                                                    RichText::new(ri::ARROW_DOWN_S_LINE)
+                                                        .size(10.0)
+                                                        .color(t.colors.text_secondary),
+                                                ),
+                                            )
+                                            .on_hover_text("Move track down")
+                                            .clicked()
+                                        {
+                                            song.write().reorder_track(i, i + 1);
+                                        }
+
+                                        // Properties button (volume / pan / colour)
+                                        let prop_btn = ui
+                                            .button(
+                                                RichText::new(ri::MORE_FILL)
+                                                    .size(10.0)
+                                                    .color(t.colors.text_secondary),
+                                            )
+                                            .on_hover_text(
+                                                "Track properties (volume, pan, colour)",
+                                            );
+                                        egui::Popup::from_toggle_button_response(&prop_btn).show(
+                                            |ui| {
+                                                ui.set_min_width(220.0);
+                                                ui.label(
+                                                    RichText::new("Track properties").strong(),
+                                                );
+                                                ui.add_space(t.spacing.xs);
+
+                                                // Volume
+                                                let mut vol = track.volume.as_f32();
+                                                ui.horizontal(|ui| {
+                                                    ui.label(
+                                                        RichText::new("Vol")
+                                                            .color(t.colors.text_dim),
+                                                    );
+                                                    if ui
+                                                        .add(
+                                                            egui::Slider::new(&mut vol, 0.0..=1.0)
+                                                                .show_value(true)
+                                                                .fixed_decimals(2),
+                                                        )
+                                                        .changed()
+                                                        && let mut song_w = song.write()
+                                                        && let Some(trk) =
+                                                            song_w.track_mut(track.id)
+                                                    {
+                                                        trk.volume = NormalizedValue::new(vol);
+                                                    }
+                                                });
+
+                                                let mut pan_bi = track.pan.as_f32();
+                                                ui.horizontal(|ui| {
+                                                    ui.label(
+                                                        RichText::new("Pan")
+                                                            .color(t.colors.text_dim),
+                                                    );
+                                                    if ui
+                                                        .add(
+                                                            egui::Slider::new(
+                                                                &mut pan_bi,
+                                                                -1.0..=1.0,
+                                                            )
+                                                            .show_value(true)
+                                                            .fixed_decimals(2),
+                                                        )
+                                                        .changed()
+                                                        && let mut song_w = song.write()
+                                                        && let Some(trk) =
+                                                            song_w.track_mut(track.id)
+                                                    {
+                                                        trk.pan = BipolarValue::new(pan_bi);
+                                                    }
+                                                });
+
+                                                // Description (utility metadata, no undo).
+                                                // Buffered so edits survive the per-frame
+                                                // snapshot rebuild; committed on lost focus.
+                                                ui.add_space(t.spacing.xs);
+                                                ui.label(
+                                                    RichText::new("Description")
+                                                        .color(t.colors.text_dim),
+                                                );
+                                                let editing_this = view_state
+                                                    .editing_track_description
+                                                    .as_ref()
+                                                    .map(|(id, _)| *id)
+                                                    == Some(track.id);
+                                                if editing_this {
+                                                    if let Some((_, ref mut desc_buf)) =
+                                                        view_state.editing_track_description
+                                                    {
+                                                        let resp = ui.add(
+                                                            egui::TextEdit::multiline(desc_buf)
+                                                                .desired_rows(2)
+                                                                .desired_width(f32::INFINITY)
+                                                                .hint_text("Description"),
+                                                        );
+                                                        // Commit on every change so a popup
+                                                        // dismissal (click-outside) can never
+                                                        // strand an in-progress edit; lost_focus
+                                                        // just ends the edit session.
+                                                        if resp.changed() {
+                                                            let new_desc = desc_buf.clone();
+                                                            let mut song_w = song.write();
+                                                            if let Some(trk) =
+                                                                song_w.track_mut(track.id)
+                                                                && trk.description != new_desc
+                                                            {
+                                                                trk.description = new_desc;
+                                                            }
+                                                        }
+                                                        if resp.lost_focus() {
+                                                            view_state.editing_track_description =
+                                                                None;
+                                                        } else if !resp.has_focus() {
+                                                            resp.request_focus();
+                                                        }
+                                                    }
+                                                } else {
+                                                    let desc_text = if track.description.is_empty()
+                                                    {
+                                                        RichText::new("(click to add)")
+                                                            .italics()
+                                                            .color(t.colors.text_dim)
+                                                    } else {
+                                                        RichText::new(&track.description)
+                                                            .color(t.colors.text_secondary)
+                                                    };
+                                                    if ui
+                                                        .add(
+                                                            egui::Label::new(desc_text)
+                                                                .sense(Sense::click()),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        view_state.editing_track_description = Some(
+                                                            (track.id, track.description.clone()),
+                                                        );
+                                                    }
+                                                }
+
+                                                ui.add_space(t.spacing.xs);
+                                                ui.label(
+                                                    RichText::new("Colour")
+                                                        .color(t.colors.text_dim),
+                                                );
+                                                ui.horizontal_wrapped(|ui| {
+                                                    for preset in
+                                                        synth_sequencer::TrackColor::presets()
+                                                    {
+                                                        let c = Color32::from_rgb(
+                                                            preset.r, preset.g, preset.b,
+                                                        );
+                                                        let selected = track.track_color == *preset;
+                                                        let stroke = if selected {
+                                                            Stroke::new(2.0, t.colors.accent_cyan)
+                                                        } else {
+                                                            Stroke::NONE
+                                                        };
+                                                        let (rect, resp) = ui.allocate_exact_size(
+                                                            Vec2::new(18.0, 18.0),
+                                                            Sense::click(),
+                                                        );
+                                                        ui.painter().rect_filled(rect, 3.0, c);
+                                                        ui.painter().rect_stroke(
+                                                            rect,
+                                                            3.0,
+                                                            stroke,
+                                                            egui::StrokeKind::Inside,
+                                                        );
+                                                        if resp.clicked()
+                                                            && let mut song_w = song.write()
+                                                            && let Some(trk) =
+                                                                song_w.track_mut(track.id)
+                                                        {
+                                                            trk.color = *preset;
+                                                        }
+                                                    }
+                                                });
+                                            },
+                                        );
+                                    });
+                                });
+                            });
+                        });
+                    }
+
+                    // "+" button to add track
+                    ui.add_space(t.spacing.xs);
+                    if ui
+                        .button(
+                            RichText::new(format!("{} Add Track", ri::ADD_LINE))
+                                .size(11.0)
+                                .color(t.colors.accent_green),
+                        )
+                        .clicked()
+                    {
+                        let mut song_w = song.write();
+                        let count = song_w.track_count();
+                        let _ = song_w.create_track(format!("Track {}", count + 1));
+                    }
+                });
+        });
 }
