@@ -3,14 +3,19 @@
 //! piano-roll selection inspector (and later the tracker ornament column); both
 //! call [`draw_ornament_editor`], so there is one editing code path.
 
+use std::sync::Arc;
+
 use eframe::egui;
+use parking_lot::RwLock;
 use synth_core::{NormalizedValue, Semitones};
 use synth_sequencer::{
     Duration as SeqDuration, MAX_ORNAMENT_HITS, NoteId, Ornament, OrnamentDynamics,
-    OrnamentPlacement, OrnamentSpacing, PatternId,
+    OrnamentPlacement, OrnamentSpacing, PatternId, Song,
 };
 
+use super::SequencerViewState;
 use crate::gui::widgets::Knob;
+use crate::undo::{UndoAction, UndoManager};
 
 /// An in-progress ornament edit: which note, the pre-edit baseline (for one
 /// coalesced undo entry per popup session), and the live working copy. Lives on
@@ -115,6 +120,51 @@ pub(crate) fn draw_ornament_editor(ui: &mut egui::Ui, orn: &mut Option<Ornament>
     }
 
     *orn != before
+}
+
+/// The per-note ornament editor popup window, shared by the piano-roll selection
+/// inspector and the tracker ornament column. Shown while
+/// `view_state.editing_ornament` is set; applies edits live to the note and
+/// pushes one coalesced `SetNoteOrnament` undo entry when the window is closed.
+pub(crate) fn draw_ornament_popup(
+    ui: &mut egui::Ui,
+    song: &Arc<RwLock<Song>>,
+    view_state: &mut SequencerViewState,
+    undo_manager: &mut UndoManager,
+) {
+    let mut finalize = false;
+    if let Some(edit) = view_state.editing_ornament.as_mut() {
+        let mut open = true;
+        let mut changed = false;
+        egui::Window::new("Ornament")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ui.ctx(), |ui| {
+                changed = draw_ornament_editor(ui, &mut edit.current);
+            });
+        if changed {
+            let mut song_w = song.write();
+            if let Some(note) = song_w
+                .pattern_mut(edit.pattern_id)
+                .and_then(|p| p.note_mut(edit.note_id))
+            {
+                note.ornament = edit.current;
+            }
+        }
+        finalize = !open;
+    }
+    if finalize
+        && let Some(edit) = view_state.editing_ornament.take()
+        && edit.before != edit.current
+    {
+        undo_manager.push(UndoAction::SetNoteOrnament {
+            pattern_id: edit.pattern_id,
+            note_id: edit.note_id,
+            old: edit.before,
+            new: edit.current,
+        });
+    }
 }
 
 /// A one-line read-only summary of a note's ornament for the inspector.

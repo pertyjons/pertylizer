@@ -15,7 +15,7 @@ use synth_engine::{EngineCommand, EngineHandle, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
     ExpansionBuffer, Glide, GlideFrom, GlideInterp, Note, NoteExpression, NoteId, NoteLane,
-    NoteName, NoteProcessor, PatternId, PatternTick, Pitch, SeqInstrumentId, Song, Tick,
+    NoteName, NoteProcessor, Ornament, PatternId, PatternTick, Pitch, SeqInstrumentId, Song, Tick,
     TimeSignature, TrackId, Velocity, Vibrato, VibratoShape,
 };
 
@@ -33,7 +33,7 @@ mod transport;
 use arrangement::{collect_arrangement_data, draw_arrangement};
 use automation::{automation_point_at_pos, draw_automation_zone};
 pub(crate) use note_fx::draw_note_fx_panel;
-pub(crate) use ornament::{OrnamentEdit, draw_ornament_editor, ornament_summary};
+pub(crate) use ornament::{OrnamentEdit, draw_ornament_popup, ornament_summary};
 pub(crate) use piano_roll::{collect_piano_roll_data, draw_piano_roll};
 use piano_roll::{draw_automation_target_selector, draw_pattern_instrument_transport};
 pub(crate) use tracker::draw_tracker;
@@ -697,8 +697,9 @@ struct PianoRollNote {
     legato: bool,
     glide: Option<Glide>,
     expression: Option<NoteExpression>,
-    /// Whether this note carries a per-note ornament (drawn as a head marker).
-    has_ornament: bool,
+    /// The note's per-note ornament, if any (drawn as a head marker in the piano
+    /// roll, as a tag in the tracker ornament column).
+    ornament: Option<Ornament>,
     /// Stored voice/column lane (the tracker's source of truth for which voice
     /// column a note lives in). The piano roll ignores it.
     lane: NoteLane,

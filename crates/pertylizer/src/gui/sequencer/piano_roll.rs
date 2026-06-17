@@ -37,7 +37,7 @@ pub(crate) fn collect_piano_roll_data(
                 legato: n.legato,
                 glide: n.glide,
                 expression: n.expression,
-                has_ornament: n.ornament.is_some(),
+                ornament: n.ornament,
                 lane: n.lane,
             }
         })
@@ -801,50 +801,6 @@ fn draw_piano_roll_selection_inspector(
     }
 
     draw_ornament_popup(ui, song, view_state, undo_manager);
-}
-
-/// The per-note ornament editor popup window. Shown while
-/// `view_state.editing_ornament` is set; applies edits live and pushes one
-/// coalesced `SetNoteOrnament` undo entry when the window is closed.
-fn draw_ornament_popup(
-    ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
-    view_state: &mut SequencerViewState,
-    undo_manager: &mut crate::undo::UndoManager,
-) {
-    let mut finalize = false;
-    if let Some(edit) = view_state.editing_ornament.as_mut() {
-        let mut open = true;
-        let mut changed = false;
-        egui::Window::new("Ornament")
-            .collapsible(false)
-            .resizable(false)
-            .open(&mut open)
-            .show(ui.ctx(), |ui| {
-                changed = draw_ornament_editor(ui, &mut edit.current);
-            });
-        if changed {
-            let mut song_w = song.write();
-            if let Some(note) = song_w
-                .pattern_mut(edit.pattern_id)
-                .and_then(|p| p.note_mut(edit.note_id))
-            {
-                note.ornament = edit.current;
-            }
-        }
-        finalize = !open;
-    }
-    if finalize
-        && let Some(edit) = view_state.editing_ornament.take()
-        && edit.before != edit.current
-    {
-        undo_manager.push(crate::undo::UndoAction::SetNoteOrnament {
-            pattern_id: edit.pattern_id,
-            note_id: edit.note_id,
-            old: edit.before,
-            new: edit.current,
-        });
-    }
 }
 
 /// Shared automation-target selector ComboBox (labelled "Auto:"). Sets
@@ -1851,7 +1807,7 @@ pub(crate) fn draw_piano_roll(
                 }
                 // Per-note ornament (NP6): a small marker at the top-left corner,
                 // in the Note FX accent colour.
-                if note.has_ornament && note_width > 5.0 {
+                if note.ornament.is_some() && note_width > 5.0 {
                     painter.circle_filled(
                         Pos2::new(note_rect.min.x + 2.5, note_rect.min.y + 2.5),
                         1.5,
