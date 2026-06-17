@@ -18,11 +18,11 @@ use std::sync::Arc;
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
 use parking_lot::RwLock;
-use synth_core::NormalizedValue;
+use synth_core::{Milliseconds, NormalizedValue, Semitones};
 use synth_engine::EngineHandle;
 use synth_sequencer::{
-    AutomationLane, AutomationPoint, CurveType, Duration as SeqDuration, ExpansionBuffer,
-    NoteExpression, NoteLane, PatternId, PatternTick, Pitch, Song,
+    AutomationLane, AutomationPoint, CurveType, Duration as SeqDuration, ExpansionBuffer, Glide,
+    GlideFrom, GlideInterp, NoteExpression, NoteId, NoteLane, PatternId, PatternTick, Pitch, Song,
 };
 
 use super::{
@@ -44,6 +44,26 @@ const TRACKER_ROW_HEIGHT: f32 = 18.0;
 const TRACKER_ZOOM_MIN: f32 = 0.5;
 const TRACKER_ZOOM_MAX: f32 = 3.0;
 const TRACKER_ZOOM_STEP: f32 = 1.2;
+
+/// A cell context-menu action, recorded during the table pass and applied
+/// afterwards so the menu closures don't need a mutable borrow of the song/undo.
+enum CtxAction {
+    DeleteNote(NoteId),
+    SetLegato(NoteId, bool),
+    SetGlide(NoteId, Option<Glide>),
+    EditOrnament(NoteId),
+    ClearOrnament(NoteId),
+}
+
+/// The default glide installed when toggling glide on from the context menu
+/// (mirrors the piano-roll inspector's default).
+fn default_glide() -> Glide {
+    Glide {
+        from: GlideFrom::Semitones(Semitones::new(-2.0)),
+        time: Milliseconds::new(100.0),
+        interp: GlideInterp::Continuous,
+    }
+}
 
 /// Upper bound on voice columns. Far above any realistic single-instrument
 /// polyphony, and well under `NoteLane`'s u8 ceiling (255) so a column index can
@@ -1358,6 +1378,8 @@ pub(crate) fn draw_tracker(
     // is stored for *next* frame's tint (one-frame lag is invisible).
     let prev_hovered_row = view_state.tracker_hovered_row;
     let hovered_row: Cell<Option<usize>> = Cell::new(None);
+    // A cell context-menu action, applied after the table (like `click_target`).
+    let ctx_action: Cell<Option<CtxAction>> = Cell::new(None);
     // The cursor is "active" exactly when the tracker would respond to arrow keys:
     // no other widget holds keyboard focus (the same gate `handle_tracker_keys`
     // uses). When false (e.g. an inline rename has focus), the cursor draws dimmed.
@@ -1571,7 +1593,28 @@ pub(crate) fn draw_tracker(
                         hovered_row.set(Some(r));
                     }
                     if let Some(idx) = first_note {
-                        resp.on_hover_text(voice_tooltip(&data.notes[idx], tpr));
+                        let n = &data.notes[idx];
+                        let note_id = n.note_id;
+                        let legato = n.legato;
+                        let has_glide = n.glide.is_some();
+                        resp.context_menu(|ui| {
+                            if ui.button("Delete note").clicked() {
+                                ctx_action.set(Some(CtxAction::DeleteNote(note_id)));
+                                ui.close();
+                            }
+                            let mut leg = legato;
+                            if ui.checkbox(&mut leg, "Legato").changed() {
+                                ctx_action.set(Some(CtxAction::SetLegato(note_id, leg)));
+                                ui.close();
+                            }
+                            let mut gl = has_glide;
+                            if ui.checkbox(&mut gl, "Glide").changed() {
+                                ctx_action
+                                    .set(Some(CtxAction::SetGlide(note_id, gl.then(default_glide))));
+                                ui.close();
+                            }
+                        });
+                        resp.on_hover_text(voice_tooltip(n, tpr));
                     }
 
                     // Ornament cell (always present, sub-column 1): a compact tag
@@ -1601,8 +1644,22 @@ pub(crate) fn draw_tracker(
                     if orn_resp.contains_pointer() {
                         hovered_row.set(Some(r));
                     }
-                    if let Some(o) = first_note.and_then(|idx| data.notes[idx].ornament) {
-                        orn_resp.on_hover_text(ornament_detail(o));
+                    if let Some(idx) = first_note {
+                        let note_id = data.notes[idx].note_id;
+                        let orn = data.notes[idx].ornament;
+                        orn_resp.context_menu(|ui| {
+                            if ui.button("Edit ornament…").clicked() {
+                                ctx_action.set(Some(CtxAction::EditOrnament(note_id)));
+                                ui.close();
+                            }
+                            if orn.is_some() && ui.button("Clear ornament").clicked() {
+                                ctx_action.set(Some(CtxAction::ClearOrnament(note_id)));
+                                ui.close();
+                            }
+                        });
+                        if let Some(o) = orn {
+                            orn_resp.on_hover_text(ornament_detail(o));
+                        }
                     }
 
                     // Expression sub-columns: the note's scalar fields, read-only
@@ -1729,9 +1786,102 @@ pub(crate) fn draw_tracker(
         view_state.tracker_cursor.col = col;
     }
 
+    // Apply a context-menu action captured during the table pass (mutates the
+    // song + records undo; EditOrnament must run before the popup below).
+    apply_ctx_action(
+        ctx_action.take(),
+        data.pattern_id,
+        song,
+        view_state,
+        undo_manager,
+    );
+
     // Shared per-note ornament popup (open while `editing_ornament` is set —
     // e.g. Enter on an ornament cell above).
     draw_ornament_popup(ui, song, view_state, undo_manager);
+}
+
+/// Apply a tracker cell context-menu action: mutate the song and push the
+/// matching undo entry (or open the ornament editor for `EditOrnament`).
+fn apply_ctx_action(
+    action: Option<CtxAction>,
+    pattern_id: PatternId,
+    song: &Arc<RwLock<Song>>,
+    view_state: &mut SequencerViewState,
+    undo_manager: &mut UndoManager,
+) {
+    match action {
+        None => {}
+        Some(CtxAction::DeleteNote(id)) => {
+            let mut song_w = song.write();
+            if let Some(p) = song_w.pattern_mut(pattern_id)
+                && let Some(removed) = p.note(id).map(Into::into)
+            {
+                p.remove_note(id);
+                undo_manager.push(UndoAction::RemoveNote {
+                    pattern_id,
+                    note: removed,
+                });
+            }
+        }
+        Some(CtxAction::SetLegato(id, new)) => {
+            let mut song_w = song.write();
+            if let Some(p) = song_w.pattern_mut(pattern_id)
+                && let Some(old) = p.note(id).map(|n| n.legato)
+            {
+                p.set_note_legato(id, new);
+                undo_manager.push(UndoAction::SetLegatoBatch {
+                    pattern_id,
+                    changes: vec![(id, old, new)],
+                });
+            }
+        }
+        Some(CtxAction::SetGlide(id, new)) => {
+            let mut song_w = song.write();
+            if let Some(p) = song_w.pattern_mut(pattern_id)
+                && let Some(old) = p.note(id).map(|n| n.glide)
+            {
+                p.set_note_glide(id, new);
+                undo_manager.push(UndoAction::SetGlideBatch {
+                    pattern_id,
+                    changes: vec![(id, old, new)],
+                });
+            }
+        }
+        Some(CtxAction::EditOrnament(id)) => {
+            if let Some(s) = song.try_read() {
+                let current = s
+                    .pattern(pattern_id)
+                    .and_then(|p| p.note(id))
+                    .and_then(|n| n.ornament);
+                drop(s);
+                view_state.editing_ornament = Some(OrnamentEdit {
+                    pattern_id,
+                    note_id: id,
+                    before: current,
+                    current,
+                });
+            }
+        }
+        Some(CtxAction::ClearOrnament(id)) => {
+            let mut old = None;
+            {
+                let mut song_w = song.write();
+                if let Some(n) = song_w.pattern_mut(pattern_id).and_then(|p| p.note_mut(id)) {
+                    old = n.ornament;
+                    n.ornament = None;
+                }
+            }
+            if old.is_some() {
+                undo_manager.push(UndoAction::SetNoteOrnament {
+                    pattern_id,
+                    note_id: id,
+                    old,
+                    new: None,
+                });
+            }
+        }
+    }
 }
 
 /// Render one note into a voice cell: name, velocity, off-grid + expression markers.
