@@ -44,13 +44,13 @@ feature, just different affordances to reach it.
 
 ## Status at a glance
 
-- [x] **NP6.1** — The shared **Note FX rack inspector**: a right-docked panel to add / remove / configure processors (+ freeze), available beside *either* inner editor. Closes the deferred tracker "rack management" item. **Shipped** — panel + toggle (`1da8093`), Pattern-view wiring (`975a69f`), per-type param widgets + coalesced undo (`856048b`), undoable freeze via full-pattern snapshot. (Freeze button gated on a non-empty rack; relax to include ornament-only patterns once NP6.3 lands.)
-- [ ] **NP6.2** — **Ornament editing in the tracker** (primary): an ornament sub-column reusing the expression-cell flow, plus the **shared ornament-editor popup**.
-- [ ] **NP6.3** — **Piano-roll surface**: ghost-note preview of the expansion, a read-only ornament glyph on notes, and an "Edit…" shortcut (in the selection inspector) that opens the shared popup from NP6.2.
+- [x] **NP6.1** — The shared **Note FX rack inspector**: a right-docked panel to add / remove / configure processors (+ freeze), available beside *either* inner editor. Closes the deferred tracker "rack management" item. **Shipped** — panel + toggle (`1da8093`), Pattern-view wiring (`975a69f`), per-type param widgets + coalesced undo (`856048b`), undoable freeze via full-pattern snapshot. Freeze gate relaxed to `rack OR any count≥2 ornament`.
+- [~] **NP6.2** — **Ornament editing in the tracker** (primary): an ornament sub-column. **Deferred** — the shared ornament-editor popup *shipped* (in NP6.3) and ornament editing works via the piano-roll inspector; the tracker also already *shows* ornament effects through its read-only NP-stage columns (the expansion includes ornament hits). The remaining piece — a **selectable** ornament sub-column wired into the tracker — requires extending the tracker's `TrackerColumn`/`cols_per_voice`/`resolved()` cursor model and click/render paths, the codebase's most fragile, test-free UI. That is exactly the "interactive egui work that benefits from visual iteration" NP6 was deferred for, so it is left for an in-app session with the user rather than an autonomous pass. Reuse `draw_ornament_editor` (move `draw_ornament_popup` from `piano_roll.rs` to `ornament.rs` to share it).
+- [x] **NP6.3** — **Piano-roll surface**: ghost-note preview of the expansion (`0e4d169`), a read-only ornament glyph on notes (`ef64655`), and the shared ornament-editor popup + an "Edit…" shortcut in the selection inspector (`d49ec7a`).
 
-Build order: NP6.1 (the headline — makes the engine feature reachable) → NP6.2 →
-NP6.3. Each step is its own commit + `/code-review --fix`, mirroring the NP1–NP5
-loop.
+Build order: NP6.1 (the headline) → NP6.3 (piano-roll editing + visuals) → NP6.2
+(tracker editing column, deferred for an interactive session). Each step was its
+own commit + `/code-review --fix`.
 
 ---
 

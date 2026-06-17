@@ -388,13 +388,18 @@ extracted here.
   (which freed on every drop). Full fix: route cleared/replaced targets through the
   engine's `return_producer` off-thread drop channel. Low priority (bounded, rare).
 
-**Note Processors (generative articulation): SHIPPED in v0.311.0 except the GUI.**
+**Note Processors (generative articulation): SHIPPED in v0.311.0; GUI mostly landed.**
 The engine and every processor landed per `plans/note-processors-plan.md`: arpeggiator
 (flagship), timed-repeat ornaments (flam/drag/ruff/roll/grace), chord + strum,
-scale-quantize + humanize, the MCP surface, and save/load persistence. The one
-remaining item is **NP6 — the per-track rack + per-note ornament GUI**, deferred for
-interactive egui work with the user (not headless-testable). Verified still absent from
-`crates/pertylizer/src/gui/` as of 2026-06-12.
+scale-quantize + humanize, the MCP surface, and save/load persistence. The **NP6 GUI**
+is built on branch `feat/note-fx-rack-panel` (`plans/note-processors-gui-plan.md`):
+NP6.1 (Note FX rack inspector — add/remove/configure/freeze, in both the Sequencer and
+Pattern views) and NP6.3 (piano-roll ornament editor popup + selection-inspector "Edit…"
++ note-head glyph + ghost-note preview) are done. Remaining: **NP6.2 — a selectable
+ornament sub-column in the tracker**, deferred for an in-app session (it extends the
+tracker's fragile cursor/column model; ornament editing already works via the piano roll,
+and the tracker already shows ornament *effects* via its NP-stage columns). Not yet
+pushed/merged or eyeballed in-app.
 
 **Iceboxed — the rest of Phase E (build on demand only).** The expensive,
 narrow-audience remainder of the old north-star phase. No plan doc; pick up only when a

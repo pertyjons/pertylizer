@@ -83,18 +83,27 @@ pub(crate) fn draw_note_fx_panel(
     // gates undo finalization so a drag yields one entry, not one per frame.
     let mut any_dragged = false;
 
-    // Snapshot the rack so the lock is held only briefly.
-    let Some(rack) = song
-        .try_read()
-        .and_then(|s| s.pattern(pattern_id).map(|p| p.processors().to_vec()))
-    else {
+    // Snapshot the rack (and whether any note has an ornament) so the lock is
+    // held only briefly.
+    let Some((rack, has_ornament)) = song.try_read().and_then(|s| {
+        s.pattern(pattern_id).map(|p| {
+            (
+                p.processors().to_vec(),
+                // Match the freeze condition: a count < 2 ornament is a no-op the
+                // bake skips, so it must not enable the button.
+                p.notes()
+                    .iter()
+                    .any(|n| n.ornament.is_some_and(|o| o.count >= 2)),
+            )
+        })
+    }) else {
         ui.label(RichText::new("Pattern unavailable…").color(t.colors.text_dim));
         return;
     };
 
-    // Freeze: bake the rack (+ per-note ornaments) into plain notes. Enabled only
-    // when the rack is non-empty (an empty rack has nothing to bake).
-    ui.add_enabled_ui(!rack.is_empty(), |ui| {
+    // Freeze: bake the rack + per-note ornaments into plain notes. Enabled when
+    // there is anything to bake (a rack or any ornament).
+    ui.add_enabled_ui(!rack.is_empty() || has_ornament, |ui| {
         ui.menu_button("Freeze", |ui| {
             ui.label(
                 RichText::new(
