@@ -44,7 +44,7 @@ feature, just different affordances to reach it.
 
 ## Status at a glance
 
-- [ ] **NP6.1** — The shared **Note FX rack inspector**: a right-docked panel to add / remove / configure processors (+ freeze), available beside *either* inner editor. Closes the deferred tracker "rack management" item.
+- [x] **NP6.1** — The shared **Note FX rack inspector**: a right-docked panel to add / remove / configure processors (+ freeze), available beside *either* inner editor. Closes the deferred tracker "rack management" item. **Shipped** — panel + toggle (`1da8093`), Pattern-view wiring (`975a69f`), per-type param widgets + coalesced undo (`856048b`), undoable freeze via full-pattern snapshot. (Freeze button gated on a non-empty rack; relax to include ornament-only patterns once NP6.3 lands.)
 - [ ] **NP6.2** — **Ornament editing in the tracker** (primary): an ornament sub-column reusing the expression-cell flow, plus the **shared ornament-editor popup**.
 - [ ] **NP6.3** — **Piano-roll surface**: ghost-note preview of the expansion, a read-only ornament glyph on notes, and an "Edit…" shortcut (in the selection inspector) that opens the shared popup from NP6.2.
 

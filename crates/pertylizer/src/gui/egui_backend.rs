@@ -4290,6 +4290,21 @@ impl SynthApp {
                     pattern.set_processor(*index, new.clone());
                 }
             }
+            UndoAction::FreezePattern { pattern_id, .. } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    pattern.freeze_processors();
+                }
+            }
+            UndoAction::RestorePattern {
+                pattern_id,
+                snapshot,
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    *pattern = snapshot.clone();
+                }
+            }
             UndoAction::RenamePattern {
                 pattern_id,
                 new_name,

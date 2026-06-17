@@ -115,6 +115,19 @@ pub(crate) enum UndoAction {
         old: NoteProcessor,
         new: NoteProcessor,
     },
+    /// A pattern's processor rack (+ per-note ornaments) was frozen — baked into
+    /// plain notes and the rack cleared. Carries the full pre-freeze pattern so
+    /// the inverse restores notes + rack losslessly; applying it re-runs the
+    /// (deterministic) freeze for redo.
+    FreezePattern {
+        pattern_id: PatternId,
+        before: synth_sequencer::Pattern,
+    },
+    /// Restore a full pattern snapshot — the inverse of [`Self::FreezePattern`].
+    RestorePattern {
+        pattern_id: PatternId,
+        snapshot: synth_sequencer::Pattern,
+    },
 
     // ── Pattern + track metadata ──
     /// A pattern was renamed.
@@ -418,6 +431,17 @@ impl UndoManager {
                 index: *index,
                 old: new.clone(),
                 new: old.clone(),
+            },
+            UndoAction::FreezePattern { pattern_id, before } => UndoAction::RestorePattern {
+                pattern_id: *pattern_id,
+                snapshot: before.clone(),
+            },
+            UndoAction::RestorePattern {
+                pattern_id,
+                snapshot,
+            } => UndoAction::FreezePattern {
+                pattern_id: *pattern_id,
+                before: snapshot.clone(),
             },
             UndoAction::MoveNote {
                 pattern_id,

@@ -43,6 +43,8 @@ enum RackEdit {
         index: usize,
         cfg: NoteProcessor,
     },
+    /// Bake the rack (+ per-note ornaments) into plain notes and clear it.
+    Freeze,
 }
 
 /// Draw the note-processor rack for `pattern_id`. Reads a cloned snapshot of the
@@ -76,6 +78,11 @@ pub(crate) fn draw_note_fx_panel(
     });
     ui.separator();
 
+    let mut edit: Option<RackEdit> = None;
+    // Set true by any continuous widget (knob/slider/DragValue) currently dragged;
+    // gates undo finalization so a drag yields one entry, not one per frame.
+    let mut any_dragged = false;
+
     // Snapshot the rack so the lock is held only briefly.
     let Some(rack) = song
         .try_read()
@@ -85,10 +92,23 @@ pub(crate) fn draw_note_fx_panel(
         return;
     };
 
-    let mut edit: Option<RackEdit> = None;
-    // Set true by any continuous widget (knob/slider/DragValue) currently dragged;
-    // gates undo finalization so a drag yields one entry, not one per frame.
-    let mut any_dragged = false;
+    // Freeze: bake the rack (+ per-note ornaments) into plain notes. Enabled only
+    // when the rack is non-empty (an empty rack has nothing to bake).
+    ui.add_enabled_ui(!rack.is_empty(), |ui| {
+        ui.menu_button("Freeze ▾", |ui| {
+            ui.label(
+                RichText::new(
+                    "Bakes the processor rack and per-note ornaments into plain notes, then clears the rack. Undoable.",
+                )
+                .color(t.colors.text_dim),
+            );
+            if ui.button("Freeze now").clicked() {
+                edit = Some(RackEdit::Freeze);
+                ui.close();
+            }
+        });
+    });
+    ui.add_space(4.0);
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         if rack.is_empty() {
@@ -205,6 +225,19 @@ pub(crate) fn draw_note_fx_panel(
             let mut song_w = song.write();
             if let Some(pattern) = song_w.pattern_mut(pattern_id) {
                 pattern.set_processor(index, cfg);
+            }
+        }
+        Some(RackEdit::Freeze) => {
+            let mut before = None;
+            {
+                let mut song_w = song.write();
+                if let Some(pattern) = song_w.pattern_mut(pattern_id) {
+                    before = Some(pattern.clone());
+                    pattern.freeze_processors();
+                }
+            }
+            if let Some(before) = before {
+                undo_manager.push(UndoAction::FreezePattern { pattern_id, before });
             }
         }
         None => {}
