@@ -25,6 +25,7 @@ use crate::gui::widgets::toggle_button;
 
 mod arrangement;
 mod automation;
+mod note_fx;
 mod piano_roll;
 mod tracker;
 mod transport;
@@ -285,6 +286,9 @@ pub struct SequencerViewState {
     /// Whether the tracker interleaves the per-note expression sub-columns
     /// (accent/gate/ghost/probability) after each voice column ("Expr" toggle).
     tracker_show_expression: bool,
+    /// Whether the right-docked Note FX rack inspector is shown for the opened
+    /// pattern (toggled by the "Note FX" button in the piano-roll toolbar).
+    note_fx_panel_open: bool,
 }
 
 impl SequencerViewState {
@@ -340,6 +344,7 @@ impl SequencerViewState {
             tracker_value_buffer: None,
             tracker_voice_columns: 0,
             tracker_show_expression: true,
+            note_fx_panel_open: false,
         }
     }
 }
@@ -1073,6 +1078,19 @@ pub(crate) fn draw_sequencer_view(
                 })
             })
         };
+
+        // Note FX rack inspector (right-docked; only when toggled on). Declared
+        // before the bottom piano-roll panel so it spans the full height on the
+        // right, beside both the arrangement and the roll.
+        if view_state.note_fx_panel_open {
+            egui::Panel::right("note_fx_panel")
+                .resizable(true)
+                .min_size(190.0)
+                .default_size(290.0)
+                .show_inside(ui, |ui| {
+                    note_fx::draw_note_fx_panel(ui, song, view_state, undo_manager, pattern_id);
+                });
+        }
 
         // Use ~50% of available height for piano roll, with generous max
         let available_height = ctx.content_rect().height();

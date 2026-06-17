@@ -4261,6 +4261,35 @@ impl SynthApp {
                     }
                 }
             }
+            UndoAction::AddNoteProcessor {
+                pattern_id,
+                processor,
+                ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    pattern.add_processor(processor.clone());
+                }
+            }
+            UndoAction::RemoveNoteProcessor {
+                pattern_id, index, ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    pattern.remove_processor(*index);
+                }
+            }
+            UndoAction::SetNoteProcessorConfig {
+                pattern_id,
+                index,
+                new,
+                ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    pattern.set_processor(*index, new.clone());
+                }
+            }
             UndoAction::RenamePattern {
                 pattern_id,
                 new_name,

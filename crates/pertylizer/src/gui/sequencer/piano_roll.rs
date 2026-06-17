@@ -2536,6 +2536,23 @@ fn draw_piano_roll_toolbar(
         );
         ui.separator();
 
+        // Note FX rack toggle (badge = processor count for this pattern).
+        let np_count = song
+            .try_read()
+            .and_then(|s| s.pattern(data.pattern_id).map(|p| p.processors().len()))
+            .unwrap_or(0);
+        if ui
+            .selectable_label(
+                view_state.note_fx_panel_open,
+                format!("Note FX ({np_count})"),
+            )
+            .on_hover_text("Show/hide the note-processor rack for this pattern")
+            .clicked()
+        {
+            view_state.note_fx_panel_open = !view_state.note_fx_panel_open;
+        }
+        ui.separator();
+
         ui.label(
             RichText::new(format!("{} notes", data.notes.len())).color(t.colors.text_secondary),
         );

@@ -9,8 +9,8 @@ use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
 use synth_sequencer::{
-    Duration as SeqDuration, Glide, NoteExpression, NoteId, NoteLane, PatternId, PatternTick,
-    Pitch, Tick, TrackId, Velocity,
+    Duration as SeqDuration, Glide, NoteExpression, NoteId, NoteLane, NoteProcessor, PatternId,
+    PatternTick, Pitch, Tick, TrackId, Velocity,
 };
 
 use crate::patch::{ConnectionState, ModuleState, ParamValue};
@@ -93,6 +93,27 @@ pub(crate) enum UndoAction {
     SetLaneBatch {
         pattern_id: PatternId,
         changes: Vec<(NoteId, NoteLane, NoteLane)>,
+    },
+
+    // ── Note processors (pattern rack) ──
+    /// A note processor was added to a pattern's rack at `index`.
+    AddNoteProcessor {
+        pattern_id: PatternId,
+        index: usize,
+        processor: NoteProcessor,
+    },
+    /// A note processor was removed from `index` of a pattern's rack.
+    RemoveNoteProcessor {
+        pattern_id: PatternId,
+        index: usize,
+        processor: NoteProcessor,
+    },
+    /// A note processor's config was edited in place at `index`.
+    SetNoteProcessorConfig {
+        pattern_id: PatternId,
+        index: usize,
+        old: NoteProcessor,
+        new: NoteProcessor,
     },
 
     // ── Pattern + track metadata ──
@@ -368,6 +389,35 @@ impl UndoManager {
             UndoAction::RemoveNote { pattern_id, note } => UndoAction::AddNote {
                 pattern_id: *pattern_id,
                 note: note.clone(),
+            },
+            UndoAction::AddNoteProcessor {
+                pattern_id,
+                index,
+                processor,
+            } => UndoAction::RemoveNoteProcessor {
+                pattern_id: *pattern_id,
+                index: *index,
+                processor: processor.clone(),
+            },
+            UndoAction::RemoveNoteProcessor {
+                pattern_id,
+                index,
+                processor,
+            } => UndoAction::AddNoteProcessor {
+                pattern_id: *pattern_id,
+                index: *index,
+                processor: processor.clone(),
+            },
+            UndoAction::SetNoteProcessorConfig {
+                pattern_id,
+                index,
+                old,
+                new,
+            } => UndoAction::SetNoteProcessorConfig {
+                pattern_id: *pattern_id,
+                index: *index,
+                old: new.clone(),
+                new: old.clone(),
             },
             UndoAction::MoveNote {
                 pattern_id,
