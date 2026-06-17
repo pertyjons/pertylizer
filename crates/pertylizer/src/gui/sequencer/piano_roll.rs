@@ -37,6 +37,7 @@ pub(crate) fn collect_piano_roll_data(
                 legato: n.legato,
                 glide: n.glide,
                 expression: n.expression,
+                has_ornament: n.ornament.is_some(),
                 lane: n.lane,
             }
         })
@@ -1812,6 +1813,15 @@ pub(crate) fn draw_piano_roll(
                         Pos2::new(note_rect.max.x - 2.5, note_rect.min.y + 2.5),
                         1.5,
                         t.colors.accent_yellow,
+                    );
+                }
+                // Per-note ornament (NP6): a small marker at the top-left corner,
+                // in the Note FX accent colour.
+                if note.has_ornament && note_width > 5.0 {
+                    painter.circle_filled(
+                        Pos2::new(note_rect.min.x + 2.5, note_rect.min.y + 2.5),
+                        1.5,
+                        t.colors.accent_purple,
                     );
                 }
 

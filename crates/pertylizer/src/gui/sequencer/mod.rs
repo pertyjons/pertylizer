@@ -650,6 +650,8 @@ struct PianoRollNote {
     legato: bool,
     glide: Option<Glide>,
     expression: Option<NoteExpression>,
+    /// Whether this note carries a per-note ornament (drawn as a head marker).
+    has_ornament: bool,
     /// Stored voice/column lane (the tracker's source of truth for which voice
     /// column a note lives in). The piano roll ignores it.
     lane: NoteLane,
