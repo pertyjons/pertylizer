@@ -167,6 +167,22 @@ pub(crate) fn draw_ornament_popup(
     }
 }
 
+/// A compact tracker-cell tag for an ornament (e.g. "Fl2", "Ro12", "Gr+2").
+pub(crate) fn ornament_tag(o: Ornament) -> String {
+    if o.pitch_offset.as_f32() != 0.0 && o.count == 2 {
+        format!("Gr{:+}", o.pitch_offset.as_f32() as i32)
+    } else {
+        let prefix = match o.count {
+            0 | 1 => "—",
+            2 => "Fl",
+            3 => "Dr",
+            4 => "Rf",
+            _ => "Ro",
+        };
+        format!("{prefix}{}", o.count)
+    }
+}
+
 /// A one-line read-only summary of a note's ornament for the inspector.
 pub(crate) fn ornament_summary(orn: Option<Ornament>) -> String {
     match orn {

@@ -26,8 +26,9 @@ use synth_sequencer::{
 };
 
 use super::{
-    AutomationPointSnapshot, PianoRollData, PianoRollNote, SequencerViewState,
-    draw_automation_target_selector, draw_pattern_instrument_transport, preview_note,
+    AutomationPointSnapshot, OrnamentEdit, PianoRollData, PianoRollNote, SequencerViewState,
+    draw_automation_target_selector, draw_ornament_popup, draw_pattern_instrument_transport,
+    ornament_tag, preview_note,
 };
 use crate::gui::input::KEY_MAP;
 use crate::gui::instrument_rack::InstrumentUiState;
@@ -341,6 +342,8 @@ const EXPR_FIELDS: usize = ExprField::ALL.len();
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrackerColumn {
     Voice(usize),
+    /// Per-note ornament cell for a voice lane (edited via the shared popup).
+    Ornament(usize),
     Expr(usize, ExprField),
     Automation(usize),
 }
@@ -391,18 +394,18 @@ impl TrackerCursor {
     }
 
     /// Resolve the flat column index into a typed column for the frame's layout.
-    /// `cols_per_voice` is 1 (voice only) or `1 + EXPR_FIELDS` (voice + expression
-    /// sub-columns) — each voice lane owns a contiguous group of that width, then
-    /// the automation lanes follow.
+    /// Each voice lane owns a contiguous group of `cols_per_voice`: sub-column 0 is
+    /// the voice cell, 1 is the always-present ornament cell, and 2.. are the
+    /// optional expression sub-columns; the automation lanes follow the groups.
     fn resolved(&self, n_lanes: usize, cols_per_voice: usize) -> TrackerColumn {
         let n_voice_cols = voice_group_base(n_lanes, cols_per_voice);
         if self.col < n_voice_cols {
             let lane = self.col / cols_per_voice;
             let sub = self.col % cols_per_voice;
-            if sub == 0 {
-                TrackerColumn::Voice(lane)
-            } else {
-                TrackerColumn::Expr(lane, ExprField::ALL[sub - 1])
+            match sub {
+                0 => TrackerColumn::Voice(lane),
+                1 => TrackerColumn::Ornament(lane),
+                _ => TrackerColumn::Expr(lane, ExprField::ALL[sub - 2]),
             }
         } else {
             TrackerColumn::Automation(self.col - n_voice_cols)
@@ -522,6 +525,20 @@ fn handle_tracker_edit_keys(
                 notes_by_start_row,
             )
         }
+        TrackerColumn::Ornament(lane) => {
+            view_state.tracker_value_buffer = None;
+            edit_ornament_cell(
+                ui,
+                data,
+                song,
+                undo_manager,
+                view_state,
+                lane,
+                cursor.row,
+                lane_of_note,
+                notes_by_start_row,
+            )
+        }
         TrackerColumn::Expr(lane, field) => edit_expression_cell(
             ui,
             data,
@@ -545,6 +562,70 @@ fn handle_tracker_edit_keys(
             tpr,
         ),
     }
+}
+
+/// Per-note ornament cell: Enter opens the shared ornament popup for the note
+/// under the cursor (baseline = its current ornament); Delete/Backspace clears
+/// the ornament. The popup window itself is rendered once per frame by
+/// `draw_tracker`. Returns false (never moves the cursor).
+#[allow(clippy::too_many_arguments)]
+fn edit_ornament_cell(
+    ui: &egui::Ui,
+    data: &PianoRollData,
+    song: &Arc<RwLock<Song>>,
+    undo_manager: &mut UndoManager,
+    view_state: &mut SequencerViewState,
+    lane: usize,
+    row: usize,
+    lane_of_note: &[usize],
+    notes_by_start_row: &HashMap<usize, Vec<usize>>,
+) -> bool {
+    let Some(idx) = notes_by_start_row
+        .get(&row)
+        .into_iter()
+        .flatten()
+        .find(|&&i| lane_of_note[i] == lane)
+        .copied()
+    else {
+        return false;
+    };
+    let note_id = data.notes[idx].note_id;
+    let current = data.notes[idx].ornament;
+
+    let (enter, delete, backspace) = ui.input_mut(|i| {
+        (
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace),
+        )
+    });
+
+    if enter {
+        // Open the shared popup; baseline = the note's current ornament.
+        view_state.editing_ornament = Some(OrnamentEdit {
+            pattern_id: data.pattern_id,
+            note_id,
+            before: current,
+            current,
+        });
+    } else if (delete || backspace) && current.is_some() {
+        {
+            let mut song_w = song.write();
+            if let Some(n) = song_w
+                .pattern_mut(data.pattern_id)
+                .and_then(|p| p.note_mut(note_id))
+            {
+                n.ornament = None;
+            }
+        }
+        undo_manager.push(UndoAction::SetNoteOrnament {
+            pattern_id: data.pattern_id,
+            note_id,
+            old: current,
+            new: None,
+        });
+    }
+    false
 }
 
 /// Note entry + delete for a voice cell. A piano key inserts a note at the cursor
@@ -1133,7 +1214,8 @@ pub(crate) fn draw_tracker(
     // optional expression sub-cells) followed by the automation lanes (the row/time
     // gutter is not selectable). `cols_per_voice` is the width of one voice group.
     let show_expr = view_state.tracker_show_expression;
-    let cols_per_voice = if show_expr { 1 + EXPR_FIELDS } else { 1 };
+    // Voice + always-present ornament cell, plus the optional expression fields.
+    let cols_per_voice = 2 + if show_expr { EXPR_FIELDS } else { 0 };
     let n_auto = data.automation_lanes.len();
     let n_cols = n_lanes * cols_per_voice + n_auto;
     let cursor_before_nav = view_state.tracker_cursor;
@@ -1189,6 +1271,7 @@ pub(crate) fn draw_tracker(
         .column(Column::auto().at_least(44.0)); // row/time gutter
     for _ in 0..n_lanes {
         builder = builder.column(Column::initial(72.0).at_least(40.0)); // voice
+        builder = builder.column(Column::initial(40.0).at_least(30.0)); // ornament
         if show_expr {
             for _ in 0..EXPR_FIELDS {
                 builder = builder.column(Column::initial(34.0).at_least(26.0)); // expr field
@@ -1252,6 +1335,12 @@ pub(crate) fn draw_tracker(
                         "Voice lane {} — notes feeding the pattern's instrument",
                         lane + 1
                     ));
+                });
+                header.col(|ui| {
+                    header_label(ui, "Orn".to_string(), cursor_kind == TrackerColumn::Ornament(lane))
+                        .on_hover_text(
+                            "Per-note ornament — Enter edits (flam/drag/ruff/roll/grace), Delete clears",
+                        );
                 });
                 if show_expr {
                     for field in ExprField::ALL {
@@ -1362,11 +1451,36 @@ pub(crate) fn draw_tracker(
                         click_target.set(Some((r, voice_col)));
                     }
 
+                    // Ornament cell (always present, sub-column 1): a compact tag
+                    // for the note's ornament; Enter edits via the shared popup.
+                    let orn_col = voice_col + 1;
+                    let is_orn_cursor = is_cursor_row && cursor.col == orn_col;
+                    let (_, orn_resp) = row.col(|ui| {
+                        colors.paint_cursor(ui, is_cursor_row, is_orn_cursor);
+                        match first_note.and_then(|idx| data.notes[idx].ornament) {
+                            Some(o) => {
+                                ui.label(
+                                    RichText::new(ornament_tag(o))
+                                        .color(colors.expression)
+                                        .monospace(),
+                                );
+                            }
+                            None => {
+                                ui.label(
+                                    RichText::new(EXPR_UNSET).color(colors.empty).monospace(),
+                                );
+                            }
+                        }
+                    });
+                    if orn_resp.interact(egui::Sense::click()).clicked() {
+                        click_target.set(Some((r, orn_col)));
+                    }
+
                     // Expression sub-columns: the note's scalar fields, read-only
                     // (T3.1a). Blank when no note carries this (row, lane).
                     if show_expr {
                         for (fi, field) in ExprField::ALL.into_iter().enumerate() {
-                            let flat = voice_col + 1 + fi;
+                            let flat = voice_col + 2 + fi;
                             let is_cc = is_cursor_row && cursor.col == flat;
                             let (_, resp) = row.col(|ui| {
                                 colors.paint_cursor(ui, is_cursor_row, is_cc);
@@ -1473,6 +1587,10 @@ pub(crate) fn draw_tracker(
         view_state.tracker_cursor.row = row;
         view_state.tracker_cursor.col = col;
     }
+
+    // Shared per-note ornament popup (open while `editing_ornament` is set —
+    // e.g. Enter on an ornament cell above).
+    draw_ornament_popup(ui, song, view_state, undo_manager);
 }
 
 /// Render one note into a voice cell: name, velocity, off-grid + expression markers.
