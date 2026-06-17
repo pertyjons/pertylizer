@@ -1,0 +1,1167 @@
+{
+  "file_type": "project",
+  "version": "1.0",
+  "instruments": [
+    {
+      "id": 1,
+      "name": "Snare Drum",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description": "Electronic snare (example 'Snare Drum' patch). The ornament carrier: its backbeat hits (beats 2 & 4) get the per-note flam/drag/ruff/roll/grace figures. Signal: white-noise snap, band-passed, blended with a pitch-swept triangle body.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "patch": {
+        "name": "Snare Drum",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "description": "Triangle oscillator — the tuned snare 'body'/thud (mixer in1). Its pitch is FM-driven by env-1.",
+            "parameters": {
+              "anti_alias": "polyblep",
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": "exponential",
+              "frequency": 440.0,
+              "level": 0.6,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": "triangle",
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "nse-1",
+            "type": "noise",
+            "position": {
+              "x": 32.0,
+              "y": 384.0
+            },
+            "description": "White-noise source — the snare's 'snap'/rattle. Feeds the filter.",
+            "parameters": {
+              "level": 0.7,
+              "type": "white"
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "description": "Band-shapes the noise (~5 kHz) into the bright snare snap, then into the mixer (in2).",
+            "parameters": {
+              "cutoff": 5000.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "env_amt": 0.25,
+              "key_track": 0.0,
+              "model": "standard",
+              "morph": 0.0,
+              "resonance": 0.3,
+              "type": "bandpass"
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 32.0,
+              "y": 576.0
+            },
+            "description": "Ultra-fast envelope (~30 ms) modulating the oscillator pitch (FM) — the body's pitch-drop transient.",
+            "parameters": {
+              "atk_curve": -0.9,
+              "attack": 0.001,
+              "dec_curve": -0.8,
+              "decay": 0.03,
+              "rel_curve": -0.5,
+              "release": 0.01,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "env-2",
+            "type": "envelope",
+            "position": {
+              "x": 832.0,
+              "y": 384.0
+            },
+            "description": "Amp envelope (~120 ms decay) driving the VCA cv — the overall hit decay/tail.",
+            "parameters": {
+              "atk_curve": -1.0,
+              "attack": 0.001,
+              "dec_curve": -0.6,
+              "decay": 0.12,
+              "rel_curve": -0.4,
+              "release": 0.08,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 1184.0,
+              "y": 32.0
+            },
+            "description": "Voice VCA — gain shaped by env-2, out to the stereo output.",
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 0.75,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "mix-1",
+            "type": "mixer",
+            "position": {
+              "x": 832.0,
+              "y": 32.0
+            },
+            "description": "Blends the filtered noise snap (in2) with the body tone (in1) into the VCA.",
+            "parameters": {
+              "input_1": 1.0,
+              "input_2": 1.0,
+              "input_3": 1.0,
+              "input_4": 1.0,
+              "input_5": 1.0,
+              "input_6": 1.0,
+              "input_7": 1.0,
+              "input_8": 1.0,
+              "master": 0.8
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1536.0,
+              "y": 32.0
+            },
+            "description": "Instrument stereo output.",
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "mix-1",
+              "in1"
+            ]
+          },
+          {
+            "from": [
+              "nse-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "mix-1",
+              "in2"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "osc-1",
+              "fm"
+            ]
+          },
+          {
+            "from": [
+              "env-2",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "left"
+            ],
+            "to": [
+              "out-1",
+              "in_l"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "right"
+            ],
+            "to": [
+              "out-1",
+              "in_r"
+            ]
+          },
+          {
+            "from": [
+              "mix-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1986.0,
+            "height": 1076.0
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Kick Drum",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description": "Electronic kick (example 'Kick Drum' patch). Steady four-on-the-floor pulse giving a beat reference under the ornamented snare. Sine body with a fast pitch sweep, punched by distortion.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "patch": {
+        "name": "Kick Drum",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "description": "Sine oscillator — the kick body. Pitch FM-driven by env-1 for the boom→thud sweep.",
+            "parameters": {
+              "anti_alias": "polyblep",
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": "exponential",
+              "frequency": 440.0,
+              "level": 1.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": "sine",
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 32.0,
+              "y": 384.0
+            },
+            "description": "Fast envelope modulating the oscillator pitch (FM) — the kick's pitch sweep.",
+            "parameters": {
+              "atk_curve": -0.8,
+              "attack": 0.001,
+              "dec_curve": -0.6,
+              "decay": 0.05,
+              "rel_curve": -0.5,
+              "release": 0.01,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "env-2",
+            "type": "envelope",
+            "position": {
+              "x": 32.0,
+              "y": 672.0
+            },
+            "description": "Amp envelope (~150 ms) driving the VCA cv — the kick decay.",
+            "parameters": {
+              "atk_curve": -1.0,
+              "attack": 0.001,
+              "dec_curve": -0.7,
+              "decay": 0.15,
+              "rel_curve": -0.5,
+              "release": 0.05,
+              "sustain": 0.0,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "description": "Voice VCA — gain shaped by env-2.",
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 0.9,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 800.0,
+              "y": 32.0
+            },
+            "description": "Instrument stereo output.",
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "dst-1",
+            "type": "distortion",
+            "position": {
+              "x": 1152.0,
+              "y": 32.0
+            },
+            "description": "Distortion — adds drive/grit and punch to the kick.",
+            "parameters": {
+              "bit_depth": 8.0,
+              "drive": 0.2,
+              "mix": 0.3,
+              "tone": 0.8,
+              "type": "soft_clip"
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "osc-1",
+              "fm"
+            ]
+          },
+          {
+            "from": [
+              "env-2",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "left"
+            ],
+            "to": [
+              "out-1",
+              "in_l"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "right"
+            ],
+            "to": [
+              "out-1",
+              "in_r"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1602.0,
+            "height": 1172.0
+          },
+          "effect_chain_order": [
+            "dst-1"
+          ]
+        }
+      }
+    }
+  ],
+  "active_instrument_id": 1,
+  "author": {
+    "name": "Per Jonsson",
+    "email": "pertyjons@gmail.com"
+  },
+  "song": {
+    "name": "Ornament Demo",
+    "author": "",
+    "description": "Ornament Demo — a teaching project for the Note Processors per-note ornament feature. Five 2-bar snare phrases, one per ornament type (Flam / Drag / Ruff / Roll / Grace), played in sequence over a steady four-on-the-floor kick at 100 BPM. Each ornament expands a single snare hit into its characteristic figure at playback; toggle \"Ghosts\" in the piano roll to see the generated hits, or read each pattern's description for the exact settings. Loop covers the whole demo (beats 0–40). Built via MCP.",
+    "patterns": [
+      {
+        "id": 0,
+        "name": "Flam",
+        "description": "FLAM (2 hits): one soft grace note lands just before the main hit — count 2, spacing 70 ticks, lead-in, crescendo. Fattens the snare attack. Snare on beats 2 & 4.",
+        "length": 7680,
+        "notes": [
+          {
+            "id": 0,
+            "start": 960,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 2,
+              "spacing": 70,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 2880,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 2,
+              "spacing": 70,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 4800,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 2,
+              "spacing": 70,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 6720,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 2,
+              "spacing": 70,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 4
+      },
+      {
+        "id": 1,
+        "name": "Drag",
+        "description": "DRAG (3 hits): two quick grace notes before the main hit — count 3, spacing 55 ticks, lead-in, crescendo. A short 'd-d-DAH' lead-in into the beat.",
+        "length": 7680,
+        "notes": [
+          {
+            "id": 0,
+            "start": 960,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 3,
+              "spacing": 55,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 2880,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 3,
+              "spacing": 55,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 4800,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 3,
+              "spacing": 55,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 6720,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 3,
+              "spacing": 55,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 4
+      },
+      {
+        "id": 2,
+        "name": "Ruff",
+        "description": "RUFF (4 hits): three grace notes before the main hit — count 4, spacing 50 ticks, lead-in, crescendo. A rolling pickup into the beat.",
+        "length": 7680,
+        "notes": [
+          {
+            "id": 0,
+            "start": 960,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 4,
+              "spacing": 50,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 2880,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 4,
+              "spacing": 50,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 4800,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 4,
+              "spacing": 50,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 6720,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 4,
+              "spacing": 50,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "LeadIn",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.5
+            },
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 4
+      },
+      {
+        "id": 3,
+        "name": "Roll",
+        "description": "ROLL (12 even hits): a sustained buzz/press roll — count 12, spacing 60 ticks, EVEN spacing, crescendo, ON-BEAT (main hit on the beat, the roll continues after it). Two rolls, on beats 1 and 3.",
+        "length": 7680,
+        "notes": [
+          {
+            "id": 0,
+            "start": 960,
+            "duration": 960,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 12,
+              "spacing": 60,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "OnBeat",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.6
+            },
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 4800,
+            "duration": 960,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 12,
+              "spacing": 60,
+              "spacing_curve": "Even",
+              "dynamics": "Crescendo",
+              "placement": "OnBeat",
+              "pitch_offset": 0.0,
+              "grace_gate": 0.6
+            },
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 2
+      },
+      {
+        "id": 4,
+        "name": "Grace",
+        "description": "GRACE NOTE / acciaccatura: the grace plays at a DIFFERENT pitch (+2 semitones), crushed just before the main note — count 2, spacing 90 ticks, lead-in, pitch offset +2, short grace gate. The melodic ornament; clearest on a pitched instrument — here on the tuned snare it sounds like a higher 'pickup' hit.",
+        "length": 7680,
+        "notes": [
+          {
+            "id": 0,
+            "start": 960,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 2,
+              "spacing": 90,
+              "spacing_curve": "Even",
+              "dynamics": "Flat",
+              "placement": "LeadIn",
+              "pitch_offset": 2.0,
+              "grace_gate": 0.4
+            },
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 2880,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 2,
+              "spacing": 90,
+              "spacing_curve": "Even",
+              "dynamics": "Flat",
+              "placement": "LeadIn",
+              "pitch_offset": 2.0,
+              "grace_gate": 0.4
+            },
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 4800,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 2,
+              "spacing": 90,
+              "spacing_curve": "Even",
+              "dynamics": "Flat",
+              "placement": "LeadIn",
+              "pitch_offset": 2.0,
+              "grace_gate": 0.4
+            },
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 6720,
+            "duration": 240,
+            "pitch": 50,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": {
+              "count": 2,
+              "spacing": 90,
+              "spacing_curve": "Even",
+              "dynamics": "Flat",
+              "placement": "LeadIn",
+              "pitch_offset": 2.0,
+              "grace_gate": 0.4
+            },
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 4
+      },
+      {
+        "id": 5,
+        "name": "Kick pulse",
+        "description": "",
+        "length": 7680,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 3840,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 4800,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 6,
+            "start": 5760,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 7,
+            "start": 6720,
+            "duration": 240,
+            "pitch": 36,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 8
+      }
+    ],
+    "next_pattern_id": 6,
+    "tracks": [
+      {
+        "id": 0,
+        "name": "Snare (ornaments)",
+        "description": "",
+        "instrument": 1,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      {
+        "id": 1,
+        "name": "Kick pulse",
+        "description": "",
+        "instrument": 2,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      }
+    ],
+    "next_track_id": 2,
+    "arrangement": [
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 0,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 1,
+        "start": 0,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 0,
+        "start": 7680,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 1,
+        "start": 7680,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 0,
+        "start": 15360,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 1,
+        "start": 15360,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 3,
+        "track_id": 0,
+        "start": 23040,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 1,
+        "start": 23040,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 4,
+        "track_id": 0,
+        "start": 30720,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 5,
+        "track_id": 1,
+        "start": 30720,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      }
+    ],
+    "tempo_changes": [],
+    "time_signature_changes": [],
+    "default_tempo": 100.0,
+    "default_time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 64,
+      "ticks_per_row": 240
+    },
+    "next_return_bus_id": 0
+  },
+  "global": {
+    "master_volume": 0.8,
+    "octave_offset": 0,
+    "glide_time": 0.0
+  }
+}
