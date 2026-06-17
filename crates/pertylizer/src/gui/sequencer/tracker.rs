@@ -1554,6 +1554,7 @@ pub(crate) fn draw_tracker(
                     .on_hover_text(format!(
                         "Automation: {name} — per-row value 0..1; type to set a point, Delete to clear. Right-click to delete the lane."
                     ))
+                    .interact(egui::Sense::click())
                     .context_menu(|ui| {
                         if ui.button("Delete lane").clicked() {
                             ctx_action.set(Some(CtxAction::DeleteAutoLane(target.clone())));
@@ -1658,7 +1659,7 @@ pub(crate) fn draw_tracker(
                         let note_id = n.note_id;
                         let legato = n.legato;
                         let has_glide = n.glide.is_some();
-                        resp.context_menu(|ui| {
+                        resp.interact(egui::Sense::click()).context_menu(|ui| {
                             if ui.button("Delete note").clicked() {
                                 ctx_action.set(Some(CtxAction::DeleteNote(note_id)));
                                 ui.close();
@@ -1708,7 +1709,7 @@ pub(crate) fn draw_tracker(
                     if let Some(idx) = first_note {
                         let note_id = data.notes[idx].note_id;
                         let orn = data.notes[idx].ornament;
-                        orn_resp.context_menu(|ui| {
+                        orn_resp.interact(egui::Sense::click()).context_menu(|ui| {
                             if ui.button("Edit ornament…").clicked() {
                                 ctx_action.set(Some(CtxAction::EditOrnament(note_id)));
                                 ui.close();
@@ -1762,7 +1763,7 @@ pub(crate) fn draw_tracker(
                             }
                             if let Some(idx) = first_note {
                                 let note_id = data.notes[idx].note_id;
-                                resp.context_menu(|ui| {
+                                resp.interact(egui::Sense::click()).context_menu(|ui| {
                                     if ui.button(format!("Clear {}", field.header())).clicked() {
                                         ctx_action
                                             .set(Some(CtxAction::ClearExprField(note_id, field)));
@@ -1826,7 +1827,7 @@ pub(crate) fn draw_tracker(
                         .map(|p| (p.value, p.curve))
                     {
                         let target = &lane.target;
-                        resp.context_menu(|ui| {
+                        resp.interact(egui::Sense::click()).context_menu(|ui| {
                             if ui.button("Clear point").clicked() {
                                 ctx_action.set(Some(CtxAction::ClearAutoPoint {
                                     target: target.clone(),
