@@ -167,19 +167,42 @@ pub(crate) fn draw_ornament_popup(
     }
 }
 
+/// Drum-rudiment classification of an ornament, derived from its shape. The
+/// single source of truth shared by [`ornament_tag`] and [`ornament_kind_name`].
+enum Rudiment {
+    /// `count <= 1` — effectively no ornament.
+    NoOp,
+    /// Melodic grace note (a different pitch, count 2).
+    Grace,
+    Flam,
+    Drag,
+    Ruff,
+    Roll,
+}
+
+fn classify(o: Ornament) -> Rudiment {
+    if o.pitch_offset.as_f32() != 0.0 && o.count == 2 {
+        Rudiment::Grace
+    } else {
+        match o.count {
+            0 | 1 => Rudiment::NoOp,
+            2 => Rudiment::Flam,
+            3 => Rudiment::Drag,
+            4 => Rudiment::Ruff,
+            _ => Rudiment::Roll,
+        }
+    }
+}
+
 /// A compact tracker-cell tag for an ornament (e.g. "Fl2", "Ro12", "Gr+2").
 pub(crate) fn ornament_tag(o: Ornament) -> String {
-    if o.pitch_offset.as_f32() != 0.0 && o.count == 2 {
-        format!("Gr{:+}", o.pitch_offset.as_f32() as i32)
-    } else {
-        let prefix = match o.count {
-            0 | 1 => "—",
-            2 => "Fl",
-            3 => "Dr",
-            4 => "Rf",
-            _ => "Ro",
-        };
-        format!("{prefix}{}", o.count)
+    match classify(o) {
+        Rudiment::NoOp => "—".to_string(),
+        Rudiment::Grace => format!("Gr{:+}", o.pitch_offset.as_f32() as i32),
+        Rudiment::Flam => format!("Fl{}", o.count),
+        Rudiment::Drag => format!("Dr{}", o.count),
+        Rudiment::Ruff => format!("Rf{}", o.count),
+        Rudiment::Roll => format!("Ro{}", o.count),
     }
 }
 
@@ -191,19 +214,15 @@ pub(crate) fn ornament_summary(orn: Option<Ornament>) -> String {
     }
 }
 
-/// Best-effort drum-rudiment name for an ornament by hit count (matches the
-/// preset convention).
+/// Drum-rudiment name for an ornament (matches the preset convention).
 fn ornament_kind_name(o: Ornament) -> &'static str {
-    if o.pitch_offset.as_f32() != 0.0 && o.count == 2 {
-        "Grace"
-    } else {
-        match o.count {
-            0 | 1 => "—",
-            2 => "Flam",
-            3 => "Drag",
-            4 => "Ruff",
-            _ => "Roll",
-        }
+    match classify(o) {
+        Rudiment::NoOp => "—",
+        Rudiment::Grace => "Grace",
+        Rudiment::Flam => "Flam",
+        Rudiment::Drag => "Drag",
+        Rudiment::Ruff => "Ruff",
+        Rudiment::Roll => "Roll",
     }
 }
 
