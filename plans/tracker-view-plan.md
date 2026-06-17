@@ -12,21 +12,20 @@ column. All tracker code lives in
 `crates/pertylizer/src/gui/sequencer/tracker.rs` (+ the shared snapshot in
 `sequencer/mod.rs` and the ornament popup in `sequencer/ornament.rs`).
 
-What remains is optional follow-ups and polish.
+The T3 follow-ups and the T4 polish below are **all shipped** (one commit each;
+each step gate-checked + code-reviewed).
 
 ---
 
-## Remaining
+## Done
 
-### T3 follow-ups (deferred, not blocking)
+### T3 follow-ups
 
-- [ ] **Cell-level tooltips.** Header tooltips already cover every column; per-cell
-  tooltips (e.g. the true tick of an off-grid note, the full ornament config) are
-  not added.
-- [ ] **Group the flat tracker fields into a `TrackerViewState` sub-struct.**
-  `tracker_cursor` / `tracker_value_buffer` / `tracker_voice_columns` /
-  `tracker_show_expression` (and the ornament-edit state) live flat on
-  `SequencerViewState`; a review suggested grouping them. Pure cleanup.
+- [x] **Cell-level tooltips** — voice cells show pitch / velocity / true start tick
+  (off-grid flagged) / duration / legato / glide; ornament cells show the full
+  config (`ornament_detail`).
+- [x] **Group the flat tracker fields into a `TrackerViewState` sub-struct** — the
+  five `tracker_*` fields now live on a single `tracker` field.
 
 > **Dropped:** in-grid NoteProcessor *rack management* (add/remove/configure
 > processors as tracker columns). Superseded — the **Note FX rack panel (NP6.1)**
@@ -35,22 +34,20 @@ What remains is optional follow-ups and polish.
 
 ### T4 — UX & visual polish
 
-- [ ] **Vertical zoom-Y controls in the toolbar** — `+`, `1x`, `-` small buttons
-  (right-aligned, second toolbar row) driving `view_state.pr_zoom_y` directly.
-- [ ] **Dynamic font scaling** — scale cell text size with `pr_zoom_y`
-  (e.g. `(11.0 * pr_zoom_y).clamp(9.0, 20.0)`) so text doesn't clip/vanish on zoom.
-- [ ] **Context menus for cells and column headers** (`.context_menu`):
-  - Voice cells: delete, toggle legato/glide.
-  - Expression / automation cells: set / clear values.
-  - Column headers: delete column, clear column data.
-- [ ] **Row hover highlight** — subtle background tint behind the row under the
-  pointer, to ease horizontal scanning across many columns.
-- [ ] **Bar separator lines** — a solid divider under a row that starts a new bar
-  (`row_tick.is_multiple_of(ticks_per_beat * 4)`).
-- [ ] **Focus-state cursor indicator** — dim/dash the cursor outline when the
-  tracker lacks keyboard focus (`ui.memory(|m| m.has_focus(table_id))`).
-- [ ] **Info/help popup** — a `❓` toolbar button with a cheat-sheet of keyboard
-  navigation, note entry, expression/ornament editing, and automation.
+- [x] **Vertical zoom-Y controls in the toolbar** — `+` / `1x` / `-` driving
+  `pr_zoom_y` (×/÷1.2, clamped [0.5, 3.0]).
+- [x] **Dynamic font scaling** — monospace cell text scales with `pr_zoom_y`,
+  clamped [9, 20].
+- [x] **Context menus for cells and column headers** — voice (delete / legato /
+  glide), ornament (edit / clear), expression (clear field), automation (clear
+  point), automation header (delete lane). _Voice-header bulk-clear was
+  intentionally skipped — awkward multi-note undo; the toolbar Clean + per-cell
+  delete cover it._
+- [x] **Row hover highlight** — faint tint behind the row under the pointer.
+- [x] **Bar separator lines** — a divider at the top edge of each bar-start row.
+- [x] **Focus-state cursor indicator** — dimmed cursor outline when another widget
+  holds keyboard focus.
+- [x] **Info/help popup** — a `?` toolbar button with a keyboard/mouse cheat-sheet.
 
 ---
 
