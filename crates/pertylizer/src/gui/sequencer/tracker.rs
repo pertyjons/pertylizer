@@ -74,6 +74,35 @@ fn default_glide() -> Glide {
     }
 }
 
+/// Tracker-only view state, grouped on `SequencerViewState` as one `tracker`
+/// field. Persists across frames and view toggles.
+pub(crate) struct TrackerViewState {
+    /// Cursor (row + flat column index); navigated with arrows / clicks.
+    pub cursor: TrackerCursor,
+    /// In-progress numeric entry for the cell under the cursor (`Some` while
+    /// typing; committed on Enter, dropped on Esc / when the cursor leaves).
+    pub value_buffer: Option<String>,
+    /// User-requested minimum voice-column count (the actual count is
+    /// `max(derived_from_notes, this, 1)`); "Add voice column" raises it.
+    pub voice_columns: usize,
+    /// Whether the per-note expression sub-columns are interleaved ("Expr").
+    pub show_expression: bool,
+    /// Row under the mouse last frame, tinted this frame as a hover highlight.
+    pub hovered_row: Option<usize>,
+}
+
+impl Default for TrackerViewState {
+    fn default() -> Self {
+        Self {
+            cursor: TrackerCursor::default(),
+            value_buffer: None,
+            voice_columns: 0,
+            show_expression: true,
+            hovered_row: None,
+        }
+    }
+}
+
 /// Upper bound on voice columns. Far above any realistic single-instrument
 /// polyphony, and well under `NoteLane`'s u8 ceiling (255) so a column index can
 /// never saturate `NoteLane::from(usize)` and silently collapse two columns onto
@@ -601,11 +630,11 @@ fn handle_tracker_edit_keys(
     if ui.memory(|m| m.focused()).is_some() {
         return false;
     }
-    let cursor = view_state.tracker_cursor;
+    let cursor = view_state.tracker.cursor;
     match cursor.resolved(n_lanes, cols_per_voice) {
         TrackerColumn::Voice(lane) => {
             // Leaving an automation cell drops any half-typed value.
-            view_state.tracker_value_buffer = None;
+            view_state.tracker.value_buffer = None;
             edit_voice_cell(
                 ui,
                 data,
@@ -622,7 +651,7 @@ fn handle_tracker_edit_keys(
             )
         }
         TrackerColumn::Ornament(lane) => {
-            view_state.tracker_value_buffer = None;
+            view_state.tracker.value_buffer = None;
             edit_ornament_cell(
                 ui,
                 data,
@@ -839,7 +868,7 @@ fn edit_voice_cell(
 
     // Advance the cursor down one row (vertical tracker), wrapping at the end.
     let next = row + 1;
-    view_state.tracker_cursor.row = if next >= n_rows { 0 } else { next };
+    view_state.tracker.cursor.row = if next >= n_rows { 0 } else { next };
     true
 }
 
@@ -860,7 +889,7 @@ fn edit_automation_cell(
     tpr: u32,
 ) -> bool {
     let Some(lane) = data.automation_lanes.get(ai) else {
-        view_state.tracker_value_buffer = None;
+        view_state.tracker.value_buffer = None;
         return false;
     };
     let tick = PatternTick(row as u32 * tpr);
@@ -882,12 +911,12 @@ fn edit_automation_cell(
     });
 
     if esc {
-        view_state.tracker_value_buffer = None;
+        view_state.tracker.value_buffer = None;
         return false;
     }
 
     if delete {
-        view_state.tracker_value_buffer = None;
+        view_state.tracker.value_buffer = None;
         if let Some((value, curve)) = existing {
             let mut song_w = song.write();
             if let Some(pattern) = song_w.pattern_mut(data.pattern_id)
@@ -908,7 +937,7 @@ fn edit_automation_cell(
     }
 
     if enter {
-        if let Some(buf) = view_state.tracker_value_buffer.take()
+        if let Some(buf) = view_state.tracker.value_buffer.take()
             && let Ok(parsed) = buf.parse::<f32>()
         {
             let value = NormalizedValue::new(parsed.clamp(0.0, 1.0));
@@ -946,12 +975,12 @@ fn edit_automation_cell(
     }
 
     if backspace {
-        if let Some(buf) = view_state.tracker_value_buffer.as_mut() {
+        if let Some(buf) = view_state.tracker.value_buffer.as_mut() {
             buf.pop();
         }
         return false;
     }
-    accumulate_digit_buffer(ui, &mut view_state.tracker_value_buffer);
+    accumulate_digit_buffer(ui, &mut view_state.tracker.value_buffer);
     false
 }
 
@@ -1020,7 +1049,7 @@ fn edit_expression_cell(
         .find(|&&i| lane_of_note[i] == lane)
         .copied()
     else {
-        view_state.tracker_value_buffer = None;
+        view_state.tracker.value_buffer = None;
         return false;
     };
     let note_id = data.notes[idx].note_id;
@@ -1052,13 +1081,13 @@ fn edit_expression_cell(
     };
 
     if esc {
-        view_state.tracker_value_buffer = None;
+        view_state.tracker.value_buffer = None;
         return false;
     }
 
     // Ghost: a boolean flag — Enter/Space toggles, Delete clears. No value buffer.
     if field == ExprField::Ghost {
-        view_state.tracker_value_buffer = None;
+        view_state.tracker.value_buffer = None;
         if enter || space {
             let mut e = old_expr.unwrap_or_default();
             e.ghost = !e.ghost;
@@ -1072,7 +1101,7 @@ fn edit_expression_cell(
 
     // Numeric fields: Delete clears, Enter commits the typed buffer, digits build it.
     if delete {
-        view_state.tracker_value_buffer = None;
+        view_state.tracker.value_buffer = None;
         if let Some(mut e) = old_expr {
             set_expr_field(&mut e, field, None);
             commit(e);
@@ -1080,7 +1109,7 @@ fn edit_expression_cell(
         return false;
     }
     if enter {
-        if let Some(buf) = view_state.tracker_value_buffer.take()
+        if let Some(buf) = view_state.tracker.value_buffer.take()
             && let Ok(parsed) = buf.parse::<f32>()
         {
             let mut e = old_expr.unwrap_or_default();
@@ -1090,12 +1119,12 @@ fn edit_expression_cell(
         return false;
     }
     if backspace {
-        if let Some(buf) = view_state.tracker_value_buffer.as_mut() {
+        if let Some(buf) = view_state.tracker.value_buffer.as_mut() {
             buf.pop();
         }
         return false;
     }
-    accumulate_digit_buffer(ui, &mut view_state.tracker_value_buffer);
+    accumulate_digit_buffer(ui, &mut view_state.tracker.value_buffer);
     false
 }
 
@@ -1143,7 +1172,7 @@ fn clean_empty_columns(
             });
         }
     }
-    view_state.tracker_voice_columns = occupied.len();
+    view_state.tracker.voice_columns = occupied.len();
 
     // ── Automation lanes: remove the ones with no points. ──
     let empty_targets: Vec<_> = data
@@ -1244,7 +1273,7 @@ pub(crate) fn draw_tracker(
                 )
                 .clicked();
             ui.separator();
-            ui.toggle_value(&mut view_state.tracker_show_expression, "Expr")
+            ui.toggle_value(&mut view_state.tracker.show_expression, "Expr")
                 .on_hover_text(
                     "Show per-note expression sub-columns (accent / gate / ghost / probability)",
                 );
@@ -1323,11 +1352,11 @@ pub(crate) fn draw_tracker(
     // cell lookup is cheap. The shown column count honors the user's requested
     // minimum (Add voice column) on top of what the notes need.
     let (lane_of_note, derived_lanes) = display_lanes(&data.notes, tpr);
-    let n_lanes = derived_lanes.max(view_state.tracker_voice_columns).max(1);
+    let n_lanes = derived_lanes.max(view_state.tracker.voice_columns).max(1);
 
     // Column add/prune (applied to the song/view; reflected next frame).
     if add_voice {
-        view_state.tracker_voice_columns = (n_lanes + 1).min(MAX_TRACKER_VOICE_COLUMNS);
+        view_state.tracker.voice_columns = (n_lanes + 1).min(MAX_TRACKER_VOICE_COLUMNS);
     }
     if add_auto && let Some(target) = view_state.selected_automation.clone() {
         // Materialize the selected target as an empty lane (a new column), unless
@@ -1359,19 +1388,19 @@ pub(crate) fn draw_tracker(
     // selectable column space is each voice lane's group (the voice cell + its
     // optional expression sub-cells) followed by the automation lanes (the row/time
     // gutter is not selectable). `cols_per_voice` is the width of one voice group.
-    let show_expr = view_state.tracker_show_expression;
+    let show_expr = view_state.tracker.show_expression;
     // Voice + always-present ornament cell, plus the optional expression fields.
     let cols_per_voice = 2 + if show_expr { EXPR_FIELDS } else { 0 };
     let n_auto = data.automation_lanes.len();
     let n_cols = n_lanes * cols_per_voice + n_auto;
-    let cursor_before_nav = view_state.tracker_cursor;
-    view_state.tracker_cursor.clamp(n_rows, n_cols);
-    let nav_moved = handle_tracker_keys(ui, &mut view_state.tracker_cursor, n_rows, n_cols);
-    if view_state.tracker_cursor != cursor_before_nav {
+    let cursor_before_nav = view_state.tracker.cursor;
+    view_state.tracker.cursor.clamp(n_rows, n_cols);
+    let nav_moved = handle_tracker_keys(ui, &mut view_state.tracker.cursor, n_rows, n_cols);
+    if view_state.tracker.cursor != cursor_before_nav {
         // Any cursor shift — keyboard nav OR a clamp from a reshaped grid (lane
         // added/removed) — discards a half-typed automation value: it belonged to
         // the cell we just left, and committing it to the new cell would be wrong.
-        view_state.tracker_value_buffer = None;
+        view_state.tracker.value_buffer = None;
     }
     let edit_moved = handle_tracker_edit_keys(
         ui,
@@ -1388,11 +1417,11 @@ pub(crate) fn draw_tracker(
         &notes_by_start_row,
     );
     let cursor_moved = nav_moved || edit_moved;
-    let cursor = view_state.tracker_cursor;
+    let cursor = view_state.tracker.cursor;
     let cursor_kind = cursor.resolved(n_lanes, cols_per_voice);
     // In-progress automation value entry, snapshotted for the (immutable) cell
     // closures so they can show it in the cursor cell without borrowing view_state.
-    let entry_buffer = view_state.tracker_value_buffer.clone();
+    let entry_buffer = view_state.tracker.value_buffer.clone();
 
     // Click-to-place: cells record their (row, col) here instead of borrowing
     // `view_state` into the table closures; applied after the table is built.
@@ -1401,7 +1430,7 @@ pub(crate) fn draw_tracker(
     // Row-hover highlight: any cell whose response contains the pointer records
     // its row here (cells span the table width, so this is X+Y exact); the result
     // is stored for *next* frame's tint (one-frame lag is invisible).
-    let prev_hovered_row = view_state.tracker_hovered_row;
+    let prev_hovered_row = view_state.tracker.hovered_row;
     let hovered_row: Cell<Option<usize>> = Cell::new(None);
     // A cell context-menu action, applied after the table (like `click_target`).
     let ctx_action: Cell<Option<CtxAction>> = Cell::new(None);
@@ -1835,16 +1864,16 @@ pub(crate) fn draw_tracker(
         });
 
     // Store the row the pointer landed on this frame for next frame's hover tint.
-    view_state.tracker_hovered_row = hovered_row.get();
+    view_state.tracker.hovered_row = hovered_row.get();
 
     // Apply a click captured during the table pass (deferred so the closures don't
     // need a mutable borrow of `view_state`).
     if let Some((row, col)) = click_target.get() {
-        if (row, col) != (view_state.tracker_cursor.row, view_state.tracker_cursor.col) {
-            view_state.tracker_value_buffer = None;
+        if (row, col) != (view_state.tracker.cursor.row, view_state.tracker.cursor.col) {
+            view_state.tracker.value_buffer = None;
         }
-        view_state.tracker_cursor.row = row;
-        view_state.tracker_cursor.col = col;
+        view_state.tracker.cursor.row = row;
+        view_state.tracker.cursor.col = col;
     }
 
     // Apply a context-menu action captured during the table pass (mutates the

@@ -275,25 +275,9 @@ pub struct SequencerViewState {
     /// Mirrored to the engine via `EngineCommand::SetLoop`.
     loop_start_tick: Option<Tick>,
     loop_end_tick: Option<Tick>,
-    /// Tracker-view cursor (row + flat column index). Persisted across frames and
-    /// view toggles; navigated with arrow keys / clicks in `draw_tracker`. T1
-    /// highlights it, T2 will edit the cell under it.
-    tracker_cursor: tracker::TrackerCursor,
-    /// In-progress numeric entry for the tracker automation cell under the cursor.
-    /// `Some` while the user is typing a value (digits/`.`); committed on Enter,
-    /// discarded on Esc or when the cursor leaves the cell. `None` when idle.
-    tracker_value_buffer: Option<String>,
-    /// User-requested minimum number of tracker voice columns. The actual column
-    /// count is `max(derived_from_notes, this, 1)`; "Add voice column" raises it so
-    /// an empty lane appears for entry, "Remove empty columns" lowers it. `0` = just
-    /// derive from the notes.
-    tracker_voice_columns: usize,
-    /// Whether the tracker interleaves the per-note expression sub-columns
-    /// (accent/gate/ghost/probability) after each voice column ("Expr" toggle).
-    tracker_show_expression: bool,
-    /// Tracker row under the mouse last frame, tinted this frame as a hover
-    /// highlight (one-frame lag is invisible; avoids per-cell geometry math).
-    tracker_hovered_row: Option<usize>,
+    /// Tracker-only view state (cursor, entry buffer, column count, Expr toggle,
+    /// hovered row) — grouped; see `tracker::TrackerViewState`.
+    tracker: tracker::TrackerViewState,
     /// Whether the right-docked Note FX rack inspector is shown for the opened
     /// pattern (toggled by the "Note FX" button in the piano-roll toolbar or the
     /// pattern view's editor-mode row).
@@ -363,11 +347,7 @@ impl SequencerViewState {
             tap_tempo_times: Vec::new(),
             loop_start_tick: None,
             loop_end_tick: None,
-            tracker_cursor: tracker::TrackerCursor::default(),
-            tracker_value_buffer: None,
-            tracker_voice_columns: 0,
-            tracker_show_expression: true,
-            tracker_hovered_row: None,
+            tracker: tracker::TrackerViewState::default(),
             note_fx_panel_open: false,
             note_fx_edit_drag_start: None,
             editing_ornament: None,
