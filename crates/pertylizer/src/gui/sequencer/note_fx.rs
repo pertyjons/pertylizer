@@ -32,7 +32,7 @@ enum RackEdit {
 /// Draw the note-processor rack for `pattern_id`. Reads a cloned snapshot of the
 /// rack, renders one card per processor, and applies at most one add / remove
 /// edit (with undo) after drawing.
-pub(super) fn draw_note_fx_panel(
+pub(crate) fn draw_note_fx_panel(
     ui: &mut egui::Ui,
     song: &Arc<RwLock<Song>>,
     view_state: &mut SequencerViewState,

@@ -31,6 +31,7 @@ mod tracker;
 mod transport;
 use arrangement::{collect_arrangement_data, draw_arrangement};
 use automation::{automation_point_at_pos, draw_automation_zone};
+pub(crate) use note_fx::draw_note_fx_panel;
 pub(crate) use piano_roll::{collect_piano_roll_data, draw_piano_roll};
 use piano_roll::{draw_automation_target_selector, draw_pattern_instrument_transport};
 pub(crate) use tracker::draw_tracker;
@@ -287,8 +288,9 @@ pub struct SequencerViewState {
     /// (accent/gate/ghost/probability) after each voice column ("Expr" toggle).
     tracker_show_expression: bool,
     /// Whether the right-docked Note FX rack inspector is shown for the opened
-    /// pattern (toggled by the "Note FX" button in the piano-roll toolbar).
-    note_fx_panel_open: bool,
+    /// pattern (toggled by the "Note FX" button in the piano-roll toolbar or the
+    /// pattern view's editor-mode row).
+    pub(crate) note_fx_panel_open: bool,
 }
 
 impl SequencerViewState {

@@ -21,8 +21,8 @@ use synth_sequencer::{Duration as SeqDuration, PatternId, PatternTick, Song, Tic
 
 use crate::gui::instrument_rack::InstrumentUiState;
 use crate::gui::sequencer::{
-    SequencerViewState, collect_piano_roll_data, commit_pattern_rename, draw_piano_roll,
-    draw_tracker,
+    SequencerViewState, collect_piano_roll_data, commit_pattern_rename, draw_note_fx_panel,
+    draw_piano_roll, draw_tracker,
 };
 use crate::gui::theme::theme;
 use crate::undo::UndoManager;
@@ -137,6 +137,22 @@ pub(crate) fn draw_pattern_view(
 ) {
     draw_pattern_browser(ui, song, seq_view_state, pattern_view_state, undo_manager);
 
+    // Note FX rack inspector (right-docked; declared before the central panel so
+    // it spans the full height to the right of both editors). Shown for the
+    // opened pattern when toggled on — works for both the tracker and piano-roll
+    // editor modes.
+    if seq_view_state.note_fx_panel_open
+        && let Some(pattern_id) = seq_view_state.opened_pattern
+    {
+        egui::Panel::right("note_fx_panel")
+            .resizable(true)
+            .min_size(190.0)
+            .default_size(290.0)
+            .show_inside(ui, |ui| {
+                draw_note_fx_panel(ui, song, seq_view_state, undo_manager, pattern_id);
+            });
+    }
+
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(theme().colors.bg_panel))
         .show_inside(ui, |ui| {
@@ -188,6 +204,28 @@ pub(crate) fn draw_pattern_view(
                     PatternEditorMode::Tracker,
                     "Tracker",
                 );
+
+                // Note FX toggle. In piano-roll mode the piano-roll toolbar
+                // already carries this button, so only surface it here in
+                // tracker mode (which has no such toolbar) — one toggle per
+                // context, no duplicate.
+                if pattern_view_state.editor_mode == PatternEditorMode::Tracker {
+                    ui.separator();
+                    let np_count = song
+                        .try_read()
+                        .and_then(|s| s.pattern(pattern_id).map(|p| p.processors().len()))
+                        .unwrap_or(0);
+                    if ui
+                        .selectable_label(
+                            seq_view_state.note_fx_panel_open,
+                            format!("Note FX ({np_count})"),
+                        )
+                        .on_hover_text("Show/hide the note-processor rack for this pattern")
+                        .clicked()
+                    {
+                        seq_view_state.note_fx_panel_open = !seq_view_state.note_fx_panel_open;
+                    }
+                }
             });
             ui.separator();
 
