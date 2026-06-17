@@ -289,6 +289,9 @@ pub struct SequencerViewState {
     /// Whether the tracker interleaves the per-note expression sub-columns
     /// (accent/gate/ghost/probability) after each voice column ("Expr" toggle).
     tracker_show_expression: bool,
+    /// Tracker row under the mouse last frame, tinted this frame as a hover
+    /// highlight (one-frame lag is invisible; avoids per-cell geometry math).
+    tracker_hovered_row: Option<usize>,
     /// Whether the right-docked Note FX rack inspector is shown for the opened
     /// pattern (toggled by the "Note FX" button in the piano-roll toolbar or the
     /// pattern view's editor-mode row).
@@ -362,6 +365,7 @@ impl SequencerViewState {
             tracker_value_buffer: None,
             tracker_voice_columns: 0,
             tracker_show_expression: true,
+            tracker_hovered_row: None,
             note_fx_panel_open: false,
             note_fx_edit_drag_start: None,
             editing_ornament: None,

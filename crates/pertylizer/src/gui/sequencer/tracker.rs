@@ -222,6 +222,8 @@ struct TrackerColors {
     cursor_border: Color32,
     /// Divider line drawn at the top edge of a row that starts a new bar.
     bar_line: Color32,
+    /// Faint tint behind the row under the mouse pointer.
+    hover_row: Color32,
 }
 
 impl TrackerColors {
@@ -246,6 +248,7 @@ impl TrackerColors {
             cursor_cell: c.accent_primary.gamma_multiply(0.22),
             cursor_border: c.border_selected,
             bar_line: c.border,
+            hover_row: Color32::from_white_alpha(10),
         }
     }
 
@@ -259,9 +262,13 @@ impl TrackerColors {
         is_cursor_row: bool,
         is_cursor_cell: bool,
         is_bar_start: bool,
+        is_hovered_row: bool,
     ) {
         let rect = ui.max_rect();
         let painter = ui.painter();
+        if is_hovered_row && !is_cursor_row {
+            painter.rect_filled(rect, 0.0, self.hover_row);
+        }
         if is_cursor_row {
             painter.rect_filled(rect, 0.0, self.cursor_row);
             if is_cursor_cell {
@@ -1268,6 +1275,12 @@ pub(crate) fn draw_tracker(
     // `view_state` into the table closures; applied after the table is built.
     let click_target: Cell<Option<(usize, usize)>> = Cell::new(None);
 
+    // Row-hover highlight: any cell whose response contains the pointer records
+    // its row here (cells span the table width, so this is X+Y exact); the result
+    // is stored for *next* frame's tint (one-frame lag is invisible).
+    let prev_hovered_row = view_state.tracker_hovered_row;
+    let hovered_row: Cell<Option<usize>> = Cell::new(None);
+
     // Manual wheel scrolling during playback breaks lock-follow, mirroring the
     // piano roll's scroll-away detection. The table virtualizes rows and hides its
     // scroll offset, so (unlike the piano roll's offset delta) we key off raw scroll
@@ -1402,11 +1415,12 @@ pub(crate) fn draw_tracker(
                 let is_bar_start = r > 0 && row_tick.is_multiple_of(ticks_per_bar);
                 let is_playhead = playhead_row == Some(r);
                 let is_cursor_row = r == cursor.row;
+                let is_hovered_row = prev_hovered_row == Some(r);
 
                 // Gutter: row number, beat emphasis, playhead marker. Clicking it
                 // moves the cursor to this row, keeping the current column.
                 let (_, gutter_resp) = row.col(|ui| {
-                    colors.paint_cell_chrome(ui, is_cursor_row, false, is_bar_start);
+                    colors.paint_cell_chrome(ui, is_cursor_row, false, is_bar_start, is_hovered_row);
                     let mut num = RichText::new(row_number_text(r))
                         .monospace()
                         .color(colors.row_number(is_playhead, on_beat));
@@ -1422,6 +1436,9 @@ pub(crate) fn draw_tracker(
                 });
                 if gutter_resp.interact(egui::Sense::click()).clicked() {
                     click_target.set(Some((r, cursor.col)));
+                }
+                if gutter_resp.contains_pointer() {
+                    hovered_row.set(Some(r));
                 }
 
                 // Voice columns (each optionally followed by its expression cells).
@@ -1440,7 +1457,7 @@ pub(crate) fn draw_tracker(
 
                     let is_cursor_cell = is_cursor_row && cursor.col == voice_col;
                     let (_, resp) = row.col(|ui| {
-                        colors.paint_cell_chrome(ui, is_cursor_row, is_cursor_cell, is_bar_start);
+                        colors.paint_cell_chrome(ui, is_cursor_row, is_cursor_cell, is_bar_start, is_hovered_row);
                         // Usually 0 or 1 notes; more than one means notes share a
                         // (row, lane) — draw the first and mark the rest with a "+N"
                         // overflow glyph rather than silently hiding them.
@@ -1468,13 +1485,16 @@ pub(crate) fn draw_tracker(
                     if resp.interact(egui::Sense::click()).clicked() {
                         click_target.set(Some((r, voice_col)));
                     }
+                    if resp.contains_pointer() {
+                        hovered_row.set(Some(r));
+                    }
 
                     // Ornament cell (always present, sub-column 1): a compact tag
                     // for the note's ornament; Enter edits via the shared popup.
                     let orn_col = voice_col + 1;
                     let is_orn_cursor = is_cursor_row && cursor.col == orn_col;
                     let (_, orn_resp) = row.col(|ui| {
-                        colors.paint_cell_chrome(ui, is_cursor_row, is_orn_cursor, is_bar_start);
+                        colors.paint_cell_chrome(ui, is_cursor_row, is_orn_cursor, is_bar_start, is_hovered_row);
                         match first_note.and_then(|idx| data.notes[idx].ornament) {
                             Some(o) => {
                                 ui.label(
@@ -1493,6 +1513,9 @@ pub(crate) fn draw_tracker(
                     if orn_resp.interact(egui::Sense::click()).clicked() {
                         click_target.set(Some((r, orn_col)));
                     }
+                    if orn_resp.contains_pointer() {
+                        hovered_row.set(Some(r));
+                    }
 
                     // Expression sub-columns: the note's scalar fields, read-only
                     // (T3.1a). Blank when no note carries this (row, lane).
@@ -1501,7 +1524,7 @@ pub(crate) fn draw_tracker(
                             let flat = voice_col + 2 + fi;
                             let is_cc = is_cursor_row && cursor.col == flat;
                             let (_, resp) = row.col(|ui| {
-                                colors.paint_cell_chrome(ui, is_cursor_row, is_cc, is_bar_start);
+                                colors.paint_cell_chrome(ui, is_cursor_row, is_cc, is_bar_start, is_hovered_row);
                                 let Some(idx) = first_note else { return };
                                 // While typing a value into this (numeric) cell, show
                                 // the entry buffer with a caret; otherwise the value.
@@ -1528,6 +1551,9 @@ pub(crate) fn draw_tracker(
                             if resp.interact(egui::Sense::click()).clicked() {
                                 click_target.set(Some((r, flat)));
                             }
+                            if resp.contains_pointer() {
+                                hovered_row.set(Some(r));
+                            }
                         }
                     }
                 }
@@ -1537,7 +1563,7 @@ pub(crate) fn draw_tracker(
                     let flat_col = voice_group_base(n_lanes, cols_per_voice) + ai;
                     let is_cursor_cell = is_cursor_row && cursor.col == flat_col;
                     let (_, resp) = row.col(|ui| {
-                        colors.paint_cell_chrome(ui, is_cursor_row, is_cursor_cell, is_bar_start);
+                        colors.paint_cell_chrome(ui, is_cursor_row, is_cursor_cell, is_bar_start, is_hovered_row);
                         let top = sample_at(&lane.points, PatternTick(row_tick));
                         let bot = sample_at(&lane.points, PatternTick(row_tick + tpr));
                         let rect = ui.max_rect();
@@ -1574,13 +1600,16 @@ pub(crate) fn draw_tracker(
                     if resp.interact(egui::Sense::click()).clicked() {
                         click_target.set(Some((r, flat_col)));
                     }
+                    if resp.contains_pointer() {
+                        hovered_row.set(Some(r));
+                    }
                 }
 
                 // Note-processor output columns (read-only, non-selectable, one per
                 // processor stage). Clicking parks the cursor on this row.
                 for stage in &np_stages {
                     let (_, resp) = row.col(|ui| {
-                        colors.paint_cell_chrome(ui, is_cursor_row, false, is_bar_start);
+                        colors.paint_cell_chrome(ui, is_cursor_row, false, is_bar_start, is_hovered_row);
                         if let Some(pitches) = stage.rows.get(r) {
                             ui.label(
                                 RichText::new(np_cell_text(pitches))
@@ -1592,9 +1621,15 @@ pub(crate) fn draw_tracker(
                     if resp.interact(egui::Sense::click()).clicked() {
                         click_target.set(Some((r, cursor.col)));
                     }
+                    if resp.contains_pointer() {
+                        hovered_row.set(Some(r));
+                    }
                 }
             });
         });
+
+    // Store the row the pointer landed on this frame for next frame's hover tint.
+    view_state.tracker_hovered_row = hovered_row.get();
 
     // Apply a click captured during the table pass (deferred so the closures don't
     // need a mutable borrow of `view_state`).
