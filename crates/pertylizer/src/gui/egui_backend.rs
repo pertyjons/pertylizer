@@ -3394,6 +3394,7 @@ impl SynthApp {
         let mut send_transpose = false;
         let mut send_oversampling = false;
         let mut send_alloc_mode = false;
+        let mut send_stealing = false;
         let mut send_vel_amp = false;
         let mut send_vel_filter = false;
         let mut send_description = false;
@@ -3696,6 +3697,39 @@ impl SynthApp {
 
                 ui.add_space(t.spacing.sm);
 
+                // Voice stealing strategy (which voice is reused when all are busy)
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Steal").color(t.colors.text_dim));
+                    let current = inst.stealing_strategy;
+                    egui::ComboBox::from_id_salt("instrument_edit_stealing")
+                        .selected_text(format!("{current:?}"))
+                        .width(110.0)
+                        .show_ui(ui, |ui| {
+                            for strategy in [
+                                synth_engine::voice_allocator::StealingStrategy::Oldest,
+                                synth_engine::voice_allocator::StealingStrategy::Quietest,
+                                synth_engine::voice_allocator::StealingStrategy::LowestPriority,
+                                synth_engine::voice_allocator::StealingStrategy::SameNote,
+                                synth_engine::voice_allocator::StealingStrategy::None,
+                            ] {
+                                if ui
+                                    .selectable_label(current == strategy, format!("{strategy:?}"))
+                                    .clicked()
+                                {
+                                    inst.stealing_strategy = strategy;
+                                    send_stealing = true;
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text(
+                            "Which voice is reused when all are busy: Oldest, Quietest, \
+                             LowestPriority, SameNote, or None (ignore new notes when full)",
+                        );
+                });
+
+                ui.add_space(t.spacing.sm);
+
                 // Velocity → amp sensitivity
                 ui.horizontal(|ui| {
                     ui.label(
@@ -3847,6 +3881,13 @@ impl SynthApp {
                 param: synth_engine::InstrumentParam::AllocationMode(mode),
             });
         }
+        if send_stealing {
+            let strategy = self.instruments[idx].stealing_strategy;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: target_id,
+                param: synth_engine::InstrumentParam::StealingStrategy(strategy),
+            });
+        }
         if send_vel_amp {
             let s = self.instruments[idx].velocity_amp_sensitivity;
             self.handle.send(EngineCommand::SetInstrumentParameter {
@@ -3904,6 +3945,7 @@ impl SynthApp {
             || send_transpose
             || send_oversampling
             || send_alloc_mode
+            || send_stealing
             || send_vel_amp
             || send_vel_filter
             || send_description

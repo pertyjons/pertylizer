@@ -413,9 +413,15 @@ concrete need appears:
 
 ### 3.5 Polyphony settings
 
-- [ ] Voice stealing mode selection (oldest, quietest, none) — engine + persistence done, GUI selector
-  not yet added (`stealing_strategy` field is read but has no ComboBox; `allocation_mode` already does).
-- [ ] Unison detune/spread controls
+- [x] Voice stealing mode selection (oldest, quietest, none) — **Done.** Added a "Steal" ComboBox in the
+  instrument edit panel (`gui/egui_backend.rs`, next to the Mode/allocation selector) covering all five
+  `StealingStrategy` variants, wired through `InstrumentParam::StealingStrategy`. Engine + persistence were
+  already in place.
+- [ ] Unison detune/spread controls — the allocator's global `AllocationMode::Unison` uses a hardcoded
+  `AllocatorConfig.unison_detune` (10 cents, no setter/persistence) and has **no spread** field at all
+  (the per-module `voice_synth` unison is separate). Needs a full vertical slice: new `InstrumentParam`
+  variant(s) + engine handling + `EngineState` snapshot field + project save/load + GUI + MCP. Bigger than
+  the stealing selector — design separately.
 
 ---
 
@@ -443,15 +449,8 @@ concrete need appears:
 When a module (e.g. `env-2`, `lfo-1`) is referenced only via Mod Matrix slots — not via cables —
 it *looks* unused: no visible cable in the patch-editor graph. Header badges and MCP surfacing
 shipped in v0.289.0 (`get_mod_matrix_routings`, virtual `"matrix"` port on `list_modules`, header
-arrow badge with tooltip). What remains is the in-canvas visual + navigation polish:
+arrow badge with tooltip). Remaining work:
 
-- [ ] **GUI: ghost cables for Mod Matrix routings.** In the cable view, draw faint dashed lines
-  (different colour) from matrix sources to their destinations (e.g. `env-2` → `flt-1.cutoff`),
-  togglable in the View menu. Both routing paradigms become visible in one canvas.
-- [ ] **GUI (optional polish): click a Mod Matrix slot source/dest to focus + pulse that module.**
-  Two-way matrix↔graph navigation — was Phase 4 of the (now-completed, removed)
-  mod-matrix-routing-visibility plan; Phases 1–3 (MCP surface, framed zone, header badges)
-  shipped in v0.289.0.
 - [ ] **Reflect YAMS-script sources in the per-knob source markers + macro rail (S2.4 follow-up).**
   After the expression editor shipped, a scripted Mod Matrix slot has no slot *source* address —
   its sources live inside the script (`src lfo = lfo-1.out`, plus macros like `velocity`/`mod_wheel`).
