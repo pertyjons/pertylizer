@@ -4305,6 +4305,20 @@ impl SynthApp {
                     *pattern = snapshot.clone();
                 }
             }
+            UndoAction::SetNoteOrnament {
+                pattern_id,
+                note_id,
+                new,
+                ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(note) = song_w
+                    .pattern_mut(*pattern_id)
+                    .and_then(|p| p.note_mut(*note_id))
+                {
+                    note.ornament = *new;
+                }
+            }
             UndoAction::RenamePattern {
                 pattern_id,
                 new_name,

@@ -9,8 +9,8 @@ use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
 use synth_sequencer::{
-    Duration as SeqDuration, Glide, NoteExpression, NoteId, NoteLane, NoteProcessor, PatternId,
-    PatternTick, Pitch, Tick, TrackId, Velocity,
+    Duration as SeqDuration, Glide, NoteExpression, NoteId, NoteLane, NoteProcessor, Ornament,
+    PatternId, PatternTick, Pitch, Tick, TrackId, Velocity,
 };
 
 use crate::patch::{ConnectionState, ModuleState, ParamValue};
@@ -127,6 +127,13 @@ pub(crate) enum UndoAction {
     RestorePattern {
         pattern_id: PatternId,
         snapshot: synth_sequencer::Pattern,
+    },
+    /// A note's per-note ornament was set, changed, or cleared.
+    SetNoteOrnament {
+        pattern_id: PatternId,
+        note_id: NoteId,
+        old: Option<Ornament>,
+        new: Option<Ornament>,
     },
 
     // ── Pattern + track metadata ──
@@ -442,6 +449,17 @@ impl UndoManager {
             } => UndoAction::FreezePattern {
                 pattern_id: *pattern_id,
                 before: snapshot.clone(),
+            },
+            UndoAction::SetNoteOrnament {
+                pattern_id,
+                note_id,
+                old,
+                new,
+            } => UndoAction::SetNoteOrnament {
+                pattern_id: *pattern_id,
+                note_id: *note_id,
+                old: *new,
+                new: *old,
             },
             UndoAction::MoveNote {
                 pattern_id,

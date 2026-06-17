@@ -759,7 +759,90 @@ fn draw_piano_roll_selection_inspector(
                 }
             });
             ui.separator();
+
+            // ── Per-note ornament (single selection) ──
+            if selected.len() == 1 {
+                let nid = selected[0].note_id;
+                // Outer `Some` = lock acquired; inner = the note's ornament (or
+                // `None`). The editor only opens from a successful read, so a
+                // transient lock miss can't capture a wrong `None` baseline and
+                // clobber an existing ornament.
+                let read = song.try_read().map(|s| {
+                    s.pattern(data.pattern_id)
+                        .and_then(|p| p.note(nid))
+                        .and_then(|n| n.ornament)
+                });
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.label(
+                        RichText::new("Ornament")
+                            .color(t.colors.text_dim)
+                            .size(10.0),
+                    );
+                    ui.label(
+                        RichText::new(ornament_summary(read.flatten()))
+                            .color(t.colors.text_secondary),
+                    );
+                    if ui.button("Edit…").clicked()
+                        && let Some(current) = read
+                    {
+                        view_state.editing_ornament = Some(OrnamentEdit {
+                            pattern_id: data.pattern_id,
+                            note_id: nid,
+                            before: current,
+                            current,
+                        });
+                    }
+                });
+                ui.separator();
+            }
         }
+    }
+
+    draw_ornament_popup(ui, song, view_state, undo_manager);
+}
+
+/// The per-note ornament editor popup window. Shown while
+/// `view_state.editing_ornament` is set; applies edits live and pushes one
+/// coalesced `SetNoteOrnament` undo entry when the window is closed.
+fn draw_ornament_popup(
+    ui: &mut egui::Ui,
+    song: &Arc<RwLock<Song>>,
+    view_state: &mut SequencerViewState,
+    undo_manager: &mut crate::undo::UndoManager,
+) {
+    let mut finalize = false;
+    if let Some(edit) = view_state.editing_ornament.as_mut() {
+        let mut open = true;
+        let mut changed = false;
+        egui::Window::new("Ornament")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ui.ctx(), |ui| {
+                changed = draw_ornament_editor(ui, &mut edit.current);
+            });
+        if changed {
+            let mut song_w = song.write();
+            if let Some(note) = song_w
+                .pattern_mut(edit.pattern_id)
+                .and_then(|p| p.note_mut(edit.note_id))
+            {
+                note.ornament = edit.current;
+            }
+        }
+        finalize = !open;
+    }
+    if finalize
+        && let Some(edit) = view_state.editing_ornament.take()
+        && edit.before != edit.current
+    {
+        undo_manager.push(crate::undo::UndoAction::SetNoteOrnament {
+            pattern_id: edit.pattern_id,
+            note_id: edit.note_id,
+            old: edit.before,
+            new: edit.current,
+        });
     }
 }
 

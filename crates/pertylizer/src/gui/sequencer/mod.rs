@@ -26,12 +26,14 @@ use crate::gui::widgets::toggle_button;
 mod arrangement;
 mod automation;
 mod note_fx;
+mod ornament;
 mod piano_roll;
 mod tracker;
 mod transport;
 use arrangement::{collect_arrangement_data, draw_arrangement};
 use automation::{automation_point_at_pos, draw_automation_zone};
 pub(crate) use note_fx::draw_note_fx_panel;
+pub(crate) use ornament::{OrnamentEdit, draw_ornament_editor, ornament_summary};
 pub(crate) use piano_roll::{collect_piano_roll_data, draw_piano_roll};
 use piano_roll::{draw_automation_target_selector, draw_pattern_instrument_transport};
 pub(crate) use tracker::draw_tracker;
@@ -296,6 +298,10 @@ pub struct SequencerViewState {
     /// a single `SetNoteProcessorConfig` undo entry on release. Discrete edits
     /// (combos, toggles) capture and finalize in the same frame.
     note_fx_edit_drag_start: Option<(PatternId, usize, NoteProcessor)>,
+    /// Open per-note ornament editor popup (target note + baseline + working
+    /// copy). `None` when the popup is closed; one coalesced undo entry is pushed
+    /// when it closes.
+    editing_ornament: Option<OrnamentEdit>,
 }
 
 impl SequencerViewState {
@@ -353,6 +359,7 @@ impl SequencerViewState {
             tracker_show_expression: true,
             note_fx_panel_open: false,
             note_fx_edit_drag_start: None,
+            editing_ornament: None,
         }
     }
 }
