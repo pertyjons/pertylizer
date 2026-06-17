@@ -153,7 +153,17 @@ pub(crate) fn draw_note_fx_panel(
                             NoteProcessor::Humanize(h) => edit_humanize(ui, h, &mut any_dragged),
                         }
                         if cfg != *proc {
-                            if view_state.note_fx_edit_drag_start.is_none() {
+                            // Capture the pre-edit baseline for this (pattern,
+                            // index). Replace any stale baseline left by an
+                            // interrupted gesture on a different processor/pattern
+                            // (e.g. the pattern was switched or removed mid-edit),
+                            // so the current edit's undo is never keyed to the
+                            // wrong slot.
+                            let matches = view_state
+                                .note_fx_edit_drag_start
+                                .as_ref()
+                                .is_some_and(|(p, i, _)| *p == pattern_id && *i == index);
+                            if !matches {
                                 view_state.note_fx_edit_drag_start =
                                     Some((pattern_id, index, proc.clone()));
                             }
@@ -243,17 +253,21 @@ pub(crate) fn draw_note_fx_panel(
         None => {}
     }
 
-    // Finalize a coalesced config edit once no widget is being dragged. Clone the
-    // baseline (rather than take) and clear only after a successful read, so a
-    // transient lock miss never loses the pre-edit state.
+    // Finalize a coalesced config edit once no widget is being dragged. Clear the
+    // baseline whenever the lock is acquired (the gesture is over) — even if the
+    // processor is gone (pattern removed/closed mid-edit) — so a stale baseline
+    // can never wedge future edits. A transient lock miss keeps it for a retry.
     if !any_dragged
         && let Some((pid, idx, old)) = view_state.note_fx_edit_drag_start.clone()
-        && let Some(new) = song.try_read().and_then(|s| {
-            s.pattern(pid)
-                .and_then(|p| p.processors().get(idx).cloned())
-        })
+        && let Some(song_r) = song.try_read()
     {
-        if new != old {
+        let new = song_r
+            .pattern(pid)
+            .and_then(|p| p.processors().get(idx).cloned());
+        drop(song_r);
+        if let Some(new) = new
+            && new != old
+        {
             undo_manager.push(UndoAction::SetNoteProcessorConfig {
                 pattern_id: pid,
                 index: idx,
