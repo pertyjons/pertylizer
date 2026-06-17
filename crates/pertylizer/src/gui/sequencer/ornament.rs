@@ -206,6 +206,21 @@ pub(crate) fn ornament_tag(o: Ornament) -> String {
     }
 }
 
+/// A multi-line description of an ornament's full config, for a hover tooltip.
+pub(crate) fn ornament_detail(o: Ornament) -> String {
+    format!(
+        "{} — {} hits, spacing {} ticks\ncurve {}, dynamics {}, {}\npitch offset {:+} st, grace gate {:.0}%",
+        ornament_kind_name(o),
+        o.count,
+        o.spacing.0,
+        spacing_name(o.spacing_curve),
+        dynamics_name(o.dynamics),
+        placement_name(o.placement),
+        o.pitch_offset.as_f32() as i32,
+        o.grace_gate.as_f32() * 100.0,
+    )
+}
+
 /// A one-line read-only summary of a note's ornament for the inspector.
 pub(crate) fn ornament_summary(orn: Option<Ornament>) -> String {
     match orn {

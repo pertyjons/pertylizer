@@ -28,7 +28,7 @@ use synth_sequencer::{
 use super::{
     AutomationPointSnapshot, OrnamentEdit, PianoRollData, PianoRollNote, SequencerViewState,
     draw_automation_target_selector, draw_ornament_popup, draw_pattern_instrument_transport,
-    ornament_tag, preview_note,
+    ornament_detail, ornament_tag, preview_note,
 };
 use crate::gui::input::KEY_MAP;
 use crate::gui::instrument_rack::InstrumentUiState;
@@ -91,6 +91,33 @@ fn pitch_text(note: &PianoRollNote) -> String {
 fn velocity_text(note: &PianoRollNote) -> String {
     let pct = (note.velocity.as_f32() * 100.0).round() as u16;
     format!("{pct:>3}")
+}
+
+/// Multi-line hover tooltip for a voice cell: pitch, velocity, the note's true
+/// start tick (with an off-grid flag, since the row is quantized), duration, and
+/// legato/glide flags.
+fn voice_tooltip(note: &PianoRollNote, tpr: u32) -> String {
+    let vel = (note.velocity.as_f32() * 100.0).round() as u16;
+    let off_grid = !note.start_tick.0.is_multiple_of(tpr);
+    let mut s = format!(
+        "{}  ·  vel {vel}%\nstart tick {}{}",
+        note.pitch,
+        note.start_tick.0,
+        if off_grid { "  (off-grid)" } else { "" },
+    );
+    if let Some(end) = note.end_tick {
+        s.push_str(&format!(
+            "\nduration {} ticks",
+            end.0.saturating_sub(note.start_tick.0)
+        ));
+    }
+    if note.legato {
+        s.push_str("\nlegato");
+    }
+    if note.glide.is_some() {
+        s.push_str("\nglide");
+    }
+    s
 }
 
 /// Automation value at a row: the sampled value to two decimals, or the static
@@ -1543,6 +1570,9 @@ pub(crate) fn draw_tracker(
                     if resp.contains_pointer() {
                         hovered_row.set(Some(r));
                     }
+                    if let Some(idx) = first_note {
+                        resp.on_hover_text(voice_tooltip(&data.notes[idx], tpr));
+                    }
 
                     // Ornament cell (always present, sub-column 1): a compact tag
                     // for the note's ornament; Enter edits via the shared popup.
@@ -1570,6 +1600,9 @@ pub(crate) fn draw_tracker(
                     }
                     if orn_resp.contains_pointer() {
                         hovered_row.set(Some(r));
+                    }
+                    if let Some(o) = first_note.and_then(|idx| data.notes[idx].ornament) {
+                        orn_resp.on_hover_text(ornament_detail(o));
                     }
 
                     // Expression sub-columns: the note's scalar fields, read-only

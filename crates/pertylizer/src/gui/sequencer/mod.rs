@@ -33,7 +33,9 @@ mod transport;
 use arrangement::{collect_arrangement_data, draw_arrangement};
 use automation::{automation_point_at_pos, draw_automation_zone};
 pub(crate) use note_fx::draw_note_fx_panel;
-pub(crate) use ornament::{OrnamentEdit, draw_ornament_popup, ornament_summary, ornament_tag};
+pub(crate) use ornament::{
+    OrnamentEdit, draw_ornament_popup, ornament_detail, ornament_summary, ornament_tag,
+};
 pub(crate) use piano_roll::{collect_piano_roll_data, draw_piano_roll};
 use piano_roll::{draw_automation_target_selector, draw_pattern_instrument_transport};
 pub(crate) use tracker::draw_tracker;
