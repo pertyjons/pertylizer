@@ -1459,6 +1459,14 @@ pub(crate) fn draw_piano_roll(
         }
     }
 
+    // Ghost-preview notes (note-processor expansion), computed before the painter
+    // so the cache update's mutable borrow of `view_state` ends here.
+    let ghost_notes = if view_state.show_note_fx_ghosts {
+        view_state.ghost_notes(song, data.pattern_id)
+    } else {
+        Vec::new()
+    };
+
     let scroll_output = egui::ScrollArea::both()
         .id_salt(pr_scroll_salt)
         .max_height(scroll_max_height)
@@ -1683,6 +1691,32 @@ pub(crate) fn draw_piano_roll(
             let default_note_color = DEFAULT_NOTE_BLUE;
             // One-shot per-frame colour cache so each note's lookup is O(1).
             let note_color_cache = build_instrument_colour_cache(instruments);
+
+            // Ghost-preview overlay: the note-processor expansion, painted faintly
+            // behind the source notes so the user sees what actually plays.
+            // Read-only, non-interactive.
+            for ghost in &ghost_notes {
+                if ghost.pitch < view_pitch_min || ghost.pitch > view_pitch_max {
+                    continue;
+                }
+                let gy = pitch_to_y(ghost.pitch);
+                let gx_start = tick_to_x(ghost.start);
+                let gx_end = match ghost.duration {
+                    Some(d) => tick_to_x(PatternTick(ghost.start.0.saturating_add(d.0))),
+                    None => {
+                        tick_to_x(data.length_ticks.as_pattern_tick()).min(gx_start + grid_width)
+                    }
+                };
+                let gw = (gx_end - gx_start).max(2.0);
+                painter.rect_filled(
+                    Rect::from_min_size(
+                        Pos2::new(gx_start, gy + 1.0),
+                        Vec2::new(gw, note_row_height - 2.0),
+                    ),
+                    2.0,
+                    GHOST_NOTE_COLOR,
+                );
+            }
 
             for note in &data.notes {
                 if note.pitch < view_pitch_min || note.pitch > view_pitch_max {
@@ -2643,6 +2677,13 @@ fn draw_piano_roll_toolbar(
             .clicked()
         {
             view_state.note_fx_panel_open = !view_state.note_fx_panel_open;
+        }
+        if ui
+            .selectable_label(view_state.show_note_fx_ghosts, "Ghosts")
+            .on_hover_text("Preview the note-processor expansion as faint ghost notes")
+            .clicked()
+        {
+            view_state.show_note_fx_ghosts = !view_state.show_note_fx_ghosts;
         }
         ui.separator();
 

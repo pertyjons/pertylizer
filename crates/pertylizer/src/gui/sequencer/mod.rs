@@ -14,9 +14,9 @@ use synth_core::{BipolarValue, Bpm, Hertz, MidiNote, Milliseconds, NormalizedVal
 use synth_engine::{EngineCommand, EngineHandle, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
-    Glide, GlideFrom, GlideInterp, NoteExpression, NoteId, NoteLane, NoteName, NoteProcessor,
-    PatternId, PatternTick, Pitch, SeqInstrumentId, Song, Tick, TimeSignature, TrackId, Velocity,
-    Vibrato, VibratoShape,
+    ExpansionBuffer, Glide, GlideFrom, GlideInterp, Note, NoteExpression, NoteId, NoteLane,
+    NoteName, NoteProcessor, PatternId, PatternTick, Pitch, SeqInstrumentId, Song, Tick,
+    TimeSignature, TrackId, Velocity, Vibrato, VibratoShape,
 };
 
 use crate::gui::input::KEY_MAP;
@@ -302,6 +302,11 @@ pub struct SequencerViewState {
     /// copy). `None` when the popup is closed; one coalesced undo entry is pushed
     /// when it closes.
     editing_ornament: Option<OrnamentEdit>,
+    /// Whether the piano roll paints the note-processor expansion as faint ghost
+    /// notes behind the source notes ("Ghosts" toggle).
+    show_note_fx_ghosts: bool,
+    /// Cached ghost-preview expansion (see [`GhostCache`]).
+    ghost_cache: Option<GhostCache>,
 }
 
 impl SequencerViewState {
@@ -360,11 +365,50 @@ impl SequencerViewState {
             note_fx_panel_open: false,
             note_fx_edit_drag_start: None,
             editing_ornament: None,
+            show_note_fx_ghosts: false,
+            ghost_cache: None,
         }
     }
 }
 
 impl SequencerViewState {
+    /// Ghost-preview notes for `pattern_id` (the note-processor expansion). Reads
+    /// a cached result, recomputing the per-tick sweep only when the source notes
+    /// or rack changed. Returns an owned copy for the frame's painter; empty on a
+    /// lock miss or when the pattern has nothing to expand.
+    fn ghost_notes(&mut self, song: &Arc<RwLock<Song>>, pattern_id: PatternId) -> Vec<GhostNote> {
+        let Some(s) = song.try_read() else {
+            return self
+                .ghost_cache
+                .as_ref()
+                .map_or_else(Vec::new, |c| c.ghosts.clone());
+        };
+        let Some(pattern) = s.pattern(pattern_id) else {
+            self.ghost_cache = None;
+            return Vec::new();
+        };
+        let notes = pattern.notes();
+        let processors = pattern.processors();
+        let fresh = self.ghost_cache.as_ref().is_some_and(|c| {
+            c.pattern_id == pattern_id
+                && c.length == pattern.length
+                && c.notes.as_slice() == notes
+                && c.processors.as_slice() == processors
+        });
+        if !fresh {
+            self.ghost_cache = Some(GhostCache {
+                pattern_id,
+                length: pattern.length,
+                notes: notes.to_vec(),
+                processors: processors.to_vec(),
+                ghosts: compute_ghosts(pattern),
+            });
+        }
+        self.ghost_cache
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.ghosts.clone())
+    }
+
     /// Get the effective grid resolution in ticks, falling back to pattern default.
     fn effective_grid(&self, fallback_ticks_per_row: u16) -> SeqDuration {
         SeqDuration(if self.draw_grid_resolution > 0 {
@@ -492,6 +536,9 @@ const GRID_BG_WHITE: Color32 = Color32::from_rgba_premultiplied(35, 38, 42, 80);
 const DEFAULT_NOTE_BLUE: Color32 = Color32::from_rgb(100, 180, 255);
 /// Soft glow halo behind selected notes.
 const NOTE_SELECTED_GLOW: Color32 = Color32::from_rgba_unmultiplied_const(140, 220, 255, 60);
+/// Faint lavender for the note-processor ghost-preview overlay (drawn behind the
+/// source notes).
+const GHOST_NOTE_COLOR: Color32 = Color32::from_rgba_unmultiplied_const(170, 140, 230, 50);
 /// Orange for recording-preview notes.
 const RECORDING_PREVIEW_ORANGE: Color32 = Color32::from_rgb(255, 160, 60);
 /// Fill for held recording-preview notes.
@@ -655,6 +702,61 @@ struct PianoRollNote {
     /// Stored voice/column lane (the tracker's source of truth for which voice
     /// column a note lives in). The piano roll ignores it.
     lane: NoteLane,
+}
+
+/// One expanded note in the ghost-preview overlay (note-processor output drawn
+/// faintly behind the source notes). The start tick is explicit here (unlike
+/// `ExpandedNote`, whose start is the tick it was expanded at).
+#[derive(Clone, Copy)]
+struct GhostNote {
+    start: PatternTick,
+    pitch: Pitch,
+    duration: Option<SeqDuration>,
+}
+
+/// Cached ghost-preview expansion for one pattern. Recomputed only when the
+/// source notes or processor rack change (compared by value), since the sweep
+/// over every tick is too costly to run each frame.
+struct GhostCache {
+    pattern_id: PatternId,
+    /// Pattern length is part of the key: the sweep range is `0..length`, so a
+    /// length change must invalidate even when notes + rack are unchanged.
+    length: SeqDuration,
+    notes: Vec<Note>,
+    processors: Vec<NoteProcessor>,
+    ghosts: Vec<GhostNote>,
+}
+
+/// Sweep the note-processor expansion over every tick of `pattern`, collecting
+/// the generated notes for the ghost overlay. Empty when there is nothing to
+/// expand (no rack, no ornaments). Capped to bound a pathological pattern; runs
+/// on the UI thread (allocates), gated by the [`GhostCache`].
+fn compute_ghosts(pattern: &synth_sequencer::Pattern) -> Vec<GhostNote> {
+    const MAX_GHOSTS: usize = 4096;
+    // Nothing to preview without a rack or any ornament. `||` short-circuits so
+    // the note scan is skipped when a rack is present.
+    let has_work =
+        !pattern.processors().is_empty() || pattern.notes().iter().any(|n| n.ornament.is_some());
+    if !has_work {
+        return Vec::new();
+    }
+    let mut ghosts = Vec::new();
+    let mut buf = ExpansionBuffer::new();
+    for t in 0..pattern.length.0 {
+        let tick = PatternTick(t);
+        pattern.expand_at_tick(tick, |_| true, &mut buf);
+        for en in buf.notes() {
+            ghosts.push(GhostNote {
+                start: tick,
+                pitch: en.pitch,
+                duration: en.duration,
+            });
+            if ghosts.len() >= MAX_GHOSTS {
+                return ghosts;
+            }
+        }
+    }
+    ghosts
 }
 
 /// Snapshot of a single automation point for rendering.
