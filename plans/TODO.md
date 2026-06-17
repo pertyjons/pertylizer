@@ -417,11 +417,41 @@ concrete need appears:
   instrument edit panel (`gui/egui_backend.rs`, next to the Mode/allocation selector) covering all five
   `StealingStrategy` variants, wired through `InstrumentParam::StealingStrategy`. Engine + persistence were
   already in place.
-- [ ] Unison detune/spread controls — the allocator's global `AllocationMode::Unison` uses a hardcoded
-  `AllocatorConfig.unison_detune` (10 cents, no setter/persistence) and has **no spread** field at all
-  (the per-module `voice_synth` unison is separate). Needs a full vertical slice: new `InstrumentParam`
-  variant(s) + engine handling + `EngineState` snapshot field + project save/load + GUI + MCP. Bigger than
-  the stealing selector — design separately.
+- [ ] **Unison detune + spread controls — NOT IMPLEMENTED (config removed, only a fixed constant remains).**
+  The global `AllocationMode::Unison` *mode* works (selectable in the Mode dropdown; `allocate_unison`
+  plays the held note on every voice with an evenly-spread pitch detune), but the **detune amount is a
+  fixed 10-cent constant inlined in `allocate_unison`** (`voice_allocator.rs`). The old
+  `AllocatorConfig.unison_detune: Cents` field was a first-commit (v0.12) design stub that never got a
+  setter, `InstrumentParam`, snapshot field, persistence, or GUI — so it was a misleading "config" knob
+  that could never actually change. **It was removed** and replaced by the inline constant, so nothing in
+  the codebase now pretends unison detune is configurable. **`spread` never existed on any layer** — it is
+  a wishlist word from the original §5.4 roadmap stub (commit `181d6c8`), not a half-built feature.
+
+  **Distinct from the per-module unison** (`Oscillator` / `VoiceSynth` / `Fof`), which *is* fully
+  implemented with `UnisonDetune` params + MCP + GUI. This item is only about the **voice-allocator's
+  global Unison allocation mode**.
+
+  To actually implement it (full vertical slice, in dependency order):
+    1. **Allocator/DSP** (`voice_allocator.rs`): re-add `unison_detune: Cents` to `AllocatorConfig` +
+       `set_unison_detune()` setter (mirror `set_stealing`); add a **new** `unison_spread` field. Decide
+       what "spread" means — almost certainly **stereo width** (pan voices L↔R). That is *new DSP*, not
+       plumbing: voices currently only carry a pitch detune (`set_oscillator_detune`); there is no
+       per-voice pan, so `Voice`/the voice mixer must gain a per-voice stereo position first.
+    2. **Command** (`commands.rs`): `InstrumentParam::UnisonDetune(Cents)` + `UnisonSpread(NormalizedValue)`.
+    3. **Engine dispatch** (`synth_engine.rs` ~1693): match arms calling the new setters.
+    4. **Snapshot** (`shared_state.rs`): add fields to the instrument snapshot; populate them where
+       `allocator_cfg` is read (`synth_engine.rs` ~2670, next to `allocation_mode`/`stealing_strategy`).
+    5. **Persistence** (`InstrumentState`, `project_apply.rs`, `project.rs`): serde fields + build into
+       `AllocatorConfig` on load + push initial values via `InstrumentParam` (like `AllocationMode` at
+       `project_apply.rs` ~687) + defaults at the ~4 `InstrumentState` construction sites.
+    6. **GUI** (`gui/egui_backend.rs` + `gui/instrument_rack.rs`): UI-struct fields + two sliders + send
+       flags + apply block + dirty (same pattern as the stealing selector), greyed out unless the
+       instrument is in `Unison` mode.
+    7. **MCP + tests**: expose via `set_parameter` / surface on `get_instrument_info`; round-trip tests
+       mirroring the `allocation_mode` ones in `project_load_snapshot.rs`.
+
+  Detune alone (steps 1–7 minus spread) is mostly plumbing and could ship as a small first vertical;
+  **spread is the real feature** because it needs new per-voice stereo DSP. Design separately.
 
 ---
 

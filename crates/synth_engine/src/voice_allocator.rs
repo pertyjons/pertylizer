@@ -68,8 +68,6 @@ pub struct AllocatorConfig {
     pub priority: NotePriority,
     /// Glide time in seconds.
     pub glide_time: Seconds,
-    /// Unison detune amount (type-safe Cents).
-    pub unison_detune: Cents,
 }
 
 impl Default for AllocatorConfig {
@@ -80,7 +78,6 @@ impl Default for AllocatorConfig {
             stealing: StealingStrategy::Oldest,
             priority: NotePriority::Last,
             glide_time: Seconds::ZERO,
-            unison_detune: Cents::new(10.0),
         }
     }
 }
@@ -471,7 +468,10 @@ impl VoiceAllocator {
         trigger: NoteTrigger,
     ) -> Option<VoiceId> {
         let num_voices = self.voices.len();
-        let detune_per_voice = self.config.unison_detune / num_voices as f32;
+        // Total detune spread across all unison voices, in cents. Fixed for now —
+        // not yet user-configurable (see plans/TODO.md §3.5 "Unison detune/spread").
+        let unison_detune = Cents::new(10.0);
+        let detune_per_voice = unison_detune / num_voices as f32;
 
         for i in 0..num_voices {
             // Apply detune spread: voices spread evenly around center pitch
