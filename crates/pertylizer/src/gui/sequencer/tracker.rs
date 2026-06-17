@@ -39,6 +39,12 @@ use crate::undo::{UndoAction, UndoManager};
 /// each tracker row carries text.
 const TRACKER_ROW_HEIGHT: f32 = 18.0;
 
+/// Vertical-zoom (`pr_zoom_y`) bounds for the tracker's `+`/`1x`/`-` controls.
+/// Shared with the piano roll's `pr_zoom_y`; the per-step factor is multiplicative.
+const TRACKER_ZOOM_MIN: f32 = 0.5;
+const TRACKER_ZOOM_MAX: f32 = 3.0;
+const TRACKER_ZOOM_STEP: f32 = 1.2;
+
 /// Upper bound on voice columns. Far above any realistic single-instrument
 /// polyphony, and well under `NoteLane`'s u8 ceiling (255) so a column index can
 /// never saturate `NoteLane::from(usize)` and silently collapse two columns onto
@@ -1174,6 +1180,29 @@ pub(crate) fn draw_tracker(
                 .on_hover_text(
                     "Show per-note expression sub-columns (accent / gate / ghost / probability)",
                 );
+            // Vertical-zoom controls, right-aligned. In a right-to-left layout the
+            // first widget is rightmost, so add in reverse to read "+ 1x -".
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button("-")
+                    .on_hover_text("Zoom out (row height)")
+                    .clicked()
+                {
+                    view_state.pr_zoom_y = (view_state.pr_zoom_y / TRACKER_ZOOM_STEP)
+                        .clamp(TRACKER_ZOOM_MIN, TRACKER_ZOOM_MAX);
+                }
+                if ui.small_button("1x").on_hover_text("Reset zoom").clicked() {
+                    view_state.pr_zoom_y = 1.0;
+                }
+                if ui
+                    .small_button("+")
+                    .on_hover_text("Zoom in (row height)")
+                    .clicked()
+                {
+                    view_state.pr_zoom_y = (view_state.pr_zoom_y * TRACKER_ZOOM_STEP)
+                        .clamp(TRACKER_ZOOM_MIN, TRACKER_ZOOM_MAX);
+                }
+            });
             (add_v, add_a, clean)
         })
         .inner;
@@ -1182,6 +1211,16 @@ pub(crate) fn draw_tracker(
     let tpr = u32::from(data.ticks_per_row).max(1);
     let n_rows = (data.length_ticks.0.div_ceil(tpr)).max(1) as usize;
     let row_h = (TRACKER_ROW_HEIGHT * view_state.pr_zoom_y).clamp(12.0, 48.0);
+    // Scale the monospace cell text with the zoom so it neither clips nor shrinks
+    // away. Set on `ui` before the table builds; the table's cell uis inherit it.
+    let cell_font_size = (11.0 * view_state.pr_zoom_y).clamp(9.0, 20.0);
+    if let Some(font) = ui
+        .style_mut()
+        .text_styles
+        .get_mut(&egui::TextStyle::Monospace)
+    {
+        font.size = cell_font_size;
+    }
     let ticks_per_beat = data.time_sig.ticks_per_beat().max(1);
     let ticks_per_bar = data.time_sig.ticks_per_bar().max(1);
     let playhead_row = playhead_tick.map(|p| (p.0 / tpr) as usize);
