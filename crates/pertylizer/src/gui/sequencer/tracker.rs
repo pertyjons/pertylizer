@@ -232,6 +232,18 @@ struct TrackerColors {
     hover_row: Color32,
 }
 
+/// Per-cell row-chrome flags for [`TrackerColors::paint_cell_chrome`].
+#[derive(Clone, Copy)]
+struct CellChrome {
+    cursor_row: bool,
+    cursor_cell: bool,
+    bar_start: bool,
+    hovered: bool,
+    /// The tracker would respond to arrow keys now (no other widget holds focus);
+    /// when false the cursor outline draws dimmed.
+    active: bool,
+}
+
 impl TrackerColors {
     fn from_theme() -> Self {
         let c = &theme().colors;
@@ -262,32 +274,32 @@ impl TrackerColors {
     /// outline (on the cursor row/cell), and a divider line at the top edge of a
     /// bar-start row. Each cell paints its own slice, so the bar line is
     /// continuous across the row despite the table's per-cell clipping.
-    fn paint_cell_chrome(
-        &self,
-        ui: &egui::Ui,
-        is_cursor_row: bool,
-        is_cursor_cell: bool,
-        is_bar_start: bool,
-        is_hovered_row: bool,
-    ) {
+    fn paint_cell_chrome(&self, ui: &egui::Ui, chrome: CellChrome) {
         let rect = ui.max_rect();
         let painter = ui.painter();
-        if is_hovered_row && !is_cursor_row {
+        if chrome.hovered && !chrome.cursor_row {
             painter.rect_filled(rect, 0.0, self.hover_row);
         }
-        if is_cursor_row {
+        if chrome.cursor_row {
             painter.rect_filled(rect, 0.0, self.cursor_row);
-            if is_cursor_cell {
+            if chrome.cursor_cell {
                 painter.rect_filled(rect, 0.0, self.cursor_cell);
+                // Dim the outline when the tracker isn't the active input (some
+                // other widget holds keyboard focus), so the cursor reads as idle.
+                let border = if chrome.active {
+                    self.cursor_border
+                } else {
+                    self.cursor_border.gamma_multiply(0.4)
+                };
                 painter.rect_stroke(
                     rect,
                     0.0,
-                    egui::Stroke::new(1.0, self.cursor_border),
+                    egui::Stroke::new(1.0, border),
                     egui::StrokeKind::Inside,
                 );
             }
         }
-        if is_bar_start {
+        if chrome.bar_start {
             painter.line_segment(
                 [rect.left_top(), rect.right_top()],
                 egui::Stroke::new(1.0, self.bar_line),
@@ -1319,6 +1331,10 @@ pub(crate) fn draw_tracker(
     // is stored for *next* frame's tint (one-frame lag is invisible).
     let prev_hovered_row = view_state.tracker_hovered_row;
     let hovered_row: Cell<Option<usize>> = Cell::new(None);
+    // The cursor is "active" exactly when the tracker would respond to arrow keys:
+    // no other widget holds keyboard focus (the same gate `handle_tracker_keys`
+    // uses). When false (e.g. an inline rename has focus), the cursor draws dimmed.
+    let cursor_active = ui.memory(|m| m.focused()).is_none();
 
     // Manual wheel scrolling during playback breaks lock-follow, mirroring the
     // piano roll's scroll-away detection. The table virtualizes rows and hides its
@@ -1459,7 +1475,7 @@ pub(crate) fn draw_tracker(
                 // Gutter: row number, beat emphasis, playhead marker. Clicking it
                 // moves the cursor to this row, keeping the current column.
                 let (_, gutter_resp) = row.col(|ui| {
-                    colors.paint_cell_chrome(ui, is_cursor_row, false, is_bar_start, is_hovered_row);
+                    colors.paint_cell_chrome(ui, CellChrome { cursor_row: is_cursor_row, cursor_cell: false, bar_start: is_bar_start, hovered: is_hovered_row, active: cursor_active });
                     let mut num = RichText::new(row_number_text(r))
                         .monospace()
                         .color(colors.row_number(is_playhead, on_beat));
@@ -1496,7 +1512,7 @@ pub(crate) fn draw_tracker(
 
                     let is_cursor_cell = is_cursor_row && cursor.col == voice_col;
                     let (_, resp) = row.col(|ui| {
-                        colors.paint_cell_chrome(ui, is_cursor_row, is_cursor_cell, is_bar_start, is_hovered_row);
+                        colors.paint_cell_chrome(ui, CellChrome { cursor_row: is_cursor_row, cursor_cell: is_cursor_cell, bar_start: is_bar_start, hovered: is_hovered_row, active: cursor_active });
                         // Usually 0 or 1 notes; more than one means notes share a
                         // (row, lane) — draw the first and mark the rest with a "+N"
                         // overflow glyph rather than silently hiding them.
@@ -1533,7 +1549,7 @@ pub(crate) fn draw_tracker(
                     let orn_col = voice_col + 1;
                     let is_orn_cursor = is_cursor_row && cursor.col == orn_col;
                     let (_, orn_resp) = row.col(|ui| {
-                        colors.paint_cell_chrome(ui, is_cursor_row, is_orn_cursor, is_bar_start, is_hovered_row);
+                        colors.paint_cell_chrome(ui, CellChrome { cursor_row: is_cursor_row, cursor_cell: is_orn_cursor, bar_start: is_bar_start, hovered: is_hovered_row, active: cursor_active });
                         match first_note.and_then(|idx| data.notes[idx].ornament) {
                             Some(o) => {
                                 ui.label(
@@ -1563,7 +1579,7 @@ pub(crate) fn draw_tracker(
                             let flat = voice_col + 2 + fi;
                             let is_cc = is_cursor_row && cursor.col == flat;
                             let (_, resp) = row.col(|ui| {
-                                colors.paint_cell_chrome(ui, is_cursor_row, is_cc, is_bar_start, is_hovered_row);
+                                colors.paint_cell_chrome(ui, CellChrome { cursor_row: is_cursor_row, cursor_cell: is_cc, bar_start: is_bar_start, hovered: is_hovered_row, active: cursor_active });
                                 let Some(idx) = first_note else { return };
                                 // While typing a value into this (numeric) cell, show
                                 // the entry buffer with a caret; otherwise the value.
@@ -1602,7 +1618,7 @@ pub(crate) fn draw_tracker(
                     let flat_col = voice_group_base(n_lanes, cols_per_voice) + ai;
                     let is_cursor_cell = is_cursor_row && cursor.col == flat_col;
                     let (_, resp) = row.col(|ui| {
-                        colors.paint_cell_chrome(ui, is_cursor_row, is_cursor_cell, is_bar_start, is_hovered_row);
+                        colors.paint_cell_chrome(ui, CellChrome { cursor_row: is_cursor_row, cursor_cell: is_cursor_cell, bar_start: is_bar_start, hovered: is_hovered_row, active: cursor_active });
                         let top = sample_at(&lane.points, PatternTick(row_tick));
                         let bot = sample_at(&lane.points, PatternTick(row_tick + tpr));
                         let rect = ui.max_rect();
@@ -1648,7 +1664,7 @@ pub(crate) fn draw_tracker(
                 // processor stage). Clicking parks the cursor on this row.
                 for stage in &np_stages {
                     let (_, resp) = row.col(|ui| {
-                        colors.paint_cell_chrome(ui, is_cursor_row, false, is_bar_start, is_hovered_row);
+                        colors.paint_cell_chrome(ui, CellChrome { cursor_row: is_cursor_row, cursor_cell: false, bar_start: is_bar_start, hovered: is_hovered_row, active: cursor_active });
                         if let Some(pitches) = stage.rows.get(r) {
                             ui.label(
                                 RichText::new(np_cell_text(pitches))
