@@ -1248,6 +1248,22 @@ pub(crate) fn draw_tracker(
                 .on_hover_text(
                     "Show per-note expression sub-columns (accent / gate / ghost / probability)",
                 );
+            ui.separator();
+            ui.menu_button("?", |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                ui.label(RichText::new("Tracker — keys & mouse").strong());
+                ui.separator();
+                ui.label("Navigate: arrows move the cursor; PageUp/Down jump; Home/End to ends.");
+                ui.label("Notes: a piano key (A W S E D F …) inserts a note at the cursor; Delete removes it.");
+                ui.label("Expression (Acc/Gat/Prb): type digits + Enter (×100; 120 = 1.2×); Delete clears.");
+                ui.label("Ghost (Gho): Enter/Space toggles; Delete clears.");
+                ui.label("Ornament (Orn): Enter opens the editor; Delete clears.");
+                ui.label("Automation: type a value 0–1 + Enter to set a point at the cursor row; Delete removes it.");
+                ui.label("Right-click a cell or column header for more actions (delete, clear, legato/glide…).");
+                ui.label("Zoom: the + / 1x / - buttons (also scales the cell text).");
+            })
+            .response
+            .on_hover_text("Keyboard & mouse cheat-sheet");
             // Vertical-zoom controls, right-aligned. In a right-to-left layout the
             // first widget is rightmost, so add in reverse to read "+ 1x -".
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
