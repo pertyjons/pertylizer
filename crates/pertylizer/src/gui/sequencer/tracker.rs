@@ -21,8 +21,9 @@ use parking_lot::RwLock;
 use synth_core::{Milliseconds, NormalizedValue, Semitones};
 use synth_engine::EngineHandle;
 use synth_sequencer::{
-    AutomationLane, AutomationPoint, CurveType, Duration as SeqDuration, ExpansionBuffer, Glide,
-    GlideFrom, GlideInterp, NoteExpression, NoteId, NoteLane, PatternId, PatternTick, Pitch, Song,
+    AutomationLane, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
+    ExpansionBuffer, Glide, GlideFrom, GlideInterp, NoteExpression, NoteId, NoteLane, PatternId,
+    PatternTick, Pitch, Song,
 };
 
 use super::{
@@ -53,6 +54,14 @@ enum CtxAction {
     SetGlide(NoteId, Option<Glide>),
     EditOrnament(NoteId),
     ClearOrnament(NoteId),
+    ClearExprField(NoteId, ExprField),
+    ClearAutoPoint {
+        target: AutomationTarget,
+        tick: PatternTick,
+        value: NormalizedValue,
+        curve: CurveType,
+    },
+    DeleteAutoLane(AutomationTarget),
 }
 
 /// The default glide installed when toggling glide on from the context menu
@@ -1491,14 +1500,21 @@ pub(crate) fn draw_tracker(
             for (ai, lane) in data.automation_lanes.iter().enumerate() {
                 header.col(|ui| {
                     let name = lane.target.display_name();
+                    let target = &lane.target;
                     header_label(
                         ui,
                         name.clone(),
                         cursor_kind == TrackerColumn::Automation(ai),
                     )
                     .on_hover_text(format!(
-                        "Automation: {name} — per-row value 0..1; type to set a point, Delete to clear"
-                    ));
+                        "Automation: {name} — per-row value 0..1; type to set a point, Delete to clear. Right-click to delete the lane."
+                    ))
+                    .context_menu(|ui| {
+                        if ui.button("Delete lane").clicked() {
+                            ctx_action.set(Some(CtxAction::DeleteAutoLane(target.clone())));
+                            ui.close();
+                        }
+                    });
                 });
             }
             for (si, stage) in np_stages.iter().enumerate() {
@@ -1699,6 +1715,16 @@ pub(crate) fn draw_tracker(
                             if resp.contains_pointer() {
                                 hovered_row.set(Some(r));
                             }
+                            if let Some(idx) = first_note {
+                                let note_id = data.notes[idx].note_id;
+                                resp.context_menu(|ui| {
+                                    if ui.button(format!("Clear {}", field.header())).clicked() {
+                                        ctx_action
+                                            .set(Some(CtxAction::ClearExprField(note_id, field)));
+                                        ui.close();
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -1747,6 +1773,25 @@ pub(crate) fn draw_tracker(
                     }
                     if resp.contains_pointer() {
                         hovered_row.set(Some(r));
+                    }
+                    if let Some((value, curve)) = lane
+                        .points
+                        .iter()
+                        .find(|p| p.tick.0 == row_tick)
+                        .map(|p| (p.value, p.curve))
+                    {
+                        let target = &lane.target;
+                        resp.context_menu(|ui| {
+                            if ui.button("Clear point").clicked() {
+                                ctx_action.set(Some(CtxAction::ClearAutoPoint {
+                                    target: target.clone(),
+                                    tick: PatternTick(row_tick),
+                                    value,
+                                    curve,
+                                }));
+                                ui.close();
+                            }
+                        });
                     }
                 }
 
@@ -1879,6 +1924,67 @@ fn apply_ctx_action(
                     old,
                     new: None,
                 });
+            }
+        }
+        Some(CtxAction::ClearExprField(id, field)) => {
+            let mut change = None;
+            {
+                let mut song_w = song.write();
+                if let Some(p) = song_w.pattern_mut(pattern_id)
+                    && let Some(old) = p.note(id).map(|n| n.expression)
+                {
+                    let mut e = old.unwrap_or_default();
+                    set_expr_field(&mut e, field, None);
+                    let new = e.normalized();
+                    if new != old {
+                        p.set_note_expression(id, new);
+                        change = Some((id, old, new));
+                    }
+                }
+            }
+            if let Some(c) = change {
+                undo_manager.push(UndoAction::SetExpressionBatch {
+                    pattern_id,
+                    changes: vec![c],
+                });
+            }
+        }
+        Some(CtxAction::ClearAutoPoint {
+            target,
+            tick,
+            value,
+            curve,
+        }) => {
+            let mut removed = false;
+            {
+                let mut song_w = song.write();
+                if let Some(lane) = song_w
+                    .pattern_mut(pattern_id)
+                    .and_then(|p| p.automation.iter_mut().find(|l| l.target == target))
+                {
+                    removed = lane.remove_point(tick).is_some();
+                }
+            }
+            if removed {
+                undo_manager.push(UndoAction::RemoveAutomationPoint {
+                    pattern_id,
+                    target,
+                    tick,
+                    value,
+                    curve,
+                });
+            }
+        }
+        Some(CtxAction::DeleteAutoLane(target)) => {
+            let mut removed = None;
+            {
+                let mut song_w = song.write();
+                if let Some(p) = song_w.pattern_mut(pattern_id) {
+                    removed = p.remove_automation_lane(&target);
+                }
+            }
+            if let Some(lane) = removed {
+                undo_manager.push(UndoAction::RemoveAutomationLane { pattern_id, lane });
             }
         }
     }
