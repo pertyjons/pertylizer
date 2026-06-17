@@ -220,6 +220,8 @@ struct TrackerColors {
     cursor_cell: Color32,
     /// Outline around the cursor cell + accent for its column header.
     cursor_border: Color32,
+    /// Divider line drawn at the top edge of a row that starts a new bar.
+    bar_line: Color32,
 }
 
 impl TrackerColors {
@@ -243,26 +245,39 @@ impl TrackerColors {
             cursor_row: c.bg_widget,
             cursor_cell: c.accent_primary.gamma_multiply(0.22),
             cursor_border: c.border_selected,
+            bar_line: c.border,
         }
     }
 
-    /// Paint the cursor background for one cell: a row-wide tint plus, on the
-    /// cursor cell itself, a translucent fill and outline. No-op off the cursor
-    /// row. Drawn before the cell content so text/curves stay on top.
-    fn paint_cursor(&self, ui: &egui::Ui, is_cursor_row: bool, is_cursor_cell: bool) {
-        if !is_cursor_row {
-            return;
-        }
+    /// Paint one cell's row chrome before its content: the cursor row tint + cell
+    /// outline (on the cursor row/cell), and a divider line at the top edge of a
+    /// bar-start row. Each cell paints its own slice, so the bar line is
+    /// continuous across the row despite the table's per-cell clipping.
+    fn paint_cell_chrome(
+        &self,
+        ui: &egui::Ui,
+        is_cursor_row: bool,
+        is_cursor_cell: bool,
+        is_bar_start: bool,
+    ) {
         let rect = ui.max_rect();
         let painter = ui.painter();
-        painter.rect_filled(rect, 0.0, self.cursor_row);
-        if is_cursor_cell {
-            painter.rect_filled(rect, 0.0, self.cursor_cell);
-            painter.rect_stroke(
-                rect,
-                0.0,
-                egui::Stroke::new(1.0, self.cursor_border),
-                egui::StrokeKind::Inside,
+        if is_cursor_row {
+            painter.rect_filled(rect, 0.0, self.cursor_row);
+            if is_cursor_cell {
+                painter.rect_filled(rect, 0.0, self.cursor_cell);
+                painter.rect_stroke(
+                    rect,
+                    0.0,
+                    egui::Stroke::new(1.0, self.cursor_border),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+        if is_bar_start {
+            painter.line_segment(
+                [rect.left_top(), rect.right_top()],
+                egui::Stroke::new(1.0, self.bar_line),
             );
         }
     }
@@ -1161,6 +1176,7 @@ pub(crate) fn draw_tracker(
     let n_rows = (data.length_ticks.0.div_ceil(tpr)).max(1) as usize;
     let row_h = (TRACKER_ROW_HEIGHT * view_state.pr_zoom_y).clamp(12.0, 48.0);
     let ticks_per_beat = data.time_sig.ticks_per_beat().max(1);
+    let ticks_per_bar = data.time_sig.ticks_per_bar().max(1);
     let playhead_row = playhead_tick.map(|p| (p.0 / tpr) as usize);
 
     // Keep repainting while playing so the playhead row and auto-follow track the
@@ -1382,13 +1398,15 @@ pub(crate) fn draw_tracker(
                 let r = row.index();
                 let row_tick = (r as u32) * tpr;
                 let on_beat = row_tick.is_multiple_of(ticks_per_beat);
+                // A divider above each bar boundary (not above row 0 = table top).
+                let is_bar_start = r > 0 && row_tick.is_multiple_of(ticks_per_bar);
                 let is_playhead = playhead_row == Some(r);
                 let is_cursor_row = r == cursor.row;
 
                 // Gutter: row number, beat emphasis, playhead marker. Clicking it
                 // moves the cursor to this row, keeping the current column.
                 let (_, gutter_resp) = row.col(|ui| {
-                    colors.paint_cursor(ui, is_cursor_row, false);
+                    colors.paint_cell_chrome(ui, is_cursor_row, false, is_bar_start);
                     let mut num = RichText::new(row_number_text(r))
                         .monospace()
                         .color(colors.row_number(is_playhead, on_beat));
@@ -1422,7 +1440,7 @@ pub(crate) fn draw_tracker(
 
                     let is_cursor_cell = is_cursor_row && cursor.col == voice_col;
                     let (_, resp) = row.col(|ui| {
-                        colors.paint_cursor(ui, is_cursor_row, is_cursor_cell);
+                        colors.paint_cell_chrome(ui, is_cursor_row, is_cursor_cell, is_bar_start);
                         // Usually 0 or 1 notes; more than one means notes share a
                         // (row, lane) — draw the first and mark the rest with a "+N"
                         // overflow glyph rather than silently hiding them.
@@ -1456,7 +1474,7 @@ pub(crate) fn draw_tracker(
                     let orn_col = voice_col + 1;
                     let is_orn_cursor = is_cursor_row && cursor.col == orn_col;
                     let (_, orn_resp) = row.col(|ui| {
-                        colors.paint_cursor(ui, is_cursor_row, is_orn_cursor);
+                        colors.paint_cell_chrome(ui, is_cursor_row, is_orn_cursor, is_bar_start);
                         match first_note.and_then(|idx| data.notes[idx].ornament) {
                             Some(o) => {
                                 ui.label(
@@ -1483,7 +1501,7 @@ pub(crate) fn draw_tracker(
                             let flat = voice_col + 2 + fi;
                             let is_cc = is_cursor_row && cursor.col == flat;
                             let (_, resp) = row.col(|ui| {
-                                colors.paint_cursor(ui, is_cursor_row, is_cc);
+                                colors.paint_cell_chrome(ui, is_cursor_row, is_cc, is_bar_start);
                                 let Some(idx) = first_note else { return };
                                 // While typing a value into this (numeric) cell, show
                                 // the entry buffer with a caret; otherwise the value.
@@ -1519,7 +1537,7 @@ pub(crate) fn draw_tracker(
                     let flat_col = voice_group_base(n_lanes, cols_per_voice) + ai;
                     let is_cursor_cell = is_cursor_row && cursor.col == flat_col;
                     let (_, resp) = row.col(|ui| {
-                        colors.paint_cursor(ui, is_cursor_row, is_cursor_cell);
+                        colors.paint_cell_chrome(ui, is_cursor_row, is_cursor_cell, is_bar_start);
                         let top = sample_at(&lane.points, PatternTick(row_tick));
                         let bot = sample_at(&lane.points, PatternTick(row_tick + tpr));
                         let rect = ui.max_rect();
@@ -1562,7 +1580,7 @@ pub(crate) fn draw_tracker(
                 // processor stage). Clicking parks the cursor on this row.
                 for stage in &np_stages {
                     let (_, resp) = row.col(|ui| {
-                        colors.paint_cursor(ui, is_cursor_row, false);
+                        colors.paint_cell_chrome(ui, is_cursor_row, false, is_bar_start);
                         if let Some(pitches) = stage.rows.get(r) {
                             ui.label(
                                 RichText::new(np_cell_text(pitches))
