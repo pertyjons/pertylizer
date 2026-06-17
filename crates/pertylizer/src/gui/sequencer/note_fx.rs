@@ -68,7 +68,7 @@ pub(crate) fn draw_note_fx_panel(
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .small_button("✕")
+                .small_button("✖")
                 .on_hover_text("Hide the Note FX rack")
                 .clicked()
             {
@@ -95,7 +95,7 @@ pub(crate) fn draw_note_fx_panel(
     // Freeze: bake the rack (+ per-note ornaments) into plain notes. Enabled only
     // when the rack is non-empty (an empty rack has nothing to bake).
     ui.add_enabled_ui(!rack.is_empty(), |ui| {
-        ui.menu_button("Freeze ▾", |ui| {
+        ui.menu_button("Freeze", |ui| {
             ui.label(
                 RichText::new(
                     "Bakes the processor rack and per-note ornaments into plain notes, then clears the rack. Undoable.",
@@ -353,7 +353,7 @@ fn edit_chord(ui: &mut egui::Ui, index: usize, c: &mut Chord, any_dragged: &mut 
         let mut remove_idx = None;
         for (i, &iv) in ivs.iter().enumerate() {
             if ui
-                .button(format!("{iv:+} ✕"))
+                .button(format!("{iv:+} ✖"))
                 .on_hover_text("Remove interval")
                 .clicked()
             {
