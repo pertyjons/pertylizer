@@ -14,9 +14,9 @@ use synth_core::{BipolarValue, Bpm, Hertz, MidiNote, Milliseconds, NormalizedVal
 use synth_engine::{EngineCommand, EngineHandle, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
-    Glide, GlideFrom, GlideInterp, NoteExpression, NoteId, NoteLane, NoteName, PatternId,
-    PatternTick, Pitch, SeqInstrumentId, Song, Tick, TimeSignature, TrackId, Velocity, Vibrato,
-    VibratoShape,
+    Glide, GlideFrom, GlideInterp, NoteExpression, NoteId, NoteLane, NoteName, NoteProcessor,
+    PatternId, PatternTick, Pitch, SeqInstrumentId, Song, Tick, TimeSignature, TrackId, Velocity,
+    Vibrato, VibratoShape,
 };
 
 use crate::gui::input::KEY_MAP;
@@ -291,6 +291,11 @@ pub struct SequencerViewState {
     /// pattern (toggled by the "Note FX" button in the piano-roll toolbar or the
     /// pattern view's editor-mode row).
     pub(crate) note_fx_panel_open: bool,
+    /// Pre-edit snapshot of a note processor captured when an edit gesture begins
+    /// (pattern, rack index, prior config), so a knob/slider drag collapses into
+    /// a single `SetNoteProcessorConfig` undo entry on release. Discrete edits
+    /// (combos, toggles) capture and finalize in the same frame.
+    note_fx_edit_drag_start: Option<(PatternId, usize, NoteProcessor)>,
 }
 
 impl SequencerViewState {
@@ -347,6 +352,7 @@ impl SequencerViewState {
             tracker_voice_columns: 0,
             tracker_show_expression: true,
             note_fx_panel_open: false,
+            note_fx_edit_drag_start: None,
         }
     }
 }

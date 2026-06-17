@@ -293,6 +293,16 @@ impl Chord {
     pub fn intervals(&self) -> &[i8] {
         &self.intervals[..(self.count as usize).min(MAX_CHORD_INTERVALS)]
     }
+
+    /// Onset spread between adjacent tones (`0` = a simultaneous block chord).
+    pub fn strum(&self) -> Duration {
+        self.strum
+    }
+
+    /// Tone order when strumming.
+    pub fn direction(&self) -> StrumDirection {
+        self.direction
+    }
 }
 
 impl Default for Chord {
