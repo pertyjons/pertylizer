@@ -1,29 +1,8 @@
 # TODO - Pertylizer
 
-## ★ Color fields via MCP
+## 1. Sequencer & Arrangement
 
-Color setters for the remaining entities (instrument, patch, track) all shipped; group
-color was dropped. Only one open item remains:
-
-- [ ] Decide whether AI-friendly named palettes are useful (`"warm-orange"`, `"cool-blue"`) on top of
-  raw hex — same pattern as `set_awe_preset` vs `set_awe_parameter`. Out of scope for v1; raw hex
-  is enough.
-
----
-
-## 1. Core Usability & Workflow
-
-### 1.6 Workflow quality of life
-
-- [ ] A/B comparison — quick-switch between two patch versions to compare sound
-- [ ] Parameter locking — lock parameters to prevent accidental changes
-- [ ] Favorite modules — quick access to frequently used modules in "Add Module"
-
----
-
-## 2. Sequencer & Arrangement
-
-### 2.1 Tempo automation
+### 1.1 Tempo automation
 
 > **Not to be confused with the deleted `Global(Tempo)` automation lane.** Two different
 > things shared the "tempo automation" name. (1) The generic `AutomationTarget::Global(Tempo)`
@@ -45,22 +24,22 @@ color was dropped. Only one open item remains:
   This is the real "tempo automation" feature — built on the tempo map, not a generic
   automation lane.
 
-### 2.2 Section markers
+### 1.2 Section markers
 
 - [ ] Verse, chorus, bridge labels in the arrangement
 
-### 2.3 Macro controllers
+### 1.3 Macro controllers
 
 - [ ] Map multiple parameters to a single macro knob for live performance
 
-### 2.5 Track reorder via drag-handle
+### 1.4 Track reorder via drag-handle
 
 - [ ] Replace (or complement) the current ↑/↓ arrow buttons in the track header with a drag-handle
   (e.g. `ri::DRAG_MOVE_2_LINE`) on the left edge of each row. Drag should snap the row vertically to the
   nearest neighbour while dragging, then commit on release via `Song::reorder_track`. The arrow buttons
   shipped because they are simpler and robust, but drag-handle reorder is the DAW convention.
 
-### 2.6 Pattern looping within placement length (future)
+### 1.5 Pattern looping within placement length (future)
 
 - [ ] **Switch placement-resize from clip to loop-within semantics.** Today
   `PatternPlacement.length_override` (added in v0.281 with placement-resize) uses *clip* semantics: when the
@@ -89,14 +68,14 @@ color was dropped. Only one open item remains:
 
 ---
 
-## 3. Sound Design — Expanded Capabilities
+## 2. Sound Design — Expanded Capabilities
 
-### 3.1 Sample & wavetable import
+### 2.1 Sample & wavetable import
 
 - [ ] Sample import — load .wav files as oscillator source or in granular synth
 - [ ] Wavetable import — load custom wavetables (Serum format, single-cycle .wav)
 
-### 3.2 Alternative tunings
+### 2.2 Alternative tunings
 
 - [ ] **Support tunings other than 12-TET.** Today the pitch path hardcodes 12-tone equal
   temperament when converting `MidiNote` → `Hertz`. Route that conversion through a pluggable
@@ -106,7 +85,7 @@ color was dropped. Only one open item remains:
   tunings (scale steps given in cents or as frequency ratios). Parsing a `.scl` file fills the
   tuning table from the previous item.
 
-### 3.3 Expression & articulation
+### 2.3 Expression & articulation
 
 **Remaining open work from the retired note-expression roadmap:**
 
@@ -136,7 +115,7 @@ concrete need appears:
   (per-note position in the simulated room). Genuine differentiator; no equivalent in
   other synths — worth keeping on the list even though it is niche.
 
-### 3.5 Polyphony settings
+### 2.4 Polyphony settings
 
 - [ ] **Unison detune + spread controls — NOT IMPLEMENTED (config removed, only a fixed constant remains).**
   The global `AllocationMode::Unison` *mode* works (selectable in the Mode dropdown; `allocate_unison`
@@ -176,26 +155,26 @@ concrete need appears:
 
 ---
 
-## 4. UI & Visual Polish
+## 3. UI & Visual Polish
 
-### 4.1 Improve module knobs
+### 3.1 Improve module knobs
 
 - [ ] Better visual design — gradient fill, shadow, tick marks, value tooltip
 - [ ] Consistent sizing across module types
 - [ ] Arc-style knobs with colored fill showing current value
 
-### 4.2 Redesign instrument list
+### 3.2 Redesign instrument list
 
 - [ ] Tabbed interface, mixer-style vertical strips, or collapsible panels
 
-### 4.3 Module Groups — Phase 2–3
+### 3.3 Module Groups — Phase 2–3
 
 - [ ] Phase 2: Template variants (parameter presets with remap)
 - [ ] Phase 3: Probes data pipeline (ringbuffers, audio-thread safe collection)
 - [ ] Phase 3: Probe rendering (waveform/spectrum/meter) with PortType-based signal type
 - [ ] Phase 3: Polyphony probes = sum of voices (mixdown)
 
-### 4.4 Mod Matrix routing visibility
+### 3.4 Mod Matrix routing visibility
 
 Header badges and MCP surfacing shipped in v0.289.0 (`get_mod_matrix_routings`, virtual `"matrix"`
 port on `list_modules`, header arrow badge with tooltip). Remaining work:
@@ -216,30 +195,30 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
 
 ---
 
-## 5. Template Library & Presets
+## 4. Template Library & Presets
 
-### 5.1 Template library
+### 4.1 Template library
 
 - [ ] Add patch template directory and `Save Patch as Template` action
 - [ ] Add Patch Template browser to load patch templates
 - [ ] Support optional `license` and `min_app_version` metadata in group templates
 
-### 5.2 Preset sharing
+### 4.2 Preset sharing
 
 - [ ] Community format for sharing patches online
 
 ---
 
-## 6. AI & Automation
+## 5. AI & Automation
 
-### 6.1 MCP & AI Interaction
+### 5.1 MCP & AI Interaction
 
 - [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
   `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
 - [ ] Enable AI to "play freely" via MCP to autonomously generate complete songs and arrangements
 - [ ] Implement real-time parameter interpolation (gliding) to allow smoother AI-driven sound design
 
-### 6.2 Technical follow-ups from the MCP music tools plan
+### 5.2 Technical follow-ups from the MCP music tools plan
 
 - [ ] **`HarmonyScope` enum to fix `analyze_song_harmony` argument sprawl.** `analyze_song_harmony`
   (`crates/pertylizer/src/mcp_bridge.rs:7541`) takes 8 arguments and carries
@@ -304,11 +283,11 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
 
 ---
 
-## 7. AWE Improvements
+## 6. AWE Improvements
 
 Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 
-### 7.0 AWE acoustic engine — prioritized plan
+### 6.0 AWE acoustic engine — prioritized plan
 
 #### Phase 2 — Medium complexity
 
@@ -320,22 +299,22 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 - [ ] **12. Doppler effect** — track radial velocity between source/listener, shift pitch via variable delay read speed:
   `ratio = v_sound / (v_sound + v_radial)`
 
-### 7.1 Rework room visualization
+### 6.1 Rework room visualization
 
 - [ ] Redesign the 3D isometric room rendering
 - [ ] Improve animations (sound rings, reflection paths)
 - [ ] Better visual clarity for room shape and dimensions
 
-### 7.2 Differentiate effects more clearly
+### 6.2 Differentiate effects more clearly
 
 - [ ] Each material/effect should have more distinct visual representation
 - [ ] Color-coded zones, animated textures per material, spectral visualization
 
 ---
 
-## 8. Visualizer & OSC
+## 7. Visualizer & OSC
 
-### 8.1 OSC control & connectivity
+### 7.1 OSC control & connectivity
 
 - [ ] OSC enable/disable toggle in Pertylizer settings GUI
 - [ ] `/viz/` OSC control endpoints (effect select, param set, scene load)
@@ -343,7 +322,7 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 - [ ] OSC parameter tweaking — live control of intensity, speed, scale per effect
 - [ ] Support connecting multiple OSC clients simultaneously
 
-### 8.2 Post-processing & shaders
+### 7.2 Post-processing & shaders
 
 - [ ] Chromatic aberration — intensity scales with RMS level
 - [ ] Glitch/distortion effect — triggered by CPU spikes or spectral flux
@@ -351,14 +330,14 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 - [ ] CRT/VHS filter — scanlines, color bleed, static noise
 - [ ] Motion blur — strength synced to tempo
 
-### 8.3 Multi-effect layering
+### 7.3 Multi-effect layering
 
 - [ ] Show 2–3 effects simultaneously instead of one at a time
 - [ ] Per-instrument visual layers — each instrument gets its own color/effect layer
 - [ ] Blending modes between layers (additive, multiply, screen)
 - [ ] Layer opacity control via OSC
 
-### 8.4 Reactive environment
+### 7.4 Reactive environment
 
 - [ ] Skybox that reacts to music — stars pulse with RMS, clouds move with tempo
 - [ ] Reactive ground — ripples on note-on, cracks on bass hits
@@ -366,33 +345,33 @@ Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
 - [ ] Day/night cycle driven by song position
 - [ ] Weather effects — rain on high spectral flux, lightning on transients
 
-### 8.5 Advanced simulations
+### 7.5 Advanced simulations
 
 - [ ] Swarm/flock simulation — particles flock or scatter based on dynamics
 - [ ] Cloth simulation — fabric that billows and ripples with FFT energy
 - [ ] Text/typography — display song title, BPM, key in stylized 3D text
 - [ ] AWE spatialization — visualize sound source position in 3D space
 
-### 8.6 Video export
+### 7.6 Video export
 
 - [ ] Video recording — render to MP4 or image sequence
 
 ---
 
-## 9. Advanced / Long-term
+## 8. Advanced / Long-term
 
-### 9.1 Audio tracks
+### 8.1 Audio tracks
 
 - [ ] Import and arrange audio files, not just synth tracks
 
-### 9.2 Audio recording
+### 8.2 Audio recording
 
 - [ ] Record external audio via cpal input
 
-### 9.3 Clip launching
+### 8.3 Clip launching
 
 - [ ] Ableton-style live mode with follow actions
 
-### 9.4 Plugin export
+### 8.4 Plugin export
 
 - [ ] Export instruments as VST3/CLAP plugins
