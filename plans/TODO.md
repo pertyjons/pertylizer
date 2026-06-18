@@ -13,12 +13,6 @@ color was dropped. Only one open item remains:
 
 ## 1. Core Usability & Workflow
 
-### 1.2 MIDI learn
-
-- [ ] Map MIDI CC to any module parameter via right-click → "MIDI Learn"
-- [ ] Visual indicator on mapped parameters
-- [ ] Save/load MIDI mappings with patch or settings
-
 ### 1.6 Workflow quality of life
 
 - [ ] A/B comparison — quick-switch between two patch versions to compare sound
@@ -58,10 +52,6 @@ color was dropped. Only one open item remains:
 ### 2.3 Macro controllers
 
 - [ ] Map multiple parameters to a single macro knob for live performance
-
-### 2.4 MIDI export
-
-- [ ] Export sequences as .mid files
 
 ### 2.5 Track reorder via drag-handle
 
@@ -108,7 +98,13 @@ color was dropped. Only one open item remains:
 
 ### 3.2 Alternative tunings
 
-- [ ] Scala file (.scl) support, just intonation, microtonality
+- [ ] **Support tunings other than 12-TET.** Today the pitch path hardcodes 12-tone equal
+  temperament when converting `MidiNote` → `Hertz`. Route that conversion through a pluggable
+  tuning table so the synth can play just intonation (pure integer ratios like `3/2`, `5/4`),
+  microtonal systems (19/22/31-EDO, quarter-tones), and arbitrary historical/non-Western scales.
+- [ ] **Load Scala `.scl` files** as the import format — the de facto standard for sharing
+  tunings (scale steps given in cents or as frequency ratios). Parsing a `.scl` file fills the
+  tuning table from the previous item.
 
 ### 3.3 Expression & articulation
 
@@ -134,11 +130,6 @@ color was dropped. Only one open item remains:
 narrow-audience remainder of the old north-star phase. No plan doc; pick up only when a
 concrete need appears:
 
-- [ ] MPE support — MIDI Polyphonic Expression for per-note pitch bend, pressure, slide
-  (needs MPE hardware to be worth it; the Phase C expression block already defaults to
-  the MPE dimension set — bend/pressure/timbre/velocity/release-velocity — so input
-  mapping is the missing piece).
-- [ ] Polyphonic aftertouch routing to module parameters.
 - [ ] Per-note hand-drawn expression curves + the **piano-roll per-note curve editor**
   (the real cost center that gated the whole phase).
 - [ ] Per-note **spatial via AWE** — primitive 1 with an AWE room param as the target
@@ -251,53 +242,65 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
 ### 6.2 Technical follow-ups from the MCP music tools plan
 
 - [ ] **`HarmonyScope` enum to fix `analyze_song_harmony` argument sprawl.** `analyze_song_harmony`
-  takes 8 arguments and carries `#[allow(clippy::too_many_arguments)]`. Two of them
-  (`exclude_drums`, `exclude_track_ids`) are only meaningful in arrangement scope; pattern scope
-  currently emits a runtime warning if they're passed. Introduce
+  (`crates/pertylizer/src/mcp_bridge.rs:7541`) takes 8 arguments and carries
+  `#[allow(clippy::too_many_arguments)]` (`mcp_bridge.rs:7540`). Two of them
+  (`exclude_drums`, `exclude_track_ids`) are only meaningful in arrangement scope. Today the
+  enforcement is inconsistent: only `exclude_track_ids` emits a runtime warning in pattern scope
+  (`mcp_bridge.rs:7584`), while `exclude_drums` silently no-ops. Introduce
   `enum HarmonyScope { Pattern { pattern_id: PatternId }, Arrangement { start: Option<u64>,
   end: Option<u64>, exclude_drums: bool, exclude_track_ids: HashSet<TrackId> } }` at the bridge
-  boundary; the flat `AnalyzeHarmonyParam` (JSON-schema layer requires it) maps into the enum
-  inside the bridge. The runtime "ignored in pattern scope" warning becomes a compile-time
-  impossibility and the `#[allow]` disappears. Touches `synth_mcp::bridge`, the bridge impl,
-  and the arrangement-vs-pattern branch in `analyze_song_harmony`. Medium impact — pick up
-  when next touching the harmony analyzer.
-- [ ] **`synth_sequencer::shared_song(Song) -> Arc<RwLock<Song>>` constructor.** Grep finds ~9 sites
-  that wrap a `Song` in `Arc::new(parking_lot::RwLock::new(...))` verbatim
-  (`crates/pertylizer/src/audio/export.rs:214`, `main.rs:83`, `mcp_shared.rs:56`, sequencer
-  tests, the per-track render loop, etc.). Strictly cosmetic; not on any hot path. Pick up
+  boundary; the flat `AnalyzeHarmonyParam` (`crates/synth_mcp/src/server.rs:1011`, JSON-schema
+  layer requires it) maps into the enum inside the bridge. Both "ignored in pattern scope"
+  cases become a compile-time impossibility and the `#[allow]` disappears. Touches
+  `synth_mcp::server` (the param struct), the bridge impl, and the arrangement-vs-pattern branch
+  in `analyze_song_harmony`. Medium impact — pick up when next touching the harmony analyzer.
+- [ ] **`synth_sequencer::shared_song(Song) -> Arc<RwLock<Song>>` constructor.** Grep finds 12 sites
+  that wrap a `Song` in `Arc::new(parking_lot::RwLock::new(...))` verbatim, and no such helper
+  exists yet. Seven are in `crates/synth_engine/src/synth_engine.rs` (4116, 4335, 4377, 4407,
+  4442, 4472, 4501); the rest: `crates/pertylizer/src/mcp_bridge.rs:9962` and `:10378`,
+  `crates/pertylizer/src/audio/export.rs:214`, `crates/pertylizer/src/main.rs:113`,
+  `crates/pertylizer/src/mcp_shared.rs:117`. Strictly cosmetic; not on any hot path. Pick up
   as a drive-by when next touching one of those sites.
 - [ ] **`OfflineNoteSession` — engine reuse across patch-sweep steps.** `analyze_instrument_range_impl`
-  and `analyze_velocity_response_impl` (`crates/pertylizer/src/mcp_bridge.rs`) call
-  `analyze_rendered_note` once per swept value; each call goes through
-  `audio::preview::render_note_to_buffer`, spins up a fresh `SynthEngine`, and reloads the
-  instrument's module graph + sample data. For a 60-note semitone-step sweep that's 60 fresh
-  engines; for the default 8-step velocity sweep that's 8. Mirror §7.1's `OfflineEngineSession`
-  — wrapper takes `SynthSession` + `SharedSampleLibrary` + `InstrumentId` at construction,
-  builds the engine + loads the patch + samples once, then exposes
-  `render(note, velocity, duration_ms, tail_ms) -> RenderedNote` per call. Reproduce the
-  voice-bleed drain between renders (same problem as §7.1). Determinism tests would mirror
-  `tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`.
-  After session-reuse lands, parallelize the sweep target vector with `par_iter` for a 2-4×
-  speedup on top (same sequence as §7.1 → §7.2).
+  (`crates/pertylizer/src/mcp_bridge.rs:7366`) and `analyze_velocity_response_impl` (`:7426`) call
+  `analyze_rendered_note` (`:7303`) once per swept value via the `sweep_range` loop; each call goes
+  through `audio::preview::render_note_to_buffer` (`crates/pertylizer/src/audio/preview.rs:203`),
+  which spins up a fresh `SynthEngine::new()` and reloads the instrument's module graph + sample
+  data. For a 60-note semitone-step sweep that's 60 fresh engines; for the default 8-step velocity
+  sweep that's 8. Mirror the existing `OfflineEngineSession`
+  (`crates/pertylizer/src/audio/arrangement_render.rs:219`, ctor `:262`/`new_with_scope` `:274`,
+  `render_range` reuses one engine across calls) — a wrapper that takes
+  `SynthSession` + `SharedSampleLibrary` + `InstrumentId` at construction, builds the engine +
+  loads the patch + samples once, then exposes `render(note, velocity, duration_ms, tail_ms)
+  -> RenderedNote` per call. Reproduce the voice-bleed drain between renders (same problem
+  `OfflineEngineSession` already solves). Determinism tests would mirror
+  `tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`
+  (`:191`). After session-reuse lands, parallelize the sweep target vector with `par_iter` for a
+  2-4× speedup on top.
 - [ ] **Static `#[schemars(range(...))]` on fixed-range numeric MCP fields.** Module/AWE *parameter*
   values are now validated at the bridge boundary against the descriptor's `ValueRange`
   (`ParameterDescriptor::validate_f32`), but the *globally* fixed numeric tool fields — MIDI note
   (0–127), velocity (0–127), MIDI channel (1–16), LFO index (1–4) — still expose only a plain
-  `u8`/`f32` in their `JsonSchema` (prose-only bounds in `#[schemars(description=...)]`). They are
-  enforced at runtime via the `validate_*` helpers in `synth_mcp::server` but a schema-aware client
-  sees no `minimum`/`maximum`. Add `#[schemars(range(min = …, max = …))]` to those fields in the
-  param structs (`crates/synth_mcp/src/server.rs`) so the constraint is machine-readable. Verify the
-  attribute syntax/feature against the pinned `schemars` 1.2 first (it differs from 0.8). Low risk,
-  small; skipped during the 2026-05-27 validation pass for scope.
+  `u8`/`f32` in their `JsonSchema` (prose-only bounds in `#[schemars(description=...)]`; e.g. note
+  `crates/synth_mcp/src/server.rs:742`, velocity `:744`, channel `:746` and `:1840`, LFO index
+  `:3102`; no field uses `#[schemars(range(...))]` today). They are enforced at runtime via
+  `validate_midi_note`/`validate_velocity`/`validate_midi_channel` (`server.rs:105-124`) — LFO index
+  is checked inline (`:7221`) — but a schema-aware client sees no `minimum`/`maximum`. Add
+  `#[schemars(range(min = …, max = …))]` to those fields so the constraint is machine-readable.
+  Verify the attribute syntax/feature against the pinned `schemars` 1.2.1 first (it differs from
+  0.8). Low risk, small; skipped during the 2026-05-27 validation pass for scope.
 - [ ] **Uniform machine-readable bounds on `synth_core` newtypes.** Newtype clamping is inconsistent:
-  `NormalizedValue`/`BipolarValue`/`Velocity`/`Phase` clamp in `new()`, but `Hertz`/`Gain`/`Cents`/
-  `Semitones` do not, and there is no uniform `const RANGE: ValueRange` on any newtype — so a shared
+  `NormalizedValue`/`BipolarValue`/`Velocity` clamp in `new()` and `Phase` wraps (`rem_euclid`), but
+  `Hertz`/`Gain`/`Cents`/`Semitones` are `const fn new` with no clamp, and there is no uniform
+  `const RANGE: ValueRange` on any newtype (only ad-hoc `MIN`/`MAX` on a few) — so a shared
   "spec → (schema | validation)" abstraction can only read bounds from the per-module
-  `ParameterDescriptor`, never from the type. `Param::with_f32` (`crates/synth_core/src/params/*.rs`)
-  then re-clamps ad hoc and sometimes hardcodes a range that duplicates the descriptor (e.g. the
-  2026-05-27 `Detune::with_f32` `-100..100` clamp mirrors `oscillator.rs:308` by hand). Consider a
-  `BoundedNewtype` trait (or `const RANGE`) so bounds live on the type and descriptors/`with_f32`
-  derive from it. Larger, cross-cutting refactor — plan separately.
+  `ParameterDescriptor`, never from the type. `Param::with_f32` (`crates/synth_core/src/params/mod.rs:1070`
+  dispatching to per-module impls) then re-clamps ad hoc and sometimes hardcodes a range that
+  duplicates the descriptor (e.g. the 2026-05-27 `Detune::with_f32` `-100..100` clamp at
+  `crates/synth_core/src/params/oscillators.rs:530` mirrors the descriptor range at
+  `crates/synth_modules/src/oscillator.rs:354` by hand). No `BoundedNewtype` trait exists yet.
+  Consider one (or a `const RANGE`) so bounds live on the type and descriptors/`with_f32` derive
+  from it. Larger, cross-cutting refactor — plan separately.
 
 ---
 
