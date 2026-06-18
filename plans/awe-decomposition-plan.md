@@ -46,7 +46,8 @@ mode frequencies today; ER and FDN see the bounding box only.**
 
 ## 3. Target module suite
 
-Revised after the professional DAW review (`awe_decomposition_review.md`). The decisive change
+Revised after a professional DAW review (its conclusions are folded into this plan —
+see §7 Decisions; the standalone review doc was never committed to the repo). The decisive change
 vs. the first draft: **early reflections and the spatializer are per-voice (`PolyModule`)**, not
 buss effects — once voices are mixed the per-note 3D positions are gone, so buss-level ER would
 collapse every voice to one source (a regression from AWE's `process_spatial`).
