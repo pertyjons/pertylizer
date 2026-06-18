@@ -1434,828 +1434,23 @@ pub(crate) fn draw_piano_roll(
             mouse_wheel: true,
         })
         .show(ui, |ui| {
-            let total_size = Vec2::new(KEY_WIDTH + grid_width, RULER_HEIGHT + total_content_height);
-
-            // Use allocate_rect with click_and_drag sense for mouse interaction
-            let alloc_rect = Rect::from_min_size(ui.cursor().min, total_size);
-            let response = ui.allocate_rect(alloc_rect, Sense::click_and_drag());
-            let rect = response.rect;
-            let painter = ui.painter_at(rect);
-
-            // ── Ctrl+scroll → zoom (consumed before scroll area sees it) ──
-            if response.hovered() {
-                let (scroll_dy, ctrl, shift) = ui.input(|i| {
-                    (
-                        i.smooth_scroll_delta.y,
-                        i.modifiers.ctrl || i.modifiers.command,
-                        i.modifiers.shift,
-                    )
-                });
-                if ctrl && scroll_dy != 0.0 {
-                    let factor = 1.0 + scroll_dy * 0.002;
-                    if shift {
-                        view_state.pr_zoom_y = (view_state.pr_zoom_y * factor).clamp(0.5, 3.0);
-                    } else {
-                        view_state.pr_zoom_x = (view_state.pr_zoom_x * factor).clamp(0.25, 4.0);
-                    }
-                }
-            }
-
-            let origin = rect.min;
-            let grid_x = origin.x + KEY_WIDTH;
-            // Reserve a ruler strip at the top; the grid starts below it.
-            let grid_y = origin.y + RULER_HEIGHT;
-
-            // All four grid↔(tick,pitch) transforms live on this one value (see
-            // `PianoRollCoords`). The closures below just delegate so the rest of
-            // this function — and the interaction handler — keep their call shape.
-            let coords = PianoRollCoords {
-                grid_x,
-                grid_y,
-                ticks_per_beat,
-                pr_pixels_per_beat,
-                note_row_height,
+            let mut ctx =
+                PianoRollCtx::new(data, song, view_state, handle, undo_manager, instruments);
+            draw_piano_roll_grid(
+                &mut ctx,
+                ui,
+                playhead_tick,
                 view_pitch_min,
                 view_pitch_max,
-            };
-            let tick_to_x = |tick_val: PatternTick| coords.tick_to_x(tick_val);
-            let pitch_to_y = |pitch: Pitch| coords.pitch_to_y(pitch);
-
-            // Grid rect for checking if pointer is in the note grid area
-            let grid_rect = Rect::from_min_size(
-                Pos2::new(grid_x, grid_y),
-                Vec2::new(grid_width, grid_height),
-            );
-
-            // ── Timeline ruler (bar numbers) ──
-            // Top-left corner cell above the keyboard column.
-            painter.rect_filled(
-                Rect::from_min_size(origin, Vec2::new(KEY_WIDTH, RULER_HEIGHT)),
-                0.0,
-                t.colors.bg_dark,
-            );
-            let ruler_rect = Rect::from_min_size(
-                Pos2::new(grid_x, origin.y),
-                Vec2::new(grid_width, RULER_HEIGHT),
-            );
-            let ticks_per_bar = u64::from(data.time_sig.ticks_per_bar().max(1));
-            let total_bars = effective_ticks.div_ceil(data.time_sig.ticks_per_bar().max(1)).max(1);
-            draw_ruler_labels(&painter, &t, ruler_rect, total_bars, ticks_per_bar, |tick| {
-                if ticks_per_beat == 0 {
-                    grid_x
-                } else {
-                    grid_x + (tick as f32 / ticks_per_beat as f32) * pr_pixels_per_beat
-                }
-            });
-            // Ruler bottom border.
-            painter.line_segment(
-                [
-                    Pos2::new(grid_x, grid_y),
-                    Pos2::new(grid_x + grid_width, grid_y),
-                ],
-                Stroke::new(1.0, t.colors.border),
-            );
-
-            // ── Keyboard (left column) ──
-            painter.rect_filled(
-                Rect::from_min_size(Pos2::new(origin.x, grid_y), Vec2::new(KEY_WIDTH, grid_height)),
-                0.0,
-                t.colors.bg_dark,
-            );
-
-            for p in view_pitch_min.as_midi()..=view_pitch_max.as_midi() {
-                let pitch = Pitch::new(p).unwrap_or(Pitch::MIDDLE_C);
-                let y = pitch_to_y(pitch);
-                let note_name = NoteName::from_midi(p % 12);
-                let is_black = note_name.is_black_key();
-
-                // Key background
-                let key_color = if is_black {
-                    PIANO_KEY_BLACK
-                } else {
-                    PIANO_KEY_WHITE
-                };
-                painter.rect_filled(
-                    Rect::from_min_size(
-                        Pos2::new(origin.x, y),
-                        Vec2::new(KEY_WIDTH, note_row_height),
-                    ),
-                    0.0,
-                    key_color,
-                );
-
-                // Label on C notes
-                if p % 12 == 0 {
-                    let octave = (p / 12) as i8 - 1;
-                    painter.text(
-                        Pos2::new(origin.x + 4.0, y + 1.0),
-                        egui::Align2::LEFT_TOP,
-                        format!("C{octave}"),
-                        egui::FontId::proportional(10.0),
-                        t.colors.text_primary,
-                    );
-                }
-
-                // Key border
-                painter.line_segment(
-                    [
-                        Pos2::new(origin.x, y + note_row_height),
-                        Pos2::new(origin.x + KEY_WIDTH, y + note_row_height),
-                    ],
-                    Stroke::new(0.5, t.colors.border.gamma_multiply(0.3)),
-                );
-            }
-
-            // ── Note grid background ──
-            for p in view_pitch_min.as_midi()..=view_pitch_max.as_midi() {
-                let pitch = Pitch::new(p).unwrap_or(Pitch::MIDDLE_C);
-                let y = pitch_to_y(pitch);
-                let note_name = NoteName::from_midi(p % 12);
-                let is_black = note_name.is_black_key();
-                let is_c = p % 12 == 0;
-
-                let bg = if is_c {
-                    GRID_BG_C
-                } else if is_black {
-                    GRID_BG_BLACK
-                } else {
-                    GRID_BG_WHITE
-                };
-
-                painter.rect_filled(
-                    Rect::from_min_size(
-                        Pos2::new(grid_x, y),
-                        Vec2::new(grid_width, note_row_height),
-                    ),
-                    0.0,
-                    bg,
-                );
-
-                // Horizontal pitch row separator
-                painter.line_segment(
-                    [
-                        Pos2::new(grid_x, y + note_row_height),
-                        Pos2::new(grid_x + grid_width, y + note_row_height),
-                    ],
-                    Stroke::new(
-                        if is_c { 0.8 } else { 0.3 },
-                        t.colors.border.gamma_multiply(if is_c { 0.6 } else { 0.2 }),
-                    ),
-                );
-            }
-
-            // ── Vertical beat/sub-beat lines ──
-            let beats_total = beats_in_pattern.ceil() as u32;
-            let beats_per_bar_val = data.time_sig.numerator.max(1) as u32;
-            for beat_idx in 0..=beats_total {
-                let beat_tick = beat_idx * ticks_per_beat;
-                let x = tick_to_x(PatternTick(beat_tick));
-                let is_bar_line = beat_idx % beats_per_bar_val == 0;
-
-                painter.line_segment(
-                    [Pos2::new(x, grid_y), Pos2::new(x, grid_y + grid_height)],
-                    Stroke::new(
-                        if is_bar_line { 1.0 } else { 0.5 },
-                        t.colors
-                            .border
-                            .gamma_multiply(if is_bar_line { 0.8 } else { 0.3 }),
-                    ),
-                );
-
-                // Sub-beat lines (based on ticks_per_row)
-                if data.ticks_per_row > 0 && !is_bar_line {
-                    // Already drawing at beat level; skip sub-beats for readability
-                }
-            }
-
-            // Sub-beat grid lines based on row resolution
-            if data.ticks_per_row > 0 {
-                let total_rows = data.length_ticks.0 / data.ticks_per_row as u32;
-                for row in 0..total_rows {
-                    let row_tick = row * data.ticks_per_row as u32;
-                    // Skip if this aligns with a beat line (already drawn)
-                    if row_tick.is_multiple_of(ticks_per_beat) {
-                        continue;
-                    }
-                    let x = tick_to_x(PatternTick(row_tick));
-                    painter.line_segment(
-                        [Pos2::new(x, grid_y), Pos2::new(x, grid_y + grid_height)],
-                        Stroke::new(0.3, t.colors.border.gamma_multiply(0.15)),
-                    );
-                }
-            }
-
-            // ── Notes ──
-            let default_note_color = DEFAULT_NOTE_BLUE;
-            // One-shot per-frame colour cache so each note's lookup is O(1).
-            let note_color_cache = build_instrument_colour_cache(instruments);
-
-            // Ghost-preview overlay: the note-processor expansion, painted faintly
-            // behind the source notes so the user sees what actually plays.
-            // Read-only, non-interactive.
-            for ghost in &ghost_notes {
-                if ghost.pitch < view_pitch_min || ghost.pitch > view_pitch_max {
-                    continue;
-                }
-                let gy = pitch_to_y(ghost.pitch);
-                let gx_start = tick_to_x(ghost.start);
-                let gx_end = match ghost.duration {
-                    Some(d) => tick_to_x(PatternTick(ghost.start.0.saturating_add(d.0))),
-                    None => {
-                        tick_to_x(data.length_ticks.as_pattern_tick()).min(gx_start + grid_width)
-                    }
-                };
-                let gw = (gx_end - gx_start).max(2.0);
-                painter.rect_filled(
-                    Rect::from_min_size(
-                        Pos2::new(gx_start, gy + 1.0),
-                        Vec2::new(gw, note_row_height - 2.0),
-                    ),
-                    2.0,
-                    GHOST_NOTE_COLOR,
-                );
-            }
-
-            for note in &data.notes {
-                if note.pitch < view_pitch_min || note.pitch > view_pitch_max {
-                    continue;
-                }
-
-                // Skip notes that are being dragged (draw ghost instead)
-                let is_being_moved = matches!(
-                    &view_state.drag,
-                    Some(DragState::MoveNote { note_id, .. }) if *note_id == note.note_id
-                );
-                if is_being_moved {
-                    continue;
-                }
-
-                let y = pitch_to_y(note.pitch);
-                let x_start = tick_to_x(note.start_tick);
-
-                let x_end = match note.end_tick {
-                    Some(end) => tick_to_x(end),
-                    None => {
-                        // Open-ended: draw to pattern end or at least a visible width
-                        tick_to_x(data.length_ticks.as_pattern_tick()).min(x_start + grid_width)
-                    }
-                };
-
-                // Apply resize preview if this note is being resized
-                let x_end = match &view_state.drag {
-                    Some(DragState::ResizeNote {
-                        note_id,
-                        current_end_tick,
-                        ..
-                    }) if *note_id == note.note_id => tick_to_x(*current_end_tick),
-                    _ => x_end,
-                };
-
-                let note_width = (x_end - x_start).max(3.0);
-                let alpha = (note.velocity.as_f32() * 200.0 + 55.0).min(255.0) as u8;
-
-                // Notes have no per-note instrument; colour by the instrument
-                // the pattern plays through (its placement's track), falling
-                // back to the working instrument for an unplaced pattern.
-                let note_instrument = data
-                    .track_overrides
-                    .first()
-                    .copied()
-                    .unwrap_or(view_state.selected_instrument);
-                let inst_color =
-                    cached_instrument_color(&note_color_cache, note_instrument, default_note_color);
-
-                let is_selected = view_state.selected_notes.contains(&note.note_id);
-
-                let fill = Color32::from_rgba_unmultiplied(
-                    inst_color.r(),
-                    inst_color.g(),
-                    inst_color.b(),
-                    alpha,
-                );
-
-                let note_rect = Rect::from_min_size(
-                    Pos2::new(x_start, y + 1.0),
-                    Vec2::new(note_width, note_row_height - 2.0),
-                );
-
-                if is_selected {
-                    // Soft glow halo behind the note (cyan tint).
-                    let glow_rect = note_rect.expand(3.0);
-                    painter.rect_filled(
-                        glow_rect,
-                        3.0,
-                        NOTE_SELECTED_GLOW,
-                    );
-                }
-
-                painter.rect_filled(note_rect, 2.0, fill);
-
-                if is_selected {
-                    // High-contrast outer outline (white) — clearly visible
-                    // against any instrument colour or grid background.
-                    painter.rect_stroke(
-                        note_rect.expand(1.0),
-                        3.0,
-                        Stroke::new(2.0, Color32::WHITE),
-                        egui::StrokeKind::Outside,
-                    );
-                    // Cyan inner accent for a recognisable selection colour.
-                    painter.rect_stroke(
-                        note_rect,
-                        2.0,
-                        Stroke::new(1.0, t.colors.accent_cyan),
-                        egui::StrokeKind::Inside,
-                    );
-                } else {
-                    painter.rect_stroke(
-                        note_rect,
-                        2.0,
-                        Stroke::new(0.5, inst_color),
-                        egui::StrokeKind::Inside,
-                    );
-                }
-
-                // Per-note expression markers (B4): a tie underline for legato
-                // and a small ramp glyph at the left edge for glide.
-                if note.legato {
-                    let y_line = note_rect.max.y - 1.0;
-                    painter.line_segment(
-                        [
-                            Pos2::new(note_rect.min.x + 1.0, y_line),
-                            Pos2::new(note_rect.max.x - 1.0, y_line),
-                        ],
-                        Stroke::new(1.5, t.colors.accent_yellow),
-                    );
-                }
-                if note.glide.is_some() {
-                    // Diagonal ramp from bottom-left up into the note's leading edge.
-                    let gx = note_rect.min.x;
-                    painter.line_segment(
-                        [
-                            Pos2::new(gx + 0.5, note_rect.max.y - 1.0),
-                            Pos2::new((gx + 6.0).min(note_rect.max.x), note_rect.min.y + 1.0),
-                        ],
-                        Stroke::new(1.5, t.colors.accent_cyan),
-                    );
-                }
-                // Per-note expression (C5): a small dot at the top-right corner.
-                if note.expression.is_some() && note_width > 5.0 {
-                    painter.circle_filled(
-                        Pos2::new(note_rect.max.x - 2.5, note_rect.min.y + 2.5),
-                        1.5,
-                        t.colors.accent_yellow,
-                    );
-                }
-                // Per-note ornament (NP6): a small marker at the top-left corner,
-                // in the Note FX accent colour.
-                if note.ornament.is_some() && note_width > 5.0 {
-                    painter.circle_filled(
-                        Pos2::new(note_rect.min.x + 2.5, note_rect.min.y + 2.5),
-                        1.5,
-                        t.colors.accent_purple,
-                    );
-                }
-
-                // Open-ended indicator (gradient fade-out at right edge)
-                if note.end_tick.is_none() && note_width > 8.0 {
-                    let fade_rect = Rect::from_min_max(
-                        Pos2::new(note_rect.max.x - 6.0, note_rect.min.y),
-                        note_rect.max,
-                    );
-                    painter.rect_filled(
-                        fade_rect,
-                        0.0,
-                        Color32::from_rgba_unmultiplied(
-                            inst_color.r(),
-                            inst_color.g(),
-                            inst_color.b(),
-                            alpha / 3,
-                        ),
-                    );
-                }
-            }
-
-            // ── Recording preview notes (orange) ──
-            if !view_state.recording_preview_completed.is_empty()
-                || !view_state.recording_preview_held.is_empty()
-            {
-                let preview_color = RECORDING_PREVIEW_ORANGE;
-
-                // Draw completed preview notes
-                for note in &view_state.recording_preview_completed {
-                    if note.pitch < view_pitch_min || note.pitch > view_pitch_max {
-                        continue;
-                    }
-                    let y = pitch_to_y(note.pitch);
-                    let x_start = tick_to_x(note.start);
-                    let x_end = tick_to_x(note.start + note.duration);
-                    let note_width = (x_end - x_start).max(3.0);
-                    let alpha = 180_u8;
-
-                    let preview_rect = Rect::from_min_size(
-                        Pos2::new(x_start, y + 1.0),
-                        Vec2::new(note_width, note_row_height - 2.0),
-                    );
-                    painter.rect_filled(
-                        preview_rect,
-                        2.0,
-                        Color32::from_rgba_unmultiplied(
-                            preview_color.r(),
-                            preview_color.g(),
-                            preview_color.b(),
-                            alpha,
-                        ),
-                    );
-                    painter.rect_stroke(
-                        preview_rect,
-                        2.0,
-                        Stroke::new(0.5, preview_color),
-                        egui::StrokeKind::Inside,
-                    );
-                }
-
-                // Draw held notes extending from start to current playhead
-                if !view_state.recording_preview_held.is_empty() {
-                    // Compute playhead position within pattern
-                    let playhead_in_pattern = playhead_tick.map_or(0, |pt| pt.0);
-
-                    for (pitch, start_tick) in &view_state.recording_preview_held {
-                        if *pitch < view_pitch_min || *pitch > view_pitch_max {
-                            continue;
-                        }
-                        let y = pitch_to_y(*pitch);
-                        let x_start = tick_to_x(*start_tick);
-                        let end = if playhead_in_pattern >= start_tick.0 {
-                            PatternTick(playhead_in_pattern)
-                        } else {
-                            // Note wraps around pattern — draw to end
-                            data.length_ticks.as_pattern_tick()
-                        };
-                        let x_end = tick_to_x(end);
-                        let note_width = (x_end - x_start).max(3.0);
-
-                        let held_rect = Rect::from_min_size(
-                            Pos2::new(x_start, y + 1.0),
-                            Vec2::new(note_width, note_row_height - 2.0),
-                        );
-                        painter.rect_filled(
-                            held_rect,
-                            2.0,
-                            RECORDING_PREVIEW_HELD_FILL,
-                        );
-                        painter.rect_stroke(
-                            held_rect,
-                            2.0,
-                            Stroke::new(0.5, preview_color),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-                }
-
-                // Request repaint during recording for live updates
-                ui.request_repaint();
-            }
-
-            // ── Ghost note for MoveNote drag ──
-            if let Some(DragState::MoveNote {
-                note_id,
-                current_tick: drag_tick,
-                current_pitch: drag_pitch,
-                ..
-            }) = &view_state.drag
-            {
-                // Find the original note data for velocity/duration
-                if let Some(note) = data.notes.iter().find(|n| n.note_id == *note_id) {
-                    let duration_ticks = note.end_tick.map_or(
-                        data.length_ticks.as_pattern_tick() - note.start_tick,
-                        |end| end - note.start_tick,
-                    );
-                    let y = pitch_to_y(*drag_pitch);
-                    let x_start = tick_to_x(*drag_tick);
-                    let x_end = tick_to_x(*drag_tick + duration_ticks);
-                    let note_width = (x_end - x_start).max(3.0);
-
-                    let ghost_rect = Rect::from_min_size(
-                        Pos2::new(x_start, y + 1.0),
-                        Vec2::new(note_width, note_row_height - 2.0),
-                    );
-
-                    // Semi-transparent ghost
-                    painter.rect_filled(
-                        ghost_rect,
-                        2.0,
-                        MOVE_GHOST_FILL,
-                    );
-                    painter.rect_stroke(
-                        ghost_rect,
-                        2.0,
-                        Stroke::new(1.0, MOVE_GHOST_STROKE),
-                        egui::StrokeKind::Inside,
-                    );
-                }
-            }
-
-            // ── DrawNote preview ──
-            if let Some(DragState::DrawNote {
-                start_tick,
-                pitch,
-                current_end_tick,
-            }) = &view_state.drag
-            {
-                let y = pitch_to_y(*pitch);
-                let x_start = tick_to_x(*start_tick);
-                let x_end = tick_to_x(*current_end_tick);
-                let note_width = (x_end - x_start).max(3.0);
-
-                let draw_rect = Rect::from_min_size(
-                    Pos2::new(x_start, y + 1.0),
-                    Vec2::new(note_width, note_row_height - 2.0),
-                );
-                painter.rect_filled(
-                    draw_rect,
-                    2.0,
-                    DRAW_NOTE_FILL,
-                );
-                painter.rect_stroke(
-                    draw_rect,
-                    2.0,
-                    Stroke::new(1.0, DRAW_NOTE_STROKE),
-                    egui::StrokeKind::Inside,
-                );
-            }
-
-            // ── Selection rectangle ──
-            if let Some(DragState::SelectRect {
-                start_pos,
-                current_pos,
-            }) = &view_state.drag
-            {
-                let sel_rect = Rect::from_two_pos(*start_pos, *current_pos);
-                painter.rect_filled(
-                    sel_rect,
-                    0.0,
-                    SELECTION_RECT_FILL,
-                );
-                painter.rect_stroke(
-                    sel_rect,
-                    0.0,
-                    Stroke::new(1.0, SELECTION_RECT_STROKE),
-                    egui::StrokeKind::Inside,
-                );
-            }
-
-            // ── Velocity bars (below grid) ──
-            let vel_y = grid_y + grid_height;
-            // Background
-            painter.rect_filled(
-                Rect::from_min_size(
-                    Pos2::new(grid_x, vel_y),
-                    Vec2::new(grid_width, VELOCITY_ZONE_HEIGHT),
-                ),
-                0.0,
-                VELOCITY_ZONE_BG,
-            );
-
-            // Separator line
-            painter.line_segment(
-                [
-                    Pos2::new(grid_x, vel_y),
-                    Pos2::new(grid_x + grid_width, vel_y),
-                ],
-                Stroke::new(1.0, t.colors.border),
-            );
-
-            // Velocity label
-            painter.text(
-                Pos2::new(origin.x + 2.0, vel_y + 2.0),
-                egui::Align2::LEFT_TOP,
-                "VEL",
-                egui::FontId::proportional(9.0),
-                t.colors.text_dim,
-            );
-
-            // Velocity bars
-            for note in &data.notes {
-                let x = tick_to_x(note.start_tick);
-                let bar_height = note.velocity.as_f32() * (VELOCITY_ZONE_HEIGHT - 4.0);
-                let bar_y = vel_y + VELOCITY_ZONE_HEIGHT - bar_height - 2.0;
-
-                let is_selected = view_state.selected_notes.contains(&note.note_id);
-                let (vel_color, bar_w) = if is_selected {
-                    (VELOCITY_BAR_SELECTED, 5.0)
-                } else {
-                    (velocity_color(note.velocity.as_f32()), 3.0)
-                };
-                let bar_rect = Rect::from_min_size(
-                    Pos2::new(x - bar_w * 0.5, bar_y),
-                    Vec2::new(bar_w, bar_height),
-                );
-                painter.rect_filled(bar_rect, 1.0, vel_color);
-                if is_selected {
-                    painter.rect_stroke(
-                        bar_rect,
-                        1.0,
-                        Stroke::new(1.0, Color32::WHITE),
-                        egui::StrokeKind::Outside,
-                    );
-                }
-            }
-
-            // ── Automation zone (below velocity) ──
-            let auto_y = vel_y + VELOCITY_ZONE_HEIGHT;
-            if let Some(selected_target) = &view_state.selected_automation {
-                draw_automation_zone(
-                    &painter,
-                    data,
-                    view_state,
-                    selected_target,
-                    grid_x,
-                    auto_y,
-                    grid_width,
-                    &tick_to_x,
-                    &t,
-                );
-            }
-
-            // ── Playhead (only if this pattern is actually playing) ──
-            if let Some(pattern_tick) = playhead_tick {
-                let playhead_x = tick_to_x(pattern_tick);
-
-                if playhead_x >= grid_x && playhead_x <= grid_x + grid_width {
-                    // Line runs from the top of the ruler down through the grid.
-                    painter.line_segment(
-                        [
-                            Pos2::new(playhead_x, origin.y),
-                            Pos2::new(playhead_x, grid_y + total_content_height),
-                        ],
-                        Stroke::new(1.5, t.colors.accent_primary),
-                    );
-                    // Triangle marker in the ruler strip.
-                    let tri_size = 6.0;
-                    painter.add(egui::Shape::convex_polygon(
-                        vec![
-                            Pos2::new(playhead_x - tri_size, origin.y),
-                            Pos2::new(playhead_x + tri_size, origin.y),
-                            Pos2::new(playhead_x, origin.y + RULER_HEIGHT * 0.6),
-                        ],
-                        t.colors.accent_primary,
-                        Stroke::NONE,
-                    ));
-                }
-            }
-
-            // ── Step cursor ──
-            if view_state.step_entry_mode {
-                let cursor_x = tick_to_x(view_state.step_cursor_tick);
-                if cursor_x >= grid_x && cursor_x <= grid_x + grid_width {
-                    painter.line_segment(
-                        [
-                            Pos2::new(cursor_x, grid_y),
-                            Pos2::new(cursor_x, grid_y + grid_height),
-                        ],
-                        Stroke::new(2.0, STEP_CURSOR),
-                    );
-                }
-            }
-
-            // ── Keyboard / grid separator ──
-            painter.line_segment(
-                [
-                    Pos2::new(grid_x, grid_y),
-                    Pos2::new(grid_x, grid_y + total_content_height),
-                ],
-                Stroke::new(1.0, t.colors.border),
-            );
-
-            // Automation zone rect (for hit-testing)
-            let auto_rect = if view_state.selected_automation.is_some() {
-                Some(Rect::from_min_size(
-                    Pos2::new(grid_x, auto_y),
-                    Vec2::new(grid_width, AUTOMATION_ZONE_HEIGHT),
-                ))
-            } else {
-                None
-            };
-
-            // ── Hover and cursor ──
-            if let Some(pos) = ui.ctx().pointer_hover_pos() {
-                // Check automation zone hover first
-                if auto_rect.is_some_and(|r| r.contains(pos)) {
-                    ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
-                } else if grid_rect.contains(pos) {
-                    let vp_min = view_pitch_min;
-                    let vp_max = view_pitch_max;
-                    let hit = note_at_pos(
-                        &data.notes,
-                        pos,
-                        &tick_to_x,
-                        &pitch_to_y,
-                        data.length_ticks,
-                        vp_min,
-                        vp_max,
-                        note_row_height,
-                    );
-
-                    match hit {
-                        Some((_, HitZone::RightEdge)) => {
-                            ui.ctx().set_cursor_icon(CursorIcon::ResizeEast);
-                        }
-                        Some((note_id, HitZone::Body)) => {
-                            ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
-
-                            // Subtle hover highlight
-                            if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
-                                let y = pitch_to_y(note.pitch);
-                                let x_start = tick_to_x(note.start_tick);
-                                let x_end = match note.end_tick {
-                                    Some(end) => tick_to_x(end),
-                                    None => tick_to_x(data.length_ticks.as_pattern_tick()),
-                                };
-                                let hover_rect = Rect::from_min_size(
-                                    Pos2::new(x_start, y + 1.0),
-                                    Vec2::new((x_end - x_start).max(3.0), note_row_height - 2.0),
-                                );
-                                painter.rect_stroke(
-                                    hover_rect,
-                                    2.0,
-                                    Stroke::new(1.0, NOTE_HOVER_OUTLINE),
-                                    egui::StrokeKind::Outside,
-                                );
-
-                                let midi = note.pitch.as_midi();
-                                let pitch_name = NoteName::from_midi(midi % 12);
-                                let octave = (midi / 12) as i8 - 1;
-                                let beats = note.start_tick.0 as f32
-                                    / synth_sequencer::TICKS_PER_QUARTER as f32;
-                                let (bar0, beat0, tick0) =
-                                    Tick(note.start_tick.0 as u64).to_bar_beat_tick(data.time_sig);
-                                let bar = bar0 + 1;
-                                let beat_in_bar = beat0 as f32
-                                    + tick0 as f32 / synth_sequencer::TICKS_PER_QUARTER as f32
-                                    + 1.0;
-                                let length_text = match note.end_tick {
-                                    Some(end) => {
-                                        let dur_beats = (end.0 - note.start_tick.0) as f32
-                                            / synth_sequencer::TICKS_PER_QUARTER as f32;
-                                        format!("{dur_beats:.2} beats")
-                                    }
-                                    None => "open".to_owned(),
-                                };
-                                let vel_pct = (note.velocity.as_f32() * 100.0).round();
-                                // Notes route through their placement's track instrument.
-                                let note_instrument =
-                                    data.track_overrides.first().copied().unwrap_or_default();
-                                let inst_name = instruments
-                                    .iter()
-                                    .find(|inst| inst.id == note_instrument.into())
-                                    .map_or_else(
-                                        || format!("#{}", note_instrument.0),
-                                        |inst| inst.name.clone(),
-                                    );
-                                let tooltip_id = ui.id().with(("note_tip", note_id.0));
-                                egui::Tooltip::always_open(
-                                    ui.ctx().clone(),
-                                    ui.layer_id(),
-                                    tooltip_id,
-                                    pos,
-                                )
-                                .at_pointer()
-                                .show(|ui| {
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "{pitch_name:?}{octave}  (MIDI {midi})"
-                                        ))
-                                        .strong(),
-                                    );
-                                    ui.label(format!(
-                                        "Bar {bar}, beat {beat_in_bar:.2}  ({beats:.2} beats from start)"
-                                    ));
-                                    ui.label(format!("Length: {length_text}"));
-                                    ui.label(format!("Velocity: {vel_pct}%"));
-                                    ui.label(format!("Instrument: {inst_name}"));
-                                });
-                            }
-                        }
-                        None => {
-                            if view_state.edit_tool == EditTool::Draw {
-                                ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ── Mouse interaction ──
-            let mut ctx = PianoRollCtx::new(data, song, view_state, handle, undo_manager, instruments);
-            handle_piano_roll_interaction(
-                &mut ctx,
-                &response,
-                ui,
-                grid_rect,
-                auto_rect,
-                auto_y,
-                &coords,
+                note_row_height,
+                pr_pixels_per_beat,
+                grid_height,
+                grid_width,
+                total_content_height,
+                ticks_per_beat,
+                effective_ticks,
+                beats_in_pattern,
+                &ghost_notes,
             );
         });
 
@@ -2280,6 +1475,836 @@ pub(crate) fn draw_piano_roll(
     }
 
     keep_open
+}
+
+/// Draw the piano-roll note grid (keys, ruler, grid lines, notes, velocity and
+/// automation zones) and dispatch its pointer interaction — the body of the
+/// note-grid `ScrollArea`, split out of [`draw_piano_roll`]. Builds its
+/// `PianoRollCoords` from the painter rect and delegates editing to
+/// [`handle_piano_roll_interaction`].
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn draw_piano_roll_grid(
+    ctx: &mut PianoRollCtx<'_>,
+    ui: &mut egui::Ui,
+    playhead_tick: Option<PatternTick>,
+    view_pitch_min: Pitch,
+    view_pitch_max: Pitch,
+    note_row_height: f32,
+    pr_pixels_per_beat: f32,
+    grid_height: f32,
+    grid_width: f32,
+    total_content_height: f32,
+    ticks_per_beat: u32,
+    effective_ticks: u32,
+    beats_in_pattern: f32,
+    ghost_notes: &[GhostNote],
+) {
+    let data = ctx.data;
+    let song = ctx.song;
+    let view_state = &mut *ctx.view_state;
+    let handle = &mut *ctx.handle;
+    let undo_manager = &mut *ctx.undo_manager;
+    let instruments = ctx.instruments;
+    let t = theme();
+
+    let total_size = Vec2::new(KEY_WIDTH + grid_width, RULER_HEIGHT + total_content_height);
+
+    // Use allocate_rect with click_and_drag sense for mouse interaction
+    let alloc_rect = Rect::from_min_size(ui.cursor().min, total_size);
+    let response = ui.allocate_rect(alloc_rect, Sense::click_and_drag());
+    let rect = response.rect;
+    let painter = ui.painter_at(rect);
+
+    // ── Ctrl+scroll → zoom (consumed before scroll area sees it) ──
+    if response.hovered() {
+        let (scroll_dy, ctrl, shift) = ui.input(|i| {
+            (
+                i.smooth_scroll_delta.y,
+                i.modifiers.ctrl || i.modifiers.command,
+                i.modifiers.shift,
+            )
+        });
+        if ctrl && scroll_dy != 0.0 {
+            let factor = 1.0 + scroll_dy * 0.002;
+            if shift {
+                view_state.pr_zoom_y = (view_state.pr_zoom_y * factor).clamp(0.5, 3.0);
+            } else {
+                view_state.pr_zoom_x = (view_state.pr_zoom_x * factor).clamp(0.25, 4.0);
+            }
+        }
+    }
+
+    let origin = rect.min;
+    let grid_x = origin.x + KEY_WIDTH;
+    // Reserve a ruler strip at the top; the grid starts below it.
+    let grid_y = origin.y + RULER_HEIGHT;
+
+    // All four grid↔(tick,pitch) transforms live on this one value (see
+    // `PianoRollCoords`). The closures below just delegate so the rest of
+    // this function — and the interaction handler — keep their call shape.
+    let coords = PianoRollCoords {
+        grid_x,
+        grid_y,
+        ticks_per_beat,
+        pr_pixels_per_beat,
+        note_row_height,
+        view_pitch_min,
+        view_pitch_max,
+    };
+    let tick_to_x = |tick_val: PatternTick| coords.tick_to_x(tick_val);
+    let pitch_to_y = |pitch: Pitch| coords.pitch_to_y(pitch);
+
+    // Grid rect for checking if pointer is in the note grid area
+    let grid_rect = Rect::from_min_size(
+        Pos2::new(grid_x, grid_y),
+        Vec2::new(grid_width, grid_height),
+    );
+
+    // ── Timeline ruler (bar numbers) ──
+    // Top-left corner cell above the keyboard column.
+    painter.rect_filled(
+        Rect::from_min_size(origin, Vec2::new(KEY_WIDTH, RULER_HEIGHT)),
+        0.0,
+        t.colors.bg_dark,
+    );
+    let ruler_rect = Rect::from_min_size(
+        Pos2::new(grid_x, origin.y),
+        Vec2::new(grid_width, RULER_HEIGHT),
+    );
+    let ticks_per_bar = u64::from(data.time_sig.ticks_per_bar().max(1));
+    let total_bars = effective_ticks
+        .div_ceil(data.time_sig.ticks_per_bar().max(1))
+        .max(1);
+    draw_ruler_labels(
+        &painter,
+        &t,
+        ruler_rect,
+        total_bars,
+        ticks_per_bar,
+        |tick| {
+            if ticks_per_beat == 0 {
+                grid_x
+            } else {
+                grid_x + (tick as f32 / ticks_per_beat as f32) * pr_pixels_per_beat
+            }
+        },
+    );
+    // Ruler bottom border.
+    painter.line_segment(
+        [
+            Pos2::new(grid_x, grid_y),
+            Pos2::new(grid_x + grid_width, grid_y),
+        ],
+        Stroke::new(1.0, t.colors.border),
+    );
+
+    // ── Keyboard (left column) ──
+    painter.rect_filled(
+        Rect::from_min_size(
+            Pos2::new(origin.x, grid_y),
+            Vec2::new(KEY_WIDTH, grid_height),
+        ),
+        0.0,
+        t.colors.bg_dark,
+    );
+
+    for p in view_pitch_min.as_midi()..=view_pitch_max.as_midi() {
+        let pitch = Pitch::new(p).unwrap_or(Pitch::MIDDLE_C);
+        let y = pitch_to_y(pitch);
+        let note_name = NoteName::from_midi(p % 12);
+        let is_black = note_name.is_black_key();
+
+        // Key background
+        let key_color = if is_black {
+            PIANO_KEY_BLACK
+        } else {
+            PIANO_KEY_WHITE
+        };
+        painter.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(origin.x, y),
+                Vec2::new(KEY_WIDTH, note_row_height),
+            ),
+            0.0,
+            key_color,
+        );
+
+        // Label on C notes
+        if p % 12 == 0 {
+            let octave = (p / 12) as i8 - 1;
+            painter.text(
+                Pos2::new(origin.x + 4.0, y + 1.0),
+                egui::Align2::LEFT_TOP,
+                format!("C{octave}"),
+                egui::FontId::proportional(10.0),
+                t.colors.text_primary,
+            );
+        }
+
+        // Key border
+        painter.line_segment(
+            [
+                Pos2::new(origin.x, y + note_row_height),
+                Pos2::new(origin.x + KEY_WIDTH, y + note_row_height),
+            ],
+            Stroke::new(0.5, t.colors.border.gamma_multiply(0.3)),
+        );
+    }
+
+    // ── Note grid background ──
+    for p in view_pitch_min.as_midi()..=view_pitch_max.as_midi() {
+        let pitch = Pitch::new(p).unwrap_or(Pitch::MIDDLE_C);
+        let y = pitch_to_y(pitch);
+        let note_name = NoteName::from_midi(p % 12);
+        let is_black = note_name.is_black_key();
+        let is_c = p % 12 == 0;
+
+        let bg = if is_c {
+            GRID_BG_C
+        } else if is_black {
+            GRID_BG_BLACK
+        } else {
+            GRID_BG_WHITE
+        };
+
+        painter.rect_filled(
+            Rect::from_min_size(Pos2::new(grid_x, y), Vec2::new(grid_width, note_row_height)),
+            0.0,
+            bg,
+        );
+
+        // Horizontal pitch row separator
+        painter.line_segment(
+            [
+                Pos2::new(grid_x, y + note_row_height),
+                Pos2::new(grid_x + grid_width, y + note_row_height),
+            ],
+            Stroke::new(
+                if is_c { 0.8 } else { 0.3 },
+                t.colors.border.gamma_multiply(if is_c { 0.6 } else { 0.2 }),
+            ),
+        );
+    }
+
+    // ── Vertical beat/sub-beat lines ──
+    let beats_total = beats_in_pattern.ceil() as u32;
+    let beats_per_bar_val = data.time_sig.numerator.max(1) as u32;
+    for beat_idx in 0..=beats_total {
+        let beat_tick = beat_idx * ticks_per_beat;
+        let x = tick_to_x(PatternTick(beat_tick));
+        let is_bar_line = beat_idx % beats_per_bar_val == 0;
+
+        painter.line_segment(
+            [Pos2::new(x, grid_y), Pos2::new(x, grid_y + grid_height)],
+            Stroke::new(
+                if is_bar_line { 1.0 } else { 0.5 },
+                t.colors
+                    .border
+                    .gamma_multiply(if is_bar_line { 0.8 } else { 0.3 }),
+            ),
+        );
+
+        // Sub-beat lines (based on ticks_per_row)
+        if data.ticks_per_row > 0 && !is_bar_line {
+            // Already drawing at beat level; skip sub-beats for readability
+        }
+    }
+
+    // Sub-beat grid lines based on row resolution
+    if data.ticks_per_row > 0 {
+        let total_rows = data.length_ticks.0 / data.ticks_per_row as u32;
+        for row in 0..total_rows {
+            let row_tick = row * data.ticks_per_row as u32;
+            // Skip if this aligns with a beat line (already drawn)
+            if row_tick.is_multiple_of(ticks_per_beat) {
+                continue;
+            }
+            let x = tick_to_x(PatternTick(row_tick));
+            painter.line_segment(
+                [Pos2::new(x, grid_y), Pos2::new(x, grid_y + grid_height)],
+                Stroke::new(0.3, t.colors.border.gamma_multiply(0.15)),
+            );
+        }
+    }
+
+    // ── Notes ──
+    let default_note_color = DEFAULT_NOTE_BLUE;
+    // One-shot per-frame colour cache so each note's lookup is O(1).
+    let note_color_cache = build_instrument_colour_cache(instruments);
+
+    // Ghost-preview overlay: the note-processor expansion, painted faintly
+    // behind the source notes so the user sees what actually plays.
+    // Read-only, non-interactive.
+    for ghost in ghost_notes {
+        if ghost.pitch < view_pitch_min || ghost.pitch > view_pitch_max {
+            continue;
+        }
+        let gy = pitch_to_y(ghost.pitch);
+        let gx_start = tick_to_x(ghost.start);
+        let gx_end = match ghost.duration {
+            Some(d) => tick_to_x(PatternTick(ghost.start.0.saturating_add(d.0))),
+            None => tick_to_x(data.length_ticks.as_pattern_tick()).min(gx_start + grid_width),
+        };
+        let gw = (gx_end - gx_start).max(2.0);
+        painter.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(gx_start, gy + 1.0),
+                Vec2::new(gw, note_row_height - 2.0),
+            ),
+            2.0,
+            GHOST_NOTE_COLOR,
+        );
+    }
+
+    for note in &data.notes {
+        if note.pitch < view_pitch_min || note.pitch > view_pitch_max {
+            continue;
+        }
+
+        // Skip notes that are being dragged (draw ghost instead)
+        let is_being_moved = matches!(
+            &view_state.drag,
+            Some(DragState::MoveNote { note_id, .. }) if *note_id == note.note_id
+        );
+        if is_being_moved {
+            continue;
+        }
+
+        let y = pitch_to_y(note.pitch);
+        let x_start = tick_to_x(note.start_tick);
+
+        let x_end = match note.end_tick {
+            Some(end) => tick_to_x(end),
+            None => {
+                // Open-ended: draw to pattern end or at least a visible width
+                tick_to_x(data.length_ticks.as_pattern_tick()).min(x_start + grid_width)
+            }
+        };
+
+        // Apply resize preview if this note is being resized
+        let x_end = match &view_state.drag {
+            Some(DragState::ResizeNote {
+                note_id,
+                current_end_tick,
+                ..
+            }) if *note_id == note.note_id => tick_to_x(*current_end_tick),
+            _ => x_end,
+        };
+
+        let note_width = (x_end - x_start).max(3.0);
+        let alpha = (note.velocity.as_f32() * 200.0 + 55.0).min(255.0) as u8;
+
+        // Notes have no per-note instrument; colour by the instrument
+        // the pattern plays through (its placement's track), falling
+        // back to the working instrument for an unplaced pattern.
+        let note_instrument = data
+            .track_overrides
+            .first()
+            .copied()
+            .unwrap_or(view_state.selected_instrument);
+        let inst_color =
+            cached_instrument_color(&note_color_cache, note_instrument, default_note_color);
+
+        let is_selected = view_state.selected_notes.contains(&note.note_id);
+
+        let fill =
+            Color32::from_rgba_unmultiplied(inst_color.r(), inst_color.g(), inst_color.b(), alpha);
+
+        let note_rect = Rect::from_min_size(
+            Pos2::new(x_start, y + 1.0),
+            Vec2::new(note_width, note_row_height - 2.0),
+        );
+
+        if is_selected {
+            // Soft glow halo behind the note (cyan tint).
+            let glow_rect = note_rect.expand(3.0);
+            painter.rect_filled(glow_rect, 3.0, NOTE_SELECTED_GLOW);
+        }
+
+        painter.rect_filled(note_rect, 2.0, fill);
+
+        if is_selected {
+            // High-contrast outer outline (white) — clearly visible
+            // against any instrument colour or grid background.
+            painter.rect_stroke(
+                note_rect.expand(1.0),
+                3.0,
+                Stroke::new(2.0, Color32::WHITE),
+                egui::StrokeKind::Outside,
+            );
+            // Cyan inner accent for a recognisable selection colour.
+            painter.rect_stroke(
+                note_rect,
+                2.0,
+                Stroke::new(1.0, t.colors.accent_cyan),
+                egui::StrokeKind::Inside,
+            );
+        } else {
+            painter.rect_stroke(
+                note_rect,
+                2.0,
+                Stroke::new(0.5, inst_color),
+                egui::StrokeKind::Inside,
+            );
+        }
+
+        // Per-note expression markers (B4): a tie underline for legato
+        // and a small ramp glyph at the left edge for glide.
+        if note.legato {
+            let y_line = note_rect.max.y - 1.0;
+            painter.line_segment(
+                [
+                    Pos2::new(note_rect.min.x + 1.0, y_line),
+                    Pos2::new(note_rect.max.x - 1.0, y_line),
+                ],
+                Stroke::new(1.5, t.colors.accent_yellow),
+            );
+        }
+        if note.glide.is_some() {
+            // Diagonal ramp from bottom-left up into the note's leading edge.
+            let gx = note_rect.min.x;
+            painter.line_segment(
+                [
+                    Pos2::new(gx + 0.5, note_rect.max.y - 1.0),
+                    Pos2::new((gx + 6.0).min(note_rect.max.x), note_rect.min.y + 1.0),
+                ],
+                Stroke::new(1.5, t.colors.accent_cyan),
+            );
+        }
+        // Per-note expression (C5): a small dot at the top-right corner.
+        if note.expression.is_some() && note_width > 5.0 {
+            painter.circle_filled(
+                Pos2::new(note_rect.max.x - 2.5, note_rect.min.y + 2.5),
+                1.5,
+                t.colors.accent_yellow,
+            );
+        }
+        // Per-note ornament (NP6): a small marker at the top-left corner,
+        // in the Note FX accent colour.
+        if note.ornament.is_some() && note_width > 5.0 {
+            painter.circle_filled(
+                Pos2::new(note_rect.min.x + 2.5, note_rect.min.y + 2.5),
+                1.5,
+                t.colors.accent_purple,
+            );
+        }
+
+        // Open-ended indicator (gradient fade-out at right edge)
+        if note.end_tick.is_none() && note_width > 8.0 {
+            let fade_rect = Rect::from_min_max(
+                Pos2::new(note_rect.max.x - 6.0, note_rect.min.y),
+                note_rect.max,
+            );
+            painter.rect_filled(
+                fade_rect,
+                0.0,
+                Color32::from_rgba_unmultiplied(
+                    inst_color.r(),
+                    inst_color.g(),
+                    inst_color.b(),
+                    alpha / 3,
+                ),
+            );
+        }
+    }
+
+    // ── Recording preview notes (orange) ──
+    if !view_state.recording_preview_completed.is_empty()
+        || !view_state.recording_preview_held.is_empty()
+    {
+        let preview_color = RECORDING_PREVIEW_ORANGE;
+
+        // Draw completed preview notes
+        for note in &view_state.recording_preview_completed {
+            if note.pitch < view_pitch_min || note.pitch > view_pitch_max {
+                continue;
+            }
+            let y = pitch_to_y(note.pitch);
+            let x_start = tick_to_x(note.start);
+            let x_end = tick_to_x(note.start + note.duration);
+            let note_width = (x_end - x_start).max(3.0);
+            let alpha = 180_u8;
+
+            let preview_rect = Rect::from_min_size(
+                Pos2::new(x_start, y + 1.0),
+                Vec2::new(note_width, note_row_height - 2.0),
+            );
+            painter.rect_filled(
+                preview_rect,
+                2.0,
+                Color32::from_rgba_unmultiplied(
+                    preview_color.r(),
+                    preview_color.g(),
+                    preview_color.b(),
+                    alpha,
+                ),
+            );
+            painter.rect_stroke(
+                preview_rect,
+                2.0,
+                Stroke::new(0.5, preview_color),
+                egui::StrokeKind::Inside,
+            );
+        }
+
+        // Draw held notes extending from start to current playhead
+        if !view_state.recording_preview_held.is_empty() {
+            // Compute playhead position within pattern
+            let playhead_in_pattern = playhead_tick.map_or(0, |pt| pt.0);
+
+            for (pitch, start_tick) in &view_state.recording_preview_held {
+                if *pitch < view_pitch_min || *pitch > view_pitch_max {
+                    continue;
+                }
+                let y = pitch_to_y(*pitch);
+                let x_start = tick_to_x(*start_tick);
+                let end = if playhead_in_pattern >= start_tick.0 {
+                    PatternTick(playhead_in_pattern)
+                } else {
+                    // Note wraps around pattern — draw to end
+                    data.length_ticks.as_pattern_tick()
+                };
+                let x_end = tick_to_x(end);
+                let note_width = (x_end - x_start).max(3.0);
+
+                let held_rect = Rect::from_min_size(
+                    Pos2::new(x_start, y + 1.0),
+                    Vec2::new(note_width, note_row_height - 2.0),
+                );
+                painter.rect_filled(held_rect, 2.0, RECORDING_PREVIEW_HELD_FILL);
+                painter.rect_stroke(
+                    held_rect,
+                    2.0,
+                    Stroke::new(0.5, preview_color),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+
+        // Request repaint during recording for live updates
+        ui.request_repaint();
+    }
+
+    // ── Ghost note for MoveNote drag ──
+    if let Some(DragState::MoveNote {
+        note_id,
+        current_tick: drag_tick,
+        current_pitch: drag_pitch,
+        ..
+    }) = &view_state.drag
+    {
+        // Find the original note data for velocity/duration
+        if let Some(note) = data.notes.iter().find(|n| n.note_id == *note_id) {
+            let duration_ticks = note.end_tick.map_or(
+                data.length_ticks.as_pattern_tick() - note.start_tick,
+                |end| end - note.start_tick,
+            );
+            let y = pitch_to_y(*drag_pitch);
+            let x_start = tick_to_x(*drag_tick);
+            let x_end = tick_to_x(*drag_tick + duration_ticks);
+            let note_width = (x_end - x_start).max(3.0);
+
+            let ghost_rect = Rect::from_min_size(
+                Pos2::new(x_start, y + 1.0),
+                Vec2::new(note_width, note_row_height - 2.0),
+            );
+
+            // Semi-transparent ghost
+            painter.rect_filled(ghost_rect, 2.0, MOVE_GHOST_FILL);
+            painter.rect_stroke(
+                ghost_rect,
+                2.0,
+                Stroke::new(1.0, MOVE_GHOST_STROKE),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+
+    // ── DrawNote preview ──
+    if let Some(DragState::DrawNote {
+        start_tick,
+        pitch,
+        current_end_tick,
+    }) = &view_state.drag
+    {
+        let y = pitch_to_y(*pitch);
+        let x_start = tick_to_x(*start_tick);
+        let x_end = tick_to_x(*current_end_tick);
+        let note_width = (x_end - x_start).max(3.0);
+
+        let draw_rect = Rect::from_min_size(
+            Pos2::new(x_start, y + 1.0),
+            Vec2::new(note_width, note_row_height - 2.0),
+        );
+        painter.rect_filled(draw_rect, 2.0, DRAW_NOTE_FILL);
+        painter.rect_stroke(
+            draw_rect,
+            2.0,
+            Stroke::new(1.0, DRAW_NOTE_STROKE),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    // ── Selection rectangle ──
+    if let Some(DragState::SelectRect {
+        start_pos,
+        current_pos,
+    }) = &view_state.drag
+    {
+        let sel_rect = Rect::from_two_pos(*start_pos, *current_pos);
+        painter.rect_filled(sel_rect, 0.0, SELECTION_RECT_FILL);
+        painter.rect_stroke(
+            sel_rect,
+            0.0,
+            Stroke::new(1.0, SELECTION_RECT_STROKE),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    // ── Velocity bars (below grid) ──
+    let vel_y = grid_y + grid_height;
+    // Background
+    painter.rect_filled(
+        Rect::from_min_size(
+            Pos2::new(grid_x, vel_y),
+            Vec2::new(grid_width, VELOCITY_ZONE_HEIGHT),
+        ),
+        0.0,
+        VELOCITY_ZONE_BG,
+    );
+
+    // Separator line
+    painter.line_segment(
+        [
+            Pos2::new(grid_x, vel_y),
+            Pos2::new(grid_x + grid_width, vel_y),
+        ],
+        Stroke::new(1.0, t.colors.border),
+    );
+
+    // Velocity label
+    painter.text(
+        Pos2::new(origin.x + 2.0, vel_y + 2.0),
+        egui::Align2::LEFT_TOP,
+        "VEL",
+        egui::FontId::proportional(9.0),
+        t.colors.text_dim,
+    );
+
+    // Velocity bars
+    for note in &data.notes {
+        let x = tick_to_x(note.start_tick);
+        let bar_height = note.velocity.as_f32() * (VELOCITY_ZONE_HEIGHT - 4.0);
+        let bar_y = vel_y + VELOCITY_ZONE_HEIGHT - bar_height - 2.0;
+
+        let is_selected = view_state.selected_notes.contains(&note.note_id);
+        let (vel_color, bar_w) = if is_selected {
+            (VELOCITY_BAR_SELECTED, 5.0)
+        } else {
+            (velocity_color(note.velocity.as_f32()), 3.0)
+        };
+        let bar_rect = Rect::from_min_size(
+            Pos2::new(x - bar_w * 0.5, bar_y),
+            Vec2::new(bar_w, bar_height),
+        );
+        painter.rect_filled(bar_rect, 1.0, vel_color);
+        if is_selected {
+            painter.rect_stroke(
+                bar_rect,
+                1.0,
+                Stroke::new(1.0, Color32::WHITE),
+                egui::StrokeKind::Outside,
+            );
+        }
+    }
+
+    // ── Automation zone (below velocity) ──
+    let auto_y = vel_y + VELOCITY_ZONE_HEIGHT;
+    if let Some(selected_target) = &view_state.selected_automation {
+        draw_automation_zone(
+            &painter,
+            data,
+            view_state,
+            selected_target,
+            grid_x,
+            auto_y,
+            grid_width,
+            &tick_to_x,
+            &t,
+        );
+    }
+
+    // ── Playhead (only if this pattern is actually playing) ──
+    if let Some(pattern_tick) = playhead_tick {
+        let playhead_x = tick_to_x(pattern_tick);
+
+        if playhead_x >= grid_x && playhead_x <= grid_x + grid_width {
+            // Line runs from the top of the ruler down through the grid.
+            painter.line_segment(
+                [
+                    Pos2::new(playhead_x, origin.y),
+                    Pos2::new(playhead_x, grid_y + total_content_height),
+                ],
+                Stroke::new(1.5, t.colors.accent_primary),
+            );
+            // Triangle marker in the ruler strip.
+            let tri_size = 6.0;
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    Pos2::new(playhead_x - tri_size, origin.y),
+                    Pos2::new(playhead_x + tri_size, origin.y),
+                    Pos2::new(playhead_x, origin.y + RULER_HEIGHT * 0.6),
+                ],
+                t.colors.accent_primary,
+                Stroke::NONE,
+            ));
+        }
+    }
+
+    // ── Step cursor ──
+    if view_state.step_entry_mode {
+        let cursor_x = tick_to_x(view_state.step_cursor_tick);
+        if cursor_x >= grid_x && cursor_x <= grid_x + grid_width {
+            painter.line_segment(
+                [
+                    Pos2::new(cursor_x, grid_y),
+                    Pos2::new(cursor_x, grid_y + grid_height),
+                ],
+                Stroke::new(2.0, STEP_CURSOR),
+            );
+        }
+    }
+
+    // ── Keyboard / grid separator ──
+    painter.line_segment(
+        [
+            Pos2::new(grid_x, grid_y),
+            Pos2::new(grid_x, grid_y + total_content_height),
+        ],
+        Stroke::new(1.0, t.colors.border),
+    );
+
+    // Automation zone rect (for hit-testing)
+    let auto_rect = if view_state.selected_automation.is_some() {
+        Some(Rect::from_min_size(
+            Pos2::new(grid_x, auto_y),
+            Vec2::new(grid_width, AUTOMATION_ZONE_HEIGHT),
+        ))
+    } else {
+        None
+    };
+
+    // ── Hover and cursor ──
+    if let Some(pos) = ui.ctx().pointer_hover_pos() {
+        // Check automation zone hover first
+        if auto_rect.is_some_and(|r| r.contains(pos)) {
+            ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+        } else if grid_rect.contains(pos) {
+            let vp_min = view_pitch_min;
+            let vp_max = view_pitch_max;
+            let hit = note_at_pos(
+                &data.notes,
+                pos,
+                &tick_to_x,
+                &pitch_to_y,
+                data.length_ticks,
+                vp_min,
+                vp_max,
+                note_row_height,
+            );
+
+            match hit {
+                Some((_, HitZone::RightEdge)) => {
+                    ui.ctx().set_cursor_icon(CursorIcon::ResizeEast);
+                }
+                Some((note_id, HitZone::Body)) => {
+                    ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
+
+                    // Subtle hover highlight
+                    if let Some(note) = data.notes.iter().find(|n| n.note_id == note_id) {
+                        let y = pitch_to_y(note.pitch);
+                        let x_start = tick_to_x(note.start_tick);
+                        let x_end = match note.end_tick {
+                            Some(end) => tick_to_x(end),
+                            None => tick_to_x(data.length_ticks.as_pattern_tick()),
+                        };
+                        let hover_rect = Rect::from_min_size(
+                            Pos2::new(x_start, y + 1.0),
+                            Vec2::new((x_end - x_start).max(3.0), note_row_height - 2.0),
+                        );
+                        painter.rect_stroke(
+                            hover_rect,
+                            2.0,
+                            Stroke::new(1.0, NOTE_HOVER_OUTLINE),
+                            egui::StrokeKind::Outside,
+                        );
+
+                        let midi = note.pitch.as_midi();
+                        let pitch_name = NoteName::from_midi(midi % 12);
+                        let octave = (midi / 12) as i8 - 1;
+                        let beats =
+                            note.start_tick.0 as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
+                        let (bar0, beat0, tick0) =
+                            Tick(note.start_tick.0 as u64).to_bar_beat_tick(data.time_sig);
+                        let bar = bar0 + 1;
+                        let beat_in_bar = beat0 as f32
+                            + tick0 as f32 / synth_sequencer::TICKS_PER_QUARTER as f32
+                            + 1.0;
+                        let length_text = match note.end_tick {
+                            Some(end) => {
+                                let dur_beats = (end.0 - note.start_tick.0) as f32
+                                    / synth_sequencer::TICKS_PER_QUARTER as f32;
+                                format!("{dur_beats:.2} beats")
+                            }
+                            None => "open".to_owned(),
+                        };
+                        let vel_pct = (note.velocity.as_f32() * 100.0).round();
+                        // Notes route through their placement's track instrument.
+                        let note_instrument =
+                            data.track_overrides.first().copied().unwrap_or_default();
+                        let inst_name = instruments
+                            .iter()
+                            .find(|inst| inst.id == note_instrument.into())
+                            .map_or_else(
+                                || format!("#{}", note_instrument.0),
+                                |inst| inst.name.clone(),
+                            );
+                        let tooltip_id = ui.id().with(("note_tip", note_id.0));
+                        egui::Tooltip::always_open(
+                            ui.ctx().clone(),
+                            ui.layer_id(),
+                            tooltip_id,
+                            pos,
+                        )
+                        .at_pointer()
+                        .show(|ui| {
+                            ui.label(
+                                RichText::new(format!("{pitch_name:?}{octave}  (MIDI {midi})"))
+                                    .strong(),
+                            );
+                            ui.label(format!(
+                                "Bar {bar}, beat {beat_in_bar:.2}  ({beats:.2} beats from start)"
+                            ));
+                            ui.label(format!("Length: {length_text}"));
+                            ui.label(format!("Velocity: {vel_pct}%"));
+                            ui.label(format!("Instrument: {inst_name}"));
+                        });
+                    }
+                }
+                None => {
+                    if view_state.edit_tool == EditTool::Draw {
+                        ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Mouse interaction ──
+    let mut ctx = PianoRollCtx::new(data, song, view_state, handle, undo_manager, instruments);
+    handle_piano_roll_interaction(
+        &mut ctx, &response, ui, grid_rect, auto_rect, auto_y, &coords,
+    );
 }
 
 /// Handle mouse clicks and drags in the piano roll.
