@@ -1334,6 +1334,12 @@ pub(crate) fn draw_tracker(
     {
         font.size = cell_font_size;
     }
+    // Cell/header text is plain `ui.label`s, which default to *selectable* text and
+    // therefore sense `click_and_drag`. A selectable label sits on top of the cell
+    // background and steals the click — so clicking (or right-clicking) directly on
+    // the text would never reach the cell response. Disable label selection table-wide
+    // (cell uis inherit this style) so the text is click-through to the cell.
+    ui.style_mut().interaction.selectable_labels = false;
     let ticks_per_beat = data.time_sig.ticks_per_beat().max(1);
     let ticks_per_bar = data.time_sig.ticks_per_bar().max(1);
     let playhead_row = playhead_tick.map(|p| (p.0 / tpr) as usize);
@@ -1454,6 +1460,12 @@ pub(crate) fn draw_tracker(
     let mut builder = TableBuilder::new(ui)
         .striped(true)
         .resizable(true)
+        // Cells default to `Sense::hover()`, so cell/header responses never report
+        // `clicked()` / `secondary_clicked()` and `.context_menu()` + `.on_hover_text()`
+        // silently no-op. Sense clicks table-wide (propagates to header + body strips).
+        // `Sense::CLICK` is the non-focusable variant: cells must not steal keyboard
+        // focus, or the cursor's arrow-key gate (`focused().is_none()`) would break.
+        .sense(egui::Sense::CLICK)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(Column::auto().at_least(44.0)); // row/time gutter
     for _ in 0..n_lanes {
@@ -1543,24 +1555,22 @@ pub(crate) fn draw_tracker(
                 }
             }
             for (ai, lane) in data.automation_lanes.iter().enumerate() {
-                header.col(|ui| {
-                    let name = lane.target.display_name();
-                    let target = &lane.target;
-                    header_label(
-                        ui,
-                        name.clone(),
-                        cursor_kind == TrackerColumn::Automation(ai),
-                    )
-                    .on_hover_text(format!(
-                        "Automation: {name} — per-row value 0..1; type to set a point, Delete to clear. Right-click to delete the lane."
-                    ))
-                    .interact(egui::Sense::click())
-                    .context_menu(|ui| {
-                        if ui.button("Delete lane").clicked() {
-                            ctx_action.set(Some(CtxAction::DeleteAutoLane(target.clone())));
-                            ui.close();
-                        }
-                    });
+                let name = lane.target.display_name();
+                // Attach the tooltip + menu to the whole column cell, not the inner
+                // label (a tiny text-sized rect): the cell senses clicks, the label
+                // does not.
+                let (_, resp) = header.col(|ui| {
+                    header_label(ui, name.clone(), cursor_kind == TrackerColumn::Automation(ai));
+                });
+                let target = &lane.target;
+                resp.on_hover_text(format!(
+                    "Automation: {name} — per-row value 0..1; type to set a point, Delete to clear. Right-click to delete the lane."
+                ))
+                .context_menu(|ui| {
+                    if ui.button("Delete lane").clicked() {
+                        ctx_action.set(Some(CtxAction::DeleteAutoLane(target.clone())));
+                        ui.close();
+                    }
                 });
             }
             for (si, stage) in np_stages.iter().enumerate() {
@@ -1600,7 +1610,7 @@ pub(crate) fn draw_tracker(
                         ui.label(num);
                     });
                 });
-                if gutter_resp.interact(egui::Sense::click()).clicked() {
+                if gutter_resp.clicked() {
                     click_target.set(Some((r, cursor.col)));
                 }
                 if gutter_resp.contains_pointer() {
@@ -1648,7 +1658,7 @@ pub(crate) fn draw_tracker(
                             }
                         }
                     });
-                    if resp.interact(egui::Sense::click()).clicked() {
+                    if resp.clicked() {
                         click_target.set(Some((r, voice_col)));
                     }
                     if resp.contains_pointer() {
@@ -1659,7 +1669,7 @@ pub(crate) fn draw_tracker(
                         let note_id = n.note_id;
                         let legato = n.legato;
                         let has_glide = n.glide.is_some();
-                        resp.interact(egui::Sense::click()).context_menu(|ui| {
+                        resp.context_menu(|ui| {
                             if ui.button("Delete note").clicked() {
                                 ctx_action.set(Some(CtxAction::DeleteNote(note_id)));
                                 ui.close();
@@ -1700,7 +1710,7 @@ pub(crate) fn draw_tracker(
                             }
                         }
                     });
-                    if orn_resp.interact(egui::Sense::click()).clicked() {
+                    if orn_resp.clicked() {
                         click_target.set(Some((r, orn_col)));
                     }
                     if orn_resp.contains_pointer() {
@@ -1709,7 +1719,7 @@ pub(crate) fn draw_tracker(
                     if let Some(idx) = first_note {
                         let note_id = data.notes[idx].note_id;
                         let orn = data.notes[idx].ornament;
-                        orn_resp.interact(egui::Sense::click()).context_menu(|ui| {
+                        orn_resp.context_menu(|ui| {
                             if ui.button("Edit ornament…").clicked() {
                                 ctx_action.set(Some(CtxAction::EditOrnament(note_id)));
                                 ui.close();
@@ -1755,7 +1765,7 @@ pub(crate) fn draw_tracker(
                                         .monospace(),
                                 );
                             });
-                            if resp.interact(egui::Sense::click()).clicked() {
+                            if resp.clicked() {
                                 click_target.set(Some((r, flat)));
                             }
                             if resp.contains_pointer() {
@@ -1763,7 +1773,7 @@ pub(crate) fn draw_tracker(
                             }
                             if let Some(idx) = first_note {
                                 let note_id = data.notes[idx].note_id;
-                                resp.interact(egui::Sense::click()).context_menu(|ui| {
+                                resp.context_menu(|ui| {
                                     if ui.button(format!("Clear {}", field.header())).clicked() {
                                         ctx_action
                                             .set(Some(CtxAction::ClearExprField(note_id, field)));
@@ -1814,7 +1824,7 @@ pub(crate) fn draw_tracker(
                             ui.label(text);
                         }
                     });
-                    if resp.interact(egui::Sense::click()).clicked() {
+                    if resp.clicked() {
                         click_target.set(Some((r, flat_col)));
                     }
                     if resp.contains_pointer() {
@@ -1827,7 +1837,7 @@ pub(crate) fn draw_tracker(
                         .map(|p| (p.value, p.curve))
                     {
                         let target = &lane.target;
-                        resp.interact(egui::Sense::click()).context_menu(|ui| {
+                        resp.context_menu(|ui| {
                             if ui.button("Clear point").clicked() {
                                 ctx_action.set(Some(CtxAction::ClearAutoPoint {
                                     target: target.clone(),
@@ -1854,7 +1864,7 @@ pub(crate) fn draw_tracker(
                             );
                         }
                     });
-                    if resp.interact(egui::Sense::click()).clicked() {
+                    if resp.clicked() {
                         click_target.set(Some((r, cursor.col)));
                     }
                     if resp.contains_pointer() {
