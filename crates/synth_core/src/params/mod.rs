@@ -229,6 +229,8 @@ pub enum ModuleType {
     VoiceSynth,
     VocalTract,
     Fof,
+    // Scripting (per-voice control-signal generator)
+    Script,
 }
 
 impl ModuleType {
@@ -298,6 +300,8 @@ impl ModuleType {
                 | Self::VoiceSynth
                 | Self::VocalTract
                 | Self::Fof
+                // Scripting (per-voice control-signal generator)
+                | Self::Script
         )
     }
 
@@ -440,6 +444,7 @@ impl ModuleType {
             Self::VoiceSynth => "Voice Synth",
             Self::VocalTract => "Vocal Tract",
             Self::Fof => "FOF",
+            Self::Script => "Script",
         }
     }
 
@@ -521,6 +526,7 @@ impl ModuleType {
             Self::VoiceSynth => "vox",
             Self::VocalTract => "vtr",
             Self::Fof => "fof",
+            Self::Script => "scr",
         }
     }
 
@@ -602,6 +608,7 @@ impl ModuleType {
             "vox" => Some(Self::VoiceSynth),
             "vtr" => Some(Self::VocalTract),
             "fof" => Some(Self::Fof),
+            "scr" => Some(Self::Script),
             _ => None,
         }
     }

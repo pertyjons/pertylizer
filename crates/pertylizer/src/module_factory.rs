@@ -224,6 +224,11 @@ pub fn create_voice_module(
             let d = m.descriptor();
             Some((Box::new(m), d))
         }
+        ModuleType::Script => {
+            let m = synth_modules::ScriptModule::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
         // Effects and visualizers are not voice modules
         _ => None,
     }
@@ -438,6 +443,8 @@ pub const ALL_MODULE_TYPES: &[ModuleType] = &[
     ModuleType::VoiceSynth,
     ModuleType::VocalTract,
     ModuleType::Fof,
+    // Scripting
+    ModuleType::Script,
     // Effects
     ModuleType::Delay,
     ModuleType::Reverb,

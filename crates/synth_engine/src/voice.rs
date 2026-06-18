@@ -464,6 +464,11 @@ pub struct Voice {
     /// Cached mod matrix module ID (if present in graph).
     mod_matrix_id: Option<crate::ModuleId>,
 
+    /// Cached Script-module IDs (Phase 2). Their slots are evaluated each block
+    /// before graph processing, like the Mod Matrix, but the result is cached on
+    /// the module and emitted on its output ports rather than applied as offsets.
+    script_module_ids: Vec<crate::ModuleId>,
+
     /// Pre-allocated buffer for mod matrix slot data (avoids per-frame Vec allocation).
     mod_slots_cache: Vec<(f32, synth_core::DestAddr, f32)>,
 
@@ -512,6 +517,7 @@ impl Voice {
             vibrato_offset: Semitones::ZERO,
             output_module_id: None,
             mod_matrix_id: None,
+            script_module_ids: Vec::new(),
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: TuningTable::default(),
@@ -530,6 +536,7 @@ impl Voice {
             .or_else(|| graph.find_module_by_type(ModuleType::Mixer));
 
         let mod_matrix_id = graph.find_module_by_type(ModuleType::ModMatrix);
+        let script_module_ids = Self::collect_script_module_ids(&graph);
 
         let mut voice = Self {
             id,
@@ -550,6 +557,7 @@ impl Voice {
             vibrato_offset: Semitones::ZERO,
             output_module_id: output_id,
             mod_matrix_id,
+            script_module_ids,
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: TuningTable::default(),
@@ -564,6 +572,15 @@ impl Voice {
     /// A fresh, zeroed per-slot source scratch buffer.
     fn new_script_scratch() -> Box<[[f32; MAX_SOURCES]; MAX_MOD_MATRIX_SLOTS]> {
         Box::new([[0.0; MAX_SOURCES]; MAX_MOD_MATRIX_SLOTS])
+    }
+
+    /// Collect the IDs of every Script module in `graph` (Phase 2). Cached so the
+    /// per-block eval pass does not rescan the graph each time.
+    fn collect_script_module_ids(graph: &ModuleGraph) -> Vec<crate::ModuleId> {
+        graph
+            .module_ids()
+            .filter(|id| id.module_type == ModuleType::Script)
+            .collect()
     }
 
     /// Set the voice id and re-propagate the control-script PRNG seed base to the
@@ -921,14 +938,33 @@ impl Voice {
         // Set oscillator frequencies in the graph before processing
         self.graph.set_oscillator_frequency(freq);
 
-        // === Mod Matrix: update sources and apply modulations ===
-        if let Some(mm_id) = self.mod_matrix_id {
+        // === Control scripts: evaluate the Mod Matrix and Script modules ===
+        // Both read the same per-block source snapshot (so `gate_on` is seen by
+        // every consumer this block) and run before graph processing.
+        if self.mod_matrix_id.is_some() || !self.script_module_ids.is_empty() {
             // Control rate = evaluations per second = sample_rate / block_size;
             // drives time-based script ops (`lag`, `phasor`) and the `sr` var.
             let block = samples.as_usize().max(1) as f32;
             let control_rate = context.sample_rate.as_f32() / block;
-            self.apply_mod_matrix(mm_id, control_rate, context);
+            let macros = self.macro_values();
+            let sctx = self.script_ctx(control_rate, context);
+
+            if let Some(mm_id) = self.mod_matrix_id {
+                self.apply_mod_matrix(mm_id, &macros, &sctx);
+            }
+            // Evaluate each Script module's slots (caches results on the module;
+            // its `process()` then emits them on `out1`..`out8`).
+            for i in 0..self.script_module_ids.len() {
+                let id = self.script_module_ids[i];
+                self.eval_script_module(id, &macros, &sctx);
+            }
         }
+
+        // `gate_on` is a one-block pulse: consume it after every control-script
+        // consumer has read it this block. Cleared unconditionally — a voice with
+        // no script consumers must not leave the flag stuck at `1` (a later
+        // hot-added script would otherwise see `gate_on` every block).
+        self.note_on_block = false;
 
         // Ensure buffers are sized correctly
         self.mono_buffer.resize(samples.as_usize());
@@ -987,18 +1023,9 @@ impl Voice {
         }
     }
 
-    /// Apply modulation matrix: resolve each routing's source (macro / module
-    /// output / param) and add the scaled offset to its destination.
-    fn apply_mod_matrix(
-        &mut self,
-        mm_id: crate::ModuleId,
-        control_rate: f32,
-        context: &ProcessContext<'_>,
-    ) {
-        let sample_rate = context.sample_rate;
-
-        // Per-voice macro source values.
-        let macros = MacroValues {
+    /// Per-voice macro source values for this block.
+    fn macro_values(&self) -> MacroValues {
+        MacroValues {
             velocity: self.state.velocity().map(|v| v.as_f32()).unwrap_or(0.0),
             note: self
                 .state
@@ -1009,35 +1036,76 @@ impl Voice {
             mod_wheel: self.mod_wheel.as_f32(),
             pitch_bend: self.pitch_bend.as_f32(),
             poly_aftertouch: self.poly_aftertouch.as_f32(),
-        };
+        }
+    }
 
-        // Per-voice control-script context: gate/age/sr (Step 2) plus the
-        // transport sources (Phase 1). Transport newtypes normalize to `f32`
-        // here; `bar_phase` is the 0..1 position within the 4/4 bar.
-        let sctx = ScriptCtx {
+    /// Per-voice control-script context for this block: gate/age/sr (Step 2) plus
+    /// the transport sources (Phase 1). Transport newtypes normalize to `f32`
+    /// here; `bar_phase` is the 0..1 position within the 4/4 bar.
+    fn script_ctx(&self, control_rate: f32, context: &ProcessContext<'_>) -> ScriptCtx {
+        ScriptCtx {
             gate: f32::from(matches!(self.state, VoiceState::Active { .. })),
             gate_on: f32::from(self.note_on_block),
             // `age` is the block-start elapsed time. The instrument bumps `age`
             // just *before* `process_audio`, so block 0 already reads ~one block
             // (sub-5 ms), not exactly 0 — accepted: moving the increment would
             // perturb the voice-stealing priority that also reads `age`.
-            age: self.age.to_seconds(sample_rate).as_f32(),
+            age: self.age.to_seconds(context.sample_rate).as_f32(),
             sr: control_rate,
             beat: context.position_beats.as_f32(),
             bar_phase: (context.position_beats.beat_in_bar() / 4.0) as f32,
             tempo: context.tempo.as_f32(),
             playing: f32::from(context.is_playing),
-        };
+        }
+    }
 
-        // Resolve each routing's source value (scalar) or script output into the
-        // pre-allocated cache while the graph is borrowed immutably; then apply
-        // (mutable) from the cache.
-        self.resolve_routings_into_cache(mm_id, &macros, &sctx);
-        // `gate_on` is a one-block pulse — consume it after this block's scripts.
-        self.note_on_block = false;
+    /// Apply modulation matrix: resolve each routing's source (macro / module
+    /// output / param) or script output into the pre-allocated cache while the
+    /// graph is borrowed immutably, then add the scaled offset to its destination.
+    fn apply_mod_matrix(&mut self, mm_id: crate::ModuleId, macros: &MacroValues, sctx: &ScriptCtx) {
+        self.resolve_routings_into_cache(mm_id, macros, sctx);
         for i in 0..self.mod_slots_cache.len() {
             let (src_value, dst, amount) = self.mod_slots_cache[i];
             self.graph.apply_mod_offset_addr(dst, src_value * amount);
+        }
+    }
+
+    /// Evaluate every scripted slot of a Script module (Phase 2) in two passes,
+    /// mirroring the Mod Matrix: resolve each slot's address-based sources into
+    /// `script_scratch` while the graph is borrowed immutably, then evaluate under
+    /// a mutable borrow. The module caches each result (via its overridden
+    /// `eval_script_slot`) and emits it on the matching output port in `process()`.
+    fn eval_script_module(&mut self, id: crate::ModuleId, macros: &MacroValues, sctx: &ScriptCtx) {
+        // Pass 1: resolve sources for each active slot into its scratch row.
+        let mut active = [None::<usize>; MAX_MOD_MATRIX_SLOTS];
+        {
+            let Some(module) = self.graph.get_module(id) else {
+                return;
+            };
+            let Some(scripts) = module.scripts() else {
+                return;
+            };
+            for (slot, entry) in scripts.iter().enumerate().take(MAX_MOD_MATRIX_SLOTS) {
+                if let Some(script) = entry {
+                    let n = script.inputs.len().min(MAX_SOURCES);
+                    for (j, input) in script.inputs.iter().take(MAX_SOURCES).enumerate() {
+                        self.script_scratch[slot][j] =
+                            Self::resolve_script_input(&self.graph, input, macros, sctx);
+                    }
+                    active[slot] = Some(n);
+                }
+            }
+        }
+
+        // Pass 2: evaluate each active slot against the module's own state.
+        let eval_ctx = EvalContext::new(sctx.sr);
+        if let Some(module) = self.graph.get_module_mut(id) {
+            for (slot, count) in active.iter().enumerate() {
+                if let Some(n) = *count {
+                    let _ =
+                        module.eval_script_slot(slot, &self.script_scratch[slot][..n], &eval_ctx);
+                }
+            }
         }
     }
 
@@ -1199,6 +1267,7 @@ impl Voice {
             .or_else(|| cloned_graph.find_module_by_type(ModuleType::Mixer));
 
         let mod_matrix_id = cloned_graph.find_module_by_type(ModuleType::ModMatrix);
+        let script_module_ids = Self::collect_script_module_ids(&cloned_graph);
 
         let mut voice = Self {
             id: self.id,
@@ -1219,6 +1288,7 @@ impl Voice {
             vibrato_offset: Semitones::ZERO,
             output_module_id: output_id,
             mod_matrix_id,
+            script_module_ids,
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: self.tuning_table.clone(),
@@ -1242,6 +1312,7 @@ impl Voice {
             .or_else(|| self.graph.find_module_by_type(ModuleType::Amplifier))
             .or_else(|| self.graph.find_module_by_type(ModuleType::Mixer));
         self.mod_matrix_id = self.graph.find_module_by_type(ModuleType::ModMatrix);
+        self.script_module_ids = Self::collect_script_module_ids(&self.graph);
     }
 }
 
@@ -1552,5 +1623,146 @@ mod tests {
             peak(&mut voice, &ctx) > 0.01,
             "clearing the script must restore audio"
         );
+    }
+
+    /// Phase 2 acceptance: a Script module's `out1` port carries its slot's value
+    /// and can drive a Mod-Matrix source — `scr-1.out1 = -1` routed to `amp.level`
+    /// silences the voice (read with the usual one-block source latency).
+    #[test]
+    fn script_module_drives_mod_matrix_source() {
+        use synth_core::script::{BoundScript, CompiledScript, Op};
+        use synth_core::{DestAddr, ModMatrixParam, SampleCount, SampleRate, SrcAddr};
+        use synth_modules::{Amplifier, ModMatrix, Oscillator, ScriptModule};
+
+        let mut voice = Voice::new(VoiceId::new(0));
+        let osc = voice.graph.add_module(Box::new(Oscillator::new()));
+        let amp = voice.graph.add_module(Box::new(Amplifier::new()));
+        let scr = voice.graph.add_module(Box::new(ScriptModule::new()));
+        let mmx = voice.graph.add_module(Box::new(ModMatrix::new()));
+        voice
+            .graph
+            .connect(osc, "out", amp, "in")
+            .expect("osc -> amp");
+        voice.update_output_cache();
+
+        // scr-1 slot 0: `out = -1`, emitted on out1.
+        let neg_one = std::sync::Arc::new(BoundScript::new(
+            CompiledScript::new(vec![Op::PushConst(0)], vec![-1.0], 0, 0),
+            Vec::new(),
+            "out = -1".to_string(),
+        ));
+        let _ = voice.graph.set_script(scr, 0, Some(neg_one));
+
+        // Mod Matrix slot 0: source = scr-1.out1, dest = amp.level, amount = +1.
+        voice.graph.set_param(
+            mmx,
+            Param::ModMatrix(ModMatrixParam::SlotSource(
+                0,
+                Some(SrcAddr::module(ModuleType::Script, 1, "out1")),
+            )),
+        );
+        voice.graph.set_param(
+            mmx,
+            Param::ModMatrix(ModMatrixParam::SlotDestination(
+                0,
+                Some(DestAddr::new(ModuleType::Amplifier, 1, "level")),
+            )),
+        );
+        voice.graph.set_param(
+            mmx,
+            Param::ModMatrix(ModMatrixParam::SlotAmount(0, BipolarValue::new(1.0))),
+        );
+        voice
+            .graph
+            .set_param(mmx, Param::ModMatrix(ModMatrixParam::SlotEnabled(0, true)));
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        voice.note_on(MidiNote::A4, Velocity::MAX, SamplePosition::ZERO);
+
+        let mut l = AudioBuffer::new(256);
+        let mut r = AudioBuffer::new(256);
+        // First block fills scr-1.out1; the matrix reads it (1-block latency) on
+        // the next blocks. Run several to settle the level de-zipper ramp.
+        for _ in 0..4 {
+            voice.process_audio(&mut l, &mut r, &ctx);
+        }
+        // scr-1.out1 carries the script value across the whole buffer.
+        let out1 = voice
+            .graph
+            .get_module_output(scr, PortName::intern("out1"))
+            .expect("scr-1.out1 exists");
+        assert!(
+            (0..256).all(|i| (out1[i] + 1.0).abs() < 1e-6),
+            "out1 == -1 everywhere"
+        );
+        // …and routed to amp.level it silences the voice.
+        let peak = (0..256).map(|i| l[i].abs()).fold(0.0_f32, f32::max);
+        assert!(
+            peak < 1e-3,
+            "scr-1.out1 -> amp.level must silence the voice"
+        );
+    }
+
+    /// Phase 2 acceptance: scripts chain — `scr-2` reads `scr-1.out1` and doubles
+    /// it, so a constant `0.5` from scr-1 becomes `1.0` on scr-2.out1 (one block
+    /// of latency for the cross-module port read).
+    #[test]
+    fn script_modules_chain_through_ports() {
+        use synth_core::script::{BoundScript, CompiledScript, Op, ScriptInput};
+        use synth_core::{SampleCount, SampleRate, SrcAddr};
+        use synth_modules::ScriptModule;
+
+        let mut voice = Voice::new(VoiceId::new(0));
+        let scr1 = voice.graph.add_module(Box::new(ScriptModule::new()));
+        let scr2 = voice.graph.add_module(Box::new(ScriptModule::new()));
+        voice.update_output_cache();
+
+        // scr-1 slot 0: `out = 0.5`.
+        let half = std::sync::Arc::new(BoundScript::new(
+            CompiledScript::new(vec![Op::PushConst(0)], vec![0.5], 0, 0),
+            Vec::new(),
+            "out = 0.5".to_string(),
+        ));
+        let _ = voice.graph.set_script(scr1, 0, Some(half));
+
+        // scr-2 slot 0: `src x = scr-1.out1` / `out = x * 2`.
+        let doubler = std::sync::Arc::new(BoundScript::new(
+            CompiledScript::new(
+                vec![Op::PushSource(0), Op::PushConst(0), Op::Mul],
+                vec![2.0],
+                1,
+                0,
+            ),
+            vec![ScriptInput::Source(SrcAddr::module(
+                ModuleType::Script,
+                1,
+                "out1",
+            ))],
+            "src x = scr-1.out1\nout = x * 2".to_string(),
+        ));
+        let _ = voice.graph.set_script(scr2, 0, Some(doubler));
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(64),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        voice.note_on(MidiNote::A4, Velocity::MAX, SamplePosition::ZERO);
+
+        let mut l = AudioBuffer::new(64);
+        let mut r = AudioBuffer::new(64);
+        // Block 1 fills scr-1.out1; block 2 lets scr-2 read it (1-block latency).
+        for _ in 0..2 {
+            voice.process_audio(&mut l, &mut r, &ctx);
+        }
+        let out = voice
+            .graph
+            .get_module_output(scr2, PortName::intern("out1"))
+            .expect("scr-2.out1 exists");
+        assert!((out[0] - 1.0).abs() < 1e-6, "scr-2 = scr-1.out1 * 2 = 1.0");
     }
 }

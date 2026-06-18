@@ -4238,6 +4238,37 @@
           "type": "object"
         },
         {
+          "description": "Script (script) — Scripted control signals — up to 8 YAMS slots, each on its own output port",
+          "properties": {
+            "id": {
+              "description": "Module instance ID, e.g. `scr-1`.",
+              "pattern": "^scr-\\d+$",
+              "type": "string"
+            },
+            "parameters": {
+              "additionalProperties": false,
+              "default": {},
+              "description": "Parameter values for this module.",
+              "properties": {},
+              "type": "object"
+            },
+            "position": {
+              "$ref": "#/$defs/Position"
+            },
+            "type": {
+              "const": "script",
+              "description": "Module type discriminator."
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "position"
+          ],
+          "title": "Script",
+          "type": "object"
+        },
+        {
           "description": "Delay (delay) — Stereo delay with ping-pong mode",
           "properties": {
             "id": {
@@ -6371,7 +6402,8 @@
         "vocoder",
         "voice_synth",
         "vocal_tract",
-        "fof"
+        "fof",
+        "script"
       ],
       "type": "string"
     },
