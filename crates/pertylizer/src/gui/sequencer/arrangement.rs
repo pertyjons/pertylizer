@@ -233,7 +233,75 @@ struct ArrangementCtx<'a> {
     instruments: &'a [crate::gui::instrument_rack::InstrumentUiState],
 }
 
-/// Draw the arrangement view with track headers and timeline.
+/// Painter-local coordinate transforms for the arrangement timeline. Mirrors
+/// [`super::piano_roll`]'s `PianoRollCoords`: the screen geometry (timeline
+/// origin, zoom, snap unit) lives in one value so extracted painter / context-
+/// menu helpers can take `&ArrangementCoords` instead of capturing a fistful of
+/// closures. The closures in [`draw_arrangement`] delegate straight to these
+/// methods, so every call site stays byte-for-byte unchanged.
+struct ArrangementCoords {
+    /// Left edge of the timeline (x of tick 0), in screen pixels.
+    tl_x: f32,
+    /// Top edge of the timeline (ruler top), in screen pixels.
+    tl_y: f32,
+    /// Ticks per beat (quarter note).
+    ticks_per_beat: u64,
+    /// Horizontal scale: screen pixels per beat.
+    pixels_per_beat: f32,
+    /// Number of track rows (clamps `y_to_row`).
+    track_count: usize,
+    /// Snap unit in ticks, shared by placement create / drag / resize / loop.
+    snap_ticks: u64,
+}
+
+impl ArrangementCoords {
+    /// Tick → x screen position.
+    fn tick_to_x(&self, tick_val: u64) -> f32 {
+        if self.ticks_per_beat == 0 {
+            return self.tl_x;
+        }
+        let beats = tick_val as f32 / self.ticks_per_beat as f32;
+        self.tl_x + beats * self.pixels_per_beat
+    }
+
+    /// x screen position → tick (clamped at 0).
+    fn x_to_tick(&self, x: f32) -> u64 {
+        if self.ticks_per_beat == 0 {
+            return 0;
+        }
+        let beats = (x - self.tl_x) / self.pixels_per_beat;
+        (beats * self.ticks_per_beat as f32).max(0.0) as u64
+    }
+
+    /// Snap a tick to the current arrangement snap unit.
+    fn snap_tick(&self, tick: u64) -> u64 {
+        snap_to_step(tick, self.snap_ticks)
+    }
+
+    /// y screen position → track row index, or `None` when above the first row
+    /// or past the last track.
+    fn y_to_row(&self, y: f32) -> Option<usize> {
+        let row_offset = y - (self.tl_y + RULER_HEIGHT);
+        if row_offset < 0.0 || TRACK_ROW_HEIGHT <= 0.0 {
+            return None;
+        }
+        let idx = (row_offset / TRACK_ROW_HEIGHT) as usize;
+        if idx < self.track_count {
+            Some(idx)
+        } else {
+            None
+        }
+    }
+
+    /// The ruler rectangle spanning the full timeline width.
+    fn ruler_rect(&self, timeline_width: f32) -> Rect {
+        Rect::from_min_size(
+            Pos2::new(self.tl_x, self.tl_y),
+            Vec2::new(timeline_width, RULER_HEIGHT),
+        )
+    }
+}
+
 /// Write a new length to a pattern and push the matching `SetPatternLength`
 /// undo action — but only if the length actually changed. Shared by the
 /// "Set Length…" submenu's free-input Apply branch and its bar presets.
@@ -262,6 +330,8 @@ fn apply_pattern_length(
     }
 }
 
+/// Draw the arrangement view with track headers and timeline.
+///
 /// Returns `Some(PatternId)` if a placement was double-clicked.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub(super) fn draw_arrangement(
@@ -406,43 +476,29 @@ pub(super) fn draw_arrangement(
             let tl_x = painter_rect.min.x;
             let tl_y = painter_rect.min.y;
 
-            let tick_to_x = |tick_val: u64| -> f32 {
-                if ticks_per_beat == 0 {
-                    return tl_x;
-                }
-                let beats = tick_val as f32 / ticks_per_beat as f32;
-                tl_x + beats * pixels_per_beat
+            // Painter-local geometry. The closures below delegate to it so the
+            // rest of this function's call sites stay unchanged; later painter
+            // extractions can take `&coords` directly.
+            let coords = ArrangementCoords {
+                tl_x,
+                tl_y,
+                ticks_per_beat,
+                pixels_per_beat,
+                track_count,
+                snap_ticks: view_state.arrangement_snap_ticks as u64,
             };
 
+            let tick_to_x = |tick_val: u64| coords.tick_to_x(tick_val);
             // Helper: x position to tick
-            let x_to_tick = |x: f32| -> u64 {
-                if ticks_per_beat == 0 {
-                    return 0;
-                }
-                let beats = (x - tl_x) / pixels_per_beat;
-                (beats * ticks_per_beat as f32).max(0.0) as u64
-            };
-
+            let x_to_tick = |x: f32| coords.x_to_tick(x);
             // Single snap unit shared by placement create, drag, resize, and
             // loop-region — see `snap_to_step` for the underlying math.
-            let snap_ticks = view_state.arrangement_snap_ticks as u64;
-            let snap_tick = |tick: u64| snap_to_step(tick, snap_ticks);
-
+            let snap_tick = |tick: u64| coords.snap_tick(tick);
             // Helper: y position to track row index
-            let y_to_row = |y: f32| -> Option<usize> {
-                let row_offset = y - (tl_y + RULER_HEIGHT);
-                if row_offset < 0.0 || TRACK_ROW_HEIGHT <= 0.0 {
-                    return None;
-                }
-                let idx = (row_offset / TRACK_ROW_HEIGHT) as usize;
-                if idx < track_count { Some(idx) } else { None }
-            };
+            let y_to_row = |y: f32| coords.y_to_row(y);
 
             // ── Ruler (bar/beat numbers) ──
-            let ruler_rect = Rect::from_min_size(
-                Pos2::new(tl_x, tl_y),
-                Vec2::new(timeline_width, RULER_HEIGHT),
-            );
+            let ruler_rect = coords.ruler_rect(timeline_width);
             draw_ruler_labels(
                 &painter,
                 &t,
