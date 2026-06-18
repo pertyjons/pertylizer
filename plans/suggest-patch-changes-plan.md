@@ -200,8 +200,9 @@ Call `*_impl()` directly, the repo convention:
 3. Server param/handler/dispatch + tool description.
 4. `reduce_masking` goal (depends on `analyze_masking_matrix` wiring) + its tests.
 5. `apply=true` path + integration test.
-6. Update `docs/history.md` (one line), tick the item in
-   `plans/mcp-improvements-plan.md`, bump `Cargo.toml` per the `new version` flow.
+6. Update `docs/history.md` (one line) and bump `Cargo.toml` per the `new version`
+   flow. (This was the last open item from the MCP improvements batch, whose
+   checklist doc has since been removed — nothing left to tick there.)
 
 Each step keeps `cargo fmt --check && cargo build && cargo clippy --all-targets &&
 cargo test` green before committing (per CLAUDE.md).
