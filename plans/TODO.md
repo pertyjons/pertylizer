@@ -397,7 +397,8 @@ NP6.1 (Note FX rack inspector — add/remove/configure/freeze, in both the Seque
 Pattern views, coalesced undo), NP6.2 (per-note ornament "Orn" column in the tracker),
 and NP6.3 (piano-roll ornament editor popup + selection-inspector "Edit…" + note-head
 glyph + ghost-note preview). Includes the bundled "Ornament Demo" example project.
-Not yet eyeballed in-app.
+The tracker ornament cells/menus were eyeballed in-app (2026-06-18); the rack panel +
+piano-roll ghosts have not been verified in-app yet.
 
 **Iceboxed — the rest of Phase E (build on demand only).** The expensive,
 narrow-audience remainder of the old north-star phase. No plan doc; pick up only when a
