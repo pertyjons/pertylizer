@@ -275,7 +275,8 @@ pub fn spectrum_top_peaks(samples: &[f32], sample_rate: u32, n: usize) -> Vec<Sp
         .map(|(k, m)| {
             let refined_bin = parabolic_refine_bin(&mags, k);
             let freq_hz = refined_bin * sr / fsz;
-            let magnitude_db = 20.0 * (m.max(MAG_FLOOR) / max_mag).log10();
+            let magnitude_db =
+                synth_core::Decibels::from_linear(m.max(MAG_FLOOR) / max_mag).as_f32();
             SpectrumPeak {
                 freq_hz,
                 magnitude_db,

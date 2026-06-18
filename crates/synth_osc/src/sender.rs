@@ -442,8 +442,8 @@ fn compute_spectrum(
         if count > 0 {
             let avg_mag = sum / count as f32;
             // Convert to dB and normalize to 0.0–1.0 range (-100 dB → 0 dB)
-            let db = 20.0 * (avg_mag / FFT_SIZE as f32).max(1e-10).log10();
-            state.bands[band_idx] = ((db + 100.0) / 100.0).clamp(0.0, 1.0);
+            state.bands[band_idx] =
+                synth_core::magnitude_to_normalized_db(avg_mag / FFT_SIZE as f32, -100.0);
         }
     }
 

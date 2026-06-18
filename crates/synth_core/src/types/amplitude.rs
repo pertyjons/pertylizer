@@ -207,6 +207,23 @@ impl Decibels {
     }
 }
 
+/// Convert a linear magnitude to a normalized `0.0..=1.0` meter value.
+///
+/// The magnitude is converted to dBFS (`20·log10`) and then mapped linearly
+/// over the dB range `[floor_db, 0]` onto `[0.0, 1.0]`, clamped at both ends.
+/// `floor_db` is the dB value that maps to `0.0` and must be negative (e.g.
+/// `-60.0` for a level meter, `-100.0` for a spectrum band). A magnitude of
+/// `0` (or below) yields `0.0`.
+#[inline]
+#[must_use]
+pub fn magnitude_to_normalized_db(magnitude: f32, floor_db: f32) -> f32 {
+    // `max(0.0)` floors at silence and also collapses NaN to 0.0 (NaN guard:
+    // `f32::max` returns the non-NaN operand), so a bad sample maps to 0.0
+    // rather than propagating NaN through the clamp into render geometry.
+    let db = Decibels::from_linear(magnitude.max(0.0)).as_f32();
+    ((db - floor_db) / -floor_db).clamp(0.0, 1.0)
+}
+
 impl Default for Decibels {
     fn default() -> Self {
         Self::UNITY
@@ -379,6 +396,24 @@ impl std::fmt::Display for Ratio {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_magnitude_to_normalized_db() {
+        // 0 dB (unity magnitude) maps to the top of the range.
+        assert!((magnitude_to_normalized_db(1.0, -60.0) - 1.0).abs() < 1e-4);
+        // The floor dB maps to 0.0 (-60 dB ≈ magnitude 0.001).
+        assert!(magnitude_to_normalized_db(0.001, -60.0).abs() < 1e-3);
+        // Midpoint: -30 dB over a -60 dB floor → 0.5.
+        let half = magnitude_to_normalized_db(10f32.powf(-30.0 / 20.0), -60.0);
+        assert!((half - 0.5).abs() < 1e-3);
+        // Below the floor and silence both clamp to 0.0.
+        assert_eq!(magnitude_to_normalized_db(0.0, -60.0), 0.0);
+        assert_eq!(magnitude_to_normalized_db(-1.0, -60.0), 0.0);
+        // Above unity clamps to 1.0.
+        assert_eq!(magnitude_to_normalized_db(4.0, -60.0), 1.0);
+        // NaN is sanitized to 0.0 rather than propagating.
+        assert_eq!(magnitude_to_normalized_db(f32::NAN, -60.0), 0.0);
+    }
 
     #[test]
     fn test_ratio_compression() {

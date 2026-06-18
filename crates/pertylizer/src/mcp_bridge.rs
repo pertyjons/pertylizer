@@ -10177,7 +10177,7 @@ fn auto_gain_stage_impl(
     let new_master = raw_new_master.clamp(0.0, 2.0);
     if (new_master - raw_new_master).abs() > f32::EPSILON {
         limited_by = "master_volume_range";
-        applied_gain_db = 20.0 * (new_master / current_master).log10();
+        applied_gain_db = synth_core::Decibels::from_linear(new_master / current_master).as_f32();
     }
 
     if session

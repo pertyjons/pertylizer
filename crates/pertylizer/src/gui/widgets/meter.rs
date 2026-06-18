@@ -86,13 +86,9 @@ pub fn draw_level_meter(
     // Background
     painter.rect_filled(rect, t.style.corner_radius_small, t.colors.bg_dark);
 
-    // Calculate bar positions
-    let peak_db = 20.0 * peak.max(0.0001).log10();
-    let rms_db = 20.0 * rms.max(0.0001).log10();
-
-    // Map dB to 0-1 range (-60dB to 0dB)
-    let peak_norm = ((peak_db + 60.0) / 60.0).clamp(0.0, 1.0);
-    let rms_norm = ((rms_db + 60.0) / 60.0).clamp(0.0, 1.0);
+    // Map magnitude to 0-1 range over -60dB to 0dB
+    let peak_norm = synth_core::magnitude_to_normalized_db(peak, -60.0);
+    let rms_norm = synth_core::magnitude_to_normalized_db(rms, -60.0);
 
     let padding = 2.0;
     let inner_rect = rect.shrink(padding);
@@ -229,12 +225,9 @@ fn draw_meter_bar(
     rms: f32,
     t: &crate::gui::theme::Theme,
 ) {
-    // Calculate levels
-    let peak_db = 20.0 * peak.max(0.0001).log10();
-    let rms_db = 20.0 * rms.max(0.0001).log10();
-
-    let peak_norm = ((peak_db + 60.0) / 60.0).clamp(0.0, 1.0);
-    let rms_norm = ((rms_db + 60.0) / 60.0).clamp(0.0, 1.0);
+    // Calculate levels over -60dB to 0dB
+    let peak_norm = synth_core::magnitude_to_normalized_db(peak, -60.0);
+    let rms_norm = synth_core::magnitude_to_normalized_db(rms, -60.0);
 
     // Background
     painter.rect_filled(rect, t.style.border_width, t.colors.bg_dark);
