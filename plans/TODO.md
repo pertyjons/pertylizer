@@ -392,7 +392,7 @@ extracted here.
 The engine and every processor landed in v0.311.0:
 arpeggiator (flagship), timed-repeat ornaments (flam/drag/ruff/roll/grace), chord +
 strum, scale-quantize + humanize, the MCP surface, and save/load persistence. The
-**NP6 GUI is now fully done** (`plans/note-processors-gui-plan.md`):
+**NP6 GUI is now fully done**:
 NP6.1 (Note FX rack inspector — add/remove/configure/freeze, in both the Sequencer and
 Pattern views, coalesced undo), NP6.2 (per-note ornament "Orn" column in the tracker),
 and NP6.3 (piano-roll ornament editor popup + selection-inspector "Edit…" + note-head
