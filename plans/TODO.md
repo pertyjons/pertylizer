@@ -19,20 +19,6 @@ color was dropped. Only one open item remains:
 - [ ] Visual indicator on mapped parameters
 - [ ] Save/load MIDI mappings with patch or settings
 
-### 1.5 Settings & utilities
-
-All done. The painter cores were decomposed: `draw_arrangement` now delegates
-to `draw_arrangement_timeline` + `draw_arrangement_context_menu` (both via
-`ArrangementCtx`, with geometry in `ArrangementCoords` mirroring
-`PianoRollCoords`), and `draw_piano_roll` delegates its note grid to
-`draw_piano_roll_grid`. Earlier shipped: `magnitude_to_normalized_db()`
-(synth_core), `Param::sample_select` / `SamplerParam::sample_select`,
-`param_sample_id` on `ModuleStateBuilder`, the `apply_pattern_length` dedup,
-and the `From`/`TryFrom` `SeqInstrumentId` ↔ `InstrumentId` conversions. The
-`Song::calculate_length()` per-tick recompute was already cached behind a
-structural-generation counter (`d779f582`). The Settings Browse-button item
-was dropped.
-
 ### 1.6 Workflow quality of life
 
 - [ ] A/B comparison — quick-switch between two patch versions to compare sound
