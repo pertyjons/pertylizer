@@ -1029,6 +1029,17 @@ impl ModuleBuilder {
         self
     }
 
+    /// Set a sampler `SampleSelect` parameter by raw sample id.
+    ///
+    /// Uses the dedicated [`ParamValue::SampleId`] variant so the `u64` id
+    /// round-trips losslessly instead of going through the lossy f32 path.
+    pub fn param_sample_id(mut self, name: &str, id: u64) -> Self {
+        self.state
+            .parameters
+            .insert(name.to_string(), ParamValue::SampleId { sample_id: id });
+        self
+    }
+
     /// Convenience: set waveform for oscillator.
     pub fn waveform(self, wf: &str) -> Self {
         self.param_choice("waveform", wf)
