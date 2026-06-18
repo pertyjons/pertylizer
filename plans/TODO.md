@@ -22,42 +22,19 @@ color was dropped. Only one open item remains:
 ### 1.5 Settings & utilities
 
 - [ ] Add Browse button in Settings dialog to change patches directory
-- [ ] Extract `magnitude_to_normalized_db()` into `synth_core` or `synth_dsp` — the
-  `20·log10(mag)` → normalized-dB pattern is repeated in 5+ locations (`synth_osc/src/sender.rs`,
-  `mcp_bridge.rs`, `audio/analysis.rs`, two in `gui/widgets/meter.rs`) with no shared helper.
-- [ ] Add ergonomic constructor `SamplerParam::sample_select(u64) -> Self` (or `Param::sample_select`) in
-  `synth_core/src/params/sampler.rs` — 4 call sites currently spell out
-  `Param::Sampler(SamplerParam::SampleSelect(SampleId(id)))` verbatim (`session.rs`, `mcp_bridge.rs`,
-  `gui/patch_editor.rs`, `gui/egui_backend.rs`)
-- [ ] Add `param_sample_id(name, id)` to `ModuleStateBuilder` in `pertylizer/src/patch.rs` for symmetry with
-  `param_f` / `param_i` / `param_b` / `param_choice` (no current callers — for API completeness)
 - [ ] **Finish decomposing `draw_piano_roll` / `draw_arrangement` — geometry-coupled painter cores.**
   The two painter cores stay inline (deferred): `draw_piano_roll`'s note-grid `ScrollArea` closure
   and `draw_arrangement`'s timeline painter + its ~330-line `response.context_menu`. They depend on
   painter-local coordinate transforms (`tick_to_x`, `ruler_rect`, `snap_tick`…), not just the 6 ctx
   fields, so clean extraction needs those plumbed too; no GUI tests, so left for a focused follow-up.
   When the arrangement timeline is extracted, add `handle` back to `ArrangementCtx`.
-- [ ] **Deduplicate "Set Length" write+undo in the arrangement context menu.**
-  `gui/sequencer/arrangement.rs` "Set Length…" submenu has the same ~22-line "read old length → write new → push
-  `SetPatternLength` undo" block in two places: the free-input `DragValue` + Apply branch and the preset
-  buttons loop. Extract `fn apply_pattern_length(song, undo_manager, pat_id, new_len)`.
-- [ ] **Unify `SeqInstrumentId` ↔ `InstrumentId` raw conversions.**
-  ~9 sites across `gui/sequencer/{mod,arrangement,piano_roll}.rs` (split out of the old `mod.rs`)
-  do `inst.id.0 == seq_id.0 as u64` and a few do the reverse
-  `SeqInstrumentId::new(inst.id.0 as u16)` (lossy `u64 → u16` cast is silent). Pick one of: add
-  `impl From<SeqInstrumentId> for InstrumentId` + `TryFrom<InstrumentId> for SeqInstrumentId`, or add a
-  single `find_instrument_by_seq_id(&[InstrumentUiState], SeqInstrumentId) -> Option<&InstrumentUiState>`
-  helper. (A `build_instrument_colour_cache` helper already exists for the hot-path lookups.)
-- [ ] **Cache `Song::calculate_length()` instead of recomputing per tick on the audio
-  thread.** `SequencerEngine::update_cached_state` (`crates/synth_engine/src/sequencer_engine.rs`
-  around line 306/328) calls `song.calculate_length()` once per tick during playback. After
-  the E1 migration (`Song.patterns: Vec<Pattern>`) that cost is `O(arrangement × patterns)`
-  per tick — ~50 placements × 22 patterns × 1920 ticks/s ≈ 2.1M linear-find ops/s.
-  Still well within audio-thread budget at the current scale (no allocs, no locks, no panics),
-  but it's recomputing a value that only changes on structural mutation. Recommended fix:
-  cache `cached_song_length: Tick` on `SequencerEngine`, refresh on `play()` / `seek()` and
-  the structural-change command set; drop the per-tick recompute. Pre-existing with BTreeMap
-  too — surfaced as a code-review finding during the E1 commit (2026-05-21).
+
+> The other §1.5 items shipped: `magnitude_to_normalized_db()` (synth_core),
+> `Param::sample_select` / `SamplerParam::sample_select`, `param_sample_id` on
+> `ModuleStateBuilder`, the `apply_pattern_length` dedup, and the
+> `From`/`TryFrom` `SeqInstrumentId` ↔ `InstrumentId` conversions. The
+> `Song::calculate_length()` per-tick recompute was already cached behind a
+> structural-generation counter (`d779f582`, 2026-06-16).
 
 ### 1.6 Workflow quality of life
 
