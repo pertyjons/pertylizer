@@ -168,6 +168,25 @@ impl From<u64> for InstrumentId {
     }
 }
 
+/// Widen a sequencer-side `SeqInstrumentId` (`u16`) to an engine `InstrumentId`
+/// (`u64`). Always lossless.
+impl From<synth_sequencer::SeqInstrumentId> for InstrumentId {
+    fn from(id: synth_sequencer::SeqInstrumentId) -> Self {
+        Self(u64::from(id.0))
+    }
+}
+
+/// Narrow an engine `InstrumentId` (`u64`) to a sequencer `SeqInstrumentId`
+/// (`u16`). Fails when the id does not fit in `u16` instead of silently
+/// truncating (the old `id.0 as u16` cast).
+impl TryFrom<InstrumentId> for synth_sequencer::SeqInstrumentId {
+    type Error = std::num::TryFromIntError;
+
+    fn try_from(id: InstrumentId) -> Result<Self, Self::Error> {
+        Ok(Self(u16::try_from(id.0)?))
+    }
+}
+
 /// Re-exported from `synth_osc_protocol` — shared across workspace and visualizer.
 pub use synth_osc_protocol::InstrumentCategory;
 

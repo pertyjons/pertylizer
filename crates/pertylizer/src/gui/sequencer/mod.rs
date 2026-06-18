@@ -11,7 +11,7 @@ use parking_lot::RwLock;
 
 use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use synth_core::{BipolarValue, Bpm, Hertz, MidiNote, Milliseconds, NormalizedValue, Semitones};
-use synth_engine::{EngineCommand, EngineHandle, RecordingState};
+use synth_engine::{EngineCommand, EngineHandle, InstrumentId, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
     ExpansionBuffer, Glide, GlideFrom, GlideInterp, Note, NoteExpression, NoteId, NoteLane,
@@ -799,14 +799,14 @@ fn preview_note(handle: &mut EngineHandle, pitch: Pitch, velocity: synth_core::V
 /// is O(1) and the hex parse only happens once per instrument.
 fn build_instrument_colour_cache(
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
-) -> std::collections::HashMap<u64, Color32> {
+) -> std::collections::HashMap<InstrumentId, Color32> {
     instruments
         .iter()
         .filter_map(|inst| {
             inst.color
                 .as_ref()
                 .and_then(|hex| crate::gui::patch_editor::parse_hex_color(hex))
-                .map(|c| (inst.id.0, c))
+                .map(|c| (inst.id, c))
         })
         .collect()
 }
@@ -814,11 +814,14 @@ fn build_instrument_colour_cache(
 /// Look up a cached instrument colour, falling back to `fallback` when
 /// the instrument has no colour set.
 fn cached_instrument_color(
-    cache: &std::collections::HashMap<u64, Color32>,
+    cache: &std::collections::HashMap<InstrumentId, Color32>,
     seq_id: SeqInstrumentId,
     fallback: Color32,
 ) -> Color32 {
-    cache.get(&(seq_id.0 as u64)).copied().unwrap_or(fallback)
+    cache
+        .get(&InstrumentId::from(seq_id))
+        .copied()
+        .unwrap_or(fallback)
 }
 
 /// Send the engine an `ArmRecord` command for the given pattern, using the
@@ -1100,10 +1103,11 @@ pub(crate) fn draw_sequencer_view(
     // back to the first available one so new notes route to a real target.
     if !instruments
         .iter()
-        .any(|inst| inst.id.0 == view_state.selected_instrument.0 as u64)
+        .any(|inst| inst.id == view_state.selected_instrument.into())
         && let Some(first) = instruments.first()
+        && let Ok(seq_id) = SeqInstrumentId::try_from(first.id)
     {
-        view_state.selected_instrument = SeqInstrumentId::new(first.id.0 as u16);
+        view_state.selected_instrument = seq_id;
     }
 
     // Transport bar at the top

@@ -667,9 +667,7 @@ pub(super) fn draw_arrangement(
                         .iter()
                         .find(|t| t.id == pl.track_id)
                         .map(|t| t.instrument_id)
-                        .and_then(|seq_id| {
-                            instruments.iter().find(|inst| inst.id.0 == seq_id.0 as u64)
-                        })
+                        .and_then(|seq_id| instruments.iter().find(|inst| inst.id == seq_id.into()))
                         .map_or_else(|| "---".to_owned(), |inst| inst.name.clone());
                     let tip_name = pl.pattern_name.clone();
                     let tip_beats = pl.length_beats;
@@ -1556,7 +1554,7 @@ fn draw_arrangement_track_headers(
                                     // Instrument selector row
                                     let inst_label = instruments
                                         .iter()
-                                        .find(|inst| inst.id.0 == track.instrument_id.0 as u64)
+                                        .find(|inst| inst.id == track.instrument_id.into())
                                         .map_or_else(
                                             || "— (none) —".to_owned(),
                                             |inst| inst.name.clone(),
@@ -1568,7 +1566,10 @@ fn draw_arrangement_track_headers(
                                     .width(116.0)
                                     .show_ui(ui, |ui| {
                                         for inst in instruments {
-                                            let seq_id = SeqInstrumentId::new(inst.id.0 as u16);
+                                            let Ok(seq_id) = SeqInstrumentId::try_from(inst.id)
+                                            else {
+                                                continue;
+                                            };
                                             let selected = track.instrument_id == seq_id;
                                             if ui.selectable_label(selected, &inst.name).clicked()
                                                 && let mut song_w = song.write()

@@ -852,7 +852,7 @@ pub(crate) fn draw_automation_target_selector(
                     AutomationTarget::Instrument { instrument, .. }
                     | AutomationTarget::Module { instrument, .. } => instruments
                         .iter()
-                        .find(|inst| inst.id.0 == instrument.0 as u64)
+                        .find(|inst| inst.id == (*instrument).into())
                         .map(|inst| inst.name.clone()),
                     _ => None,
                 };
@@ -905,7 +905,7 @@ pub(crate) fn draw_automation_target_selector(
             //    instrument-level set above.
             if let Some(inst) = instruments
                 .iter()
-                .find(|i| i.id.0 == view_state.selected_instrument.0 as u64)
+                .find(|i| i.id == view_state.selected_instrument.into())
             {
                 let mut module_ids = inst.patch_editor.module_ids();
                 module_ids.sort_unstable(); // deterministic (type, instance) order
@@ -968,14 +968,16 @@ pub(super) fn draw_pattern_instrument_transport(
     {
         let selected_label = instruments
             .iter()
-            .find(|inst| inst.id.0 == view_state.selected_instrument.0 as u64)
+            .find(|inst| inst.id == view_state.selected_instrument.into())
             .map_or_else(|| "---".to_owned(), |inst| inst.name.clone());
         egui::ComboBox::from_id_salt(ui.id().with("piano_roll_instrument"))
             .selected_text(RichText::new(&selected_label).size(12.0))
             .width(100.0)
             .show_ui(ui, |ui| {
                 for inst in instruments {
-                    let seq_id = SeqInstrumentId::new(inst.id.0 as u16);
+                    let Ok(seq_id) = SeqInstrumentId::try_from(inst.id) else {
+                        continue;
+                    };
                     let selected = view_state.selected_instrument == seq_id;
                     if ui.selectable_label(selected, &inst.name).clicked() {
                         view_state.selected_instrument = seq_id;
@@ -993,7 +995,7 @@ pub(super) fn draw_pattern_instrument_transport(
                 .map(|seq_id| {
                     instruments
                         .iter()
-                        .find(|inst| inst.id.0 == seq_id.0 as u64)
+                        .find(|inst| inst.id == (*seq_id).into())
                         .map_or_else(|| format!("#{}", seq_id.0), |inst| inst.name.clone())
                 })
                 .collect();
@@ -2206,7 +2208,7 @@ pub(crate) fn draw_piano_roll(
                                     data.track_overrides.first().copied().unwrap_or_default();
                                 let inst_name = instruments
                                     .iter()
-                                    .find(|inst| inst.id.0 == note_instrument.0 as u64)
+                                    .find(|inst| inst.id == note_instrument.into())
                                     .map_or_else(
                                         || format!("#{}", note_instrument.0),
                                         |inst| inst.name.clone(),
