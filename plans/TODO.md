@@ -1,199 +1,13 @@
 # TODO - Pertylizer
 
-## 0. Known Bugs
-
-### 0.1 Misc findings
-
-- [x] **Swing / Track-Solo automation unimplemented.** Most automation targets now
-  reach the engine (instrument macros, generic `AutomationTarget::Module`, Track
-  Volume/Pan/Mute, Global MasterVolume — all shipped via channel-strip Phases 1–2).
-  `Global(Tempo)` was removed in favour of the tempo map (see §2.1). **Resolved by
-  dropping the variants** — `GlobalParam::Swing` and `TrackParam::Solo` were silent
-  no-op lanes. Swing alters note timing (`Pattern::apply_swing`), not a per-block
-  scalar, so it follows the same reasoning that removed `Global(Tempo)`; Solo is an
-  inherently cross-track concept (Mute already covers per-track silencing). Removed
-  the enum variants, their engine match arms, and regenerated the project schema.
-- [x] **★ HIGH: expand Sub Oscillator waveform set from 3 to 6.** `SubOscWaveform`
-  (`crates/synth_core/src/params/sub_osc.rs:13`) currently exposes only
-  `Sine / Square / Pulse25`, while the main `Oscillator` exposes 6
-  (`Sine / Triangle / Sawtooth / Square / Pulse / DsfSaw`). Add the three
-  missing shapes: `Triangle`, `Sawtooth`, `DsfSaw`. Keep `Pulse25` distinct
-  from `Pulse` (Pulse25 = fixed 25 % duty, dedicated bass shape — Pulse
-  needs a PulseWidth param that the lean Sub Osc workflow deliberately
-  skips). The waveform-selector widget already filters by descriptor
-  choices (`gui/widgets/waveform.rs::WaveformType::from_id`) so the GUI picks
-  up the new buttons automatically as long as `WaveformType::from_id` covers
-  the new ids. Touch points: `sub_osc.rs:23-55` (variants + `ALL` + `name` +
-  `id` + `to_choices` + rendering branch in `generate_sample`),
-  `WaveformType::from_id` (mappings for `triangle`/`sawtooth`/`dsf_saw` —
-  already exist). No save-format bump required; existing `"sine"` / `"square"`
-  / `"pulse25"` keep loading.
-- [x] **Follow-up: stale `list_instruments` readback inside one `batch_execute`.** The primary
-  bridge-race (set/get validation failing with `"instrument not found"` right after
-  `apply_example_patch`) was fixed by adding a synchronous `alive_instruments` mirror on
-  `SynthSession`. What was left: `list_instruments`, `get_instrument_info`, and other readers that
-  pull `volume`/`pan`/`mute` etc. read `EngineState::instrument_snapshots`, only rebuilt on the
-  audio thread, so a same-batch `set_instrument_volume` → `list_instruments` reported the stale
-  value until the audio thread ticked. **Done** — added a single `patch_instrument_snapshot(id,
-  |s| …)` write-through helper on `SynthSession` and wired it into every `set_instrument_*` setter
-  (volume/pan/mute/enabled/solo/category/midi_channel/description/color/patch_*/sidechain), each
-  mirroring the engine's `update_shared_instruments` field mapping exactly. The closure helper keeps
-  the maintenance burden to one line per new setter. Regression test
-  `set_instrument_writes_through_to_snapshot_before_audio_tick`.
-
---- 
-
-## ★ Description fields on user-facing entities (for AI context)
-
-Add an optional free-text `description: String` field on user-facing entities so the user (or AI) can record
-*intent* — what a thing is for, not just what it is. The structural data (graph, notes, params) already tells you
-*what*; descriptions capture the *why*, which is otherwise unrecoverable.
-
-**Every instance-level description must be readable AND writable via MCP**, so AI can both read existing intent
-and populate descriptions after analysis. Read access is typically free (include the field in the existing
-resource/getter response — `get_instrument_info`, `get_song_info`, `list_patterns`, `list_tracks`,
-`list_samples`, `get_awe_state`); write access needs a dedicated setter tool routed through
-`bridge.rs` → `mcp_bridge.rs` → `server.rs`.
-
-**Every instance-level description must also be editable from the GUI** — never MCP-only. The user must be
-able to write the same intent they'd ask AI to write. Each entity gets an inline-editable text field (header
-band, properties dialog, or context-menu "Edit description…" action) wired through the same session/bridge
-path so MCP and GUI writes share validation and undo. Type-level descriptors (`ModuleDescriptor`,
-`ParameterDescriptor`, `PortDescriptor`) are already read-exposed via `get_module_type_info` /
-`list_module_types` / `search_modules` and are hardcoded in source — no GUI edit and no MCP write tool there.
-
-### Current status of description fields
-
-Phase 1 (`InstrumentState`/`Patch`/`AwePresetFile`), Phase 2 (`Song`/`Pattern`/`SequencerTrack`/`Sample`)
-and **Phase 3 (per-module-instance descriptions)** are shipped — every entity below has its `description`
-field plus MCP read + write tool and GUI editing. The only remaining items are the cross-cutting polish
-tasks at the end of this section (diagnostics surfacing + tooltips).
-
-| Entity                       | Field exists?                        | MCP read | MCP write       |
-|------------------------------|--------------------------------------|----------|-----------------|
-| `InstrumentState`            | ✅ `patch.rs:697`                     | ✅        | ✅               |
-| `Patch`                      | ✅ `patch.rs:130, 307` (Option)       | ✅        | ✅               |
-| `AwePresetFile`              | ✅ `patch.rs:792`                     | ✅        | ✅               |
-| `Song`                       | ✅                                    | ✅        | ✅               |
-| `Pattern`                    | ✅                                    | ✅        | ✅               |
-| `SequencerTrack`             | ✅                                    | ✅        | ✅               |
-| `Sample` entry (`SampleMeta`)| ✅                                    | ✅        | ✅               |
-| Module *instance* (in patch) | ✅ `patch.rs:144` (separate from type) | ✅        | ✅               |
-| `ModuleDescriptor` (type)    | ✅ `module_traits.rs:869`             | ✅        | n/a (hardcoded) |
-| `ParameterDescriptor` (type) | ✅ `module_traits.rs:586`             | ✅        | n/a             |
-| `PortDescriptor` (type)      | ✅                                    | ✅        | n/a             |
-| `ChoiceOption` (type)        | ✅ `module_traits.rs:557` (Option)    | partial  | n/a             |
-
-### Phase 3 — per-module-instance notes (different concept from type docs) — SHIPPED
-
-Shipped in `9c9dd4b` (data model + engine mirror + persistence), `91adce0` (MCP read + write),
-`fc5bd4b` (GUI editing + info popup). Bridge test `set_module_description_round_trips_via_bridge`.
-
-- [x] Add per-instance `description: String` on placed modules in a patch (e.g. annotate "this LFO is the
-  wobble modulator" on a specific `lfo-1` instance). Distinct from `ModuleDescriptor.description` which
-  documents the module *type* and is shared across all instances. **Done** — `ModuleState.description`
-  (`patch.rs:144`).
-- [x] Surface in `get_module_info` (MCP read); add `set_module_description(instrument_id, module_id, description)`
-  MCP tool (MCP write). Accept `""` to clear. **Done** — `mcp_bridge.rs:910` (clears on `""`, rejects
-  over-length + unknown module id).
-- [x] Editable from GUI (module header context menu). **Done** — "Edit description" popup + read-only info
-  popup wired through `module_description_actions` → `session.set_module_description`.
-
-#### Persistence (must round-trip on save/load)
-
-Module-instance descriptions **must** survive serialization, both at the project and standalone-patch
-level — otherwise AI-applied notes silently vanish on save/reload. Same pattern as
-`Patch.description` and the planned color persistence below.
-
-- [x] **Project save** — every module instance's description persisted inside its containing patch
-  in the project JSON. **Done** — `ModuleState.description` with `#[serde(default,
-  skip_serializing_if = "String::is_empty")]`, so empty stays byte-identical/schema-valid.
-- [x] **Standalone patch save** — the per-instance description travels with the .json patch file
-  when the user invokes "Save Patch…". **Done** — same `ModuleState` struct serializes for standalone
-  patches.
-- [x] **Project / patch load → engine mirror** — on load, copy each saved module description into
-  the engine's runtime mirror so subsequent MCP reads see what was loaded, not stale defaults.
-  **Done** — engine `set_module_description` (`synth_engine.rs` / `instrument.rs`).
-- [x] **No partial states** — **Done** — data + MCP + GUI + save/load all landed together
-  (`9c9dd4b`→`91adce0`→`fc5bd4b`); no half-wired ship.
-
-### Cross-cutting
-
-- [x] Include all instance-level descriptions in `get_graph_diagnostics` / `analyze_note` output so AI sees
-  intent alongside structure. **Done** — shared `collect_module_descriptions` helper; diagnostics append
-  one `Info` "Module <id> (<name>) intent: …" per annotated module (after the health summary), and
-  `analyze_note` carries a `module_descriptions` array. Test
-  `module_descriptions_surface_in_graph_diagnostics`.
-- [x] Surface descriptions as tooltips on the corresponding GUI elements. **Done** — the module
-  instance description is shown via the header info icon.
-- [x] Decide on max length (suggest 500 chars soft, 2000 hard). **Done** — `MAX_MODULE_DESCRIPTION_LEN =
-  2000` hard cap enforced at the bridge (`mcp_bridge.rs:49`); 500 soft is advisory only.
-- [x] Persistence format: inline in the existing JSON containers (no sidecar files). **Done** — inline on
-  `ModuleState` in the patch JSON.
-
----
-
 ## ★ Color fields via MCP
 
-Color fields already exist on several entities (Patch, Instrument, Group, SequencerTrack), but
-most have **no MCP setter** — AI can build a song but can't paint the strips/tracks to make the
-arrangement visually scannable. Parallel structure to the description roadmap above: read on the
-existing getter response, write via a dedicated setter routed through
-`bridge.rs` → `mcp_bridge.rs` → `server.rs`. Color is also already GUI-editable in most cases.
-Track color is the only one shipped via MCP so far (`set_track_color`); the rest are blocked on
-engine-ownership refactors noted below.
+Color setters for the remaining entities (instrument, patch, track) all shipped; group
+color was dropped. Only one open item remains:
 
-### Current status of color fields
-
-| Entity            | Field exists?                        | MCP read | MCP write |
-|-------------------|--------------------------------------|----------|-----------|
-| `InstrumentState` | ✅ `patch.rs` `Option<HexColor>`      | ✅        | ✅         |
-| `Patch`           | ✅ `patch.rs` `Option<HexColor>`      | ✅        | ✅         |
-| `Group`           | ✅ `patch.rs` `Option<HexColor>`      | ❌        | ❌ (dropped) |
-| `SequencerTrack`  | ✅ in song JSON `{r, g, b}` per track | ✅        | ✅         |
-
-### Work to do
-
-- [x] Surface color on `get_instrument_info` / `list_instruments` (MCP read); add
-  `set_instrument_color(instrument_id, color)` MCP tool. Accept `"#RRGGBB"` / `"#RRGGBBAA"` and
-  `""` to clear back to "auto" / default. **Done** — made engine-owned like `description`
-  (`EngineCommand::SetInstrumentColor` + `Instrument.color` runtime field + snapshot + save/load
-  mirror). `8598a6d`.
-- [x] Surface patch color on the same getters as a separate `patch_color` field, mirroring how
-  `patch_description` is exposed alongside `description`. Add `set_patch_color` MCP tool.
-  **Done** — added `Patch.color` field + engine `patch_color` mirror + round-trip (incl. standalone
-  "Save Patch…"). `5ca35a5`.
-- [~] ~~Surface group color~~ — **dropped**: the group concept is slated to be removed/reworked, so
-  wiring a GUI-only MCP side-channel for it (groups have no engine path; only live in `PatchEditor`)
-  is not worth it. Revisit only if groups survive the rework.
 - [ ] Decide whether AI-friendly named palettes are useful (`"warm-orange"`, `"cool-blue"`) on top of
   raw hex — same pattern as `set_awe_preset` vs `set_awe_parameter`. Out of scope for v1; raw hex
   is enough.
-
-### Persistence (must round-trip on save/load)
-
-Color writes via MCP **must** survive serialization, both at the project and standalone-patch level
-— otherwise AI-applied colors silently vanish on save/reload. This is the same architectural
-pattern used for `Patch.description` (runtime mirror in the engine, project load copies in, project
-save reads back).
-
-- [x] **Project save** — instrument + patch colors persisted in the project JSON. The engine-side
-  runtime mirror (`Instrument.color` / `Instrument.patch_color`) is read back into the snapshot at
-  save time and `snapshot_to_instrument_state` writes `InstrumentState.color` / `Patch.color`.
-  (`SequencerTrack` color was already done.) Group color dropped.
-- [x] **Standalone patch save** — `Patch.color` travels with the .json patch file: `create_patch_from_editor`
-  pulls `patch_color` from the engine snapshot when "Save Patch…" is invoked.
-- [x] **Project load → engine mirror** — on load, each saved instrument/patch color is pushed into the
-  engine runtime mirror (`set_instrument_color` / `set_patch_color`) so subsequent MCP reads see what
-  was loaded, not stale defaults.
-- [x] **No partial states** — both setters ship with their save+load paths wired (verified by the
-  schema round-trip + full test suite). Group color was dropped rather than shipped half-wired.
-
-### Use case (motivation)
-
-When AI builds a multi-instrument song via MCP, every track defaults to the same color (e.g. all
-tracks in the just-built sidechain demo render as `{r:100, g:100, b:255}`). With color setters AI
-can make the arrangement self-documenting at a glance — e.g. red kick, blue pad, green bass.
 
 ---
 
@@ -217,33 +31,12 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
   `gui/patch_editor.rs`, `gui/egui_backend.rs`)
 - [ ] Add `param_sample_id(name, id)` to `ModuleStateBuilder` in `pertylizer/src/patch.rs` for symmetry with
   `param_f` / `param_i` / `param_b` / `param_choice` (no current callers — for API completeness)
-- [x] **Bundle piano-roll coordinate plumbing into a `PianoRollCoords` struct.**
-  **Done** (`498243d`) — `PianoRollCoords` bundles the 4 grid↔(tick,pitch) transforms +
-  `view_pitch_min`/`view_pitch_max`/`note_row_height`; `handle_piano_roll_interaction` went
-  17→11 params (and later 11→7 once `PianoRollCtx` landed, see below).
-- [~] **Context-struct refactor to finish decomposing `draw_piano_roll` / `draw_arrangement`.**
-  **Mostly shipped + merged to main 2026-06-16** (`498243d..5578d1f`):
-    1. **File split** — `gui/sequencer/mod.rs` 6963 → 1154 lines, carved into `transport.rs`,
-       `arrangement.rs`, `piano_roll.rs`, `automation.rs` (`894a518`). Children use
-       `use super::*`; shared snapshot DTOs + tick helpers stay in `mod.rs` so child modules read
-       their private fields without field-visibility surgery.
-    2. **`PianoRollCtx<'a>`** (`e0c0af4`) — bundles the 6 shared locals; extracted
-       `draw_piano_roll_toolbar` + `handle_piano_roll_shortcuts`, and
-       `handle_piano_roll_interaction` dropped 11 → 7 params. (`PianoRollCtx::new()` collapses the
-       construction sites; `5578d1f`.)
-    3. **`ArrangementCtx<'a>`** (`d7054a8`) — same bundle (minus `handle`, unused so far);
-       extracted the ~456-line `draw_arrangement_track_headers`.
-
-  Zero-rewrite recipe: each helper re-exposes the ctx fields as locals with their original names/
-  types, so moved bodies stay byte-for-byte unchanged. A high-effort `/code-review` (8 angles)
-  found zero correctness bugs.
-
-  **RESIDUAL (deliberately deferred):** the two geometry-coupled painter cores — `draw_piano_roll`'s
-  note-grid `ScrollArea` closure and `draw_arrangement`'s timeline painter + its ~330-line
-  `response.context_menu` — stay inline. They depend on painter-local coordinate transforms
-  (`tick_to_x`, `ruler_rect`, `snap_tick`…), not just the 6 ctx fields, so clean extraction needs
-  those plumbed too; no GUI tests, so left for a focused follow-up. When the arrangement timeline is
-  extracted, add `handle` back to `ArrangementCtx`.
+- [ ] **Finish decomposing `draw_piano_roll` / `draw_arrangement` — geometry-coupled painter cores.**
+  The two painter cores stay inline (deferred): `draw_piano_roll`'s note-grid `ScrollArea` closure
+  and `draw_arrangement`'s timeline painter + its ~330-line `response.context_menu`. They depend on
+  painter-local coordinate transforms (`tick_to_x`, `ruler_rect`, `snap_tick`…), not just the 6 ctx
+  fields, so clean extraction needs those plumbed too; no GUI tests, so left for a focused follow-up.
+  When the arrangement timeline is extracted, add `handle` back to `ArrangementCtx`.
 - [ ] **Deduplicate "Set Length" write+undo in the arrangement context menu.**
   `gui/sequencer/arrangement.rs` "Set Length…" submenu has the same ~22-line "read old length → write new → push
   `SetPatternLength` undo" block in two places: the free-input `DragValue` + Apply branch and the preset
@@ -359,18 +152,7 @@ can make the arrangement self-documenting at a glance — e.g. red kick, blue pa
 
 ### 3.3 Expression & articulation
 
-**History.** The staged note-expression roadmap (`plans/note-expression-roadmap.md`,
-now retired) shipped almost in full: generic sequencer→module automation (Phase A1
-bugfix — the 6 dead FilterCutoff/ADSR macros now sound; A2 — `AutomationTarget::Module`),
-per-note legato/glide (B), per-note vibrato + expression block (C), the A1/A2 deferred
-cross-cutting follow-ups (Track F — F2/F3/F4 resolved), and export-robustness tooling
-(Parallel track P). See `docs/history.md` (v0.292.0–0.297.0). Phase D's *routing* half
-was delivered by the mixer/return-bus work (per-instrument/return/master effect chains,
-any of which can carry a `Filter`). What remains of that roadmap is the three items below
-plus the Note Processors plan; the roadmap doc itself was deleted once these were
-extracted here.
-
-**Remaining open work from the retired roadmap:**
+**Remaining open work from the retired note-expression roadmap:**
 
 - [ ] **Phase D residual — automate master/return effect params.** A `Filter` can be
   placed on the master or a return bus and set today (`set_master_effect_parameter` /
@@ -387,18 +169,6 @@ extracted here.
   source lane was removed mid-playback. Strict improvement over the prior `String`
   (which freed on every drop). Full fix: route cleared/replaced targets through the
   engine's `return_producer` off-thread drop channel. Low priority (bounded, rare).
-
-**Note Processors (generative articulation): COMPLETE — engine + GUI.**
-The engine and every processor landed in v0.311.0:
-arpeggiator (flagship), timed-repeat ornaments (flam/drag/ruff/roll/grace), chord +
-strum, scale-quantize + humanize, the MCP surface, and save/load persistence. The
-**NP6 GUI is now fully done**:
-NP6.1 (Note FX rack inspector — add/remove/configure/freeze, in both the Sequencer and
-Pattern views, coalesced undo), NP6.2 (per-note ornament "Orn" column in the tracker),
-and NP6.3 (piano-roll ornament editor popup + selection-inspector "Edit…" + note-head
-glyph + ghost-note preview). Includes the bundled "Ornament Demo" example project.
-The tracker ornament cells/menus were eyeballed in-app (2026-06-18); the rack panel +
-piano-roll ghosts have not been verified in-app yet.
 
 **Iceboxed — the rest of Phase E (build on demand only).** The expensive,
 narrow-audience remainder of the old north-star phase. No plan doc; pick up only when a
@@ -417,10 +187,6 @@ concrete need appears:
 
 ### 3.5 Polyphony settings
 
-- [x] Voice stealing mode selection (oldest, quietest, none) — **Done.** Added a "Steal" ComboBox in the
-  instrument edit panel (`gui/egui_backend.rs`, next to the Mode/allocation selector) covering all five
-  `StealingStrategy` variants, wired through `InstrumentParam::StealingStrategy`. Engine + persistence were
-  already in place.
 - [ ] **Unison detune + spread controls — NOT IMPLEMENTED (config removed, only a fixed constant remains).**
   The global `AllocationMode::Unison` *mode* works (selectable in the Mode dropdown; `allocate_unison`
   plays the held note on every voice with an evenly-spread pitch detune), but the **detune amount is a
@@ -480,10 +246,8 @@ concrete need appears:
 
 ### 4.4 Mod Matrix routing visibility
 
-When a module (e.g. `env-2`, `lfo-1`) is referenced only via Mod Matrix slots — not via cables —
-it *looks* unused: no visible cable in the patch-editor graph. Header badges and MCP surfacing
-shipped in v0.289.0 (`get_mod_matrix_routings`, virtual `"matrix"` port on `list_modules`, header
-arrow badge with tooltip). Remaining work:
+Header badges and MCP surfacing shipped in v0.289.0 (`get_mod_matrix_routings`, virtual `"matrix"`
+port on `list_modules`, header arrow badge with tooltip). Remaining work:
 
 - [ ] **Reflect YAMS-script sources in the per-knob source markers + macro rail (S2.4 follow-up).**
   After the expression editor shipped, a scripted Mod Matrix slot has no slot *source* address —
@@ -519,24 +283,12 @@ arrow badge with tooltip). Remaining work:
 
 ### 6.1 MCP & AI Interaction
 
-Tier-0 music-analysis tools shipped in v0.276.0 (`analyze_harmony`,
-`analyze_mix_bus`, `analyze_section`); Tier-1 follow-ups for drum-track
-filtering and per-track contribution breakdown shipped in v0.277.0. The
-roadmap doc (`docs/mcp-music-tools-plan.md`) was closed and deleted on
-2026-05-17 — remaining work for that roadmap lives below.
-
 - [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
   `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
 - [ ] Enable AI to "play freely" via MCP to autonomously generate complete songs and arrangements
 - [ ] Implement real-time parameter interpolation (gliding) to allow smoother AI-driven sound design
 
 ### 6.2 Technical follow-ups from the MCP music tools plan
-
-Moved from §7 of the (now-deleted) MCP music tools plan on 2026-05-17 when the plan was
-closed. The four shipped follow-ups (`OfflineEngineSession` for arrangement renders,
-rayon-parallel per-track renders, `Song::tracks_mut` / `set_solo_only` helpers, embed
-`MixBusMetrics` in `TrackContribution`) are documented in `docs/history.md` against their
-ship dates.
 
 - [ ] **`HarmonyScope` enum to fix `analyze_song_harmony` argument sprawl.** `analyze_song_harmony`
   takes 8 arguments and carries `#[allow(clippy::too_many_arguments)]`. Two of them
