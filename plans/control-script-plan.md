@@ -181,12 +181,12 @@ address picker (**S1.5c first**, see the re-planned checklist + GUI section abov
 
 ### Step 2 — Control Script (the compute layer)
 
-The language is **YAMS** (*Yet Another Modulation Script*). Grammar spiked in
-[`yams-grammar.md`](yams-grammar.md): header `src` bindings (each → a source register) +
+The language is **YAMS** (*Yet Another Modulation Script*), documented in
+[`docs/yams.md`](../docs/yams.md): header `src` bindings (each → a source register) +
 a body that assigns the normalized offset to `out`; rate/context-agnostic so the future
-audio-rate dialect reuses the same grammar. See that doc's Open-questions section for the
-locked semantics (eager eval, reserved built-ins, NaN-sanitized state, per-voice PRNG) and
-the remaining sign-offs (persistence, caps, diagnostics).
+audio-rate dialect reuses the same grammar. The locked semantics (eager eval, reserved
+built-ins, NaN-sanitized state, per-voice PRNG) and sign-offs (persistence, caps,
+diagnostics) are all implemented — see that doc.
 
 - [x] **S2.1** — `CompiledScript` + control-rate evaluator. **SHIPPED** (merged `54cbcdf`,
   5 reviewed steps `9f1ff82..d852772`). Compile **source → AST → flat bytecode**; the RT

@@ -382,7 +382,6 @@ for the editor and for tooling). Distinctions:
 
 ## Reference
 
-- Language spec & decision log: `plans/yams-grammar.md`
 - Toolchain crate (lexer/parser/compiler/`yamsfmt`): `crates/synth_script`
 - Real-time bytecode + evaluator: `crates/synth_core/src/script`
 - Runnable demo: `cargo run -p synth_script --example demo`

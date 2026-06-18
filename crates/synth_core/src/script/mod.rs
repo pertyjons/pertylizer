@@ -4,7 +4,7 @@
 //! the bytecode instruction set, the immutable [`CompiledScript`], and the
 //! allocation-free stack-machine evaluator. The non-RT toolchain that *builds*
 //! a `CompiledScript` from source text (lexer, parser, compiler, formatter)
-//! lives in the `synth_script` crate. See `plans/yams-grammar.md`.
+//! lives in the `synth_script` crate. See `docs/yams.md`.
 
 pub mod bound;
 pub mod bytecode;

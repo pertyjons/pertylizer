@@ -1,6 +1,6 @@
 //! Recursive-descent parser: tokens → [`Program`].
 //!
-//! Follows the EBNF in `plans/yams-grammar.md`. Key behaviours:
+//! Follows the grammar documented in `docs/yams.md`. Key behaviours:
 //! - **All errors collected** (decision #9): a malformed statement emits a
 //!   diagnostic and recovers to the next separator, so later statements still
 //!   parse. Lexer diagnostics are threaded in, so callers see one list.

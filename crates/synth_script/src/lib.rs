@@ -4,7 +4,7 @@
 //! This crate holds the language toolchain that runs on the UI/MCP thread:
 //! lexer, parser, resolver, bytecode compiler, and the `yamsfmt` formatter. It
 //! compiles source text into a `CompiledScript` (the real-time type, defined in
-//! `synth_core`) which the audio thread evaluates. See `plans/yams-grammar.md`
+//! `synth_core`) which the audio thread evaluates. See `docs/yams.md`
 //! for the language specification.
 
 pub mod ast;
