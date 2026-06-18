@@ -21,7 +21,6 @@ color was dropped. Only one open item remains:
 
 ### 1.5 Settings & utilities
 
-- [ ] Add Browse button in Settings dialog to change patches directory
 - [ ] **Finish decomposing `draw_piano_roll` / `draw_arrangement` — geometry-coupled painter cores.**
   The two painter cores stay inline (deferred): `draw_piano_roll`'s note-grid `ScrollArea` closure
   and `draw_arrangement`'s timeline painter + its ~330-line `response.context_menu`. They depend on
