@@ -7319,6 +7319,33 @@ fn analyze_rendered_note(
     ))
 }
 
+/// Like [`analyze_rendered_note`] but renders on a reused
+/// [`OfflineNoteSession`], so a sweep amortizes the engine + patch-load setup
+/// across all its steps instead of building one engine per note/velocity.
+fn analyze_rendered_note_in_session(
+    sess: &mut crate::audio::preview::OfflineNoteSession,
+    note: u8,
+    velocity: u8,
+    duration_ms: u32,
+    tail_ms: u32,
+    expected_note: Option<u8>,
+) -> Result<synth_mcp::types::AnalyzeNoteResult, McpBridgeError> {
+    let rendered = sess.render(
+        MidiNote::new(note),
+        Velocity::from_midi(velocity),
+        duration_ms,
+        tail_ms,
+    )?;
+
+    Ok(analyze_rendered_buffer(
+        &rendered,
+        note,
+        velocity,
+        duration_ms,
+        expected_note,
+    ))
+}
+
 /// Default note duration for sweep tools. Long enough for the envelope to
 /// reach sustain on typical patches; short enough that 60-note sweeps don't
 /// take minutes.
@@ -7389,11 +7416,17 @@ pub fn analyze_instrument_range_impl(
     let tail_ms = tail_ms.unwrap_or(SWEEP_DEFAULT_TAIL_MS);
 
     let mut warnings: Vec<String> = Vec::new();
+    // Build the offline engine + load the patch once, then reuse it for every
+    // step instead of spinning up a fresh engine per note.
+    let (mut sess, setup_warnings) = crate::audio::preview::OfflineNoteSession::new(
+        session,
+        sample_library,
+        InstrumentId::new(instrument_id),
+    )?;
+    warnings.extend(setup_warnings);
     let steps_out = sweep_range(low_note, high_note, step, "note", &mut warnings, |note| {
-        let result = analyze_rendered_note(
-            session,
-            sample_library,
-            instrument_id,
+        let result = analyze_rendered_note_in_session(
+            &mut sess,
             note,
             velocity,
             duration_ms,
@@ -7450,6 +7483,14 @@ pub fn analyze_velocity_response_impl(
     let tail_ms = tail_ms.unwrap_or(SWEEP_DEFAULT_TAIL_MS);
 
     let mut warnings: Vec<String> = Vec::new();
+    // Build the offline engine + load the patch once, then reuse it for every
+    // velocity step instead of spinning up a fresh engine per step.
+    let (mut sess, setup_warnings) = crate::audio::preview::OfflineNoteSession::new(
+        session,
+        sample_library,
+        InstrumentId::new(instrument_id),
+    )?;
+    warnings.extend(setup_warnings);
     let steps_out = sweep_range(
         velocity_low,
         velocity_high,
@@ -7457,10 +7498,8 @@ pub fn analyze_velocity_response_impl(
         "velocity",
         &mut warnings,
         |velocity| {
-            let result = analyze_rendered_note(
-                session,
-                sample_library,
-                instrument_id,
+            let result = analyze_rendered_note_in_session(
+                &mut sess,
                 note,
                 velocity,
                 duration_ms,

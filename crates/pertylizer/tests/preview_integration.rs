@@ -31,7 +31,9 @@ use synth_engine::SynthEngine;
 use synth_engine::commands::ModuleId;
 use synth_engine::instrument::InstrumentId;
 
-use pertylizer::audio::preview::{RenderedNote, SharedSampleLibrary, render_note_to_buffer};
+use pertylizer::audio::preview::{
+    OfflineNoteSession, RenderedNote, SharedSampleLibrary, render_note_to_buffer,
+};
 use pertylizer::patch::{ModuleBuilder, Patch};
 use pertylizer::session::SynthSession;
 
@@ -861,4 +863,85 @@ fn voice_module_bypass_replicated_in_offline_render() {
         "bypassing filter should change the offline render (max diff = {max_diff}, \
          baseline_rms = {baseline_rms}, after_rms = {after_rms})"
     );
+}
+
+// -------------------------------------------------------------------------
+// OfflineNoteSession: engine reuse across sweep steps (TODO §6.2 #3).
+// -------------------------------------------------------------------------
+
+/// A reused `OfflineNoteSession` rendering several notes must produce the exact
+/// same samples as the same notes rendered through independent
+/// `render_note_to_buffer` calls (each of which builds its own fresh engine).
+/// This is the key correctness gate: it proves the voice-bleed drain fully
+/// resets state between renders so reuse does not alter the output.
+#[test]
+fn session_render_matches_independent_renders_bit_exact() {
+    let rig = setup_with_patch(&sustain_patch_no_envelope());
+    let notes = [48u8, 60, 67, 72];
+
+    // Independent renders — fresh engine each call.
+    let independent: Vec<Vec<f32>> = notes
+        .iter()
+        .map(|&n| {
+            render_note_to_buffer(
+                &rig.session,
+                &rig.sample_library,
+                rig.instrument_id,
+                MidiNote::new(n),
+                Velocity::from_midi(100),
+                200,
+                100,
+            )
+            .expect("independent render")
+            .samples
+        })
+        .collect();
+
+    // Reused session — one engine, drained between notes.
+    let (mut sess, _warnings) =
+        OfflineNoteSession::new(&rig.session, &rig.sample_library, rig.instrument_id)
+            .expect("build session");
+    let reused: Vec<Vec<f32>> = notes
+        .iter()
+        .map(|&n| {
+            sess.render(MidiNote::new(n), Velocity::from_midi(100), 200, 100)
+                .expect("session render")
+                .samples
+        })
+        .collect();
+
+    for (i, (ind, reu)) in independent.iter().zip(reused.iter()).enumerate() {
+        assert_eq!(
+            ind, reu,
+            "note {} (idx {i}): reused session render differs from independent render",
+            notes[i]
+        );
+    }
+}
+
+/// The same note rendered three times on one session is bit-exact each time
+/// (mirrors `arrangement_render_determinism::session_render_range_is_bit_exact_across_three_calls`).
+#[test]
+fn session_render_same_note_is_bit_exact_across_three_calls() {
+    let rig = setup_with_patch(&sustain_patch_no_envelope());
+    let (mut sess, _warnings) =
+        OfflineNoteSession::new(&rig.session, &rig.sample_library, rig.instrument_id)
+            .expect("build session");
+
+    let first = sess
+        .render(MidiNote::new(60), Velocity::from_midi(100), 200, 100)
+        .expect("first")
+        .samples;
+    let second = sess
+        .render(MidiNote::new(60), Velocity::from_midi(100), 200, 100)
+        .expect("second")
+        .samples;
+    let third = sess
+        .render(MidiNote::new(60), Velocity::from_midi(100), 200, 100)
+        .expect("third")
+        .samples;
+
+    assert_eq!(first, second, "render 1 vs 2 not bit-exact");
+    assert_eq!(second, third, "render 2 vs 3 not bit-exact");
+    assert!(rms(&extract_left(&first)) > 1e-4, "render produced silence");
 }
