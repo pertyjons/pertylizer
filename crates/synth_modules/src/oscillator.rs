@@ -37,10 +37,12 @@ const MAX_UNISON_VOICES: usize = 7;
 /// spans exactly that — the same musical unit as the knob.
 ///
 /// This is the legacy native-unit (semitone) write path, like the dedicated
-/// `pitch` target and the filter cutoff. It happens to equal the plan's locked
+/// `pitch` target and the filter cutoff. It happens to equal the locked
 /// normalized-through-range contract *only because* detune's positive travel is
 /// exactly 1 semitone; if the detune range ever changes, this should move to a
-/// per-descriptor `mod_scale` hint (control-script-plan.md, scaling contract #2).
+/// per-descriptor `mod_scale` hint. (Mod-matrix scaling contract: a ±1 offset is
+/// summed in normalized space, applied through the param's range+curve, then
+/// clamped — see `docs/yams.md`.)
 const DETUNE_MOD_SEMITONES: f32 = 1.0;
 
 /// Mod-matrix pitch scaling for the `frequency` target: a full-scale (`±1`)

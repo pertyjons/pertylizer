@@ -1,5 +1,6 @@
 //! YAMS (*Yet Another Modulation Script*) — the non-real-time front-end for the
-//! Control Script layer (Step 2 of `plans/control-script-plan.md`).
+//! Control Script layer (the Mod Matrix modulation expression language; see
+//! `docs/yams.md`).
 //!
 //! This crate holds the language toolchain that runs on the UI/MCP thread:
 //! lexer, parser, resolver, bytecode compiler, and the `yamsfmt` formatter. It
