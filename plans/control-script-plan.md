@@ -290,8 +290,8 @@ diagnostics) are all implemented — see that doc.
   oscillator **silently dropping** `detune`/`frequency` offsets (`_ => {}`). Fixed: `detune` →
   ±1 semitone, `frequency` → ±12 (one octave); legacy `osc-N.pitch` unaffected. Scale lives as
   a documented `const` per target.
-- [x] **Audit `set_mod_offset` coverage across all modules.** DONE (2026-06-15, see
-  `plans/set-mod-offset-audit.md`): option-A generic `ParamModOffsets` store landed
+- [x] **Audit `set_mod_offset` coverage across all modules.** DONE (2026-06-15):
+  option-A generic `ParamModOffsets` store landed
   (`dcea729`) + all 40 voice modules opted-in/triaged one-per-commit on
   `feat/dynamic-mod-matrix`. Every `modulatable: true` float now either routes through
   the store or was marked `.modulatable(false)`; only `signal_monitor`+`mod_matrix` have
