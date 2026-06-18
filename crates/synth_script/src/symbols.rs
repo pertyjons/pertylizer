@@ -26,6 +26,15 @@ pub enum Context {
     /// Control rate in Hz (drives time-based stateful math; supplied as an input
     /// rather than a constant because it depends on the device sample rate).
     Sr,
+    /// Absolute transport position in beats (e.g. `sin(beat * tau)` is a
+    /// tempo-locked sine). Grows unbounded while playing.
+    Beat,
+    /// Phase within the current bar, `0..1` (4/4). Wraps every bar.
+    BarPhase,
+    /// Transport tempo in BPM (e.g. `tempo / 60` is beats per second).
+    Tempo,
+    /// `1.0` while the transport is running, else `0.0`.
+    Playing,
 }
 
 /// A stateful built-in that carries per-voice register state.
@@ -102,6 +111,10 @@ pub fn context_from_name(name: &str) -> Option<Context> {
         "gate_on" => Context::GateOn,
         "age" => Context::Age,
         "sr" => Context::Sr,
+        "beat" => Context::Beat,
+        "bar_phase" => Context::BarPhase,
+        "tempo" => Context::Tempo,
+        "playing" => Context::Playing,
         _ => return None,
     })
 }

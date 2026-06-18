@@ -23,6 +23,14 @@ pub enum ScriptContext {
     Age,
     /// Control rate in Hz.
     Sr,
+    /// Absolute transport position in beats (grows unbounded while playing).
+    Beat,
+    /// Phase within the current bar, `0..1` (4/4).
+    BarPhase,
+    /// Transport tempo in BPM.
+    Tempo,
+    /// `1.0` while the transport is running, else `0.0`.
+    Playing,
 }
 
 /// One source register a [`BoundScript`] reads, in register order: the voice

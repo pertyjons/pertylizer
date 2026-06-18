@@ -154,12 +154,21 @@ shadowing.
 
 ### Context (per-voice, filled each block)
 
-| Name      | Meaning |
-|-----------|---------|
-| `gate`    | `1` while the note is held, else `0` |
-| `gate_on` | `1` for the single block of note-on, else `0` |
-| `age`     | seconds since note-on |
-| `sr`      | control rate in Hz (device-dependent) |
+| Name        | Meaning |
+|-------------|---------|
+| `gate`      | `1` while the note is held, else `0` |
+| `gate_on`   | `1` for the single block of note-on, else `0` |
+| `age`       | seconds since note-on |
+| `sr`        | control rate in Hz (device-dependent) |
+| `beat`      | absolute transport position in beats (grows unbounded; `sin(beat * tau)` is a tempo-locked sine) |
+| `bar_phase` | phase within the current bar, `0..1` (4/4); wraps every bar |
+| `tempo`     | transport tempo in BPM (`tempo / 60` is beats per second) |
+| `playing`   | `1` while the transport is running, else `0` |
+
+The transport vars (`beat`, `bar_phase`, `tempo`, `playing`) are global —
+every voice sees the same value each block — so they drive tempo-synced
+modulation: `out = (sin(bar_phase * tau) * 0.5 + 0.5) * playing` is a bar-locked
+ramp that mutes when the transport stops.
 
 ### Constants
 

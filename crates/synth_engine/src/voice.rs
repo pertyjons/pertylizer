@@ -21,8 +21,8 @@ use synth_core::script::{EvalContext, MAX_SOURCES, ScriptContext, ScriptInput};
 use synth_core::tuning::TuningTable;
 use synth_core::{AudioBuffer, DestAddr, Phase, PortName, ProcessContext};
 use synth_core::{
-    BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, SampleRate,
-    Seconds, Semitones, Velocity,
+    BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds,
+    Semitones, Velocity,
 };
 use synth_core::{MAX_MOD_MATRIX_SLOTS, ModuleType, OscillatorParam, Param};
 
@@ -59,8 +59,11 @@ struct MacroValues {
     poly_aftertouch: f32,
 }
 
-/// Per-voice control-script context values (Step 2) — the predefined `gate`,
-/// `gate_on`, `age`, `sr` identifiers, filled once per block.
+/// Per-voice control-script context values — the predefined `gate`, `gate_on`,
+/// `age`, `sr` identifiers (Step 2) plus the transport sources `beat`,
+/// `bar_phase`, `tempo`, `playing` (Phase 1), filled once per block. Transport
+/// newtypes (`BeatPosition`, `Bpm`) are normalized to `f32` here, at the resolve
+/// boundary — the VM only ever sees `f32`.
 struct ScriptCtx {
     /// `1.0` while the note is held (Active), else `0.0`.
     gate: f32,
@@ -70,6 +73,14 @@ struct ScriptCtx {
     age: f32,
     /// Control rate in Hz.
     sr: f32,
+    /// Absolute transport position in beats (grows unbounded while playing).
+    beat: f32,
+    /// Phase within the current bar, `0..1` (4/4).
+    bar_phase: f32,
+    /// Transport tempo in BPM.
+    tempo: f32,
+    /// `1.0` while the transport is running, else `0.0`.
+    playing: f32,
 }
 
 /// Voice state with embedded data - "Make Invalid States Unrepresentable".
@@ -916,7 +927,7 @@ impl Voice {
             // drives time-based script ops (`lag`, `phasor`) and the `sr` var.
             let block = samples.as_usize().max(1) as f32;
             let control_rate = context.sample_rate.as_f32() / block;
-            self.apply_mod_matrix(mm_id, control_rate, context.sample_rate);
+            self.apply_mod_matrix(mm_id, control_rate, context);
         }
 
         // Ensure buffers are sized correctly
@@ -982,8 +993,10 @@ impl Voice {
         &mut self,
         mm_id: crate::ModuleId,
         control_rate: f32,
-        sample_rate: SampleRate,
+        context: &ProcessContext<'_>,
     ) {
+        let sample_rate = context.sample_rate;
+
         // Per-voice macro source values.
         let macros = MacroValues {
             velocity: self.state.velocity().map(|v| v.as_f32()).unwrap_or(0.0),
@@ -998,7 +1011,9 @@ impl Voice {
             poly_aftertouch: self.poly_aftertouch.as_f32(),
         };
 
-        // Per-voice control-script context (Step 2).
+        // Per-voice control-script context: gate/age/sr (Step 2) plus the
+        // transport sources (Phase 1). Transport newtypes normalize to `f32`
+        // here; `bar_phase` is the 0..1 position within the 4/4 bar.
         let sctx = ScriptCtx {
             gate: f32::from(matches!(self.state, VoiceState::Active { .. })),
             gate_on: f32::from(self.note_on_block),
@@ -1008,6 +1023,10 @@ impl Voice {
             // perturb the voice-stealing priority that also reads `age`.
             age: self.age.to_seconds(sample_rate).as_f32(),
             sr: control_rate,
+            beat: context.position_beats.as_f32(),
+            bar_phase: (context.position_beats.beat_in_bar() / 4.0) as f32,
+            tempo: context.tempo.as_f32(),
+            playing: f32::from(context.is_playing),
         };
 
         // Resolve each routing's source value (scalar) or script output into the
@@ -1160,6 +1179,10 @@ impl Voice {
                 ScriptContext::GateOn => sctx.gate_on,
                 ScriptContext::Age => sctx.age,
                 ScriptContext::Sr => sctx.sr,
+                ScriptContext::Beat => sctx.beat,
+                ScriptContext::BarPhase => sctx.bar_phase,
+                ScriptContext::Tempo => sctx.tempo,
+                ScriptContext::Playing => sctx.playing,
             },
             ScriptInput::Zero => 0.0,
         }

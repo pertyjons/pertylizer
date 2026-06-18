@@ -94,6 +94,10 @@ fn context_to_runtime(c: Context) -> ScriptContext {
         Context::GateOn => ScriptContext::GateOn,
         Context::Age => ScriptContext::Age,
         Context::Sr => ScriptContext::Sr,
+        Context::Beat => ScriptContext::Beat,
+        Context::BarPhase => ScriptContext::BarPhase,
+        Context::Tempo => ScriptContext::Tempo,
+        Context::Playing => ScriptContext::Playing,
     }
 }
 
@@ -668,6 +672,64 @@ mod tests {
         assert!(bound.inputs.contains(&ScriptInput::Source(SrcAddr::Macro(
             MacroSource::PolyAftertouch
         ))));
+    }
+
+    #[test]
+    fn transport_context_vars_compile_and_eval() {
+        // The Phase-1 transport sources are context vars: they compile to
+        // `Context` inputs and the VM reads them straight from the source slice.
+        let prog = compile_ok("out = sin(beat * tau) * playing");
+        assert!(prog.inputs.contains(&SourceInput::Context(Context::Beat)));
+        assert!(
+            prog.inputs
+                .contains(&SourceInput::Context(Context::Playing))
+        );
+
+        // beat = 0.25 → sin(tau/4) = 1; playing = 1 → out = 1.
+        let out = eval(&prog, |inp| match inp {
+            SourceInput::Context(Context::Beat) => 0.25,
+            SourceInput::Context(Context::Playing) => 1.0,
+            _ => 0.0,
+        });
+        assert!(approx(out, 1.0));
+        // playing = 0 mutes regardless of beat.
+        let muted = eval(&prog, |inp| match inp {
+            SourceInput::Context(Context::Beat) => 0.25,
+            _ => 0.0,
+        });
+        assert!(approx(muted, 0.0));
+    }
+
+    #[test]
+    fn into_bound_maps_transport_context_vars() {
+        let bound = compile_ok("out = bar_phase + tempo + playing").into_bound(String::new());
+        assert!(
+            bound
+                .inputs
+                .contains(&ScriptInput::Context(ScriptContext::BarPhase))
+        );
+        assert!(
+            bound
+                .inputs
+                .contains(&ScriptInput::Context(ScriptContext::Tempo))
+        );
+        assert!(
+            bound
+                .inputs
+                .contains(&ScriptInput::Context(ScriptContext::Playing))
+        );
+    }
+
+    #[test]
+    fn transport_context_names_are_reserved() {
+        // Predefined context vars cannot be shadowed by a `src` binding.
+        for name in ["beat", "bar_phase", "tempo", "playing"] {
+            let errs = errors(&format!("src {name} = lfo-1.out\nout = {name}"));
+            assert!(
+                !errs.is_empty(),
+                "binding reserved context var `{name}` must be a compile error"
+            );
+        }
     }
 
     #[test]
