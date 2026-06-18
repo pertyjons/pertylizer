@@ -118,7 +118,9 @@ impl VoiceAllocator {
         let voices = (0..config.max_voices.as_usize())
             .map(|i| {
                 let mut v = template.clone_structure();
-                v.id = VoiceId::new(i as u32);
+                // `set_id` re-seeds the per-voice script PRNG streams for the new
+                // id; a bare `v.id = …` would leave every voice on the template's.
+                v.set_id(VoiceId::new(i as u32));
                 v
             })
             .collect();
@@ -344,7 +346,7 @@ impl VoiceAllocator {
             for i in current_size..new_size {
                 let new_voice = if let Some(template) = self.voices.first() {
                     let mut v = template.clone_structure();
-                    v.id = VoiceId::new(i as u32);
+                    v.set_id(VoiceId::new(i as u32));
                     v
                 } else {
                     Voice::new(VoiceId::new(i as u32))

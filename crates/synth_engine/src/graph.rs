@@ -16,6 +16,17 @@ use synth_core::{
 use synth_core::{MidiNote, PortName, Velocity};
 use synth_core::{ModuleType, Param};
 
+/// Fold a voice id with a module identity into a per-(voice, module) PRNG seed
+/// base, so two script-hosting modules in the same voice — and the same module
+/// across different voices — all decorrelate. Used by
+/// [`ModuleGraph::set_voice_index`].
+fn script_seed_base(voice_index: u32, id: ModuleId) -> u32 {
+    voice_index
+        .wrapping_mul(0x9E37_79B1)
+        .wrapping_add((id.module_type as u32).wrapping_mul(131))
+        .wrapping_add(u32::from(id.instance))
+}
+
 /// A connection between two ports.
 ///
 /// Uses `PortName` (interned strings) for zero-allocation port name handling.
@@ -355,21 +366,33 @@ impl ModuleGraph {
         }
     }
 
-    /// Install (or clear, with `None`) a Mod Matrix slot's compiled control
-    /// script (Step 2). No-op when the module is absent or is not a Mod Matrix
-    /// (the default `set_mod_script` ignores it). The `Arc` is shared, not
-    /// deep-copied. Returns the **replaced** script (if any) so the caller can
-    /// drop it off the audio thread — this runs during the command drain.
+    /// Install (or clear, with `None`) a hosted control-script slot on a module.
+    /// No-op when the module is absent or hosts no scripts (the default
+    /// `set_script` ignores it). The `Arc` is shared, not deep-copied. Returns the
+    /// **replaced** script (if any) so the caller can drop it off the audio
+    /// thread — this runs during the command drain.
     #[must_use = "the replaced script must be dropped off the audio thread"]
-    pub fn set_mod_script(
+    pub fn set_script(
         &mut self,
         module: ModuleId,
         slot: usize,
         script: Option<std::sync::Arc<synth_core::script::BoundScript>>,
     ) -> Option<std::sync::Arc<synth_core::script::BoundScript>> {
         match self.nodes.get_mut(&module) {
-            Some(node) => node.module.set_mod_script(slot, script),
+            Some(node) => node.module.set_script(slot, script),
             None => script,
+        }
+    }
+
+    /// Propagate the per-voice PRNG seed base to every script-hosting module in
+    /// the graph, folding the `voice_index` with each module's identity so two
+    /// script hosts in the same voice still decorrelate. Called once per voice at
+    /// allocation, after the voice id is assigned. No-op for modules that host no
+    /// scripts (default [`PolyModule::set_voice_index`]).
+    pub fn set_voice_index(&mut self, voice_index: u32) {
+        for (id, node) in &mut self.nodes {
+            node.module
+                .set_voice_index(script_seed_base(voice_index, *id));
         }
     }
 
@@ -930,11 +953,11 @@ mod tests {
         assert!(graph.get_module(osc2).is_some());
     }
 
-    /// `set_mod_script` installs a slot's compiled script onto a Mod Matrix
-    /// node (visible via `mod_scripts`), clears it with `None`, and is a safe
+    /// `set_script` installs a slot's compiled script onto a Mod Matrix
+    /// node (visible via `scripts`), clears it with `None`, and is a safe
     /// no-op for an absent module — the write half of the YAMS engine channel.
     #[test]
-    fn set_mod_script_installs_clears_and_ignores_absent() {
+    fn set_script_installs_clears_and_ignores_absent() {
         use std::sync::Arc;
         use synth_core::script::{BoundScript, CompiledScript, Op};
         use synth_modules::ModMatrix;
@@ -950,11 +973,11 @@ mod tests {
         // Installing into an empty slot replaces nothing → returns None.
         assert!(
             graph
-                .set_mod_script(mmx, 1, Some(Arc::clone(&script)))
+                .set_script(mmx, 1, Some(Arc::clone(&script)))
                 .is_none()
         );
 
-        let scripts = graph.get_module(mmx).and_then(|m| m.mod_scripts()).unwrap();
+        let scripts = graph.get_module(mmx).and_then(|m| m.scripts()).unwrap();
         assert_eq!(
             scripts[1].as_deref().map(|b| b.source.as_str()),
             Some("out = 0.5")
@@ -962,13 +985,13 @@ mod tests {
         assert!(scripts[0].is_none());
 
         // Clearing the slot removes it and hands the old script back to drop.
-        assert!(graph.set_mod_script(mmx, 1, None).is_some());
-        assert!(graph.get_module(mmx).and_then(|m| m.mod_scripts()).unwrap()[1].is_none());
+        assert!(graph.set_script(mmx, 1, None).is_some());
+        assert!(graph.get_module(mmx).and_then(|m| m.scripts()).unwrap()[1].is_none());
 
         // An absent module is a silent no-op (no panic) and returns the unused
         // script straight back rather than swallowing it.
         let ghost = ModuleId::new(ModuleType::ModMatrix, 99);
-        assert!(graph.set_mod_script(ghost, 0, Some(script)).is_some());
+        assert!(graph.set_script(ghost, 0, Some(script)).is_some());
     }
 
     #[test]

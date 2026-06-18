@@ -17,20 +17,14 @@
 use crate::ModuleId;
 use crate::graph::ModuleGraph;
 use synth_core::params::LfoWaveform;
-use synth_core::script::{EvalContext, MAX_SOURCES, RegisterFile, ScriptContext, ScriptInput};
+use synth_core::script::{EvalContext, MAX_SOURCES, ScriptContext, ScriptInput};
 use synth_core::tuning::TuningTable;
-use synth_core::{AudioBuffer, Phase, PortName, ProcessContext};
+use synth_core::{AudioBuffer, DestAddr, Phase, PortName, ProcessContext};
 use synth_core::{
     BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, SampleRate,
     Seconds, Semitones, Velocity,
 };
 use synth_core::{MAX_MOD_MATRIX_SLOTS, ModuleType, OscillatorParam, Param};
-
-/// Global seed for per-voice control-script PRNG state. Combined with a
-/// per-(voice, slot) index so simultaneous voices — and different slots within a
-/// voice — produce decorrelated `rand`/`white` streams, while a retrigger
-/// re-seeds identically (deterministic). See [`Voice::reset_script_state`].
-const SCRIPT_PRNG_SEED: u64 = 0x59A5_5EED_2C0D_E001;
 
 /// Unique identifier for a voice within an instrument's voice pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -462,11 +456,16 @@ pub struct Voice {
     /// Pre-allocated buffer for mod matrix slot data (avoids per-frame Vec allocation).
     mod_slots_cache: Vec<(f32, synth_core::DestAddr, f32)>,
 
-    /// Per-slot per-voice control-script state (Step 2), one [`RegisterFile`] per
-    /// Mod Matrix slot. Pre-allocated (no audio-thread allocation); the immutable
-    /// `Arc<BoundScript>` lives on the module, this is the mutable half. Re-seeded
-    /// and zeroed on note-on by [`Self::reset_script_state`].
-    script_regs: [RegisterFile; MAX_MOD_MATRIX_SLOTS],
+    /// Per-slot resolved control-script source values, filled while the graph is
+    /// borrowed immutably (pass 1) and consumed by the eval pass (pass 2). The
+    /// per-voice script *state* now lives in each script-hosting module's
+    /// `ScriptHost` (so a per-voice module clone carries its own registers); this
+    /// is only the pre-allocated scratch for the two-step resolve→eval that
+    /// dissolves the `&graph` / `&mut regs` borrow conflict.
+    script_scratch: Box<[[f32; MAX_SOURCES]; MAX_MOD_MATRIX_SLOTS]>,
+    /// Active scripted slots queued by pass 1 as `(slot, source_count, dest)` for
+    /// the mutable eval pass. Pre-allocated; reused each block.
+    script_eval_queue: Vec<(usize, usize, DestAddr)>,
     /// `true` only during the first process block after note-on — the `gate_on`
     /// context value. Set in `note_on_expr`, cleared after the mod-matrix pass.
     note_on_block: bool,
@@ -505,7 +504,8 @@ impl Voice {
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: TuningTable::default(),
-            script_regs: Self::new_script_regs(id),
+            script_scratch: Self::new_script_scratch(),
+            script_eval_queue: Vec::with_capacity(MAX_MOD_MATRIX_SLOTS),
             note_on_block: false,
         }
     }
@@ -520,7 +520,7 @@ impl Voice {
 
         let mod_matrix_id = graph.find_module_by_type(ModuleType::ModMatrix);
 
-        Self {
+        let mut voice = Self {
             id,
             state: VoiceState::Idle,
             age: SampleCount::ZERO,
@@ -542,34 +542,34 @@ impl Voice {
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: TuningTable::default(),
-            script_regs: Self::new_script_regs(id),
+            script_scratch: Self::new_script_scratch(),
+            script_eval_queue: Vec::with_capacity(MAX_MOD_MATRIX_SLOTS),
             note_on_block: false,
-        }
+        };
+        voice.refresh_voice_index();
+        voice
     }
 
-    /// A per-(voice, slot) index folding the voice id and slot so no two
-    /// (voice, slot) pairs share a control-script PRNG seed.
-    fn script_seed_index(id: VoiceId, slot: usize) -> u32 {
-        id.0.wrapping_mul(MAX_MOD_MATRIX_SLOTS as u32)
-            .wrapping_add(slot as u32)
+    /// A fresh, zeroed per-slot source scratch buffer.
+    fn new_script_scratch() -> Box<[[f32; MAX_SOURCES]; MAX_MOD_MATRIX_SLOTS]> {
+        Box::new([[0.0; MAX_SOURCES]; MAX_MOD_MATRIX_SLOTS])
     }
 
-    /// Build a fresh per-slot register-file array for `id`.
-    fn new_script_regs(id: VoiceId) -> [RegisterFile; MAX_MOD_MATRIX_SLOTS] {
-        std::array::from_fn(|slot| {
-            RegisterFile::new(Self::script_seed_index(id, slot), SCRIPT_PRNG_SEED)
-        })
+    /// Set the voice id and re-propagate the control-script PRNG seed base to the
+    /// graph's script-hosting modules. The voice allocator clones a template (with
+    /// the template's id) and then assigns the real id here, so the seed base must
+    /// be refreshed *after* the id changes — otherwise every voice would share the
+    /// template's streams (broken decorrelation).
+    pub fn set_id(&mut self, id: VoiceId) {
+        self.id = id;
+        self.refresh_voice_index();
     }
 
-    /// Zero each control-script's persistent state and re-seed its PRNG for the
-    /// current voice id (decision #4: state resets on note-on; the PRNG re-seeds
-    /// rather than zeroing, so a retrigger is deterministic yet simultaneous
-    /// voices stay decorrelated).
-    fn reset_script_state(&mut self) {
-        let id = self.id;
-        for (slot, regs) in self.script_regs.iter_mut().enumerate() {
-            regs.reset(Self::script_seed_index(id, slot), SCRIPT_PRNG_SEED);
-        }
+    /// Push this voice's id into every script-hosting module so their PRNG streams
+    /// decorrelate per voice (and per module). Cheap; runs at allocation, never on
+    /// the audio thread.
+    fn refresh_voice_index(&mut self) {
+        self.graph.set_voice_index(self.id.0);
     }
 
     /// Set parameter on a module in the graph.
@@ -677,9 +677,9 @@ impl Voice {
         };
         self.age = SampleCount::ZERO;
 
-        // Control scripts: zero per-slot state and re-seed the PRNG for this
-        // note; flag the first block so `gate_on` reads 1.0 (Step 2).
-        self.reset_script_state();
+        // Flag the first block so `gate_on` reads 1.0 (Step 2). Per-slot script
+        // state is zeroed and re-seeded by each script-hosting module's `note_on`,
+        // invoked via `graph.note_on` below.
         self.note_on_block = true;
 
         // Notify all modules in the graph
@@ -1066,12 +1066,17 @@ impl Voice {
         }
     }
 
-    /// Resolve every active routing's source value into the pre-allocated cache.
+    /// Resolve every active routing into the pre-allocated cache, in two passes
+    /// so the immutable graph borrow (reading source ports/params) is released
+    /// before the script-eval pass takes a mutable borrow of the host module.
     ///
-    /// Stores `(resolved source value, destination, amount)` so the immutable
-    /// borrow of the graph (reading source ports/params) is released before the
-    /// apply loop takes a mutable borrow. Reuses `mod_slots_cache` to stay
-    /// allocation-free on the audio thread.
+    /// Pass 1 (`&graph`): scalar routings resolve straight into `mod_slots_cache`;
+    /// scripted slots resolve their source registers into `script_scratch` and
+    /// queue `(slot, n, dest)` in `script_eval_queue` (writing disjoint `self`
+    /// fields while the graph is borrowed). Pass 2 (`&mut graph`): evaluate each
+    /// queued slot against the host module's own per-voice state and push the
+    /// `(offset, dest, 1.0)` result. Application order is irrelevant — offsets are
+    /// summed additively at the destination. Allocation-free on the audio thread.
     fn resolve_routings_into_cache(
         &mut self,
         mm_id: crate::ModuleId,
@@ -1079,46 +1084,62 @@ impl Voice {
         sctx: &ScriptCtx,
     ) {
         self.mod_slots_cache.clear();
+        self.script_eval_queue.clear();
 
-        let Some(module) = self.graph.get_module(mm_id) else {
-            return;
-        };
-        let Some(routings) = module.mod_routings() else {
-            return;
-        };
-        // Parallel per-slot scripts (Step 2). `None` for every slot on a Mod
-        // Matrix with no scripts — then this is exactly the old scalar path.
-        let scripts = module.mod_scripts();
-        let eval_ctx = EvalContext::new(sctx.sr);
-
-        for (slot, routing) in routings.iter().enumerate() {
-            // Both paths need an enabled routing with a destination (the routing
-            // owns the address; a script only owns the value — decision #1).
-            if !routing.enabled {
-                continue;
-            }
-            let Some(dest) = routing.destination else {
-                continue;
+        // --- Pass 1: resolve sources while the graph is borrowed immutably. ---
+        {
+            let Some(module) = self.graph.get_module(mm_id) else {
+                return;
             };
+            let Some(routings) = module.mod_routings() else {
+                return;
+            };
+            // Parallel per-slot scripts (Step 2). `None` for every slot on a host
+            // with no scripts — then this is exactly the old scalar path.
+            let scripts = module.scripts();
 
-            // A slot with a script: its `out` IS the normalized offset, replacing
-            // the scalar `source × amount`. Sources read disjoint `self` fields
-            // (graph shared, `script_regs[slot]` mutable) so no borrow conflict.
-            if let Some(script) = scripts.and_then(|s| s.get(slot)).and_then(Option::as_ref) {
-                let mut sources = [0.0f32; MAX_SOURCES];
-                let n = script.inputs.len().min(MAX_SOURCES);
-                for (j, input) in script.inputs.iter().take(MAX_SOURCES).enumerate() {
-                    sources[j] = Self::resolve_script_input(&self.graph, input, macros, sctx);
+            for (slot, routing) in routings.iter().enumerate() {
+                // Both paths need an enabled routing with a destination (the
+                // routing owns the address; a script only owns the value — #1).
+                if !routing.enabled {
+                    continue;
                 }
-                let offset =
-                    script
-                        .script
-                        .eval(&sources[..n], &mut self.script_regs[slot], &eval_ctx);
-                self.mod_slots_cache.push((offset, dest, 1.0));
-            } else if let Some(source) = routing.source {
-                let value = Self::resolve_source(&self.graph, source, macros);
-                self.mod_slots_cache
-                    .push((value, dest, routing.amount.as_f32()));
+                let Some(dest) = routing.destination else {
+                    continue;
+                };
+
+                // A slot with a script: its `out` IS the normalized offset,
+                // replacing the scalar `source × amount`. Resolve its source
+                // registers into this slot's scratch (a disjoint `self` field) and
+                // queue it for the mutable eval pass — the eval needs `&mut` on the
+                // host's registers, which live inside the graph.
+                if let Some(script) = scripts.and_then(|s| s.get(slot)).and_then(Option::as_ref) {
+                    let n = script.inputs.len().min(MAX_SOURCES);
+                    for (j, input) in script.inputs.iter().take(MAX_SOURCES).enumerate() {
+                        self.script_scratch[slot][j] =
+                            Self::resolve_script_input(&self.graph, input, macros, sctx);
+                    }
+                    self.script_eval_queue.push((slot, n, dest));
+                } else if let Some(source) = routing.source {
+                    let value = Self::resolve_source(&self.graph, source, macros);
+                    self.mod_slots_cache
+                        .push((value, dest, routing.amount.as_f32()));
+                }
+            }
+        }
+
+        // --- Pass 2: evaluate scripted slots against the host's own state. ---
+        if self.script_eval_queue.is_empty() {
+            return;
+        }
+        let eval_ctx = EvalContext::new(sctx.sr);
+        if let Some(module) = self.graph.get_module_mut(mm_id) {
+            for &(slot, n, dest) in &self.script_eval_queue {
+                if let Some(offset) =
+                    module.eval_script_slot(slot, &self.script_scratch[slot][..n], &eval_ctx)
+                {
+                    self.mod_slots_cache.push((offset, dest, 1.0));
+                }
             }
         }
     }
@@ -1156,7 +1177,7 @@ impl Voice {
 
         let mod_matrix_id = cloned_graph.find_module_by_type(ModuleType::ModMatrix);
 
-        Self {
+        let mut voice = Self {
             id: self.id,
             state: VoiceState::Idle,
             age: SampleCount::ZERO,
@@ -1178,9 +1199,15 @@ impl Voice {
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: self.tuning_table.clone(),
-            script_regs: Self::new_script_regs(self.id),
+            script_scratch: Self::new_script_scratch(),
+            script_eval_queue: Vec::with_capacity(MAX_MOD_MATRIX_SLOTS),
             note_on_block: false,
-        }
+        };
+        // The clone inherits the source voice's id; re-seed its hosts to that id
+        // (the allocator may override the id afterwards via `set_id`, which
+        // re-seeds again).
+        voice.refresh_voice_index();
+        voice
     }
 
     /// Update the cached output module ID.
@@ -1488,7 +1515,7 @@ mod tests {
             Vec::new(),
             "out = -1".to_string(),
         ));
-        let _ = voice.graph.set_mod_script(mmx, 0, Some(silence));
+        let _ = voice.graph.set_script(mmx, 0, Some(silence));
         let _ = peak(&mut voice, &ctx); // settle the de-zipper ramp
         assert!(
             peak(&mut voice, &ctx) < 1e-3,
@@ -1496,7 +1523,7 @@ mod tests {
         );
 
         // Clearing the script restores audio.
-        let _ = voice.graph.set_mod_script(mmx, 0, None);
+        let _ = voice.graph.set_script(mmx, 0, None);
         let _ = peak(&mut voice, &ctx);
         assert!(
             peak(&mut voice, &ctx) > 0.01,

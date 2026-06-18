@@ -2134,14 +2134,13 @@ impl SynthEngine {
         match instrument_id {
             Some(inst_id) => match self.instruments.iter_mut().find(|i| i.id() == inst_id) {
                 Some(instrument) => {
-                    let replaced = instrument.voice_graph_mut().set_mod_script(
-                        module_id,
-                        slot,
-                        script.clone(),
-                    );
+                    let replaced =
+                        instrument
+                            .voice_graph_mut()
+                            .set_script(module_id, slot, script.clone());
                     Self::trash_script(trash, replaced);
                     for voice in instrument.allocator_mut().voices_mut() {
-                        let replaced = voice.graph.set_mod_script(module_id, slot, script.clone());
+                        let replaced = voice.graph.set_script(module_id, slot, script.clone());
                         Self::trash_script(trash, replaced);
                     }
                 }
@@ -2154,7 +2153,7 @@ impl SynthEngine {
                 None => Self::trash_script(trash, script),
             },
             None => {
-                let replaced = self.module_graph.set_mod_script(module_id, slot, script);
+                let replaced = self.module_graph.set_script(module_id, slot, script);
                 Self::trash_script(trash, replaced);
             }
         }
@@ -2626,7 +2625,7 @@ impl SynthEngine {
                 // Publish per-slot control scripts (Step 2) for the save path.
                 // Allocation is fine here — this is the UI/save snapshot, never
                 // the audio thread. 1-based slot key matches the persisted form.
-                if let Some(scripts) = module.mod_scripts() {
+                if let Some(scripts) = module.scripts() {
                     for (slot, entry) in scripts.iter().enumerate() {
                         if let Some(bound) = entry {
                             snapshot

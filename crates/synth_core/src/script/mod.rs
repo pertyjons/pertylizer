@@ -9,6 +9,7 @@
 pub mod bound;
 pub mod bytecode;
 pub mod eval;
+pub mod host;
 
 pub use bound::{BoundScript, ScriptContext, ScriptInput};
 pub use bytecode::{
@@ -16,3 +17,4 @@ pub use bytecode::{
     MAX_SOURCES, MAX_STACK, MAX_STATE, Op, finite_or_zero, safe_clamp, safe_div,
 };
 pub use eval::{EvalContext, RegisterFile};
+pub use host::{SCRIPT_HOST_SLOTS, SCRIPT_PRNG_SEED, ScriptHost};

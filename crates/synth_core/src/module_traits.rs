@@ -1226,13 +1226,15 @@ pub trait PolyModule: Describable + Send {
         None
     }
 
-    /// Expose this module's per-slot compiled control scripts (YAMS), if it is a
-    /// Mod Matrix (Step 2). Parallel to [`mod_routings`](Self::mod_routings): when
-    /// `mod_scripts()[i]` is `Some`, slot `i`'s offset is the script's output
-    /// instead of the scalar `source × amount` (decision #1 — the script owns the
-    /// value, the routing still owns the destination). Shared immutably behind an
-    /// `Arc`; the per-voice mutable state lives in the `Voice`. Default `None`.
-    fn mod_scripts(&self) -> Option<&[Option<std::sync::Arc<crate::script::BoundScript>>]> {
+    /// Expose this module's per-slot compiled control scripts (YAMS), if it hosts
+    /// any. Modules that host scripts embed a
+    /// [`ScriptHost`](crate::script::ScriptHost) and return its
+    /// [`slots`](crate::script::ScriptHost::slots) here. For the Mod Matrix this is
+    /// parallel to [`mod_routings`](Self::mod_routings): when `scripts()[i]` is
+    /// `Some`, slot `i`'s offset is the script's output instead of the scalar
+    /// `source × amount` (decision #1). Shared immutably behind an `Arc`; the
+    /// per-voice mutable state lives in the module's host. Default `None`.
+    fn scripts(&self) -> Option<&[Option<std::sync::Arc<crate::script::BoundScript>>]> {
         None
     }
 
@@ -1246,13 +1248,34 @@ pub trait PolyModule: Describable + Send {
     /// main thread for a deferred drop, keeping the (possibly final) `free()` off
     /// the real-time thread. Default: no-op slot, returns `None`.
     #[must_use = "the replaced script must be dropped off the audio thread"]
-    fn set_mod_script(
+    fn set_script(
         &mut self,
         _slot: usize,
         _script: Option<std::sync::Arc<crate::script::BoundScript>>,
     ) -> Option<std::sync::Arc<crate::script::BoundScript>> {
         None
     }
+
+    /// Evaluate one hosted script slot from externally-resolved `sources` and the
+    /// slot's own per-voice state, returning the sanitized output offset.
+    ///
+    /// The engine resolves a script's source registers from the graph *first*
+    /// (while holding `&graph`), then calls this with `&mut module` — dissolving
+    /// the `&graph` / `&mut regs` borrow conflict. `None` if the slot is empty or
+    /// the module hosts no scripts. Default: no-op, returns `None`. Real-time safe.
+    fn eval_script_slot(
+        &mut self,
+        _slot: usize,
+        _sources: &[f32],
+        _ctx: &crate::script::EvalContext,
+    ) -> Option<f32> {
+        None
+    }
+
+    /// Set the stable per-(voice, module) PRNG seed base for this module's hosted
+    /// scripts, re-seeding their state. Called once per voice at allocation, after
+    /// the voice id is assigned. Default: no-op (the module hosts no scripts).
+    fn set_voice_index(&mut self, _voice_index: u32) {}
 
     /// Apply a transient parameter override from sequencer automation.
     ///

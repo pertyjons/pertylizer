@@ -248,8 +248,9 @@ pub struct ModuleStateSnapshot {
     pub parameters: Vec<Param>,
     /// Per-slot YAMS control-script source text (Step 2), keyed by 1-based slot
     /// number — the read side of the script channel, mirroring the engine
-    /// module's `mod_scripts()` so the save path can persist them. Empty for
-    /// every module except a Mod Matrix with installed scripts.
+    /// module's `scripts()` so the save path can persist them. Empty for
+    /// every module except a script-hosting one (e.g. a Mod Matrix) with
+    /// installed scripts.
     pub scripts: BTreeMap<String, String>,
     /// Number of connections to each input port.
     pub input_connection_counts: HashMap<PortName, usize>,
