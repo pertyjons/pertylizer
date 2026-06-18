@@ -218,16 +218,16 @@ fn draw_arrangement_toolbar(
 }
 
 /// Bundle of the long-lived locals the arrangement view threads through: the
-/// song snapshot, view state, undo manager and instrument list. Mirrors
-/// [`super::piano_roll`]'s `PianoRollCtx` so extracted sub-sections (e.g. the
-/// track-header panel) take one `&mut ctx` instead of many positional
-/// parameters; each helper re-exposes the fields under their original names so
-/// the moved bodies stay byte-for-byte unchanged. (The live `EngineHandle` is
-/// still threaded directly — the timeline painter that needs it is not yet
-/// extracted.)
+/// song snapshot, live engine handle, view state, undo manager and instrument
+/// list. Mirrors [`super::piano_roll`]'s `PianoRollCtx` so extracted sub-
+/// sections (the track-header panel, timeline painter, context menu) take one
+/// `&mut ctx` instead of many positional parameters; each helper re-exposes the
+/// fields under their original names so the moved bodies stay byte-for-byte
+/// unchanged.
 struct ArrangementCtx<'a> {
     data: &'a ArrangementData,
     song: &'a Arc<RwLock<Song>>,
+    handle: &'a mut EngineHandle,
     view_state: &'a mut SequencerViewState,
     undo_manager: &'a mut crate::undo::UndoManager,
     instruments: &'a [crate::gui::instrument_rack::InstrumentUiState],
@@ -415,6 +415,7 @@ pub(super) fn draw_arrangement(
         let mut ctx = ArrangementCtx {
             data,
             song,
+            handle: &mut *handle,
             view_state: &mut *view_state,
             undo_manager: &mut *undo_manager,
             instruments,
@@ -466,668 +467,26 @@ pub(super) fn draw_arrangement(
         .id_salt(scroll_salt)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let total_size = Vec2::new(
-                timeline_width,
-                RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT,
-            );
-            let (response, painter) = ui.allocate_painter(total_size, Sense::click_and_drag());
-            let painter_rect = response.rect;
-
-            let tl_x = painter_rect.min.x;
-            let tl_y = painter_rect.min.y;
-
-            // Painter-local geometry. The closures below delegate to it so the
-            // rest of this function's call sites stay unchanged; later painter
-            // extractions can take `&coords` directly.
-            let coords = ArrangementCoords {
-                tl_x,
-                tl_y,
+            let mut ctx = ArrangementCtx {
+                data,
+                song,
+                handle: &mut *handle,
+                view_state: &mut *view_state,
+                undo_manager: &mut *undo_manager,
+                instruments,
+            };
+            draw_arrangement_timeline(
+                &mut ctx,
+                ui,
+                current_tick,
+                beats_per_bar,
+                ticks_per_bar,
                 ticks_per_beat,
                 pixels_per_beat,
                 track_count,
-                snap_ticks: view_state.arrangement_snap_ticks as u64,
-            };
-
-            let tick_to_x = |tick_val: u64| coords.tick_to_x(tick_val);
-            // Helper: x position to tick
-            let x_to_tick = |x: f32| coords.x_to_tick(x);
-            // Single snap unit shared by placement create, drag, resize, and
-            // loop-region — see `snap_to_step` for the underlying math.
-            let snap_tick = |tick: u64| coords.snap_tick(tick);
-            // Helper: y position to track row index
-            let y_to_row = |y: f32| coords.y_to_row(y);
-
-            // ── Ruler (bar/beat numbers) ──
-            let ruler_rect = coords.ruler_rect(timeline_width);
-            draw_ruler_labels(
-                &painter,
-                &t,
-                ruler_rect,
+                timeline_width,
                 total_bars,
-                ticks_per_bar,
-                tick_to_x,
-            );
-
-            // ── Full-height bar/beat grid lines ──
-            for bar_idx in 0..total_bars {
-                let bar_tick = bar_idx as u64 * ticks_per_bar;
-                let x = tick_to_x(bar_tick);
-
-                let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
-                painter.line_segment(
-                    [Pos2::new(x, tl_y + RULER_HEIGHT), Pos2::new(x, line_bottom)],
-                    Stroke::new(1.0, t.colors.border),
-                );
-
-                for beat in 1..beats_per_bar {
-                    let beat_tick = bar_tick + beat * ticks_per_beat;
-                    let bx = tick_to_x(beat_tick);
-                    painter.line_segment(
-                        [
-                            Pos2::new(bx, tl_y + RULER_HEIGHT),
-                            Pos2::new(bx, line_bottom),
-                        ],
-                        Stroke::new(0.5, t.colors.border.gamma_multiply(0.4)),
-                    );
-                }
-            }
-
-            // ── Track row backgrounds ──
-            for i in 0..track_count {
-                let row_y = tl_y + RULER_HEIGHT + i as f32 * TRACK_ROW_HEIGHT;
-                let is_highlighted = view_state.highlighted_track == Some(data.tracks[i].id);
-                let bg = if is_highlighted {
-                    TRACK_HIGHLIGHT_FILL
-                } else if i % 2 == 0 {
-                    TRACK_ROW_BG_EVEN
-                } else {
-                    Color32::TRANSPARENT
-                };
-                painter.rect_filled(
-                    Rect::from_min_size(
-                        Pos2::new(tl_x, row_y),
-                        Vec2::new(timeline_width, TRACK_ROW_HEIGHT),
-                    ),
-                    0.0,
-                    bg,
-                );
-                // Row separator
-                painter.line_segment(
-                    [
-                        Pos2::new(tl_x, row_y + TRACK_ROW_HEIGHT),
-                        Pos2::new(tl_x + timeline_width, row_y + TRACK_ROW_HEIGHT),
-                    ],
-                    Stroke::new(0.5, t.colors.border),
-                );
-            }
-
-            // ── Discoverability hint when no placements exist yet ──
-            if data.placements.is_empty() && !data.tracks.is_empty() {
-                let row_y = tl_y + RULER_HEIGHT + TRACK_ROW_HEIGHT * 0.5;
-                painter.text(
-                    Pos2::new(tl_x + 16.0, row_y),
-                    egui::Align2::LEFT_CENTER,
-                    "Double-click here to create a pattern",
-                    egui::FontId::proportional(13.0),
-                    t.colors.text_dim,
-                );
-            }
-
-            // ── Pattern placements ──
-            let mut placement_rects: Vec<(Rect, PatternId, TrackId, u64)> = Vec::new();
-            // One-shot per-frame colour cache so mini-note rendering is O(1)
-            // per note instead of O(notes × instruments) with a hex parse.
-            let inst_color_cache = build_instrument_colour_cache(instruments);
-
-            for placement in &data.placements {
-                let Some(row_idx) = data.tracks.iter().position(|t| t.id == placement.track_id)
-                else {
-                    continue;
-                };
-
-                let x_start = tick_to_x(placement.start_tick);
-                let x_end = tick_to_x(placement.end_tick);
-                let row_y =
-                    tl_y + RULER_HEIGHT + row_idx as f32 * TRACK_ROW_HEIGHT + PLACEMENT_PADDING;
-                let height = TRACK_ROW_HEIGHT - PLACEMENT_PADDING * 2.0;
-
-                let rect = Rect::from_min_size(
-                    Pos2::new(x_start, row_y),
-                    Vec2::new((x_end - x_start).max(4.0), height),
-                );
-
-                placement_rects.push((
-                    rect,
-                    placement.pattern_id,
-                    placement.track_id,
-                    placement.start_tick,
-                ));
-
-                // Placement body uses the TRACK colour — uniform per track
-                // so all placements on one track share the same row identity.
-                let track_color = placement.color;
-
-                let is_opened = view_state.opened_pattern == Some(placement.pattern_id);
-                let fill_alpha = if is_opened { 140 } else { 100 };
-                let fill = Color32::from_rgba_unmultiplied(
-                    track_color.r(),
-                    track_color.g(),
-                    track_color.b(),
-                    fill_alpha,
-                );
-                painter.rect_filled(rect, 3.0, fill);
-                let stroke = if is_opened {
-                    Stroke::new(2.0, t.colors.accent_cyan)
-                } else {
-                    Stroke::new(1.0, track_color)
-                };
-                painter.rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Inside);
-
-                let text_clip = Rect::from_min_max(
-                    Pos2::new(rect.min.x + 4.0, rect.min.y),
-                    Pos2::new(rect.max.x - 2.0, rect.max.y),
-                );
-                if text_clip.width() > 20.0 {
-                    painter.with_clip_rect(text_clip).text(
-                        Pos2::new(rect.min.x + 4.0, rect.min.y + 4.0),
-                        egui::Align2::LEFT_TOP,
-                        &placement.pattern_name,
-                        egui::FontId::proportional(11.0),
-                        t.colors.text_primary,
-                    );
-                }
-
-                if !placement.note_miniatures.is_empty() {
-                    let mini_top = rect.min.y + 18.0;
-                    let mini_height = rect.max.y - mini_top - 2.0;
-                    if mini_height > 4.0 {
-                        let mini_width = rect.width() - 4.0;
-                        let fallback = MINIATURE_FALLBACK;
-                        let clipped = painter.with_clip_rect(rect);
-                        // All notes in a placement play the placement's track instrument.
-                        let inst_color = cached_instrument_color(
-                            &inst_color_cache,
-                            placement.instrument,
-                            fallback,
-                        );
-                        // Pixel budget: drawing more notes than the box has
-                        // horizontal pixels is invisible, so decimate evenly
-                        // (notes are sorted by start tick, so every Nth note
-                        // preserves the pattern's shape over its full length).
-                        #[allow(clippy::cast_sign_loss)]
-                        let budget = ((mini_width * MINIATURE_NOTES_PER_PIXEL) as usize).max(1);
-                        let step = placement.note_miniatures.len().div_ceil(budget).max(1);
-                        let note_color = Color32::from_rgba_unmultiplied(
-                            inst_color.r(),
-                            inst_color.g(),
-                            inst_color.b(),
-                            200,
-                        );
-                        for mini in placement.note_miniatures.iter().step_by(step) {
-                            let nx = rect.min.x + 2.0 + mini.start_frac * mini_width;
-                            let nw = (mini.duration_frac * mini_width).max(1.0);
-                            let ny = mini_top + (1.0 - mini.pitch_frac) * (mini_height - 2.0);
-                            clipped.rect_filled(
-                                Rect::from_min_size(Pos2::new(nx, ny), Vec2::new(nw, 2.0)),
-                                0.0,
-                                note_color,
-                            );
-                        }
-                    }
-                }
-            }
-
-            // ── Double-click → open piano roll or create pattern ──
-            if response.double_clicked()
-                && let Some(pos) = response.interact_pointer_pos()
-            {
-                let mut hit_placement = false;
-                for (rect, pattern_id, _, _) in &placement_rects {
-                    if rect.contains(pos) {
-                        double_clicked_pattern = Some(*pattern_id);
-                        hit_placement = true;
-                        break;
-                    }
-                }
-                // Double-click on empty area → create pattern + place + open
-                if !hit_placement && let Some(row_idx) = y_to_row(pos.y) {
-                    let target_track = data.tracks[row_idx].id;
-                    let click_tick = x_to_tick(pos.x);
-                    let placement_tick = snap_tick(click_tick);
-                    {
-                        let mut song_w = song.write();
-                        let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
-                        song_w.place_pattern(new_pat_id, target_track, Tick(placement_tick));
-                        double_clicked_pattern = Some(new_pat_id);
-                    }
-                }
-            }
-
-            // ── Hover hint + tooltip on placements ──
-            if response.hovered()
-                && let Some(pos) = ui.ctx().pointer_hover_pos()
-            {
-                let hovered_placement = data
-                    .placements
-                    .iter()
-                    .zip(placement_rects.iter())
-                    .find(|(_, (r, _, _, _))| r.contains(pos));
-
-                if let Some((pl, _)) = hovered_placement {
-                    ui.output_mut(|o| {
-                        o.cursor_icon = CursorIcon::PointingHand;
-                    });
-                    // Tooltip with pattern info
-                    let instr_name = data
-                        .tracks
-                        .iter()
-                        .find(|t| t.id == pl.track_id)
-                        .map(|t| t.instrument_id)
-                        .and_then(|seq_id| instruments.iter().find(|inst| inst.id == seq_id.into()))
-                        .map_or_else(|| "---".to_owned(), |inst| inst.name.clone());
-                    let tip_name = pl.pattern_name.clone();
-                    let tip_beats = pl.length_beats;
-                    let tip_notes = pl.note_count;
-                    response.clone().on_hover_ui(|ui: &mut egui::Ui| {
-                        ui.label(
-                            RichText::new(&tip_name)
-                                .strong()
-                                .color(t.colors.text_primary),
-                        );
-                        ui.label(format!("{tip_beats:.1} beats"));
-                        ui.label(format!("{tip_notes} notes"));
-                        ui.label(format!("Instrument: {instr_name}"));
-                    });
-                }
-            }
-
-            // ── Ctrl+scroll → timeline zoom ──
-            if response.hovered() {
-                let scroll_delta = ui.input(|i| {
-                    if i.modifiers.ctrl || i.modifiers.command {
-                        i.smooth_scroll_delta.y
-                    } else {
-                        0.0
-                    }
-                });
-                if scroll_delta != 0.0 {
-                    let factor = 1.0 + scroll_delta * 0.002;
-                    view_state.zoom_level =
-                        (view_state.zoom_level * factor).clamp(MIN_ZOOM, MAX_ZOOM);
-                }
-            }
-
-            // ── Primary click: ruler seek or clear highlight ──
-            if response.clicked()
-                && let Some(pos) = response.interact_pointer_pos()
-            {
-                if ruler_rect.contains(pos) {
-                    // Click in ruler → seek to that position
-                    let seek_tick = x_to_tick(pos.x);
-                    handle.send(EngineCommand::Seek {
-                        tick: Tick(seek_tick),
-                    });
-                    // Re-enable auto-follow on ruler click
-                    view_state.reveal_playhead();
-                } else {
-                    view_state.highlighted_track = None;
-                }
-            }
-
-            // ── Ruler hover: pointing hand cursor + indicator line ──
-            if response.hovered()
-                && let Some(pos) = ui.ctx().pointer_hover_pos()
-                && ruler_rect.contains(pos)
-            {
-                ui.output_mut(|o| {
-                    o.cursor_icon = CursorIcon::PointingHand;
-                });
-                // Draw subtle hover indicator line
-                let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
-                painter.line_segment(
-                    [Pos2::new(pos.x, tl_y), Pos2::new(pos.x, line_bottom)],
-                    Stroke::new(1.0, t.colors.text_dim.gamma_multiply(0.4)),
-                );
-            }
-
-            // ── Capture right-click position + set highlighted track ──
-            if response.secondary_clicked()
-                && let Some(pos) = response.interact_pointer_pos()
-            {
-                view_state.context_menu_pos = Some(pos);
-                view_state.highlighted_track = y_to_row(pos.y).map(|i| data.tracks[i].id);
-            }
-
-            // ── Drag-to-move / resize placements ──
-            const PLACEMENT_RESIZE_ZONE: f32 = 8.0;
-            if response.drag_started_by(egui::PointerButton::Primary)
-                && let Some(pos) = response.interact_pointer_pos()
-                && let Some((rect, pat_id, trk_id, start_tick)) =
-                    placement_rects.iter().find(|(r, _, _, _)| r.contains(pos))
-            {
-                // Right-edge grab → resize. Body grab → move.
-                if pos.x >= rect.max.x - PLACEMENT_RESIZE_ZONE {
-                    if let Some(p) = data.placements.iter().find(|p| {
-                        p.pattern_id == *pat_id
-                            && p.track_id == *trk_id
-                            && p.start_tick == *start_tick
-                    }) {
-                        let cur_len = SeqDuration((p.end_tick - p.start_tick) as u32);
-                        view_state.drag = Some(DragState::ResizePlacement {
-                            pattern_id: *pat_id,
-                            track_id: *trk_id,
-                            start_tick: Tick(*start_tick),
-                            original_length: cur_len,
-                            current_length: cur_len,
-                        });
-                    }
-                } else {
-                    let grab_tick = x_to_tick(pos.x);
-                    view_state.drag = Some(DragState::DragPlacement {
-                        pattern_id: *pat_id,
-                        track_id: *trk_id,
-                        start_tick: Tick(*start_tick),
-                        current_tick: Tick(*start_tick),
-                        current_track_id: *trk_id,
-                        grab_offset_ticks: Tick(grab_tick.saturating_sub(*start_tick)),
-                    });
-                }
-            }
-
-            // ── Update drag state ──
-            if response.dragged_by(egui::PointerButton::Primary)
-                && let Some(pos) = response.interact_pointer_pos()
-            {
-                match &mut view_state.drag {
-                    Some(DragState::DragPlacement {
-                        current_tick,
-                        current_track_id,
-                        grab_offset_ticks,
-                        ..
-                    }) => {
-                        let raw_tick = x_to_tick(pos.x).saturating_sub(grab_offset_ticks.0);
-                        *current_tick = Tick(snap_tick(raw_tick));
-                        if let Some(row_idx) = y_to_row(pos.y) {
-                            *current_track_id = data.tracks[row_idx].id;
-                        }
-                    }
-                    Some(DragState::ResizePlacement {
-                        start_tick,
-                        current_length,
-                        ..
-                    }) => {
-                        let raw_end = x_to_tick(pos.x).max(start_tick.0 + 1);
-                        let snapped_end = snap_tick(raw_end);
-                        let end = snapped_end.max(start_tick.0 + 1);
-                        *current_length = SeqDuration((end - start_tick.0).max(1) as u32);
-                    }
-                    _ => {}
-                }
-            }
-            // ── Release drag → move placement / commit resize ──
-            if response.drag_stopped_by(egui::PointerButton::Primary) {
-                match view_state.drag.take() {
-                    Some(DragState::DragPlacement {
-                        pattern_id,
-                        track_id,
-                        start_tick,
-                        current_tick,
-                        current_track_id,
-                        ..
-                    }) => {
-                        if current_tick != start_tick || current_track_id != track_id {
-                            let moved = song.write().move_placement(
-                                pattern_id,
-                                track_id,
-                                start_tick,
-                                current_track_id,
-                                current_tick,
-                            );
-                            if moved {
-                                undo_manager.push(crate::undo::UndoAction::MovePlacement {
-                                    pattern_id,
-                                    old_track_id: track_id,
-                                    old_start: start_tick,
-                                    new_track_id: current_track_id,
-                                    new_start: current_tick,
-                                });
-                            }
-                        }
-                    }
-                    Some(DragState::ResizePlacement {
-                        pattern_id,
-                        track_id,
-                        start_tick,
-                        original_length,
-                        current_length,
-                    }) => {
-                        if current_length != original_length {
-                            // Resolve the underlying pattern's native length so
-                            // we can decide whether the override clears (== pattern.length).
-                            let pattern_len = song
-                                .read()
-                                .pattern(pattern_id)
-                                .map(|p| p.length)
-                                .unwrap_or(current_length);
-                            let new_override = if current_length == pattern_len {
-                                None
-                            } else {
-                                Some(current_length)
-                            };
-                            // Old override is the original length unless it
-                            // matched the pattern's native length too.
-                            let old_override = if original_length == pattern_len {
-                                None
-                            } else {
-                                Some(original_length)
-                            };
-                            song.write().set_placement_length(
-                                pattern_id,
-                                track_id,
-                                start_tick,
-                                new_override,
-                            );
-                            undo_manager.push(crate::undo::UndoAction::SetPlacementLength {
-                                pattern_id,
-                                track_id,
-                                start: start_tick,
-                                old_length: old_override,
-                                new_length: new_override,
-                            });
-                        }
-                    }
-                    other => view_state.drag = other,
-                }
-            }
-
-            // ── Draw resize ghost ──
-            if let Some(DragState::ResizePlacement {
-                track_id,
-                start_tick,
-                current_length,
-                ..
-            }) = &view_state.drag
-                && let Some(row_idx) = data.tracks.iter().position(|t| t.id == *track_id)
-            {
-                let ghost_x = tick_to_x(start_tick.0);
-                let ghost_end_x = tick_to_x(start_tick.0 + current_length.0 as u64);
-                let ghost_y =
-                    tl_y + RULER_HEIGHT + row_idx as f32 * TRACK_ROW_HEIGHT + PLACEMENT_PADDING;
-                let ghost_rect = Rect::from_min_size(
-                    Pos2::new(ghost_x, ghost_y),
-                    Vec2::new(
-                        (ghost_end_x - ghost_x).max(4.0),
-                        TRACK_ROW_HEIGHT - PLACEMENT_PADDING * 2.0,
-                    ),
-                );
-                painter.rect_stroke(
-                    ghost_rect,
-                    3.0,
-                    Stroke::new(2.0, RESIZE_GHOST_STROKE),
-                    egui::StrokeKind::Outside,
-                );
-            }
-
-            // ── Draw drag ghost ──
-            if let Some(DragState::DragPlacement {
-                pattern_id,
-                current_tick,
-                current_track_id,
-                ..
-            }) = &view_state.drag
-            {
-                // Find original placement length
-                if let Some(placement) =
-                    data.placements.iter().find(|p| p.pattern_id == *pattern_id)
-                {
-                    let duration_ticks = placement.end_tick - placement.start_tick;
-                    let ghost_x = tick_to_x(current_tick.0);
-                    let ghost_end_x = tick_to_x(current_tick.0 + duration_ticks);
-                    if let Some(row_idx) =
-                        data.tracks.iter().position(|t| t.id == *current_track_id)
-                    {
-                        let ghost_y = tl_y
-                            + RULER_HEIGHT
-                            + row_idx as f32 * TRACK_ROW_HEIGHT
-                            + PLACEMENT_PADDING;
-                        let ghost_rect = Rect::from_min_size(
-                            Pos2::new(ghost_x, ghost_y),
-                            Vec2::new(
-                                (ghost_end_x - ghost_x).max(4.0),
-                                TRACK_ROW_HEIGHT - PLACEMENT_PADDING * 2.0,
-                            ),
-                        );
-                        painter.rect_filled(ghost_rect, 3.0, DRAG_GHOST_FILL);
-                        painter.rect_stroke(
-                            ghost_rect,
-                            3.0,
-                            Stroke::new(1.5, DRAG_GHOST_STROKE),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-                }
-            }
-
-            // ── Right-click context menu on timeline ──
-            // Use stored position from secondary_clicked, not current hover
-            let ctx_pos = view_state.context_menu_pos;
-            {
-                let mut ctx = ArrangementCtx {
-                    data,
-                    song,
-                    view_state: &mut *view_state,
-                    undo_manager: &mut *undo_manager,
-                    instruments,
-                };
-                response.context_menu(|ui| {
-                    draw_arrangement_context_menu(
-                        &mut ctx,
-                        ui,
-                        handle,
-                        &coords,
-                        ruler_rect,
-                        ctx_pos,
-                        &placement_rects,
-                        &mut double_clicked_pattern,
-                        ticks_per_bar,
-                    );
-                });
-            }
-
-            // ── Loop region markers (in ruler + faint band over rows) ──
-            if let (Some(loop_start), Some(loop_end)) =
-                (view_state.loop_start_tick, view_state.loop_end_tick)
-                && loop_end.0 > loop_start.0
-            {
-                let x_a = tick_to_x(loop_start.0);
-                let x_b = tick_to_x(loop_end.0);
-                let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
-                let band_fill = Color32::from_rgba_unmultiplied(
-                    LOOP_COLOR.r(),
-                    LOOP_COLOR.g(),
-                    LOOP_COLOR.b(),
-                    24,
-                );
-
-                painter.rect_filled(
-                    Rect::from_min_max(
-                        Pos2::new(x_a, tl_y + RULER_HEIGHT),
-                        Pos2::new(x_b, line_bottom),
-                    ),
-                    0.0,
-                    band_fill,
-                );
-
-                for (x, dx) in [(x_a, 6.0), (x_b, -6.0)] {
-                    painter.line_segment(
-                        [Pos2::new(x, tl_y), Pos2::new(x, tl_y + RULER_HEIGHT)],
-                        Stroke::new(2.0, LOOP_COLOR),
-                    );
-                    painter.line_segment(
-                        [Pos2::new(x, tl_y + 4.0), Pos2::new(x + dx, tl_y + 4.0)],
-                        Stroke::new(2.0, LOOP_COLOR),
-                    );
-                }
-            }
-
-            // ── Tempo change markers on the ruler ──
-            if !data.tempo_changes.is_empty() {
-                let tempo_color = TEMPO_MARKER;
-                for (tick, bpm) in &data.tempo_changes {
-                    let x = tick_to_x(*tick);
-                    // Small flag: vertical tick + label "120.0".
-                    painter.line_segment(
-                        [Pos2::new(x, tl_y + 1.0), Pos2::new(x, tl_y + RULER_HEIGHT)],
-                        Stroke::new(1.5, tempo_color),
-                    );
-                    painter.text(
-                        Pos2::new(x + 2.0, tl_y + 12.0),
-                        egui::Align2::LEFT_TOP,
-                        format!("{bpm:.0}"),
-                        egui::FontId::proportional(9.0),
-                        tempo_color,
-                    );
-                }
-            }
-
-            // ── Playhead ──
-            // The play-start / return position (the "cursor") is tracked by the
-            // engine and drives Play / Stop, but it is intentionally not drawn
-            // as a separate marker: while paused it sits behind the playhead and
-            // reads as a misaligned "ghost". Stop simply snaps the playhead back
-            // to it, the standard DAW behavior.
-            let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
-            if current_tick > 0 || data.song_end_tick > 0 {
-                let playhead_x = tick_to_x(current_tick);
-                let line_top = tl_y;
-
-                painter.line_segment(
-                    [
-                        Pos2::new(playhead_x, line_top),
-                        Pos2::new(playhead_x, line_bottom),
-                    ],
-                    Stroke::new(2.0, t.colors.accent_primary),
-                );
-
-                let tri_size = 6.0;
-                painter.add(egui::Shape::convex_polygon(
-                    vec![
-                        Pos2::new(playhead_x - tri_size, line_top),
-                        Pos2::new(playhead_x + tri_size, line_top),
-                        Pos2::new(playhead_x, line_top + RULER_HEIGHT * 0.6),
-                    ],
-                    t.colors.accent_primary,
-                    Stroke::NONE,
-                ));
-            }
-
-            // Ruler bottom border
-            painter.line_segment(
-                [
-                    Pos2::new(tl_x, tl_y + RULER_HEIGHT),
-                    Pos2::new(tl_x + timeline_width, tl_y + RULER_HEIGHT),
-                ],
-                Stroke::new(1.0, t.colors.border),
+                &mut double_clicked_pattern,
             );
         });
 
@@ -1151,6 +510,680 @@ pub(super) fn draw_arrangement(
     double_clicked_pattern
 }
 
+/// Draw the arrangement timeline (ruler, grid, placements, loop/tempo markers,
+/// playhead) and handle its pointer interaction — the body of the timeline
+/// `ScrollArea`, split out of [`draw_arrangement`]. Builds its own
+/// `ArrangementCoords` from the painter rect and delegates the right-click menu
+/// to [`draw_arrangement_context_menu`]. Sets `*double_clicked_pattern` when a
+/// placement is opened in the piano roll.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn draw_arrangement_timeline(
+    ctx: &mut ArrangementCtx<'_>,
+    ui: &mut egui::Ui,
+    current_tick: u64,
+    beats_per_bar: u64,
+    ticks_per_bar: u64,
+    ticks_per_beat: u64,
+    pixels_per_beat: f32,
+    track_count: usize,
+    timeline_width: f32,
+    total_bars: u32,
+    double_clicked_pattern: &mut Option<PatternId>,
+) {
+    let data = ctx.data;
+    let song = ctx.song;
+    let handle = &mut *ctx.handle;
+    let view_state = &mut *ctx.view_state;
+    let undo_manager = &mut *ctx.undo_manager;
+    let instruments = ctx.instruments;
+    let t = theme();
+
+    let total_size = Vec2::new(
+        timeline_width,
+        RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT,
+    );
+    let (response, painter) = ui.allocate_painter(total_size, Sense::click_and_drag());
+    let painter_rect = response.rect;
+
+    let tl_x = painter_rect.min.x;
+    let tl_y = painter_rect.min.y;
+
+    // Painter-local geometry. The closures below delegate to it so the
+    // rest of this function's call sites stay unchanged; later painter
+    // extractions can take `&coords` directly.
+    let coords = ArrangementCoords {
+        tl_x,
+        tl_y,
+        ticks_per_beat,
+        pixels_per_beat,
+        track_count,
+        snap_ticks: view_state.arrangement_snap_ticks as u64,
+    };
+
+    let tick_to_x = |tick_val: u64| coords.tick_to_x(tick_val);
+    // Helper: x position to tick
+    let x_to_tick = |x: f32| coords.x_to_tick(x);
+    // Single snap unit shared by placement create, drag, resize, and
+    // loop-region — see `snap_to_step` for the underlying math.
+    let snap_tick = |tick: u64| coords.snap_tick(tick);
+    // Helper: y position to track row index
+    let y_to_row = |y: f32| coords.y_to_row(y);
+
+    // ── Ruler (bar/beat numbers) ──
+    let ruler_rect = coords.ruler_rect(timeline_width);
+    draw_ruler_labels(
+        &painter,
+        &t,
+        ruler_rect,
+        total_bars,
+        ticks_per_bar,
+        tick_to_x,
+    );
+
+    // ── Full-height bar/beat grid lines ──
+    for bar_idx in 0..total_bars {
+        let bar_tick = bar_idx as u64 * ticks_per_bar;
+        let x = tick_to_x(bar_tick);
+
+        let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
+        painter.line_segment(
+            [Pos2::new(x, tl_y + RULER_HEIGHT), Pos2::new(x, line_bottom)],
+            Stroke::new(1.0, t.colors.border),
+        );
+
+        for beat in 1..beats_per_bar {
+            let beat_tick = bar_tick + beat * ticks_per_beat;
+            let bx = tick_to_x(beat_tick);
+            painter.line_segment(
+                [
+                    Pos2::new(bx, tl_y + RULER_HEIGHT),
+                    Pos2::new(bx, line_bottom),
+                ],
+                Stroke::new(0.5, t.colors.border.gamma_multiply(0.4)),
+            );
+        }
+    }
+
+    // ── Track row backgrounds ──
+    for i in 0..track_count {
+        let row_y = tl_y + RULER_HEIGHT + i as f32 * TRACK_ROW_HEIGHT;
+        let is_highlighted = view_state.highlighted_track == Some(data.tracks[i].id);
+        let bg = if is_highlighted {
+            TRACK_HIGHLIGHT_FILL
+        } else if i % 2 == 0 {
+            TRACK_ROW_BG_EVEN
+        } else {
+            Color32::TRANSPARENT
+        };
+        painter.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(tl_x, row_y),
+                Vec2::new(timeline_width, TRACK_ROW_HEIGHT),
+            ),
+            0.0,
+            bg,
+        );
+        // Row separator
+        painter.line_segment(
+            [
+                Pos2::new(tl_x, row_y + TRACK_ROW_HEIGHT),
+                Pos2::new(tl_x + timeline_width, row_y + TRACK_ROW_HEIGHT),
+            ],
+            Stroke::new(0.5, t.colors.border),
+        );
+    }
+
+    // ── Discoverability hint when no placements exist yet ──
+    if data.placements.is_empty() && !data.tracks.is_empty() {
+        let row_y = tl_y + RULER_HEIGHT + TRACK_ROW_HEIGHT * 0.5;
+        painter.text(
+            Pos2::new(tl_x + 16.0, row_y),
+            egui::Align2::LEFT_CENTER,
+            "Double-click here to create a pattern",
+            egui::FontId::proportional(13.0),
+            t.colors.text_dim,
+        );
+    }
+
+    // ── Pattern placements ──
+    let mut placement_rects: Vec<(Rect, PatternId, TrackId, u64)> = Vec::new();
+    // One-shot per-frame colour cache so mini-note rendering is O(1)
+    // per note instead of O(notes × instruments) with a hex parse.
+    let inst_color_cache = build_instrument_colour_cache(instruments);
+
+    for placement in &data.placements {
+        let Some(row_idx) = data.tracks.iter().position(|t| t.id == placement.track_id) else {
+            continue;
+        };
+
+        let x_start = tick_to_x(placement.start_tick);
+        let x_end = tick_to_x(placement.end_tick);
+        let row_y = tl_y + RULER_HEIGHT + row_idx as f32 * TRACK_ROW_HEIGHT + PLACEMENT_PADDING;
+        let height = TRACK_ROW_HEIGHT - PLACEMENT_PADDING * 2.0;
+
+        let rect = Rect::from_min_size(
+            Pos2::new(x_start, row_y),
+            Vec2::new((x_end - x_start).max(4.0), height),
+        );
+
+        placement_rects.push((
+            rect,
+            placement.pattern_id,
+            placement.track_id,
+            placement.start_tick,
+        ));
+
+        // Placement body uses the TRACK colour — uniform per track
+        // so all placements on one track share the same row identity.
+        let track_color = placement.color;
+
+        let is_opened = view_state.opened_pattern == Some(placement.pattern_id);
+        let fill_alpha = if is_opened { 140 } else { 100 };
+        let fill = Color32::from_rgba_unmultiplied(
+            track_color.r(),
+            track_color.g(),
+            track_color.b(),
+            fill_alpha,
+        );
+        painter.rect_filled(rect, 3.0, fill);
+        let stroke = if is_opened {
+            Stroke::new(2.0, t.colors.accent_cyan)
+        } else {
+            Stroke::new(1.0, track_color)
+        };
+        painter.rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Inside);
+
+        let text_clip = Rect::from_min_max(
+            Pos2::new(rect.min.x + 4.0, rect.min.y),
+            Pos2::new(rect.max.x - 2.0, rect.max.y),
+        );
+        if text_clip.width() > 20.0 {
+            painter.with_clip_rect(text_clip).text(
+                Pos2::new(rect.min.x + 4.0, rect.min.y + 4.0),
+                egui::Align2::LEFT_TOP,
+                &placement.pattern_name,
+                egui::FontId::proportional(11.0),
+                t.colors.text_primary,
+            );
+        }
+
+        if !placement.note_miniatures.is_empty() {
+            let mini_top = rect.min.y + 18.0;
+            let mini_height = rect.max.y - mini_top - 2.0;
+            if mini_height > 4.0 {
+                let mini_width = rect.width() - 4.0;
+                let fallback = MINIATURE_FALLBACK;
+                let clipped = painter.with_clip_rect(rect);
+                // All notes in a placement play the placement's track instrument.
+                let inst_color =
+                    cached_instrument_color(&inst_color_cache, placement.instrument, fallback);
+                // Pixel budget: drawing more notes than the box has
+                // horizontal pixels is invisible, so decimate evenly
+                // (notes are sorted by start tick, so every Nth note
+                // preserves the pattern's shape over its full length).
+                #[allow(clippy::cast_sign_loss)]
+                let budget = ((mini_width * MINIATURE_NOTES_PER_PIXEL) as usize).max(1);
+                let step = placement.note_miniatures.len().div_ceil(budget).max(1);
+                let note_color = Color32::from_rgba_unmultiplied(
+                    inst_color.r(),
+                    inst_color.g(),
+                    inst_color.b(),
+                    200,
+                );
+                for mini in placement.note_miniatures.iter().step_by(step) {
+                    let nx = rect.min.x + 2.0 + mini.start_frac * mini_width;
+                    let nw = (mini.duration_frac * mini_width).max(1.0);
+                    let ny = mini_top + (1.0 - mini.pitch_frac) * (mini_height - 2.0);
+                    clipped.rect_filled(
+                        Rect::from_min_size(Pos2::new(nx, ny), Vec2::new(nw, 2.0)),
+                        0.0,
+                        note_color,
+                    );
+                }
+            }
+        }
+    }
+
+    // ── Double-click → open piano roll or create pattern ──
+    if response.double_clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let mut hit_placement = false;
+        for (rect, pattern_id, _, _) in &placement_rects {
+            if rect.contains(pos) {
+                *double_clicked_pattern = Some(*pattern_id);
+                hit_placement = true;
+                break;
+            }
+        }
+        // Double-click on empty area → create pattern + place + open
+        if !hit_placement && let Some(row_idx) = y_to_row(pos.y) {
+            let target_track = data.tracks[row_idx].id;
+            let click_tick = x_to_tick(pos.x);
+            let placement_tick = snap_tick(click_tick);
+            {
+                let mut song_w = song.write();
+                let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
+                song_w.place_pattern(new_pat_id, target_track, Tick(placement_tick));
+                *double_clicked_pattern = Some(new_pat_id);
+            }
+        }
+    }
+
+    // ── Hover hint + tooltip on placements ──
+    if response.hovered()
+        && let Some(pos) = ui.ctx().pointer_hover_pos()
+    {
+        let hovered_placement = data
+            .placements
+            .iter()
+            .zip(placement_rects.iter())
+            .find(|(_, (r, _, _, _))| r.contains(pos));
+
+        if let Some((pl, _)) = hovered_placement {
+            ui.output_mut(|o| {
+                o.cursor_icon = CursorIcon::PointingHand;
+            });
+            // Tooltip with pattern info
+            let instr_name = data
+                .tracks
+                .iter()
+                .find(|t| t.id == pl.track_id)
+                .map(|t| t.instrument_id)
+                .and_then(|seq_id| instruments.iter().find(|inst| inst.id == seq_id.into()))
+                .map_or_else(|| "---".to_owned(), |inst| inst.name.clone());
+            let tip_name = pl.pattern_name.clone();
+            let tip_beats = pl.length_beats;
+            let tip_notes = pl.note_count;
+            response.clone().on_hover_ui(|ui: &mut egui::Ui| {
+                ui.label(
+                    RichText::new(&tip_name)
+                        .strong()
+                        .color(t.colors.text_primary),
+                );
+                ui.label(format!("{tip_beats:.1} beats"));
+                ui.label(format!("{tip_notes} notes"));
+                ui.label(format!("Instrument: {instr_name}"));
+            });
+        }
+    }
+
+    // ── Ctrl+scroll → timeline zoom ──
+    if response.hovered() {
+        let scroll_delta = ui.input(|i| {
+            if i.modifiers.ctrl || i.modifiers.command {
+                i.smooth_scroll_delta.y
+            } else {
+                0.0
+            }
+        });
+        if scroll_delta != 0.0 {
+            let factor = 1.0 + scroll_delta * 0.002;
+            view_state.zoom_level = (view_state.zoom_level * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+        }
+    }
+
+    // ── Primary click: ruler seek or clear highlight ──
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        if ruler_rect.contains(pos) {
+            // Click in ruler → seek to that position
+            let seek_tick = x_to_tick(pos.x);
+            handle.send(EngineCommand::Seek {
+                tick: Tick(seek_tick),
+            });
+            // Re-enable auto-follow on ruler click
+            view_state.reveal_playhead();
+        } else {
+            view_state.highlighted_track = None;
+        }
+    }
+
+    // ── Ruler hover: pointing hand cursor + indicator line ──
+    if response.hovered()
+        && let Some(pos) = ui.ctx().pointer_hover_pos()
+        && ruler_rect.contains(pos)
+    {
+        ui.output_mut(|o| {
+            o.cursor_icon = CursorIcon::PointingHand;
+        });
+        // Draw subtle hover indicator line
+        let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
+        painter.line_segment(
+            [Pos2::new(pos.x, tl_y), Pos2::new(pos.x, line_bottom)],
+            Stroke::new(1.0, t.colors.text_dim.gamma_multiply(0.4)),
+        );
+    }
+
+    // ── Capture right-click position + set highlighted track ──
+    if response.secondary_clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        view_state.context_menu_pos = Some(pos);
+        view_state.highlighted_track = y_to_row(pos.y).map(|i| data.tracks[i].id);
+    }
+
+    // ── Drag-to-move / resize placements ──
+    const PLACEMENT_RESIZE_ZONE: f32 = 8.0;
+    if response.drag_started_by(egui::PointerButton::Primary)
+        && let Some(pos) = response.interact_pointer_pos()
+        && let Some((rect, pat_id, trk_id, start_tick)) =
+            placement_rects.iter().find(|(r, _, _, _)| r.contains(pos))
+    {
+        // Right-edge grab → resize. Body grab → move.
+        if pos.x >= rect.max.x - PLACEMENT_RESIZE_ZONE {
+            if let Some(p) = data.placements.iter().find(|p| {
+                p.pattern_id == *pat_id && p.track_id == *trk_id && p.start_tick == *start_tick
+            }) {
+                let cur_len = SeqDuration((p.end_tick - p.start_tick) as u32);
+                view_state.drag = Some(DragState::ResizePlacement {
+                    pattern_id: *pat_id,
+                    track_id: *trk_id,
+                    start_tick: Tick(*start_tick),
+                    original_length: cur_len,
+                    current_length: cur_len,
+                });
+            }
+        } else {
+            let grab_tick = x_to_tick(pos.x);
+            view_state.drag = Some(DragState::DragPlacement {
+                pattern_id: *pat_id,
+                track_id: *trk_id,
+                start_tick: Tick(*start_tick),
+                current_tick: Tick(*start_tick),
+                current_track_id: *trk_id,
+                grab_offset_ticks: Tick(grab_tick.saturating_sub(*start_tick)),
+            });
+        }
+    }
+
+    // ── Update drag state ──
+    if response.dragged_by(egui::PointerButton::Primary)
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        match &mut view_state.drag {
+            Some(DragState::DragPlacement {
+                current_tick,
+                current_track_id,
+                grab_offset_ticks,
+                ..
+            }) => {
+                let raw_tick = x_to_tick(pos.x).saturating_sub(grab_offset_ticks.0);
+                *current_tick = Tick(snap_tick(raw_tick));
+                if let Some(row_idx) = y_to_row(pos.y) {
+                    *current_track_id = data.tracks[row_idx].id;
+                }
+            }
+            Some(DragState::ResizePlacement {
+                start_tick,
+                current_length,
+                ..
+            }) => {
+                let raw_end = x_to_tick(pos.x).max(start_tick.0 + 1);
+                let snapped_end = snap_tick(raw_end);
+                let end = snapped_end.max(start_tick.0 + 1);
+                *current_length = SeqDuration((end - start_tick.0).max(1) as u32);
+            }
+            _ => {}
+        }
+    }
+    // ── Release drag → move placement / commit resize ──
+    if response.drag_stopped_by(egui::PointerButton::Primary) {
+        match view_state.drag.take() {
+            Some(DragState::DragPlacement {
+                pattern_id,
+                track_id,
+                start_tick,
+                current_tick,
+                current_track_id,
+                ..
+            }) => {
+                if current_tick != start_tick || current_track_id != track_id {
+                    let moved = song.write().move_placement(
+                        pattern_id,
+                        track_id,
+                        start_tick,
+                        current_track_id,
+                        current_tick,
+                    );
+                    if moved {
+                        undo_manager.push(crate::undo::UndoAction::MovePlacement {
+                            pattern_id,
+                            old_track_id: track_id,
+                            old_start: start_tick,
+                            new_track_id: current_track_id,
+                            new_start: current_tick,
+                        });
+                    }
+                }
+            }
+            Some(DragState::ResizePlacement {
+                pattern_id,
+                track_id,
+                start_tick,
+                original_length,
+                current_length,
+            }) => {
+                if current_length != original_length {
+                    // Resolve the underlying pattern's native length so
+                    // we can decide whether the override clears (== pattern.length).
+                    let pattern_len = song
+                        .read()
+                        .pattern(pattern_id)
+                        .map(|p| p.length)
+                        .unwrap_or(current_length);
+                    let new_override = if current_length == pattern_len {
+                        None
+                    } else {
+                        Some(current_length)
+                    };
+                    // Old override is the original length unless it
+                    // matched the pattern's native length too.
+                    let old_override = if original_length == pattern_len {
+                        None
+                    } else {
+                        Some(original_length)
+                    };
+                    song.write().set_placement_length(
+                        pattern_id,
+                        track_id,
+                        start_tick,
+                        new_override,
+                    );
+                    undo_manager.push(crate::undo::UndoAction::SetPlacementLength {
+                        pattern_id,
+                        track_id,
+                        start: start_tick,
+                        old_length: old_override,
+                        new_length: new_override,
+                    });
+                }
+            }
+            other => view_state.drag = other,
+        }
+    }
+
+    // ── Draw resize ghost ──
+    if let Some(DragState::ResizePlacement {
+        track_id,
+        start_tick,
+        current_length,
+        ..
+    }) = &view_state.drag
+        && let Some(row_idx) = data.tracks.iter().position(|t| t.id == *track_id)
+    {
+        let ghost_x = tick_to_x(start_tick.0);
+        let ghost_end_x = tick_to_x(start_tick.0 + current_length.0 as u64);
+        let ghost_y = tl_y + RULER_HEIGHT + row_idx as f32 * TRACK_ROW_HEIGHT + PLACEMENT_PADDING;
+        let ghost_rect = Rect::from_min_size(
+            Pos2::new(ghost_x, ghost_y),
+            Vec2::new(
+                (ghost_end_x - ghost_x).max(4.0),
+                TRACK_ROW_HEIGHT - PLACEMENT_PADDING * 2.0,
+            ),
+        );
+        painter.rect_stroke(
+            ghost_rect,
+            3.0,
+            Stroke::new(2.0, RESIZE_GHOST_STROKE),
+            egui::StrokeKind::Outside,
+        );
+    }
+
+    // ── Draw drag ghost ──
+    if let Some(DragState::DragPlacement {
+        pattern_id,
+        current_tick,
+        current_track_id,
+        ..
+    }) = &view_state.drag
+    {
+        // Find original placement length
+        if let Some(placement) = data.placements.iter().find(|p| p.pattern_id == *pattern_id) {
+            let duration_ticks = placement.end_tick - placement.start_tick;
+            let ghost_x = tick_to_x(current_tick.0);
+            let ghost_end_x = tick_to_x(current_tick.0 + duration_ticks);
+            if let Some(row_idx) = data.tracks.iter().position(|t| t.id == *current_track_id) {
+                let ghost_y =
+                    tl_y + RULER_HEIGHT + row_idx as f32 * TRACK_ROW_HEIGHT + PLACEMENT_PADDING;
+                let ghost_rect = Rect::from_min_size(
+                    Pos2::new(ghost_x, ghost_y),
+                    Vec2::new(
+                        (ghost_end_x - ghost_x).max(4.0),
+                        TRACK_ROW_HEIGHT - PLACEMENT_PADDING * 2.0,
+                    ),
+                );
+                painter.rect_filled(ghost_rect, 3.0, DRAG_GHOST_FILL);
+                painter.rect_stroke(
+                    ghost_rect,
+                    3.0,
+                    Stroke::new(1.5, DRAG_GHOST_STROKE),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+    }
+
+    // ── Right-click context menu on timeline ──
+    // Use stored position from secondary_clicked, not current hover
+    let ctx_pos = view_state.context_menu_pos;
+    {
+        let mut ctx = ArrangementCtx {
+            data,
+            song,
+            handle: &mut *handle,
+            view_state: &mut *view_state,
+            undo_manager: &mut *undo_manager,
+            instruments,
+        };
+        response.context_menu(|ui| {
+            draw_arrangement_context_menu(
+                &mut ctx,
+                ui,
+                &coords,
+                ruler_rect,
+                ctx_pos,
+                &placement_rects,
+                double_clicked_pattern,
+                ticks_per_bar,
+            );
+        });
+    }
+
+    // ── Loop region markers (in ruler + faint band over rows) ──
+    if let (Some(loop_start), Some(loop_end)) =
+        (view_state.loop_start_tick, view_state.loop_end_tick)
+        && loop_end.0 > loop_start.0
+    {
+        let x_a = tick_to_x(loop_start.0);
+        let x_b = tick_to_x(loop_end.0);
+        let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
+        let band_fill =
+            Color32::from_rgba_unmultiplied(LOOP_COLOR.r(), LOOP_COLOR.g(), LOOP_COLOR.b(), 24);
+
+        painter.rect_filled(
+            Rect::from_min_max(
+                Pos2::new(x_a, tl_y + RULER_HEIGHT),
+                Pos2::new(x_b, line_bottom),
+            ),
+            0.0,
+            band_fill,
+        );
+
+        for (x, dx) in [(x_a, 6.0), (x_b, -6.0)] {
+            painter.line_segment(
+                [Pos2::new(x, tl_y), Pos2::new(x, tl_y + RULER_HEIGHT)],
+                Stroke::new(2.0, LOOP_COLOR),
+            );
+            painter.line_segment(
+                [Pos2::new(x, tl_y + 4.0), Pos2::new(x + dx, tl_y + 4.0)],
+                Stroke::new(2.0, LOOP_COLOR),
+            );
+        }
+    }
+
+    // ── Tempo change markers on the ruler ──
+    if !data.tempo_changes.is_empty() {
+        let tempo_color = TEMPO_MARKER;
+        for (tick, bpm) in &data.tempo_changes {
+            let x = tick_to_x(*tick);
+            // Small flag: vertical tick + label "120.0".
+            painter.line_segment(
+                [Pos2::new(x, tl_y + 1.0), Pos2::new(x, tl_y + RULER_HEIGHT)],
+                Stroke::new(1.5, tempo_color),
+            );
+            painter.text(
+                Pos2::new(x + 2.0, tl_y + 12.0),
+                egui::Align2::LEFT_TOP,
+                format!("{bpm:.0}"),
+                egui::FontId::proportional(9.0),
+                tempo_color,
+            );
+        }
+    }
+
+    // ── Playhead ──
+    // The play-start / return position (the "cursor") is tracked by the
+    // engine and drives Play / Stop, but it is intentionally not drawn
+    // as a separate marker: while paused it sits behind the playhead and
+    // reads as a misaligned "ghost". Stop simply snaps the playhead back
+    // to it, the standard DAW behavior.
+    let line_bottom = tl_y + RULER_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT;
+    if current_tick > 0 || data.song_end_tick > 0 {
+        let playhead_x = tick_to_x(current_tick);
+        let line_top = tl_y;
+
+        painter.line_segment(
+            [
+                Pos2::new(playhead_x, line_top),
+                Pos2::new(playhead_x, line_bottom),
+            ],
+            Stroke::new(2.0, t.colors.accent_primary),
+        );
+
+        let tri_size = 6.0;
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                Pos2::new(playhead_x - tri_size, line_top),
+                Pos2::new(playhead_x + tri_size, line_top),
+                Pos2::new(playhead_x, line_top + RULER_HEIGHT * 0.6),
+            ],
+            t.colors.accent_primary,
+            Stroke::NONE,
+        ));
+    }
+
+    // Ruler bottom border
+    painter.line_segment(
+        [
+            Pos2::new(tl_x, tl_y + RULER_HEIGHT),
+            Pos2::new(tl_x + timeline_width, tl_y + RULER_HEIGHT),
+        ],
+        Stroke::new(1.0, t.colors.border),
+    );
+}
+
 /// Right-click context menu for the arrangement timeline (ruler loop/tempo
 /// commands, per-placement actions, and empty-area pattern creation). Split
 /// out of [`draw_arrangement`]; takes `&ArrangementCoords` for the geometry
@@ -1159,7 +1192,6 @@ pub(super) fn draw_arrangement(
 fn draw_arrangement_context_menu(
     ctx: &mut ArrangementCtx<'_>,
     ui: &mut egui::Ui,
-    handle: &mut EngineHandle,
     coords: &ArrangementCoords,
     ruler_rect: Rect,
     ctx_pos: Option<Pos2>,
@@ -1170,6 +1202,7 @@ fn draw_arrangement_context_menu(
     use egui_remixicon::icons as ri;
     let data = ctx.data;
     let song = ctx.song;
+    let handle = &mut *ctx.handle;
     let view_state = &mut *ctx.view_state;
     let undo_manager = &mut *ctx.undo_manager;
     let t = theme();
