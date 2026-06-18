@@ -1011,303 +1011,28 @@ pub(super) fn draw_arrangement(
             // ── Right-click context menu on timeline ──
             // Use stored position from secondary_clicked, not current hover
             let ctx_pos = view_state.context_menu_pos;
-            response.context_menu(|ui| {
-                ui.set_min_width(180.0);
-                let hover_pos = ctx_pos.unwrap_or(ui.min_rect().min);
-
-                // Right-click on the ruler shows loop-region commands.
-                if ruler_rect.contains(hover_pos) {
-                    let tick = Tick(x_to_tick(hover_pos.x));
-                    let snapped = snap_tick(tick.0);
-                    if ui.button("Set loop start here").clicked() {
-                        view_state.loop_start_tick = Some(Tick(snapped));
-                        if let Some(end) = view_state.loop_end_tick
-                            && end.0 > snapped
-                        {
-                            handle.send(EngineCommand::SetLoop {
-                                start: Tick(snapped),
-                                end,
-                                enabled: true,
-                            });
-                        }
-                        ui.close();
-                    }
-                    if ui.button("Set loop end here").clicked() {
-                        view_state.loop_end_tick = Some(Tick(snapped));
-                        if let Some(start) = view_state.loop_start_tick
-                            && snapped > start.0
-                        {
-                            handle.send(EngineCommand::SetLoop {
-                                start,
-                                end: Tick(snapped),
-                                enabled: true,
-                            });
-                        }
-                        ui.close();
-                    }
-                    if (view_state.loop_start_tick.is_some() || view_state.loop_end_tick.is_some())
-                        && ui
-                            .button(RichText::new("Clear loop").color(t.colors.accent_red))
-                            .clicked()
-                    {
-                        view_state.loop_start_tick = None;
-                        view_state.loop_end_tick = None;
-                        handle.send(EngineCommand::SetLoop {
-                            start: Tick::ZERO,
-                            end: Tick::ZERO,
-                            enabled: false,
-                        });
-                        ui.close();
-                    }
-
-                    ui.separator();
-
-                    // Tempo automation at the clicked (snapped) tick.
-                    let existing_bpm: Option<f32> = data
-                        .tempo_changes
-                        .iter()
-                        .find(|(t, _)| *t == snapped)
-                        .map(|(_, b)| *b);
-                    let default_bpm = existing_bpm.unwrap_or_else(|| {
-                        // Seed from the song's tempo at this position so
-                        // dragging from a curve point feels stable.
-                        song.try_read()
-                            .map(|s| s.tempo_at(Tick(snapped)).as_f32())
-                            .unwrap_or(120.0)
-                    });
-                    ui.menu_button("Set tempo here…", |ui| {
-                        let mut bpm = default_bpm;
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::DragValue::new(&mut bpm)
-                                    .range(20.0..=300.0)
-                                    .speed(0.5)
-                                    .fixed_decimals(1)
-                                    .suffix(" BPM"),
-                            );
-                            if ui.button("Apply").clicked() {
-                                let new_bpm = Bpm::new(bpm);
-                                let old_bpm = existing_bpm.map(Bpm::new);
-                                if old_bpm != Some(new_bpm) {
-                                    song.write().set_tempo_at(Tick(snapped), new_bpm);
-                                    undo_manager.push(crate::undo::UndoAction::SetTempo {
-                                        tick: Tick(snapped),
-                                        old_bpm,
-                                        new_bpm: Some(new_bpm),
-                                    });
-                                }
-                                ui.close();
-                            }
-                        });
-                        if let Some(existing) = existing_bpm {
-                            ui.separator();
-                            if ui
-                                .button(
-                                    RichText::new("Remove tempo change here")
-                                        .color(t.colors.accent_red),
-                                )
-                                .clicked()
-                            {
-                                if song.write().remove_tempo_change(Tick(snapped)) {
-                                    undo_manager.push(crate::undo::UndoAction::SetTempo {
-                                        tick: Tick(snapped),
-                                        old_bpm: Some(Bpm::new(existing)),
-                                        new_bpm: None,
-                                    });
-                                }
-                                ui.close();
-                            }
-                        }
-                    });
-                    return;
-                }
-
-                // Check if right-click is on an existing placement
-                let clicked_placement = placement_rects
-                    .iter()
-                    .find(|(r, _, _, _)| r.contains(hover_pos));
-
-                if let Some((_, pat_id, trk_id, start_tick)) = clicked_placement {
-                    let pat_id = *pat_id;
-                    let trk_id = *trk_id;
-                    let start_tick = *start_tick;
-
-                    if ui.button("Open in Piano Roll").clicked() {
-                        double_clicked_pattern = Some(pat_id);
-                        ui.close();
-                    }
-                    if ui.button("Rename Pattern").clicked() {
-                        // Get current name
-                        let current_name = data
-                            .patterns
-                            .iter()
-                            .find(|p| p.id == pat_id)
-                            .map_or_else(String::new, |p| p.name.clone());
-                        view_state.editing_pattern_name = Some((pat_id, current_name));
-                        // The inline rename editor lives in the piano-roll
-                        // toolbar — open it so the user can actually type.
-                        double_clicked_pattern = Some(pat_id);
-                        ui.close();
-                    }
-
-                    // Pattern length editing — free-input bars
-                    ui.menu_button("Set Length…", |ui| {
-                        let ticks_per_bar = data.time_sig.ticks_per_bar().max(1);
-                        let current_len = data
-                            .patterns
-                            .iter()
-                            .find(|p| p.id == pat_id)
-                            .map_or(ticks_per_bar, |p| p.length_ticks);
-                        let mut bars = (current_len / ticks_per_bar).max(1) as i32;
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::DragValue::new(&mut bars)
-                                    .range(1..=64)
-                                    .speed(0.1)
-                                    .suffix(" bars"),
-                            );
-                            if ui.button("Apply").clicked() {
-                                let new_len = SeqDuration(bars.max(1) as u32 * ticks_per_bar);
-                                apply_pattern_length(song, undo_manager, pat_id, new_len);
-                                ui.close();
-                            }
-                        });
-                        ui.separator();
-                        for bars_preset in [1_u32, 2, 4, 8, 16] {
-                            if ui.button(format!("{bars_preset} bar(s)")).clicked() {
-                                let new_len = SeqDuration(bars_preset * ticks_per_bar);
-                                apply_pattern_length(song, undo_manager, pat_id, new_len);
-                                ui.close();
-                            }
-                        }
-                    });
-
-                    if ui.button("Duplicate Pattern").clicked() {
-                        {
-                            let mut song_w = song.write();
-                            if let Some(new_id) = song_w.duplicate_pattern(pat_id) {
-                                let pattern_length = song_w
-                                    .pattern(pat_id)
-                                    .map_or(SeqDuration::WHOLE, |p| p.length);
-                                song_w.place_pattern(
-                                    new_id,
-                                    trk_id,
-                                    Tick(start_tick + pattern_length.0 as u64),
-                                );
-                            }
-                        }
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Remove from Timeline").clicked() {
-                        let mut captured: Option<synth_sequencer::PatternPlacement> = None;
-                        {
-                            let mut song_w = song.write();
-                            if let Some(p) = song_w
-                                .arrangement()
-                                .iter()
-                                .find(|p| {
-                                    p.pattern_id == pat_id
-                                        && p.track_id == trk_id
-                                        && p.start.0 == start_tick
-                                })
-                                .cloned()
-                            {
-                                song_w.remove_placement(pat_id, trk_id, Tick(start_tick));
-                                captured = Some(p);
-                            }
-                        }
-                        if let Some(p) = captured {
-                            undo_manager
-                                .push(crate::undo::UndoAction::RemovePlacement { placement: p });
-                        }
-                        ui.close();
-                    }
-                    if ui
-                        .button(RichText::new("Delete Pattern").color(t.colors.accent_red))
-                        .clicked()
-                    {
-                        let mut captured: Option<(
-                            synth_sequencer::Pattern,
-                            Vec<synth_sequencer::PatternPlacement>,
-                        )> = None;
-                        {
-                            let mut song_w = song.write();
-                            let placements: Vec<_> = song_w
-                                .arrangement()
-                                .iter()
-                                .filter(|p| p.pattern_id == pat_id)
-                                .cloned()
-                                .collect();
-                            if let Some(deleted) = song_w.delete_pattern(pat_id) {
-                                captured = Some((deleted, placements));
-                            }
-                        }
-                        if let Some((pat, plcs)) = captured {
-                            undo_manager.push(crate::undo::UndoAction::DeletePattern {
-                                pattern: pat,
-                                placements: plcs,
-                            });
-                        }
-                        ui.close();
-                    }
-                } else {
-                    // Clicked on empty area — figure out track + tick
-                    let row_offset = hover_pos.y - (tl_y + RULER_HEIGHT);
-                    let row_idx = if TRACK_ROW_HEIGHT > 0.0 {
-                        (row_offset / TRACK_ROW_HEIGHT) as usize
-                    } else {
-                        0
-                    };
-                    let click_tick = x_to_tick(hover_pos.x);
-                    let bar_tick = snap_tick(click_tick);
-
-                    if row_idx < data.tracks.len() {
-                        let target_track = data.tracks[row_idx].id;
-                        ui.label(
-                            RichText::new(format!(
-                                "Bar {}",
-                                bar_tick.checked_div(ticks_per_bar).map_or(1, |q| q + 1)
-                            ))
-                            .color(t.colors.text_dim),
-                        );
-                        ui.separator();
-
-                        if ui
-                            .button(format!("{} New Pattern Here", ri::ADD_LINE))
-                            .clicked()
-                        {
-                            {
-                                let mut song_w = song.write();
-                                let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
-                                song_w.place_pattern(new_pat_id, target_track, Tick(bar_tick));
-                            }
-                            ui.close();
-                        }
-
-                        // Place existing pattern submenu
-                        if !data.patterns.is_empty() {
-                            ui.menu_button("Place Existing Pattern", |ui| {
-                                for pat in &data.patterns {
-                                    let beats = pat.length_ticks as f32
-                                        / synth_sequencer::TICKS_PER_QUARTER as f32;
-                                    if ui
-                                        .button(format!("{} ({:.0} beats)", pat.name, beats))
-                                        .clicked()
-                                    {
-                                        song.write().place_pattern(
-                                            pat.id,
-                                            target_track,
-                                            Tick(bar_tick),
-                                        );
-                                        ui.close();
-                                    }
-                                }
-                            });
-                        }
-                    }
-                }
-            });
+            {
+                let mut ctx = ArrangementCtx {
+                    data,
+                    song,
+                    view_state: &mut *view_state,
+                    undo_manager: &mut *undo_manager,
+                    instruments,
+                };
+                response.context_menu(|ui| {
+                    draw_arrangement_context_menu(
+                        &mut ctx,
+                        ui,
+                        handle,
+                        &coords,
+                        ruler_rect,
+                        ctx_pos,
+                        &placement_rects,
+                        &mut double_clicked_pattern,
+                        ticks_per_bar,
+                    );
+                });
+            }
 
             // ── Loop region markers (in ruler + faint band over rows) ──
             if let (Some(loop_start), Some(loop_end)) =
@@ -1424,6 +1149,320 @@ pub(super) fn draw_arrangement(
     }
 
     double_clicked_pattern
+}
+
+/// Right-click context menu for the arrangement timeline (ruler loop/tempo
+/// commands, per-placement actions, and empty-area pattern creation). Split
+/// out of [`draw_arrangement`]; takes `&ArrangementCoords` for the geometry
+/// plus the live `EngineHandle` and the painter-local hit-test state.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn draw_arrangement_context_menu(
+    ctx: &mut ArrangementCtx<'_>,
+    ui: &mut egui::Ui,
+    handle: &mut EngineHandle,
+    coords: &ArrangementCoords,
+    ruler_rect: Rect,
+    ctx_pos: Option<Pos2>,
+    placement_rects: &[(Rect, PatternId, TrackId, u64)],
+    double_clicked_pattern: &mut Option<PatternId>,
+    ticks_per_bar: u64,
+) {
+    use egui_remixicon::icons as ri;
+    let data = ctx.data;
+    let song = ctx.song;
+    let view_state = &mut *ctx.view_state;
+    let undo_manager = &mut *ctx.undo_manager;
+    let t = theme();
+    let tl_y = coords.tl_y;
+    let x_to_tick = |x: f32| coords.x_to_tick(x);
+    let snap_tick = |tick: u64| coords.snap_tick(tick);
+
+    ui.set_min_width(180.0);
+    let hover_pos = ctx_pos.unwrap_or(ui.min_rect().min);
+
+    // Right-click on the ruler shows loop-region commands.
+    if ruler_rect.contains(hover_pos) {
+        let tick = Tick(x_to_tick(hover_pos.x));
+        let snapped = snap_tick(tick.0);
+        if ui.button("Set loop start here").clicked() {
+            view_state.loop_start_tick = Some(Tick(snapped));
+            if let Some(end) = view_state.loop_end_tick
+                && end.0 > snapped
+            {
+                handle.send(EngineCommand::SetLoop {
+                    start: Tick(snapped),
+                    end,
+                    enabled: true,
+                });
+            }
+            ui.close();
+        }
+        if ui.button("Set loop end here").clicked() {
+            view_state.loop_end_tick = Some(Tick(snapped));
+            if let Some(start) = view_state.loop_start_tick
+                && snapped > start.0
+            {
+                handle.send(EngineCommand::SetLoop {
+                    start,
+                    end: Tick(snapped),
+                    enabled: true,
+                });
+            }
+            ui.close();
+        }
+        if (view_state.loop_start_tick.is_some() || view_state.loop_end_tick.is_some())
+            && ui
+                .button(RichText::new("Clear loop").color(t.colors.accent_red))
+                .clicked()
+        {
+            view_state.loop_start_tick = None;
+            view_state.loop_end_tick = None;
+            handle.send(EngineCommand::SetLoop {
+                start: Tick::ZERO,
+                end: Tick::ZERO,
+                enabled: false,
+            });
+            ui.close();
+        }
+
+        ui.separator();
+
+        // Tempo automation at the clicked (snapped) tick.
+        let existing_bpm: Option<f32> = data
+            .tempo_changes
+            .iter()
+            .find(|(t, _)| *t == snapped)
+            .map(|(_, b)| *b);
+        let default_bpm = existing_bpm.unwrap_or_else(|| {
+            // Seed from the song's tempo at this position so
+            // dragging from a curve point feels stable.
+            song.try_read()
+                .map(|s| s.tempo_at(Tick(snapped)).as_f32())
+                .unwrap_or(120.0)
+        });
+        ui.menu_button("Set tempo here…", |ui| {
+            let mut bpm = default_bpm;
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut bpm)
+                        .range(20.0..=300.0)
+                        .speed(0.5)
+                        .fixed_decimals(1)
+                        .suffix(" BPM"),
+                );
+                if ui.button("Apply").clicked() {
+                    let new_bpm = Bpm::new(bpm);
+                    let old_bpm = existing_bpm.map(Bpm::new);
+                    if old_bpm != Some(new_bpm) {
+                        song.write().set_tempo_at(Tick(snapped), new_bpm);
+                        undo_manager.push(crate::undo::UndoAction::SetTempo {
+                            tick: Tick(snapped),
+                            old_bpm,
+                            new_bpm: Some(new_bpm),
+                        });
+                    }
+                    ui.close();
+                }
+            });
+            if let Some(existing) = existing_bpm {
+                ui.separator();
+                if ui
+                    .button(RichText::new("Remove tempo change here").color(t.colors.accent_red))
+                    .clicked()
+                {
+                    if song.write().remove_tempo_change(Tick(snapped)) {
+                        undo_manager.push(crate::undo::UndoAction::SetTempo {
+                            tick: Tick(snapped),
+                            old_bpm: Some(Bpm::new(existing)),
+                            new_bpm: None,
+                        });
+                    }
+                    ui.close();
+                }
+            }
+        });
+        return;
+    }
+
+    // Check if right-click is on an existing placement
+    let clicked_placement = placement_rects
+        .iter()
+        .find(|(r, _, _, _)| r.contains(hover_pos));
+
+    if let Some((_, pat_id, trk_id, start_tick)) = clicked_placement {
+        let pat_id = *pat_id;
+        let trk_id = *trk_id;
+        let start_tick = *start_tick;
+
+        if ui.button("Open in Piano Roll").clicked() {
+            *double_clicked_pattern = Some(pat_id);
+            ui.close();
+        }
+        if ui.button("Rename Pattern").clicked() {
+            // Get current name
+            let current_name = data
+                .patterns
+                .iter()
+                .find(|p| p.id == pat_id)
+                .map_or_else(String::new, |p| p.name.clone());
+            view_state.editing_pattern_name = Some((pat_id, current_name));
+            // The inline rename editor lives in the piano-roll
+            // toolbar — open it so the user can actually type.
+            *double_clicked_pattern = Some(pat_id);
+            ui.close();
+        }
+
+        // Pattern length editing — free-input bars
+        ui.menu_button("Set Length…", |ui| {
+            let ticks_per_bar = data.time_sig.ticks_per_bar().max(1);
+            let current_len = data
+                .patterns
+                .iter()
+                .find(|p| p.id == pat_id)
+                .map_or(ticks_per_bar, |p| p.length_ticks);
+            let mut bars = (current_len / ticks_per_bar).max(1) as i32;
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::DragValue::new(&mut bars)
+                        .range(1..=64)
+                        .speed(0.1)
+                        .suffix(" bars"),
+                );
+                if ui.button("Apply").clicked() {
+                    let new_len = SeqDuration(bars.max(1) as u32 * ticks_per_bar);
+                    apply_pattern_length(song, undo_manager, pat_id, new_len);
+                    ui.close();
+                }
+            });
+            ui.separator();
+            for bars_preset in [1_u32, 2, 4, 8, 16] {
+                if ui.button(format!("{bars_preset} bar(s)")).clicked() {
+                    let new_len = SeqDuration(bars_preset * ticks_per_bar);
+                    apply_pattern_length(song, undo_manager, pat_id, new_len);
+                    ui.close();
+                }
+            }
+        });
+
+        if ui.button("Duplicate Pattern").clicked() {
+            {
+                let mut song_w = song.write();
+                if let Some(new_id) = song_w.duplicate_pattern(pat_id) {
+                    let pattern_length = song_w
+                        .pattern(pat_id)
+                        .map_or(SeqDuration::WHOLE, |p| p.length);
+                    song_w.place_pattern(
+                        new_id,
+                        trk_id,
+                        Tick(start_tick + pattern_length.0 as u64),
+                    );
+                }
+            }
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Remove from Timeline").clicked() {
+            let mut captured: Option<synth_sequencer::PatternPlacement> = None;
+            {
+                let mut song_w = song.write();
+                if let Some(p) = song_w
+                    .arrangement()
+                    .iter()
+                    .find(|p| {
+                        p.pattern_id == pat_id && p.track_id == trk_id && p.start.0 == start_tick
+                    })
+                    .cloned()
+                {
+                    song_w.remove_placement(pat_id, trk_id, Tick(start_tick));
+                    captured = Some(p);
+                }
+            }
+            if let Some(p) = captured {
+                undo_manager.push(crate::undo::UndoAction::RemovePlacement { placement: p });
+            }
+            ui.close();
+        }
+        if ui
+            .button(RichText::new("Delete Pattern").color(t.colors.accent_red))
+            .clicked()
+        {
+            let mut captured: Option<(
+                synth_sequencer::Pattern,
+                Vec<synth_sequencer::PatternPlacement>,
+            )> = None;
+            {
+                let mut song_w = song.write();
+                let placements: Vec<_> = song_w
+                    .arrangement()
+                    .iter()
+                    .filter(|p| p.pattern_id == pat_id)
+                    .cloned()
+                    .collect();
+                if let Some(deleted) = song_w.delete_pattern(pat_id) {
+                    captured = Some((deleted, placements));
+                }
+            }
+            if let Some((pat, plcs)) = captured {
+                undo_manager.push(crate::undo::UndoAction::DeletePattern {
+                    pattern: pat,
+                    placements: plcs,
+                });
+            }
+            ui.close();
+        }
+    } else {
+        // Clicked on empty area — figure out track + tick
+        let row_offset = hover_pos.y - (tl_y + RULER_HEIGHT);
+        let row_idx = if TRACK_ROW_HEIGHT > 0.0 {
+            (row_offset / TRACK_ROW_HEIGHT) as usize
+        } else {
+            0
+        };
+        let click_tick = x_to_tick(hover_pos.x);
+        let bar_tick = snap_tick(click_tick);
+
+        if row_idx < data.tracks.len() {
+            let target_track = data.tracks[row_idx].id;
+            ui.label(
+                RichText::new(format!(
+                    "Bar {}",
+                    bar_tick.checked_div(ticks_per_bar).map_or(1, |q| q + 1)
+                ))
+                .color(t.colors.text_dim),
+            );
+            ui.separator();
+
+            if ui
+                .button(format!("{} New Pattern Here", ri::ADD_LINE))
+                .clicked()
+            {
+                {
+                    let mut song_w = song.write();
+                    let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
+                    song_w.place_pattern(new_pat_id, target_track, Tick(bar_tick));
+                }
+                ui.close();
+            }
+
+            // Place existing pattern submenu
+            if !data.patterns.is_empty() {
+                ui.menu_button("Place Existing Pattern", |ui| {
+                    for pat in &data.patterns {
+                        let beats =
+                            pat.length_ticks as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
+                        if ui
+                            .button(format!("{} ({:.0} beats)", pat.name, beats))
+                            .clicked()
+                        {
+                            song.write()
+                                .place_pattern(pat.id, target_track, Tick(bar_tick));
+                            ui.close();
+                        }
+                    }
+                });
+            }
+        }
+    }
 }
 
 fn draw_arrangement_track_headers(
