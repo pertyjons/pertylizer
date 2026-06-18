@@ -1239,13 +1239,19 @@ pub trait PolyModule: Describable + Send {
     /// Install (or clear, with `None`) the compiled control script for one slot.
     ///
     /// The `Arc<BoundScript>` cannot ride the numeric [`set_param`](Self::set_param)
-    /// channel, so the load / authoring path sets it here directly. Off the audio
-    /// thread (compiled on load). Default: no-op (module has no script slots).
+    /// channel, so the load / authoring path sets it here directly. The script is
+    /// *compiled* off the audio thread, but this install runs **on** the audio
+    /// thread (command drain), so the implementation must **return** the script it
+    /// replaces instead of dropping it — the engine routes the old `Arc` to the
+    /// main thread for a deferred drop, keeping the (possibly final) `free()` off
+    /// the real-time thread. Default: no-op slot, returns `None`.
+    #[must_use = "the replaced script must be dropped off the audio thread"]
     fn set_mod_script(
         &mut self,
         _slot: usize,
         _script: Option<std::sync::Arc<crate::script::BoundScript>>,
-    ) {
+    ) -> Option<std::sync::Arc<crate::script::BoundScript>> {
+        None
     }
 
     /// Apply a transient parameter override from sequencer automation.

@@ -266,9 +266,17 @@ impl PolyModule for ModMatrix {
         Some(&self.scripts)
     }
 
-    fn set_mod_script(&mut self, slot: usize, script: Option<Arc<BoundScript>>) {
-        if let Some(cell) = self.scripts.get_mut(slot) {
-            *cell = script;
+    fn set_mod_script(
+        &mut self,
+        slot: usize,
+        script: Option<Arc<BoundScript>>,
+    ) -> Option<Arc<BoundScript>> {
+        // Return the replaced script rather than dropping it: this runs on the
+        // audio thread, so its (possibly final) `free()` must happen on the main
+        // thread instead. The engine routes the returned `Arc` to a trash channel.
+        match self.scripts.get_mut(slot) {
+            Some(cell) => std::mem::replace(cell, script),
+            None => script,
         }
     }
 
@@ -340,7 +348,7 @@ mod tests {
             Vec::new(),
             "out = 0.5".to_string(),
         ));
-        mm.set_mod_script(2, Some(Arc::clone(&script)));
+        assert!(mm.set_mod_script(2, Some(Arc::clone(&script))).is_none());
 
         let scripts = mm.mod_scripts().unwrap();
         assert!(scripts[0].is_none());
@@ -359,11 +367,11 @@ mod tests {
         );
         assert!(Arc::strong_count(&script) >= 3);
 
-        // Clearing removes it.
-        mm.set_mod_script(2, None);
+        // Clearing removes it and returns the old script for deferred drop.
+        assert!(mm.set_mod_script(2, None).is_some());
         assert!(mm.mod_scripts().unwrap()[2].is_none());
-        // Out-of-range slot is a safe no-op.
-        mm.set_mod_script(999, Some(script));
+        // Out-of-range slot is a safe no-op; the script is handed straight back.
+        assert!(mm.set_mod_script(999, Some(script)).is_some());
     }
 
     /// A source that the legacy enum could not express — a third LFO — is now a

@@ -49,6 +49,15 @@ const EVENT_BUFFER_SIZE: usize = 256;
 /// Size of the return channel for modules that need to be dropped on main thread.
 const RETURN_BUFFER_SIZE: usize = 256;
 
+/// Size of the replaced-script return channel. A single `SetModScript` re-install
+/// on a fully-allocated instrument hands back up to `1 + VoiceCount::MAX_ALLOCATOR`
+/// (= 129: template voice graph + every live voice) replaced `Arc`s, and
+/// `process_commands` can drain several such commands in one audio block before
+/// the main thread next calls `cleanup_dropped_modules`. Size for ~15 full-
+/// polyphony re-installs per drain so the ring never overflows into an
+/// audio-thread `Arc` drop in realistic live editing.
+const SCRIPT_TRASH_BUFFER_SIZE: usize = 2048;
+
 /// Items returned from audio thread for main thread cleanup.
 /// This prevents memory deallocation from happening on the audio thread.
 pub enum DroppedItem {
@@ -139,6 +148,10 @@ pub struct EngineHandle {
     /// `ParamId(Arc<str>)` frees here, on the main thread, never on the audio
     /// thread (see `SequencerEngine::clear_automation_dedup`).
     automation_trash_consumer: ringbuf::HeapCons<AutomationTarget>,
+    /// Receive replaced mod-matrix scripts from the audio thread so the old
+    /// `Arc<BoundScript>` (bytecode + source text) frees here, on the main
+    /// thread, never on the audio thread (see `handle_set_mod_script`).
+    script_trash_consumer: ringbuf::HeapCons<Arc<synth_core::script::BoundScript>>,
     /// Shared state for reading meters, etc.
     pub state: Arc<EngineState>,
     /// Visualization buffers keyed by module ID (shared with engine via Arc).
@@ -187,6 +200,9 @@ impl EngineHandle {
         // Clean up cleared automation dedup keys — their ParamId(Arc<str>) frees
         // here on the main thread, never on the audio thread.
         while self.automation_trash_consumer.try_pop().is_some() {}
+        // Clean up replaced mod-matrix scripts — their Arc<BoundScript> frees here
+        // on the main thread, never on the audio thread.
+        while self.script_trash_consumer.try_pop().is_some() {}
     }
 
     /// Send a note on event to the default channel.
@@ -369,6 +385,10 @@ pub struct SynthEngine {
     return_producer: ringbuf::HeapProd<DroppedModule>,
     /// Send removed instruments back to UI for dropping on main thread.
     instrument_return_producer: ringbuf::HeapProd<Box<Instrument>>,
+    /// Send replaced mod-matrix scripts back to UI for dropping on the main
+    /// thread. `set_mod_script` runs during the command drain (audio thread), so
+    /// the old `Arc<BoundScript>`'s final `free()` must not happen here.
+    script_trash_producer: ringbuf::HeapProd<Arc<synth_core::script::BoundScript>>,
     /// Shared state.
     state: Arc<EngineState>,
 
@@ -517,6 +537,13 @@ impl SynthEngine {
         let automation_trash_rb = HeapRb::<AutomationTarget>::new(RETURN_BUFFER_SIZE);
         let (automation_trash_producer, automation_trash_consumer) = automation_trash_rb.split();
 
+        // Create return buffer for replaced mod-matrix scripts, whose
+        // `Arc<BoundScript>` must not run its (possibly final) drop on the audio
+        // thread (see `handle_set_mod_script`).
+        let script_trash_rb =
+            HeapRb::<Arc<synth_core::script::BoundScript>>::new(SCRIPT_TRASH_BUFFER_SIZE);
+        let (script_trash_producer, script_trash_consumer) = script_trash_rb.split();
+
         let instrument_mapping = InstrumentMapping::new();
 
         let mut engine = Self {
@@ -525,6 +552,7 @@ impl SynthEngine {
             note_event_producer,
             return_producer,
             instrument_return_producer,
+            script_trash_producer,
             state: Arc::clone(&state),
             instruments: vec![],
             master_effects: EffectChain::new(),
@@ -576,6 +604,7 @@ impl SynthEngine {
             return_consumer,
             instrument_return_consumer,
             automation_trash_consumer,
+            script_trash_consumer,
             state,
             visualization_buffers: HashMap::new(),
             note_event_consumer: Some(note_event_consumer),
@@ -2098,20 +2127,51 @@ impl SynthEngine {
         slot: usize,
         script: Option<std::sync::Arc<synth_core::script::BoundScript>>,
     ) {
+        // Every install replaces a slot's previous `Arc<BoundScript>` (template
+        // voice graph + each live voice). Capture each replaced `Arc` and ship it
+        // to the main thread instead of dropping it here, on the audio thread.
+        let trash = &mut self.script_trash_producer;
         match instrument_id {
-            Some(inst_id) => {
-                if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
-                    instrument
-                        .voice_graph_mut()
-                        .set_mod_script(module_id, slot, script.clone());
+            Some(inst_id) => match self.instruments.iter_mut().find(|i| i.id() == inst_id) {
+                Some(instrument) => {
+                    let replaced = instrument.voice_graph_mut().set_mod_script(
+                        module_id,
+                        slot,
+                        script.clone(),
+                    );
+                    Self::trash_script(trash, replaced);
                     for voice in instrument.allocator_mut().voices_mut() {
-                        voice.graph.set_mod_script(module_id, slot, script.clone());
+                        let replaced = voice.graph.set_mod_script(module_id, slot, script.clone());
+                        Self::trash_script(trash, replaced);
                     }
                 }
-            }
+                // Instrument not found (stale id — removed/renamed between the
+                // command's enqueue and this drain). The script was never
+                // installed and holds no other reference here, so dropping it
+                // inline would free on the audio thread; route it to the trash
+                // channel instead. (The `Some` arm above only ever *clones*
+                // `script`, so its final drop is a non-last refcount decrement.)
+                None => Self::trash_script(trash, script),
+            },
             None => {
-                self.module_graph.set_mod_script(module_id, slot, script);
+                let replaced = self.module_graph.set_mod_script(module_id, slot, script);
+                Self::trash_script(trash, replaced);
             }
+        }
+    }
+
+    /// Ship a replaced mod-matrix script to the main thread for a deferred drop.
+    /// If the trash channel is full, the `Arc` drops here (audio thread) as a
+    /// last resort — the same degradation as the automation-trash path. The ring
+    /// is sized (`SCRIPT_TRASH_BUFFER_SIZE`) for the worst-case per-command
+    /// fan-out (template + every live voice) across several re-installs per drain,
+    /// so it does not realistically fill between `cleanup_dropped_modules` drains.
+    fn trash_script(
+        producer: &mut ringbuf::HeapProd<Arc<synth_core::script::BoundScript>>,
+        replaced: Option<Arc<synth_core::script::BoundScript>>,
+    ) {
+        if let Some(old) = replaced {
+            let _ = producer.try_push(old);
         }
     }
 
@@ -3831,6 +3891,44 @@ mod tests {
         handle.note_on_channel(MidiNote::new(64), Velocity::new(0.8), ch2);
         engine.process_commands();
         assert_eq!(engine.instruments[0].active_voice_count(), 1); // Still 1
+    }
+
+    /// A `SetModScript` for a non-existent instrument (stale id) must NOT drop the
+    /// unused script `Arc` on the audio thread — it must be parked in the trash
+    /// channel and freed on the main thread by `cleanup_dropped_modules`.
+    #[test]
+    fn set_mod_script_for_missing_instrument_routes_to_trash_not_audio_thread() {
+        use synth_core::script::{BoundScript, CompiledScript, Op};
+
+        let (mut engine, mut handle) = SynthEngine::new();
+        // No instruments exist, so the instrument lookup in handle_set_mod_script
+        // misses and the script is never installed.
+        let script = std::sync::Arc::new(BoundScript::new(
+            CompiledScript::new(vec![Op::PushConst(0)], vec![0.5], 0, 0),
+            Vec::new(),
+            "out = 0.5".to_string(),
+        ));
+        assert!(handle.send(EngineCommand::SetModScript {
+            instrument_id: Some(InstrumentId::FIRST), // no such instrument
+            module_id: ModuleId::new(ModuleType::ModMatrix, 1),
+            slot: 0,
+            script: Some(std::sync::Arc::clone(&script)),
+        }));
+        // Test holds one ref, the queued command holds the other.
+        assert_eq!(std::sync::Arc::strong_count(&script), 2);
+
+        // Drain commands as the audio thread does. With the bug, the unused
+        // script would drop here (count → 1); the fix parks it in the trash ring.
+        engine.process_commands();
+        assert_eq!(
+            std::sync::Arc::strong_count(&script),
+            2,
+            "unused script must be parked in the trash channel, not freed on the audio thread"
+        );
+
+        // The main thread drains the trash and drops it here.
+        handle.cleanup_dropped_modules();
+        assert_eq!(std::sync::Arc::strong_count(&script), 1);
     }
 
     /// Regression tests for dynamic routing.

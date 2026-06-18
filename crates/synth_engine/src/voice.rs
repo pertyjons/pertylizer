@@ -1488,7 +1488,7 @@ mod tests {
             Vec::new(),
             "out = -1".to_string(),
         ));
-        voice.graph.set_mod_script(mmx, 0, Some(silence));
+        let _ = voice.graph.set_mod_script(mmx, 0, Some(silence));
         let _ = peak(&mut voice, &ctx); // settle the de-zipper ramp
         assert!(
             peak(&mut voice, &ctx) < 1e-3,
@@ -1496,7 +1496,7 @@ mod tests {
         );
 
         // Clearing the script restores audio.
-        voice.graph.set_mod_script(mmx, 0, None);
+        let _ = voice.graph.set_mod_script(mmx, 0, None);
         let _ = peak(&mut voice, &ctx);
         assert!(
             peak(&mut voice, &ctx) > 0.01,
