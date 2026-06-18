@@ -21,19 +21,17 @@ color was dropped. Only one open item remains:
 
 ### 1.5 Settings & utilities
 
-- [ ] **Finish decomposing `draw_piano_roll` / `draw_arrangement` — geometry-coupled painter cores.**
-  The two painter cores stay inline (deferred): `draw_piano_roll`'s note-grid `ScrollArea` closure
-  and `draw_arrangement`'s timeline painter + its ~330-line `response.context_menu`. They depend on
-  painter-local coordinate transforms (`tick_to_x`, `ruler_rect`, `snap_tick`…), not just the 6 ctx
-  fields, so clean extraction needs those plumbed too; no GUI tests, so left for a focused follow-up.
-  When the arrangement timeline is extracted, add `handle` back to `ArrangementCtx`.
-
-> The other §1.5 items shipped: `magnitude_to_normalized_db()` (synth_core),
-> `Param::sample_select` / `SamplerParam::sample_select`, `param_sample_id` on
-> `ModuleStateBuilder`, the `apply_pattern_length` dedup, and the
-> `From`/`TryFrom` `SeqInstrumentId` ↔ `InstrumentId` conversions. The
-> `Song::calculate_length()` per-tick recompute was already cached behind a
-> structural-generation counter (`d779f582`, 2026-06-16).
+All done. The painter cores were decomposed: `draw_arrangement` now delegates
+to `draw_arrangement_timeline` + `draw_arrangement_context_menu` (both via
+`ArrangementCtx`, with geometry in `ArrangementCoords` mirroring
+`PianoRollCoords`), and `draw_piano_roll` delegates its note grid to
+`draw_piano_roll_grid`. Earlier shipped: `magnitude_to_normalized_db()`
+(synth_core), `Param::sample_select` / `SamplerParam::sample_select`,
+`param_sample_id` on `ModuleStateBuilder`, the `apply_pattern_length` dedup,
+and the `From`/`TryFrom` `SeqInstrumentId` ↔ `InstrumentId` conversions. The
+`Song::calculate_length()` per-tick recompute was already cached behind a
+structural-generation counter (`d779f582`). The Settings Browse-button item
+was dropped.
 
 ### 1.6 Workflow quality of life
 
