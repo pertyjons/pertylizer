@@ -4218,6 +4218,7 @@ impl PatchEditor {
                     Self::bg_menu_item(ui, PaletteSelection::EnvelopeFollower, &mut selected);
                     Self::bg_menu_item(ui, PaletteSelection::Mseg, &mut selected);
                     Self::bg_menu_item(ui, PaletteSelection::KineticModulator, &mut selected);
+                    Self::bg_menu_item(ui, PaletteSelection::Script, &mut selected);
                 },
             );
 
@@ -5804,6 +5805,12 @@ fn draw_module_panel_params(
         return draw_mod_matrix_grid(ui, state, descriptor, accent_color, mod_catalog);
     }
 
+    // Special handling for the Script module — a list of YAMS slots (one per
+    // output port), each opening the shared expression editor.
+    if descriptor.type_id.0 == "script" {
+        return draw_script_module_grid(ui, state, accent_color);
+    }
+
     // Signal Monitor — draw oscilloscope display above parameters
     if descriptor.type_id.0 == "signal_monitor" {
         let gain = state.param_values.get("Gain").copied().unwrap_or(1.0);
@@ -6236,124 +6243,207 @@ fn draw_mod_matrix_grid(
     // the routing list stays compact. Compilation runs live (off the audio thread)
     // for the status line; Apply/Clear push actions the caller routes to the
     // session, which recompiles + installs the shared script.
-    if let Some(mut editor) = state.script_editor.take() {
-        let ctx = ui.ctx().clone();
-        let mut keep_open = true;
-        let mut closed_by_action = false;
-        egui::Window::new(format!("Slot {} - Expression", editor.slot + 1))
-            .id(egui::Id::new(("mm_expr_editor", state.id, editor.slot)))
-            .collapsible(false)
-            .resizable(true)
-            .default_size(egui::vec2(520.0, 340.0))
-            .min_width(320.0)
-            .min_height(200.0)
-            .open(&mut keep_open)
-            .show(&ctx, |ui| {
-                ui.label(
-                    egui::RichText::new(
-                        "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`",
-                    )
-                    .size(theme().fonts.size_small)
-                    .color(theme().colors.text_secondary),
-                );
-                // The editor fills the window: it takes the full width and all the
-                // height left after reserving room for the status line + button row,
-                // so dragging the window corner grows the text area. Long scripts
-                // scroll within the code editor.
-                let reserved = 52.0;
-                let editor_height = (ui.available_height() - reserved).max(80.0);
-                ui.add_sized(
-                    egui::vec2(ui.available_width(), editor_height),
-                    egui::TextEdit::multiline(&mut editor.draft)
-                        .code_editor()
-                        .desired_rows(4),
-                );
-
-                // Live compile → status line (mirrors `session.set_mod_script`).
-                let trimmed = editor.draft.trim();
-                let status: Result<(), String> = if trimmed.is_empty() {
-                    Err("empty - Apply will clear the slot".to_string())
-                } else {
-                    let (program, diags) = synth_script::compile(
-                        &editor.draft,
-                        &synth_script::CompileOptions::default(),
-                    );
-                    if program.is_some() {
-                        Ok(())
-                    } else {
-                        let msg = diags
-                            .iter()
-                            .filter(|d| d.is_error())
-                            .map(|d| d.message.clone())
-                            .collect::<Vec<_>>()
-                            .join("; ");
-                        Err(if msg.is_empty() {
-                            "compile error".to_string()
-                        } else {
-                            msg
-                        })
-                    }
-                };
-                match &status {
-                    Ok(()) => {
-                        ui.label(
-                            egui::RichText::new(format!("{}  compiled", ri::CHECKBOX_CIRCLE_LINE))
-                                .size(theme().fonts.size_small)
-                                .color(theme().colors.accent_green),
-                        );
-                    }
-                    Err(e) => {
-                        ui.label(
-                            egui::RichText::new(format!("{}  {e}", ri::ERROR_WARNING_LINE))
-                                .size(theme().fonts.size_small)
-                                .color(theme().colors.accent_orange),
-                        );
-                    }
-                }
-
-                ui.horizontal(|ui| {
-                    // Format runs the canonical yamsfmt formatter and replaces the
-                    // draft with its output. Enabled only when the script is valid
-                    // (the formatter parses first; a broken script can't be formatted).
-                    if ui
-                        .add_enabled(status.is_ok(), egui::Button::new("Format"))
-                        .on_hover_text("Reformat the expression (yamsfmt)")
-                        .clicked()
-                        && let Ok(formatted) = synth_script::format(&editor.draft)
-                    {
-                        editor.draft = formatted;
-                    }
-                    if ui
-                        .add_enabled(status.is_ok(), egui::Button::new("Apply"))
-                        .on_hover_text("Install this expression on the slot (keeps editing)")
-                        .clicked()
-                    {
-                        // Install but leave the popup open so the user can keep
-                        // iterating (Close / ✕ dismisses it).
-                        mod_script_actions.push((editor.slot, Some(editor.draft.clone())));
-                    }
-                    if ui
-                        .button("Clear")
-                        .on_hover_text("Remove the expression, revert to Amount")
-                        .clicked()
-                    {
-                        mod_script_actions.push((editor.slot, None));
-                        closed_by_action = true;
-                    }
-                    if ui.button("Close").clicked() {
-                        closed_by_action = true;
-                    }
-                });
-            });
-        // Persist the editor (with its in-progress draft) across frames unless the
-        // window was closed via its ✕ or an action button.
-        if keep_open && !closed_by_action {
-            state.script_editor = Some(editor);
-        }
-    }
+    draw_slot_expression_editor(ui, state, &mut mod_script_actions);
 
     PanelParamsResult {
         param_changes,
+        audio_input_action: None,
+        mod_script_actions,
+    }
+}
+
+/// Draw the shared per-slot YAMS expression-editor popup, reused by the Mod
+/// Matrix and the Script module. Compiles live for the status line (off the
+/// audio thread) and pushes `(slot, Some(src))` / `(slot, None)` actions the
+/// caller routes to `session.set_mod_script` / `clear_mod_script`. No-op when no
+/// slot's editor is open. The window is keyed by `state.id`, so each module's
+/// editor is independent.
+fn draw_slot_expression_editor(
+    ui: &Ui,
+    state: &mut ModulePanelState,
+    mod_script_actions: &mut Vec<(u8, Option<String>)>,
+) {
+    let Some(mut editor) = state.script_editor.take() else {
+        return;
+    };
+    let ctx = ui.ctx().clone();
+    let mut keep_open = true;
+    let mut closed_by_action = false;
+    egui::Window::new(format!("Slot {} - Expression", editor.slot + 1))
+        .id(egui::Id::new(("mm_expr_editor", state.id, editor.slot)))
+        .collapsible(false)
+        .resizable(true)
+        .default_size(egui::vec2(520.0, 340.0))
+        .min_width(320.0)
+        .min_height(200.0)
+        .open(&mut keep_open)
+        .show(&ctx, |ui| {
+            ui.label(
+                egui::RichText::new(
+                    "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`",
+                )
+                .size(theme().fonts.size_small)
+                .color(theme().colors.text_secondary),
+            );
+            // The editor fills the window: it takes the full width and all the
+            // height left after reserving room for the status line + button row,
+            // so dragging the window corner grows the text area. Long scripts
+            // scroll within the code editor.
+            let reserved = 52.0;
+            let editor_height = (ui.available_height() - reserved).max(80.0);
+            ui.add_sized(
+                egui::vec2(ui.available_width(), editor_height),
+                egui::TextEdit::multiline(&mut editor.draft)
+                    .code_editor()
+                    .desired_rows(4),
+            );
+
+            // Live compile → status line (mirrors `session.set_mod_script`).
+            let trimmed = editor.draft.trim();
+            let status: Result<(), String> = if trimmed.is_empty() {
+                Err("empty - Apply will clear the slot".to_string())
+            } else {
+                let (program, diags) =
+                    synth_script::compile(&editor.draft, &synth_script::CompileOptions::default());
+                if program.is_some() {
+                    Ok(())
+                } else {
+                    let msg = diags
+                        .iter()
+                        .filter(|d| d.is_error())
+                        .map(|d| d.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    Err(if msg.is_empty() {
+                        "compile error".to_string()
+                    } else {
+                        msg
+                    })
+                }
+            };
+            match &status {
+                Ok(()) => {
+                    ui.label(
+                        egui::RichText::new(format!("{}  compiled", ri::CHECKBOX_CIRCLE_LINE))
+                            .size(theme().fonts.size_small)
+                            .color(theme().colors.accent_green),
+                    );
+                }
+                Err(e) => {
+                    ui.label(
+                        egui::RichText::new(format!("{}  {e}", ri::ERROR_WARNING_LINE))
+                            .size(theme().fonts.size_small)
+                            .color(theme().colors.accent_orange),
+                    );
+                }
+            }
+
+            ui.horizontal(|ui| {
+                // Format runs the canonical yamsfmt formatter and replaces the
+                // draft with its output. Enabled only when the script is valid
+                // (the formatter parses first; a broken script can't be formatted).
+                if ui
+                    .add_enabled(status.is_ok(), egui::Button::new("Format"))
+                    .on_hover_text("Reformat the expression (yamsfmt)")
+                    .clicked()
+                    && let Ok(formatted) = synth_script::format(&editor.draft)
+                {
+                    editor.draft = formatted;
+                }
+                if ui
+                    .add_enabled(status.is_ok(), egui::Button::new("Apply"))
+                    .on_hover_text("Install this expression on the slot (keeps editing)")
+                    .clicked()
+                {
+                    // Install but leave the popup open so the user can keep
+                    // iterating (Close / ✕ dismisses it).
+                    mod_script_actions.push((editor.slot, Some(editor.draft.clone())));
+                }
+                if ui
+                    .button("Clear")
+                    .on_hover_text("Remove the expression from this slot")
+                    .clicked()
+                {
+                    mod_script_actions.push((editor.slot, None));
+                    closed_by_action = true;
+                }
+                if ui.button("Close").clicked() {
+                    closed_by_action = true;
+                }
+            });
+        });
+    // Persist the editor (with its in-progress draft) across frames unless the
+    // window was closed via its ✕ or an action button.
+    if keep_open && !closed_by_action {
+        state.script_editor = Some(editor);
+    }
+}
+
+/// A one-line, truncated preview of a slot's YAMS source for the panel row.
+fn script_preview(src: &str) -> String {
+    const MAX: usize = 24;
+    let line = src.lines().next().unwrap_or("").trim();
+    if line.chars().count() > MAX {
+        let head: String = line.chars().take(MAX).collect();
+        format!("{head}…")
+    } else {
+        line.to_string()
+    }
+}
+
+/// Draw the Script module body: one row per output port (`out1`..`out8`), each
+/// showing the installed YAMS source (truncated) and an ƒx button that opens the
+/// shared expression editor for that slot. The output-port nipples themselves are
+/// drawn by the descriptor-driven port column; this is only the editing UI.
+fn draw_script_module_grid(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    accent_color: Color32,
+) -> PanelParamsResult {
+    let mut mod_script_actions: Vec<(u8, Option<String>)> = Vec::new();
+    let mut open_editor_for: Option<u8> = None;
+    let t = theme();
+
+    for slot in 0u8..synth_modules::script_module::SCRIPT_MODULE_OUTPUTS as u8 {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(format!("out{}", slot + 1))
+                    .color(accent_color)
+                    .small(),
+            );
+            let installed = state.slot_scripts.get(&slot);
+            let (preview, color) = match installed {
+                Some(src) => (script_preview(src), t.colors.text_secondary),
+                None => ("— empty —".to_string(), t.colors.text_dim),
+            };
+            ui.label(egui::RichText::new(preview).color(color).small());
+
+            let fx_color = if installed.is_some() {
+                t.colors.accent_green
+            } else {
+                t.colors.text_secondary
+            };
+            if ui
+                .button(egui::RichText::new("ƒx").color(fx_color))
+                .on_hover_text("Edit this slot's YAMS expression")
+                .clicked()
+            {
+                open_editor_for = Some(slot);
+            }
+        });
+    }
+
+    // Open the editor for a clicked slot, seeding the draft from the installed
+    // script (empty for a fresh slot) — mirrors the Mod Matrix ƒx flow.
+    if let Some(slot) = open_editor_for {
+        let draft = state.slot_scripts.get(&slot).cloned().unwrap_or_default();
+        state.script_editor = Some(super::module_panel::ScriptEditorState { slot, draft });
+    }
+
+    draw_slot_expression_editor(ui, state, &mut mod_script_actions);
+
+    PanelParamsResult {
+        param_changes: Vec::new(),
         audio_input_action: None,
         mod_script_actions,
     }
@@ -6401,6 +6491,8 @@ pub enum PaletteSelection {
     KineticModulator,
     SignalMonitor,
     FractalOsc,
+    // Scripting
+    Script,
     // Sampler
     Sampler,
     AudioInput,
@@ -6462,6 +6554,11 @@ fn palette_label(selection: PaletteSelection) -> (String, Color32) {
             ri::MIC_FILL,
             "Audio Input",
             category_color(ModuleCategory::Sampler),
+        ),
+        PaletteSelection::Script => (
+            ri::FUNCTION_FILL,
+            "Script",
+            category_color(ModuleCategory::Utility),
         ),
         // Simple categories
         PaletteSelection::Category(ModuleCategory::Filter) => (

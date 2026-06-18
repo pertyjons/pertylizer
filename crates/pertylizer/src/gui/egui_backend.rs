@@ -1086,6 +1086,7 @@ impl SynthApp {
             PaletteSelection::Euclidean => Some(TypedModuleType::Euclidean),
             PaletteSelection::TuringMachine => Some(TypedModuleType::TuringMachine),
             PaletteSelection::RandomGates => Some(TypedModuleType::RandomGates),
+            PaletteSelection::Script => Some(TypedModuleType::Script),
             PaletteSelection::Effect(effect_type) => Some(effect_to_module_type(effect_type)),
             PaletteSelection::SignalMonitor => {
                 // SignalMonitor needs GUI-specific VisualizationBuffer
@@ -1349,6 +1350,7 @@ impl SynthApp {
                     PaletteSelection::Euclidean => Some(TypedModuleType::Euclidean),
                     PaletteSelection::TuringMachine => Some(TypedModuleType::TuringMachine),
                     PaletteSelection::RandomGates => Some(TypedModuleType::RandomGates),
+                    PaletteSelection::Script => Some(TypedModuleType::Script),
                     PaletteSelection::ModMatrix => Some(TypedModuleType::ModMatrix),
                     PaletteSelection::StereoOutput => Some(TypedModuleType::StereoOutput),
                     PaletteSelection::KeyboardPanner => Some(TypedModuleType::KeyboardPanner),
