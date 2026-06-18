@@ -389,7 +389,7 @@ extracted here.
   engine's `return_producer` off-thread drop channel. Low priority (bounded, rare).
 
 **Note Processors (generative articulation): COMPLETE — engine + GUI.**
-The engine and every processor landed in v0.311.0 per `plans/note-processors-plan.md`:
+The engine and every processor landed in v0.311.0:
 arpeggiator (flagship), timed-repeat ornaments (flam/drag/ruff/roll/grace), chord +
 strum, scale-quantize + humanize, the MCP surface, and save/load persistence. The
 **NP6 GUI is now fully done** (`plans/note-processors-gui-plan.md`):

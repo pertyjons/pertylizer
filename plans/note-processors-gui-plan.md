@@ -1,6 +1,6 @@
 # Plan: Note Processors GUI (NP6)
 
-The one remaining slice of the Note Processors feature (`plans/note-processors-plan.md`).
+The one remaining slice of the Note Processors feature.
 Everything else — the engine, every processor, the MCP surface, and save/load
 persistence — shipped in v0.311.0. NP6 is the human-facing UI layer, deferred
 because it is interactive egui work that benefits from visual iteration and is
@@ -288,7 +288,5 @@ The piano roll *shows* the result and offers one light editing shortcut.
   no new data-model change to round-trip). Verify with the `/verify` skill: build
   a rack, edit an ornament in the tracker, confirm the stage columns + piano-roll
   ghosts match what plays, and that freeze bakes correctly.
-- [ ] **On ship** — flip the NP6 checkbox in `plans/note-processors-plan.md:44`,
-  mark NP6 done in `plans/TODO.md §3.3`, mark the tracker rack-management item
-  (`tracker-view-plan.md:253`) closed-by-the-shared-panel, and update the
+- [x] **On ship** — NP6 shipped; status reflected in `plans/TODO.md` and the
   `project_note_processors` memory.
