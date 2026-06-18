@@ -403,9 +403,7 @@ impl ParamValue {
     /// through the 24-bit f32 mantissa.
     pub fn to_param(&self, desc: &ParameterDescriptor) -> Param {
         if let Self::SampleId { sample_id } = self {
-            return Param::Sampler(synth_core::params::SamplerParam::SampleSelect(
-                synth_core::params::SampleId(*sample_id),
-            ));
+            return Param::sample_select(*sample_id);
         }
         // Mod-matrix destination: parse the address string (accepting both the
         // new "flt-1.cutoff" form and legacy enum ids like "flt1_cutoff").

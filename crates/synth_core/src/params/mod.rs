@@ -736,6 +736,14 @@ pub enum Param {
 }
 
 impl Param {
+    /// Ergonomic constructor for a sampler `SampleSelect` param from a raw
+    /// sample id, collapsing the `Param::Sampler(SamplerParam::SampleSelect(
+    /// SampleId(id)))` nesting at call sites.
+    #[must_use]
+    pub const fn sample_select(id: u64) -> Self {
+        Self::Sampler(SamplerParam::sample_select(id))
+    }
+
     /// Check if two parameters are the same kind (ignoring values).
     ///
     /// This is useful for finding/updating parameters in a list.

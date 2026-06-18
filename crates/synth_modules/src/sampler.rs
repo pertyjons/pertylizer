@@ -204,15 +204,11 @@ impl Describable for Sampler {
             // SampleSelect uses Hidden because the patch editor renders its
             // own sample-picker combo box (see patch_editor.rs).
             .parameter(
-                ParameterDescriptor::float(
-                    "sample_select",
-                    Param::Sampler(SamplerParam::SampleSelect(SampleId(0))),
-                    "Sample",
-                )
-                .description("Assigned sample (selected via the sample picker)")
-                // Discrete sample selector, not a continuous modulation target.
-                .modulatable(false)
-                .widget(WidgetHint::Hidden),
+                ParameterDescriptor::float("sample_select", Param::sample_select(0), "Sample")
+                    .description("Assigned sample (selected via the sample picker)")
+                    // Discrete sample selector, not a continuous modulation target.
+                    .modulatable(false)
+                    .widget(WidgetHint::Hidden),
             )
             .parameter(
                 ParameterDescriptor::choice(

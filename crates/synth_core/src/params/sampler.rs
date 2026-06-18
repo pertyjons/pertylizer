@@ -57,6 +57,14 @@ pub enum SamplerParam {
 }
 
 impl SamplerParam {
+    /// Ergonomic constructor for `SampleSelect` from a raw sample id.
+    ///
+    /// Saves call sites from spelling out `SampleSelect(SampleId(id))`.
+    #[must_use]
+    pub const fn sample_select(id: u64) -> Self {
+        Self::SampleSelect(SampleId(id))
+    }
+
     /// Check if two params are the same kind (ignoring values).
     pub fn same_kind(&self, other: &Self) -> bool {
         std::mem::discriminant(self) == std::mem::discriminant(other)

@@ -1204,9 +1204,7 @@ mod tests {
             .send(EngineCommand::SetModuleParameter {
                 instrument_id: Some(inst_id),
                 module_id: mod_id,
-                param: synth_core::Param::Sampler(synth_core::SamplerParam::SampleSelect(
-                    synth_core::SampleId(kept_id.0),
-                )),
+                param: synth_core::Param::sample_select(kept_id.0),
             });
 
         let stream_info = synth_core::StreamInfo {

@@ -5791,9 +5791,7 @@ fn draw_module_panel_params(
                     for &(id, ref name) in sample_list {
                         if ui.selectable_label(id == current_id, name).clicked() {
                             state.param_values.insert("Sample".to_string(), id as f32);
-                            param_changes.push(synth_core::Param::Sampler(
-                                synth_core::SamplerParam::SampleSelect(synth_core::SampleId(id)),
-                            ));
+                            param_changes.push(synth_core::Param::sample_select(id));
                         }
                     }
                 });

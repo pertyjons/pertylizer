@@ -5437,9 +5437,7 @@ impl SynthBridge for AppSynthBridge {
             .send(EngineCommand::SetModuleParameter {
                 instrument_id: Some(inst_id),
                 module_id: mid,
-                param: Param::Sampler(synth_core::SamplerParam::SampleSelect(
-                    synth_core::SampleId(sample_id),
-                )),
+                param: Param::sample_select(sample_id),
             })
         {
             return Err(McpBridgeError::CommandSendFailed {
