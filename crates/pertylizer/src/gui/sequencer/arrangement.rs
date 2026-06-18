@@ -234,6 +234,34 @@ struct ArrangementCtx<'a> {
 }
 
 /// Draw the arrangement view with track headers and timeline.
+/// Write a new length to a pattern and push the matching `SetPatternLength`
+/// undo action — but only if the length actually changed. Shared by the
+/// "Set Length…" submenu's free-input Apply branch and its bar presets.
+fn apply_pattern_length(
+    song: &Arc<RwLock<Song>>,
+    undo_manager: &mut crate::undo::UndoManager,
+    pat_id: PatternId,
+    new_len: SeqDuration,
+) {
+    let mut applied: Option<SeqDuration> = None;
+    {
+        let mut song_w = song.write();
+        if let Some(pat) = song_w.pattern_mut(pat_id)
+            && pat.length != new_len
+        {
+            applied = Some(pat.length);
+            pat.length = new_len;
+        }
+    }
+    if let Some(old) = applied {
+        undo_manager.push(crate::undo::UndoAction::SetPatternLength {
+            pattern_id: pat_id,
+            old_length: old,
+            new_length: new_len,
+        });
+    }
+}
+
 /// Returns `Some(PatternId)` if a placement was double-clicked.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub(super) fn draw_arrangement(
@@ -1086,23 +1114,7 @@ pub(super) fn draw_arrangement(
                             );
                             if ui.button("Apply").clicked() {
                                 let new_len = SeqDuration(bars.max(1) as u32 * ticks_per_bar);
-                                let mut applied: Option<SeqDuration> = None;
-                                {
-                                    let mut song_w = song.write();
-                                    if let Some(pat) = song_w.pattern_mut(pat_id)
-                                        && pat.length != new_len
-                                    {
-                                        applied = Some(pat.length);
-                                        pat.length = new_len;
-                                    }
-                                }
-                                if let Some(old) = applied {
-                                    undo_manager.push(crate::undo::UndoAction::SetPatternLength {
-                                        pattern_id: pat_id,
-                                        old_length: old,
-                                        new_length: new_len,
-                                    });
-                                }
+                                apply_pattern_length(song, undo_manager, pat_id, new_len);
                                 ui.close();
                             }
                         });
@@ -1110,23 +1122,7 @@ pub(super) fn draw_arrangement(
                         for bars_preset in [1_u32, 2, 4, 8, 16] {
                             if ui.button(format!("{bars_preset} bar(s)")).clicked() {
                                 let new_len = SeqDuration(bars_preset * ticks_per_bar);
-                                let mut applied: Option<SeqDuration> = None;
-                                {
-                                    let mut song_w = song.write();
-                                    if let Some(pat) = song_w.pattern_mut(pat_id)
-                                        && pat.length != new_len
-                                    {
-                                        applied = Some(pat.length);
-                                        pat.length = new_len;
-                                    }
-                                }
-                                if let Some(old) = applied {
-                                    undo_manager.push(crate::undo::UndoAction::SetPatternLength {
-                                        pattern_id: pat_id,
-                                        old_length: old,
-                                        new_length: new_len,
-                                    });
-                                }
+                                apply_pattern_length(song, undo_manager, pat_id, new_len);
                                 ui.close();
                             }
                         }
