@@ -6,14 +6,17 @@ Today **YAMS** (`docs/yams.md`) is a control-rate expression language bound to
 additive parameter offset. This plan generalizes that one engine into a
 real-time computation language usable in many places.
 
-Direction chosen: **A + C + E first** (cheap, broad generalization of the engine
+Direction chosen: **A + E first** (cheap, broad generalization of the engine
 that already exists), then **B** (audio-rate DSP) as a self-contained later
-stage.
+stage. **C is dropped** — see the Phase 3 note below for why; in short, Phase 1
+(E) already delivers the bulk of "global" modulation for free, so C is the
+heaviest lift in the plan for the narrowest unique payoff.
 
 - **A** — generic control-rate modulator as a first-class graph node.
-- **C** — global / instrument-scope scripts + a shared modulation bus.
 - **E** — new sources (transport / tempo / more params).
 - **B** — audio-rate, per-sample scriptable DSP module.
+- ~~**C** — global / instrument-scope scripts + a shared modulation bus.~~
+  **Dropped** (do reactively + minimally if a real patch ever demands it).
 
 ---
 
@@ -51,7 +54,7 @@ core-fraction ≈ (evals/sec) × (ops/eval × ns/op) × (concurrent instances) /
   ≈ ~50 ns; heavy 200-op script ≈ ~400 ns.
 - `instances` = voices × script-slots.
 
-Consequence: **A/C/E (control-rate) are effectively free**; **B (audio-rate)
+Consequence: **A/E (control-rate) are effectively free**; **B (audio-rate)
 scales with voices and must be budgeted** (heavy stereo script × full polyphony
 ≈ half a core per instance). Numbers are a hypothesis until Phase B benchmarks.
 
@@ -139,7 +142,7 @@ Cheapest, purely additive, unlocks tempo sync everywhere.
 
 ## Phase 2 (A) — The Script module
 
-The headline of A+C+E: scripted control signals as first-class graph nodes —
+The headline of A+E: scripted control signals as first-class graph nodes —
 reusable, shared, chainable.
 
 - **`ModuleType::Script`:** a rack of **K=8** slots, each slot =
@@ -171,39 +174,50 @@ script→script; bundled example patch.
 
 ---
 
-## Phase 3 (C) — Global / instrument scripts + global mod bus
+## Phase 3 (C) — Global / instrument scripts + global mod bus — DROPPED
 
-Larger engine work because it breaks the per-voice clone model (one state, one
-eval per block, visible to all voices).
+**Decision (2026-06-20): not building this.** Kept here as a record of why, plus
+the design sketch for a minimal future slice should a real patch ever demand it.
 
-- **Mono script rack at instrument scope**, evaluated by the engine *once per
-  block* before voices (not in the per-voice graph). One `RegisterFile` per slot,
-  no voice cloning.
-- **Global mod bus: a fixed `[f32; 32]` indexed array, not a string-keyed map.**
-  Global scripts publish to named slots; the compiler maps each `glob.<name>` to
-  a static index at compile/bind time so the voice-side read is a plain
-  `global_mod_bus[idx]` — O(1), cache-friendly, **zero string compares in the
-  voice loop** (same pre-bind rule as Phase 1).
-- **Name→index registry lives on the `Instrument`** as a persistent
-  `HashMap<String, usize>`, so writers (global scripts) and readers (voice scripts)
-  resolve the *same* name to the *same* offset regardless of compile order. New
-  names allocate the next free slot; the 33rd distinct name is a **compile error**
-  (bus full). A voice script that reads a `glob.<name>` no global script ever
-  writes resolves to a valid-but-unwritten slot → reads `0` (consistent with
-  YAMS's existing dangling-`src` disable-and-keep semantics), optionally a warning.
-- **Thread the bus via `ProcessContext`:** add `global_mod_bus: Option<&'a [f32]>`.
-  It already routes through every voice/module, so no extra lifetime or
-  thread-safety surface. The global rack runs (engine scope) → writes the bus →
-  voices process with `&bus`; the write fully precedes the reads, so no aliasing.
-- Used for: shared tempo-synced modulation, one-knob→many-params, ducking logic.
-  (Sidechain / envelope follower that *reads an audio level* — deferred to
-  Phase B, since it wants an audio input.)
+**Why dropped — Phase 1 already delivers most of the payoff for free.** A
+*stateless* expression over shared transport context (`beat`, `tempo`,
+`bar_phase`, `playing`) yields a **bit-identical** result in every voice on its
+own — same inputs, same pure function. So the canonical "global" cases already
+work today, per-voice, with no new machinery:
 
-**Files:** `synth_engine` (instrument-scope script pass + the bus),
-`module_traits.rs` (`ProcessContext.global_mod_bus`), `symbols.rs`/`bound.rs`
-(the bus source + name→index binding), MCP + GUI.
-**Test:** one global LFO seen identically by all voices; bus read in a voice
-script.
+- tempo-synced LFO `sin(beat * tau)` — identical across voices ✓ (Phase 1)
+- rhythmic pump from `bar_phase`, tempo→rate `tempo / 60` — stateless ✓
+- script→script chaining — already works per voice ✓ (Phase 2)
+
+What C would *uniquely* add is narrow: (1) shared **stateful** evolution across
+voices — one `rand()`/accumulator all voices read the *same* value of (per-voice
+`rand` decorrelates by design and can't be faked); (2) state that **survives
+note boundaries** (a global LFO that doesn't reset on each note-on); (3) CPU:
+eval once vs N. Point (3) is negated by this plan's own cost model (control-rate
+eval is "effectively free", so N× redundant identical math at ~187 Hz is
+near-zero). That leaves a musically-real but **niche** payoff (shared dice-roll,
+note-independent free-run) against the **heaviest lift in the whole plan**: it is
+the only phase that breaks the per-voice-clone invariant, touches the hot
+`ProcessContext`, adds an RT write-before-read ordering rule, a persistent
+name→index registry on `Instrument`, and save/load + MCP + GUI surface for an
+instrument-scope rack. Worst cost/payoff ratio in the plan → defer.
+
+Honest counter-point (recorded, not decisive): today "global" modulation works
+only *by coincidence* (stateless + shared input), and that illusion **breaks
+silently** the moment a user adds any stateful op or per-voice macro. C would
+turn that accident into a guarantee. Real, but a robustness argument — not enough
+to justify the largest build speculatively.
+
+**If revisited, build the minimal slice, not the full rack:** just the
+`glob`-bus + a *single* global script slot — defer the K-slot rack, registry,
+MCP and GUI until usage proves them out. The original design that still holds:
+fixed `[f32; 32]` indexed array (not a string-keyed map) bound at compile time so
+the voice read is `global_mod_bus[idx]` (zero string compares in the voice loop);
+index wrapped in a `GlobalBusSlot` newtype; bus threaded via
+`ProcessContext.global_mod_bus: Option<&'a [f32]>` with the global rack writing
+*before* voices read (write fully precedes reads → no aliasing); a resolved bus
+reference modelled as an enum in the bind layer (`Builtin(Context)` vs
+`UserSlot(GlobalBusSlot)`); dangling `glob.<name>` reads `0` (disable-and-keep).
 
 ---
 
@@ -284,11 +298,12 @@ confirms the audio-rate cost; null test (passthrough) is bit-exact.
 - **Transport sources** → already in `ProcessContext` (`position_beats`,
   `tempo`); newtypes at the resolve boundary, `f32` in the VM.
 - **Named-source resolution** → pre-bound to fixed accessors/indices at bind
-  time; no string compares in the voice loop (Phases 1 + 3).
+  time; no string compares in the voice loop (Phase 1).
 - **Script output** → fill the *entire* buffer, not `buffer[0]` (Phase 2).
 - **K = 8** slots/outputs (Phase 2).
-- **Global bus** → fixed `[f32; 32]`, name→index at compile time, threaded via
-  `ProcessContext.global_mod_bus` (Phase 3).
+- ~~**Global bus** → fixed `[f32; 32]`, name→index at compile time, threaded via
+  `ProcessContext.global_mod_bus`~~ (Phase 3 — **dropped**; minimal-slice design
+  retained in the Phase 3 note).
 - **Audio-rate VM** → scalar warm-frame baseline (vectorize only the
   feed-forward subset, benchmark-gated) + `LoadState`/`StoreState` + a `state`
   declaration for custom IIR (Phase 4).
