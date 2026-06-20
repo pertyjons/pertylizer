@@ -4065,190 +4065,46 @@ impl PatchEditor {
             }
             ui.separator();
 
-            // Oscillator submenu
-            let osc_color = category_color(ModuleCategory::Oscillator);
-            ui.menu_button(
-                egui::RichText::new(format!("{} Oscillator", ri::MUSIC_2_FILL)).color(osc_color),
-                |ui| {
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Category(ModuleCategory::Oscillator),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(ui, PaletteSelection::MathOscillator, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::SubOscillator, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::Noise, &mut selected);
-                    ui.separator();
-                    Self::bg_menu_item(ui, PaletteSelection::WavetableOsc, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::AdditiveOsc, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::GranularOsc, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::FractalOsc, &mut selected);
-                    ui.separator();
-                    Self::bg_menu_item(ui, PaletteSelection::Sampler, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::AudioInput, &mut selected);
-                },
-            );
-
-            // Simple categories (single module type each)
-            for sel in [
-                PaletteSelection::Category(ModuleCategory::Filter),
-                PaletteSelection::Category(ModuleCategory::Envelope),
-                PaletteSelection::Category(ModuleCategory::LFO),
-                PaletteSelection::Category(ModuleCategory::Amplifier),
-                PaletteSelection::Category(ModuleCategory::Mixer),
-            ] {
-                Self::bg_menu_item(ui, sel, &mut selected);
+            // Data-driven "Add module" menu: one submenu per category, populated
+            // from the module catalog (which is built from `ALL_MODULE_TYPES`).
+            // Adding a `ModuleType` variant and listing it in `ALL_MODULE_TYPES`
+            // makes it appear here automatically — there is no hand-maintained
+            // palette to drift out of sync with the enum. Every `ModuleCategory`
+            // is listed below, so no category can be silently dropped either.
+            const CATEGORY_ORDER: &[(ModuleCategory, &str)] = &[
+                (ModuleCategory::Oscillator, "Oscillator"),
+                (ModuleCategory::Filter, "Filter"),
+                (ModuleCategory::Envelope, "Envelope"),
+                (ModuleCategory::LFO, "LFO"),
+                (ModuleCategory::Amplifier, "Amplifier"),
+                (ModuleCategory::Mixer, "Mixer"),
+                (ModuleCategory::Effect, "Effect"),
+                (ModuleCategory::Sampler, "Sampler"),
+                (ModuleCategory::Utility, "Modulation / Utility"),
+                (ModuleCategory::Sequencer, "Generative"),
+                (ModuleCategory::PhysicalModeling, "Physical"),
+                (ModuleCategory::Visualizer, "Visualizer"),
+                (ModuleCategory::Output, "Output"),
+            ];
+            for &(category, title) in CATEGORY_ORDER {
+                // Skip a category with no modules rather than show an empty
+                // submenu. (The closure below only runs when the submenu opens,
+                // so presence must be checked up front.)
+                if !module_catalog().iter().any(|(_, cat, _)| *cat == category) {
+                    continue;
+                }
+                ui.menu_button(
+                    egui::RichText::new(format!("{} {title}", category_icon(category)))
+                        .color(category_color(category)),
+                    |ui| {
+                        for &(mt, cat, _) in module_catalog() {
+                            if cat == category {
+                                Self::bg_menu_item(ui, PaletteSelection::Module(mt), &mut selected);
+                            }
+                        }
+                    },
+                );
             }
-
-            ui.separator();
-
-            // Effect submenu
-            let fx_color = category_color(ModuleCategory::Effect);
-            ui.menu_button(
-                egui::RichText::new(format!("{} Effect", ri::SPARKLING_FILL)).color(fx_color),
-                |ui| {
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::Delay),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::Reverb),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::Distortion),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::Chorus),
-                        &mut selected,
-                    );
-                    ui.separator();
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::Flanger),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::Phaser),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::Compressor),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(ui, PaletteSelection::Effect(EffectType::Eq), &mut selected);
-                    ui.separator();
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::Waveshaper),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::BbdDelay),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::Limiter),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::MidSide),
-                        &mut selected,
-                    );
-                    ui.separator();
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::Convolver),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::PhaseVocoder),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Effect(EffectType::FrequencyShifter),
-                        &mut selected,
-                    );
-                },
-            );
-
-            // Visualizer submenu
-            let viz_color = category_color(ModuleCategory::Visualizer);
-            ui.menu_button(
-                egui::RichText::new(format!("{} Visualizer", ri::SPECTRUM_FILL)).color(viz_color),
-                |ui| {
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Visualizer(PaletteVisualizerType::Oscilloscope),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Visualizer(PaletteVisualizerType::LevelMeter),
-                        &mut selected,
-                    );
-                    Self::bg_menu_item(
-                        ui,
-                        PaletteSelection::Visualizer(PaletteVisualizerType::SpectrumAnalyzer),
-                        &mut selected,
-                    );
-                    ui.separator();
-                    Self::bg_menu_item(ui, PaletteSelection::SignalMonitor, &mut selected);
-                },
-            );
-
-            // Modulation submenu
-            let mod_color = category_color(ModuleCategory::Utility);
-            ui.menu_button(
-                egui::RichText::new(format!("{} Modulation", ri::SWAP_FILL)).color(mod_color),
-                |ui| {
-                    Self::bg_menu_item(ui, PaletteSelection::RingMod, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::EnvelopeFollower, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::Mseg, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::KineticModulator, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::Script, &mut selected);
-                },
-            );
-
-            // Generative submenu
-            let gen_color = category_color(ModuleCategory::LFO);
-            ui.menu_button(
-                egui::RichText::new(format!("{} Generative", ri::MAGIC_FILL)).color(gen_color),
-                |ui| {
-                    Self::bg_menu_item(ui, PaletteSelection::Euclidean, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::TuringMachine, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::RandomGates, &mut selected);
-                },
-            );
-
-            // Physical submenu
-            let phys_color = category_color(ModuleCategory::PhysicalModeling);
-            ui.menu_button(
-                egui::RichText::new(format!("{} Physical", ri::PIANO_FILL)).color(phys_color),
-                |ui| {
-                    Self::bg_menu_item(ui, PaletteSelection::KeyboardPanner, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::BodyResonance, &mut selected);
-                    Self::bg_menu_item(ui, PaletteSelection::MechanicalNoise, &mut selected);
-                },
-            );
-
-            ui.separator();
-
-            // Output & Mod Matrix as direct buttons
-            Self::bg_menu_item(ui, PaletteSelection::StereoOutput, &mut selected);
-            Self::bg_menu_item(ui, PaletteSelection::ModMatrix, &mut selected);
         });
 
         if cable_action_taken {
@@ -6465,6 +6321,10 @@ pub enum PaletteVisualizerType {
 /// Result from ModulePalette - either a category or a specific effect type.
 #[derive(Debug, Clone, Copy)]
 pub enum PaletteSelection {
+    /// Any module type, selected directly. This is what the data-driven
+    /// "Add module" menu emits — every entry in `ALL_MODULE_TYPES` is reachable
+    /// through it, so a new `ModuleType` variant needs no new palette case.
+    Module(ModuleType),
     Category(ModuleCategory),
     MathOscillator,
     SubOscillator,
@@ -6498,9 +6358,59 @@ pub enum PaletteSelection {
     AudioInput,
 }
 
+/// Cached catalog of every addable module type with its display name and
+/// category, built once from [`ALL_MODULE_TYPES`](crate::module_factory::ALL_MODULE_TYPES).
+///
+/// This is the single source of truth for the "Add module" menu: a new
+/// `ModuleType` variant listed in `ALL_MODULE_TYPES` appears automatically, so
+/// the menu can never silently drift out of sync with the enum again. Built
+/// lazily (constructing one throwaway instance per type) and memoized — the menu
+/// renders every frame while open, so we must not rebuild it each time.
+fn module_catalog() -> &'static [(ModuleType, ModuleCategory, String)] {
+    static CATALOG: std::sync::OnceLock<Vec<(ModuleType, ModuleCategory, String)>> =
+        std::sync::OnceLock::new();
+    CATALOG.get_or_init(|| {
+        crate::module_factory::ALL_MODULE_TYPES
+            .iter()
+            .filter_map(|&mt| {
+                crate::module_factory::get_descriptor(mt).map(|d| (mt, d.category, d.name))
+            })
+            .collect()
+    })
+}
+
+/// Remix-icon glyph for a module category, used as the submenu header icon.
+fn category_icon(category: ModuleCategory) -> &'static str {
+    use egui_remixicon::icons as ri;
+    match category {
+        ModuleCategory::Oscillator => ri::MUSIC_2_FILL,
+        ModuleCategory::Effect => ri::SPARKLING_FILL,
+        ModuleCategory::Visualizer => ri::SPECTRUM_FILL,
+        ModuleCategory::Utility => ri::SWAP_FILL,
+        ModuleCategory::Sequencer => ri::MAGIC_FILL,
+        ModuleCategory::PhysicalModeling => ri::PIANO_FILL,
+        ModuleCategory::Sampler => ri::MUSIC_FILL,
+        _ => ri::SOUND_MODULE_FILL,
+    }
+}
+
 /// Get the display label (with Remix Icon) and category color for a palette selection.
 fn palette_label(selection: PaletteSelection) -> (String, Color32) {
     use egui_remixicon::icons as ri;
+
+    // Data-driven selections carry only the type; resolve name + colour from the
+    // catalog rather than maintaining a per-variant arm here.
+    if let PaletteSelection::Module(mt) = selection {
+        let (name, category) = module_catalog()
+            .iter()
+            .find(|(t, _, _)| *t == mt)
+            .map(|(_, c, n)| (n.clone(), *c))
+            .unwrap_or_else(|| (format!("{mt:?}"), ModuleCategory::Utility));
+        return (
+            format!("{} {name}", category_icon(category)),
+            category_color(category),
+        );
+    }
 
     let (icon, text, color) = match selection {
         // Oscillators
@@ -6777,6 +6687,13 @@ fn palette_label(selection: PaletteSelection) -> (String, Color32) {
         ),
         // Fallback for any other category
         PaletteSelection::Category(cat) => (ri::SOUND_MODULE_FILL, "Module", category_color(cat)),
+        // Resolved by the early return above; this arm only satisfies the
+        // exhaustiveness check.
+        PaletteSelection::Module(_) => (
+            ri::SOUND_MODULE_FILL,
+            "Module",
+            category_color(ModuleCategory::Utility),
+        ),
     };
     (format!("{icon} {text}"), color)
 }

@@ -1258,6 +1258,43 @@ impl SynthApp {
         };
 
         match selection {
+            PaletteSelection::Module(mt) => {
+                // The data-driven "Add module" menu routes every type through
+                // here. Visualizers and the signal monitor need their
+                // buffer/command setup, so delegate those to the specialised
+                // arms below; all other types take the generic add path.
+                if mt.is_visualizer() {
+                    let viz = match mt {
+                        TypedModuleType::Oscilloscope => PaletteVisualizerType::Oscilloscope,
+                        TypedModuleType::LevelMeter => PaletteVisualizerType::LevelMeter,
+                        _ => PaletteVisualizerType::SpectrumAnalyzer,
+                    };
+                    Self::handle_context_add(
+                        session,
+                        handle,
+                        instrument_id,
+                        editor,
+                        PaletteSelection::Visualizer(viz),
+                        position,
+                        inline_cable,
+                    );
+                } else if mt == TypedModuleType::SignalMonitor {
+                    Self::handle_context_add(
+                        session,
+                        handle,
+                        instrument_id,
+                        editor,
+                        PaletteSelection::SignalMonitor,
+                        position,
+                        inline_cable,
+                    );
+                } else if let Ok((next_id, descriptor)) = session.add_module(instrument_id, mt) {
+                    editor.add_module_at(next_id, descriptor.clone(), position);
+                    if let Some(cable) = inline_cable {
+                        wire_inline(handle, editor, next_id, &descriptor, cable);
+                    }
+                }
+            }
             PaletteSelection::Visualizer(viz_type) => {
                 let (descriptor, module_type) = match viz_type {
                     PaletteVisualizerType::Oscilloscope => (

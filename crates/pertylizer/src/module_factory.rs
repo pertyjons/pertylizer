@@ -477,3 +477,25 @@ pub const ALL_MODULE_TYPES: &[ModuleType] = &[
     ModuleType::LevelMeter,
     ModuleType::SpectrumAnalyzer,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every module listed in `ALL_MODULE_TYPES` must resolve a descriptor.
+    /// The data-driven "Add module" menu only shows a type when
+    /// `get_descriptor` returns `Some`, so a missing one would be silently
+    /// unreachable in the UI even though it is in the master list.
+    #[test]
+    fn every_module_type_has_a_descriptor() {
+        let missing: Vec<ModuleType> = ALL_MODULE_TYPES
+            .iter()
+            .copied()
+            .filter(|&mt| get_descriptor(mt).is_none())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "module types in ALL_MODULE_TYPES with no descriptor: {missing:?}"
+        );
+    }
+}
