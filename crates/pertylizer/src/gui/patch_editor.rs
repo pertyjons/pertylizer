@@ -2395,6 +2395,13 @@ impl PatchEditor {
                         },
                     );
 
+                    // Width the header row established. Used to stretch the
+                    // three-column body so the OUT port column reaches the
+                    // panel's right edge instead of floating mid-panel when the
+                    // body content is narrower than the header (e.g. the Script
+                    // module's compact slot list under a wide title bar).
+                    let header_width = ui.min_rect().width();
+
                     // Check if this is a global module (no ports to show in columns)
                     let is_global = matches!(
                         descriptor.category,
@@ -2478,6 +2485,15 @@ impl PatchEditor {
                         // Normal modules: three-column layout (IN ports | content | OUT ports)
                         let col_w = theme().sizes.port_column_width;
 
+                        // Stretch the content column so IN + content + OUT span
+                        // the header width, anchoring the OUT column to the right
+                        // edge. When the content is naturally wider than this
+                        // (the common case), `set_min_width` is a no-op and the
+                        // layout is unchanged.
+                        let spacing_x = ui.spacing().item_spacing.x;
+                        let content_min_w =
+                            (header_width - 2.0 * col_w - 2.0 * spacing_x).max(0.0);
+
                         ui.horizontal(|ui| {
                             // Left port column (IN) - fixed width
                             ui.vertical(|ui| {
@@ -2491,8 +2507,9 @@ impl PatchEditor {
                                 );
                             });
 
-                            // Content column - auto-width from content
+                            // Content column - stretched to anchor OUT at the edge
                             ui.vertical(|ui| {
+                                ui.set_min_width(content_min_w);
                                 if let Some(panel_state) = self.panels.get_mut(&module_id) {
                                     let vis_buffer =
                                         handle.get_visualization_buffer(module_id);
