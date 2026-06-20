@@ -6259,9 +6259,24 @@ fn draw_script_module_grid(
     let mut mod_script_actions: Vec<(u8, Option<String>)> = Vec::new();
     let mut open_editor_for: Option<u8> = None;
     let t = theme();
+    // Match the output-port column's row pitch so each slot row lines up with
+    // its `outN` nipple.
+    let row_height = t.sizes.port_vertical_spacing;
+
+    // Column header: the OUT port column starts with an "OUT" label that takes
+    // up the top strip, so without a matching header here the slot rows would
+    // sit half a row above their nipples. This 8px header restores alignment.
+    ui.label(
+        egui::RichText::new("SLOTS")
+            .size(8.0)
+            .color(t.colors.text_dim),
+    );
 
     for slot in 0u8..synth_modules::script_module::SCRIPT_MODULE_OUTPUTS as u8 {
         ui.horizontal(|ui| {
+            // Pin the row to the port pitch (24px) and centre its contents, so
+            // the rows neither drift from nor sit off-centre to the nipples.
+            ui.set_min_height(row_height);
             ui.label(
                 egui::RichText::new(format!("out{}", slot + 1))
                     .color(accent_color)
