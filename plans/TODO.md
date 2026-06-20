@@ -193,6 +193,34 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   source set per (slot, script-text) and invalidate when `slot_scripts` changes, rather than
   recompiling unconditionally.
 
+### 3.5 YAMS Script editor follow-ups
+
+- [ ] **Detect/warn on recursive or self-referential script source graphs.** A script's
+  sources are *address-based* (`src x = lfo-1.out`, `src y = scr-2.out1`) and are resolved
+  with a **1-block latency** into a scratch buffer — they do **not** flow through the graph's
+  cable connections, so the existing cable cycle-detection (`drag_cycle_blocked`, the topo
+  sort in `graph.rs`) does **not** cover them. Note up front: because YAMS bytecode is
+  straight-line (no loops/recursion — `bytecode.rs:5`) and the 1-block latency breaks the
+  dependency, a self-reference (`scr-1` reading `scr-1.out1`) or a script↔script cycle
+  **cannot** infinite-loop or stack-overflow at runtime; it just reads last block's value.
+  So this is a **UX/correctness warning**, not a safety fix: surface "this script feeds back
+  on itself / forms a cycle" so the user isn't surprised by a 1-block-delayed feedback path.
+  Build a dependency graph over scripted slots (extract each script's `Module{..}` source
+  addresses, same extraction as §3.4) and flag self-edges + cycles in the ƒx editor status
+  line. Decide whether to hard-block or just warn (lean warn — delayed feedback is sometimes
+  intentional, e.g. a leaky integrator).
+
+- [ ] **"Select input" picker in the ƒx expression editor.** Add a button (e.g. labelled
+  "Select input") *before* the existing Format button in the script popup
+  (`draw_slot_expression_editor`, `patch_editor.rs`). It opens a **tree picker**: top level =
+  every module in the patch, expandable to that module's selectable members (output ports and
+  modulatable parameters), plus the macro/context sources (`velocity`, `beat`, …). Selecting a
+  leaf inserts a suggested binding into the editor at the cursor — a `src <name> = <address>`
+  line with an auto-derived variable name (e.g. `src lfo1_out = lfo-1.out`) and the assignment.
+  Source the module/parameter list the same way the Mod Matrix address pickers do (S1.5c —
+  the patch descriptor catalog), so it stays in sync with what `resolve_source` can actually
+  bind.
+
 ---
 
 ## 4. Template Library & Presets
