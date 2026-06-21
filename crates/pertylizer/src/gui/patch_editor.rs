@@ -6313,17 +6313,23 @@ enum PickedInput {
     ModuleSource(String),
 }
 
-/// Insert `text` into `draft` at char index `at` (clamped to the end; `None` →
-/// end). Returns the char index just past the inserted text, for caret restore.
-fn insert_at_cursor(draft: &mut String, at: Option<usize>, text: &str) -> usize {
+/// Replace the char range `sel` (a sorted `(start, end)`; `None` → end of draft)
+/// with `text`. An empty range is a plain insertion at the caret; a non-empty one
+/// replaces the selection, matching how typing over a selection behaves. Returns
+/// the char index just past the inserted text, for caret restore.
+fn insert_at_cursor(draft: &mut String, sel: Option<(usize, usize)>, text: &str) -> usize {
     let char_len = draft.chars().count();
-    let idx = at.unwrap_or(char_len).min(char_len);
-    let byte = draft
-        .char_indices()
-        .nth(idx)
-        .map_or(draft.len(), |(b, _)| b);
-    draft.insert_str(byte, text);
-    idx + text.chars().count()
+    let (start, end) = sel.unwrap_or((char_len, char_len));
+    let start = start.min(char_len);
+    let end = end.min(char_len).max(start);
+    let byte = |idx: usize| {
+        draft
+            .char_indices()
+            .nth(idx)
+            .map_or(draft.len(), |(b, _)| b)
+    };
+    draft.replace_range(byte(start)..byte(end), text);
+    start + text.chars().count()
 }
 
 /// A YAMS-legal variable name derived from a source address: `lfo-1.out` →
@@ -6391,18 +6397,18 @@ fn unique_src_var(draft: &str, addr: &str) -> String {
 
 /// Splice a module-output reference into `draft`: ensure a `src <var> = <addr>`
 /// binding exists (reuse an existing one, else prepend a fresh, collision-free
-/// binding as the first line), then insert `<var>` at the cursor so it lands
-/// where the user is typing. Returns the new caret char index.
-fn insert_module_source(draft: &mut String, cursor: Option<usize>, addr: &str) -> usize {
+/// binding as the first line), then insert `<var>` over the selection `sel` so it
+/// lands where the user is typing. Returns the new caret char index.
+fn insert_module_source(draft: &mut String, sel: Option<(usize, usize)>, addr: &str) -> usize {
     // Reuse an existing binding for this address — just insert its variable.
     if let Some(var) = existing_binding_var(draft, addr) {
-        return insert_at_cursor(draft, cursor, &var);
+        return insert_at_cursor(draft, sel, &var);
     }
     let var = unique_src_var(draft, addr);
     let line = format!("src {var} = {addr}\n");
-    // Insert the variable at the cursor first (indices refer to the current
+    // Insert the variable at the selection first (indices refer to the current
     // draft), then prepend the binding and shift the caret past it.
-    let new_cursor = insert_at_cursor(draft, cursor, &var);
+    let new_cursor = insert_at_cursor(draft, sel, &var);
     draft.insert_str(0, &line);
     new_cursor + line.chars().count()
 }
@@ -6537,13 +6543,17 @@ fn draw_slot_expression_editor(
                     .code_editor()
                     .desired_rows(EDITOR_ROWS),
             );
-            // Read the caret from the text edit's stored state: its live
+            // Read the selection from the text edit's stored state: its live
             // `cursor_range` is only populated while focused, but opening the
             // "Select input" menu moves focus to the popup — so without this the
-            // picker would append at the end instead of at the user's caret.
-            let cursor_char = egui::text_edit::TextEditState::load(ui.ctx(), te_id)
+            // picker would append at the end instead of at the user's caret. A
+            // non-empty range is replaced (like typing over a selection).
+            let selection = egui::text_edit::TextEditState::load(ui.ctx(), te_id)
                 .and_then(|st| st.cursor.char_range())
-                .map(|r| r.primary.index);
+                .map(|r| {
+                    let (a, b) = (r.primary.index, r.secondary.index);
+                    (a.min(b), a.max(b))
+                });
 
             // Live compile → status line (mirrors `session.set_mod_script`).
             let trimmed = editor.draft.trim();
@@ -6607,10 +6617,10 @@ fn draw_slot_expression_editor(
                 if let Some(pick) = draw_select_input_menu(ui, catalog) {
                     let new_caret = match pick {
                         PickedInput::Bare(name) => {
-                            insert_at_cursor(&mut editor.draft, cursor_char, &name)
+                            insert_at_cursor(&mut editor.draft, selection, &name)
                         }
                         PickedInput::ModuleSource(addr) => {
-                            insert_module_source(&mut editor.draft, cursor_char, &addr)
+                            insert_module_source(&mut editor.draft, selection, &addr)
                         }
                     };
                     set_text_caret(&ctx, te_id, new_caret);
@@ -7623,7 +7633,7 @@ mod patch_analysis_tests {
     fn insert_at_cursor_splices_at_index() {
         let mut s = "out = ".to_string();
         // Cursor at end → append; returns the new caret past the text.
-        let caret = insert_at_cursor(&mut s, Some(6), "velocity");
+        let caret = insert_at_cursor(&mut s, Some((6, 6)), "velocity");
         assert_eq!(s, "out = velocity");
         assert_eq!(caret, 14);
         // `None` cursor falls back to the end.
@@ -7632,8 +7642,13 @@ mod patch_analysis_tests {
         assert_eq!(s2, "abcX");
         // An out-of-range index clamps to the end rather than panicking.
         let mut s3 = "ab".to_string();
-        insert_at_cursor(&mut s3, Some(99), "!");
+        insert_at_cursor(&mut s3, Some((99, 99)), "!");
         assert_eq!(s3, "ab!");
+        // A non-empty range REPLACES the selection (like typing over it).
+        let mut s4 = "out = lfo".to_string();
+        let caret = insert_at_cursor(&mut s4, Some((6, 9)), "velocity");
+        assert_eq!(s4, "out = velocity");
+        assert_eq!(caret, 14);
     }
 
     #[test]
@@ -7662,7 +7677,7 @@ mod patch_analysis_tests {
     fn insert_module_source_prepends_binding_then_inserts_var() {
         // No existing binding: prepend `src <var> = <addr>` and insert the var.
         let mut draft = "out = ".to_string();
-        let caret = insert_module_source(&mut draft, Some(6), "lfo-1.out");
+        let caret = insert_module_source(&mut draft, Some((6, 6)), "lfo-1.out");
         assert_eq!(draft, "src lfo1_out = lfo-1.out\nout = lfo1_out");
         // Caret lands past the inserted variable (shifted by the prepended line).
         assert_eq!(&draft[..caret], "src lfo1_out = lfo-1.out\nout = lfo1_out");
@@ -7673,7 +7688,7 @@ mod patch_analysis_tests {
         // A binding for this address already exists → reuse its var, no prepend.
         let mut draft = "src l = lfo-1.out\nout = ".to_string();
         let end = draft.chars().count();
-        insert_module_source(&mut draft, Some(end), "lfo-1.out");
+        insert_module_source(&mut draft, Some((end, end)), "lfo-1.out");
         assert_eq!(draft, "src l = lfo-1.out\nout = l");
     }
 
@@ -7683,7 +7698,7 @@ mod patch_analysis_tests {
         // the new binding must get a suffix so the script stays compilable.
         let mut draft = "src lfo1_out = env-2.out\nout = ".to_string();
         let end = draft.chars().count();
-        insert_module_source(&mut draft, Some(end), "lfo-1.out");
+        insert_module_source(&mut draft, Some((end, end)), "lfo-1.out");
         assert!(draft.contains("src lfo1_out_2 = lfo-1.out"), "{draft}");
         assert!(draft.ends_with("lfo1_out_2"), "{draft}");
     }
