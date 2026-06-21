@@ -19,6 +19,12 @@
 use synth_core::types::StereoSample;
 use synth_dsp::{Complex, FftProcessor, WindowType, fill_window};
 
+/// Detailed spectral analysis (partials, harmonicity, timbre descriptors) and
+/// spectrum comparison, built on the primitives in this module. Lives here so
+/// it can reuse the private FFT helpers (`MagnitudeWorkspace`, `MAG_FLOOR`) and
+/// `energy_bands`.
+pub mod spectrum;
+
 /// One spectral peak: frequency in Hz and magnitude in dB relative to the
 /// loudest peak in the spectrum (loudest = 0 dB).
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -183,6 +189,7 @@ fn window_samples(window_ms: f32, sample_rate: u32) -> usize {
 /// harmonic resolution for tonal analysis.
 struct MagnitudeWorkspace {
     fft: FftProcessor,
+    window_type: WindowType,
     window: Vec<f32>,
     fft_in: Vec<f32>,
     fft_out: Vec<Complex<f32>>,
@@ -190,9 +197,16 @@ struct MagnitudeWorkspace {
 
 impl MagnitudeWorkspace {
     fn new(fft_size: usize) -> Self {
+        Self::with_window(fft_size, WindowType::Hann)
+    }
+
+    /// Like [`new`](Self::new) but with an explicit window function. Used by the
+    /// `spectrum` submodule, which wants Blackman-Nuttall's low sidelobes.
+    fn with_window(fft_size: usize, window_type: WindowType) -> Self {
         let complex_size = fft_size / 2 + 1;
         Self {
             fft: FftProcessor::new(fft_size),
+            window_type,
             window: Vec::new(),
             fft_in: vec![0.0; fft_size],
             fft_out: vec![Complex::new(0.0, 0.0); complex_size],
@@ -210,7 +224,7 @@ impl MagnitudeWorkspace {
         let take = samples.len().min(n);
         if self.window.len() != take {
             self.window.resize(take, 0.0);
-            fill_window(&mut self.window, WindowType::Hann);
+            fill_window(&mut self.window, self.window_type);
         }
         for i in 0..take {
             self.fft_in[i] = samples[i] * self.window[i];
