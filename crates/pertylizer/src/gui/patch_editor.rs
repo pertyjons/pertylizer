@@ -6283,7 +6283,11 @@ fn draw_mod_matrix_grid(
     // from the slot's installed script (empty if none).
     if let Some(slot) = open_editor_for {
         let draft = state.slot_scripts.get(&slot).cloned().unwrap_or_default();
-        state.script_editor = Some(super::module_panel::ScriptEditorState { slot, draft });
+        state.script_editor = Some(super::module_panel::ScriptEditorState {
+            slot,
+            draft,
+            ..Default::default()
+        });
     }
 
     // Draw the expression-editor popup (S2.4) if one is open. A floating window so
@@ -6493,13 +6497,28 @@ fn draw_slot_expression_editor(
         .min_height(200.0)
         .open(&mut keep_open)
         .show(&ctx, |ui| {
-            ui.label(
-                egui::RichText::new(
-                    "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`",
-                )
-                .size(theme().fonts.size_small)
-                .color(theme().colors.text_secondary),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`",
+                    )
+                    .size(theme().fonts.size_small)
+                    .color(theme().colors.text_secondary),
+                );
+                // Help toggle: opens the YAMS reference panel beside the editor.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let help = ui
+                        .selectable_label(
+                            editor.show_help,
+                            egui::RichText::new(format!("{}  Help", ri::QUESTION_LINE))
+                                .size(theme().fonts.size_small),
+                        )
+                        .on_hover_text("YAMS reference: how it runs, sources, functions");
+                    if help.clicked() {
+                        editor.show_help = !editor.show_help;
+                    }
+                });
+            });
             // The editor fills the window: it takes the full width and all the
             // height left after reserving room for the status line + button row,
             // so dragging the window corner grows the text area. Long scripts
@@ -6633,11 +6652,160 @@ fn draw_slot_expression_editor(
                 }
             });
         });
+
+    // YAMS reference panel, toggled by the Help button. A sibling window so it
+    // can be read side-by-side with the editor; its ✕ mirrors back to the toggle.
+    if editor.show_help {
+        let mut help_open = true;
+        draw_yams_help_window(&ctx, state.id, editor.slot, &mut help_open);
+        if !help_open {
+            editor.show_help = false;
+        }
+    }
+
     // Persist the editor (with its in-progress draft) across frames unless the
     // window was closed via its ✕ or an action button.
     if keep_open && !closed_by_action {
         state.script_editor = Some(editor);
     }
+}
+
+/// The YAMS reference panel: a scrollable, read-only cheat-sheet covering the
+/// execution model (control-rate, one read per block — the key expectation),
+/// source syntax, the predefined identifiers, and the function catalog. Mirrors
+/// `docs/yams.md` so the in-app help stays close to the canonical reference.
+fn draw_yams_help_window(ctx: &egui::Context, module: ModuleId, slot: u8, open: &mut bool) {
+    let t = theme();
+    // Section heading.
+    let head = |ui: &mut Ui, text: &str| {
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(text)
+                .strong()
+                .color(t.colors.accent_cyan),
+        );
+    };
+    // Body paragraph.
+    let body = |ui: &mut Ui, text: &str| {
+        ui.label(egui::RichText::new(text).size(t.fonts.size_small));
+    };
+    // Monospace example line.
+    let code = |ui: &mut Ui, text: &str| {
+        ui.label(
+            egui::RichText::new(text)
+                .monospace()
+                .size(t.fonts.size_small)
+                .color(t.colors.text_secondary),
+        );
+    };
+
+    egui::Window::new("YAMS - reference")
+        .id(egui::Id::new(("yams_help", module, slot)))
+        .collapsible(true)
+        .resizable(true)
+        .default_size(egui::vec2(420.0, 460.0))
+        .min_width(300.0)
+        .open(open)
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                head(ui, "What it is");
+                body(
+                    ui,
+                    "YAMS is a small control-rate expression language. Each slot \
+                     computes one value per voice, assigned to `out`. That value \
+                     becomes a normalized modulation offset (output ports are ±1; a \
+                     parameter maps to 0..1, or -1..1 if bipolar).",
+                );
+
+                head(ui, "How it runs (the key expectation)");
+                body(
+                    ui,
+                    "The script runs once per CONTROL BLOCK (~187-750 Hz), not per \
+                     audio sample. Every source you reference is SAMPLED once per \
+                     block - you read a value, you do not process the waveform. So \
+                     `osc-1.out` gives one sampled point of that oscillator per \
+                     block (great for a sub-audio osc used as an LFO; aliased for an \
+                     audio-rate one), never the audible waveform. Per-sample audio \
+                     processing is a separate audio-rate module (planned), not this.",
+                );
+                body(
+                    ui,
+                    "Sources resolve with a one-block latency, so a script reading \
+                     its own or a downstream script's output is a delayed feedback \
+                     path - allowed, but flagged below the editor.",
+                );
+                body(
+                    ui,
+                    "Evaluation is eager: every node runs every block. `?:`, `&&`, \
+                     `||` only SELECT an already-computed value - stateful functions \
+                     (lag, phasor, ...) keep ticking even on the untaken branch. \
+                     Math is NaN-free (x/0 = 0, safe log/sqrt).",
+                );
+
+                head(ui, "Syntax");
+                code(ui, "src lfo = lfo-1.out   # bind a source by address");
+                code(ui, "let depth = mod_wheel * 0.5");
+                code(ui, "out = lfo * depth     # exactly one `out`");
+                body(
+                    ui,
+                    "All `src` bindings first, then `let`s, then one `out`. \
+                     Numbers need a leading zero (0.5, not .5). Durations: 50ms, \
+                     1.5s. Comments: # to end of line. Use the \"Select input\" \
+                     button to insert a source without typing the address.",
+                );
+
+                head(ui, "Sources you can reference");
+                body(
+                    ui,
+                    "- Any module output port by address: lfo-1.out, env-2.out, \
+                     scr-1.out1 (bound with `src`).",
+                );
+                body(
+                    ui,
+                    "- Macros (bare names, 0..1 unless noted): velocity, mod_wheel, \
+                     aftertouch, pitch_bend (-1..1), note, poly_at.",
+                );
+                body(
+                    ui,
+                    "- Context: gate, gate_on, age (s), sr, beat, bar_phase (0..1), \
+                     tempo (BPM), playing. The transport vars are shared by all \
+                     voices - tempo-synced: out = sin(beat * tau).",
+                );
+                body(ui, "- Constants: pi, tau (2*pi), e.");
+
+                head(ui, "Functions - stateless");
+                code(ui, "abs sign min max clamp");
+                code(ui, "floor ceil round trunc quantize(x,step)");
+                code(ui, "pow sqrt exp log");
+                code(ui, "sin cos tan atan atan2");
+                code(ui, "lerp/mix(a,b,t) smoothstep(a,b,x) sigmoid gauss");
+                code(ui, "semis(x)->ratio  mtof(x)->Hz");
+
+                head(ui, "Functions - stateful (per-voice, reset on note-on)");
+                code(ui, "lag(x,t)         one-pole smoothing");
+                code(ui, "slew(x,up,down)  separate rise/fall rates");
+                code(ui, "sah(x,trig)      sample & hold on rising trig");
+                code(ui, "accum(x)         running sum   delta(x) change/block");
+                code(ui, "phasor(rate)     own 0->1 ramp at rate Hz");
+                code(ui, "edge(x) counter(trig)");
+                code(ui, "rand([lo,hi])    white()   (decorrelated per voice)");
+                body(
+                    ui,
+                    "A literal time arg (lag(x, 50ms)) precomputes its coefficient; \
+                     an expression arg costs a per-block recompute.",
+                );
+
+                head(ui, "Operators (low -> high precedence)");
+                code(ui, "?:   ||   &&   == !=   < > <= >=   + -   * / %");
+                code(ui, "unary - !    ^ (power)    f(...)  ( )");
+                body(
+                    ui,
+                    "Comparisons can't chain: a < b < c is a syntax error - \
+                     parenthesize. Truthiness: any non-zero is true; comparisons \
+                     yield 1 or 0.",
+                );
+            });
+        });
 }
 
 /// A one-line, truncated preview of a slot's YAMS source for the panel row.
@@ -6715,7 +6883,11 @@ fn draw_script_module_grid(
     // script (empty for a fresh slot) — mirrors the Mod Matrix ƒx flow.
     if let Some(slot) = open_editor_for {
         let draft = state.slot_scripts.get(&slot).cloned().unwrap_or_default();
-        state.script_editor = Some(super::module_panel::ScriptEditorState { slot, draft });
+        state.script_editor = Some(super::module_panel::ScriptEditorState {
+            slot,
+            draft,
+            ..Default::default()
+        });
     }
 
     draw_slot_expression_editor(ui, state, script_graph, catalog, &mut mod_script_actions);

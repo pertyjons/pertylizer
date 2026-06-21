@@ -59,12 +59,14 @@ pub struct ModulePanelState {
 /// `draft` is the in-progress YAMS source the user is editing; it is independent
 /// of the installed script (`slot_scripts`) until applied. Compilation status is
 /// recomputed live each frame while the popup is open, so it is not stored here.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ScriptEditorState {
     /// 0-based slot whose amount cell is being edited.
     pub slot: u8,
     /// Current editor text.
     pub draft: String,
+    /// Whether the YAMS help panel is open alongside the editor.
+    pub show_help: bool,
 }
 
 impl ModulePanelState {
