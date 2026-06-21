@@ -1761,6 +1761,25 @@ pub trait SynthBridge: Send + Sync + 'static {
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeSpectrumResult, McpBridgeError>;
 
+    /// Like `analyze_spectrum` but returns a *spectrogram*: the requested window
+    /// is rendered **once** and a sliding FFT produces one spectrum per `hop_ms`
+    /// (analysing `window_len_ms` per frame), so the time evolution of a sound is
+    /// visible in a single O(1)-render call. The per-frame `voiced` flag reads a
+    /// source's pitched/noise alternation directly.
+    #[allow(clippy::too_many_arguments)]
+    fn analyze_spectrogram(
+        &self,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+        instrument_id: Option<u16>,
+        f0_hint: Option<f32>,
+        max_partials: Option<u32>,
+        log_bins: Option<u32>,
+        hop_ms: Option<f32>,
+        window_len_ms: Option<f32>,
+        scope: AnalysisScope,
+    ) -> Result<crate::types::AnalyzeSpectrogramResult, McpBridgeError>;
+
     /// Same detailed spectral analysis as `analyze_spectrum`, but over an
     /// imported sample or a WAV file on disk instead of a render — so a real
     /// reference recording (e.g. a SID render) can be fingerprinted in identical

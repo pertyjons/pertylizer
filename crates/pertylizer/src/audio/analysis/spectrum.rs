@@ -21,7 +21,7 @@
 //!   fundamental. An *unvoiced* verdict (`f0 = None`) keeps noise frames from
 //!   emitting a garbage fundamental that would poison the harmonic metrics.
 
-use synth_core::types::{Cents, Decibels, Hertz, NormalizedValue};
+use synth_core::types::{Cents, Decibels, Hertz, NormalizedValue, Seconds};
 use synth_dsp::WindowType;
 
 use super::{EnergyBands, MAG_FLOOR, MagnitudeWorkspace};
@@ -176,6 +176,21 @@ struct Peak {
 /// produce `NaN`.
 #[must_use]
 pub fn analyze_spectrum(signal: &[f32], sample_rate: u32, opts: SpectrumOpts) -> SpectrumResult {
+    let fft_size = opts.fft_size.max(64).next_power_of_two();
+    let mut workspace = MagnitudeWorkspace::with_window(fft_size, opts.window.to_dsp());
+    analyze_with_workspace(signal, sample_rate, opts, &mut workspace)
+}
+
+/// Analyse one frame using a caller-provided (and reused) FFT workspace. The
+/// workspace's `fft_size` and window are authoritative — `opts.fft_size`/
+/// `opts.window` are ignored here, since the spectrogram path builds the
+/// workspace once and slides it across every frame.
+fn analyze_with_workspace(
+    signal: &[f32],
+    sample_rate: u32,
+    opts: SpectrumOpts,
+    workspace: &mut MagnitudeWorkspace,
+) -> SpectrumResult {
     let bands = super::energy_bands(signal, sample_rate);
 
     if sample_rate == 0 || signal.len() < 2 {
@@ -192,8 +207,8 @@ pub fn analyze_spectrum(signal: &[f32], sample_rate: u32, opts: SpectrumOpts) ->
     }
     let signal = &demeaned[..];
 
-    let fft_size = opts.fft_size.max(64).next_power_of_two();
-    let mags = MagnitudeWorkspace::with_window(fft_size, opts.window.to_dsp()).magnitudes(signal);
+    let fft_size = workspace.fft_size();
+    let mags = workspace.magnitudes(signal);
     // Usable bins: skip DC (0) and Nyquist (last) so aliasing artefacts at
     // Fs/2 never appear as partials.
     if mags.len() < 3 {
@@ -255,6 +270,68 @@ pub fn analyze_spectrum(signal: &[f32], sample_rate: u32, opts: SpectrumOpts) ->
         bands,
         log_bins,
     }
+}
+
+/// One frame of a spectrogram: its window-centre time plus the full spectrum.
+#[derive(Debug, Clone)]
+pub struct SpectrogramFrame {
+    /// Window-centre time of this frame.
+    pub time: Seconds,
+    /// The frame's spectrum descriptor.
+    pub spectrum: SpectrumResult,
+}
+
+/// Hard cap on spectrogram frames, so a tiny `hop` can't exhaust memory. When a
+/// run hits this, the caller should warn that coverage was truncated.
+pub const MAX_SPECTROGRAM_FRAMES: usize = 4096;
+
+/// Slide a window across `signal` and analyse each frame, **reusing one FFT
+/// workspace** across all frames (the planner is built once, not per frame —
+/// this is what makes a one-render spectrogram cheap). `hop_samples` is the step
+/// between frame starts; `window_len_samples` is the analysed frame length
+/// (zero-padded to the FFT size). Each frame's `time` is its window centre.
+///
+/// The per-frame `voiced` flag lets a caller read a source's time evolution
+/// directly — e.g. a SID voice alternating pitched/​noise every video frame.
+#[must_use]
+pub fn analyze_spectrogram(
+    signal: &[f32],
+    sample_rate: u32,
+    hop_samples: usize,
+    window_len_samples: usize,
+    opts: SpectrumOpts,
+) -> Vec<SpectrogramFrame> {
+    if sample_rate == 0 || signal.is_empty() || hop_samples == 0 || window_len_samples == 0 {
+        return Vec::new();
+    }
+    // The FFT must be at least the window length so the frame isn't truncated.
+    let fft_size = opts
+        .fft_size
+        .max(window_len_samples)
+        .max(64)
+        .next_power_of_two();
+    let mut workspace = MagnitudeWorkspace::with_window(fft_size, opts.window.to_dsp());
+    let sr = sample_rate as f32;
+
+    let mut frames = Vec::new();
+    let mut start = 0usize;
+    while start < signal.len() && frames.len() < MAX_SPECTROGRAM_FRAMES {
+        let end = (start + window_len_samples).min(signal.len());
+        let frame = &signal[start..end];
+        let spectrum = analyze_with_workspace(frame, sample_rate, opts, &mut workspace);
+        let centre = start as f32 + frame.len() as f32 / 2.0;
+        frames.push(SpectrogramFrame {
+            time: Seconds::new(centre / sr),
+            spectrum,
+        });
+        // Stop once the window has reached the end, so an overlapping hop does
+        // not emit a run of ever-shorter tail frames.
+        if end == signal.len() {
+            break;
+        }
+        start += hop_samples;
+    }
+    frames
 }
 
 /// Geometric-mean / arithmetic-mean spectral flatness over bins `1..len-1`
@@ -948,5 +1025,52 @@ mod tests {
             d.missing_partials.is_empty(),
             "no partial matching across a voicing mismatch"
         );
+    }
+
+    #[test]
+    fn spectrogram_tracks_voiced_to_noise_transition() {
+        // First half: 440 Hz sine (voiced). Second half: white noise (unvoiced).
+        let half = 22_050; // 0.5 s
+        let mut sig = sine(440.0, half, 0.8);
+        let mut x = 0x9E37_79B9u32;
+        sig.extend((0..half).map(|_| {
+            x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (x >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0
+        }));
+
+        let win = (0.040 * SR as f32) as usize; // 40 ms window
+        let hop = (0.020 * SR as f32) as usize; // 20 ms hop
+        let frames = analyze_spectrogram(&sig, SR, hop, win, SpectrumOpts::default());
+        assert!(
+            frames.len() > 10,
+            "expected many frames, got {}",
+            frames.len()
+        );
+
+        // Timestamps increase monotonically.
+        assert!(frames[1].time.0 > frames[0].time.0, "timestamps ascend");
+
+        // A frame well inside the tone is voiced; one well inside the noise is
+        // not — the spectrogram reads the transition directly.
+        let early = &frames[2];
+        let late = &frames[frames.len() - 3];
+        assert!(early.spectrum.voiced, "early (tone) frame should be voiced");
+        let f0 = early.spectrum.f0.expect("tone frame has f0").0;
+        assert!(
+            (f0 - 440.0).abs() < 6.0,
+            "early frame f0 ≈ 440 Hz, got {f0}"
+        );
+        assert!(
+            !late.spectrum.voiced,
+            "late (noise) frame should be unvoiced"
+        );
+    }
+
+    #[test]
+    fn spectrogram_degenerate_inputs_are_empty() {
+        let sig = sine(440.0, 4096, 0.5);
+        assert!(analyze_spectrogram(&sig, SR, 0, 512, SpectrumOpts::default()).is_empty());
+        assert!(analyze_spectrogram(&sig, SR, 256, 0, SpectrumOpts::default()).is_empty());
+        assert!(analyze_spectrogram(&[], SR, 256, 512, SpectrumOpts::default()).is_empty());
     }
 }

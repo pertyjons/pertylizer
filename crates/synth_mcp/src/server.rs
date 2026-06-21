@@ -920,6 +920,58 @@ pub struct AnalyzeSpectrumParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeSpectrogramParam {
+    #[schemars(
+        description = "How many seconds of the arrangement to render and analyze (default 10.0, max 300.0)."
+    )]
+    pub duration_seconds: Option<f32>,
+    #[schemars(
+        description = "Absolute tick to start rendering from (default 0 = song beginning)."
+    )]
+    pub start_tick: Option<u64>,
+    #[schemars(
+        description = "When set, solo only this instrument's tracks. Omit for the full mix. Done against a clone, so your project's solo state is untouched."
+    )]
+    pub instrument_id: Option<u16>,
+    #[schemars(
+        description = "Approximate fundamental frequency in Hz, applied to every frame to sharpen harmonic tagging. Optional."
+    )]
+    pub f0_hint: Option<f32>,
+    #[schemars(description = "Maximum partials per frame (default 48).")]
+    pub max_partials: Option<u32>,
+    #[schemars(
+        description = "When > 0, add that many log-spaced magnitude bins (dB) per frame. Default 0 = off."
+    )]
+    pub log_bins: Option<u32>,
+    #[schemars(
+        description = "Hop between frame centres in milliseconds (default 20 ≈ one PAL video frame, the rate a SID voice switches waveform). Smaller = finer time resolution, more frames (capped at 4096)."
+    )]
+    pub hop_ms: Option<f32>,
+    #[schemars(
+        description = "Analysed window length per frame in milliseconds (default 40). Longer windows resolve closer partials but blur fast changes."
+    )]
+    pub window_len_ms: Option<f32>,
+    #[schemars(
+        description = "Include the full signal chain (master + return effects + AWE) in the render. Shortcut for the include_* flags. Default false = dry instrument sum."
+    )]
+    pub include_all: Option<bool>,
+    #[schemars(description = "Load the master effect chain into the render. Default false.")]
+    pub include_master_effects: Option<bool>,
+    #[schemars(
+        description = "Load each return bus's effect chain into the render. Default false."
+    )]
+    pub include_return_effects: Option<bool>,
+    #[schemars(
+        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning. Default false."
+    )]
+    pub include_awe: Option<bool>,
+    #[schemars(
+        description = "Render resolution: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Use 'full' for spectral work."
+    )]
+    pub render_quality: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeSampleSpectrumParam {
     #[schemars(
         description = "Either a numeric imported-sample id (as returned by import_sample / list_samples) or a filesystem path to a WAV file. A bare integer is treated as a sample id first; to force a numeric-named file use a path form like './5.wav'. The sample is decoded at its native rate and downmixed to mono for analysis."
@@ -3884,6 +3936,7 @@ impl SynthMcpServer {
             "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
             "render_to_wav" => render_to_wav(RenderToWavParam),
             "analyze_spectrum" => analyze_spectrum(AnalyzeSpectrumParam),
+            "analyze_spectrogram" => analyze_spectrogram(AnalyzeSpectrogramParam),
             "analyze_sample_spectrum" => analyze_sample_spectrum(AnalyzeSampleSpectrumParam),
             "compare_spectra" => compare_spectra(CompareSpectraParam),
             "analyze_master_chain" => analyze_master_chain(AnalyzeMasterChainParam),
@@ -4562,6 +4615,33 @@ impl SynthMcpServer {
                 params.0.f0_hint,
                 params.0.max_partials,
                 params.0.log_bins,
+                scope,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Spectrogram of an offline render: the requested window is rendered ONCE and a sliding FFT returns one full spectrum (partials + voiced verdict + descriptors, same as analyze_spectrum) per hop_ms, analysing window_len_ms per frame. Use this when a sound's identity is its time evolution — e.g. a Commodore-64 SID voice whose spectrum switches every ~20 ms (pitched triangle frame vs chip-noise frame): the per-frame `voiced` flag reads that alternation directly. Far cheaper than calling analyze_spectrum many times — it is one render and O(1) MCP calls, not N. hop_ms defaults to 20 (≈ one PAL video frame), window_len_ms to 40; frames are capped at 4096. Renders from start_tick (default 0) for duration_seconds (default 10, max 300), deterministic and offline."
+    )]
+    async fn analyze_spectrogram(&self, params: Parameters<AnalyzeSpectrogramParam>) -> String {
+        let duration = params.0.duration_seconds.unwrap_or(10.0);
+        let scope = crate::bridge::AnalysisScope::from_flags(
+            params.0.include_all,
+            params.0.include_master_effects,
+            params.0.include_return_effects,
+            params.0.include_awe,
+            crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
+        );
+        run_blocking_json(|| {
+            self.bridge.analyze_spectrogram(
+                duration,
+                params.0.start_tick,
+                params.0.instrument_id,
+                params.0.f0_hint,
+                params.0.max_partials,
+                params.0.log_bins,
+                params.0.hop_ms,
+                params.0.window_len_ms,
                 scope,
             )
         })

@@ -1,5 +1,6 @@
 //! Integration tests for the spectrum MCP tools (`analyze_spectrum_impl`,
-//! `analyze_sample_spectrum_impl`, `compare_spectra_impl`).
+//! `analyze_sample_spectrum_impl`, `compare_spectra_impl`,
+//! `analyze_spectrogram_impl`).
 //!
 //! Builds a three-instrument project — a sawtooth (harmonic, pitched), a noise
 //! source (broadband, unpitched), and a sine (fundamental only) — all sounding
@@ -26,7 +27,8 @@ use synth_sequencer::{
 
 use pertylizer::audio::preview::SharedSampleLibrary;
 use pertylizer::mcp_bridge::{
-    analyze_sample_spectrum_impl, analyze_spectrum_impl, compare_spectra_impl, render_to_wav_impl,
+    analyze_sample_spectrum_impl, analyze_spectrogram_impl, analyze_spectrum_impl,
+    compare_spectra_impl, render_to_wav_impl,
 };
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
@@ -483,5 +485,60 @@ fn compare_spectra_render_vs_sample_matches() {
         d.log_spectral_distance < 1.0,
         "the WAV and its source render should match, got {}",
         d.log_spectral_distance
+    );
+}
+
+#[test]
+fn analyze_spectrogram_frames_track_the_soloed_saw() {
+    // One render of the soloed sawtooth, sliced into ~20 ms frames. Every frame
+    // is the steady saw, so all should be voiced at ~220 Hz with ascending time.
+    let (rig, song) = setup();
+    let shared = McpSharedState::with_song(song);
+
+    let result = analyze_spectrogram_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        2.0,
+        Some(0),
+        Some(0), // solo the sawtooth
+        None,
+        None,
+        Some(0),
+        Some(20.0), // 20 ms hop
+        Some(40.0), // 40 ms window
+        AnalysisScope::default(),
+    )
+    .expect("analyze_spectrogram should succeed");
+
+    assert_eq!(result.soloed_instrument_id, Some(0));
+    assert_eq!(result.sample_rate, TEST_SR);
+    // ~2 s at a 20 ms hop ≈ 100 frames.
+    assert!(
+        result.frames.len() > 50,
+        "expected many frames over a 2 s render, got {}",
+        result.frames.len()
+    );
+
+    // Timestamps strictly ascend and stay within the rendered window.
+    for pair in result.frames.windows(2) {
+        assert!(
+            pair[1].time_seconds > pair[0].time_seconds,
+            "frame timestamps must ascend"
+        );
+    }
+    assert!(result.frames.last().unwrap().time_seconds < 2.1);
+
+    // The steady sawtooth: a frame in the middle is voiced near 220 Hz.
+    let mid = &result.frames[result.frames.len() / 2];
+    assert!(mid.spectrum.voiced, "a mid sawtooth frame should be voiced");
+    let f0 = mid.spectrum.f0_hz.expect("voiced frame has f0");
+    assert!((f0 - 220.0).abs() < 6.0, "mid frame f0 ≈ 220 Hz, got {f0}");
+    // Almost every frame of a continuous tone is voiced.
+    let voiced = result.frames.iter().filter(|f| f.spectrum.voiced).count();
+    assert!(
+        voiced * 10 >= result.frames.len() * 8,
+        "most frames of a steady tone should be voiced ({voiced}/{})",
+        result.frames.len()
     );
 }

@@ -1836,6 +1836,41 @@ pub struct AnalyzeSpectrumResult {
     pub warnings: Vec<String>,
 }
 
+/// One frame of an `analyze_spectrogram` result: its window-centre time plus the
+/// same spectral descriptor `analyze_spectrum` returns.
+#[derive(Debug, Clone, Serialize)]
+pub struct SpectrogramFrame {
+    /// Window-centre time of this frame, in seconds from the render start.
+    pub time_seconds: f32,
+    /// The spectral descriptor (flattened into this object's JSON).
+    #[serde(flatten)]
+    pub spectrum: SpectrumDescriptor,
+}
+
+/// Result of `analyze_spectrogram`: per-frame spectra from a single offline
+/// render, so the time evolution of a sound (e.g. a SID voice alternating
+/// pitched/noise every video frame) is visible in one call. The per-frame
+/// `voiced` flag reads that alternation directly.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeSpectrogramResult {
+    /// Tick where the analysed render started.
+    pub start_tick: u64,
+    /// Tick where the analysed render ended (exclusive).
+    pub end_tick: u64,
+    /// Sample rate the render ran at, in Hz.
+    pub sample_rate: u32,
+    /// Actual hop between frame centres, in seconds (from the requested hop_ms).
+    pub hop_seconds: f32,
+    /// Actual analysed window length per frame, in seconds.
+    pub window_seconds: f32,
+    /// One spectrum per hop, in time order.
+    pub frames: Vec<SpectrogramFrame>,
+    /// Instrument that was soloed, or `null` for the full mix.
+    pub soloed_instrument_id: Option<u16>,
+    /// Non-fatal warnings emitted during the render.
+    pub warnings: Vec<String>,
+}
+
 /// Result of `analyze_sample_spectrum`: the same spectral descriptor as
 /// `analyze_spectrum`, computed over an imported sample or a WAV file on disk —
 /// so a real reference (e.g. a SID render) can be fingerprinted in identical
