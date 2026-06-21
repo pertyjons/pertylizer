@@ -27,6 +27,23 @@ use synth_core::{MidiNote, SampleRate, Velocity};
 /// the first 8 slots of the embedded [`ScriptHost`].
 pub const SCRIPT_MODULE_OUTPUTS: usize = 8;
 
+/// Canonical port name for a 0-based slot, the single source of truth for the
+/// `out1`..`out8` naming (mirrored by the interned `port_names` in
+/// [`ScriptModule::new`]). Returns `None` for an out-of-range slot.
+#[must_use]
+pub fn output_port_name(slot: usize) -> Option<String> {
+    (slot < SCRIPT_MODULE_OUTPUTS).then(|| format!("out{}", slot + 1))
+}
+
+/// Inverse of [`output_port_name`]: parse `"out3"` back to its 0-based slot,
+/// or `None` for any other / out-of-range name. Kept beside the generator so
+/// the two can't drift if the naming scheme ever changes.
+#[must_use]
+pub fn output_port_slot(port: &str) -> Option<usize> {
+    let n: usize = port.strip_prefix("out")?.parse().ok()?;
+    (1..=SCRIPT_MODULE_OUTPUTS).contains(&n).then(|| n - 1)
+}
+
 /// A rack of up to [`SCRIPT_MODULE_OUTPUTS`] scripted control signals, each on
 /// its own output port.
 #[derive(Clone)]
@@ -47,7 +64,10 @@ impl ScriptModule {
         Self {
             host: ScriptHost::new(),
             outputs: [0.0; SCRIPT_MODULE_OUTPUTS],
-            port_names: std::array::from_fn(|i| PortName::intern(&format!("out{}", i + 1))),
+            port_names: std::array::from_fn(|i| {
+                // `output_port_name(i)` is `Some` for every i < SCRIPT_MODULE_OUTPUTS.
+                PortName::intern(&output_port_name(i).unwrap_or_default())
+            }),
         }
     }
 }
@@ -174,6 +194,18 @@ mod tests {
             Vec::new(),
             format!("out = {v}"),
         ))
+    }
+
+    #[test]
+    fn output_port_name_and_slot_round_trip() {
+        for slot in 0..SCRIPT_MODULE_OUTPUTS {
+            let name = output_port_name(slot).expect("in-range slot");
+            assert_eq!(output_port_slot(&name), Some(slot));
+        }
+        assert_eq!(output_port_name(SCRIPT_MODULE_OUTPUTS), None);
+        assert_eq!(output_port_slot("out0"), None);
+        assert_eq!(output_port_slot("out9"), None);
+        assert_eq!(output_port_slot("cv"), None);
     }
 
     #[test]

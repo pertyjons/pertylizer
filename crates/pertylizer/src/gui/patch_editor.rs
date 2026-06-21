@@ -356,6 +356,158 @@ impl PatchAnalysis {
     }
 }
 
+/// The Script-module output slots a YAMS script references, found by compiling it
+/// and resolving its `scr-N.outM` source addresses. Only Script outputs are
+/// returned — they are the sole scripted slot exposing an addressable output a
+/// later script can read back, so they are the only edges that can close a latent
+/// feedback loop (LFO / macro / context sources can't). A script that fails to
+/// compile yields an empty set (the live editor already flags the compile error).
+fn script_output_refs(src: &str) -> HashSet<(ModuleId, u8)> {
+    let mut refs = HashSet::new();
+    if src.trim().is_empty() {
+        return refs;
+    }
+    let (program, _diags) = synth_script::compile(src, &synth_script::CompileOptions::default());
+    let Some(program) = program else {
+        return refs;
+    };
+    // `into_bound` needs an owned source string only for persistence/inspection;
+    // we read `inputs` and discard it, so an empty string is fine here.
+    for input in program.into_bound(String::new()).inputs {
+        if let synth_core::script::ScriptInput::Source(SrcAddr::Module {
+            module_type: ModuleType::Script,
+            instance,
+            name,
+        }) = input
+            && let Some(slot) = synth_modules::script_module::output_port_slot(name.as_str())
+        {
+            refs.insert((ModuleId::new(ModuleType::Script, instance), slot as u8));
+        }
+    }
+    refs
+}
+
+/// Latent script→script feedback edges across the whole patch, for the ƒx
+/// editor's loop warning (§3.5). YAMS sources are address-based and resolved with
+/// a one-block latency — they bypass the graph's cable cycle-detection
+/// (`drag_cycle_blocked`), so a script reading its own (or a downstream script's)
+/// output forms a delayed feedback path the cable checks never see. The delay
+/// makes this safe at runtime (no infinite loop / stack overflow — YAMS bytecode
+/// is straight-line); the warning exists purely so the user isn't surprised by
+/// the one-block feedback.
+///
+/// Nodes are `(Script ModuleId, 0-based slot)` — the only scripted slot with an
+/// addressable output. A Mod Matrix slot can read a script but exposes no output,
+/// so it can never close a loop and is not a node. Built only while an expression
+/// editor is open (it compiles every installed script).
+struct ScriptDepGraph {
+    /// node → the Script output slots its installed script reads.
+    edges: HashMap<(ModuleId, u8), HashSet<(ModuleId, u8)>>,
+}
+
+impl ScriptDepGraph {
+    /// Build from the installed scripts of every Script-module panel.
+    fn from_panels(panels: &HashMap<ModuleId, ModulePanelState>) -> Self {
+        let mut edges: HashMap<(ModuleId, u8), HashSet<(ModuleId, u8)>> = HashMap::new();
+        for (id, panel) in panels {
+            if id.module_type != ModuleType::Script {
+                continue;
+            }
+            for (slot, src) in &panel.slot_scripts {
+                let refs = script_output_refs(src);
+                if !refs.is_empty() {
+                    edges.insert((*id, *slot), refs);
+                }
+            }
+        }
+        Self { edges }
+    }
+
+    /// A human-readable warning if installing `draft` on `(module_id, slot)` would
+    /// make that Script slot read its own output back (self-reference) or sit on a
+    /// script→script cycle — both resolve with a one-block delay. `None` when the
+    /// edited module is not a Script module, or no loop is formed. The edited
+    /// slot's outgoing edges come from the live `draft` (not its installed
+    /// script), so the warning updates as the user types.
+    fn cycle_warning(&self, module_id: ModuleId, slot: u8, draft: &str) -> Option<String> {
+        if module_id.module_type != ModuleType::Script {
+            return None;
+        }
+        let start = (module_id, slot);
+        let draft_refs = script_output_refs(draft);
+        // Direct self-reference is the simplest loop — name it explicitly.
+        if draft_refs.contains(&start) {
+            return Some(format!(
+                "feeds back on itself (scr-{}.out{} reads its own output) — \
+                 resolved 1 block late",
+                module_id.instance,
+                slot + 1,
+            ));
+        }
+        let path = self.find_cycle_path(start, &draft_refs)?;
+        let chain = path
+            .iter()
+            .map(|(id, s)| format!("scr-{}.out{}", id.instance, s + 1))
+            .collect::<Vec<_>>()
+            .join(" → ");
+        Some(format!(
+            "forms a feedback cycle ({chain}) — resolved 1 block late"
+        ))
+    }
+
+    /// DFS for a path `start → … → start`, using `start`'s edges from
+    /// `start_refs` (the live draft) and every other node's installed edges.
+    /// Returns the cycle as a node sequence that begins and ends at `start`, or
+    /// `None` if acyclic. The graph is tiny (a handful of script slots), so plain
+    /// recursion with a global visited set is ample.
+    fn find_cycle_path(
+        &self,
+        start: (ModuleId, u8),
+        start_refs: &HashSet<(ModuleId, u8)>,
+    ) -> Option<Vec<(ModuleId, u8)>> {
+        let mut path = vec![start];
+        let mut visited = HashSet::new();
+        visited.insert(start);
+        for &next in start_refs {
+            if let Some(found) = self.dfs_to(start, next, &mut path, &mut visited) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    /// Recursive helper for [`Self::find_cycle_path`]. Returns the closed cycle
+    /// path when `node` can reach `start`. `visited` is global: a node that can't
+    /// reach `start` down one branch can't down another either, so it is never
+    /// retried.
+    fn dfs_to(
+        &self,
+        start: (ModuleId, u8),
+        node: (ModuleId, u8),
+        path: &mut Vec<(ModuleId, u8)>,
+        visited: &mut HashSet<(ModuleId, u8)>,
+    ) -> Option<Vec<(ModuleId, u8)>> {
+        if node == start {
+            let mut cycle = path.clone();
+            cycle.push(start);
+            return Some(cycle);
+        }
+        if !visited.insert(node) {
+            return None;
+        }
+        path.push(node);
+        if let Some(neighbours) = self.edges.get(&node) {
+            for &next in neighbours {
+                if let Some(found) = self.dfs_to(start, next, path, visited) {
+                    return Some(found);
+                }
+            }
+        }
+        path.pop();
+        None
+    }
+}
+
 /// A single addressing target for the Mod Matrix pickers (S1.5c).
 struct ModAddrTarget {
     id: ModuleId,
@@ -1880,6 +2032,15 @@ impl PatchEditor {
             }
         };
 
+        // Script feedback-loop graph for the ƒx editor's warning (§3.5). Building
+        // it compiles every installed script, so only do so while an expression
+        // editor is actually open — the warning has no other consumer.
+        let script_graph = self
+            .panels
+            .values()
+            .any(|p| p.script_editor.is_some())
+            .then(|| ScriptDepGraph::from_panels(&self.panels));
+
         let content_size = self.content_size();
 
         // Save the visible rect for toolbar positioning (before ScrollArea consumes it)
@@ -2468,6 +2629,7 @@ impl PatchEditor {
                                 vis_buffer,
                                 &analysis,
                                 &mod_catalog,
+                                script_graph.as_ref(),
                                 &self.sample_list,
                                 audio_input_snapshot,
                             );
@@ -2521,6 +2683,7 @@ impl PatchEditor {
                                         vis_buffer,
                                         &analysis,
                                         &mod_catalog,
+                                        script_graph.as_ref(),
                                         &self.sample_list,
                                         audio_input_snapshot,
                                     );
@@ -5433,6 +5596,7 @@ fn draw_module_panel_params(
     vis_buffer: Option<&synth_engine::visualizers::VisualizationBuffer>,
     analysis: &PatchAnalysis,
     mod_catalog: &ModAddrCatalog,
+    script_graph: Option<&ScriptDepGraph>,
     sample_list: &[(u64, String)],
     audio_input_snapshot: &AudioInputSnapshot,
 ) -> PanelParamsResult {
@@ -5675,13 +5839,20 @@ fn draw_module_panel_params(
 
     // Special handling for Mod Matrix — custom grid rendering
     if descriptor.type_id.0 == "mod_matrix" {
-        return draw_mod_matrix_grid(ui, state, descriptor, accent_color, mod_catalog);
+        return draw_mod_matrix_grid(
+            ui,
+            state,
+            descriptor,
+            accent_color,
+            mod_catalog,
+            script_graph,
+        );
     }
 
     // Special handling for the Script module — a list of YAMS slots (one per
     // output port), each opening the shared expression editor.
     if descriptor.type_id.0 == "script" {
-        return draw_script_module_grid(ui, state, accent_color);
+        return draw_script_module_grid(ui, state, accent_color, script_graph);
     }
 
     // Signal Monitor — draw oscilloscope display above parameters
@@ -5765,6 +5936,7 @@ fn draw_mod_matrix_grid(
     descriptor: &ModuleDescriptor,
     accent_color: Color32,
     catalog: &ModAddrCatalog,
+    script_graph: Option<&ScriptDepGraph>,
 ) -> PanelParamsResult {
     use super::widgets::Knob;
 
@@ -6116,7 +6288,7 @@ fn draw_mod_matrix_grid(
     // the routing list stays compact. Compilation runs live (off the audio thread)
     // for the status line; Apply/Clear push actions the caller routes to the
     // session, which recompiles + installs the shared script.
-    draw_slot_expression_editor(ui, state, &mut mod_script_actions);
+    draw_slot_expression_editor(ui, state, script_graph, &mut mod_script_actions);
 
     PanelParamsResult {
         param_changes,
@@ -6134,11 +6306,13 @@ fn draw_mod_matrix_grid(
 fn draw_slot_expression_editor(
     ui: &Ui,
     state: &mut ModulePanelState,
+    script_graph: Option<&ScriptDepGraph>,
     mod_script_actions: &mut Vec<(u8, Option<String>)>,
 ) {
     let Some(mut editor) = state.script_editor.take() else {
         return;
     };
+    let module_id = state.id;
     let ctx = ui.ctx().clone();
     let mut keep_open = true;
     let mut closed_by_action = false;
@@ -6211,6 +6385,21 @@ fn draw_slot_expression_editor(
                 }
             }
 
+            // Feedback-loop notice (§3.5): a script reading its own or a
+            // downstream script's output forms a one-block-delayed loop the cable
+            // cycle-detection can't see. Purely informational — delayed feedback
+            // (e.g. a leaky integrator) is sometimes intentional, so we warn
+            // rather than block. Only Script-module slots can close such a loop.
+            if let Some(warning) =
+                script_graph.and_then(|g| g.cycle_warning(module_id, editor.slot, &editor.draft))
+            {
+                ui.label(
+                    egui::RichText::new(format!("{}  {warning}", ri::ALERT_LINE))
+                        .size(theme().fonts.size_small)
+                        .color(theme().colors.accent_yellow),
+                );
+            }
+
             ui.horizontal(|ui| {
                 // Format runs the canonical yamsfmt formatter and replaces the
                 // draft with its output. Enabled only when the script is valid
@@ -6272,6 +6461,7 @@ fn draw_script_module_grid(
     ui: &mut Ui,
     state: &mut ModulePanelState,
     accent_color: Color32,
+    script_graph: Option<&ScriptDepGraph>,
 ) -> PanelParamsResult {
     let mut mod_script_actions: Vec<(u8, Option<String>)> = Vec::new();
     let mut open_editor_for: Option<u8> = None;
@@ -6328,7 +6518,7 @@ fn draw_script_module_grid(
         state.script_editor = Some(super::module_panel::ScriptEditorState { slot, draft });
     }
 
-    draw_slot_expression_editor(ui, state, &mut mod_script_actions);
+    draw_slot_expression_editor(ui, state, script_graph, &mut mod_script_actions);
 
     PanelParamsResult {
         param_changes: Vec::new(),
@@ -6973,5 +7163,91 @@ mod patch_analysis_tests {
         editor.pending_connection = None;
         editor.recompute_drag_cycle_blocked();
         assert!(editor.drag_cycle_blocked.is_empty());
+    }
+
+    /// A Script-module panel carrying `(0-based slot, source)` YAMS scripts.
+    fn script_panel(instance: u16, slots: &[(u8, &str)]) -> (ModuleId, ModulePanelState) {
+        let id = ModuleId::new(ModuleType::Script, instance);
+        let mut state = ModulePanelState::new(id, Pos2::ZERO);
+        for (slot, src) in slots {
+            state.slot_scripts.insert(*slot, (*src).to_string());
+        }
+        (id, state)
+    }
+
+    fn graph_of(panels: Vec<(ModuleId, ModulePanelState)>) -> ScriptDepGraph {
+        ScriptDepGraph::from_panels(&panels.into_iter().collect())
+    }
+
+    /// A script reading its own output is flagged as a self-reference. The draft
+    /// drives the check, so it fires before the script is even installed.
+    #[test]
+    fn cycle_warning_flags_self_reference() {
+        let scr = ModuleId::new(ModuleType::Script, 1);
+        let graph = graph_of(vec![script_panel(1, &[])]);
+        let warning = graph
+            .cycle_warning(scr, 0, "src me = scr-1.out1\nout = me * 0.5")
+            .expect("self-reference must warn");
+        assert!(warning.contains("feeds back on itself"), "{warning}");
+    }
+
+    /// scr-1.out1 → scr-2.out1 → scr-1.out1 is a two-node cycle. scr-2's edge is
+    /// installed; scr-1's edge comes from the live draft.
+    #[test]
+    fn cycle_warning_flags_two_script_cycle() {
+        let scr1 = ModuleId::new(ModuleType::Script, 1);
+        let graph = graph_of(vec![
+            script_panel(1, &[]),
+            script_panel(2, &[(0, "src a = scr-1.out1\nout = a")]),
+        ]);
+        let warning = graph
+            .cycle_warning(scr1, 0, "src b = scr-2.out1\nout = b")
+            .expect("cycle must warn");
+        assert!(warning.contains("feedback cycle"), "{warning}");
+        assert!(
+            warning.contains("scr-1.out1") && warning.contains("scr-2.out1"),
+            "{warning}"
+        );
+    }
+
+    /// An acyclic chain (scr-1 reads scr-2, scr-2 reads nothing back) is fine.
+    #[test]
+    fn cycle_warning_silent_on_acyclic_chain() {
+        let scr1 = ModuleId::new(ModuleType::Script, 1);
+        let graph = graph_of(vec![
+            script_panel(1, &[]),
+            script_panel(2, &[(0, "out = 0.5")]),
+        ]);
+        assert!(
+            graph
+                .cycle_warning(scr1, 0, "src b = scr-2.out1\nout = b")
+                .is_none()
+        );
+    }
+
+    /// Referencing a non-script source (an LFO) never forms a script cycle, so no
+    /// warning — only `scr-N.outM` edges count.
+    #[test]
+    fn cycle_warning_ignores_non_script_sources() {
+        let scr1 = ModuleId::new(ModuleType::Script, 1);
+        let graph = graph_of(vec![script_panel(1, &[])]);
+        assert!(
+            graph
+                .cycle_warning(scr1, 0, "src l = lfo-1.out\nout = l")
+                .is_none()
+        );
+    }
+
+    /// A Mod Matrix slot exposes no addressable output, so it can never close a
+    /// loop even when its script reads one — the warning is Script-module only.
+    #[test]
+    fn cycle_warning_only_for_script_modules() {
+        let mm = ModuleId::new(ModuleType::ModMatrix, 1);
+        let graph = graph_of(vec![script_panel(1, &[(0, "src m = scr-1.out1\nout = m")])]);
+        assert!(
+            graph
+                .cycle_warning(mm, 0, "src s = scr-1.out1\nout = s")
+                .is_none()
+        );
     }
 }
