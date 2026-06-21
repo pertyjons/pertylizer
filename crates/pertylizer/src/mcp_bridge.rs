@@ -31,7 +31,8 @@ use synth_mcp::types::{
     MixBusMetrics, MixDelta, ModuleInfo, ModuleTypeInfo, NoteInfo, NoteProcessorInfo,
     OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue,
     PatchResourceData, PatternInfo, PlacementInfo, ProjectSchemaInfo, RebuildInstrumentResult,
-    SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    RenderToWavResult, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo,
+    UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -4296,6 +4297,26 @@ impl SynthBridge for AppSynthBridge {
             duration_seconds,
             start_tick,
             include_per_track,
+            scope,
+        )
+    }
+
+    fn render_to_wav(
+        &self,
+        path: String,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+        instrument_id: Option<u16>,
+        scope: synth_mcp::AnalysisScope,
+    ) -> Result<RenderToWavResult, McpBridgeError> {
+        render_to_wav_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            path,
+            duration_seconds,
+            start_tick,
+            instrument_id,
             scope,
         )
     }
@@ -9755,6 +9776,130 @@ fn render_range_to_metrics(
         }
     }
     Ok((metrics, rendered.start_tick, rendered.end_tick))
+}
+
+/// `render_to_wav` bridge implementation. Renders the requested window exactly
+/// like `analyze_mix_bus_impl` (same offline render + scope), optionally soloing
+/// one instrument against a cloned song so the live project is untouched, then
+/// writes the interleaved buffer to a 32-bit float WAV via the shared `hound`
+/// writer in `audio::export`.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn render_to_wav_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    path: String,
+    duration_seconds: f32,
+    start_tick: Option<u64>,
+    instrument_id: Option<u16>,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<RenderToWavResult, McpBridgeError> {
+    let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
+
+    // Choose the song to render. For an instrument solo we isolate that
+    // instrument's tracks on a *clone* so the live project's mute/solo state is
+    // never mutated; otherwise we render the live song directly.
+    let mut warnings = Vec::new();
+    let song_handle = if let Some(inst_id) = instrument_id {
+        let mut isolated = shared.song.read().clone();
+        let audible_tracks = isolated.isolate_instrument(synth_sequencer::SeqInstrumentId(inst_id));
+        if audible_tracks == 0 {
+            warnings.push(format!(
+                "instrument_id {inst_id} drives no track — the rendered WAV will be silent"
+            ));
+        }
+        // Track-level isolation cannot override *instrument*-level mute/solo,
+        // which the offline render replays verbatim from the live engine
+        // snapshot. Warn when that live state will silence or distort the
+        // fingerprint instead of producing a misleadingly empty WAV.
+        warnings.extend(instrument_solo_conflicts(session, inst_id));
+        Arc::new(parking_lot::RwLock::new(isolated))
+    } else {
+        Arc::clone(&shared.song)
+    };
+
+    let mut rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_song(
+        session,
+        sample_library,
+        &song_handle,
+        start,
+        end,
+        scope,
+    )?;
+    warnings.append(&mut rendered.warnings);
+
+    // Resolve and create the target directory before the (potentially
+    // expensive) write so a missing parent dir or relative path is handled
+    // up front rather than failing after the render.
+    let path_buf = std::path::PathBuf::from(&path);
+    if let Some(parent) = path_buf.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            McpBridgeError::Other(format!(
+                "failed to create directory {} for WAV output: {e}",
+                parent.display()
+            ))
+        })?;
+    }
+
+    let peak = crate::audio::export::write_interleaved_wav_f32(
+        &path_buf,
+        &rendered.samples,
+        rendered.sample_rate,
+        rendered.channels,
+    )
+    .map_err(|e| McpBridgeError::Other(format!("failed to write WAV to {path}: {e}")))?;
+
+    let frames = rendered.samples.len() as u64 / u64::from(rendered.channels.max(1));
+    // Report the absolute path the agent can actually read back; canonicalize
+    // only succeeds now that the file exists, so fall back to the input.
+    let resolved_path = std::fs::canonicalize(&path_buf)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or(path);
+
+    Ok(RenderToWavResult {
+        path: resolved_path,
+        sample_rate: rendered.sample_rate,
+        channels: rendered.channels,
+        duration_seconds: rendered.duration_seconds,
+        frames,
+        peak,
+        soloed_instrument_id: instrument_id,
+        warnings,
+    })
+}
+
+/// Warnings describing live *instrument*-level mute/solo state that the offline
+/// render replays from the engine snapshot and that an isolated `render_to_wav`
+/// cannot override via the cloned song's track flags. Returns the (possibly
+/// empty) set of human-readable warnings for soloing `target_seq_id`.
+fn instrument_solo_conflicts(session: &SynthSession, target_seq_id: u16) -> Vec<String> {
+    let snapshots = session.state().instrument_snapshots.read();
+    let mut warnings = Vec::new();
+
+    if let Some(target) = snapshots
+        .iter()
+        .find(|s| s.seq_instrument_id == target_seq_id)
+        && (target.muted || !target.enabled)
+    {
+        warnings.push(format!(
+            "instrument {target_seq_id} is muted/disabled in the live project — \
+             the rendered WAV will be silent; unmute it to fingerprint its sound"
+        ));
+    }
+
+    if snapshots
+        .iter()
+        .any(|s| s.solo && s.seq_instrument_id != target_seq_id)
+    {
+        warnings.push(format!(
+            "another instrument is soloed in the live project — instrument-level solo \
+             silences instrument {target_seq_id} in the offline render; clear the solo to \
+             fingerprint it"
+        ));
+    }
+
+    warnings
 }
 
 #[doc(hidden)]

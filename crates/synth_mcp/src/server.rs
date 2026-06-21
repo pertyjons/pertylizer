@@ -836,6 +836,44 @@ pub struct AnalyzeMixBusParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RenderToWavParam {
+    #[schemars(
+        description = "Absolute filesystem path to write the WAV file to (e.g. '/tmp/candidate.wav'). Written as 32-bit float, stereo, overwriting any existing file."
+    )]
+    pub path: String,
+    #[schemars(
+        description = "How many seconds of the arrangement to render (default 10.0, max 300.0)."
+    )]
+    pub duration_seconds: Option<f32>,
+    #[schemars(
+        description = "Absolute tick to start rendering from (default 0 = song beginning)."
+    )]
+    pub start_tick: Option<u64>,
+    #[schemars(
+        description = "When set, solo only this instrument's tracks so the file contains that one instrument's contribution — a clean single-source fingerprint for external spectral matching. Omit for the full mix. Done against a clone, so your project's solo state is untouched."
+    )]
+    pub instrument_id: Option<u16>,
+    #[schemars(
+        description = "Include the full signal chain (master effects + return-bus effects + AWE) in the render. Shortcut for every include_* flag below. Default false = dry instrument sum (per-instrument effects only)."
+    )]
+    pub include_all: Option<bool>,
+    #[schemars(description = "Load the master effect chain into the render. Default false.")]
+    pub include_master_effects: Option<bool>,
+    #[schemars(
+        description = "Load each return bus's effect chain into the render. Default false."
+    )]
+    pub include_return_effects: Option<bool>,
+    #[schemars(
+        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning and otherwise renders without AWE. Default false."
+    )]
+    pub include_awe: Option<bool>,
+    #[schemars(
+        description = "Render resolution: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Use 'full' for spectral fingerprinting — 'draft' truncates everything above 11 kHz. Unrecognized values fall back to 'full'."
+    )]
+    pub render_quality: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeMasterChainParam {
     #[schemars(
         description = "How many seconds of the master bus to render and analyze per stage (default 10.0, max 300.0)."
@@ -3720,6 +3758,7 @@ impl SynthMcpServer {
             "analyze_bass_drum_lock" => analyze_bass_drum_lock(AnalyzeBassDrumLockParam),
             "analyze_harmonic_function" => analyze_harmonic_function(AnalyzeHarmonicFunctionParam),
             "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
+            "render_to_wav" => render_to_wav(RenderToWavParam),
             "analyze_master_chain" => analyze_master_chain(AnalyzeMasterChainParam),
             "analyze_return_busses" => analyze_return_busses(AnalyzeReturnBussesParam),
             "compare_mix_before_after" => compare_mix_before_after(CompareMixBeforeAfterParam),
@@ -4348,6 +4387,29 @@ impl SynthMcpServer {
                 duration,
                 params.0.start_tick,
                 params.0.include_per_track,
+                scope,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Render the arrangement offline and write it to a 32-bit float stereo WAV file on disk, returning the path plus stats (sample_rate, frames, peak). Deterministic and offline — the same render analyze_mix_bus uses. Pass instrument_id to solo one instrument so the file is a clean single-source fingerprint (done against a clone, your project is untouched); omit it for the full mix. This is the building block for external timbre-matching: write your candidate patch to a WAV, then run your own FFT / spectral-distance against a reference WAV (e.g. a real SID render). Renders from start_tick (default 0) for duration_seconds (default 10, max 300). Use render_quality 'full' (default) for spectral work — 'draft' truncates everything above 11 kHz."
+    )]
+    async fn render_to_wav(&self, params: Parameters<RenderToWavParam>) -> String {
+        let duration = params.0.duration_seconds.unwrap_or(10.0);
+        let scope = crate::bridge::AnalysisScope::from_flags(
+            params.0.include_all,
+            params.0.include_master_effects,
+            params.0.include_return_effects,
+            params.0.include_awe,
+            crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
+        );
+        run_blocking_json(|| {
+            self.bridge.render_to_wav(
+                params.0.path.clone(),
+                duration,
+                params.0.start_tick,
+                params.0.instrument_id,
                 scope,
             )
         })

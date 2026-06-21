@@ -529,6 +529,32 @@ impl Song {
         }
     }
 
+    /// Make exactly the tracks driving `instrument` audible and silence every
+    /// other track, isolating one instrument's whole contribution (an instrument
+    /// may be played by several tracks).
+    ///
+    /// Unlike [`set_solo_only`](Self::set_solo_only), this works by muting the
+    /// non-matching tracks and clearing all solo flags, so the result is
+    /// unambiguous regardless of any prior mute/solo state: if the instrument
+    /// drives no track the return value is `0` and the whole song is silenced
+    /// (the soloed-only approach would instead leave everything audible, since
+    /// "no track soloed" reads as "no solo active"). Intended for use on a
+    /// throwaway clone of the song.
+    ///
+    /// Returns the number of tracks left audible.
+    pub fn isolate_instrument(&mut self, instrument: SeqInstrumentId) -> usize {
+        let mut audible = 0;
+        for track in &mut self.tracks {
+            let matches = track.instrument == instrument;
+            track.solo = false;
+            track.mute = !matches;
+            if matches {
+                audible += 1;
+            }
+        }
+        audible
+    }
+
     // === Arrangement ===
 
     /// Place a pattern in the arrangement.

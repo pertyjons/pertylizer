@@ -1704,6 +1704,25 @@ pub trait SynthBridge: Send + Sync + 'static {
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeMixBusResult, McpBridgeError>;
 
+    /// Render `duration_seconds` of the arrangement offline and write it to a
+    /// 32-bit float WAV file at `path`, returning where it landed plus basic
+    /// stats (sample rate, frame count, peak). Deterministic and offline, the
+    /// same render `analyze_mix_bus` uses.
+    ///
+    /// When `instrument_id` is `Some`, only that instrument's tracks are soloed
+    /// so the file contains a single instrument's contribution (a clean
+    /// fingerprint for external spectral matching); `None` writes the full mix.
+    /// `scope` selects which optional signal stages (master/return effects, AWE)
+    /// the render includes, exactly as for `analyze_mix_bus`.
+    fn render_to_wav(
+        &self,
+        path: String,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+        instrument_id: Option<u16>,
+        scope: AnalysisScope,
+    ) -> Result<crate::types::RenderToWavResult, McpBridgeError>;
+
     /// Incremental per-effect breakdown of the master bus. Renders the chain
     /// input (post-return mix, no master effects) once, then re-renders the
     /// master output with the chain truncated after each effect, so each

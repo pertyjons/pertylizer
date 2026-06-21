@@ -149,6 +149,35 @@ impl From<hound::Error> for ExportError {
     }
 }
 
+/// Write an already-rendered interleaved f32 buffer to a 32-bit float WAV file.
+///
+/// `samples` is channel-interleaved (`L0, R0, L1, R1, …` for stereo). This is
+/// the writer the offline analysis tools (`render_to_wav`) reuse instead of
+/// hand-rolling a WAV header — it shares `hound` with the project exporter
+/// above. Returns the absolute peak sample amplitude seen in the buffer (0.0
+/// for silence), so callers can report whether the render clipped or was empty.
+pub(crate) fn write_interleaved_wav_f32(
+    path: &std::path::Path,
+    samples: &[f32],
+    sample_rate: u32,
+    channels: u16,
+) -> Result<f32, ExportError> {
+    let spec = hound::WavSpec {
+        channels,
+        sample_rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut writer = hound::WavWriter::create(path, spec)?;
+    let mut peak = 0.0_f32;
+    for &sample in samples {
+        peak = peak.max(sample.abs());
+        writer.write_sample(sample)?;
+    }
+    writer.finalize()?;
+    Ok(peak)
+}
+
 /// Start an offline WAV export in a background thread.
 ///
 /// Returns an `ExportProgress` handle that can be polled from the GUI

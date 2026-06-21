@@ -1752,6 +1752,30 @@ pub struct AnalyzeMixBusResult {
     pub warnings: Vec<String>,
 }
 
+/// Result of `render_to_wav`: an offline render was written to a WAV file on
+/// disk. The agent can then run its own DSP (FFT, spectral distance, partial
+/// tracking) on the file and compare it against an external reference WAV.
+#[derive(Debug, Clone, Serialize)]
+pub struct RenderToWavResult {
+    /// Absolute path the WAV file was written to.
+    pub path: String,
+    /// Sample rate of the written file in Hz.
+    pub sample_rate: u32,
+    /// Channel count (always 2 — stereo-interleaved).
+    pub channels: u16,
+    /// Wall-clock duration of the render in seconds.
+    pub duration_seconds: f32,
+    /// Number of audio frames written (samples per channel).
+    pub frames: u64,
+    /// Absolute peak sample amplitude in the render, 0.0 for silence. > 1.0
+    /// means the render clipped the [-1, 1] WAV range.
+    pub peak: f32,
+    /// Instrument that was soloed for this render, or `None` for the full mix.
+    pub soloed_instrument_id: Option<u16>,
+    /// Non-fatal warnings emitted during the render.
+    pub warnings: Vec<String>,
+}
+
 /// Result of `auto_gain_stage`: the master fader was adjusted to bring the mix
 /// toward a target loudness without breaching a true-peak ceiling.
 #[derive(Debug, Clone, Serialize)]
