@@ -195,7 +195,7 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
 
 ### 3.5 YAMS Script editor follow-ups
 
-- [ ] **Detect/warn on recursive or self-referential script source graphs.** A script's
+- [x] **Detect/warn on recursive or self-referential script source graphs.** A script's
   sources are *address-based* (`src x = lfo-1.out`, `src y = scr-2.out1`) and are resolved
   with a **1-block latency** into a scratch buffer — they do **not** flow through the graph's
   cable connections, so the existing cable cycle-detection (`drag_cycle_blocked`, the topo
@@ -210,7 +210,7 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   line. Decide whether to hard-block or just warn (lean warn — delayed feedback is sometimes
   intentional, e.g. a leaky integrator).
 
-- [ ] **"Select input" picker in the ƒx expression editor.** Add a button (e.g. labelled
+- [x] **"Select input" picker in the ƒx expression editor.** Add a button (e.g. labelled
   "Select input") *before* the existing Format button in the script popup
   (`draw_slot_expression_editor`, `patch_editor.rs`). It opens a **tree picker**: top level =
   every module in the patch, expandable to that module's selectable members (output ports and
@@ -220,6 +220,8 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   Source the module/parameter list the same way the Mod Matrix address pickers do (S1.5c —
   the patch descriptor catalog), so it stays in sync with what `resolve_source` can actually
   bind.
+  — *Done: output ports only (params as YAMS sources are still deferred — `ScriptInput::ModuleParam`
+  needs the cross-crate resolver); macro/context leaves insert bare identifiers.*
 
 ---
 
