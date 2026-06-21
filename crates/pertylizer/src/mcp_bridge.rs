@@ -4321,6 +4321,30 @@ impl SynthBridge for AppSynthBridge {
         )
     }
 
+    fn analyze_spectrum(
+        &self,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+        instrument_id: Option<u16>,
+        f0_hint: Option<f32>,
+        max_partials: Option<u32>,
+        log_bins: Option<u32>,
+        scope: synth_mcp::AnalysisScope,
+    ) -> Result<synth_mcp::types::AnalyzeSpectrumResult, McpBridgeError> {
+        analyze_spectrum_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            duration_seconds,
+            start_tick,
+            instrument_id,
+            f0_hint,
+            max_partials,
+            log_bins,
+            scope,
+        )
+    }
+
     fn analyze_master_chain(
         &self,
         duration_seconds: f32,
@@ -9796,38 +9820,15 @@ pub fn render_to_wav_impl(
     scope: synth_mcp::AnalysisScope,
 ) -> Result<RenderToWavResult, McpBridgeError> {
     let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
-
-    // Choose the song to render. For an instrument solo we isolate that
-    // instrument's tracks on a *clone* so the live project's mute/solo state is
-    // never mutated; otherwise we render the live song directly.
-    let mut warnings = Vec::new();
-    let song_handle = if let Some(inst_id) = instrument_id {
-        let mut isolated = shared.song.read().clone();
-        let audible_tracks = isolated.isolate_instrument(synth_sequencer::SeqInstrumentId(inst_id));
-        if audible_tracks == 0 {
-            warnings.push(format!(
-                "instrument_id {inst_id} drives no track — the rendered WAV will be silent"
-            ));
-        }
-        // Track-level isolation cannot override *instrument*-level mute/solo,
-        // which the offline render replays verbatim from the live engine
-        // snapshot. Warn when that live state will silence or distort the
-        // fingerprint instead of producing a misleadingly empty WAV.
-        warnings.extend(instrument_solo_conflicts(session, inst_id));
-        Arc::new(parking_lot::RwLock::new(isolated))
-    } else {
-        Arc::clone(&shared.song)
-    };
-
-    let mut rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_song(
+    let (rendered, warnings) = render_analysis_window(
         session,
         sample_library,
-        &song_handle,
+        shared,
         start,
         end,
+        instrument_id,
         scope,
     )?;
-    warnings.append(&mut rendered.warnings);
 
     // Resolve and create the target directory before the (potentially
     // expensive) write so a missing parent dir or relative path is handled
@@ -9870,9 +9871,10 @@ pub fn render_to_wav_impl(
 }
 
 /// Warnings describing live *instrument*-level mute/solo state that the offline
-/// render replays from the engine snapshot and that an isolated `render_to_wav`
-/// cannot override via the cloned song's track flags. Returns the (possibly
-/// empty) set of human-readable warnings for soloing `target_seq_id`.
+/// render replays from the engine snapshot and that an isolated render (
+/// `render_to_wav` / `analyze_spectrum`) cannot override via the cloned song's
+/// track flags. Returns the (possibly empty) set of human-readable warnings for
+/// soloing `target_seq_id`.
 fn instrument_solo_conflicts(session: &SynthSession, target_seq_id: u16) -> Vec<String> {
     let snapshots = session.state().instrument_snapshots.read();
     let mut warnings = Vec::new();
@@ -9884,7 +9886,7 @@ fn instrument_solo_conflicts(session: &SynthSession, target_seq_id: u16) -> Vec<
     {
         warnings.push(format!(
             "instrument {target_seq_id} is muted/disabled in the live project — \
-             the rendered WAV will be silent; unmute it to fingerprint its sound"
+             the render will be silent; unmute it to fingerprint its sound"
         ));
     }
 
@@ -9900,6 +9902,136 @@ fn instrument_solo_conflicts(session: &SynthSession, target_seq_id: u16) -> Vec<
     }
 
     warnings
+}
+
+/// Render `[start, end)` for offline analysis, optionally soloing one
+/// instrument on a *clone* of the song (the live project's mute/solo state is
+/// never mutated). Returns the rendered buffer plus the render warnings,
+/// including any instrument-level solo/mute conflict notes. Shared by
+/// `render_to_wav_impl` and `analyze_spectrum_impl`.
+fn render_analysis_window(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    start: u64,
+    end: u64,
+    instrument_id: Option<u16>,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<
+    (
+        crate::audio::arrangement_render::RenderedArrangement,
+        Vec<String>,
+    ),
+    McpBridgeError,
+> {
+    let mut warnings = Vec::new();
+    let song_handle = if let Some(inst_id) = instrument_id {
+        let mut isolated = shared.song.read().clone();
+        let audible_tracks = isolated.isolate_instrument(synth_sequencer::SeqInstrumentId(inst_id));
+        if audible_tracks == 0 {
+            warnings.push(format!(
+                "instrument_id {inst_id} drives no track — the render will be silent"
+            ));
+        }
+        // Track-level isolation cannot override *instrument*-level mute/solo,
+        // which the offline render replays verbatim from the live engine
+        // snapshot. Warn rather than produce a misleadingly empty render.
+        warnings.extend(instrument_solo_conflicts(session, inst_id));
+        Arc::new(parking_lot::RwLock::new(isolated))
+    } else {
+        Arc::clone(&shared.song)
+    };
+
+    let mut rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_song(
+        session,
+        sample_library,
+        &song_handle,
+        start,
+        end,
+        scope,
+    )?;
+    warnings.append(&mut rendered.warnings);
+    Ok((rendered, warnings))
+}
+
+/// Downmix a stereo-interleaved buffer to mono — `(L+R)/2`. Assumes the
+/// 2-channel `RenderedArrangement` layout (`channels == 2`); a trailing odd
+/// sample (which that layout never produces) would be dropped.
+fn downmix_to_mono(stereo: &[f32]) -> Vec<f32> {
+    stereo
+        .chunks_exact(2)
+        .map(|lr| 0.5 * (lr[0] + lr[1]))
+        .collect()
+}
+
+/// `analyze_spectrum` bridge implementation. Renders the requested window (same
+/// path as `render_to_wav`), mono-sums it, and runs the detailed spectral
+/// analysis.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_spectrum_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    duration_seconds: f32,
+    start_tick: Option<u64>,
+    instrument_id: Option<u16>,
+    f0_hint: Option<f32>,
+    max_partials: Option<u32>,
+    log_bins: Option<u32>,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<synth_mcp::types::AnalyzeSpectrumResult, McpBridgeError> {
+    use crate::audio::analysis::spectrum;
+
+    let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
+    let (rendered, warnings) = render_analysis_window(
+        session,
+        sample_library,
+        shared,
+        start,
+        end,
+        instrument_id,
+        scope,
+    )?;
+
+    let mono = downmix_to_mono(&rendered.samples);
+    let mut opts = spectrum::SpectrumOpts {
+        f0_hint: f0_hint.map(synth_core::Hertz::new),
+        ..Default::default()
+    };
+    if let Some(n) = max_partials {
+        opts.max_partials = n;
+    }
+    if let Some(n) = log_bins {
+        opts.log_bins = n;
+    }
+    let result = spectrum::analyze_spectrum(&mono, rendered.sample_rate, opts);
+
+    Ok(synth_mcp::types::AnalyzeSpectrumResult {
+        start_tick: rendered.start_tick,
+        end_tick: rendered.end_tick,
+        f0_hz: result.f0.map(|h| h.0),
+        voiced: result.voiced,
+        partials: result
+            .partials
+            .iter()
+            .map(|p| synth_mcp::types::AnalyzePartial {
+                frequency_hz: p.frequency.0,
+                amplitude_db: p.amplitude.0,
+                harmonic_number: p.harmonic_number,
+                inharmonicity_cents: p.inharmonicity.0,
+            })
+            .collect(),
+        centroid_hz: result.centroid.0,
+        flatness: result.flatness.0,
+        rolloff_hz: result.rolloff.0,
+        inharmonicity: result.inharmonicity.0,
+        odd_even_ratio: result.odd_even_ratio,
+        energy_bands: result.bands.into(),
+        log_bins_db: result.log_bins.iter().map(|d| d.0).collect(),
+        soloed_instrument_id: instrument_id,
+        warnings,
+    })
 }
 
 #[doc(hidden)]

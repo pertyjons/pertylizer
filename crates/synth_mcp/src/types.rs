@@ -1776,6 +1776,55 @@ pub struct RenderToWavResult {
     pub warnings: Vec<String>,
 }
 
+/// One detected spectral peak in `AnalyzeSpectrumResult`.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct AnalyzePartial {
+    /// Refined peak frequency in Hz.
+    pub frequency_hz: f32,
+    /// Peak-normalised amplitude in dB (loudest partial = 0 dB).
+    pub amplitude_db: f32,
+    /// Nearest harmonic number `n` in `n·f0`; `null` when the frame is unvoiced.
+    pub harmonic_number: Option<u32>,
+    /// Signed deviation of `frequency_hz` from `harmonic_number·f0` in cents.
+    pub inharmonicity_cents: f32,
+}
+
+/// Result of `analyze_spectrum`: a detailed spectrum of an offline render —
+/// detected partials, harmonicity, and timbre descriptors that separate
+/// timbres the 4-band `analyze_mix_bus` energy metric cannot.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeSpectrumResult {
+    /// Tick where the analysed render started.
+    pub start_tick: u64,
+    /// Tick where the analysed render ended (exclusive).
+    pub end_tick: u64,
+    /// Detected fundamental in Hz; `null` = unvoiced (noise frame).
+    pub f0_hz: Option<f32>,
+    /// `false` → the frame is noise-like; harmonic metrics are not meaningful.
+    pub voiced: bool,
+    /// Detected partials, descending amplitude.
+    pub partials: Vec<AnalyzePartial>,
+    /// Spectral centroid (brightness) in Hz.
+    pub centroid_hz: f32,
+    /// Spectral flatness, 0 = pure tone … 1 = white noise.
+    pub flatness: f32,
+    /// Frequency below which 85 % of the energy lies, in Hz.
+    pub rolloff_hz: f32,
+    /// Aggregate energy-weighted inharmonicity (0 if unvoiced).
+    pub inharmonicity: f32,
+    /// Σ odd-harmonic / Σ even-harmonic power (0 if unvoiced).
+    pub odd_even_ratio: f32,
+    /// The 4-band energy metric, for continuity with `analyze_mix_bus`.
+    pub energy_bands: AnalyzeEnergyBands,
+    /// Optional log-spaced magnitude bins in dB (empty unless `log_bins` set);
+    /// used by `compare_spectra` for the broadband distance.
+    pub log_bins_db: Vec<f32>,
+    /// Instrument that was soloed for this analysis, or `null` for the full mix.
+    pub soloed_instrument_id: Option<u16>,
+    /// Non-fatal warnings emitted during the render.
+    pub warnings: Vec<String>,
+}
+
 /// Result of `auto_gain_stage`: the master fader was adjusted to bring the mix
 /// toward a target loudness without breaching a true-peak ceiling.
 #[derive(Debug, Clone, Serialize)]

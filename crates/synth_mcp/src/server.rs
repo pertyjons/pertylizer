@@ -874,6 +874,52 @@ pub struct RenderToWavParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeSpectrumParam {
+    #[schemars(
+        description = "How many seconds of the arrangement to render and analyze (default 10.0, max 300.0). For a steady single-note fingerprint, solo the instrument and use a short window."
+    )]
+    pub duration_seconds: Option<f32>,
+    #[schemars(
+        description = "Absolute tick to start rendering from (default 0 = song beginning)."
+    )]
+    pub start_tick: Option<u64>,
+    #[schemars(
+        description = "When set, solo only this instrument's tracks so the spectrum is that one instrument's contribution — a clean single-source fingerprint. Omit for the full mix. Done against a clone, so your project's solo state is untouched."
+    )]
+    pub instrument_id: Option<u16>,
+    #[schemars(
+        description = "Approximate fundamental frequency in Hz. Restricts the pitch tracker's search to a fifth either side, killing octave errors and sharpening harmonic tagging (each partial's harmonic number + cents deviation). Optional."
+    )]
+    pub f0_hint: Option<f32>,
+    #[schemars(
+        description = "Maximum number of detected partials to return, descending by amplitude (default 48)."
+    )]
+    pub max_partials: Option<u32>,
+    #[schemars(
+        description = "When > 0, also return that many log-spaced magnitude bins (dB) spanning ~20 Hz to Nyquist. Needed for compare_spectra's broadband log-spectral distance. Default 0 = off."
+    )]
+    pub log_bins: Option<u32>,
+    #[schemars(
+        description = "Include the full signal chain (master effects + return-bus effects + AWE) in the render. Shortcut for every include_* flag below. Default false = dry instrument sum."
+    )]
+    pub include_all: Option<bool>,
+    #[schemars(description = "Load the master effect chain into the render. Default false.")]
+    pub include_master_effects: Option<bool>,
+    #[schemars(
+        description = "Load each return bus's effect chain into the render. Default false."
+    )]
+    pub include_return_effects: Option<bool>,
+    #[schemars(
+        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning and otherwise renders without AWE. Default false."
+    )]
+    pub include_awe: Option<bool>,
+    #[schemars(
+        description = "Render resolution: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Use 'full' for spectral work — 'draft' truncates everything above 11 kHz. Unrecognized values fall back to 'full'."
+    )]
+    pub render_quality: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeMasterChainParam {
     #[schemars(
         description = "How many seconds of the master bus to render and analyze per stage (default 10.0, max 300.0)."
@@ -3759,6 +3805,7 @@ impl SynthMcpServer {
             "analyze_harmonic_function" => analyze_harmonic_function(AnalyzeHarmonicFunctionParam),
             "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
             "render_to_wav" => render_to_wav(RenderToWavParam),
+            "analyze_spectrum" => analyze_spectrum(AnalyzeSpectrumParam),
             "analyze_master_chain" => analyze_master_chain(AnalyzeMasterChainParam),
             "analyze_return_busses" => analyze_return_busses(AnalyzeReturnBussesParam),
             "compare_mix_before_after" => compare_mix_before_after(CompareMixBeforeAfterParam),
@@ -4410,6 +4457,31 @@ impl SynthMcpServer {
                 duration,
                 params.0.start_tick,
                 params.0.instrument_id,
+                scope,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Detailed spectrum of an offline render: detected partials (frequency + amplitude + harmonic number + cents deviation), a voiced/unvoiced verdict, and timbre descriptors — spectral centroid (brightness), flatness (0 pure tone … 1 noise), rolloff, aggregate inharmonicity, and odd/even harmonic ratio. These separate timbres the 4-band analyze_mix_bus energy metric cannot: a plain triangle, a ring-modulated triangle, and a metallic carrier have near-identical 4-band energy but very different partial structure. Pass instrument_id to fingerprint one instrument in isolation (clone-based; your project is untouched); f0_hint to sharpen harmonic tagging; log_bins > 0 to add log-spaced magnitude bins for compare_spectra. The f0 detector (McLeod/NSDF) reports unvoiced (f0 null) for noise so noise frames don't emit a garbage fundamental. Renders from start_tick (default 0) for duration_seconds (default 10, max 300), deterministic and offline; use render_quality 'full' (default) for spectral work."
+    )]
+    async fn analyze_spectrum(&self, params: Parameters<AnalyzeSpectrumParam>) -> String {
+        let duration = params.0.duration_seconds.unwrap_or(10.0);
+        let scope = crate::bridge::AnalysisScope::from_flags(
+            params.0.include_all,
+            params.0.include_master_effects,
+            params.0.include_return_effects,
+            params.0.include_awe,
+            crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
+        );
+        run_blocking_json(|| {
+            self.bridge.analyze_spectrum(
+                duration,
+                params.0.start_tick,
+                params.0.instrument_id,
+                params.0.f0_hint,
+                params.0.max_partials,
+                params.0.log_bins,
                 scope,
             )
         })

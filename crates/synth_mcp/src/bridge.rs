@@ -1723,6 +1723,28 @@ pub trait SynthBridge: Send + Sync + 'static {
         scope: AnalysisScope,
     ) -> Result<crate::types::RenderToWavResult, McpBridgeError>;
 
+    /// Render `duration_seconds` of the arrangement offline and return a
+    /// detailed spectrum: detected partials (frequency + amplitude + harmonic
+    /// tagging), a voiced/unvoiced verdict, and timbre descriptors (centroid,
+    /// flatness, rolloff, inharmonicity, odd/even ratio). Deterministic and
+    /// offline, the same render `analyze_mix_bus` uses.
+    ///
+    /// `instrument_id` solos one instrument (clean single-source fingerprint);
+    /// `f0_hint` sharpens the harmonic tagging; `max_partials` caps the partial
+    /// list; `log_bins` (> 0) adds log-spaced magnitude bins for
+    /// `compare_spectra`. `scope` selects the optional signal stages.
+    #[allow(clippy::too_many_arguments)]
+    fn analyze_spectrum(
+        &self,
+        duration_seconds: f32,
+        start_tick: Option<u64>,
+        instrument_id: Option<u16>,
+        f0_hint: Option<f32>,
+        max_partials: Option<u32>,
+        log_bins: Option<u32>,
+        scope: AnalysisScope,
+    ) -> Result<crate::types::AnalyzeSpectrumResult, McpBridgeError>;
+
     /// Incremental per-effect breakdown of the master bus. Renders the chain
     /// input (post-return mix, no master effects) once, then re-renders the
     /// master output with the chain truncated after each effect, so each
