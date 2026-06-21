@@ -1913,6 +1913,30 @@ pub struct AnalyzeSampleSpectrumResult {
     pub warnings: Vec<String>,
 }
 
+/// Result of `analyze_sample_spectrogram`: per-frame spectra from an imported
+/// sample or WAV file, analysed at the file's NATIVE sample rate — the sample
+/// counterpart of `analyze_spectrogram`, so the time evolution of a real
+/// reference recording (e.g. a SID render alternating pitched/noise) is visible
+/// in one call and lines up with the equivalent render's spectrogram.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeSampleSpectrogramResult {
+    /// Sample name (file stem for a path, or the imported sample's name).
+    pub sample_name: String,
+    /// The sample's NATIVE sample rate in Hz (never the engine's) — the
+    /// bin→Hz mapping uses this, so a 32 kHz dump reads its true frequencies.
+    pub sample_rate: u32,
+    /// Channel count of the source sample (downmixed to mono for analysis).
+    pub channels: u16,
+    /// Actual hop between frame centres, in seconds (from the requested hop_ms).
+    pub hop_seconds: f32,
+    /// Actual analysed window length per frame, in seconds.
+    pub window_seconds: f32,
+    /// One spectrum per hop, in time order.
+    pub frames: Vec<SpectrogramFrame>,
+    /// Non-fatal warnings (e.g. frame-cap truncation).
+    pub warnings: Vec<String>,
+}
+
 /// One target partial matched (or not) against the candidate, in
 /// `CompareSpectraResult`.
 #[derive(Debug, Clone, Copy, Serialize)]

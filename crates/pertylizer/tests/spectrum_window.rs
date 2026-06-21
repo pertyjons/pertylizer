@@ -1,17 +1,19 @@
-//! Gap 2 regression: the spectral tools can select a single analysis window of
-//! a sample, so a time-varying sound (a voiced frame vs an unvoiced frame) can
-//! be compared frame-to-frame instead of averaging to "unvoiced".
+//! Gap 2 + Gap 3 regression for the spectral sample tools.
 //!
-//! Builds a WAV that is a steady 1 kHz tone for the first half and silence for
-//! the second half, then checks that `analyze_sample_spectrum_impl`:
-//! - reports the tone window voiced and the silent window unvoiced,
-//! - zero-pads a window that runs off the end (no panic),
-//! - returns `WindowOutOfBounds` for a start past the end of the audio.
+//! Gap 2 — `analyze_sample_spectrum_impl` can select a single analysis window of
+//! a sample, so a time-varying sound (a voiced frame vs an unvoiced frame) is
+//! compared frame-to-frame instead of averaging to "unvoiced": the tone window
+//! reads voiced and the silent window unvoiced, a window past the end zero-pads
+//! (no panic), an absurd length is bounded, and a start past the end errors.
+//!
+//! Gap 3 — `analyze_sample_spectrogram_impl` slides an FFT over a WAV at its
+//! NATIVE rate, so a sound alternating tone/silence shows frames flipping
+//! voiced↔unvoiced and reports the file's real sample rate.
 
 use std::sync::{Arc, RwLock};
 
 use pertylizer::audio::preview::SharedSampleLibrary;
-use pertylizer::mcp_bridge::analyze_sample_spectrum_impl;
+use pertylizer::mcp_bridge::{analyze_sample_spectrogram_impl, analyze_sample_spectrum_impl};
 use synth_mcp::McpBridgeError;
 
 const SR: u32 = 44_100;
@@ -40,6 +42,71 @@ fn write_tone_then_silence(path: &std::path::Path, tone_ms: f32, silence_ms: f32
 
 fn empty_library() -> SharedSampleLibrary {
     Arc::new(RwLock::new(synth_sampler::SampleLibrary::default()))
+}
+
+/// Write a WAV at `rate` Hz that alternates `seg_ms` of a 1 kHz tone with
+/// `seg_ms` of silence for `segments` segments total (tone first).
+fn write_alternating(path: &std::path::Path, rate: u32, seg_ms: f32, segments: usize) {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+    let mut w = hound::WavWriter::create(path, spec).expect("create wav");
+    let seg_samples = (seg_ms / 1000.0 * rate as f32) as usize;
+    for seg in 0..segments {
+        let tone = seg % 2 == 0;
+        for i in 0..seg_samples {
+            let n = seg * seg_samples + i;
+            let s = if tone {
+                0.8 * (std::f32::consts::TAU * 1_000.0 * n as f32 / rate as f32).sin()
+            } else {
+                0.0
+            };
+            w.write_sample(s).expect("write sample");
+        }
+    }
+    w.finalize().expect("finalize wav");
+}
+
+#[test]
+fn sample_spectrogram_flips_voiced_at_native_rate() {
+    // A 32 kHz WAV alternating tone/silence every 50 ms. Analysed with a 50 ms
+    // hop, consecutive frames should flip voiced↔unvoiced — the per-frame
+    // evolution a single analyze_sample_spectrum aggregate would hide. The
+    // native 32 kHz rate must be reported (not the engine's 44.1 kHz).
+    let dir = std::env::temp_dir();
+    let path = dir.join("pertylizer_sample_spectrogram_test.wav");
+    write_alternating(&path, 32_000, 50.0, 8);
+    let lib = empty_library();
+    let p = path.to_string_lossy().into_owned();
+
+    let r = analyze_sample_spectrogram_impl(
+        &lib,
+        p,
+        Some(1_000.0),
+        None,
+        Some(0),
+        Some(50.0),
+        Some(40.0),
+    )
+    .expect("sample spectrogram analysis");
+
+    assert_eq!(r.sample_rate, 32_000, "native sample rate must be reported");
+    assert!(
+        r.frames.len() >= 6,
+        "expected several frames, got {}",
+        r.frames.len()
+    );
+    let voiced = r.frames.iter().filter(|f| f.spectrum.voiced).count();
+    let unvoiced = r.frames.len() - voiced;
+    assert!(
+        voiced > 0 && unvoiced > 0,
+        "frames must flip voiced↔unvoiced: {voiced} voiced, {unvoiced} unvoiced"
+    );
+
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]

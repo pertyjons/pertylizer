@@ -1000,6 +1000,32 @@ pub struct AnalyzeSampleSpectrumParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeSampleSpectrogramParam {
+    #[schemars(
+        description = "Either a numeric imported-sample id or a filesystem path to a WAV file. The audio is decoded at its native rate and downmixed to mono for analysis."
+    )]
+    pub sample_id_or_path: String,
+    #[schemars(
+        description = "Approximate fundamental frequency in Hz, applied to every frame to sharpen harmonic tagging. Optional."
+    )]
+    pub f0_hint: Option<f32>,
+    #[schemars(description = "Maximum partials per frame (default 48).")]
+    pub max_partials: Option<u32>,
+    #[schemars(
+        description = "When > 0, add that many log-spaced magnitude bins (dB) per frame. Default 0 = off."
+    )]
+    pub log_bins: Option<u32>,
+    #[schemars(
+        description = "Hop between frame centres in milliseconds (default 20 ≈ one PAL video frame, the rate a SID voice switches waveform). Smaller = finer time resolution, more frames (capped at 4096)."
+    )]
+    pub hop_ms: Option<f32>,
+    #[schemars(
+        description = "Analysed window length per frame in milliseconds (default 40). Longer windows resolve closer partials but blur fast changes."
+    )]
+    pub window_len_ms: Option<f32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SpectrumSourceParam {
     #[schemars(
         description = "Set to analyse an imported-sample id or a WAV file path instead of a render. When present this source is a sample; when omitted it is an offline render (see the render-only fields below)."
@@ -3954,6 +3980,7 @@ impl SynthMcpServer {
             "analyze_spectrum" => analyze_spectrum(AnalyzeSpectrumParam),
             "analyze_spectrogram" => analyze_spectrogram(AnalyzeSpectrogramParam),
             "analyze_sample_spectrum" => analyze_sample_spectrum(AnalyzeSampleSpectrumParam),
+            "analyze_sample_spectrogram" => analyze_sample_spectrogram(AnalyzeSampleSpectrogramParam),
             "compare_spectra" => compare_spectra(CompareSpectraParam),
             "analyze_master_chain" => analyze_master_chain(AnalyzeMasterChainParam),
             "analyze_return_busses" => analyze_return_busses(AnalyzeReturnBussesParam),
@@ -4677,6 +4704,25 @@ impl SynthMcpServer {
                 params.0.max_partials,
                 params.0.log_bins,
                 params.0.start_ms,
+                params.0.window_len_ms,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Per-frame spectrogram of an imported sample or WAV file — the sample counterpart of analyze_spectrogram. Slides an FFT across the decoded audio at its NATIVE sample rate and returns one spectrum per hop (time_seconds + the same descriptor analyze_spectrum gives: partials, voiced verdict, centroid/flatness/rolloff/inharmonicity). Use it to see the time evolution of a real reference recording — e.g. a SID render alternating pitched/noise every ~20 ms — which a single aggregate analyze_sample_spectrum hides. Frames line up with analyze_spectrogram of the equivalent render so you can compare per-frame. sample_id_or_path is a numeric imported-sample id or a path to a WAV. hop_ms defaults to 20 (≈ one PAL frame), window_len_ms to 40; frame count is capped at 4096 (a warning is added on truncation). Deterministic and offline."
+    )]
+    async fn analyze_sample_spectrogram(
+        &self,
+        params: Parameters<AnalyzeSampleSpectrogramParam>,
+    ) -> String {
+        run_blocking_json(|| {
+            self.bridge.analyze_sample_spectrogram(
+                params.0.sample_id_or_path.clone(),
+                params.0.f0_hint,
+                params.0.max_partials,
+                params.0.log_bins,
+                params.0.hop_ms,
                 params.0.window_len_ms,
             )
         })

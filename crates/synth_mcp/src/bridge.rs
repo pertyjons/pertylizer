@@ -1804,6 +1804,19 @@ pub trait SynthBridge: Send + Sync + 'static {
         window_len_ms: Option<f32>,
     ) -> Result<crate::types::AnalyzeSampleSpectrumResult, McpBridgeError>;
 
+    /// Per-frame spectrogram of an imported sample or WAV file, analysed at the
+    /// file's NATIVE sample rate — the sample counterpart of `analyze_spectrogram`,
+    /// so the time evolution of a real reference recording is visible in one call.
+    fn analyze_sample_spectrogram(
+        &self,
+        sample_id_or_path: String,
+        f0_hint: Option<f32>,
+        max_partials: Option<u32>,
+        log_bins: Option<u32>,
+        hop_ms: Option<f32>,
+        window_len_ms: Option<f32>,
+    ) -> Result<crate::types::AnalyzeSampleSpectrogramResult, McpBridgeError>;
+
     /// Compare two spectra (each a render or a sample) and return a distance plus
     /// a per-partial diff. `target` is the reference (e.g. a real SID render);
     /// `candidate` is the attempt (e.g. your patch). `missing_partials` names the

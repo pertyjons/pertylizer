@@ -4393,6 +4393,26 @@ impl SynthBridge for AppSynthBridge {
         )
     }
 
+    fn analyze_sample_spectrogram(
+        &self,
+        sample_id_or_path: String,
+        f0_hint: Option<f32>,
+        max_partials: Option<u32>,
+        log_bins: Option<u32>,
+        hop_ms: Option<f32>,
+        window_len_ms: Option<f32>,
+    ) -> Result<synth_mcp::types::AnalyzeSampleSpectrogramResult, McpBridgeError> {
+        analyze_sample_spectrogram_impl(
+            &self.sample_library,
+            sample_id_or_path,
+            f0_hint,
+            max_partials,
+            log_bins,
+            hop_ms,
+            window_len_ms,
+        )
+    }
+
     fn compare_spectra(
         &self,
         target: synth_mcp::SpectrumSource,
@@ -10127,7 +10147,36 @@ pub fn analyze_spectrogram_impl(
         scope,
     )?;
     let sr = rendered.sample_rate;
-    // Convert ms → samples (≥ 1 each; clamp NaN/negative to the defaults).
+    let (hop_samples, window_len_samples) = spectrogram_frame_samples(sr, hop_ms, window_len_ms);
+    let opts = spectrum_opts(f0_hint, max_partials, log_bins);
+    let frames = spectrogram_frames(
+        &mono,
+        sr,
+        hop_samples,
+        window_len_samples,
+        opts,
+        &mut warnings,
+    );
+
+    Ok(synth_mcp::types::AnalyzeSpectrogramResult {
+        start_tick: rendered.start_tick,
+        end_tick: rendered.end_tick,
+        sample_rate: sr,
+        hop_seconds: hop_samples as f32 / sr as f32,
+        window_seconds: window_len_samples as f32 / sr as f32,
+        frames,
+        soloed_instrument_id: instrument_id,
+        warnings,
+    })
+}
+
+/// Resolve hop/window ms (each with its default and NaN/non-positive guard) to
+/// sample counts at `sr` (≥ 1 each). Shared by the render and sample spectrograms.
+fn spectrogram_frame_samples(
+    sr: u32,
+    hop_ms: Option<f32>,
+    window_len_ms: Option<f32>,
+) -> (usize, usize) {
     let ms_to_samples = |ms: f32, default: f32| -> usize {
         let ms = if ms.is_finite() && ms > 0.0 {
             ms
@@ -10136,18 +10185,31 @@ pub fn analyze_spectrogram_impl(
         };
         ((ms * 0.001 * sr as f32) as usize).max(1)
     };
-    let hop_samples = ms_to_samples(
-        hop_ms.unwrap_or(DEFAULT_SPECTROGRAM_HOP_MS),
-        DEFAULT_SPECTROGRAM_HOP_MS,
-    );
-    let window_len_samples = ms_to_samples(
-        window_len_ms.unwrap_or(DEFAULT_SPECTROGRAM_WINDOW_MS),
-        DEFAULT_SPECTROGRAM_WINDOW_MS,
-    );
+    (
+        ms_to_samples(
+            hop_ms.unwrap_or(DEFAULT_SPECTROGRAM_HOP_MS),
+            DEFAULT_SPECTROGRAM_HOP_MS,
+        ),
+        ms_to_samples(
+            window_len_ms.unwrap_or(DEFAULT_SPECTROGRAM_WINDOW_MS),
+            DEFAULT_SPECTROGRAM_WINDOW_MS,
+        ),
+    )
+}
 
-    let opts = spectrum_opts(f0_hint, max_partials, log_bins);
+/// Slide the spectrogram FFT over `mono` and map the frames to the MCP type,
+/// pushing a truncation warning if the DSP frame cap was hit. Shared by the
+/// render and sample spectrograms.
+fn spectrogram_frames(
+    mono: &[f32],
+    sr: u32,
+    hop_samples: usize,
+    window_len_samples: usize,
+    opts: crate::audio::analysis::spectrum::SpectrumOpts,
+    warnings: &mut Vec<String>,
+) -> Vec<synth_mcp::types::SpectrogramFrame> {
     let dsp_frames = crate::audio::analysis::spectrum::analyze_spectrogram(
-        &mono,
+        mono,
         sr,
         hop_samples,
         window_len_samples,
@@ -10158,28 +10220,58 @@ pub fn analyze_spectrogram_impl(
     if dsp_frames.len() >= crate::audio::analysis::spectrum::MAX_SPECTROGRAM_FRAMES {
         warnings.push(format!(
             "spectrogram truncated at the {}-frame cap (~{:.1} s covered) — \
-             increase hop_ms or shorten duration_seconds for full coverage",
+             increase hop_ms or shorten the source for full coverage",
             crate::audio::analysis::spectrum::MAX_SPECTROGRAM_FRAMES,
             dsp_frames.last().map(|f| f.time.0).unwrap_or(0.0)
         ));
     }
-
-    let frames = dsp_frames
+    dsp_frames
         .iter()
         .map(|f| synth_mcp::types::SpectrogramFrame {
             time_seconds: f.time.0,
             spectrum: spectrum_descriptor(&f.spectrum),
         })
-        .collect();
+        .collect()
+}
 
-    Ok(synth_mcp::types::AnalyzeSpectrogramResult {
-        start_tick: rendered.start_tick,
-        end_tick: rendered.end_tick,
+/// `analyze_sample_spectrogram` bridge implementation. The sample counterpart of
+/// `analyze_spectrogram_impl`: resolves `sample_id_or_path` to audio, downmixes
+/// to mono, and slides the same FFT — but at the file's NATIVE sample rate, so a
+/// 32 kHz dump reports its true frequencies rather than the engine's grid.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_sample_spectrogram_impl(
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    sample_id_or_path: String,
+    f0_hint: Option<f32>,
+    max_partials: Option<u32>,
+    log_bins: Option<u32>,
+    hop_ms: Option<f32>,
+    window_len_ms: Option<f32>,
+) -> Result<synth_mcp::types::AnalyzeSampleSpectrogramResult, McpBridgeError> {
+    let src = resolve_sample_source(sample_library, &sample_id_or_path)?;
+    let mono = downmix_interleaved(&src.data, src.channels);
+    let sr = src.sample_rate;
+
+    let (hop_samples, window_len_samples) = spectrogram_frame_samples(sr, hop_ms, window_len_ms);
+    let opts = spectrum_opts(f0_hint, max_partials, log_bins);
+    let mut warnings = Vec::new();
+    let frames = spectrogram_frames(
+        &mono,
+        sr,
+        hop_samples,
+        window_len_samples,
+        opts,
+        &mut warnings,
+    );
+
+    Ok(synth_mcp::types::AnalyzeSampleSpectrogramResult {
+        sample_name: src.name,
         sample_rate: sr,
+        channels: src.channels,
         hop_seconds: hop_samples as f32 / sr as f32,
         window_seconds: window_len_samples as f32 / sr as f32,
         frames,
-        soloed_instrument_id: instrument_id,
         warnings,
     })
 }
