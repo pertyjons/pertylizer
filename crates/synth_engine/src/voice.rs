@@ -17,7 +17,7 @@
 use crate::ModuleId;
 use crate::graph::ModuleGraph;
 use synth_core::params::LfoWaveform;
-use synth_core::script::{EvalContext, MAX_SOURCES, ScriptContext, ScriptInput};
+use synth_core::script::{BoundScript, EvalContext, MAX_SOURCES, ScriptContext, ScriptInput};
 use synth_core::tuning::TuningTable;
 use synth_core::{AudioBuffer, DestAddr, Phase, PortName, ProcessContext};
 use synth_core::{
@@ -1087,11 +1087,13 @@ impl Voice {
             };
             for (slot, entry) in scripts.iter().enumerate().take(MAX_MOD_MATRIX_SLOTS) {
                 if let Some(script) = entry {
-                    let n = script.inputs.len().min(MAX_SOURCES);
-                    for (j, input) in script.inputs.iter().take(MAX_SOURCES).enumerate() {
-                        self.script_scratch[slot][j] =
-                            Self::resolve_script_input(&self.graph, input, macros, sctx);
-                    }
+                    let n = Self::resolve_script_sources(
+                        &mut self.script_scratch[slot],
+                        &self.graph,
+                        script,
+                        macros,
+                        sctx,
+                    );
                     active[slot] = Some(n);
                 }
             }
@@ -1153,6 +1155,25 @@ impl Voice {
         }
     }
 
+    /// Resolve one script's source registers into `scratch` (a slot's row of
+    /// `script_scratch`) under an immutable graph borrow, returning the count
+    /// written. The two-pass resolve→eval is shared by the Mod Matrix and the
+    /// Script module, so this is the single copy of the inner resolve loop — it
+    /// can't drift between the two callers.
+    fn resolve_script_sources(
+        scratch: &mut [f32; MAX_SOURCES],
+        graph: &ModuleGraph,
+        script: &BoundScript,
+        macros: &MacroValues,
+        sctx: &ScriptCtx,
+    ) -> usize {
+        let n = script.inputs.len().min(MAX_SOURCES);
+        for (j, input) in script.inputs.iter().take(MAX_SOURCES).enumerate() {
+            scratch[j] = Self::resolve_script_input(graph, input, macros, sctx);
+        }
+        n
+    }
+
     /// Resolve every active routing into the pre-allocated cache, in two passes
     /// so the immutable graph borrow (reading source ports/params) is released
     /// before the script-eval pass takes a mutable borrow of the host module.
@@ -1201,11 +1222,13 @@ impl Voice {
                 // queue it for the mutable eval pass — the eval needs `&mut` on the
                 // host's registers, which live inside the graph.
                 if let Some(script) = scripts.and_then(|s| s.get(slot)).and_then(Option::as_ref) {
-                    let n = script.inputs.len().min(MAX_SOURCES);
-                    for (j, input) in script.inputs.iter().take(MAX_SOURCES).enumerate() {
-                        self.script_scratch[slot][j] =
-                            Self::resolve_script_input(&self.graph, input, macros, sctx);
-                    }
+                    let n = Self::resolve_script_sources(
+                        &mut self.script_scratch[slot],
+                        &self.graph,
+                        script,
+                        macros,
+                        sctx,
+                    );
                     self.script_eval_queue.push((slot, n, dest));
                 } else if let Some(source) = routing.source {
                     let value = Self::resolve_source(&self.graph, source, macros);
