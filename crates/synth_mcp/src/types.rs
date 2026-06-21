@@ -1857,6 +1857,47 @@ pub struct AnalyzeSampleSpectrumResult {
     pub warnings: Vec<String>,
 }
 
+/// One target partial matched (or not) against the candidate, in
+/// `CompareSpectraResult`.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct PartialDiff {
+    /// Frequency of the partial (Hz).
+    pub frequency_hz: f32,
+    /// Peak-normalised amplitude of the partial (dB).
+    pub amplitude_db: f32,
+}
+
+/// Result of `compare_spectra`: how far the candidate spectrum is from the
+/// target, and *where*. `log_spectral_distance` is the scalar to minimise;
+/// `missing_partials` is the actionable list ("the target has a strong partial
+/// at 1153 Hz your candidate lacks").
+#[derive(Debug, Clone, Serialize)]
+pub struct CompareSpectraResult {
+    /// Primary scalar to minimise: RMS dB difference over the shared log-spaced
+    /// bins. Larger = further apart. Requires both spectra to carry log bins.
+    pub log_spectral_distance: f32,
+    /// Candidate − target spectral centroid (Hz).
+    pub centroid_delta_hz: f32,
+    /// Candidate − target spectral flatness.
+    pub flatness_delta: f32,
+    /// Candidate − target aggregate inharmonicity.
+    pub inharmonicity_delta: f32,
+    /// `true` when exactly one spectrum is voiced — a pitched-vs-noise mismatch;
+    /// partial matching is skipped and `log_spectral_distance` is penalised.
+    pub voicing_mismatch: bool,
+    /// Whether the target (a) was voiced.
+    pub target_voiced: bool,
+    /// Whether the candidate (b) was voiced.
+    pub candidate_voiced: bool,
+    /// Partials strong in the target but absent in the candidate — what the
+    /// candidate is failing to produce.
+    pub missing_partials: Vec<PartialDiff>,
+    /// Partials present in the candidate but not in the target — extra content.
+    pub extra_partials: Vec<PartialDiff>,
+    /// Non-fatal warnings from rendering/decoding either source.
+    pub warnings: Vec<String>,
+}
+
 /// Result of `auto_gain_stage`: the master fader was adjusted to bring the mix
 /// toward a target loudness without breaching a true-peak ceiling.
 #[derive(Debug, Clone, Serialize)]

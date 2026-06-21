@@ -940,6 +940,64 @@ pub struct AnalyzeSampleSpectrumParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SpectrumSourceParam {
+    #[schemars(
+        description = "Set to analyse an imported-sample id or a WAV file path instead of a render. When present this source is a sample; when omitted it is an offline render (see the render-only fields below)."
+    )]
+    pub sample_id_or_path: Option<String>,
+    #[schemars(
+        description = "(Render source only) solo this instrument so the source is that one instrument's contribution. Omit for the full mix."
+    )]
+    pub instrument_id: Option<u16>,
+    #[schemars(description = "(Render source only) absolute start tick (default 0).")]
+    pub start_tick: Option<u64>,
+    #[schemars(
+        description = "(Render source only) how many seconds to render (default 10.0, max 300.0)."
+    )]
+    pub duration_seconds: Option<f32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CompareSpectraParam {
+    #[schemars(
+        description = "The reference spectrum (e.g. a real SID render imported as a sample, or a WAV path). missing_partials lists what this target has that the candidate lacks."
+    )]
+    pub target: SpectrumSourceParam,
+    #[schemars(
+        description = "The candidate spectrum being matched against the target (e.g. your patch, as a soloed render)."
+    )]
+    pub candidate: SpectrumSourceParam,
+    #[schemars(
+        description = "Approximate fundamental frequency in Hz, applied to BOTH sources to sharpen harmonic tagging. Optional."
+    )]
+    pub f0_hint: Option<f32>,
+    #[schemars(description = "Maximum partials per source for the partial diff (default 48).")]
+    pub max_partials: Option<u32>,
+    #[schemars(
+        description = "Log-spaced bins per source for the broadband log_spectral_distance (default 128; forced on so the distance is always available)."
+    )]
+    pub log_bins: Option<u32>,
+    #[schemars(
+        description = "Include the full signal chain (master + return effects + AWE) in any render source. Shortcut for the include_* flags. Default false = dry instrument sum."
+    )]
+    pub include_all: Option<bool>,
+    #[schemars(description = "Load the master effect chain into render sources. Default false.")]
+    pub include_master_effects: Option<bool>,
+    #[schemars(
+        description = "Load each return bus's effect chain into render sources. Default false."
+    )]
+    pub include_return_effects: Option<bool>,
+    #[schemars(
+        description = "Reconstruct AWE in render sources. NOT YET IMPLEMENTED — adds a warning. Default false."
+    )]
+    pub include_awe: Option<bool>,
+    #[schemars(
+        description = "Render resolution for render sources: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Use 'full' for spectral work."
+    )]
+    pub render_quality: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeMasterChainParam {
     #[schemars(
         description = "How many seconds of the master bus to render and analyze per stage (default 10.0, max 300.0)."
@@ -3827,6 +3885,7 @@ impl SynthMcpServer {
             "render_to_wav" => render_to_wav(RenderToWavParam),
             "analyze_spectrum" => analyze_spectrum(AnalyzeSpectrumParam),
             "analyze_sample_spectrum" => analyze_sample_spectrum(AnalyzeSampleSpectrumParam),
+            "compare_spectra" => compare_spectra(CompareSpectraParam),
             "analyze_master_chain" => analyze_master_chain(AnalyzeMasterChainParam),
             "analyze_return_busses" => analyze_return_busses(AnalyzeReturnBussesParam),
             "compare_mix_before_after" => compare_mix_before_after(CompareMixBeforeAfterParam),
@@ -4521,6 +4580,38 @@ impl SynthMcpServer {
                 params.0.f0_hint,
                 params.0.max_partials,
                 params.0.log_bins,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Compare two spectra and return how far apart they are, and WHERE. Each side (target, candidate) is either a render (optionally soloing one instrument) or an imported sample / WAV file, so you can compare render↔render, render↔sample, or sample↔sample. Returns: log_spectral_distance (the scalar to minimise — RMS dB difference over log-spaced bins); centroid/flatness/inharmonicity deltas; voicing_mismatch (a pitched-vs-noise gross mismatch, which also penalises the distance); and the high-value lists missing_partials (strong in the target, absent in the candidate — what your patch is failing to produce) and extra_partials (present in the candidate, not the target). This closes the timbre-matching loop: fingerprint a reference (analyze_sample_spectrum of a real SID render), measure your candidate, read missing_partials to know which frequencies to add, and watch log_spectral_distance fall as you adjust parameters. Deterministic and offline."
+    )]
+    async fn compare_spectra(&self, params: Parameters<CompareSpectraParam>) -> String {
+        let p = params.0;
+        let scope = crate::bridge::AnalysisScope::from_flags(
+            p.include_all,
+            p.include_master_effects,
+            p.include_return_effects,
+            p.include_awe,
+            crate::bridge::RenderQuality::parse(p.render_quality.as_deref()),
+        );
+        let to_source = |s: &SpectrumSourceParam| crate::bridge::SpectrumSource {
+            sample_id_or_path: s.sample_id_or_path.clone(),
+            instrument_id: s.instrument_id,
+            start_tick: s.start_tick,
+            duration_seconds: s.duration_seconds,
+        };
+        let target = to_source(&p.target);
+        let candidate = to_source(&p.candidate);
+        run_blocking_json(move || {
+            self.bridge.compare_spectra(
+                target,
+                candidate,
+                p.f0_hint,
+                p.max_partials,
+                p.log_bins,
+                scope,
             )
         })
     }

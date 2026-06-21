@@ -4361,6 +4361,28 @@ impl SynthBridge for AppSynthBridge {
         )
     }
 
+    fn compare_spectra(
+        &self,
+        target: synth_mcp::SpectrumSource,
+        candidate: synth_mcp::SpectrumSource,
+        f0_hint: Option<f32>,
+        max_partials: Option<u32>,
+        log_bins: Option<u32>,
+        scope: synth_mcp::AnalysisScope,
+    ) -> Result<synth_mcp::types::CompareSpectraResult, McpBridgeError> {
+        compare_spectra_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            target,
+            candidate,
+            f0_hint,
+            max_partials,
+            log_bins,
+            scope,
+        )
+    }
+
     fn analyze_master_chain(
         &self,
         duration_seconds: f32,
@@ -10146,6 +10168,118 @@ fn downmix_interleaved(data: &[f32], channels: u16) -> Vec<f32> {
     data.chunks_exact(ch)
         .map(|frame| frame.iter().sum::<f32>() / ch as f32)
         .collect()
+}
+
+/// Default number of log-spaced bins `compare_spectra` analyses each source
+/// with, so the broadband `log_spectral_distance` is always available.
+const DEFAULT_COMPARE_LOG_BINS: u32 = 128;
+
+/// Analyse one `compare_spectra` source — a render (optionally soloed) or an
+/// imported sample / WAV — into an analysis-layer `SpectrumResult` plus any
+/// render/decode warnings.
+#[allow(clippy::too_many_arguments)]
+fn analyze_spectrum_source(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    source: &synth_mcp::SpectrumSource,
+    f0_hint: Option<f32>,
+    max_partials: Option<u32>,
+    log_bins: Option<u32>,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<
+    (
+        crate::audio::analysis::spectrum::SpectrumResult,
+        Vec<String>,
+    ),
+    McpBridgeError,
+> {
+    let opts = spectrum_opts(f0_hint, max_partials, log_bins);
+    if let Some(id_or_path) = &source.sample_id_or_path {
+        let src = resolve_sample_source(sample_library, id_or_path)?;
+        let mono = downmix_interleaved(&src.data, src.channels);
+        Ok((
+            crate::audio::analysis::spectrum::analyze_spectrum(&mono, src.sample_rate, opts),
+            Vec::new(),
+        ))
+    } else {
+        let dur = source.duration_seconds.unwrap_or(10.0);
+        let (start, end) = resolve_duration_window(shared, dur, source.start_tick)?;
+        let (rendered, warnings) = render_analysis_window(
+            session,
+            sample_library,
+            shared,
+            start,
+            end,
+            source.instrument_id,
+            scope,
+        )?;
+        let mono = downmix_interleaved(&rendered.samples, rendered.channels);
+        Ok((
+            crate::audio::analysis::spectrum::analyze_spectrum(&mono, rendered.sample_rate, opts),
+            warnings,
+        ))
+    }
+}
+
+/// `compare_spectra` bridge implementation. Analyses both sources with the same
+/// options (log bins forced on so the broadband distance is meaningful) and
+/// runs `analysis::spectrum::compare`.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn compare_spectra_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    target: synth_mcp::SpectrumSource,
+    candidate: synth_mcp::SpectrumSource,
+    f0_hint: Option<f32>,
+    max_partials: Option<u32>,
+    log_bins: Option<u32>,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<synth_mcp::types::CompareSpectraResult, McpBridgeError> {
+    let bins = Some(log_bins.unwrap_or(DEFAULT_COMPARE_LOG_BINS).max(1));
+    let (a, mut warnings) = analyze_spectrum_source(
+        session,
+        sample_library,
+        shared,
+        &target,
+        f0_hint,
+        max_partials,
+        bins,
+        scope,
+    )?;
+    let (b, b_warnings) = analyze_spectrum_source(
+        session,
+        sample_library,
+        shared,
+        &candidate,
+        f0_hint,
+        max_partials,
+        bins,
+        scope,
+    )?;
+    warnings.extend(b_warnings);
+
+    let dist = crate::audio::analysis::spectrum::compare(&a, &b);
+    let to_diff =
+        |pd: &crate::audio::analysis::spectrum::PartialDiff| synth_mcp::types::PartialDiff {
+            frequency_hz: pd.frequency.0,
+            amplitude_db: pd.amplitude.0,
+        };
+
+    Ok(synth_mcp::types::CompareSpectraResult {
+        log_spectral_distance: dist.log_spectral_distance,
+        centroid_delta_hz: dist.centroid_delta.0,
+        flatness_delta: dist.flatness_delta.0,
+        inharmonicity_delta: dist.inharmonicity_delta.0,
+        voicing_mismatch: dist.voicing_mismatch,
+        target_voiced: a.voiced,
+        candidate_voiced: b.voiced,
+        missing_partials: dist.missing_partials.iter().map(to_diff).collect(),
+        extra_partials: dist.extra_partials.iter().map(to_diff).collect(),
+        warnings,
+    })
 }
 
 #[doc(hidden)]

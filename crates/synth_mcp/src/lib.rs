@@ -18,7 +18,7 @@ pub mod error;
 pub mod server;
 pub mod types;
 
-pub use bridge::{AnalysisScope, RenderQuality, SynthBridge};
+pub use bridge::{AnalysisScope, RenderQuality, SpectrumSource, SynthBridge};
 pub use error::McpBridgeError;
 pub use server::{McpSessionInfo, McpSessionRegistry, SynthMcpServer};
 pub use types::*;

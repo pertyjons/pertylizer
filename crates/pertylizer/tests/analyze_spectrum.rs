@@ -1,14 +1,14 @@
-//! Integration tests for the `analyze_spectrum` MCP tool
-//! (`pertylizer::mcp_bridge::analyze_spectrum_impl`).
+//! Integration tests for the spectrum MCP tools (`analyze_spectrum_impl`,
+//! `analyze_sample_spectrum_impl`, `compare_spectra_impl`).
 //!
-//! Builds a two-instrument project — a sawtooth oscillator (harmonic, pitched)
-//! and a noise source (broadband, unpitched) both sounding the same note — and
-//! checks that:
-//! - soloing one instrument isolates its spectrum from the full mix, and
-//! - the detailed descriptors (voiced verdict, flatness, partials) clearly
-//!   separate the two timbres — the regression that motivates the whole tool,
-//!   since the 4-band `analyze_mix_bus` energy metric does not reliably tell a
-//!   pitched source from a noisy one.
+//! Builds a three-instrument project — a sawtooth (harmonic, pitched), a noise
+//! source (broadband, unpitched), and a sine (fundamental only) — all sounding
+//! the same note, and checks that:
+//! - soloing one instrument isolates its spectrum from the full mix,
+//! - the descriptors (voiced verdict, flatness, partials) separate the timbres
+//!   the 4-band `analyze_mix_bus` energy metric cannot, and
+//! - `compare_spectra` reports the distance plus the missing/extra partials that
+//!   drive a timbre-matching loop.
 
 mod common;
 
@@ -26,7 +26,7 @@ use synth_sequencer::{
 
 use pertylizer::audio::preview::SharedSampleLibrary;
 use pertylizer::mcp_bridge::{
-    analyze_sample_spectrum_impl, analyze_spectrum_impl, render_to_wav_impl,
+    analyze_sample_spectrum_impl, analyze_spectrum_impl, compare_spectra_impl, render_to_wav_impl,
 };
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
@@ -41,6 +41,39 @@ fn saw_patch(name: &str) -> Patch {
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Oscillator)
             .waveform("sawtooth")
+            .param_f("level", 0.5)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Envelope)
+            .param_f("attack", 0.005)
+            .param_f("decay", 0.0)
+            .param_f("sustain", 1.0)
+            .param_f("release", 0.05)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Amplifier)
+            .param_f("level", 1.0)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
+            .param_f("master", 1.0)
+            .build(),
+    );
+    patch.add_connection("osc-1", "out", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("amp-1", "left", "out-1", "in_l");
+    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch
+}
+
+fn sine_patch(name: &str) -> Patch {
+    let mut patch = Patch::new(name);
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscillator)
+            .waveform("sine")
             .param_f("level", 0.5)
             .build(),
     );
@@ -108,8 +141,8 @@ struct Rig {
     sample_library: SharedSampleLibrary,
 }
 
-/// Two instruments — 0: sawtooth, 1: noise — each on its own track, both
-/// sounding a sustained A3 (220 Hz) across the whole pattern.
+/// Three instruments — 0: sawtooth, 1: noise, 2: sine — each on its own track,
+/// all sounding a sustained A3 (220 Hz) across the whole pattern.
 fn setup() -> (Rig, Arc<RwLock<Song>>) {
     let (mut engine, handle) = SynthEngine::new();
     let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
@@ -119,6 +152,9 @@ fn setup() -> (Rig, Arc<RwLock<Song>>) {
     session
         .add_instrument_with_id(InstrumentId::new(1), "Noise")
         .expect("add noise");
+    session
+        .add_instrument_with_id(InstrumentId::new(2), "Sine")
+        .expect("add sine");
 
     let stream_info = synth_core::StreamInfo {
         sample_rate: HwSampleRate(TEST_SR),
@@ -142,6 +178,7 @@ fn setup() -> (Rig, Arc<RwLock<Song>>) {
 
     let _ = session.apply_patch(InstrumentId::new(0), &saw_patch("Saw"));
     let _ = session.apply_patch(InstrumentId::new(1), &noise_patch("Noise"));
+    let _ = session.apply_patch(InstrumentId::new(2), &sine_patch("Sine"));
     for _ in 0..16 {
         block.fill(0.0);
         engine.process(&mut block, &context);
@@ -157,7 +194,7 @@ fn setup() -> (Rig, Arc<RwLock<Song>>) {
             n.duration = Some(SeqDuration::WHOLE);
         }
     }
-    for (idx, label) in [(0u16, "Saw"), (1u16, "Noise")] {
+    for (idx, label) in [(0u16, "Saw"), (1u16, "Noise"), (2u16, "Sine")] {
         let tid = song.create_track(label);
         if let Some(t) = song.track_mut(tid) {
             t.instrument = SeqInstrumentId(idx);
@@ -327,5 +364,124 @@ fn analyze_sample_spectrum_roundtrips() {
         "centroid must match: file {} vs render {}",
         from_file.spectrum.centroid_hz,
         from_render.spectrum.centroid_hz
+    );
+}
+
+/// Build a render `SpectrumSource` for the given soloed instrument.
+fn render_source(instrument_id: u16) -> synth_mcp::SpectrumSource {
+    synth_mcp::SpectrumSource {
+        sample_id_or_path: None,
+        instrument_id: Some(instrument_id),
+        start_tick: Some(0),
+        duration_seconds: Some(2.0),
+    }
+}
+
+fn compare(
+    rig: &Rig,
+    shared: &McpSharedState,
+    target: synth_mcp::SpectrumSource,
+    candidate: synth_mcp::SpectrumSource,
+) -> synth_mcp::types::CompareSpectraResult {
+    compare_spectra_impl(
+        &rig.session,
+        &rig.sample_library,
+        shared,
+        target,
+        candidate,
+        None,
+        None,
+        None,
+        AnalysisScope::default(),
+    )
+    .expect("compare_spectra should succeed")
+}
+
+#[test]
+fn compare_spectra_identical_render_is_near_zero() {
+    let (rig, song) = setup();
+    let shared = McpSharedState::with_song(song);
+    let d = compare(&rig, &shared, render_source(0), render_source(0));
+    assert!(!d.voicing_mismatch, "same source is not a voicing mismatch");
+    assert!(
+        d.log_spectral_distance < 1.0,
+        "identical sources should be ~0 apart, got {}",
+        d.log_spectral_distance
+    );
+    assert!(
+        d.missing_partials.is_empty() && d.extra_partials.is_empty(),
+        "identical sources have no missing/extra partials"
+    );
+}
+
+#[test]
+fn compare_spectra_reports_missing_partial() {
+    // Target = sawtooth (full harmonic series); candidate = sine (fundamental
+    // only). The saw's upper harmonics must show up as missing in the candidate.
+    let (rig, song) = setup();
+    let shared = McpSharedState::with_song(song);
+    let d = compare(&rig, &shared, render_source(0), render_source(2));
+    assert!(!d.voicing_mismatch, "both saw and sine are voiced");
+    assert!(
+        !d.missing_partials.is_empty(),
+        "the sawtooth's upper harmonics should be missing from the sine candidate"
+    );
+    // The missing partials should sit above the fundamental (~220 Hz).
+    assert!(
+        d.missing_partials.iter().any(|p| p.frequency_hz > 300.0),
+        "a missing partial should be an upper harmonic (> 300 Hz)"
+    );
+    assert!(d.log_spectral_distance > 0.0);
+}
+
+#[test]
+fn compare_spectra_voicing_mismatch_is_penalised() {
+    // Sawtooth (voiced) vs noise (unvoiced) — a gross timbral mismatch.
+    let (rig, song) = setup();
+    let shared = McpSharedState::with_song(song);
+    let d = compare(&rig, &shared, render_source(0), render_source(1));
+    assert!(d.voicing_mismatch, "voiced vs noise is a voicing mismatch");
+    assert!(
+        d.log_spectral_distance >= 60.0,
+        "a voicing mismatch carries the distance penalty, got {}",
+        d.log_spectral_distance
+    );
+    assert!(
+        d.missing_partials.is_empty() && d.extra_partials.is_empty(),
+        "no partial matching across a voicing mismatch"
+    );
+}
+
+#[test]
+fn compare_spectra_render_vs_sample_matches() {
+    // Render the saw to a WAV, then compare that sample against the same render.
+    // Identical audio → near-zero distance through both source paths.
+    let (rig, song) = setup();
+    let shared = McpSharedState::with_song(song);
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("saw.wav");
+    render_to_wav_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        path.to_string_lossy().into_owned(),
+        2.0,
+        Some(0),
+        Some(0),
+        AnalysisScope::default(),
+    )
+    .expect("render_to_wav");
+
+    let sample_source = synth_mcp::SpectrumSource {
+        sample_id_or_path: Some(path.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+    let d = compare(&rig, &shared, sample_source, render_source(0));
+    assert!(!d.voicing_mismatch);
+    assert!(
+        d.log_spectral_distance < 1.0,
+        "the WAV and its source render should match, got {}",
+        d.log_spectral_distance
     );
 }

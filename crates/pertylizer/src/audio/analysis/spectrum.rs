@@ -575,19 +575,15 @@ fn parabolic_peak_lag(nsdf: &[f32], lag: usize) -> f32 {
 
 // === Comparison ===
 
-/// One target partial matched (or not) against the candidate.
-#[derive(Debug, Clone)]
+/// One unmatched partial, named source-neutrally because the same type carries
+/// both `missing_partials` (the partial belongs to the target) and
+/// `extra_partials` (it belongs to the candidate).
+#[derive(Debug, Clone, Copy)]
 pub struct PartialDiff {
-    /// Target partial frequency.
-    pub target_frequency: Hertz,
-    /// Target partial amplitude (peak-normalised dB).
-    pub target_amplitude: Decibels,
-    /// Matched candidate frequency, if any.
-    pub matched_frequency: Option<Hertz>,
-    /// Candidate − target amplitude (dB); 0 when unmatched.
-    pub amplitude_delta: Decibels,
-    /// Candidate − target frequency (cents); 0 when unmatched.
-    pub frequency_delta: Cents,
+    /// The partial's frequency.
+    pub frequency: Hertz,
+    /// The partial's peak-normalised amplitude (dB).
+    pub amplitude: Decibels,
 }
 
 /// Distance between two spectra. `log_spectral_distance` is the primary scalar
@@ -693,17 +689,13 @@ fn diff_partials(
             }
         }
         match best {
-            Some((j, cents)) => {
+            Some((j, _cents)) => {
+                // Matched within tolerance — not a difference worth surfacing.
                 candidate_used[j] = true;
-                // Matched — not a difference worth surfacing.
-                let _ = cents;
             }
             None => missing.push(PartialDiff {
-                target_frequency: t.frequency,
-                target_amplitude: t.amplitude,
-                matched_frequency: None,
-                amplitude_delta: Decibels::new(0.0),
-                frequency_delta: Cents::new(0.0),
+                frequency: t.frequency,
+                amplitude: t.amplitude,
             }),
         }
     }
@@ -713,11 +705,8 @@ fn diff_partials(
         .zip(candidate_used)
         .filter(|(_, used)| !used)
         .map(|(c, _)| PartialDiff {
-            target_frequency: c.frequency,
-            target_amplitude: c.amplitude,
-            matched_frequency: Some(c.frequency),
-            amplitude_delta: Decibels::new(0.0),
-            frequency_delta: Cents::new(0.0),
+            frequency: c.frequency,
+            amplitude: c.amplitude,
         })
         .collect();
 

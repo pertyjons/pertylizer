@@ -283,6 +283,22 @@ impl Default for AnalysisScope {
     }
 }
 
+/// One side of a `compare_spectra` comparison: either an offline render
+/// (optionally soloing one instrument over a window) or an imported sample / WAV
+/// file. A `Some` `sample_id_or_path` selects the sample source; otherwise it is
+/// a render.
+#[derive(Debug, Clone, Default)]
+pub struct SpectrumSource {
+    /// `Some` → analyse this imported-sample id or WAV path. `None` → render.
+    pub sample_id_or_path: Option<String>,
+    /// (Render only) solo this instrument; `None` = full mix.
+    pub instrument_id: Option<u16>,
+    /// (Render only) absolute start tick (default 0).
+    pub start_tick: Option<u64>,
+    /// (Render only) seconds to render (default 10).
+    pub duration_seconds: Option<f32>,
+}
+
 impl AnalysisScope {
     /// Build a scope from the optional MCP flags. `all` turns on every effect
     /// stage; the per-stage flags OR in on top of it. Every `None` effect flag
@@ -1759,6 +1775,23 @@ pub trait SynthBridge: Send + Sync + 'static {
         max_partials: Option<u32>,
         log_bins: Option<u32>,
     ) -> Result<crate::types::AnalyzeSampleSpectrumResult, McpBridgeError>;
+
+    /// Compare two spectra (each a render or a sample) and return a distance plus
+    /// a per-partial diff. `target` is the reference (e.g. a real SID render);
+    /// `candidate` is the attempt (e.g. your patch). `missing_partials` names the
+    /// partials strong in the target that the candidate lacks — the actionable
+    /// guidance for a timbre-matching loop. Both sources are analysed with the
+    /// same `f0_hint`/`max_partials`/`log_bins`; render sources use `scope`.
+    #[allow(clippy::too_many_arguments)]
+    fn compare_spectra(
+        &self,
+        target: SpectrumSource,
+        candidate: SpectrumSource,
+        f0_hint: Option<f32>,
+        max_partials: Option<u32>,
+        log_bins: Option<u32>,
+        scope: AnalysisScope,
+    ) -> Result<crate::types::CompareSpectraResult, McpBridgeError>;
 
     /// Incremental per-effect breakdown of the master bus. Renders the chain
     /// input (post-return mix, no master effects) once, then re-renders the
