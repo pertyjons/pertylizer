@@ -1789,15 +1789,14 @@ pub struct AnalyzePartial {
     pub inharmonicity_cents: f32,
 }
 
-/// Result of `analyze_spectrum`: a detailed spectrum of an offline render —
-/// detected partials, harmonicity, and timbre descriptors that separate
-/// timbres the 4-band `analyze_mix_bus` energy metric cannot.
+/// The spectral descriptor shared by `analyze_spectrum` (render) and
+/// `analyze_sample_spectrum` (sample/WAV) — detected partials, harmonicity, and
+/// timbre descriptors that separate timbres the 4-band `analyze_mix_bus` energy
+/// metric cannot. Flattened into both result types so the JSON fields are the
+/// same regardless of source, which keeps the render↔sample compare loop
+/// symmetric.
 #[derive(Debug, Clone, Serialize)]
-pub struct AnalyzeSpectrumResult {
-    /// Tick where the analysed render started.
-    pub start_tick: u64,
-    /// Tick where the analysed render ended (exclusive).
-    pub end_tick: u64,
+pub struct SpectrumDescriptor {
     /// Detected fundamental in Hz; `null` = unvoiced (noise frame).
     pub f0_hz: Option<f32>,
     /// `false` → the frame is noise-like; harmonic metrics are not meaningful.
@@ -1819,9 +1818,42 @@ pub struct AnalyzeSpectrumResult {
     /// Optional log-spaced magnitude bins in dB (empty unless `log_bins` set);
     /// used by `compare_spectra` for the broadband distance.
     pub log_bins_db: Vec<f32>,
+}
+
+/// Result of `analyze_spectrum`: a detailed spectrum of an offline render.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeSpectrumResult {
+    /// Tick where the analysed render started.
+    pub start_tick: u64,
+    /// Tick where the analysed render ended (exclusive).
+    pub end_tick: u64,
+    /// The spectral descriptor (flattened into this object's JSON).
+    #[serde(flatten)]
+    pub spectrum: SpectrumDescriptor,
     /// Instrument that was soloed for this analysis, or `null` for the full mix.
     pub soloed_instrument_id: Option<u16>,
     /// Non-fatal warnings emitted during the render.
+    pub warnings: Vec<String>,
+}
+
+/// Result of `analyze_sample_spectrum`: the same spectral descriptor as
+/// `analyze_spectrum`, computed over an imported sample or a WAV file on disk —
+/// so a real reference (e.g. a SID render) can be fingerprinted in identical
+/// units and compared against a candidate patch render.
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyzeSampleSpectrumResult {
+    /// Sample name (file stem for a path, or the imported sample's name).
+    pub sample_name: String,
+    /// Sample rate of the analysed audio in Hz.
+    pub sample_rate: u32,
+    /// Number of frames (samples per channel) analysed.
+    pub frame_count: u64,
+    /// Channel count of the source sample (downmixed to mono for analysis).
+    pub channels: u16,
+    /// The spectral descriptor (flattened into this object's JSON).
+    #[serde(flatten)]
+    pub spectrum: SpectrumDescriptor,
+    /// Non-fatal warnings.
     pub warnings: Vec<String>,
 }
 

@@ -920,6 +920,26 @@ pub struct AnalyzeSpectrumParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AnalyzeSampleSpectrumParam {
+    #[schemars(
+        description = "Either a numeric imported-sample id (as returned by import_sample / list_samples) or a filesystem path to a WAV file. A bare integer is treated as a sample id first; to force a numeric-named file use a path form like './5.wav'. The sample is decoded at its native rate and downmixed to mono for analysis."
+    )]
+    pub sample_id_or_path: String,
+    #[schemars(
+        description = "Approximate fundamental frequency in Hz. Restricts the pitch tracker's search to a fifth either side, sharpening harmonic tagging. Optional."
+    )]
+    pub f0_hint: Option<f32>,
+    #[schemars(
+        description = "Maximum number of detected partials to return, descending by amplitude (default 48)."
+    )]
+    pub max_partials: Option<u32>,
+    #[schemars(
+        description = "When > 0, also return that many log-spaced magnitude bins (dB). Needed for compare_spectra's broadband log-spectral distance. Default 0 = off."
+    )]
+    pub log_bins: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeMasterChainParam {
     #[schemars(
         description = "How many seconds of the master bus to render and analyze per stage (default 10.0, max 300.0)."
@@ -3806,6 +3826,7 @@ impl SynthMcpServer {
             "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
             "render_to_wav" => render_to_wav(RenderToWavParam),
             "analyze_spectrum" => analyze_spectrum(AnalyzeSpectrumParam),
+            "analyze_sample_spectrum" => analyze_sample_spectrum(AnalyzeSampleSpectrumParam),
             "analyze_master_chain" => analyze_master_chain(AnalyzeMasterChainParam),
             "analyze_return_busses" => analyze_return_busses(AnalyzeReturnBussesParam),
             "compare_mix_before_after" => compare_mix_before_after(CompareMixBeforeAfterParam),
@@ -4483,6 +4504,23 @@ impl SynthMcpServer {
                 params.0.max_partials,
                 params.0.log_bins,
                 scope,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Run the same detailed spectral analysis as analyze_spectrum, but over an imported sample or a WAV file on disk instead of a render — detected partials, voiced/unvoiced verdict, and timbre descriptors (centroid, flatness, rolloff, inharmonicity, odd/even ratio). Use this to fingerprint a real reference recording (e.g. a SID render written by sidplayfp, or any WAV) in exactly the same units as analyze_spectrum, then feed both into compare_spectra to drive a timbre-matching loop. sample_id_or_path is either a numeric imported-sample id or a path to a WAV file; the audio is analyzed at its native sample rate and downmixed to mono. Pass log_bins > 0 to enable the broadband distance in compare_spectra."
+    )]
+    async fn analyze_sample_spectrum(
+        &self,
+        params: Parameters<AnalyzeSampleSpectrumParam>,
+    ) -> String {
+        run_blocking_json(|| {
+            self.bridge.analyze_sample_spectrum(
+                params.0.sample_id_or_path.clone(),
+                params.0.f0_hint,
+                params.0.max_partials,
+                params.0.log_bins,
             )
         })
     }

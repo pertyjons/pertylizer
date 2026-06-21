@@ -25,7 +25,9 @@ use synth_sequencer::{
 };
 
 use pertylizer::audio::preview::SharedSampleLibrary;
-use pertylizer::mcp_bridge::analyze_spectrum_impl;
+use pertylizer::mcp_bridge::{
+    analyze_sample_spectrum_impl, analyze_spectrum_impl, render_to_wav_impl,
+};
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
 use pertylizer::session::SynthSession;
@@ -206,13 +208,13 @@ fn analyze_spectrum_solo_isolates_instrument() {
     assert_eq!(saw.soloed_instrument_id, Some(0));
     // The soloed sawtooth is a clean pitched tone; the soloed noise is not. The
     // full mix contains both, so its flatness sits above the pure sawtooth's.
-    assert!(saw.voiced, "soloed sawtooth should be voiced");
-    assert!(!noise.voiced, "soloed noise should be unvoiced");
+    assert!(saw.spectrum.voiced, "soloed sawtooth should be voiced");
+    assert!(!noise.spectrum.voiced, "soloed noise should be unvoiced");
     assert!(
-        full.flatness > saw.flatness,
+        full.spectrum.flatness > saw.spectrum.flatness,
         "full mix (saw+noise) should be less tonal than the soloed saw: full {} vs saw {}",
-        full.flatness,
-        saw.flatness
+        full.spectrum.flatness,
+        saw.spectrum.flatness
     );
 }
 
@@ -229,15 +231,19 @@ fn descriptors_separate_harmonic_from_noise() {
     let noise = analyze(&rig, &shared, Some(1));
 
     // Sawtooth: pitched at ~220 Hz, low flatness, a real harmonic series.
-    assert!(saw.voiced && saw.f0_hz.is_some(), "saw voiced with an f0");
-    let f0 = saw.f0_hz.unwrap();
+    assert!(
+        saw.spectrum.voiced && saw.spectrum.f0_hz.is_some(),
+        "saw voiced with an f0"
+    );
+    let f0 = saw.spectrum.f0_hz.unwrap();
     assert!((f0 - 220.0).abs() < 6.0, "saw f0 ≈ 220 Hz, got {f0}");
     assert!(
-        saw.flatness < 0.2,
+        saw.spectrum.flatness < 0.2,
         "saw is tonal, flatness {}",
-        saw.flatness
+        saw.spectrum.flatness
     );
     let tagged = saw
+        .spectrum
         .partials
         .iter()
         .filter(|p| p.harmonic_number.is_some())
@@ -249,20 +255,77 @@ fn descriptors_separate_harmonic_from_noise() {
 
     // Noise: unvoiced, much higher flatness, no fundamental.
     assert!(
-        !noise.voiced && noise.f0_hz.is_none(),
+        !noise.spectrum.voiced && noise.spectrum.f0_hz.is_none(),
         "noise unvoiced, no f0"
     );
     assert!(
-        noise.flatness > 0.3,
+        noise.spectrum.flatness > 0.3,
         "noise is broadband, flatness {}",
-        noise.flatness
+        noise.spectrum.flatness
     );
 
     // The decisive separation the 4-band energy metric cannot make.
     assert!(
-        noise.flatness > saw.flatness + 0.2,
+        noise.spectrum.flatness > saw.spectrum.flatness + 0.2,
         "flatness must clearly separate the two: noise {} vs saw {}",
-        noise.flatness,
-        saw.flatness
+        noise.spectrum.flatness,
+        saw.spectrum.flatness
+    );
+}
+
+#[test]
+fn analyze_sample_spectrum_roundtrips() {
+    // render_to_wav (soloed saw) → analyze that WAV → it must match
+    // analyze_spectrum of the very same render, since the file is a lossless
+    // 32-bit float copy of the rendered buffer.
+    let (rig, song) = setup();
+    let shared = McpSharedState::with_song(song);
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("saw.wav");
+    render_to_wav_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        path.to_string_lossy().into_owned(),
+        2.0,
+        Some(0),
+        Some(0), // solo the sawtooth
+        AnalysisScope::default(),
+    )
+    .expect("render_to_wav should succeed");
+
+    let from_file = analyze_sample_spectrum_impl(
+        &rig.sample_library,
+        path.to_string_lossy().into_owned(),
+        None,
+        None,
+        Some(64),
+    )
+    .expect("analyze_sample_spectrum should succeed");
+    let from_render = analyze(&rig, &shared, Some(0));
+
+    assert_eq!(from_file.sample_rate, TEST_SR);
+    assert_eq!(
+        from_file.spectrum.voiced, from_render.spectrum.voiced,
+        "voiced verdict must agree"
+    );
+    let f_file = from_file.spectrum.f0_hz.expect("file f0");
+    let f_render = from_render.spectrum.f0_hz.expect("render f0");
+    assert!(
+        (f_file - f_render).abs() < 1.0,
+        "f0 from file ({f_file}) and render ({f_render}) must match"
+    );
+    assert!(
+        (from_file.spectrum.flatness - from_render.spectrum.flatness).abs() < 0.02,
+        "flatness must match: file {} vs render {}",
+        from_file.spectrum.flatness,
+        from_render.spectrum.flatness
+    );
+    assert!(
+        (from_file.spectrum.centroid_hz - from_render.spectrum.centroid_hz).abs() < 10.0,
+        "centroid must match: file {} vs render {}",
+        from_file.spectrum.centroid_hz,
+        from_render.spectrum.centroid_hz
     );
 }

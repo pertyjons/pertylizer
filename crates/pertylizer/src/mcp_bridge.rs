@@ -4345,6 +4345,22 @@ impl SynthBridge for AppSynthBridge {
         )
     }
 
+    fn analyze_sample_spectrum(
+        &self,
+        sample_id_or_path: String,
+        f0_hint: Option<f32>,
+        max_partials: Option<u32>,
+        log_bins: Option<u32>,
+    ) -> Result<synth_mcp::types::AnalyzeSampleSpectrumResult, McpBridgeError> {
+        analyze_sample_spectrum_impl(
+            &self.sample_library,
+            sample_id_or_path,
+            f0_hint,
+            max_partials,
+            log_bins,
+        )
+    }
+
     fn analyze_master_chain(
         &self,
         duration_seconds: f32,
@@ -9954,48 +9970,15 @@ fn render_analysis_window(
     Ok((rendered, warnings))
 }
 
-/// Downmix a stereo-interleaved buffer to mono — `(L+R)/2`. Assumes the
-/// 2-channel `RenderedArrangement` layout (`channels == 2`); a trailing odd
-/// sample (which that layout never produces) would be dropped.
-fn downmix_to_mono(stereo: &[f32]) -> Vec<f32> {
-    stereo
-        .chunks_exact(2)
-        .map(|lr| 0.5 * (lr[0] + lr[1]))
-        .collect()
-}
-
-/// `analyze_spectrum` bridge implementation. Renders the requested window (same
-/// path as `render_to_wav`), mono-sums it, and runs the detailed spectral
-/// analysis.
-#[doc(hidden)]
-#[allow(clippy::too_many_arguments)]
-pub fn analyze_spectrum_impl(
-    session: &SynthSession,
-    sample_library: &crate::audio::preview::SharedSampleLibrary,
-    shared: &McpSharedState,
-    duration_seconds: f32,
-    start_tick: Option<u64>,
-    instrument_id: Option<u16>,
+/// Build `SpectrumOpts` from the shared MCP knobs (`f0_hint`, `max_partials`,
+/// `log_bins`), leaving everything else at its default. Shared by
+/// `analyze_spectrum_impl` and `analyze_sample_spectrum_impl`.
+fn spectrum_opts(
     f0_hint: Option<f32>,
     max_partials: Option<u32>,
     log_bins: Option<u32>,
-    scope: synth_mcp::AnalysisScope,
-) -> Result<synth_mcp::types::AnalyzeSpectrumResult, McpBridgeError> {
-    use crate::audio::analysis::spectrum;
-
-    let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
-    let (rendered, warnings) = render_analysis_window(
-        session,
-        sample_library,
-        shared,
-        start,
-        end,
-        instrument_id,
-        scope,
-    )?;
-
-    let mono = downmix_to_mono(&rendered.samples);
-    let mut opts = spectrum::SpectrumOpts {
+) -> crate::audio::analysis::spectrum::SpectrumOpts {
+    let mut opts = crate::audio::analysis::spectrum::SpectrumOpts {
         f0_hint: f0_hint.map(synth_core::Hertz::new),
         ..Default::default()
     };
@@ -10005,11 +9988,15 @@ pub fn analyze_spectrum_impl(
     if let Some(n) = log_bins {
         opts.log_bins = n;
     }
-    let result = spectrum::analyze_spectrum(&mono, rendered.sample_rate, opts);
+    opts
+}
 
-    Ok(synth_mcp::types::AnalyzeSpectrumResult {
-        start_tick: rendered.start_tick,
-        end_tick: rendered.end_tick,
+/// Convert an analysis-layer `SpectrumResult` into the MCP `SpectrumDescriptor`
+/// (the field block shared by `analyze_spectrum` and `analyze_sample_spectrum`).
+fn spectrum_descriptor(
+    result: &crate::audio::analysis::spectrum::SpectrumResult,
+) -> synth_mcp::types::SpectrumDescriptor {
+    synth_mcp::types::SpectrumDescriptor {
         f0_hz: result.f0.map(|h| h.0),
         voiced: result.voiced,
         partials: result
@@ -10029,9 +10016,136 @@ pub fn analyze_spectrum_impl(
         odd_even_ratio: result.odd_even_ratio,
         energy_bands: result.bands.into(),
         log_bins_db: result.log_bins.iter().map(|d| d.0).collect(),
+    }
+}
+
+/// `analyze_spectrum` bridge implementation. Renders the requested window (same
+/// path as `render_to_wav`), mono-sums it, and runs the detailed spectral
+/// analysis.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_spectrum_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    duration_seconds: f32,
+    start_tick: Option<u64>,
+    instrument_id: Option<u16>,
+    f0_hint: Option<f32>,
+    max_partials: Option<u32>,
+    log_bins: Option<u32>,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<synth_mcp::types::AnalyzeSpectrumResult, McpBridgeError> {
+    let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
+    let (rendered, warnings) = render_analysis_window(
+        session,
+        sample_library,
+        shared,
+        start,
+        end,
+        instrument_id,
+        scope,
+    )?;
+
+    let mono = downmix_interleaved(&rendered.samples, rendered.channels);
+    let opts = spectrum_opts(f0_hint, max_partials, log_bins);
+    let result =
+        crate::audio::analysis::spectrum::analyze_spectrum(&mono, rendered.sample_rate, opts);
+
+    Ok(synth_mcp::types::AnalyzeSpectrumResult {
+        start_tick: rendered.start_tick,
+        end_tick: rendered.end_tick,
+        spectrum: spectrum_descriptor(&result),
         soloed_instrument_id: instrument_id,
         warnings,
     })
+}
+
+/// `analyze_sample_spectrum` bridge implementation. Resolves `sample_id_or_path`
+/// to audio — an already-imported sample id (numeric, looked up in the library)
+/// or a WAV file on disk (decoded via the sampler's `load_wav`) — downmixes to
+/// mono, and runs the same spectral analysis as `analyze_spectrum`.
+#[doc(hidden)]
+pub fn analyze_sample_spectrum_impl(
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    sample_id_or_path: String,
+    f0_hint: Option<f32>,
+    max_partials: Option<u32>,
+    log_bins: Option<u32>,
+) -> Result<synth_mcp::types::AnalyzeSampleSpectrumResult, McpBridgeError> {
+    // Resolve to (name, sample_rate, channels, interleaved data). Prefer an
+    // imported sample id when the string is a number that exists in the library;
+    // otherwise treat it as a filesystem path.
+    let src = resolve_sample_source(sample_library, &sample_id_or_path)?;
+
+    let mono = downmix_interleaved(&src.data, src.channels);
+    let opts = spectrum_opts(f0_hint, max_partials, log_bins);
+    let result = crate::audio::analysis::spectrum::analyze_spectrum(&mono, src.sample_rate, opts);
+
+    Ok(synth_mcp::types::AnalyzeSampleSpectrumResult {
+        sample_name: src.name,
+        sample_rate: src.sample_rate,
+        frame_count: mono.len() as u64,
+        channels: src.channels,
+        spectrum: spectrum_descriptor(&result),
+        warnings: Vec::new(),
+    })
+}
+
+/// Decoded audio resolved from a sample id or WAV path, ready for analysis.
+struct ResolvedSampleAudio {
+    name: String,
+    sample_rate: u32,
+    channels: u16,
+    /// Interleaved samples.
+    data: std::sync::Arc<[f32]>,
+}
+
+/// Resolve `sample_id_or_path` to decoded audio. A bare integer that names a
+/// sample in the library is used directly; anything else is decoded from disk
+/// as a WAV.
+fn resolve_sample_source(
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    sample_id_or_path: &str,
+) -> Result<ResolvedSampleAudio, McpBridgeError> {
+    if let Ok(id) = sample_id_or_path.parse::<u64>() {
+        let lib = sample_library
+            .read()
+            .map_err(|_| McpBridgeError::Other("Sample library lock poisoned".to_string()))?;
+        if let Some(sample) = lib.get(synth_sampler::SampleId::new(id)) {
+            return Ok(ResolvedSampleAudio {
+                name: sample.meta.name.clone(),
+                sample_rate: sample.meta.sample_rate.0,
+                channels: sample.meta.channels.count(),
+                data: std::sync::Arc::clone(&sample.data),
+            });
+        }
+    }
+
+    // Not an imported id → decode the path. Keep the source rate (target 0 = no
+    // resample) so the spectrum reflects the file's real frequencies.
+    let path = std::path::Path::new(sample_id_or_path);
+    let sample = synth_sampler::load_wav(path, synth_core::audio::SampleRate(0)).map_err(|e| {
+        McpBridgeError::Other(format!("could not load sample '{sample_id_or_path}': {e}"))
+    })?;
+    Ok(ResolvedSampleAudio {
+        name: sample.meta.name.clone(),
+        sample_rate: sample.meta.sample_rate.0,
+        channels: sample.meta.channels.count(),
+        data: sample.data,
+    })
+}
+
+/// Downmix an interleaved `channels`-channel buffer to mono by averaging each
+/// frame's channels. Mono passes through unchanged.
+fn downmix_interleaved(data: &[f32], channels: u16) -> Vec<f32> {
+    let ch = channels.max(1) as usize;
+    if ch == 1 {
+        return data.to_vec();
+    }
+    data.chunks_exact(ch)
+        .map(|frame| frame.iter().sum::<f32>() / ch as f32)
+        .collect()
 }
 
 #[doc(hidden)]

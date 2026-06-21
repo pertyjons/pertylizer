@@ -37,6 +37,11 @@ const DEFAULT_FFT_SIZE: usize = 8192;
 /// Default number of partials returned.
 const DEFAULT_MAX_PARTIALS: u32 = 48;
 
+/// Upper edge of the fixed log-bin reference band (Hz). Kept sample-rate
+/// independent (and below the 22.05 kHz Nyquist of a 44.1 kHz render) so
+/// `compare`'s broadband distance aligns bins across differing sample rates.
+const LOG_BINS_TOP_HZ: f32 = 20_000.0;
+
 /// Lowest fundamental the pitch tracker will consider (Hz) when no hint is set.
 const F0_SEARCH_MIN_HZ: f32 = 40.0;
 /// Highest fundamental the pitch tracker will consider (Hz) when no hint is set.
@@ -431,14 +436,19 @@ fn odd_even_ratio(peaks: &[Peak], voiced: bool) -> f32 {
     (odd / even.max(total * 1.0e-3)) as f32
 }
 
-/// `n` log-spaced magnitude bins (dB, peak-normalised) from ≈ 20 Hz to Nyquist.
+/// `n` log-spaced magnitude bins (dB, peak-normalised) over a fixed reference
+/// band (≈ 20 Hz … [`LOG_BINS_TOP_HZ`], clamped to Nyquist). The band is
+/// deliberately *not* each spectrum's own Nyquist: a fixed grid keeps bin `i`
+/// covering the same frequency range regardless of sample rate, so
+/// [`compare`]'s `log_spectral_distance` aligns bins across two spectra rendered
+/// or sampled at different rates.
 fn log_spaced_bins(mags: &[f32], bin_hz: f32, n: usize) -> Vec<Decibels> {
     if n == 0 || mags.len() < 2 {
         return Vec::new();
     }
     let nyquist = (mags.len() - 1) as f32 * bin_hz;
     let f_lo = 20.0f32.max(bin_hz);
-    let f_hi = nyquist;
+    let f_hi = nyquist.min(LOG_BINS_TOP_HZ);
     if f_hi <= f_lo {
         return Vec::new();
     }

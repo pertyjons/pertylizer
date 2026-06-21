@@ -1745,6 +1745,21 @@ pub trait SynthBridge: Send + Sync + 'static {
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeSpectrumResult, McpBridgeError>;
 
+    /// Same detailed spectral analysis as `analyze_spectrum`, but over an
+    /// imported sample or a WAV file on disk instead of a render — so a real
+    /// reference recording (e.g. a SID render) can be fingerprinted in identical
+    /// units and compared against a candidate patch.
+    ///
+    /// `sample_id_or_path` is either a numeric imported-sample id or a
+    /// filesystem path to a WAV file.
+    fn analyze_sample_spectrum(
+        &self,
+        sample_id_or_path: String,
+        f0_hint: Option<f32>,
+        max_partials: Option<u32>,
+        log_bins: Option<u32>,
+    ) -> Result<crate::types::AnalyzeSampleSpectrumResult, McpBridgeError>;
+
     /// Incremental per-effect breakdown of the master bus. Renders the chain
     /// input (post-return mix, no master effects) once, then re-renders the
     /// master output with the chain truncated after each effect, so each
