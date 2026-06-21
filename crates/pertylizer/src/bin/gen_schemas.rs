@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// discriminator and parameter keys used in saved `.pertyproj` files.
 fn write_descriptors(out_dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut modules = serde_json::Map::new();
-    for &mt in ALL_MODULE_TYPES {
+    for &mt in ALL_MODULE_TYPES.iter() {
         let Some(desc) = get_descriptor(mt) else {
             continue;
         };

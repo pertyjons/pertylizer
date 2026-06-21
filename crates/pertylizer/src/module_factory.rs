@@ -397,95 +397,24 @@ pub fn get_descriptor(module_type: ModuleType) -> Option<ModuleDescriptor> {
     }
 }
 
-/// All supported module types for listing purposes.
-pub const ALL_MODULE_TYPES: &[ModuleType] = &[
-    // Voice modules
-    ModuleType::Oscillator,
-    ModuleType::MathOscillator,
-    ModuleType::SubOscillator,
-    ModuleType::Noise,
-    ModuleType::Filter,
-    ModuleType::Envelope,
-    ModuleType::Lfo,
-    ModuleType::Amplifier,
-    ModuleType::Mixer,
-    ModuleType::StereoOutput,
-    ModuleType::ModMatrix,
-    ModuleType::RingMod,
-    ModuleType::EnvelopeFollower,
-    ModuleType::WavetableOsc,
-    ModuleType::Mseg,
-    ModuleType::AdditiveOsc,
-    ModuleType::Euclidean,
-    ModuleType::TuringMachine,
-    ModuleType::RandomGates,
-    ModuleType::KeyboardPanner,
-    ModuleType::BodyResonance,
-    ModuleType::MechanicalNoise,
-    ModuleType::GranularOsc,
-    ModuleType::KineticModulator,
-    ModuleType::SignalMonitor,
-    ModuleType::VectorMixer,
-    ModuleType::LaSynth,
-    ModuleType::PitchTracker,
-    ModuleType::FractalOsc,
-    ModuleType::Sampler,
-    ModuleType::AudioInput,
-    // MusicDSP additions
-    ModuleType::LadderFilter,
-    ModuleType::DriftGenerator,
-    ModuleType::ChaoticOsc,
-    ModuleType::FormantFilter,
-    ModuleType::Fooglers,
-    ModuleType::BeatDetector,
-    ModuleType::PadSynth,
-    ModuleType::AmFormant,
-    ModuleType::VoiceSynth,
-    ModuleType::VocalTract,
-    ModuleType::Fof,
-    // Scripting
-    ModuleType::Script,
-    // Effects
-    ModuleType::Delay,
-    ModuleType::Reverb,
-    ModuleType::Distortion,
-    ModuleType::Chorus,
-    ModuleType::Phaser,
-    ModuleType::Flanger,
-    ModuleType::Compressor,
-    ModuleType::Eq,
-    ModuleType::Waveshaper,
-    ModuleType::BbdDelay,
-    ModuleType::MidSide,
-    ModuleType::Limiter,
-    ModuleType::Convolver,
-    ModuleType::PhaseVocoder,
-    ModuleType::FrequencyShifter,
-    ModuleType::EnsembleChorus,
-    ModuleType::ShimmerReverb,
-    ModuleType::GranularFx,
-    ModuleType::SpectralBlur,
-    ModuleType::ModalResonator,
-    ModuleType::ReverseGateReverb,
-    // MusicDSP additions (effects)
-    ModuleType::TiltEq,
-    ModuleType::Univibe,
-    ModuleType::CrossoverSplitter,
-    ModuleType::Vocoder,
-    // Visualizers
-    ModuleType::Oscilloscope,
-    ModuleType::LevelMeter,
-    ModuleType::SpectrumAnalyzer,
-];
+/// All supported module types, for listing / discovery.
+///
+/// Derived directly from the [`ModuleType`] enum via `EnumIter` (in declaration
+/// order), so a newly-added variant is **automatically** discoverable through
+/// MCP (`list_module_types`) and the GUI "Add module" menu — there is no
+/// hand-maintained list that could silently fall out of sync with the enum.
+pub static ALL_MODULE_TYPES: std::sync::LazyLock<Vec<ModuleType>> =
+    std::sync::LazyLock::new(|| ModuleType::all().collect());
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Every module listed in `ALL_MODULE_TYPES` must resolve a descriptor.
-    /// The data-driven "Add module" menu only shows a type when
-    /// `get_descriptor` returns `Some`, so a missing one would be silently
-    /// unreachable in the UI even though it is in the master list.
+    /// Every `ModuleType` must resolve a descriptor. Since `ALL_MODULE_TYPES`
+    /// is now derived from `ModuleType::iter()` (every enum variant), this also
+    /// guards that a newly-added variant is wired into the factory — otherwise
+    /// it would be discoverable via MCP / the "Add module" menu yet fail to
+    /// instantiate.
     #[test]
     fn every_module_type_has_a_descriptor() {
         let missing: Vec<ModuleType> = ALL_MODULE_TYPES

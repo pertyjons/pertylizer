@@ -134,6 +134,7 @@ pub use wavetable::{WavetableParam, WavetableSelect};
     Serialize,
     Deserialize,
     schemars::JsonSchema,
+    strum::EnumIter,
 )]
 #[serde(rename_all = "snake_case")]
 #[schemars(rename_all = "snake_case")]
@@ -234,6 +235,15 @@ pub enum ModuleType {
 }
 
 impl ModuleType {
+    /// Every module type, in declaration order. Self-enumerating via
+    /// `EnumIter`, so module catalogs (MCP discovery, the GUI "Add module"
+    /// menu) are generated from the enum and can never drift from it — a new
+    /// variant is automatically included.
+    pub fn all() -> impl Iterator<Item = Self> {
+        use strum::IntoEnumIterator;
+        Self::iter()
+    }
+
     // ========================================================================
     // MODULE CLASSIFICATION METHODS
     // ========================================================================

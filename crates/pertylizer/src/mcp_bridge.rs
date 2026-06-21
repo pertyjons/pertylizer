@@ -1424,7 +1424,7 @@ impl SynthBridge for AppSynthBridge {
         use crate::module_factory::{ALL_MODULE_TYPES, get_descriptor};
 
         let mut result = Vec::new();
-        for &mt in ALL_MODULE_TYPES {
+        for &mt in ALL_MODULE_TYPES.iter() {
             if let Some(desc) = get_descriptor(mt) {
                 result.push(build_module_type_info(mt, &desc));
             }
@@ -5810,7 +5810,7 @@ impl SynthBridge for AppSynthBridge {
         let query_lower = query.map(|q| q.to_lowercase());
 
         let mut result = Vec::new();
-        for &mt in ALL_MODULE_TYPES {
+        for &mt in ALL_MODULE_TYPES.iter() {
             // Category filter — cheap, no descriptor needed
             if let Some(cat) = category {
                 let mt_cat = if mt.is_voice_module() {
