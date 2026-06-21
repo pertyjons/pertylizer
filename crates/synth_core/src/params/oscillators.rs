@@ -283,6 +283,163 @@ impl MathAlgo {
             })
             .collect()
     }
+
+    /// What the three general-purpose knobs `param_a`/`param_b`/`param_c` (in
+    /// that order) actually control for this algorithm. The math oscillator
+    /// exposes only "Param A/B/C"; this static table is how an MCP agent learns
+    /// what each knob means *before* it builds or edits the patch — e.g. that
+    /// for `sine_fm`, `param_a` is the FM index and `param_b` the ratio.
+    /// Knobs an algorithm ignores are reported as `Unused`.
+    #[must_use]
+    pub fn param_info(&self) -> [AlgoParamInfo; 3] {
+        const fn p(name: &'static str, description: &'static str) -> AlgoParamInfo {
+            AlgoParamInfo { name, description }
+        }
+        const UNUSED: AlgoParamInfo = p("Unused", "Not used by this algorithm.");
+        match self {
+            Self::SineFM => [
+                p("Modulation Index", "FM depth, 0–5×."),
+                p(
+                    "Modulation Ratio",
+                    "Modulator/carrier frequency ratio, 1–8×.",
+                ),
+                UNUSED,
+            ],
+            Self::TanChaos => [
+                p("Drive", "Level of the tangent-shaped signal."),
+                p("Tan Frequency", "Tangent frequency multiplier, 1–4×."),
+                p("Noise Amount", "Amount of added noise mixed in."),
+            ],
+            Self::SuperSaw => [
+                p("Detune Spread", "Detune spread across the stacked saws."),
+                p("Saw Count", "Number of detuned saws, 3–7."),
+                UNUSED,
+            ],
+            Self::BitWise => [
+                p("Shift A", "First bit-shift amount, 1–9."),
+                p(
+                    "Time Scale",
+                    "Phase-counter rate / frequency multiplier, 1–16×.",
+                ),
+                p("Shift B", "Second bit-shift amount, 1–9."),
+            ],
+            Self::WaveFolder => [
+                p(
+                    "Fold Amount",
+                    "Wavefolder drive, 1–9×; more drive adds harmonics.",
+                ),
+                p("Bias", "DC offset into the folder, −1..+1."),
+                UNUSED,
+            ],
+            Self::Formant => [
+                p(
+                    "Formant Frequency",
+                    "Formant peak frequency, 1–21× the base.",
+                ),
+                p(
+                    "Decay Rate",
+                    "Grain decay rate, 1–16; higher is shorter/brighter.",
+                ),
+                UNUSED,
+            ],
+            Self::PhaseDist => [
+                p(
+                    "Distortion Amount",
+                    "Phase-distortion depth, 0.1–1.0 (sine→saw/resonant).",
+                ),
+                UNUSED,
+                UNUSED,
+            ],
+            Self::Metallic => [
+                p("Ratio", "Inharmonic partial ratio, 1–11×."),
+                p("Mix", "Dry/ring-modulated balance, 0–1."),
+                UNUSED,
+            ],
+            Self::Fractal => [
+                p("Harmonics", "Number of fractal harmonics, 3–8."),
+                p("Frequency Base", "Per-harmonic frequency ratio, 2.0–3.5×."),
+                UNUSED,
+            ],
+            Self::Chebyshev => [
+                p(
+                    "Order",
+                    "Chebyshev polynomial order, 2–10 (harmonic number).",
+                ),
+                UNUSED,
+                UNUSED,
+            ],
+            Self::Bytebeat => [
+                p("Shift A", "First bit-shift amount, 1–13."),
+                p("Shift B", "Second bit-shift amount, 1–13."),
+                UNUSED,
+            ],
+            Self::Lorenz => [
+                p("Speed", "Integration speed / chaos rate."),
+                p("Amplitude", "Output scaling of the attractor."),
+                UNUSED,
+            ],
+            Self::KarplusStrong => [
+                p(
+                    "Damping",
+                    "String damping, 0.9–0.99; higher rings longer/brighter.",
+                ),
+                p("Excitation", "Burst-noise amount feeding the string."),
+                UNUSED,
+            ],
+            Self::Walsh => [
+                p("Terms", "Number of Walsh (square-wave basis) terms, 2–8."),
+                p("Amount", "Output level / depth, scaled 0–2×."),
+                UNUSED,
+            ],
+            Self::Logistic => [
+                p(
+                    "Chaos (r)",
+                    "Logistic-map rate r, 3.0–4.0; higher is more chaotic.",
+                ),
+                p("Amplitude", "Output scaling of the map."),
+                UNUSED,
+            ],
+            Self::Pulsar => [
+                p("Duty", "Pulse duty cycle, 0.1–0.5."),
+                p(
+                    "Window Shape",
+                    "Grain window: Hann (low) → Gaussian (high).",
+                ),
+                UNUSED,
+            ],
+            Self::Shepard => [
+                p(
+                    "Sweep Position",
+                    "Position of the endless glide, wrapped to [0,1).",
+                ),
+                p("Envelope Width", "Gaussian register width, 0.15–0.65."),
+                UNUSED,
+            ],
+            Self::FeedbackFM => [
+                p(
+                    "Feedback",
+                    "Self-modulation amount, 0–3×; saw-like then noisy.",
+                ),
+                UNUSED,
+                UNUSED,
+            ],
+            Self::Vosim => [
+                p("Formant Frequency", "Formant multiplier, 1–20× the base."),
+                p("Decay", "Decay per pulse, 0.3–0.99."),
+                p("Pulses", "Number of pulses per period, 1–6."),
+            ],
+        }
+    }
+}
+
+/// Human-readable meaning of one of the math oscillator's general-purpose
+/// `param_a`/`param_b`/`param_c` knobs for a given [`MathAlgo`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlgoParamInfo {
+    /// Short label for the knob (e.g. "Modulation Index").
+    pub name: &'static str,
+    /// One-line description of what the knob does and its range.
+    pub description: &'static str,
 }
 
 // ============================================================================

@@ -91,7 +91,7 @@ pub use modules::{AmplifierParam, LevelMeterParam, MixerParam, OscilloscopeParam
 pub use mseg::MsegParam;
 pub use noise::{NoiseParam, NoiseType};
 pub use oscillators::{
-    AntiAliasMode, FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform,
+    AlgoParamInfo, AntiAliasMode, FmMode, MathAlgo, MathOscillatorParam, OscillatorParam, Waveform,
 };
 pub use padsynth::PadSynthParam;
 pub use phase_vocoder::{FftSizeOption, PhaseVocoderParam};

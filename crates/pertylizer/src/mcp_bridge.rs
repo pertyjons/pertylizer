@@ -12251,7 +12251,32 @@ fn build_module_type_info(
         output_ports,
         parameters,
         signal_flow_hint: signal_flow_hint(&desc.category),
+        algorithm_parameters: algorithm_parameters_json(mt),
     }
+}
+
+/// Static per-algorithm documentation of the math oscillator's generic
+/// `param_a`/`param_b`/`param_c` knobs, as JSON keyed by algorithm id. `None`
+/// for every module type whose knobs don't change role with an algorithm.
+fn algorithm_parameters_json(mt: synth_core::ModuleType) -> Option<serde_json::Value> {
+    use serde_json::{Map, Value, json};
+    use synth_core::MathAlgo;
+
+    if mt != synth_core::ModuleType::MathOscillator {
+        return None;
+    }
+
+    let mut table = Map::new();
+    for algo in MathAlgo::ALL {
+        let [a, b, c] = algo.param_info();
+        let entry = json!({
+            "param_a": { "name": a.name, "description": a.description },
+            "param_b": { "name": b.name, "description": b.description },
+            "param_c": { "name": c.name, "description": c.description },
+        });
+        table.insert(algo.id().to_string(), entry);
+    }
+    Some(Value::Object(table))
 }
 
 /// Convert a `PortType` to its string name.

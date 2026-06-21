@@ -425,6 +425,12 @@ pub struct ModuleTypeInfo {
     /// Typical signal flow hint (e.g. "osc → filter → amp → out").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signal_flow_hint: Option<String>,
+    /// Per-algorithm meaning of generic `param_a`/`param_b`/`param_c` knobs.
+    /// Only set for modules whose knobs change role with a selected algorithm
+    /// (the math oscillator); absent for every other module type. Shape:
+    /// `{ "<algorithm_id>": { "param_a": { "name", "description" }, ... } }`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub algorithm_parameters: Option<serde_json::Value>,
 }
 
 /// Result of a `search_modules` text/filter query.
