@@ -6491,10 +6491,11 @@ fn draw_slot_expression_editor(
     egui::Window::new(format!("Slot {} - Expression", editor.slot + 1))
         .id(egui::Id::new(("mm_expr_editor", state.id, editor.slot)))
         .collapsible(false)
-        .resizable(true)
+        // Height is locked (vertical resize off) so the window can't grow when the
+        // feedback-loop warning toggles; width stays resizable for long lines.
+        .resizable(egui::Vec2b::new(true, false))
         .default_size(egui::vec2(520.0, 340.0))
         .min_width(320.0)
-        .min_height(200.0)
         .open(&mut keep_open)
         .show(&ctx, |ui| {
             ui.horizontal(|ui| {
@@ -6519,34 +6520,31 @@ fn draw_slot_expression_editor(
                     }
                 });
             });
-            // The editor fills the window: it takes the full width and all the
-            // height left after reserving room for the status line + button row,
-            // so dragging the window corner grows the text area. Long scripts
-            // scroll within the code editor.
-            let reserved = 52.0;
+            // The editor fills the window: full width, and the height left after
+            // reserving room for the status line, the feedback-loop warning, and
+            // the button row. The warning's height is reserved **whether or not it
+            // shows**, so toggling it never changes the window height — otherwise
+            // the editor (sized from the remaining height) and egui's auto-growing
+            // window would feed back and the window would grow every frame.
+            let reserved = 76.0;
             let editor_height = (ui.available_height() - reserved).max(80.0);
-            // Stable id so the "Select input" picker can move the caret after
-            // splicing text in. `.show()` (not `add_sized`) is used to read back
-            // the cursor position; `desired_rows` sizes it to fill the window.
+            // `add_sized` clamps the editor to that fixed height (long scripts
+            // scroll inside it), so the text area can't grow the window. The stable
+            // id lets the "Select input" picker move the caret, read back below.
             let te_id = egui::Id::new(("mm_expr_text", module_id, editor.slot));
-            let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
-            let rows = (editor_height / row_h).floor().max(4.0) as usize;
-            let te_output = egui::TextEdit::multiline(&mut editor.draft)
-                .id(te_id)
-                .code_editor()
-                .desired_width(f32::INFINITY)
-                .desired_rows(rows)
-                .show(ui);
-            // `cursor_range` is only populated while the text edit has focus, but
-            // opening the "Select input" menu moves focus to the popup — so fall
-            // back to the caret stored in the text edit's own state, otherwise
-            // every pick would append at the end instead of at the user's caret.
-            let cursor_char = te_output
-                .cursor_range
-                .or_else(|| {
-                    egui::text_edit::TextEditState::load(ui.ctx(), te_id)
-                        .and_then(|st| st.cursor.char_range())
-                })
+            ui.add_sized(
+                egui::vec2(ui.available_width(), editor_height),
+                egui::TextEdit::multiline(&mut editor.draft)
+                    .id(te_id)
+                    .code_editor()
+                    .desired_rows(4),
+            );
+            // Read the caret from the text edit's stored state: its live
+            // `cursor_range` is only populated while focused, but opening the
+            // "Select input" menu moves focus to the popup — so without this the
+            // picker would append at the end instead of at the user's caret.
+            let cursor_char = egui::text_edit::TextEditState::load(ui.ctx(), te_id)
+                .and_then(|st| st.cursor.char_range())
                 .map(|r| r.primary.index);
 
             // Live compile → status line (mirrors `session.set_mod_script`).
