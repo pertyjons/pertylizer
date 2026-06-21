@@ -102,6 +102,21 @@ impl CompiledScript {
                 Op::PushConst(i) => {
                     stack.push(self.constants.get(i as usize).copied().unwrap_or(0.0))
                 }
+                Op::IndexConst { base, len } => {
+                    let raw = stack.pop().floor();
+                    // Clamp into 0..len-1 without f32::clamp (which panics on a
+                    // NaN bound) — NaN/negative → 0, too-large → len-1.
+                    let max = len.saturating_sub(1);
+                    let idx = if raw >= f32::from(max) {
+                        max
+                    } else if raw >= 0.0 {
+                        raw as u16
+                    } else {
+                        0
+                    };
+                    let at = base.saturating_add(idx) as usize;
+                    stack.push(self.constants.get(at).copied().unwrap_or(0.0));
+                }
                 Op::PushSource(i) => stack.push(sources.get(i as usize).copied().unwrap_or(0.0)),
                 Op::LoadLocal(i) => stack.push(locals.get(i as usize).copied().unwrap_or(0.0)),
                 Op::StoreLocal(i) => {
@@ -389,6 +404,40 @@ mod tests {
         assert!(approx(script.eval(&[5.0, 1.0], &mut regs, &ctx), 5.0));
         // trig still high, source changed → held value persists (no new edge).
         assert!(approx(script.eval(&[9.0, 1.0], &mut regs, &ctx), 5.0));
+    }
+
+    #[test]
+    fn index_const_reads_table_and_clamps() {
+        // Table [10, 20, 30] baked at base 0; index from source[0].
+        let consts = vec![10.0, 20.0, 30.0];
+        let code = [Op::PushSource(0), Op::IndexConst { base: 0, len: 3 }];
+        let run_idx = |i: f32| {
+            let script = CompiledScript::new(code.to_vec(), consts.clone(), 1, 0);
+            let mut regs = RegisterFile::new(0, SEED);
+            script.eval(&[i], &mut regs, &EvalContext::new(SR))
+        };
+        assert!(approx(run_idx(0.0), 10.0));
+        assert!(approx(run_idx(1.9), 20.0)); // floor → 1
+        assert!(approx(run_idx(2.0), 30.0));
+        assert!(approx(run_idx(5.0), 30.0)); // clamp high
+        assert!(approx(run_idx(-1.0), 10.0)); // clamp low
+        assert!(approx(run_idx(f32::NAN), 10.0)); // NaN → 0
+    }
+
+    #[test]
+    fn index_const_with_base_offset() {
+        // A second table living at base 2 inside the shared pool.
+        let consts = vec![0.0, 0.0, 7.0, 8.0];
+        let code = [
+            Op::PushConst(0), /* push 0.0 as index */
+            Op::IndexConst { base: 2, len: 2 },
+        ];
+        let script = CompiledScript::new(code.to_vec(), consts, 0, 0);
+        let mut regs = RegisterFile::new(0, SEED);
+        assert!(approx(
+            script.eval(&[], &mut regs, &EvalContext::new(SR)),
+            7.0
+        ));
     }
 
     #[test]

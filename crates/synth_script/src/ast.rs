@@ -9,12 +9,14 @@
 pub use crate::lexer::DurationUnit;
 use crate::span::Span;
 
-/// A whole YAMS program: zero or more `src` bindings, zero or more `let`
-/// locals, and a single `out`. `output` is `None` when the source had no
-/// (valid) `out` statement — a diagnostic was emitted in that case.
+/// A whole YAMS program: zero or more `src` bindings, zero or more `arr`
+/// const-table declarations, zero or more `let` locals, and a single `out`.
+/// `output` is `None` when the source had no (valid) `out` statement — a
+/// diagnostic was emitted in that case.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub bindings: Vec<Binding>,
+    pub arrays: Vec<ArrayDecl>,
     pub locals: Vec<Local>,
     pub output: Option<Output>,
 }
@@ -41,6 +43,17 @@ pub struct ModuleRef {
     pub module: String,
     pub instance: Option<u32>,
     pub member: String,
+    pub span: Span,
+}
+
+/// `arr <name> = [ <expr>, … ]` — a read-only, compile-time-constant lookup
+/// table. Each element must const-fold to an `f32`; the table is not a value (it
+/// can only be indexed with `name[expr]` or measured with `len(name)`), so the
+/// single-`f32` type system is preserved.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayDecl {
+    pub name: Ident,
+    pub elements: Vec<Expr>,
     pub span: Span,
 }
 
@@ -122,6 +135,13 @@ pub enum Expr {
         args: Vec<Expr>,
         span: Span,
     },
+    /// `name[index]` — index a const lookup table declared with `arr`. `name` is
+    /// resolved to an array (not a scalar) by the compiler; the result is `f32`.
+    Index {
+        name: String,
+        index: Box<Expr>,
+        span: Span,
+    },
     /// Parse-error placeholder.
     Error { span: Span },
 }
@@ -137,6 +157,7 @@ impl Expr {
             | Self::Binary { span, .. }
             | Self::Ternary { span, .. }
             | Self::Call { span, .. }
+            | Self::Index { span, .. }
             | Self::Error { span } => *span,
         }
     }

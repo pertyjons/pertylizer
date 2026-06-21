@@ -8,7 +8,9 @@
 //!   `a == b == c` are errors, not silent `(a < b) < c`.
 //! - Operator precedence matches the grammar's ten-level ladder.
 
-use crate::ast::{BinaryOp, Binding, Expr, Ident, Local, ModuleRef, Output, Program, UnaryOp};
+use crate::ast::{
+    ArrayDecl, BinaryOp, Binding, Expr, Ident, Local, ModuleRef, Output, Program, UnaryOp,
+};
 use crate::diag::Diagnostic;
 use crate::lexer::{Token, TokenKind, lex};
 use crate::span::Span;
@@ -134,7 +136,7 @@ impl Parser {
 
     fn program(&mut self) -> Program {
         self.skip_seps();
-        let bindings = self.parse_bindings();
+        let (bindings, arrays) = self.parse_header();
         let (locals, output) = self.parse_body();
         self.skip_seps();
         if !self.is_eof() {
@@ -145,20 +147,70 @@ impl Parser {
         }
         Program {
             bindings,
+            arrays,
             locals,
             output,
         }
     }
 
-    fn parse_bindings(&mut self) -> Vec<Binding> {
+    /// Parse the header section: `src` bindings and `arr` const-table
+    /// declarations, in any order, until the body (`let`/`out`) begins.
+    fn parse_header(&mut self) -> (Vec<Binding>, Vec<ArrayDecl>) {
         let mut bindings = Vec::new();
-        while matches!(self.cur_kind(), TokenKind::Src) {
-            match self.parse_binding() {
-                Some(b) => bindings.push(b),
-                None => self.recover_to_sep(),
+        let mut arrays = Vec::new();
+        loop {
+            match self.cur_kind() {
+                TokenKind::Src => match self.parse_binding() {
+                    Some(b) => bindings.push(b),
+                    None => self.recover_to_sep(),
+                },
+                TokenKind::Arr => match self.parse_array_decl() {
+                    Some(a) => arrays.push(a),
+                    None => self.recover_to_sep(),
+                },
+                _ => break,
             }
         }
-        bindings
+        (bindings, arrays)
+    }
+
+    fn parse_array_decl(&mut self) -> Option<ArrayDecl> {
+        let start = self.cur_span();
+        self.advance(); // `arr`
+        let Some(name) = self.eat_ident() else {
+            self.error_here("expected an array name after 'arr'");
+            return None;
+        };
+        if !self.eat(&TokenKind::Eq) {
+            self.error_here("expected '=' in arr declaration");
+            return None;
+        }
+        if !self.eat(&TokenKind::LBracket) {
+            self.error_here("expected '[' to begin the array elements");
+            return None;
+        }
+        let mut elements = Vec::new();
+        if !self.is(&TokenKind::RBracket) {
+            loop {
+                elements.push(self.expr());
+                if self.eat(&TokenKind::Comma) {
+                    continue;
+                }
+                break;
+            }
+        }
+        let end = self.cur_span();
+        if !self.eat(&TokenKind::RBracket) {
+            self.error_here("expected ',' or ']' in array elements");
+            return None;
+        }
+        let span = start.to(end);
+        self.expect_terminator();
+        Some(ArrayDecl {
+            name,
+            elements,
+            span,
+        })
     }
 
     fn parse_binding(&mut self) -> Option<Binding> {
@@ -454,6 +506,17 @@ impl Parser {
                         args,
                         span: span.to(end),
                     }
+                } else if self.eat(&TokenKind::LBracket) {
+                    let index = self.expr();
+                    let end = self.cur_span();
+                    if !self.eat(&TokenKind::RBracket) {
+                        self.error_here("expected ']' to close the index");
+                    }
+                    Expr::Index {
+                        name,
+                        index: Box::new(index),
+                        span: span.to(end),
+                    }
                 } else {
                     Expr::Var { name, span }
                 }
@@ -701,6 +764,54 @@ mod tests {
         assert_eq!(program.bindings.len(), 1);
         assert_eq!(program.bindings[0].alias.name, "b");
         assert!(program.output.is_some());
+    }
+
+    #[test]
+    fn array_decl_parses() {
+        let p = parse_ok("arr seq = [0, 0.5, 1, -0.3]\nout = seq[0]");
+        assert_eq!(p.arrays.len(), 1);
+        assert_eq!(p.arrays[0].name.name, "seq");
+        assert_eq!(p.arrays[0].elements.len(), 4);
+        let Expr::Index { name, .. } = out_expr(&p) else {
+            panic!("expected index");
+        };
+        assert_eq!(name, "seq");
+    }
+
+    #[test]
+    fn empty_array_decl_parses() {
+        // Emptiness is a compile-time error, not a parse error.
+        let p = parse_ok("arr e = []\nout = 0");
+        assert!(p.arrays[0].elements.is_empty());
+    }
+
+    #[test]
+    fn index_with_complex_expression() {
+        let p = parse_ok("arr s = [1, 2]\nout = s[floor(beat) % 2]");
+        let Expr::Index { name, index, .. } = out_expr(&p) else {
+            panic!("expected index");
+        };
+        assert_eq!(name, "s");
+        assert!(matches!(
+            **index,
+            Expr::Binary {
+                op: BinaryOp::Rem,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn header_mixes_src_and_arr() {
+        let p = parse_ok("src lfo = lfo-1.out\narr s = [1, 2]\nout = lfo + s[0]");
+        assert_eq!(p.bindings.len(), 1);
+        assert_eq!(p.arrays.len(), 1);
+    }
+
+    #[test]
+    fn unterminated_array_is_an_error() {
+        let errs = errors("arr s = [1, 2\nout = 0");
+        assert!(!errs.is_empty(), "got: {errs:?}");
     }
 
     #[test]

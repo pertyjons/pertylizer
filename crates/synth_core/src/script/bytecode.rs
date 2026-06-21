@@ -24,6 +24,10 @@ pub const MAX_STACK: usize = 64;
 pub const MAX_NESTING_DEPTH: usize = 32;
 /// Maximum source-text length in bytes.
 pub const MAX_SOURCE_LEN: usize = 4096;
+/// Maximum number of `arr` const-table declarations in one script.
+pub const MAX_ARRAYS: usize = 16;
+/// Maximum total element storage across all `arr` declarations (f32 slots).
+pub const MAX_ARRAY_STORAGE: usize = 256;
 
 /// A built-in stateless function. Arity is fixed per function; the evaluator
 /// pops that many operands (last argument on top) and pushes one result.
@@ -184,6 +188,15 @@ pub fn safe_clamp(v: f32, lo: f32, hi: f32) -> f32 {
 pub enum Op {
     /// Push `constants[idx]`.
     PushConst(u16),
+    /// Index a const lookup table baked into the constant pool. Pop the index
+    /// `i`, push `constants[base + clamp(floor(i), 0, len-1)]`. The bounds clamp
+    /// makes an out-of-range index safe (no panic); wrap with `% len` for
+    /// sequencer semantics. `len` is always ≥ 1 (empty tables are rejected at
+    /// compile time).
+    IndexConst {
+        base: u16,
+        len: u16,
+    },
     /// Push the voice-provided source value `sources[idx]`.
     PushSource(u16),
     /// Push the transient local slot `locals[idx]`.

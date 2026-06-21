@@ -12,6 +12,7 @@ fn fill(inp: &SourceInput) -> f32 {
         SourceInput::Macro(Macro::ModWheel) => 0.5,
         SourceInput::Macro(_) => 0.0,
         SourceInput::Context(Context::Sr) => 750.0,
+        SourceInput::Context(Context::Beat) => 2.0,
         SourceInput::Context(_) => 0.0,
         SourceInput::Module { module, member, .. } if module == "lfo" && member == "out" => 1.0,
         SourceInput::Module { .. } => 0.0,
@@ -85,6 +86,8 @@ fn main() {
     show_valid("let depth = lerp(0.2, 1.0, velocity)\nout = clamp(depth, 0, 1)");
     // messy input → canonical formatting (and note: 1 + 2 * 3 is NOT folded by fmt)
     show_valid("src   lfo=lfo-1.out\nout=lfo*0.45+velocity*0.6   # wobble");
+    // arrays: a per-beat step sequencer indexing a const table (beat = 2 → step 2)
+    show_valid("arr steps = [0.2, 0.5, 0.8, 0.4]\nout = steps[floor(beat) % len(steps)]");
 
     println!("=================  STATEFUL (lag over 6 blocks)  =================\n");
     {
@@ -111,4 +114,6 @@ fn main() {
     show_errors("src lfo = lfo-1.out");
     show_errors("src velocity = lfo-1.out\nout = 0");
     show_errors("out = 1 +");
+    show_errors("arr s = [1, 2]\nout = s + 1");
+    show_errors("arr empty = []\nout = 0");
 }

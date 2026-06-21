@@ -210,7 +210,7 @@ pub fn resolve_fn(name: &str) -> Option<FnSpec> {
 /// keyword — i.e. cannot be bound by `src`/`let` (decision #5).
 #[must_use]
 pub fn is_reserved(name: &str) -> bool {
-    matches!(name, "src" | "let" | "out")
+    matches!(name, "src" | "let" | "out" | "arr" | "len")
         || resolve_fn(name).is_some()
         || macro_from_name(name).is_some()
         || context_from_name(name).is_some()

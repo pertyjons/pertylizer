@@ -33,8 +33,8 @@ out = vib * lerp(0.05, 0.4, mod_wheel)   # body: compute the offset
 
 Every program has two parts:
 
-1. **Header** — zero or more `src` bindings, each aliasing a module address to
-   an identifier.
+1. **Header** — zero or more `src` bindings (each aliasing a module address to
+   an identifier) and zero or more `arr` const-table declarations, in any order.
 2. **Body** — zero or more `let` locals, then **exactly one** `out = …`.
 
 The header and body are separated by a blank line in canonical form.
@@ -74,6 +74,46 @@ module_id  = name [ "-" instance ]      # instance defaults to 1 if omitted
 > **Dangling sources are kept, not errored.** If a bound module is deleted or
 > renamed, its register simply reads `0` — the routing stays installed and inert
 > rather than being thrown away.
+
+### Arrays — const lookup tables
+
+An `arr` declaration in the header defines a **read-only, compile-time-constant**
+lookup table. The headline use is a per-parameter step sequencer on top of the
+`beat` transport var:
+
+```yams
+arr seq = [0, 0.5, 1, 0.25, 0, 0.75, 0.5, 0]
+
+out = seq[floor(beat) % 8]      # one step per beat, wrapping every 8
+```
+
+or a custom LFO / transfer shape indexed by a phasor:
+
+```yams
+arr shape = [0, 0.3, 0.8, 1, 0.8, 0.3, 0, -0.3]
+
+out = shape[floor(phasor(2) * len(shape))]
+```
+
+Rules that keep arrays cheap and RT-safe:
+
+- **An array is not a value.** It can only be *indexed* (`name[expr]`) or
+  *measured* (`len(name)`); it cannot be assigned to a `let`, passed around, or
+  used in arithmetic. "Everything is `f32`" still holds — `name[expr]` is an
+  `f32`. (`out = seq + 1` is a compile error: "arrays cannot be used directly".)
+- **Elements are constants.** Each element must fold at compile time — literals,
+  negatives, `pi`, and constant arithmetic (`[-0.3, 1 + 1, pi]`) are all fine; a
+  source or macro is not.
+- **The index is floored, then clamped.** `name[i]` reads element
+  `clamp(floor(i), 0, len-1)`. Flooring gives equal-width steps (the correct rule
+  for a sequencer); the clamp makes an out-of-range index safe. For sequencer
+  *wrap*, write it explicitly: `seq[floor(beat) % len(seq)]`.
+- **`len(name)`** folds to the element count at compile time, so
+  `i % len(seq)` costs nothing extra.
+
+Caps: at most 16 arrays, and at most 256 elements total across all of them.
+Exceeding either is a compile error (never a silent truncation). An empty array
+(`[]`) is also an error.
 
 ---
 
@@ -201,9 +241,11 @@ they carry per-voice state.
 | Interp    | `lerp(a,b,t)` · `mix(a,b,t)` *(alias of `lerp`)* · `smoothstep(a,b,x)` |
 | Curves    | `sigmoid(x)` · `gauss(x)` |
 | Musical   | `semis(x)` → `2^(x/12)` ratio · `mtof(x)` → Hz, keyboard-tracking |
+| Arrays    | `name[i]` index a const table (floor + clamp) · `len(name)` → element count (folds at compile time) |
 
 `sqrt`/`log` of non-positive inputs and `x/0` are clamped (NaN-free), so dead
-branches can't poison state.
+branches can't poison state. Array indexing and `len` operate on `arr` tables
+declared in the header — see [Arrays](#arrays--const-lookup-tables).
 
 ### Stateful — carry a per-voice register
 
@@ -381,6 +423,7 @@ it compiles):
 
 - 256 instructions, 64 registers (≤32 sources, ≤16 state, ≤16 scratch)
 - 32 source bindings, 32 nesting depth, 4 KiB source text
+- 16 arrays, 256 array elements total (across all `arr` declarations)
 
 Diagnostics carry text spans and **all** errors are reported in one pass (better
 for the editor and for tooling). Distinctions:

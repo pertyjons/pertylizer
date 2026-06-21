@@ -13,8 +13,9 @@ pub mod host;
 
 pub use bound::{BoundScript, ScriptContext, ScriptInput};
 pub use bytecode::{
-    Builtin, CompiledScript, MAX_INSTRUCTIONS, MAX_LOCALS, MAX_NESTING_DEPTH, MAX_SOURCE_LEN,
-    MAX_SOURCES, MAX_STACK, MAX_STATE, Op, finite_or_zero, safe_clamp, safe_div,
+    Builtin, CompiledScript, MAX_ARRAY_STORAGE, MAX_ARRAYS, MAX_INSTRUCTIONS, MAX_LOCALS,
+    MAX_NESTING_DEPTH, MAX_SOURCE_LEN, MAX_SOURCES, MAX_STACK, MAX_STATE, Op, finite_or_zero,
+    safe_clamp, safe_div,
 };
 pub use eval::{EvalContext, RegisterFile};
 pub use host::{SCRIPT_HOST_SLOTS, SCRIPT_PRNG_SEED, ScriptHost};

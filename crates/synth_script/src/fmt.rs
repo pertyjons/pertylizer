@@ -11,6 +11,10 @@
 //! statement is set off by a blank line whenever any code precedes it, so the end
 //! of the program is visually clear (a lone `out` gets none).
 //!
+//! Header statements (`src` bindings and `arr` const tables) are emitted in
+//! source order — they are not reordered relative to each other — so per-line
+//! comment attachment stays sound when the two kinds are interleaved.
+//!
 //! `format` is idempotent: `format(format(x)) == format(x)`.
 //!
 //! **v1 limitations** (follow-ups, not silent): long statements are **not**
@@ -131,6 +135,22 @@ fn render(program: &Program, comments: &[Comment], lines: &LineMap) -> String {
             text: format!("src {} = {}", b.alias.name, render_address(&b.address)),
         });
     }
+    for a in &program.arrays {
+        let elems: Vec<String> = a.elements.iter().map(render_expr).collect();
+        stmts.push(Stmt::Binding {
+            sline: lines.line_of(a.span.start),
+            eline: lines.line_of(a.span.end),
+            text: format!("arr {} = [{}]", a.name.name, elems.join(", ")),
+        });
+    }
+    // `src` and `arr` are separate AST lists but share the header block; emit them
+    // in source order so the comment-attachment loop below (which walks the
+    // line-sorted comments with a single forward cursor) keeps seeing
+    // monotonically non-decreasing `sline` values. Without this an `arr` declared
+    // above a `src` would reorder them and misattach their comments.
+    stmts.sort_by_key(|s| match s {
+        Stmt::Binding { sline, .. } | Stmt::Body { sline, .. } => *sline,
+    });
     let body_start = stmts.len();
     for l in &program.locals {
         stmts.push(Stmt::Body {
@@ -211,6 +231,7 @@ fn render_expr(e: &Expr) -> String {
             let rendered: Vec<String> = args.iter().map(render_expr).collect();
             format!("{name}({})", rendered.join(", "))
         }
+        Expr::Index { name, index, .. } => format!("{name}[{}]", render_expr(index)),
         Expr::Unary { op, rhs, .. } => {
             let sym = match op {
                 UnaryOp::Neg => "-",
@@ -264,7 +285,11 @@ fn prec(e: &Expr) -> u8 {
             BinaryOp::Pow => 9,
         },
         Expr::Unary { .. } => 8,
-        Expr::Number { .. } | Expr::Var { .. } | Expr::Call { .. } | Expr::Error { .. } => 10,
+        Expr::Number { .. }
+        | Expr::Var { .. }
+        | Expr::Call { .. }
+        | Expr::Index { .. }
+        | Expr::Error { .. } => 10,
     }
 }
 
@@ -432,6 +457,41 @@ mod tests {
         );
         idempotent("out = velocity > 0.8 ? lfo : lfo * 0.2");
         idempotent("out = -a ^ 2 + (b - c) * d");
+    }
+
+    #[test]
+    fn array_decl_and_index_format() {
+        assert_eq!(
+            fmt("arr seq=[0,0.5,1.0,-0.3]\nout=seq[floor(beat)%4]"),
+            "arr seq = [0, 0.5, 1, -0.3]\n\nout = seq[floor(beat) % 4]\n"
+        );
+    }
+
+    #[test]
+    fn array_header_mixes_with_src() {
+        // Header statements keep source order (here `arr` precedes `src`).
+        assert_eq!(
+            fmt("arr s=[1,2]\nsrc lfo=lfo-1.out\nout=lfo+s[0]"),
+            "arr s = [1, 2]\nsrc lfo = lfo-1.out\n\nout = lfo + s[0]\n"
+        );
+    }
+
+    #[test]
+    fn array_format_is_idempotent() {
+        idempotent("arr s = [0, 0.5, 1, -0.3]\nout = s[floor(beat) % len(s)]");
+    }
+
+    #[test]
+    fn header_keeps_source_order_so_comments_stay_attached() {
+        // `arr` before `src` in source must NOT be reordered, or the per-line
+        // comment attachment would relocate these comments to the wrong owners.
+        let out = fmt(
+            "# arr doc\narr a = [1, 2]  # arr trail\n# src doc\nsrc lfo = lfo-1.out  # src trail\nout = lfo + a[0]",
+        );
+        assert_eq!(
+            out,
+            "# arr doc\n\narr a = [1, 2]  # arr trail\n# src doc\n\nsrc lfo = lfo-1.out  # src trail\n\nout = lfo + a[0]\n"
+        );
     }
 
     #[test]

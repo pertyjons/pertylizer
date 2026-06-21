@@ -214,7 +214,7 @@
               "slot_8_enabled": 1.0,
               "slot_8_source": "none",
               "slot_9_amount": 0.0,
-              "slot_9_dest": "none",
+              "slot_9_dest": "flt-1.cutoff",
               "slot_9_enabled": 1.0,
               "slot_9_source": "none"
             },
@@ -226,7 +226,8 @@
               "5": "# Slow auto-pan that widens as the note ages (smoothstep ramps it in over 1.5 s).\n\nout = sin(phasor(0.3) * tau) * smoothstep(0, 1.5, age) * 0.7\n",
               "6": "# Sample & hold: grab a new random value 4x/sec (clocked by a sine zero-crossing)\n# and use it to jump the main LFO's rate around in steps.\n\nout = sah(white(), sin(phasor(4) * tau)) * 0.3\n",
               "7": "# Slew limiter on the LFO: slow rise (2/s), fast fall (8/s) makes an asymmetric\n# ramp that animates the filter drive.\n\nsrc lfo = lfo-1.out\n\nout = slew(lfo, 2, 8) * 0.4\n",
-              "8": "# White noise on the oscillator level - a subtle amplitude shimmer / analog instability.\n\nout = white() * 0.08\n"
+              "8": "# White noise on the oscillator level - a subtle amplitude shimmer / analog instability.\n\nout = white() * 0.08\n",
+              "9": "# Array step sequencer: an 8-step cutoff pattern that advances one step per beat\n# (arrays + the transport `beat` var). Wrap with `% len(steps)` so it loops.\n\narr steps = [0.2, 0.5, 0.8, 0.4, 1, 0.3, 0.6, 0.15]\n\nout = steps[floor(beat) % len(steps)] * 0.5\n"
             }
           }
         ],

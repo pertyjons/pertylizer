@@ -23,6 +23,7 @@ pub enum TokenKind {
     Src,
     Let,
     Out,
+    Arr,
     // Identifier (not a keyword).
     Ident(String),
     /// Numeric literal. `unit` is set for durations; `is_int` is true for a
@@ -56,6 +57,8 @@ pub enum TokenKind {
     RParen,
     Comma,
     Dot,
+    LBracket,
+    RBracket,
     /// A run of newlines and/or semicolons (the `separator` production), with
     /// interleaved inline whitespace/comments folded in.
     Sep,
@@ -75,6 +78,7 @@ impl TokenKind {
             Self::Src => Some("src"),
             Self::Let => Some("let"),
             Self::Out => Some("out"),
+            Self::Arr => Some("arr"),
             _ => None,
         }
     }
@@ -170,6 +174,7 @@ impl Lexer<'_> {
             "src" => TokenKind::Src,
             "let" => TokenKind::Let,
             "out" => TokenKind::Out,
+            "arr" => TokenKind::Arr,
             _ => TokenKind::Ident(text.to_string()),
         };
         self.push(kind, start, self.pos);
@@ -288,6 +293,8 @@ impl Lexer<'_> {
             b')' => Some(TokenKind::RParen),
             b',' => Some(TokenKind::Comma),
             b'.' => Some(TokenKind::Dot),
+            b'[' => Some(TokenKind::LBracket),
+            b']' => Some(TokenKind::RBracket),
             _ => None,
         };
         if let Some(kind) = single {
@@ -431,6 +438,34 @@ mod tests {
             vec![
                 num(2.0, None, true),
                 TokenKind::Ident("exp".to_string()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn array_decl_and_index_tokens() {
+        assert_eq!(
+            kinds("arr seq = [0, 0.5]"),
+            vec![
+                TokenKind::Arr,
+                TokenKind::Ident("seq".to_string()),
+                TokenKind::Eq,
+                TokenKind::LBracket,
+                num(0.0, None, true),
+                TokenKind::Comma,
+                num(0.5, None, false),
+                TokenKind::RBracket,
+                TokenKind::Eof,
+            ]
+        );
+        assert_eq!(
+            kinds("seq[i]"),
+            vec![
+                TokenKind::Ident("seq".to_string()),
+                TokenKind::LBracket,
+                TokenKind::Ident("i".to_string()),
+                TokenKind::RBracket,
                 TokenKind::Eof,
             ]
         );

@@ -8,7 +8,7 @@
 //! and the hard caps (decision #8). All errors are collected; any error → no
 //! program.
 
-use crate::ast::{BinaryOp, Binding, Expr, Local, Program, UnaryOp};
+use crate::ast::{ArrayDecl, BinaryOp, Binding, Expr, Local, Program, UnaryOp};
 use crate::diag::Diagnostic;
 use crate::lexer::DurationUnit;
 use crate::parser::parse;
@@ -18,8 +18,9 @@ use crate::symbols::{
     resolve_fn,
 };
 use synth_core::script::{
-    BoundScript, Builtin, CompiledScript, MAX_INSTRUCTIONS, MAX_LOCALS, MAX_NESTING_DEPTH,
-    MAX_SOURCE_LEN, MAX_SOURCES, MAX_STATE, Op, ScriptContext, ScriptInput, safe_div,
+    BoundScript, Builtin, CompiledScript, MAX_ARRAY_STORAGE, MAX_ARRAYS, MAX_INSTRUCTIONS,
+    MAX_LOCALS, MAX_NESTING_DEPTH, MAX_SOURCE_LEN, MAX_SOURCES, MAX_STATE, Op, ScriptContext,
+    ScriptInput, safe_div,
 };
 use synth_core::{MacroSource, SrcAddr};
 
@@ -128,6 +129,8 @@ pub fn compile(src: &str, opts: &CompileOptions) -> (Option<CompiledProgram>, Ve
         constants: Vec::new(),
         inputs: Vec::new(),
         bindings: Vec::new(),
+        arrays: Vec::new(),
+        array_storage: 0,
         locals: Vec::new(),
         next_state: 0,
         depth_error: false,
@@ -153,12 +156,22 @@ struct BindingEntry {
     member: String,
 }
 
+/// A registered `arr` table: its name and where its elements live in the shared
+/// constant pool (`constants[base..base+len]`).
+struct ArrayEntry {
+    name: String,
+    base: u16,
+    len: u16,
+}
+
 struct Compiler {
     control_rate: f32,
     code: Vec<Op>,
     constants: Vec<f32>,
     inputs: Vec<SourceInput>,
     bindings: Vec<BindingEntry>,
+    arrays: Vec<ArrayEntry>,
+    array_storage: usize,
     locals: Vec<String>,
     next_state: u16,
     depth_error: bool,
@@ -173,6 +186,12 @@ impl Compiler {
     fn run(&mut self, program: &Program) -> Option<CompiledProgram> {
         for b in &program.bindings {
             self.register_binding(b);
+        }
+        // Arrays are baked into the constant pool *first* so each table occupies
+        // a contiguous, never-deduplicated `constants[base..base+len]` slice that
+        // `IndexConst` reads directly. Any later `emit_const` appends after them.
+        for a in &program.arrays {
+            self.register_array(a);
         }
         for l in &program.locals {
             self.compile_local(l);
@@ -210,7 +229,9 @@ impl Compiler {
     // ---- statements -------------------------------------------------------
 
     fn name_taken(&self, name: &str) -> bool {
-        self.bindings.iter().any(|b| b.alias == name) || self.locals.iter().any(|l| l == name)
+        self.bindings.iter().any(|b| b.alias == name)
+            || self.arrays.iter().any(|a| a.name == name)
+            || self.locals.iter().any(|l| l == name)
     }
 
     fn register_binding(&mut self, b: &Binding) {
@@ -225,6 +246,48 @@ impl Compiler {
             module: b.address.module.clone(),
             instance: b.address.instance.unwrap_or(1),
             member: b.address.member.clone(),
+        });
+    }
+
+    fn register_array(&mut self, a: &ArrayDecl) {
+        let name = &a.name.name;
+        if symbols::is_reserved(name) {
+            self.error(a.name.span, format!("cannot shadow built-in `{name}`"));
+        } else if self.name_taken(name) {
+            self.error(a.name.span, format!("duplicate name `{name}`"));
+        }
+        if a.elements.is_empty() {
+            self.error(
+                a.span,
+                format!("array `{name}` must have at least one element"),
+            );
+            return;
+        }
+        if self.arrays.len() >= MAX_ARRAYS {
+            self.error(a.span, format!("too many arrays (max {MAX_ARRAYS})"));
+        }
+        // Fold each element to a constant and bake it contiguously into the pool.
+        let base = self.constants.len() as u16;
+        for el in &a.elements {
+            let Some(v) = const_eval(el) else {
+                self.error(el.span(), "array elements must be constant");
+                self.constants.push(0.0);
+                continue;
+            };
+            self.constants.push(v);
+        }
+        let len = a.elements.len();
+        self.array_storage += len;
+        if self.array_storage > MAX_ARRAY_STORAGE {
+            self.error(
+                a.span,
+                format!("array storage exceeds {MAX_ARRAY_STORAGE} elements"),
+            );
+        }
+        self.arrays.push(ArrayEntry {
+            name: name.clone(),
+            base,
+            len: len as u16,
         });
     }
 
@@ -285,6 +348,7 @@ impl Compiler {
                 self.code.push(Op::Select);
             }
             Expr::Call { name, args, span } => self.compile_call(name, args, *span, depth),
+            Expr::Index { name, index, span } => self.compile_index(name, index, *span, depth),
             // Number is always constant (handled above); Error was already
             // reported by the parser. Emit 0 to keep the stack balanced.
             Expr::Number { value, unit, .. } => self.emit_const(fold_duration(*value, *unit)),
@@ -314,11 +378,44 @@ impl Compiler {
             self.push_source(SourceInput::Context(ctx));
             return;
         }
+        if self.arrays.iter().any(|a| a.name == name) {
+            self.error(
+                span,
+                format!("arrays cannot be used directly in arithmetic; index it with `{name}[i]`"),
+            );
+            self.emit_const(0.0);
+            return;
+        }
         self.error(span, format!("unknown identifier `{name}`"));
         self.emit_const(0.0);
     }
 
+    fn compile_index(&mut self, name: &str, index: &Expr, span: Span, depth: usize) {
+        let Some(arr) = self.arrays.iter().find(|a| a.name == name) else {
+            if self.name_taken(name)
+                || macro_from_name(name).is_some()
+                || context_from_name(name).is_some()
+            {
+                self.error(span, format!("`{name}` is not an array"));
+            } else {
+                self.error(span, format!("unknown identifier `{name}`"));
+            }
+            self.emit_const(0.0);
+            return;
+        };
+        let (base, len) = (arr.base, arr.len);
+        self.compile_expr(index, depth + 1);
+        self.code.push(Op::IndexConst { base, len });
+    }
+
     fn compile_call(&mut self, name: &str, args: &[Expr], span: Span, depth: usize) {
+        // `len(arr)` is not a stack-argument builtin — it folds to a compile-time
+        // constant (the array's element count), so it is handled before the
+        // normal function table (an array name is never a stack value).
+        if name == "len" {
+            self.compile_len(args, span);
+            return;
+        }
         let Some(spec) = resolve_fn(name) else {
             self.error(span, format!("unknown function `{name}`"));
             self.emit_const(0.0);
@@ -345,6 +442,27 @@ impl Compiler {
             }
             FnKind::Stateful(kind) => self.compile_stateful(kind, args, span, depth),
         }
+    }
+
+    /// Compile `len(arr)` → a constant equal to the array's element count. The
+    /// sole argument must be a bare array name (arrays are not stack values).
+    fn compile_len(&mut self, args: &[Expr], span: Span) {
+        if args.len() != 1 {
+            self.error(span, "wrong number of arguments to `len`");
+            self.emit_const(0.0);
+            return;
+        }
+        if let Expr::Var { name, .. } = &args[0]
+            && let Some(arr) = self.arrays.iter().find(|a| a.name == *name)
+        {
+            self.emit_const(f32::from(arr.len));
+            return;
+        }
+        self.error(
+            args[0].span(),
+            "expected an array name as the argument to `len`",
+        );
+        self.emit_const(0.0);
     }
 
     fn compile_stateful(&mut self, kind: Stateful, args: &[Expr], span: Span, depth: usize) {
@@ -519,7 +637,9 @@ fn const_eval(e: &Expr) -> Option<f32> {
             }
             Some(builtin.eval(&vals[..args.len()]))
         }
-        Expr::Error { .. } => None,
+        // Indexing needs the compiler's array registry (the constant pool), which
+        // a free function cannot see — it is lowered to `IndexConst`, not folded.
+        Expr::Index { .. } | Expr::Error { .. } => None,
     }
 }
 
@@ -864,6 +984,127 @@ mod tests {
         let body = vec!["velocity"; 40].join(" + ");
         let src = format!("out = {body}");
         assert!(errors(&src).iter().any(|e| e.contains("nesting too deep")));
+    }
+
+    #[test]
+    fn array_step_sequencer_indexes_and_clamps() {
+        // The headline example: a per-parameter step sequencer over `beat`.
+        let prog = compile_ok("arr seq = [0, 0.5, 1, 0.25]\nout = seq[floor(beat) % 4]");
+        let at = |beat: f32| {
+            eval(&prog, |inp| match inp {
+                SourceInput::Context(Context::Beat) => beat,
+                _ => 0.0,
+            })
+        };
+        assert!(approx(at(0.0), 0.0));
+        assert!(approx(at(1.0), 0.5));
+        assert!(approx(at(2.5), 1.0)); // floor(2.5) = 2 → seq[2]
+        assert!(approx(at(3.0), 0.25));
+        assert!(approx(at(4.0), 0.0)); // wraps via % 4
+    }
+
+    #[test]
+    fn array_out_of_bounds_clamps_without_wrap() {
+        // Without an explicit `% len`, an OOB index clamps to the edges.
+        let prog = compile_ok("arr s = [10, 20, 30]\nout = s[beat]");
+        let at = |beat: f32| {
+            eval(&prog, |inp| match inp {
+                SourceInput::Context(Context::Beat) => beat,
+                _ => 0.0,
+            })
+        };
+        assert!(approx(at(-5.0), 10.0));
+        assert!(approx(at(99.0), 30.0));
+    }
+
+    #[test]
+    fn array_with_negative_and_folded_elements() {
+        // Elements may be any constant expression (negatives, `pi`, arithmetic).
+        let prog = compile_ok("arr s = [-0.3, 1 + 1, pi]\nout = s[1]");
+        assert!(approx(eval(&prog, |_| 0.0), 2.0));
+    }
+
+    #[test]
+    fn len_folds_to_element_count() {
+        let prog = compile_ok("arr s = [1, 2, 3, 4, 5]\nout = len(s)");
+        assert!(approx(eval(&prog, |_| 0.0), 5.0));
+    }
+
+    #[test]
+    fn array_elements_are_baked_contiguously() {
+        // Two tables plus a stray literal must each occupy a contiguous slice;
+        // indexing the second table reads its own elements, not the first's.
+        let prog = compile_ok("arr a = [1, 2]\narr b = [7, 8, 9]\nout = b[2] + a[0]");
+        assert!(approx(eval(&prog, |_| 0.0), 10.0));
+    }
+
+    #[test]
+    fn empty_array_is_an_error() {
+        assert!(
+            errors("arr e = []\nout = 0")
+                .iter()
+                .any(|e| e.contains("at least one element"))
+        );
+    }
+
+    #[test]
+    fn indexing_a_scalar_is_an_error() {
+        assert!(
+            errors("let x = 1\nout = x[0]")
+                .iter()
+                .any(|e| e.contains("not an array"))
+        );
+    }
+
+    #[test]
+    fn array_in_arithmetic_is_an_error() {
+        assert!(
+            errors("arr s = [1, 2]\nout = s + 1")
+                .iter()
+                .any(|e| e.contains("cannot be used directly"))
+        );
+    }
+
+    #[test]
+    fn len_of_non_array_is_an_error() {
+        assert!(
+            errors("let x = 1\nout = len(x)")
+                .iter()
+                .any(|e| e.contains("expected an array name"))
+        );
+    }
+
+    #[test]
+    fn array_name_collisions_are_errors() {
+        assert!(
+            errors("arr s = [1]\nlet s = 2\nout = s[0]")
+                .iter()
+                .any(|e| e.contains("duplicate"))
+        );
+        assert!(
+            errors("arr sin = [1]\nout = sin[0]")
+                .iter()
+                .any(|e| e.contains("shadow"))
+        );
+    }
+
+    #[test]
+    fn array_storage_cap_is_enforced() {
+        // One array of 257 elements > MAX_ARRAY_STORAGE (256).
+        let body = (0..257).map(|_| "0").collect::<Vec<_>>().join(", ");
+        let src = format!("arr s = [{body}]\nout = s[0]");
+        assert!(errors(&src).iter().any(|e| e.contains("array storage")));
+    }
+
+    #[test]
+    fn too_many_arrays_is_an_error() {
+        // 17 single-element arrays > MAX_ARRAYS (16).
+        let decls = (0..17)
+            .map(|i| format!("arr a{i} = [0]"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let src = format!("{decls}\nout = a0[0]");
+        assert!(errors(&src).iter().any(|e| e.contains("too many arrays")));
     }
 
     #[test]
