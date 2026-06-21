@@ -22,8 +22,8 @@ use crate::types::{
     ChordProgressionStep, ConnectionCheckResult, ConnectionInfo, CreateChordProgressionResult,
     DetailedSampleInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
     InputDeviceInfo, InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult,
-    MatrixRoutingInfo, ModuleInfo, ModuleTypeInfo, NoteInfo, NoteProcessorInfo, OptimizeResult,
-    ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry,
+    MatrixRoutingInfo, ModuleInfo, ModuleSearchResult, ModuleTypeInfo, NoteInfo, NoteProcessorInfo,
+    OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry,
     ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo,
     SamplerStateInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
@@ -2283,13 +2283,18 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn get_module_type_info(&self, type_key: &str) -> Result<ModuleTypeInfo, McpBridgeError>;
 
     /// Search module types by category, port requirements, or text query.
+    ///
+    /// A text query is tokenised and scored with field weights (name 10,
+    /// tags 5, description 2, parameter 2); zero-score modules are dropped and
+    /// the rest sorted best-first. When the query matched nothing, the result's
+    /// `did_you_mean` carries edit-distance near-misses instead of an empty list.
     fn search_modules(
         &self,
         category: Option<&str>,
         has_input_type: Option<&str>,
         has_output_type: Option<&str>,
         query: Option<&str>,
-    ) -> Result<Vec<ModuleTypeInfo>, McpBridgeError>;
+    ) -> Result<ModuleSearchResult, McpBridgeError>;
 
     /// Check whether a connection between two ports is valid.
     fn check_connection(

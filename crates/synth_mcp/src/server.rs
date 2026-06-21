@@ -7967,16 +7967,21 @@ impl SynthMcpServer {
             p.has_output_type.as_deref(),
             p.query.as_deref(),
         ) {
-            Ok(modules) => {
-                if modules.is_empty() {
+            Ok(result) => {
+                if result.modules.is_empty() {
                     let mut hint = "No modules matched your filters.".to_string();
-                    if p.query.is_some() {
+                    if !result.did_you_mean.is_empty() {
+                        hint.push_str(&format!(
+                            " Did you mean: {}?",
+                            result.did_you_mean.join(", ")
+                        ));
+                    } else if p.query.is_some() {
                         hint.push_str(" Try a broader text query or remove filters.");
                     }
                     hint
                 } else {
-                    let count = modules.len();
-                    let json = to_json(&modules);
+                    let count = result.modules.len();
+                    let json = to_json(&result.modules);
                     format!("{json}\n\n({count} module(s) matched)")
                 }
             }

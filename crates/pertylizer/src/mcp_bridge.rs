@@ -28,11 +28,11 @@ use synth_mcp::types::{
     BatchResult, BuildInstrumentResult, CompareMixResult, ConnectionCheckResult, ConnectionInfo,
     DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent,
     HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo,
-    MixBusMetrics, MixDelta, ModuleInfo, ModuleTypeInfo, NoteInfo, NoteProcessorInfo,
-    OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue,
-    PatchResourceData, PatternInfo, PlacementInfo, ProjectSchemaInfo, RebuildInstrumentResult,
-    RenderToWavResult, SetSongResult, SongInfo, TrackInfo, UiConnectionInfo, UiModuleInfo,
-    UiOverlap, UiSnapshot,
+    MixBusMetrics, MixDelta, ModuleInfo, ModuleSearchResult, ModuleTypeInfo, NoteInfo,
+    NoteProcessorInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo,
+    PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo, PlacementInfo,
+    ProjectSchemaInfo, RebuildInstrumentResult, RenderToWavResult, SetSongResult, SongInfo,
+    TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -5803,67 +5803,13 @@ impl SynthBridge for AppSynthBridge {
         has_input_type: Option<&str>,
         has_output_type: Option<&str>,
         query: Option<&str>,
-    ) -> Result<Vec<ModuleTypeInfo>, McpBridgeError> {
-        use crate::module_factory::{ALL_MODULE_TYPES, get_descriptor};
-        use synth_core::PortDirection;
-
-        let query_lower = query.map(|q| q.to_lowercase());
-
-        let mut result = Vec::new();
-        for &mt in ALL_MODULE_TYPES.iter() {
-            // Category filter — cheap, no descriptor needed
-            if let Some(cat) = category {
-                let mt_cat = if mt.is_voice_module() {
-                    "voice"
-                } else if mt.is_effect() {
-                    "effect"
-                } else {
-                    "visualizer"
-                };
-                if mt_cat != cat {
-                    continue;
-                }
-            }
-
-            let Some(desc) = get_descriptor(mt) else {
-                continue;
-            };
-
-            // Port type filters — use raw descriptor, skip building full info
-            if let Some(input_type) = has_input_type
-                && !desc.ports.iter().any(|p| {
-                    p.direction == PortDirection::Input && port_type_str(p.port_type) == input_type
-                })
-            {
-                continue;
-            }
-            if let Some(output_type) = has_output_type
-                && !desc.ports.iter().any(|p| {
-                    p.direction == PortDirection::Output
-                        && port_type_str(p.port_type) == output_type
-                })
-            {
-                continue;
-            }
-
-            // Text query — search descriptor strings directly
-            if let Some(ref q) = query_lower {
-                let name_match = mt.name().to_lowercase().contains(q.as_str());
-                let key_match = mt.prefix().to_lowercase().contains(q.as_str());
-                let desc_match = desc.description.to_lowercase().contains(q.as_str());
-                let param_match = desc
-                    .parameters
-                    .iter()
-                    .any(|p| p.name.to_lowercase().contains(q.as_str()));
-                if !name_match && !key_match && !desc_match && !param_match {
-                    continue;
-                }
-            }
-
-            // Only build full ModuleTypeInfo for matches
-            result.push(build_module_type_info(mt, &desc));
-        }
-        Ok(result)
+    ) -> Result<ModuleSearchResult, McpBridgeError> {
+        Ok(search_module_types(
+            category,
+            has_input_type,
+            has_output_type,
+            query,
+        ))
     }
 
     fn check_connection(
@@ -11993,6 +11939,251 @@ fn format_param_display(param: &Param, unit: Option<ParameterUnit>) -> String {
     } else {
         format!("{value:.3}")
     }
+}
+
+/// Pure module-type search: filter by category/ports, then score a text query
+/// with field weights and sort best-first. Factored out of the `SynthBridge`
+/// impl so it can be unit-tested without an engine (it only reads the static
+/// module registry). See the trait doc for the scoring rationale.
+pub fn search_module_types(
+    category: Option<&str>,
+    has_input_type: Option<&str>,
+    has_output_type: Option<&str>,
+    query: Option<&str>,
+) -> ModuleSearchResult {
+    use crate::module_factory::{ALL_MODULE_TYPES, get_descriptor};
+
+    // Lowercased query tokens; empty/whitespace query behaves like "no query".
+    let tokens: Vec<String> = query
+        .map(|q| q.split_whitespace().map(str::to_lowercase).collect())
+        .unwrap_or_default();
+    let has_query = !tokens.is_empty();
+
+    // (module_type, descriptor, score) for everything passing the hard filters.
+    let mut scored: Vec<(synth_core::ModuleType, synth_core::ModuleDescriptor, u32)> = Vec::new();
+    for &mt in ALL_MODULE_TYPES.iter() {
+        let Some(desc) = get_descriptor(mt) else {
+            continue;
+        };
+        if !passes_hard_filters(mt, &desc, category, has_input_type, has_output_type) {
+            continue;
+        }
+
+        let score = if has_query {
+            score_module(&tokens, mt, &desc)
+        } else {
+            // No query: filters alone decide membership; keep stable registry order.
+            1
+        };
+        // Drop zero-relevance matches rather than padding the result.
+        if score == 0 {
+            continue;
+        }
+        scored.push((mt, desc, score));
+    }
+
+    // Best-first; ties keep the registry order (sort is stable).
+    if has_query {
+        scored.sort_by_key(|entry| std::cmp::Reverse(entry.2));
+    }
+
+    let modules: Vec<ModuleTypeInfo> = scored
+        .iter()
+        .map(|(mt, desc, _)| build_module_type_info(*mt, desc))
+        .collect();
+
+    // Only offer a "did you mean" when a real query matched nothing — an empty
+    // list with no hint reads as "feature absent", the exact trap to avoid.
+    // Suggestions respect the same hard filters so we never propose a module the
+    // caller's category/port filter would have excluded anyway.
+    let did_you_mean = if has_query && modules.is_empty() {
+        did_you_mean_modules(&tokens, category, has_input_type, has_output_type)
+    } else {
+        Vec::new()
+    };
+
+    ModuleSearchResult {
+        modules,
+        did_you_mean,
+    }
+}
+
+/// Hard (non-scored) filters shared by the main search and the `did_you_mean`
+/// fallback: category plus required input/output port signal types. A module
+/// must pass all provided filters to be eligible.
+fn passes_hard_filters(
+    mt: synth_core::ModuleType,
+    desc: &synth_core::ModuleDescriptor,
+    category: Option<&str>,
+    has_input_type: Option<&str>,
+    has_output_type: Option<&str>,
+) -> bool {
+    use synth_core::PortDirection;
+
+    if let Some(cat) = category {
+        let mt_cat = if mt.is_voice_module() {
+            "voice"
+        } else if mt.is_effect() {
+            "effect"
+        } else {
+            "visualizer"
+        };
+        if mt_cat != cat {
+            return false;
+        }
+    }
+    if let Some(input_type) = has_input_type
+        && !desc.ports.iter().any(|p| {
+            p.direction == PortDirection::Input && port_type_str(p.port_type) == input_type
+        })
+    {
+        return false;
+    }
+    if let Some(output_type) = has_output_type
+        && !desc.ports.iter().any(|p| {
+            p.direction == PortDirection::Output && port_type_str(p.port_type) == output_type
+        })
+    {
+        return false;
+    }
+    true
+}
+
+/// Weighted token score for one module: name 10, tags 5, description 2,
+/// parameter name 2 — summed across query tokens. Matching is substring with a
+/// cheap one-char-stem fallback so `multiply` hits `multiplies`.
+fn score_module(
+    tokens: &[String],
+    mt: synth_core::ModuleType,
+    desc: &synth_core::ModuleDescriptor,
+) -> u32 {
+    let name = mt.name().to_lowercase();
+    let key = mt.prefix().to_lowercase();
+    let description = desc.description.to_lowercase();
+    let tags: Vec<String> = desc.tags.iter().map(|t| t.to_lowercase()).collect();
+    let params: Vec<String> = desc
+        .parameters
+        .iter()
+        .map(|p| p.name.to_lowercase())
+        .collect();
+
+    let mut score = 0u32;
+    for tok in tokens {
+        // Name and type key are both strong identity signals → name weight.
+        if field_matches(&name, tok) || field_matches(&key, tok) {
+            score += 10;
+        }
+        if tags.iter().any(|t| field_matches(t, tok)) {
+            score += 5;
+        }
+        if field_matches(&description, tok) {
+            score += 2;
+        }
+        if params.iter().any(|p| field_matches(p, tok)) {
+            score += 2;
+        }
+    }
+    score
+}
+
+/// Does `field` contain `tok`, allowing a one-trailing-char stem so plural/verb
+/// endings bridge (`multiply` → `multipl` ⊂ `multiplies`)? Char-safe for UTF-8.
+fn field_matches(field: &str, tok: &str) -> bool {
+    if field.contains(tok) {
+        return true;
+    }
+    // Drop the last char as a poor-man's stemmer; only worth it for longer tokens.
+    if tok.chars().count() >= 4 {
+        let stem: String = {
+            let n = tok.chars().count() - 1;
+            tok.chars().take(n).collect()
+        };
+        if field.contains(&stem) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Edit-distance near-misses when a query matched nothing. Suggest a module when
+/// any query token is within 2 of its type key or within 3 of its display name,
+/// so `ringmd` surfaces `Ring Mod (rng)` but a random `xyz` yields nothing.
+/// Honours the caller's hard filters so a suggestion is never something the
+/// category/port filter would have excluded.
+fn did_you_mean_modules(
+    tokens: &[String],
+    category: Option<&str>,
+    has_input_type: Option<&str>,
+    has_output_type: Option<&str>,
+) -> Vec<String> {
+    use crate::module_factory::{ALL_MODULE_TYPES, get_descriptor};
+
+    let mut scored: Vec<(usize, String)> = Vec::new();
+    for &mt in ALL_MODULE_TYPES.iter() {
+        let Some(desc) = get_descriptor(mt) else {
+            continue;
+        };
+        if !passes_hard_filters(mt, &desc, category, has_input_type, has_output_type) {
+            continue;
+        }
+        let key = mt.prefix().to_lowercase();
+        let name = mt.name().to_lowercase();
+        let mut best: Option<usize> = None;
+        for tok in tokens {
+            if let Some(d) = best_match_distance(tok, &key, &name) {
+                best = Some(best.map_or(d, |b| b.min(d)));
+            }
+        }
+        if let Some(d) = best {
+            scored.push((d, format!("{} ({})", mt.name(), mt.prefix())));
+        }
+    }
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    scored.into_iter().take(5).map(|(_, s)| s).collect()
+}
+
+/// Distance of `tok` to a module's key (clamp ≤2) or display name (clamp ≤3),
+/// returning the smaller qualifying distance or `None` if neither is close.
+///
+/// Each threshold is additionally clamped to `target.len() - 1` so a suggestion
+/// must preserve at least one character of the target: a 2-char name like "EQ"
+/// can't false-match a 4-char random string at distance 3.
+fn best_match_distance(tok: &str, key: &str, name: &str) -> Option<usize> {
+    let key_threshold = 2.min(key.chars().count().saturating_sub(1));
+    let name_threshold = 3.min(name.chars().count().saturating_sub(1));
+    let key_d = module_edit_distance(tok, key);
+    let name_d = module_edit_distance(tok, name);
+    let mut best: Option<usize> = None;
+    if key_d <= key_threshold {
+        best = Some(key_d);
+    }
+    if name_d <= name_threshold {
+        best = Some(best.map_or(name_d, |b| b.min(name_d)));
+    }
+    best
+}
+
+/// Levenshtein edit distance over chars (small inputs; allocation is fine here).
+fn module_edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        cur[0] = i;
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
 }
 
 /// Build a [`ModuleTypeInfo`] from a [`ModuleType`] and its descriptor.

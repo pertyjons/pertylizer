@@ -427,6 +427,21 @@ pub struct ModuleTypeInfo {
     pub signal_flow_hint: Option<String>,
 }
 
+/// Result of a `search_modules` text/filter query.
+///
+/// Carries the scored matches (best-first) plus, when a text query matched
+/// nothing, a `did_you_mean` list of near-miss module names so an agent reads
+/// "you mis-spelled it" rather than "the feature is absent".
+#[derive(Debug, Clone, Serialize)]
+pub struct ModuleSearchResult {
+    /// Matching module types, best-first (highest relevance score first).
+    pub modules: Vec<ModuleTypeInfo>,
+    /// Near-miss suggestions (e.g. `"Ring Mod (rng)"`) when a text query
+    /// scored zero everywhere. Empty when there were matches or no query.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub did_you_mean: Vec<String>,
+}
+
 /// Two modules that overlap in the UI.
 #[derive(Debug, Clone, Serialize)]
 pub struct UiOverlap {
