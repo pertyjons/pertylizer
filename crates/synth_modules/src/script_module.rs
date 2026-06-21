@@ -88,10 +88,12 @@ impl Describable for ScriptModule {
             .tag("modulation")
             .tag("script");
         for i in 0..SCRIPT_MODULE_OUTPUTS {
-            let n = i + 1;
+            // Use the canonical name generator so the advertised port name can't
+            // drift from the one `process()` fills (`self.port_names`).
+            let name = output_port_name(i).unwrap_or_default();
             desc = desc.port(
-                PortDescriptor::audio_output(format!("out{n}"), format!("Out {n}"))
-                    .description(format!("Output of script slot {n}")),
+                PortDescriptor::audio_output(name, format!("Out {}", i + 1))
+                    .description(format!("Output of script slot {}", i + 1)),
             );
         }
         desc

@@ -6347,6 +6347,9 @@ fn existing_binding_var(draft: &str, addr: &str) -> Option<String> {
     draft.lines().find_map(|line| {
         let rest = line.trim().strip_prefix("src ")?;
         let (name, value) = rest.split_once('=')?;
+        // Strip a trailing `# comment` so `src x = lfo-1.out  # main` still
+        // counts as binding `lfo-1.out` (and isn't duplicated by the picker).
+        let value = value.split('#').next().unwrap_or(value);
         (value.trim() == addr).then(|| name.trim().to_string())
     })
 }
@@ -7647,6 +7650,12 @@ mod patch_analysis_tests {
             Some("lfo")
         );
         assert_eq!(existing_binding_var(draft, "env-1.out"), None);
+        // A trailing comment on the binding line is ignored when matching.
+        let commented = "src lfo = lfo-1.out  # main lfo\nout = lfo";
+        assert_eq!(
+            existing_binding_var(commented, "lfo-1.out").as_deref(),
+            Some("lfo")
+        );
     }
 
     #[test]

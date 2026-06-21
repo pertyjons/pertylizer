@@ -63,10 +63,13 @@ module_ref = module_id "." member
 module_id  = name [ "-" instance ]      # instance defaults to 1 if omitted
 ```
 
-`lfo-1.out`, `env-2.out`, `flt-1.cutoff`. The member is a port (`out`) or a
-parameter (`cutoff`, `resonance`, …). A parameter read as a source reads the
-**previous block's post-modulation value** (the 1-block latency is inherent to
-the control loop).
+`lfo-1.out`, `env-2.out`. The member is an **output port** (`out`, `out1`, …).
+
+> **Parameter sources are not wired yet.** An address whose member is a
+> *parameter* rather than an output port (`flt-1.cutoff`) parses and installs
+> without error, but currently resolves to a constant `0` — the resolver only
+> reads output ports. Use a parameter's driving signal (the LFO/envelope output)
+> as the source instead. (Tracked: `ScriptInput::ModuleParam`, TODO §3.5.)
 
 > **Dangling sources are kept, not errored.** If a bound module is deleted or
 > renamed, its register simply reads `0` — the routing stays installed and inert
@@ -175,10 +178,10 @@ ramp that mutes when the transport stops.
 `pi`, `tau` (= 2π), `e`.
 
 > **Source polarity matters.** Bound sources arrive normalized per the scaling
-> contract: output ports are ±1, a parameter maps through its descriptor range
-> to `0..1` (or `-1..1` if bipolar), macros are already normalized. You must
-> know each source's polarity — e.g. `flt-1.cutoff` is `0..1` but a pan is
-> `-1..1`.
+> contract: output ports are ±1 and macros are already normalized. You must know
+> each source's polarity — e.g. an `lfo-1.out` is `-1..1` but an `env-1.out` is
+> `0..1`. (Parameter sources, which would map through their descriptor range, are
+> not wired yet — see *Module addresses* above.)
 
 ---
 

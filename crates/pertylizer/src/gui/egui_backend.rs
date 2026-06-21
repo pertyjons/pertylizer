@@ -1216,14 +1216,7 @@ impl SynthApp {
                            new_id: ModuleId,
                            descriptor: &synth_core::ModuleDescriptor,
                            cable: synth_engine::graph::Connection| {
-            // Remove old cable from engine
-            handle.send(EngineCommand::Disconnect {
-                instrument_id: Some(instrument_id),
-                from: PortId::new(cable.from_module, cable.from_port),
-                to: PortId::new(cable.to_module, cable.to_port),
-            });
-
-            // Find first audio input and output on the new module
+            // Find first audio input and output on the new module.
             let first_input = descriptor.ports.iter().find(|p| {
                 p.direction == synth_core::PortDirection::Input
                     && p.port_type == synth_core::PortType::Audio
@@ -1233,27 +1226,42 @@ impl SynthApp {
                     && p.port_type == synth_core::PortType::Audio
             });
 
-            if let (Some(inp), Some(outp)) = (first_input, first_output) {
-                let conn_in = synth_engine::graph::Connection::new(
-                    cable.from_module,
-                    cable.from_port,
-                    new_id,
-                    inp.name,
-                );
-                let conn_out = synth_engine::graph::Connection::new(
-                    new_id,
-                    outp.name,
-                    cable.to_module,
-                    cable.to_port,
-                );
-                for c in [conn_in, conn_out] {
-                    editor.add_connection(c);
-                    handle.send(EngineCommand::Connect {
-                        instrument_id: Some(instrument_id),
-                        from: PortId::new(c.from_module, c.from_port),
-                        to: PortId::new(c.to_module, c.to_port),
-                    });
-                }
+            // Only splice the module in when it can actually sit on the cable
+            // (audio in AND out). A module without an audio input — e.g. the
+            // Script module or any generator — can't be inserted in-line, so
+            // leave the cable intact rather than silently deleting it.
+            let (Some(inp), Some(outp)) = (first_input, first_output) else {
+                return;
+            };
+
+            // Replace the cable: drop it from the engine and the editor, then
+            // wire from→new(in) and new(out)→to.
+            handle.send(EngineCommand::Disconnect {
+                instrument_id: Some(instrument_id),
+                from: PortId::new(cable.from_module, cable.from_port),
+                to: PortId::new(cable.to_module, cable.to_port),
+            });
+            editor.remove_connection(&cable);
+
+            let conn_in = synth_engine::graph::Connection::new(
+                cable.from_module,
+                cable.from_port,
+                new_id,
+                inp.name,
+            );
+            let conn_out = synth_engine::graph::Connection::new(
+                new_id,
+                outp.name,
+                cable.to_module,
+                cable.to_port,
+            );
+            for c in [conn_in, conn_out] {
+                editor.add_connection(c);
+                handle.send(EngineCommand::Connect {
+                    instrument_id: Some(instrument_id),
+                    from: PortId::new(c.from_module, c.from_port),
+                    to: PortId::new(c.to_module, c.to_port),
+                });
             }
         };
 
