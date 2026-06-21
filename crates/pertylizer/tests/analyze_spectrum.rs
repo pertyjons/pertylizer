@@ -340,6 +340,8 @@ fn analyze_sample_spectrum_roundtrips() {
         None,
         None,
         Some(64),
+        None,
+        None,
     )
     .expect("analyze_sample_spectrum should succeed");
     let from_render = analyze(&rig, &shared, Some(0));
@@ -376,6 +378,8 @@ fn render_source(instrument_id: u16) -> synth_mcp::SpectrumSource {
         instrument_id: Some(instrument_id),
         start_tick: Some(0),
         duration_seconds: Some(2.0),
+        start_ms: None,
+        window_len_ms: None,
     }
 }
 

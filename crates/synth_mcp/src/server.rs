@@ -989,6 +989,14 @@ pub struct AnalyzeSampleSpectrumParam {
         description = "When > 0, also return that many log-spaced magnitude bins (dB). Needed for compare_spectra's broadband log-spectral distance. Default 0 = off."
     )]
     pub log_bins: Option<u32>,
+    #[schemars(
+        description = "Offset into the decoded sample to start analysing, in milliseconds (default 0). Combine with window_len_ms to analyse a single frame of a time-varying sound — slide it in small (~5 ms) steps to land on a specific voiced/unvoiced frame."
+    )]
+    pub start_ms: Option<f32>,
+    #[schemars(
+        description = "Length of the analysis window in milliseconds. Slices the sample to [start_ms, start_ms+window_len_ms); a window past the end is zero-padded, and a start past the end is an error. Omit to analyse from start_ms to the end of the sample."
+    )]
+    pub window_len_ms: Option<f32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1007,6 +1015,14 @@ pub struct SpectrumSourceParam {
         description = "(Render source only) how many seconds to render (default 10.0, max 300.0)."
     )]
     pub duration_seconds: Option<f32>,
+    #[schemars(
+        description = "(Sample source only) offset into the decoded sample to start analysing, in ms (default 0). A render source addresses its window via start_tick instead. Use with window_len_ms to align one voiced frame against the other side."
+    )]
+    pub start_ms: Option<f32>,
+    #[schemars(
+        description = "Analysis window length in ms. For a sample source, slices the buffer (zero-padded past the end). For a render source, overrides duration_seconds. Set the SAME window on both sources to compare one frame against one frame — essential for time-varying targets (e.g. a SID voice switching waveform every ~20 ms), where you slide start_ms/start_tick in small steps to find the matching frame."
+    )]
+    pub window_len_ms: Option<f32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -4660,6 +4676,8 @@ impl SynthMcpServer {
                 params.0.f0_hint,
                 params.0.max_partials,
                 params.0.log_bins,
+                params.0.start_ms,
+                params.0.window_len_ms,
             )
         })
     }
@@ -4681,6 +4699,8 @@ impl SynthMcpServer {
             instrument_id: s.instrument_id,
             start_tick: s.start_tick,
             duration_seconds: s.duration_seconds,
+            start_ms: s.start_ms,
+            window_len_ms: s.window_len_ms,
         };
         let target = to_source(&p.target);
         let candidate = to_source(&p.candidate);

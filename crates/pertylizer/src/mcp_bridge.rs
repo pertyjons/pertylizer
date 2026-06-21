@@ -4379,6 +4379,8 @@ impl SynthBridge for AppSynthBridge {
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
         log_bins: Option<u32>,
+        start_ms: Option<f32>,
+        window_len_ms: Option<f32>,
     ) -> Result<synth_mcp::types::AnalyzeSampleSpectrumResult, McpBridgeError> {
         analyze_sample_spectrum_impl(
             &self.sample_library,
@@ -4386,6 +4388,8 @@ impl SynthBridge for AppSynthBridge {
             f0_hint,
             max_partials,
             log_bins,
+            start_ms,
+            window_len_ms,
         )
     }
 
@@ -10185,12 +10189,15 @@ pub fn analyze_spectrogram_impl(
 /// or a WAV file on disk (decoded via the sampler's `load_wav`) — downmixes to
 /// mono, and runs the same spectral analysis as `analyze_spectrum`.
 #[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
 pub fn analyze_sample_spectrum_impl(
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     sample_id_or_path: String,
     f0_hint: Option<f32>,
     max_partials: Option<u32>,
     log_bins: Option<u32>,
+    start_ms: Option<f32>,
+    window_len_ms: Option<f32>,
 ) -> Result<synth_mcp::types::AnalyzeSampleSpectrumResult, McpBridgeError> {
     // Resolve to (name, sample_rate, channels, interleaved data). Prefer an
     // imported sample id when the string is a number that exists in the library;
@@ -10198,17 +10205,68 @@ pub fn analyze_sample_spectrum_impl(
     let src = resolve_sample_source(sample_library, &sample_id_or_path)?;
 
     let mono = downmix_interleaved(&src.data, src.channels);
+    let frame = window_mono(mono, src.sample_rate, start_ms, window_len_ms)?;
     let opts = spectrum_opts(f0_hint, max_partials, log_bins);
-    let result = crate::audio::analysis::spectrum::analyze_spectrum(&mono, src.sample_rate, opts);
+    let result = crate::audio::analysis::spectrum::analyze_spectrum(&frame, src.sample_rate, opts);
 
     Ok(synth_mcp::types::AnalyzeSampleSpectrumResult {
         sample_name: src.name,
         sample_rate: src.sample_rate,
-        frame_count: mono.len() as u64,
+        frame_count: frame.len() as u64,
         channels: src.channels,
         spectrum: spectrum_descriptor(&result),
         warnings: Vec::new(),
     })
+}
+
+/// Slice a mono buffer to the `[start_ms, start_ms + window_len_ms)` window at
+/// `sample_rate`. The start is clamped into range and any tail past the end of
+/// the buffer is zero-padded so the analysis frame is always exactly
+/// `window_len_ms` long. A start at or beyond the end of the audio is a clean
+/// [`McpBridgeError::WindowOutOfBounds`] rather than an empty frame. When both
+/// window arguments are `None` the whole buffer passes through unchanged.
+fn window_mono(
+    mono: Vec<f32>,
+    sample_rate: u32,
+    start_ms: Option<f32>,
+    window_len_ms: Option<f32>,
+) -> Result<Vec<f32>, McpBridgeError> {
+    /// Hard cap on a zero-padded analysis frame, in seconds — bounds allocation
+    /// against an absurd `window_len_ms` (frames of interest are milliseconds).
+    const MAX_WINDOW_SECONDS: f32 = 60.0;
+
+    if start_ms.is_none() && window_len_ms.is_none() {
+        return Ok(mono);
+    }
+    let sr = sample_rate.max(1) as f32;
+    let total = mono.len();
+    let available_ms = total as f32 / sr * 1000.0;
+    let start = start_ms.unwrap_or(0.0).max(0.0);
+    let start_sample = ((start / 1000.0) * sr).round() as usize;
+    if start_sample >= total {
+        return Err(McpBridgeError::WindowOutOfBounds {
+            start_ms: start,
+            available_ms,
+        });
+    }
+    // A positive window_len_ms fixes the frame length (zero-padded past the end);
+    // otherwise analyse from the start to the end of the buffer.
+    let len_samples = match window_len_ms {
+        Some(l) if l > 0.0 => {
+            // Cap the frame length: padding beyond the audio is only zero-fill
+            // (which the FFT adds internally anyway), so a generous bound loses
+            // nothing useful while guarding a pathological/inf window_len_ms
+            // from triggering a multi-gigabyte allocation. `f32::min` also
+            // tames +inf (min(inf, cap) = cap).
+            let n = ((l / 1000.0) * sr).round();
+            n.min(MAX_WINDOW_SECONDS * sr) as usize
+        }
+        _ => total - start_sample,
+    };
+    let avail_end = start_sample.saturating_add(len_samples).min(total);
+    let mut frame = mono[start_sample..avail_end].to_vec();
+    frame.resize(len_samples.max(1), 0.0);
+    Ok(frame)
 }
 
 /// Decoded audio resolved from a sample id or WAV path, ready for analysis.
@@ -10295,12 +10353,19 @@ fn analyze_spectrum_source(
     if let Some(id_or_path) = &source.sample_id_or_path {
         let src = resolve_sample_source(sample_library, id_or_path)?;
         let mono = downmix_interleaved(&src.data, src.channels);
+        let frame = window_mono(mono, src.sample_rate, source.start_ms, source.window_len_ms)?;
         Ok((
-            crate::audio::analysis::spectrum::analyze_spectrum(&mono, src.sample_rate, opts),
+            crate::audio::analysis::spectrum::analyze_spectrum(&frame, src.sample_rate, opts),
             Vec::new(),
         ))
     } else {
-        let dur = source.duration_seconds.unwrap_or(10.0);
+        // A render addresses its window in ticks; window_len_ms (if given)
+        // overrides the render duration so both sides can frame identically.
+        let dur = source
+            .window_len_ms
+            .map(|ms| ms / 1000.0)
+            .or(source.duration_seconds)
+            .unwrap_or(10.0);
         let (start, end) = resolve_duration_window(shared, dur, source.start_tick)?;
         let (rendered, warnings) = render_analysis_window(
             session,

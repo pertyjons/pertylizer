@@ -140,6 +140,17 @@ pub enum McpBridgeError {
     #[error("invalid LFO index {0}: must be 1-4")]
     InvalidLfoIndex(u8),
 
+    /// A requested analysis window starts at or beyond the end of the audio.
+    #[error(
+        "analysis window starts at {start_ms}ms but only {available_ms}ms of audio is available"
+    )]
+    WindowOutOfBounds {
+        /// Requested window start, in milliseconds.
+        start_ms: f32,
+        /// Total audio available, in milliseconds.
+        available_ms: f32,
+    },
+
     /// Generic error — use sparingly; prefer a specific variant when the failure
     /// mode is known so MCP clients can programmatically handle it.
     #[error("{0}")]

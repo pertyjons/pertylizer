@@ -37,10 +37,14 @@ const DEFAULT_FFT_SIZE: usize = 8192;
 /// Default number of partials returned.
 const DEFAULT_MAX_PARTIALS: u32 = 48;
 
-/// Upper edge of the fixed log-bin reference band (Hz). Kept sample-rate
-/// independent (and below the 22.05 kHz Nyquist of a 44.1 kHz render) so
-/// `compare`'s broadband distance aligns bins across differing sample rates.
-const LOG_BINS_TOP_HZ: f32 = 20_000.0;
+/// Lower edge of the fixed log-bin reference band (Hz).
+const LOG_BINS_BOTTOM_HZ: f32 = 20.0;
+/// Upper edge of the fixed log-bin reference band (Hz). Capped at 16 kHz — at or
+/// below the Nyquist of every supported rate (32 kHz emulator dumps included) —
+/// so a bin never sits in a band one source physically cannot represent. Kept
+/// sample-rate independent so `compare`'s broadband distance aligns bins across
+/// differing sample rates (a 32 kHz reference vs a 44.1 kHz candidate).
+const LOG_BINS_TOP_HZ: f32 = 16_000.0;
 
 /// Lowest fundamental the pitch tracker will consider (Hz) when no hint is set.
 const F0_SEARCH_MIN_HZ: f32 = 40.0;
@@ -523,9 +527,12 @@ fn log_spaced_bins(mags: &[f32], bin_hz: f32, n: usize) -> Vec<Decibels> {
     if n == 0 || mags.len() < 2 {
         return Vec::new();
     }
-    let nyquist = (mags.len() - 1) as f32 * bin_hz;
-    let f_lo = 20.0f32.max(bin_hz);
-    let f_hi = nyquist.min(LOG_BINS_TOP_HZ);
+    // Fixed absolute band edges — deliberately NOT this source's Nyquist — so
+    // bin `i` covers the same Hz range at every sample rate. A bin that falls
+    // above this source's Nyquist simply finds no FFT bins and reads as the
+    // floor (rather than panicking or shifting the grid).
+    let f_lo = LOG_BINS_BOTTOM_HZ;
+    let f_hi = LOG_BINS_TOP_HZ;
     if f_hi <= f_lo {
         return Vec::new();
     }
@@ -538,12 +545,14 @@ fn log_spaced_bins(mags: &[f32], bin_hz: f32, n: usize) -> Vec<Decibels> {
         let lo = (log_lo + (log_hi - log_lo) * i as f32 / n as f32).exp();
         let hi = (log_lo + (log_hi - log_lo) * (i + 1) as f32 / n as f32).exp();
         let k_lo = (lo / bin_hz).floor().max(1.0) as usize;
-        let k_hi = ((hi / bin_hz).ceil() as usize)
-            .min(mags.len() - 1)
-            .max(k_lo + 1);
+        let k_hi = ((hi / bin_hz).ceil() as usize).max(k_lo + 1);
+        let hi_idx = k_hi.min(mags.len());
         let mut peak = MAG_FLOOR;
-        for &m in &mags[k_lo..k_hi.min(mags.len())] {
-            peak = peak.max(m);
+        // `k_lo >= hi_idx` ⇒ the whole bin sits above Nyquist ⇒ stays at floor.
+        if k_lo < hi_idx {
+            for &m in &mags[k_lo..hi_idx] {
+                peak = peak.max(m);
+            }
         }
         out.push(Decibels::from_linear((peak / global_max).max(MAG_FLOOR)));
     }
@@ -997,6 +1006,41 @@ mod tests {
             "saw's upper harmonics should be missing from the sine candidate"
         );
         assert!(d.log_spectral_distance > 0.0);
+    }
+
+    #[test]
+    fn log_bins_align_across_sample_rates() {
+        // The same 2 kHz tone captured at 32 kHz and 44.1 kHz must land in the
+        // SAME log bin — the fixed absolute grid is what makes a cross-rate
+        // log_spectral_distance meaningful (a 32 kHz SID dump vs a 44.1 kHz
+        // render). A Nyquist-relative grid would shift the peak between them.
+        fn tone(freq: f32, rate: u32, len: usize) -> Vec<f32> {
+            (0..len)
+                .map(|i| 0.8 * (TAU * freq * i as f32 / rate as f32).sin())
+                .collect()
+        }
+        let opts = SpectrumOpts {
+            log_bins: 96,
+            ..Default::default()
+        };
+        let lo = analyze_spectrum(&tone(2_000.0, 32_000, 16_384), 32_000, opts);
+        let hi = analyze_spectrum(&tone(2_000.0, 44_100, 16_384), 44_100, opts);
+
+        let argmax = |bins: &[Decibels]| -> usize {
+            bins.iter()
+                .enumerate()
+                .max_by(|a, b| a.1.0.total_cmp(&b.1.0))
+                .map(|(i, _)| i)
+                .unwrap_or(0)
+        };
+        let bin_lo = argmax(&lo.log_bins);
+        let bin_hi = argmax(&hi.log_bins);
+        assert_eq!(lo.log_bins.len(), 96);
+        assert_eq!(hi.log_bins.len(), 96);
+        assert!(
+            bin_lo.abs_diff(bin_hi) <= 1,
+            "2 kHz tone should land in the same log bin at both rates: 32k→{bin_lo}, 44.1k→{bin_hi}"
+        );
     }
 
     #[test]

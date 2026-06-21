@@ -297,6 +297,13 @@ pub struct SpectrumSource {
     pub start_tick: Option<u64>,
     /// (Render only) seconds to render (default 10).
     pub duration_seconds: Option<f32>,
+    /// (Sample only) offset into the decoded sample to start analysing, in ms
+    /// (default 0). Lets the caller slide a window to a single voiced frame.
+    pub start_ms: Option<f32>,
+    /// Length of the analysis window in ms. For a sample, slices the decoded
+    /// buffer (clamped + zero-padded past the end). For a render, overrides
+    /// `duration_seconds`. `None` = whole sample / default render duration.
+    pub window_len_ms: Option<f32>,
 }
 
 impl AnalysisScope {
@@ -1793,6 +1800,8 @@ pub trait SynthBridge: Send + Sync + 'static {
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
         log_bins: Option<u32>,
+        start_ms: Option<f32>,
+        window_len_ms: Option<f32>,
     ) -> Result<crate::types::AnalyzeSampleSpectrumResult, McpBridgeError>;
 
     /// Compare two spectra (each a render or a sample) and return a distance plus
