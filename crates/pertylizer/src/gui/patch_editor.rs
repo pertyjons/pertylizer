@@ -6491,10 +6491,8 @@ fn draw_slot_expression_editor(
     egui::Window::new(format!("Slot {} - Expression", editor.slot + 1))
         .id(egui::Id::new(("mm_expr_editor", state.id, editor.slot)))
         .collapsible(false)
-        // Height is locked (vertical resize off) so the window can't grow when the
-        // feedback-loop warning toggles; width stays resizable for long lines.
-        .resizable(egui::Vec2b::new(true, false))
-        .default_size(egui::vec2(520.0, 340.0))
+        .resizable(true)
+        .default_width(520.0)
         .min_width(320.0)
         .open(&mut keep_open)
         .show(&ctx, |ui| {
@@ -6520,24 +6518,21 @@ fn draw_slot_expression_editor(
                     }
                 });
             });
-            // The editor fills the window: full width, and the height left after
-            // reserving room for the status line, the feedback-loop warning, and
-            // the button row. The warning's height is reserved **whether or not it
-            // shows**, so toggling it never changes the window height — otherwise
-            // the editor (sized from the remaining height) and egui's auto-growing
-            // window would feed back and the window would grow every frame.
-            let reserved = 76.0;
-            let editor_height = (ui.available_height() - reserved).max(80.0);
-            // `add_sized` clamps the editor to that fixed height (long scripts
-            // scroll inside it), so the text area can't grow the window. The stable
-            // id lets the "Select input" picker move the caret, read back below.
+            // Fixed ~16-row editor: sizing it from `available_height` would feed
+            // back into egui's auto-growing window (which never shrinks), so the
+            // window crept taller whenever the warning line toggled. A constant
+            // height breaks that loop; `add_sized` clamps it so long scripts scroll
+            // inside the editor instead of growing the window. The stable id lets
+            // the "Select input" picker move the caret, read back below.
+            const EDITOR_ROWS: usize = 16;
+            let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
             let te_id = egui::Id::new(("mm_expr_text", module_id, editor.slot));
             ui.add_sized(
-                egui::vec2(ui.available_width(), editor_height),
+                egui::vec2(ui.available_width(), EDITOR_ROWS as f32 * row_h),
                 egui::TextEdit::multiline(&mut editor.draft)
                     .id(te_id)
                     .code_editor()
-                    .desired_rows(4),
+                    .desired_rows(EDITOR_ROWS),
             );
             // Read the caret from the text edit's stored state: its live
             // `cursor_range` is only populated while focused, but opening the
