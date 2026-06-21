@@ -89,6 +89,32 @@ impl FnSpec {
     }
 }
 
+/// Every macro identifier paired with a friendly label, for editor "select
+/// input" pickers. Kept beside [`macro_from_name`] so a new macro is added in
+/// both places — `macro_catalog_resolves` asserts every entry resolves.
+pub const MACRO_CATALOG: &[(&str, &str)] = &[
+    ("velocity", "Velocity"),
+    ("mod_wheel", "Mod Wheel"),
+    ("aftertouch", "Aftertouch"),
+    ("pitch_bend", "Pitch Bend"),
+    ("note", "Note number"),
+    ("poly_at", "Poly Aftertouch"),
+];
+
+/// Every context-variable identifier paired with a friendly label, for editor
+/// "select input" pickers. Kept beside [`context_from_name`] — see
+/// `context_catalog_resolves`.
+pub const CONTEXT_CATALOG: &[(&str, &str)] = &[
+    ("gate", "Gate (0/1)"),
+    ("gate_on", "Gate note-on edge"),
+    ("age", "Voice age (s)"),
+    ("sr", "Sample rate"),
+    ("beat", "Transport beat"),
+    ("bar_phase", "Bar phase (0..1)"),
+    ("tempo", "Tempo (BPM)"),
+    ("playing", "Transport playing"),
+];
+
 /// Resolve a macro name.
 #[must_use]
 pub fn macro_from_name(name: &str) -> Option<Macro> {
@@ -189,4 +215,28 @@ pub fn is_reserved(name: &str) -> bool {
         || macro_from_name(name).is_some()
         || context_from_name(name).is_some()
         || constant_value(name).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every label catalog entry must resolve through its `*_from_name`, so the
+    /// editor pickers can never offer an identifier the compiler rejects.
+    #[test]
+    fn macro_catalog_resolves() {
+        for (name, _label) in MACRO_CATALOG {
+            assert!(macro_from_name(name).is_some(), "macro {name} unresolved");
+        }
+    }
+
+    #[test]
+    fn context_catalog_resolves() {
+        for (name, _label) in CONTEXT_CATALOG {
+            assert!(
+                context_from_name(name).is_some(),
+                "context {name} unresolved"
+            );
+        }
+    }
 }

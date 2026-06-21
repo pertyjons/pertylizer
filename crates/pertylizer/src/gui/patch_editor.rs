@@ -2016,15 +2016,17 @@ impl PatchEditor {
         let analysis = PatchAnalysis::from_panels(&self.panels);
         self.realign_mod_matrix_attachments_if_changed(&analysis);
 
-        // Addressing targets for the Mod Matrix pickers (S1.5c). Built here, before
-        // the `self.panels.get_mut` borrow below, so the picker can address every
+        // Addressing targets for the Mod Matrix pickers (S1.5c) and the Script
+        // module's "Select input" picker (§3.5). Built here, before the
+        // `self.panels.get_mut` borrow below, so the pickers can address every
         // other module without re-borrowing `self`. Skip the (allocating) build
-        // entirely when the patch has no Mod Matrix — the catalog has no consumer.
-        let has_mod_matrix = self
+        // entirely when nothing consumes it — neither a Mod Matrix nor a Script
+        // module is present.
+        let needs_catalog = self
             .descriptors
             .keys()
-            .any(|id| id.module_type == ModuleType::ModMatrix);
-        let mod_catalog = if has_mod_matrix {
+            .any(|id| matches!(id.module_type, ModuleType::ModMatrix | ModuleType::Script));
+        let mod_catalog = if needs_catalog {
             ModAddrCatalog::from_descriptors(&self.descriptors)
         } else {
             ModAddrCatalog {
@@ -2783,7 +2785,7 @@ impl PatchEditor {
 
         // Macro-source rail (S1.5b): a fixed strip of macro chips above the
         // scrolling canvas. Only meaningful when a Mod Matrix can read them.
-        if has_mod_matrix {
+        if analysis.count(ModuleType::ModMatrix) > 0 {
             self.draw_macro_source_rail(ui, instrument_id, visible_rect, &analysis);
         }
 
@@ -5852,7 +5854,7 @@ fn draw_module_panel_params(
     // Special handling for the Script module — a list of YAMS slots (one per
     // output port), each opening the shared expression editor.
     if descriptor.type_id.0 == "script" {
-        return draw_script_module_grid(ui, state, accent_color, script_graph);
+        return draw_script_module_grid(ui, state, accent_color, script_graph, mod_catalog);
     }
 
     // Signal Monitor — draw oscilloscope display above parameters
@@ -6288,13 +6290,178 @@ fn draw_mod_matrix_grid(
     // the routing list stays compact. Compilation runs live (off the audio thread)
     // for the status line; Apply/Clear push actions the caller routes to the
     // session, which recompiles + installs the shared script.
-    draw_slot_expression_editor(ui, state, script_graph, &mut mod_script_actions);
+    draw_slot_expression_editor(ui, state, script_graph, catalog, &mut mod_script_actions);
 
     PanelParamsResult {
         param_changes,
         audio_input_action: None,
         mod_script_actions,
     }
+}
+
+/// One input chosen from the ƒx editor's "Select input" picker.
+enum PickedInput {
+    /// A macro or context identifier (`velocity`, `beat`) — always in scope, so
+    /// it splices in bare at the cursor.
+    Bare(String),
+    /// A module output address (`lfo-1.out`) — needs a `src` binding, so it
+    /// splices in a variable plus (if absent) the binding line.
+    ModuleSource(String),
+}
+
+/// Insert `text` into `draft` at char index `at` (clamped to the end; `None` →
+/// end). Returns the char index just past the inserted text, for caret restore.
+fn insert_at_cursor(draft: &mut String, at: Option<usize>, text: &str) -> usize {
+    let char_len = draft.chars().count();
+    let idx = at.unwrap_or(char_len).min(char_len);
+    let byte = draft
+        .char_indices()
+        .nth(idx)
+        .map_or(draft.len(), |(b, _)| b);
+    draft.insert_str(byte, text);
+    idx + text.chars().count()
+}
+
+/// A YAMS-legal variable name derived from a source address: `lfo-1.out` →
+/// `lfo1_out` (drop `-`, `.` → `_`). A leading digit gets an `_` prefix since
+/// YAMS identifiers are alpha-led.
+fn derive_src_var(addr: &str) -> String {
+    let mut s: String = addr
+        .chars()
+        .filter(|c| *c != '-')
+        .map(|c| if c == '.' { '_' } else { c })
+        .collect();
+    if s.starts_with(|c: char| c.is_ascii_digit()) {
+        s.insert(0, '_');
+    }
+    s
+}
+
+/// If a `src <name> = <addr>` line already binds `addr`, return its variable
+/// name so the picker reuses it instead of adding a duplicate binding.
+fn existing_binding_var(draft: &str, addr: &str) -> Option<String> {
+    draft.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("src ")?;
+        let (name, value) = rest.split_once('=')?;
+        (value.trim() == addr).then(|| name.trim().to_string())
+    })
+}
+
+/// Every name bound by a `src`/`let` line in the draft — the set a new binding
+/// must avoid colliding with (YAMS rejects duplicate names).
+fn bound_names(draft: &str) -> HashSet<String> {
+    draft
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let rest = line
+                .strip_prefix("src ")
+                .or_else(|| line.strip_prefix("let "))?;
+            let (name, _) = rest.split_once('=')?;
+            Some(name.trim().to_string())
+        })
+        .collect()
+}
+
+/// A binding name for `addr` that doesn't collide with an existing `src`/`let`
+/// name: the derived name, or it with a `_N` suffix. Prevents the picker from
+/// emitting two bindings with the same name (which the compiler would reject).
+fn unique_src_var(draft: &str, addr: &str) -> String {
+    let taken = bound_names(draft);
+    let base = derive_src_var(addr);
+    if !taken.contains(&base) {
+        return base;
+    }
+    let mut n = 2;
+    loop {
+        let candidate = format!("{base}_{n}");
+        if !taken.contains(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Splice a module-output reference into `draft`: ensure a `src <var> = <addr>`
+/// binding exists (reuse an existing one, else prepend a fresh, collision-free
+/// binding as the first line), then insert `<var>` at the cursor so it lands
+/// where the user is typing. Returns the new caret char index.
+fn insert_module_source(draft: &mut String, cursor: Option<usize>, addr: &str) -> usize {
+    // Reuse an existing binding for this address — just insert its variable.
+    if let Some(var) = existing_binding_var(draft, addr) {
+        return insert_at_cursor(draft, cursor, &var);
+    }
+    let var = unique_src_var(draft, addr);
+    let line = format!("src {var} = {addr}\n");
+    // Insert the variable at the cursor first (indices refer to the current
+    // draft), then prepend the binding and shift the caret past it.
+    let new_cursor = insert_at_cursor(draft, cursor, &var);
+    draft.insert_str(0, &line);
+    new_cursor + line.chars().count()
+}
+
+/// Move the egui multiline caret to char index `idx` next frame, so an inserted
+/// snippet leaves the cursor at its end rather than wherever it was.
+fn set_text_caret(ctx: &egui::Context, id: egui::Id, idx: usize) {
+    if let Some(mut st) = egui::text_edit::TextEditState::load(ctx, id) {
+        let cursor = egui::text::CCursor::new(idx);
+        st.cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(cursor)));
+        st.store(ctx, id);
+    }
+}
+
+/// The "Select input" tree picker for the ƒx editor: modules → output ports,
+/// plus the macro and context sources. Returns the chosen input (if any) for the
+/// caller to splice into the draft. Sourced from the same catalog as the Mod
+/// Matrix pickers (S1.5c), so it stays in sync with what `resolve_source` binds.
+fn draw_select_input_menu(ui: &mut Ui, catalog: &ModAddrCatalog) -> Option<PickedInput> {
+    let mut picked = None;
+    ui.menu_button("Select input", |ui| {
+        egui::ScrollArea::vertical()
+            .max_height(360.0)
+            .show(ui, |ui| {
+                // Module output ports — each becomes a `src` binding.
+                for target in &catalog.modules {
+                    if target.source_ports.is_empty() {
+                        continue;
+                    }
+                    ui.menu_button(&target.label, |ui| {
+                        for port in &target.source_ports {
+                            if ui.button(port).clicked() {
+                                let addr = SrcAddr::module(
+                                    target.id.module_type,
+                                    target.id.instance,
+                                    port,
+                                )
+                                .to_address_string();
+                                picked = Some(PickedInput::ModuleSource(addr));
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+                ui.separator();
+                // Macros and context vars are bare identifiers (no `src` needed).
+                ui.menu_button("Macros", |ui| {
+                    for (name, label) in synth_script::symbols::MACRO_CATALOG {
+                        if ui.button(format!("{label}  ({name})")).clicked() {
+                            picked = Some(PickedInput::Bare((*name).to_string()));
+                            ui.close();
+                        }
+                    }
+                });
+                ui.menu_button("Context", |ui| {
+                    for (name, label) in synth_script::symbols::CONTEXT_CATALOG {
+                        if ui.button(format!("{label}  ({name})")).clicked() {
+                            picked = Some(PickedInput::Bare((*name).to_string()));
+                            ui.close();
+                        }
+                    }
+                });
+            });
+    });
+    picked
 }
 
 /// Draw the shared per-slot YAMS expression-editor popup, reused by the Mod
@@ -6307,6 +6474,7 @@ fn draw_slot_expression_editor(
     ui: &Ui,
     state: &mut ModulePanelState,
     script_graph: Option<&ScriptDepGraph>,
+    catalog: &ModAddrCatalog,
     mod_script_actions: &mut Vec<(u8, Option<String>)>,
 ) {
     let Some(mut editor) = state.script_editor.take() else {
@@ -6338,12 +6506,29 @@ fn draw_slot_expression_editor(
             // scroll within the code editor.
             let reserved = 52.0;
             let editor_height = (ui.available_height() - reserved).max(80.0);
-            ui.add_sized(
-                egui::vec2(ui.available_width(), editor_height),
-                egui::TextEdit::multiline(&mut editor.draft)
-                    .code_editor()
-                    .desired_rows(4),
-            );
+            // Stable id so the "Select input" picker can move the caret after
+            // splicing text in. `.show()` (not `add_sized`) is used to read back
+            // the cursor position; `desired_rows` sizes it to fill the window.
+            let te_id = egui::Id::new(("mm_expr_text", module_id, editor.slot));
+            let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
+            let rows = (editor_height / row_h).floor().max(4.0) as usize;
+            let te_output = egui::TextEdit::multiline(&mut editor.draft)
+                .id(te_id)
+                .code_editor()
+                .desired_width(f32::INFINITY)
+                .desired_rows(rows)
+                .show(ui);
+            // `cursor_range` is only populated while the text edit has focus, but
+            // opening the "Select input" menu moves focus to the popup — so fall
+            // back to the caret stored in the text edit's own state, otherwise
+            // every pick would append at the end instead of at the user's caret.
+            let cursor_char = te_output
+                .cursor_range
+                .or_else(|| {
+                    egui::text_edit::TextEditState::load(ui.ctx(), te_id)
+                        .and_then(|st| st.cursor.char_range())
+                })
+                .map(|r| r.primary.index);
 
             // Live compile → status line (mirrors `session.set_mod_script`).
             let trimmed = editor.draft.trim();
@@ -6401,6 +6586,20 @@ fn draw_slot_expression_editor(
             }
 
             ui.horizontal(|ui| {
+                // "Select input" inserts a source reference at the caret: a bare
+                // identifier for a macro/context var, or a `src <var> = <addr>`
+                // binding + variable for a module output port.
+                if let Some(pick) = draw_select_input_menu(ui, catalog) {
+                    let new_caret = match pick {
+                        PickedInput::Bare(name) => {
+                            insert_at_cursor(&mut editor.draft, cursor_char, &name)
+                        }
+                        PickedInput::ModuleSource(addr) => {
+                            insert_module_source(&mut editor.draft, cursor_char, &addr)
+                        }
+                    };
+                    set_text_caret(&ctx, te_id, new_caret);
+                }
                 // Format runs the canonical yamsfmt formatter and replaces the
                 // draft with its output. Enabled only when the script is valid
                 // (the formatter parses first; a broken script can't be formatted).
@@ -6462,6 +6661,7 @@ fn draw_script_module_grid(
     state: &mut ModulePanelState,
     accent_color: Color32,
     script_graph: Option<&ScriptDepGraph>,
+    catalog: &ModAddrCatalog,
 ) -> PanelParamsResult {
     let mut mod_script_actions: Vec<(u8, Option<String>)> = Vec::new();
     let mut open_editor_for: Option<u8> = None;
@@ -6518,7 +6718,7 @@ fn draw_script_module_grid(
         state.script_editor = Some(super::module_panel::ScriptEditorState { slot, draft });
     }
 
-    draw_slot_expression_editor(ui, state, script_graph, &mut mod_script_actions);
+    draw_slot_expression_editor(ui, state, script_graph, catalog, &mut mod_script_actions);
 
     PanelParamsResult {
         param_changes: Vec::new(),
@@ -7249,5 +7449,68 @@ mod patch_analysis_tests {
                 .cycle_warning(mm, 0, "src s = scr-1.out1\nout = s")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn insert_at_cursor_splices_at_index() {
+        let mut s = "out = ".to_string();
+        // Cursor at end → append; returns the new caret past the text.
+        let caret = insert_at_cursor(&mut s, Some(6), "velocity");
+        assert_eq!(s, "out = velocity");
+        assert_eq!(caret, 14);
+        // `None` cursor falls back to the end.
+        let mut s2 = "abc".to_string();
+        assert_eq!(insert_at_cursor(&mut s2, None, "X"), 4);
+        assert_eq!(s2, "abcX");
+        // An out-of-range index clamps to the end rather than panicking.
+        let mut s3 = "ab".to_string();
+        insert_at_cursor(&mut s3, Some(99), "!");
+        assert_eq!(s3, "ab!");
+    }
+
+    #[test]
+    fn derive_src_var_sanitizes_address() {
+        assert_eq!(derive_src_var("lfo-1.out"), "lfo1_out");
+        assert_eq!(derive_src_var("scr-2.out1"), "scr2_out1");
+    }
+
+    #[test]
+    fn existing_binding_var_finds_reusable_binding() {
+        let draft = "src lfo = lfo-1.out\nout = lfo * 0.5";
+        assert_eq!(
+            existing_binding_var(draft, "lfo-1.out").as_deref(),
+            Some("lfo")
+        );
+        assert_eq!(existing_binding_var(draft, "env-1.out"), None);
+    }
+
+    #[test]
+    fn insert_module_source_prepends_binding_then_inserts_var() {
+        // No existing binding: prepend `src <var> = <addr>` and insert the var.
+        let mut draft = "out = ".to_string();
+        let caret = insert_module_source(&mut draft, Some(6), "lfo-1.out");
+        assert_eq!(draft, "src lfo1_out = lfo-1.out\nout = lfo1_out");
+        // Caret lands past the inserted variable (shifted by the prepended line).
+        assert_eq!(&draft[..caret], "src lfo1_out = lfo-1.out\nout = lfo1_out");
+    }
+
+    #[test]
+    fn insert_module_source_reuses_existing_binding() {
+        // A binding for this address already exists → reuse its var, no prepend.
+        let mut draft = "src l = lfo-1.out\nout = ".to_string();
+        let end = draft.chars().count();
+        insert_module_source(&mut draft, Some(end), "lfo-1.out");
+        assert_eq!(draft, "src l = lfo-1.out\nout = l");
+    }
+
+    #[test]
+    fn insert_module_source_avoids_name_collision() {
+        // The derived name `lfo1_out` is already taken by a *different* address;
+        // the new binding must get a suffix so the script stays compilable.
+        let mut draft = "src lfo1_out = env-2.out\nout = ".to_string();
+        let end = draft.chars().count();
+        insert_module_source(&mut draft, Some(end), "lfo-1.out");
+        assert!(draft.contains("src lfo1_out_2 = lfo-1.out"), "{draft}");
+        assert!(draft.ends_with("lfo1_out_2"), "{draft}");
     }
 }
