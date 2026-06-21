@@ -363,17 +363,25 @@ impl PatchAnalysis {
 /// feedback loop (LFO / macro / context sources can't). A script that fails to
 /// compile yields an empty set (the live editor already flags the compile error).
 fn script_output_refs(src: &str) -> HashSet<(ModuleId, u8)> {
-    let mut refs = HashSet::new();
     if src.trim().is_empty() {
-        return refs;
+        return HashSet::new();
     }
     let (program, _diags) = synth_script::compile(src, &synth_script::CompileOptions::default());
     let Some(program) = program else {
-        return refs;
+        return HashSet::new();
     };
     // `into_bound` needs an owned source string only for persistence/inspection;
     // we read `inputs` and discard it, so an empty string is fine here.
-    for input in program.into_bound(String::new()).inputs {
+    script_refs_from_inputs(&program.into_bound(String::new()).inputs)
+}
+
+/// The Script-module output slots referenced by an already-compiled script's
+/// `inputs`. Split out from [`script_output_refs`] so a caller that already
+/// compiled the source (the live editor's status line) can extract refs without
+/// recompiling.
+fn script_refs_from_inputs(inputs: &[synth_core::script::ScriptInput]) -> HashSet<(ModuleId, u8)> {
+    let mut refs = HashSet::new();
+    for input in inputs {
         if let synth_core::script::ScriptInput::Source(SrcAddr::Module {
             module_type: ModuleType::Script,
             instance,
@@ -381,7 +389,7 @@ fn script_output_refs(src: &str) -> HashSet<(ModuleId, u8)> {
         }) = input
             && let Some(slot) = synth_modules::script_module::output_port_slot(name.as_str())
         {
-            refs.insert((ModuleId::new(ModuleType::Script, instance), slot as u8));
+            refs.insert((ModuleId::new(ModuleType::Script, *instance), slot as u8));
         }
     }
     refs
@@ -405,36 +413,60 @@ struct ScriptDepGraph {
     edges: HashMap<(ModuleId, u8), HashSet<(ModuleId, u8)>>,
 }
 
+/// Per-slot compiled-source-reference cache: `(module, slot) → (script text,
+/// referenced Script outputs)`. Lets [`ScriptDepGraph::from_panels_cached`] skip
+/// recompiling a slot whose text is unchanged.
+type ScriptRefCache = HashMap<(ModuleId, u8), (String, HashSet<(ModuleId, u8)>)>;
+
 impl ScriptDepGraph {
-    /// Build from the installed scripts of every Script-module panel.
-    fn from_panels(panels: &HashMap<ModuleId, ModulePanelState>) -> Self {
-        let mut edges: HashMap<(ModuleId, u8), HashSet<(ModuleId, u8)>> = HashMap::new();
+    /// Build from the installed scripts of every Script-module panel, reusing
+    /// `cache` so a slot whose script text is unchanged is not recompiled — the
+    /// per-frame cost while the ƒx editor is open then scales with *changed*
+    /// scripts, not all of them.
+    fn from_panels_cached(
+        panels: &HashMap<ModuleId, ModulePanelState>,
+        cache: &mut ScriptRefCache,
+    ) -> Self {
+        let mut edges = HashMap::new();
         for (id, panel) in panels {
             if id.module_type != ModuleType::Script {
                 continue;
             }
             for (slot, src) in &panel.slot_scripts {
-                let refs = script_output_refs(src);
+                let key = (*id, *slot);
+                let refs = match cache.get(&key) {
+                    Some((cached_src, cached_refs)) if cached_src == src => cached_refs.clone(),
+                    _ => {
+                        let r = script_output_refs(src);
+                        cache.insert(key, (src.clone(), r.clone()));
+                        r
+                    }
+                };
                 if !refs.is_empty() {
-                    edges.insert((*id, *slot), refs);
+                    edges.insert(key, refs);
                 }
             }
         }
         Self { edges }
     }
 
-    /// A human-readable warning if installing `draft` on `(module_id, slot)` would
-    /// make that Script slot read its own output back (self-reference) or sit on a
-    /// script→script cycle — both resolve with a one-block delay. `None` when the
-    /// edited module is not a Script module, or no loop is formed. The edited
-    /// slot's outgoing edges come from the live `draft` (not its installed
-    /// script), so the warning updates as the user types.
-    fn cycle_warning(&self, module_id: ModuleId, slot: u8, draft: &str) -> Option<String> {
+    /// A human-readable warning if installing the script whose extracted
+    /// `draft_refs` are given on `(module_id, slot)` would make that Script slot
+    /// read its own output back (self-reference) or sit on a script→script cycle —
+    /// both resolve with a one-block delay. `None` when the edited module is not a
+    /// Script module, or no loop is formed. `draft_refs` come from the live draft
+    /// (not its installed script), so the warning updates as the user types; the
+    /// caller passes them already-extracted to avoid a redundant recompile.
+    fn cycle_warning(
+        &self,
+        module_id: ModuleId,
+        slot: u8,
+        draft_refs: &HashSet<(ModuleId, u8)>,
+    ) -> Option<String> {
         if module_id.module_type != ModuleType::Script {
             return None;
         }
         let start = (module_id, slot);
-        let draft_refs = script_output_refs(draft);
         // Direct self-reference is the simplest loop — name it explicitly.
         if draft_refs.contains(&start) {
             return Some(format!(
@@ -444,7 +476,7 @@ impl ScriptDepGraph {
                 slot + 1,
             ));
         }
-        let path = self.find_cycle_path(start, &draft_refs)?;
+        let path = self.find_cycle_path(start, draft_refs)?;
         let chain = path
             .iter()
             .map(|(id, s)| format!("scr-{}.out{}", id.instance, s + 1))
@@ -896,6 +928,12 @@ pub struct PatchEditor {
     prev_mod_matrix_attachments: Vec<ModuleId>,
     /// Cached connected ports per module (rebuilt when connections change).
     connected_ports_cache: HashMap<ModuleId, Vec<PortName>>,
+    /// Per-script-slot compiled source references, keyed by `(module, slot)` →
+    /// `(script text, referenced Script outputs)`. Lets the feedback-loop graph
+    /// (§3.5) rebuild each frame the ƒx editor is open without recompiling every
+    /// script — only a slot whose text changed is re-extracted. See
+    /// `build_script_graph`.
+    script_ref_cache: ScriptRefCache,
     /// When true, skip reading positions back from egui Area state.
     /// Set after loading a patch/project so saved positions aren't overwritten
     /// by stale egui Area rects during the same frame.
@@ -954,6 +992,7 @@ impl PatchEditor {
             prev_effect_chain_order: Vec::new(),
             prev_mod_matrix_attachments: Vec::new(),
             connected_ports_cache: HashMap::new(),
+            script_ref_cache: HashMap::new(),
             drag_cycle_blocked: HashSet::new(),
             description_editor: None,
             info_popup: None,
@@ -2034,14 +2073,19 @@ impl PatchEditor {
             }
         };
 
-        // Script feedback-loop graph for the ƒx editor's warning (§3.5). Building
-        // it compiles every installed script, so only do so while an expression
-        // editor is actually open — the warning has no other consumer.
-        let script_graph = self
-            .panels
-            .values()
-            .any(|p| p.script_editor.is_some())
-            .then(|| ScriptDepGraph::from_panels(&self.panels));
+        // Script feedback-loop graph for the ƒx editor's warning (§3.5). Only
+        // built while an expression editor is open (the warning has no other
+        // consumer), and via the cache so unchanged scripts aren't recompiled
+        // each frame the popup stays open.
+        let editor_open = self.panels.values().any(|p| p.script_editor.is_some());
+        let script_graph = if editor_open {
+            Some(ScriptDepGraph::from_panels_cached(
+                &self.panels,
+                &mut self.script_ref_cache,
+            ))
+        } else {
+            None
+        };
 
         let content_size = self.content_size();
 
@@ -6555,27 +6599,41 @@ fn draw_slot_expression_editor(
                     (a.min(b), a.max(b))
                 });
 
-            // Live compile → status line (mirrors `session.set_mod_script`).
+            // Live compile → status line (mirrors `session.set_mod_script`). The
+            // same compile feeds the feedback-loop check below, so the draft is
+            // compiled once per frame, not twice.
             let trimmed = editor.draft.trim();
-            let status: Result<(), String> = if trimmed.is_empty() {
-                Err("empty - Apply will clear the slot".to_string())
+            let (status, draft_refs): (Result<(), String>, HashSet<(ModuleId, u8)>) = if trimmed
+                .is_empty()
+            {
+                (
+                    Err("empty - Apply will clear the slot".to_string()),
+                    HashSet::new(),
+                )
             } else {
                 let (program, diags) =
                     synth_script::compile(&editor.draft, &synth_script::CompileOptions::default());
-                if program.is_some() {
-                    Ok(())
-                } else {
-                    let msg = diags
-                        .iter()
-                        .filter(|d| d.is_error())
-                        .map(|d| d.message.clone())
-                        .collect::<Vec<_>>()
-                        .join("; ");
-                    Err(if msg.is_empty() {
-                        "compile error".to_string()
-                    } else {
-                        msg
-                    })
+                match program {
+                    Some(p) => {
+                        let refs = script_refs_from_inputs(&p.into_bound(String::new()).inputs);
+                        (Ok(()), refs)
+                    }
+                    None => {
+                        let msg = diags
+                            .iter()
+                            .filter(|d| d.is_error())
+                            .map(|d| d.message.clone())
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        (
+                            Err(if msg.is_empty() {
+                                "compile error".to_string()
+                            } else {
+                                msg
+                            }),
+                            HashSet::new(),
+                        )
+                    }
                 }
             };
             match &status {
@@ -6601,7 +6659,7 @@ fn draw_slot_expression_editor(
             // (e.g. a leaky integrator) is sometimes intentional, so we warn
             // rather than block. Only Script-module slots can close such a loop.
             if let Some(warning) =
-                script_graph.and_then(|g| g.cycle_warning(module_id, editor.slot, &editor.draft))
+                script_graph.and_then(|g| g.cycle_warning(module_id, editor.slot, &draft_refs))
             {
                 ui.label(
                     egui::RichText::new(format!("{}  {warning}", ri::ALERT_LINE))
@@ -7554,7 +7612,13 @@ mod patch_analysis_tests {
     }
 
     fn graph_of(panels: Vec<(ModuleId, ModulePanelState)>) -> ScriptDepGraph {
-        ScriptDepGraph::from_panels(&panels.into_iter().collect())
+        ScriptDepGraph::from_panels_cached(&panels.into_iter().collect(), &mut HashMap::new())
+    }
+
+    /// Run the loop warning for a live `draft` (compiles it to refs first), as the
+    /// editor does each frame.
+    fn warn(graph: &ScriptDepGraph, module: ModuleId, slot: u8, draft: &str) -> Option<String> {
+        graph.cycle_warning(module, slot, &script_output_refs(draft))
     }
 
     /// A script reading its own output is flagged as a self-reference. The draft
@@ -7563,8 +7627,7 @@ mod patch_analysis_tests {
     fn cycle_warning_flags_self_reference() {
         let scr = ModuleId::new(ModuleType::Script, 1);
         let graph = graph_of(vec![script_panel(1, &[])]);
-        let warning = graph
-            .cycle_warning(scr, 0, "src me = scr-1.out1\nout = me * 0.5")
+        let warning = warn(&graph, scr, 0, "src me = scr-1.out1\nout = me * 0.5")
             .expect("self-reference must warn");
         assert!(warning.contains("feeds back on itself"), "{warning}");
     }
@@ -7578,9 +7641,8 @@ mod patch_analysis_tests {
             script_panel(1, &[]),
             script_panel(2, &[(0, "src a = scr-1.out1\nout = a")]),
         ]);
-        let warning = graph
-            .cycle_warning(scr1, 0, "src b = scr-2.out1\nout = b")
-            .expect("cycle must warn");
+        let warning =
+            warn(&graph, scr1, 0, "src b = scr-2.out1\nout = b").expect("cycle must warn");
         assert!(warning.contains("feedback cycle"), "{warning}");
         assert!(
             warning.contains("scr-1.out1") && warning.contains("scr-2.out1"),
@@ -7596,11 +7658,7 @@ mod patch_analysis_tests {
             script_panel(1, &[]),
             script_panel(2, &[(0, "out = 0.5")]),
         ]);
-        assert!(
-            graph
-                .cycle_warning(scr1, 0, "src b = scr-2.out1\nout = b")
-                .is_none()
-        );
+        assert!(warn(&graph, scr1, 0, "src b = scr-2.out1\nout = b").is_none());
     }
 
     /// Referencing a non-script source (an LFO) never forms a script cycle, so no
@@ -7609,11 +7667,7 @@ mod patch_analysis_tests {
     fn cycle_warning_ignores_non_script_sources() {
         let scr1 = ModuleId::new(ModuleType::Script, 1);
         let graph = graph_of(vec![script_panel(1, &[])]);
-        assert!(
-            graph
-                .cycle_warning(scr1, 0, "src l = lfo-1.out\nout = l")
-                .is_none()
-        );
+        assert!(warn(&graph, scr1, 0, "src l = lfo-1.out\nout = l").is_none());
     }
 
     /// A Mod Matrix slot exposes no addressable output, so it can never close a
@@ -7622,11 +7676,7 @@ mod patch_analysis_tests {
     fn cycle_warning_only_for_script_modules() {
         let mm = ModuleId::new(ModuleType::ModMatrix, 1);
         let graph = graph_of(vec![script_panel(1, &[(0, "src m = scr-1.out1\nout = m")])]);
-        assert!(
-            graph
-                .cycle_warning(mm, 0, "src s = scr-1.out1\nout = s")
-                .is_none()
-        );
+        assert!(warn(&graph, mm, 0, "src s = scr-1.out1\nout = s").is_none());
     }
 
     #[test]
