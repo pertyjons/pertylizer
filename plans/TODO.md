@@ -290,7 +290,14 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   machine-readable `minimum`/`maximum`, not just prose. Covers single-line and multi-line attrs and
   `Option<u8>` variants; verified against `schemars` 1.2.1. Schema test
   `server::schema_range_tests::fixed_range_fields_expose_min_max_in_schema` asserts the emitted bounds.
-- [ ] **Uniform machine-readable bounds on `synth_core` newtypes.** Newtype clamping is inconsistent:
+- [x] **Uniform machine-readable bounds on `synth_core` newtypes. — DONE** (commit `f90125f`).
+  Semantic `ValueRange` presets are now the single source of truth per (type, context):
+  `Cents::DETUNE_RANGE`/`UNISON_DETUNE_RANGE`, `Hertz::OSC_RANGE`/`FILTER_RANGE`/`LFO_RANGE`/
+  `CROSSOVER_RANGE`, `Gain::MIXER_RANGE`. The descriptor `.range`, the `with_f32` apply clamp,
+  and the `clamp_*` method all reference the preset, so they can no longer drift; redundant
+  `MIN/MAX_LFO`/`MIN/MAX_FILTER` consts removed and drift-guard tests added per preset. The
+  optional global drift-lint (§3.5) was deferred as a stretch. Plan deleted. Original text:
+  Newtype clamping is inconsistent:
   `NormalizedValue`/`BipolarValue`/`Velocity` clamp in `new()` and `Phase` wraps (`rem_euclid`), but
   `Hertz`/`Gain`/`Cents`/`Semitones` are `const fn new` with no clamp, and there is no uniform
   `const RANGE: ValueRange` on any newtype (only ad-hoc `MIN`/`MAX` on a few) — so a shared
@@ -305,6 +312,16 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   `clamp_*` method all reference — NOT a single per-type `const RANGE`/`BoundedNewtype` (one newtype
   serves many contexts; `Hertz` already has `clamp_audible`/`clamp_lfo`/`clamp_filter`). No clamping
   in `new()`. Incremental, one preset per commit; start with `Detune`. **→ Plan: `plans/newtype-bounds-plan.md`.**
+- [ ] **Nice-to-have: global drift-lint over preset-backed descriptors (was §3.5 of the deleted
+  newtype-bounds plan).** The per-preset drift-guard tests that shipped with `f90125f` only cover the
+  params they were hand-written for, so a future dev could still hardcode `.range(-100.0, 100.0)` on a
+  *new* `Cents`/`Hertz`/`Gain` param instead of reusing the preset, and nothing would catch the
+  re-introduced drift. Add one test that walks **every** registered module's descriptors and, for each
+  param whose unit is a preset-backed newtype, asserts its `.range` is one of the approved presets
+  (`Cents::DETUNE_RANGE`, `Hertz::OSC_RANGE`, …) rather than a raw literal. Requires a curated
+  **allow-list of legitimate one-offs** (not every `Hertz`/`Cents` param maps to a shared preset — some
+  genuinely have a unique range), or it produces false positives. Belt-and-suspenders on top of the
+  per-param asserts; low priority.
 
 ---
 
