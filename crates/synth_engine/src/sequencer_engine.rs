@@ -802,17 +802,21 @@ impl SequencerEngine {
             }
         } // Lock released here
 
-        // Legato across placement boundaries: if a new note shares
-        // (pitch, instrument) with an active note ending at this exact tick,
-        // extend the active note instead of emitting NoteOff+NoteOn. The
-        // extended end_tick keeps `check_note_offs` below from firing the
-        // pending NoteOff, so the voice sustains across the boundary.
+        // Coalesce note boundaries so a successor extends the active voice
+        // instead of emitting NoteOff+NoteOn. The extended `end_tick` keeps
+        // `check_note_offs` below from firing the pending NoteOff, so the voice
+        // sustains. Two cases:
         //
-        // The per-note `legato`/`glide` fields are *carried* here but not yet
-        // acted upon: Phase B3 generalises this same-pitch coalesce into a
-        // per-note-legato superset (suppress NoteOff+NoteOn across *any*
-        // successor, gliding when the pitch differs) and drives the engine's
-        // GlideState. For now they only ride the emitted event.
+        // * **Same pitch** (any note): a tie — just extend `end_tick`, emit
+        //   nothing. Unchanged from the original placement-boundary legato.
+        // * **Different pitch, under `legato`** (Phase B3): the chip-style arp
+        //   join. An arp changes pitch every step, so without this the engine
+        //   would emit NoteOff(old)→NoteOn(new) and the voice would fall into
+        //   release. Instead we keep the voice `Active` (suppress the NoteOff by
+        //   extending `end_tick`), retarget the active note's pitch so
+        //   `check_note_offs` tracks the truth, and emit a `legato` NoteOn that
+        //   tells the audio thread to glide/update the frequency without
+        //   re-triggering the envelope.
         for i in 0..self.scratch_notes.len() {
             let PendingNote {
                 pitch,
@@ -824,14 +828,31 @@ impl SequencerEngine {
                 expression,
             } = self.scratch_notes[i];
 
+            // A legato successor may extend an active note of a *different*
+            // pitch; a non-legato one still only ties an identical pitch (so
+            // non-legato behaviour is byte-identical to before).
             let extending_idx = self.active_notes.iter().position(|n| {
-                n.pitch == pitch
-                    && n.instrument == instrument
+                n.instrument == instrument
                     && n.end_tick == Some(self.current_tick)
+                    && (n.pitch == pitch || legato)
             });
 
             if let Some(idx) = extending_idx {
                 self.active_notes[idx].end_tick = end_tick;
+                if self.active_notes[idx].pitch != pitch {
+                    // Cross-pitch legato: retarget the held voice and glide,
+                    // crucially WITHOUT emitting the matching NoteOff.
+                    self.active_notes[idx].pitch = pitch;
+                    events.push(SequencerEvent::NoteOn {
+                        tick: self.current_tick,
+                        pitch,
+                        velocity,
+                        instrument,
+                        legato: true,
+                        glide,
+                        expression,
+                    });
+                }
                 continue;
             }
 
@@ -1264,6 +1285,58 @@ mod tests {
             note_offs, 1,
             "expected exactly 1 NoteOff (only at the final note end, not at the \
              placement boundary): {events:?}"
+        );
+    }
+
+    #[test]
+    fn coalesce_extends_across_pitch_under_legato() {
+        // A note landing on an active note's boundary at a *different* pitch:
+        // under `legato` the engine extends the voice (glide) and suppresses the
+        // boundary NoteOff; without `legato` it re-gates (NoteOff then NoteOn).
+        fn run(legato: bool) -> (usize, usize) {
+            let mut song = Song::new("Legato").with_tempo(Bpm::new(120.0));
+            let pattern_len = Duration::WHOLE; // 3840 ticks
+            let pattern_id = song.create_pattern(pattern_len);
+            if let Some(pattern) = song.pattern_mut(pattern_id) {
+                // C4 for the first half, then E4 (legato) for the second.
+                let a = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+                if let Some(n) = pattern.note_mut(a) {
+                    n.duration = Some(Duration(1920));
+                }
+                let b = pattern.add_note(PatternTick(1920), Pitch::new(64).unwrap(), Velocity::MF);
+                if let Some(n) = pattern.note_mut(b) {
+                    n.duration = Some(Duration(1920));
+                    n.legato = legato;
+                }
+            }
+            let track_id = song.create_track("T");
+            song.place_pattern(pattern_id, track_id, Tick::ZERO);
+
+            let song = Arc::new(RwLock::new(song));
+            let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
+            seq.play();
+
+            // 2.5s covers the whole pattern (2s) plus the final NoteOff at 3840.
+            let mut events = Vec::new();
+            let frames = (SampleRate::DVD_QUALITY.as_f32() * 2.5).round() as usize;
+            seq.process(SampleCount::new(frames), &mut events);
+            let ons = events.iter().filter(|e| e.is_note_on()).count();
+            let offs = events.iter().filter(|e| e.is_note_off()).count();
+            (ons, offs)
+        }
+
+        // Legato: NoteOn(C4) + a gliding NoteOn(E4); only the final NoteOff —
+        // the C4→E4 boundary NoteOff is suppressed (one held envelope).
+        assert_eq!(
+            run(true),
+            (2, 1),
+            "legato boundary should glide, not re-gate (no boundary NoteOff)"
+        );
+        // Non-legato: the boundary re-gates, so both NoteOffs fire (unchanged).
+        assert_eq!(
+            run(false),
+            (2, 2),
+            "non-legato boundary should still re-gate (NoteOff then NoteOn)"
         );
     }
 
