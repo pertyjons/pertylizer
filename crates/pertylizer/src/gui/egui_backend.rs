@@ -667,7 +667,15 @@ impl eframe::App for SynthApp {
                         ))
                         .clicked()
                     {
+                        // True panic = hard kill, not just release. AllNotesOff
+                        // only triggers the release phase, so long releases,
+                        // stuck voices, and reverb/delay tails keep ringing —
+                        // the reason panic "didn't always work". Follow it with
+                        // ResetDsp to zero all voices + effect tails instantly.
+                        // AllNotesOff stays first for its AllNotesReleased event
+                        // (clears on-screen keyboard state) + param-override reset.
                         self.handle.send(EngineCommand::AllNotesOff);
+                        self.handle.send(EngineCommand::ResetDsp);
                         self.pressed_keys.clear();
                         self.keyboard.clear_pressed();
                     }

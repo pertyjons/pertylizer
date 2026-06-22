@@ -630,7 +630,7 @@ pub fn show_about_dialog(ctx: &egui::Context, open: &mut bool) {
             ui.label("  Z-M: Lower octave (C3-B3)");
             ui.label("  Q-I: Upper octave (C4-C5)");
             ui.label("  -/+: Change octave");
-            ui.label("  Space: Panic (all notes off)");
+            ui.label("  PANIC button (top bar): hard-stop all sound");
 
             ui.add_space(theme().spacing.md);
             ui.separator();
