@@ -251,11 +251,16 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
 ### 5.2 Technical follow-ups from the MCP music tools plan
 
 - [ ] **`HarmonyScope` enum to fix `analyze_song_harmony` argument sprawl.** `analyze_song_harmony`
-  (`crates/pertylizer/src/mcp_bridge.rs:7541`) takes 8 arguments and carries
-  `#[allow(clippy::too_many_arguments)]` (`mcp_bridge.rs:7540`). Two of them
-  (`exclude_drums`, `exclude_track_ids`) are only meaningful in arrangement scope. Today the
-  enforcement is inconsistent: only `exclude_track_ids` emits a runtime warning in pattern scope
-  (`mcp_bridge.rs:7584`), while `exclude_drums` silently no-ops. Introduce
+  (`crates/pertylizer/src/mcp_bridge.rs:7721`) takes 8 arguments and carries
+  `#[allow(clippy::too_many_arguments)]`. Two of them
+  (`exclude_drums`, `exclude_track_ids`) are only meaningful in arrangement scope.
+  **The correctness bug is fixed:** `exclude_drums` now also warns when set in pattern
+  scope (commit `6b59a28`), so the enforcement is consistent. **Remaining (non-bug cleanup):**
+  the enum refactor itself, to drop the `#[allow]` and make "ignored in pattern scope" a
+  compile-time impossibility. Also a *latent* seam — `analyze_tension_curve_impl` /
+  `analyze_section`'s harmony sub-call pass `Some(exclude_drums.unwrap_or(true))`, normalizing
+  `None`→`Some(true)`, so a future change that forwarded `harmony.warnings` through those callers
+  would emit a spurious pattern-scope warning; the enum refactor resolves this seam too. Introduce
   `enum HarmonyScope { Pattern { pattern_id: PatternId }, Arrangement { start: Option<u64>,
   end: Option<u64>, exclude_drums: bool, exclude_track_ids: HashSet<TrackId> } }` at the bridge
   boundary; the flat `AnalyzeHarmonyParam` (`crates/synth_mcp/src/server.rs:1011`, JSON-schema
