@@ -368,11 +368,20 @@ pub enum ArpRate {
     /// Exact step length in ticks (sub-grid; e.g. 40 = one PAL frame @125 BPM).
     /// Clears the divided-grid floor for chiptune / SID arps. Clamped to ≥1.
     Ticks(u32),
+    /// Frame-/tempo-independent step rate in **millihertz** (integer, so
+    /// `ArpRate` keeps `Eq`/`Hash`): 50_000 = 50 Hz PAL, 60_000 = 60 Hz NTSC.
+    /// The tick length is tempo-dependent and resolved against the live BPM in
+    /// [`Arpeggiator::step_onset`] with drift-free absolute-time rounding.
+    MilliHz(u32),
 }
 
 impl ArpRate {
-    /// Step length in ticks (all named divisions are exact on the 960-PPQN
-    /// grid; [`Self::Ticks`] is the raw sub-grid count, clamped to ≥1).
+    /// Step length in ticks. All named divisions are exact on the 960-PPQN grid
+    /// and [`Self::Ticks`] is the raw sub-grid count (clamped to ≥1). For the
+    /// tempo-dependent [`Self::MilliHz`] this is only a nominal length at the
+    /// default tempo — the real per-step length is resolved against the live
+    /// BPM in [`Arpeggiator::step_onset`]; this fallback is for UI/length hints.
+    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
     pub fn ticks(self) -> Duration {
         match self {
             Self::Quarter => Duration::QUARTER,
@@ -388,6 +397,10 @@ impl ArpRate {
             Self::ThirtySecondDotted => Duration::THIRTY_SECOND.dotted(),
             Self::ThirtySecondTriplet => Duration::TRIPLET_THIRTY_SECOND,
             Self::Ticks(n) => Duration(n.max(1)),
+            Self::MilliHz(m) => {
+                let len = (16_000.0 * Bpm::DEFAULT.as_f32() / m.max(1) as f32).round();
+                Duration((len as u32).max(1))
+            }
         }
     }
 }
@@ -555,6 +568,74 @@ impl Arpeggiator {
         n
     }
 
+    /// Resolve whether `tick` is a step onset for an arp anchored at `anchor`,
+    /// and if so the step index and its gated note duration (ticks).
+    ///
+    /// The named divisions and [`ArpRate::Ticks`] live on an integer grid, so
+    /// the onset is an exact `step·len (+ swing)` and the divisor is whole. The
+    /// frame-locked [`ArpRate::MilliHz`] rate has a *fractional* step length
+    /// (e.g. 38.4 ticks at 50 Hz / 120 BPM), so it must round **absolute time**
+    /// `round(step·len)` rather than accumulate a per-step integer (which would
+    /// drift). Swing shifts odd steps off the plain grid, so the fractional path
+    /// scans a ±1 window around the expected step to find the matching onset.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss
+    )]
+    fn step_onset(&self, anchor: u32, tick: PatternTick, bpm: Bpm) -> Option<(u32, u32)> {
+        let rel = tick.0.saturating_sub(anchor);
+        let gate = self.gate.as_f32();
+        if let ArpRate::MilliHz(m_hz) = self.rate {
+            // ticks/s = 960 PPQN·BPM/60 = 16·BPM; ÷ Hz = ÷(mHz/1000) ⇒ ×1000
+            // folded in. Clamp BPM/Hz away from zero so the step length is finite,
+            // and floor it at one tick: the integer grid cannot place two steps in
+            // the same tick, so a sub-tick rate (Hz > 16·BPM, far above any frame
+            // rate) would otherwise round consecutive steps onto one tick and skip
+            // every other step. One step per tick is the finest the grid allows.
+            let step_len = ((16_000.0 * bpm.as_f32().max(1.0)) / m_hz.max(1) as f32).max(1.0);
+            let swing = self.swing.as_f32();
+            let approx_step = (rel as f32 / step_len) as u32;
+            let swing_for = |s: u32| {
+                if s % 2 == 1 {
+                    (step_len / 2.0 * swing).round() as i32
+                } else {
+                    0
+                }
+            };
+            let onset_for = |s: u32| (s as f32 * step_len).round() as i32 + swing_for(s);
+            // Scan ±1 around the expected step: swing can push an onset into the
+            // neighbouring integer-step bucket.
+            let step = (approx_step.saturating_sub(1)..=approx_step + 1).find(|&s| {
+                let o = onset_for(s);
+                o >= 0 && o as u32 == rel
+            })?;
+            let gap = (onset_for(step + 1) - onset_for(step)).max(1) as u32;
+            let duration = ((step_len * gate).round() as u32).clamp(1, gap);
+            return Some((step, duration));
+        }
+
+        // Integer-grid rates (named divisions + `Ticks`) — exact, unchanged.
+        let step_len = self.rate.ticks().0;
+        let step = rel / step_len;
+        let swing_ticks = (step_len as f32 / 2.0 * self.swing.as_f32()) as u32;
+        let onset = step * step_len + if step % 2 == 1 { swing_ticks } else { 0 };
+        if rel != onset {
+            return None;
+        }
+        // Step gate, clamped to the gap to the next (swung) onset so a long gate
+        // on a swung grid can never overlap the following step — an overlap of
+        // the same pitch would otherwise confuse the engine's NoteOff
+        // bookkeeping (two active voices, first NoteOff cuts both).
+        let gap = if step.is_multiple_of(2) {
+            step_len + swing_ticks
+        } else {
+            step_len - swing_ticks
+        };
+        let duration = ((step_len as f32 * gate) as u32).clamp(1, gap.max(1));
+        Some((step, duration))
+    }
+
     /// Per-tick arp evaluation. Suppresses the upstream note stream and, when
     /// `tick` lands on a step onset (including the swung onset of odd steps),
     /// emits that step's chord member(s).
@@ -574,7 +655,7 @@ impl Arpeggiator {
         pattern: &Pattern,
         tick: PatternTick,
         upstream: &[NoteProcessor],
-        _bpm: Bpm,
+        bpm: Bpm,
         buf: &mut ExpansionBuffer,
     ) {
         // The arp replaces the source stream: chord onsets never pass through.
@@ -586,14 +667,13 @@ impl Arpeggiator {
         let Some((source_tick, anchor)) = self.chord_source(pattern, tick) else {
             return;
         };
-        let step_len = self.rate.ticks().0;
-        let rel = tick.0.saturating_sub(anchor);
-        let step = rel / step_len;
-        let swing_ticks = (step_len as f32 / 2.0 * self.swing.as_f32()) as u32;
-        let onset = step * step_len + if step % 2 == 1 { swing_ticks } else { 0 };
-        if rel != onset {
+        // Phase 1 also resolves the step index and its gated duration — both fall
+        // out of the rate's onset grid (integer divisions for the named/`Ticks`
+        // rates, drift-free absolute-time rounding for the frame-locked `MilliHz`
+        // rate). `None` ⇒ `tick` is not a step onset for this arp.
+        let Some((step, duration)) = self.step_onset(anchor, tick, bpm) else {
             return;
-        }
+        };
 
         // Phase 2 (step onsets only): resolve the chord through the upstream
         // chain and emit. The expensive per-note pitch mapping never runs on
@@ -624,16 +704,6 @@ impl Arpeggiator {
         let octaves = u32::from(self.octaves.clamp(1, 4));
         let n32 = n as u32;
         let total = n32 * octaves;
-        // Step gate, clamped to the gap to the next (swung) onset so a long
-        // gate on a swung grid can never overlap the following step — an
-        // overlap of the same pitch would otherwise confuse the engine's
-        // NoteOff bookkeeping (two active voices, first NoteOff cuts both).
-        let gap = if step.is_multiple_of(2) {
-            step_len + swing_ticks
-        } else {
-            step_len - swing_ticks
-        };
-        let duration = ((step_len as f32 * self.gate.as_f32()) as u32).clamp(1, gap.max(1));
 
         if self.mode == ArpMode::Chord {
             // Whole chord per step; the octave cycles step-by-step, and the
@@ -1729,10 +1799,15 @@ mod tests {
 
     /// Expand a pattern over `ticks` and collect (tick, midi) of emitted notes.
     fn expand_all(p: &Pattern, ticks: u32) -> Vec<(u32, u8)> {
+        expand_all_bpm(p, ticks, Bpm::DEFAULT)
+    }
+
+    /// As [`expand_all`] but at a chosen tempo (for frame-locked rate tests).
+    fn expand_all_bpm(p: &Pattern, ticks: u32, bpm: Bpm) -> Vec<(u32, u8)> {
         let mut buf = ExpansionBuffer::new();
         let mut out = Vec::new();
         for t in 0..ticks {
-            p.expand_at_tick(PatternTick(t), |_| true, Bpm::DEFAULT, &mut buf);
+            p.expand_at_tick(PatternTick(t), |_| true, bpm, &mut buf);
             for n in buf.notes() {
                 out.push((t, n.pitch.as_midi()));
             }
@@ -1769,6 +1844,59 @@ mod tests {
         let _ = p.add_processor(NoteProcessor::Arpeggiator(a));
         let onsets: Vec<u32> = expand_all(&p, 200).iter().map(|(t, _)| *t).collect();
         assert_eq!(onsets, vec![0, 40, 80, 120, 160], "40-tick step spacing");
+    }
+
+    #[test]
+    #[allow(clippy::cast_precision_loss)]
+    fn arp_rate_hz_is_tempo_independent() {
+        // 50 Hz (PAL frame). The *mean* step is 20 ms regardless of project
+        // tempo, and there is no cumulative drift over a long pattern.
+        let mut p = chord_pattern_single(60, 4000);
+        let mut a = arp(ArpMode::Up, 1);
+        a.rate = ArpRate::MilliHz(50_000);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(a));
+
+        for &(bpm_val, ticks) in &[(120.0_f32, 800u32), (240.0_f32, 1600u32)] {
+            let bpm = Bpm::new(bpm_val);
+            // ticks/s = 16·BPM; step = (16·BPM)/Hz = 16_000·BPM/mHz.
+            let step_len = 16_000.0 * bpm_val / 50_000.0;
+            let onsets: Vec<u32> = expand_all_bpm(&p, ticks, bpm)
+                .iter()
+                .map(|(t, _)| *t)
+                .collect();
+            assert!(onsets.len() >= 8, "expected several onsets, got {onsets:?}");
+
+            // No cumulative drift: the k-th onset is `round(k·step_len)` exactly,
+            // never the sum of a truncated per-step integer.
+            for (k, &o) in onsets.iter().enumerate() {
+                let expected = (k as f32 * step_len).round() as u32;
+                assert_eq!(o, expected, "onset {k} drifted at {bpm_val} BPM");
+            }
+
+            // Mean step ≈ 20 ms (1/50 Hz) at every tempo.
+            let span = (onsets[onsets.len() - 1] - onsets[0]) as f32;
+            let mean_ticks = span / (onsets.len() - 1) as f32;
+            let mean_seconds = mean_ticks / (16.0 * bpm_val);
+            assert!(
+                (mean_seconds - 0.020).abs() < 5e-4,
+                "mean step {mean_seconds}s != 20 ms at {bpm_val} BPM"
+            );
+        }
+    }
+
+    #[test]
+    fn arp_rate_hz_subtick_clamps_to_one_per_tick() {
+        // A rate finer than the tick grid (600 Hz @20 BPM → 0.53 ticks/step)
+        // floors at one step per tick — every tick fires once, no steps skipped.
+        let mut p = chord_pattern_single(60, 200);
+        let mut a = arp(ArpMode::Up, 1);
+        a.rate = ArpRate::MilliHz(600_000);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(a));
+        let onsets: Vec<u32> = expand_all_bpm(&p, 20, Bpm::new(20.0))
+            .iter()
+            .map(|(t, _)| *t)
+            .collect();
+        assert_eq!(onsets, (0..20).collect::<Vec<_>>(), "one onset per tick");
     }
 
     #[test]

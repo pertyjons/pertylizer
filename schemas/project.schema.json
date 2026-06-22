@@ -142,6 +142,21 @@
             "Ticks"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Frame-/tempo-independent step rate in **millihertz** (integer, so\n`ArpRate` keeps `Eq`/`Hash`): 50_000 = 50 Hz PAL, 60_000 = 60 Hz NTSC.\nThe tick length is tempo-dependent and resolved against the live BPM in\n[`Arpeggiator::step_onset`] with drift-free absolute-time rounding.",
+          "properties": {
+            "MilliHz": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "MilliHz"
+          ],
+          "type": "object"
         }
       ]
     },
