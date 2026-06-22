@@ -98,12 +98,12 @@
   dispatched through the same override layer as A2. Delivers exact *shared* SID-style
   filter sweeps. **S** task — build only when a tune genuinely needs a shared (not
   per-instrument) automated sweep; per-instrument sweeps are already covered by A2.
-- [ ] **`ParamId(Arc<str>)` off-thread drop (F1 residual).** Cloning a `Module`
-  automation target is now alloc-free, but the engine's cached clone can become the
-  last `Arc` reference and so *drop* (free) on the audio thread — but only if the
-  source lane was removed mid-playback. Strict improvement over the prior `String`
-  (which freed on every drop). Full fix: route cleared/replaced targets through the
-  engine's `return_producer` off-thread drop channel. Low priority (bounded, rare).
+- [x] **`ParamId(Arc<str>)` off-thread drop (F1 residual). — RESOLVED.** The full
+  fix shipped: `SequencerEngine::clear_automation_dedup` (`sequencer_engine.rs:656`)
+  drains cleared/replaced automation targets into the dedicated `automation_trash`
+  ring (`set_automation_trash`), and the main thread frees them via
+  `automation_trash_consumer` (`synth_engine.rs:202`). The `ParamId(Arc<str>)` final
+  drop never lands on the audio thread (documented full-channel fallback aside).
 
 **Iceboxed — the rest of Phase E (build on demand only).** The expensive,
 narrow-audience remainder of the old north-star phase. No plan doc; pick up only when a
