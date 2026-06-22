@@ -1,0 +1,517 @@
+{
+  "file_type": "project",
+  "version": "1.0",
+  "instruments": [
+    {
+      "id": 1,
+      "name": "YAMS Lab",
+      "channel": 1,
+      "volume": 0.9,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description": "Pedagogical demo of the Script (scr) module + YAMS. The voice (pulse osc → acid LP filter → amp/env → out) has NO LFO — every bit of movement comes from two Script modules. scr-1 'Rhythm Brain' is global/tempo-synced (arr lookup tables driven by `beat`, polyrhythm, `playing` mute) — press PLAY to hear it. scr-2 'Voice Motion' is per-voice/expressive (vibrato that fades in with note age + mod wheel, per-note random rate, velocity→resonance) — audible on any single note. Read the slot scripts via get_module_info(scr-1/scr-2).",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "patch": {
+        "name": "YAMS Lab",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "description": "Pulse oscillator, the sole tone source. Pulse waveform is chosen so the pulse-width (pwm) CV input matters: scr-1 slot 2 sequences the width for a moving, hollow timbre. The fm input (exponential) receives scr-2 slot 1's vibrato. Frequency tracks the played note automatically.",
+            "parameters": {
+              "anti_alias": "polyblep",
+              "detune": 0.0,
+              "fm_amt": 0.15,
+              "fm_mode": "exponential",
+              "frequency": 440.0,
+              "level": 0.9,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": "pulse",
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "description": "Acid-model lowpass (TB-303-style ladder voicing) — the heart of the sound. cutoff_cv is driven by scr-1 slot 1's 8-step sequence (Env Amt 0.5 gives ~2-octave range); res_cv is driven by scr-2 slot 2 (velocity + random drift). Base cutoff sits low (350 Hz) so the script does the talking.",
+            "parameters": {
+              "cutoff": 350.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "env_amt": 0.5,
+              "key_track": 0.0,
+              "model": "acid",
+              "morph": 0.0,
+              "resonance": 0.2,
+              "type": "lowpass"
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "description": "ADSR amplitude envelope → amp-1 cv. Also read back by scr-2 slot 1 via `src eg = env-1.out`, so the scripted vibrato tapers with the note's amplitude. Plucky acid settings: fast attack, 0.25 s decay, 0.65 sustain, 0.35 s release.",
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.005,
+              "dec_curve": 0.0,
+              "decay": 0.25,
+              "rel_curve": 0.0,
+              "release": 0.35,
+              "sustain": 0.65,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "description": "VCA. Its cv gain is shaped by env-1 (standard per-note volume envelope). No script touches this stage — the amplitude contour is plain ADSR, keeping the Script demo focused on filter/pitch/timbre.",
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "description": "Stereo output with soft limiter. Final stage of the voice; receives the amp output. Nothing scripted here.",
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "scr-1",
+            "type": "script",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "description": "Rhythm Brain (tempo-synced). out1 → filter cutoff (8-step glided sequence), out2 → osc pulse-width (5-step). Coprime lengths 8 vs 5 = 40-beat polyrhythm. Both gated by `playing`, so silent until the transport runs. Demonstrates arr tables, beat/modulo, lag, playing.",
+            "parameters": {},
+            "scripts": {
+              "1": "# Slot 1 → flt.cutoff_cv\n# An 8-step filter-cutoff sequencer. `beat` is the transport position, so the\n# pattern advances one step per beat; `% len(cut)` wraps it every 8 beats.\n# `lag` glides between steps (35 ms) so the filter sings instead of clicking.\n# `* playing` mutes the sequence whenever the transport is stopped.\narr cut = [0.25, 0.55, 0.4, 0.95, 0.35, 0.7, 0.5, 0.85]\n\nlet step = cut[floor(beat) % len(cut)]\nout = lag(step, 35ms) * playing",
+              "2": "# Slot 2 → osc.pwm\n# A 5-step pulse-width sequence (bipolar, around the 0.5 base width). Length 5\n# against slot 1's length 8 is coprime, so the combined groove only repeats\n# every 40 beats — instant polyrhythm from two const tables, zero extra modules.\narr pw = [0, 0.6, -0.4, 0.3, -0.2]\n\nout = pw[floor(beat) % len(pw)] * 0.4 * playing"
+            }
+          },
+          {
+            "id": "scr-2",
+            "type": "script",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "description": "Voice Motion (per-voice, expressive). out1 → osc FM (vibrato: src-bound to env-1, fades in with age, depth from mod wheel, random rate per note). out2 → filter resonance (velocity base + rand_smooth drift, decorrelated per voice). Demonstrates src bindings, macros (velocity/mod_wheel/age), phasor, rand/rand_smooth, eager evaluation.",
+            "parameters": {},
+            "scripts": {
+              "1": "# Slot 1 → osc.fm  (expressive pitch vibrato)\n# `src` binds another module's output to a clean name — here the amp envelope,\n# so the vibrato tapers away as the note releases. The vibrato eases in over\n# ~1 s (smoothstep on `age`), its depth follows the mod wheel, and each note\n# picks its own random speed (rand() is latched per note-on) so no two notes\n# wobble identically. Remember: YAMS is eager — phasor() keeps ticking every\n# block regardless of the envelope value, so the LFO never stalls or jumps.\nsrc eg = env-1.out\n\nlet fade = smoothstep(0.2, 1.2, age)\nlet depth = lerp(0.04, 0.14, mod_wheel)\nlet rate = lerp(4.5, 6.5, rand())\nlet vib = sin(phasor(rate) * tau)\nout = vib * depth * fade * eg",
+              "2": "# Slot 2 → flt.res_cv  (per-note timbre)\n# Harder hits get more resonance (velocity), plus a slow random shimmer.\n# rand_smooth re-seeds per voice from the voice index, so simultaneous notes in\n# a chord drift independently — built-in movement/width with no LFO module.\nlet base = lerp(0.1, 0.6, velocity)\nlet drift = bipolar(rand_smooth(0.4)) * 0.15\nout = clamp(base + drift, 0, 1)"
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "scr-1",
+              "out1"
+            ],
+            "to": [
+              "flt-1",
+              "cutoff_cv"
+            ]
+          },
+          {
+            "from": [
+              "scr-1",
+              "out2"
+            ],
+            "to": [
+              "osc-1",
+              "pwm"
+            ]
+          },
+          {
+            "from": [
+              "scr-2",
+              "out1"
+            ],
+            "to": [
+              "osc-1",
+              "fm"
+            ]
+          },
+          {
+            "from": [
+              "scr-2",
+              "out2"
+            ],
+            "to": [
+              "flt-1",
+              "res_cv"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0
+        }
+      }
+    }
+  ],
+  "active_instrument_id": 1,
+  "song": {
+    "name": "YAMS Script Lab",
+    "author": "Pertylizer Examples",
+    "description": "A teaching example for the Script (scr) module and the YAMS control-script language. One acid voice with NO LFO module: all movement comes from two Script modules. scr-1 'Rhythm Brain' is tempo-synced/global (arr lookup tables indexed by `beat` → an 8-step filter sequence and a 5-step pulse-width sequence; coprime lengths = polyrhythm; gated by `playing`). scr-2 'Voice Motion' is per-voice/expressive (envelope-tapered vibrato that fades in with note age + mod wheel, random rate per note, velocity→resonance with rand_smooth drift). Press play to hear scr-1; preview a single note to hear scr-2. Open the scr modules' ƒx editors to read the scripts; get_yams_reference documents the language.\"",
+    "patterns": [
+      {
+        "id": 0,
+        "name": "YAMS Lab Loop",
+        "description": "2-bar (8-beat) 16th-note acid bassline on an E-minor root (E2) with octave and 4th/5th leaps, accents on the downbeats. Length 8 = exactly one cycle of scr-1's 8-step cutoff sequence, so the filter groove repeats each loop while the 5-step pulse-width sequence drifts against it. Loop 0..8 keeps the transport `playing` flag true, which is what wakes scr-1.",
+        "length": 7680,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 480,
+            "pitch": 40,
+            "velocity": 0.88188976,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 480,
+            "duration": 480,
+            "pitch": 40,
+            "velocity": 0.5511811,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 960,
+            "duration": 480,
+            "pitch": 52,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 1440,
+            "duration": 480,
+            "pitch": 40,
+            "velocity": 0.5511811,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 1920,
+            "duration": 480,
+            "pitch": 40,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 2400,
+            "duration": 480,
+            "pitch": 43,
+            "velocity": 0.62992126,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 6,
+            "start": 2880,
+            "duration": 480,
+            "pitch": 40,
+            "velocity": 0.5511811,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 7,
+            "start": 3360,
+            "duration": 480,
+            "pitch": 47,
+            "velocity": 0.70866144,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 8,
+            "start": 3840,
+            "duration": 480,
+            "pitch": 40,
+            "velocity": 0.88188976,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 9,
+            "start": 4320,
+            "duration": 480,
+            "pitch": 52,
+            "velocity": 0.62992126,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 10,
+            "start": 4800,
+            "duration": 480,
+            "pitch": 40,
+            "velocity": 0.5511811,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 11,
+            "start": 5280,
+            "duration": 480,
+            "pitch": 45,
+            "velocity": 0.70866144,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 12,
+            "start": 5760,
+            "duration": 480,
+            "pitch": 40,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 13,
+            "start": 6240,
+            "duration": 480,
+            "pitch": 50,
+            "velocity": 0.6692913,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 14,
+            "start": 6720,
+            "duration": 480,
+            "pitch": 43,
+            "velocity": 0.62992126,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 15,
+            "start": 7200,
+            "duration": 480,
+            "pitch": 47,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 16
+      }
+    ],
+    "next_pattern_id": 1,
+    "tracks": [
+      {
+        "id": 0,
+        "name": "YAMS Lab",
+        "description": "Drives the YAMS Lab instrument. The only track in the project — the whole point is to hear the two Script modules animate a single voice.",
+        "instrument": 1,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      }
+    ],
+    "next_track_id": 1,
+    "arrangement": [
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 0,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      }
+    ],
+    "tempo_changes": [],
+    "time_signature_changes": [],
+    "default_tempo": 124.0,
+    "default_time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 64,
+      "ticks_per_row": 240
+    },
+    "next_return_bus_id": 0
+  },
+  "global": {
+    "master_volume": 1.0,
+    "octave_offset": 0,
+    "glide_time": 0.0
+  }
+}

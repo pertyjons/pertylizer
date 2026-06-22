@@ -1,5 +1,97 @@
 # Version History
 
+## [0.314.0] - 2026-06-22
+
+### YAMS — a general real-time scripting module (`scr`)
+
+- **Standalone Script module.** YAMS graduated from the Mod Matrix amount cell to a
+  first-class voice-graph module: a module-agnostic `ScriptHost` (Phase 0),
+  transport/tempo context sources (Phase 1), and the `scr` Script module with a
+  patch-editor GUI, data-driven "Add module" menu, and output-port-aligned slot
+  rows (Phase 2).
+- **ƒx editor polish.** Feedback-loop warnings (with memoized compiles), a "Select
+  input" tree-picker that replaces the selection, an embedded Help reference panel,
+  and a fixed 16-row editor instead of a resizing window.
+- **Language gaps closed.** Const lookup-table arrays, synced `phasor`/`accum`
+  overloads, a `rand_smooth` LFO, polarity/pulse helpers, `table_lin`/`scale_snap`,
+  live + normalized parameter sources, an out-of-bounds array-index warning, the
+  `sr`→`cr` context rename, and `mtof` taking raw MIDI.
+- **MCP & offline.** `get_yams_reference` plus script read-back for `scr` modules,
+  scripts now installed in the offline render path, and tolerant decoding of
+  stringified-JSON note-processor blobs.
+
+### Note FX — rack GUI + ornaments (NP6)
+
+- **Note FX rack inspector** with per-type parameter widgets, undoable freeze, and
+  wiring into the Pattern view.
+- **Per-note ornaments.** A shared ornament-editor popup in the piano roll and a
+  tracker ornament column; ornamented notes are marked and ghost-note previews are
+  drawn in the piano roll. Added an Ornament Demo example project.
+
+### Tracker — T4 polish
+
+- Bar separators, row hover highlight, zoom-Y with dynamic font scaling,
+  focus-state cursor, cell tooltips, voice/ornament/expression/automation context
+  menus, and a keyboard cheat-sheet; flat fields grouped into `TrackerViewState`.
+- **Fixed context menus never opening** — rows now sense clicks and use
+  non-selectable labels so clicks reach the cells.
+
+### Spectral analysis — MCP suite
+
+- New `render_to_wav`, a pure-DSP spectrum module, and the
+  `analyze_spectrum` / `analyze_sample_spectrum` / `analyze_spectrogram` (native
+  STFT) / `analyze_sample_spectrogram` / `compare_spectra` tools, the last two with
+  a window selector and a fixed log-bin grid.
+
+### Arpeggiator — chiptune timing
+
+- Drift-free `ArpRate::MilliHz` and sub-grid `ArpRate::Ticks`, `ArpMode::Custom`
+  with an `ArpOffsets` cycle, cross-pitch legato coalesce (one envelope across the
+  figure), and GUI + MCP round-trip for rate/mode/legato.
+
+### Instruments & modules
+
+- **Per-module-instance descriptions** — data model + engine mirror + persistence,
+  MCP read/write, GUI editing/info popup, and surfacing in
+  `get_graph_diagnostics` / `analyze_note`.
+- **Instrument and patch color over MCP** — engine-owned, read/write, and
+  round-tripping through save/load.
+- Sub Oscillator waveforms expanded 3→6, a voice-stealing strategy selector in the
+  instrument edit panel, audio-rate oscillator hard sync, and single-source
+  parameter bounds via semantic `ValueRange` presets.
+
+### MCP & analysis ergonomics
+
+- `search_modules` weighted token scoring + `did_you_mean`, `math_oscillator`
+  `param_a/b/c` documented per algorithm, and `ALL_MODULE_TYPES` made enum-driven
+  (strum `EnumIter`).
+- `analyze_song_harmony` argument sprawl replaced by a `HarmonyQuery` enum,
+  `exclude_drums` now warns in pattern scope (was a silent no-op), and
+  machine-readable `range()` bounds on fixed numeric tool fields.
+
+### Engine & GUI internals
+
+- **OfflineNoteSession** amortizes engine setup across patch sweeps;
+  `EngineCommand::ResetDsp` gives tail-proof offline-render isolation and powers a
+  hard-stop PANIC button.
+- Sequencer GUI decomposed — `mod.rs` split into
+  transport/arrangement/piano_roll/automation submodules with `PianoRollCtx` /
+  `ArrangementCtx` and extracted painters.
+- `Song::calculate_length` cached via a generation counter, cleared-automation
+  dedup keys dropped off-thread, and a `shared_song()` helper deduping
+  `Arc<RwLock<Song>>` construction sites.
+
+### Fixes
+
+- Audio-thread `free()` when swapping/clearing Mod Matrix scripts, dropped silent
+  no-op Swing/Solo automation targets, and write-through of `set_instrument_*` into
+  the cached snapshot.
+
+### Examples & docs
+
+- New **YAMS Script Lab** example project with a `script-1.png` screenshot and
+  README writeup; `yams.md` correctness pass from a DSP review.
+
 ## [0.313.0] - 2026-06-15
 
 ### Dynamic Mod Matrix — address-based routing (Step 1)

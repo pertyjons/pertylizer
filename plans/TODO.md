@@ -66,6 +66,18 @@
   resize-grab tooltip so the user can choose per placement. Migration of older songs: default existing
   placements to `Clip` so behaviour is preserved, or `Repeat` if we accept a one-time semantic change.
 
+### 1.6 Persist the transport loop region across save/load
+
+- [ ] **`set_transport_loop` is not saved with the project.** The loop region (start/end/enabled) set via
+  the `set_transport_loop` MCP tool (and the arrangement-ruler loop) is live transport state that
+  `save_project` drops: a saved `.json` has no `transport_loop` under `song` or `global`, so on reload the
+  arrangement plays through once and stops, and the loop must be re-enabled by hand. Surfaced while building
+  the `YAMS Script Lab` example (the scr-1 "Rhythm Brain" demo relies on a loop to keep `playing` true).
+  Fix: serialize the loop region with the song (e.g. `Song.transport_loop: Option<LoopRegion { start, end,
+  enabled }>`) and restore it on load. Decide whether `enabled` persists or always loads disabled. If the
+  loop is *intentionally* ephemeral, document that in the `set_transport_loop` / `save_project` tool
+  descriptions instead, so it is not a silent surprise.
+
 ---
 
 ## 2. Sound Design — Expanded Capabilities
