@@ -639,8 +639,13 @@ impl SynthBridge for AppSynthBridge {
             .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
 
         // The tool's `slot` is 1-based (matching the routings report); the engine
-        // is 0-based. Range-check against the real slot count.
-        let max = synth_core::MAX_MOD_MATRIX_SLOTS as u8;
+        // is 0-based. Range-check against the real slot count for this module
+        // type — a Script (`scr`) module has fewer slots than a Mod Matrix, so a
+        // too-large slot is rejected up front instead of being a silent no-op.
+        let max = match mid.module_type {
+            ModuleType::Script => synth_modules::script_module::SCRIPT_MODULE_OUTPUTS as u8,
+            _ => synth_core::MAX_MOD_MATRIX_SLOTS as u8,
+        };
         if !(1..=max).contains(&slot) {
             return Err(McpBridgeError::Other(format!(
                 "slot {slot} out of range (expected 1..={max})"

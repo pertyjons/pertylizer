@@ -202,6 +202,14 @@ fn script_module_readback_via_get_module_info() {
         scripts[0].source, "out = velocity * 0.5",
         "installed source must round-trip"
     );
+
+    // §3.1: a Script module has only 8 slots, so a slot past 8 is rejected up
+    // front (not silently dropped at the engine like the old 1..=16 check did).
+    let err = bridge.set_mod_matrix_script(InstrumentId::FIRST.as_u64(), "scr-1", 9, "out = 1");
+    assert!(
+        err.is_err(),
+        "scr slot 9 must be rejected — only out1..out8 exist"
+    );
 }
 
 #[tokio::test]

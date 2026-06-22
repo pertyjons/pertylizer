@@ -109,8 +109,10 @@ Rules that keep arrays cheap and RT-safe:
   source or macro is not.
 - **The index is floored, then clamped.** `name[i]` reads element
   `clamp(floor(i), 0, len-1)`. Flooring gives equal-width steps (the correct rule
-  for a sequencer); the clamp makes an out-of-range index safe. For sequencer
-  *wrap*, write it explicitly: `seq[floor(beat) % len(seq)]`.
+  for a sequencer); the clamp makes an out-of-range index safe — a negative or
+  `NaN` index reads element `0`, a too-large one reads the last element. Indexing
+  never wraps and never interpolates; for sequencer *wrap*, write it explicitly
+  (`seq[floor(beat) % len(seq)]`), and for interpolation use `table_lin` (below).
 - **`len(name)`** folds to the element count at compile time, so
   `i % len(seq)` costs nothing extra.
 - **`table_lin(arr, pos)`** is the interpolated cousin of `arr[i]`: it lerps
