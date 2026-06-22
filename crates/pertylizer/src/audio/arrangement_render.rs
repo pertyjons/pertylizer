@@ -731,6 +731,42 @@ fn load_instrument_into_offline(
                 });
             }
         }
+
+        // Replay YAMS control scripts onto Script (`scr`) / Mod-Matrix (`mmx`)
+        // slots — the one step the offline loader previously skipped, which left
+        // every scripted modulation silent in renders/analyze (mirrors the load
+        // path in `SynthSession::apply_project`). Compilation runs here, off the
+        // audio thread; only the shared `Arc<BoundScript>` crosses to the engine.
+        // Keys are 1-based slot numbers; a bad key or compile error is recorded as
+        // a warning and skipped rather than aborting the whole render.
+        for (slot_key, source) in &module_snap.scripts {
+            let slot = match crate::session::parse_mod_slot_key(slot_key) {
+                Ok(slot) => slot,
+                Err(msg) => {
+                    warnings.push(format!("arrangement_render: {module_id} script: {msg}"));
+                    continue;
+                }
+            };
+            let script = match crate::session::compile_mod_script(source) {
+                Ok(script) => script,
+                Err(msg) => {
+                    warnings.push(format!(
+                        "arrangement_render: {module_id} slot {slot_key} script: {msg}"
+                    ));
+                    continue;
+                }
+            };
+            if !handle.send_blocking(EngineCommand::SetModScript {
+                instrument_id: Some(instrument_id),
+                module_id,
+                slot,
+                script: Some(script),
+            }) {
+                warnings.push(format!(
+                    "arrangement_render: failed to enqueue script for module {module_id} slot {slot_key}"
+                ));
+            }
+        }
     };
 
     let mut voice_modules: Vec<&synth_engine::ModuleStateSnapshot> = Vec::new();

@@ -23,6 +23,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use synth_core::AudioProcessor;
+use synth_core::ModuleType;
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_engine::SynthEngine;
 use synth_sequencer::{Duration as SeqDuration, PatternTick, Song};
@@ -30,12 +31,87 @@ use synth_sequencer::{Duration as SeqDuration, PatternTick, Song};
 use pertylizer::audio::arrangement_render::render_arrangement_to_buffer;
 use pertylizer::audio::mix_analysis::analyze_mix_buffer;
 use pertylizer::mcp_shared::McpSharedState;
+use pertylizer::patch::{ModuleBuilder, Patch};
 use pertylizer::session::SynthSession;
 
 use common::{
     TEST_SR, build_arpeggio_song, build_single_pattern_song, left_rms, setup_with_patch,
     sustain_patch,
 };
+
+/// `osc → amp → out` with a `scr` Script module driving `amp.cv` from slot 1.
+/// `script` is the YAMS source installed on that slot; with `out = 0.8` the amp
+/// passes the oscillator at 0.8 gain, with `out = 0.0` it is fully closed.
+fn scripted_amp_patch(script: &str) -> Patch {
+    let mut patch = Patch::new("ScriptedAmp");
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscillator)
+            .waveform("sawtooth")
+            .param_f("level", 0.5)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Amplifier)
+            .param_f("level", 1.0)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
+            .param_f("master", 1.0)
+            .build(),
+    );
+    let mut scr = ModuleBuilder::new(1, ModuleType::Script).build();
+    scr.scripts.insert("1".to_string(), script.to_string());
+    patch.add_module(scr);
+
+    patch.add_connection("osc-1", "out", "amp-1", "in");
+    patch.add_connection("scr-1", "out1", "amp-1", "cv");
+    patch.add_connection("amp-1", "left", "out-1", "in_l");
+    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch
+}
+
+fn render_scripted_amp_rms(script: &str) -> f32 {
+    let rig = setup_with_patch(&scripted_amp_patch(script));
+    let song = build_single_pattern_song("Scripted", &[(PatternTick(0), 60, SeqDuration(3840))]);
+    let shared = McpSharedState::with_song(song);
+    let rendered =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+            .expect("scripted-amp render should succeed");
+    left_rms(&rendered.samples)
+}
+
+#[test]
+fn offline_render_installs_script_module_cv() {
+    // Regression (§1): the offline loader replayed params + bypass but skipped
+    // `module_snap.scripts`, so a `scr`-driven CV evaluated to 0 → silence
+    // regardless of the installed script. With the script installed the amp CV
+    // is 0.8 and the render must be audible.
+    let rms = render_scripted_amp_rms("out = 0.8");
+    assert!(
+        rms > 0.01,
+        "scripted amp CV (out = 0.8) should render audible content (left RMS = {rms}); \
+         the offline loader likely dropped the Script-module script again"
+    );
+}
+
+#[test]
+fn offline_render_script_value_reaches_graph() {
+    // Decisive A-vs-B check mirroring the MCP repro: only the script's *value*
+    // distinguishes the two renders. `out = 0.8` opens the amp, `out = 0.0`
+    // closes it — if scripts were dropped, both would render identically silent.
+    let loud = render_scripted_amp_rms("out = 0.8");
+    let quiet = render_scripted_amp_rms("out = 0.0");
+    assert!(loud > 0.01, "out = 0.8 should be audible (RMS = {loud})");
+    assert!(
+        quiet < 0.001,
+        "out = 0.0 should fully close the amp (RMS = {quiet})"
+    );
+    assert!(
+        loud > quiet * 10.0,
+        "the script value must drive the CV (loud {loud} vs quiet {quiet})"
+    );
+}
 
 #[test]
 fn renders_audible_arrangement_from_engine_snapshot() {

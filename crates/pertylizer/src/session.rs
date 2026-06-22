@@ -43,6 +43,40 @@ pub enum SessionError {
     ScriptCompile(String),
 }
 
+/// Compile a YAMS control-script `source` to a shared [`BoundScript`], **off the
+/// audio thread**. On failure returns the joined error diagnostics as a single
+/// message. Shared by the live load path ([`SynthSession::set_mod_script`]) and
+/// the offline renderer so both report compile errors identically.
+pub(crate) fn compile_mod_script(
+    source: &str,
+) -> Result<Arc<synth_core::script::BoundScript>, String> {
+    let (program, diags) = synth_script::compile(source, &synth_script::CompileOptions::default());
+    let Some(program) = program else {
+        let msg = diags
+            .iter()
+            .filter(|d| d.is_error())
+            .map(|d| d.message.clone())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(msg);
+    };
+    Ok(Arc::new(program.into_bound(source.to_string())))
+}
+
+/// Parse a 1-based mod-script slot key into a 0-based slot index, range-checked
+/// against [`synth_core::MAX_MOD_MATRIX_SLOTS`]. Returns an error message naming
+/// the valid range on a non-numeric or out-of-range key. Shared by the live load
+/// path and the offline renderer so they accept exactly the same slot keys.
+pub(crate) fn parse_mod_slot_key(slot_key: &str) -> Result<u8, String> {
+    let max_slot = synth_core::MAX_MOD_MATRIX_SLOTS as u8;
+    match slot_key.parse::<u8>() {
+        Ok(n) if (1..=max_slot).contains(&n) => Ok(n - 1),
+        _ => Err(format!(
+            "invalid slot key '{slot_key}' (expected 1..={max_slot})"
+        )),
+    }
+}
+
 /// Thread-safe session that owns the module lifecycle.
 ///
 /// Both GUI and MCP call into this to add/remove modules and connections.
@@ -877,18 +911,7 @@ impl SynthSession {
         // folding; the default (48 kHz / 64-sample blocks) is the common case and
         // a mismatch only nudges constant-time smoothing — recompile on a real
         // rate change is a later refinement.
-        let (program, diags) =
-            synth_script::compile(source, &synth_script::CompileOptions::default());
-        let Some(program) = program else {
-            let msg = diags
-                .iter()
-                .filter(|d| d.is_error())
-                .map(|d| d.message.clone())
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Err(SessionError::ScriptCompile(msg));
-        };
-        let bound = Arc::new(program.into_bound(source.to_string()));
+        let bound = compile_mod_script(source).map_err(SessionError::ScriptCompile)?;
         let cmd = EngineCommand::SetModScript {
             instrument_id: Some(instrument_id),
             module_id,
@@ -1001,13 +1024,10 @@ impl SynthSession {
                         // Range-check against the real slot count so a numeric but
                         // out-of-[1,16] key is reported, not silently dropped by the
                         // engine's bounds guard.
-                        let max_slot = synth_core::MAX_MOD_MATRIX_SLOTS as u8;
-                        let slot = match slot_key.parse::<u8>() {
-                            Ok(n) if (1..=max_slot).contains(&n) => n - 1,
-                            _ => {
-                                result.errors.push(format!(
-                                    "{module_id} script: invalid slot key '{slot_key}' (expected 1..={max_slot})"
-                                ));
+                        let slot = match parse_mod_slot_key(slot_key) {
+                            Ok(slot) => slot,
+                            Err(msg) => {
+                                result.errors.push(format!("{module_id} script: {msg}"));
                                 continue;
                             }
                         };
