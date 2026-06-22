@@ -7084,6 +7084,17 @@ fn collect_mod_matrix_routings(
 fn parse_note_processor(
     value: serde_json::Value,
 ) -> Result<synth_sequencer::NoteProcessor, McpBridgeError> {
+    // LLM clients commonly send the processor as a stringified-JSON blob rather
+    // than a raw object (the tool description says "processor as JSON"). Without
+    // this the externally-tagged enum reads the whole string as the variant tag
+    // and fails with `unknown variant`. Re-parse a string payload as JSON; fall
+    // back to the original value so a genuine string still surfaces a clear error.
+    let value = match value {
+        serde_json::Value::String(s) => {
+            serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s))
+        }
+        other => other,
+    };
     serde_json::from_value(value)
         .map_err(|e| McpBridgeError::Other(format!("invalid note processor: {e}")))
 }

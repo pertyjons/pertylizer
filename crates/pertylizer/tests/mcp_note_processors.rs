@@ -127,6 +127,39 @@ fn note_processor_rack_round_trip_via_bridge() {
 }
 
 #[test]
+fn note_processor_accepts_stringified_json_blob() {
+    // §2 fix: LLM clients commonly send the processor as a stringified-JSON
+    // object (a `Value::String`) rather than a raw object. Both add and set must
+    // tolerate that — the externally-tagged enum would otherwise read the whole
+    // string as the variant tag and fail with `unknown variant`.
+    let bridge = build_bridge();
+    let pid = bridge.create_pattern("blob", 4.0).expect("create pattern");
+    bridge.add_note(pid, 60, 0.0, 1.0, 100).expect("add note");
+
+    // A stringified object is accepted by add.
+    let blob = json!(serde_json::to_string(&json!({ "Chord": {} })).unwrap());
+    let idx = bridge
+        .add_note_processor(pid, blob)
+        .expect("add must tolerate a stringified-JSON blob");
+    assert_eq!(bridge.list_note_processors(pid).unwrap()[idx].kind, "chord");
+
+    // The same blob form is accepted by the in-place set (the §2 repro): same
+    // chain stage, so it is not rejected for reordering.
+    let set_blob = json!(serde_json::to_string(&json!({ "Chord": {} })).unwrap());
+    bridge
+        .set_note_processor(pid, idx, set_blob)
+        .expect("set must tolerate a stringified-JSON blob");
+
+    // A genuine non-JSON string still surfaces a clear error, not a panic.
+    assert!(
+        bridge
+            .add_note_processor(pid, json!("not json at all"))
+            .is_err(),
+        "a non-JSON string must still error cleanly"
+    );
+}
+
+#[test]
 fn chiptune_arp_round_trips_via_bridge() {
     // The chiptune payoff: a Custom arp with a sub-grid rate, a bare-array
     // offset list, and legato must round-trip through the MCP pass-through with
