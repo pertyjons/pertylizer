@@ -435,6 +435,193 @@
           ]
         }
       }
+    },
+    {
+      "id": 19,
+      "name": "Chip Lead",
+      "channel": 1,
+      "volume": 0.7,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description": "Demo voice for the CUSTOM ARPEGGIATOR / chiptune patterns (bars 19-23): SID-style per-frame arps with custom offset cycles, sub-grid Ticks / frame-locked MilliHz rates and cross-pitch legato.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "patch": {
+        "name": "Chip Lead",
+        "version": "1.0",
+        "description": "Single pulse oscillator → open lowpass → punchy fast envelope → light ping-pong delay. Bright, dry, fast-transient mono-style lead chosen so each per-frame arpeggiator step reads cleanly — the canonical chiptune / SID voice for the custom-arp demos.",
+        "modules": [
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "anti_alias": "polyblep",
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": "exponential",
+              "frequency": 440.0,
+              "level": 1.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1.0,
+              "waveform": "pulse",
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 448.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 6500.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "env_amt": 0.2,
+              "key_track": 0.4,
+              "model": "standard",
+              "morph": 0.0,
+              "resonance": 0.2,
+              "type": "lowpass"
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 448.0,
+              "y": 320.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.001,
+              "dec_curve": 0.0,
+              "decay": 0.12,
+              "rel_curve": 0.0,
+              "release": 0.06,
+              "sustain": 0.55,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 832.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1184.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "dly-1",
+            "type": "delay",
+            "position": {
+              "x": 1536.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "feedback": 0.2,
+              "mix": 0.1,
+              "mode": "ping_pong",
+              "time": 0.12,
+              "tone": 0.5
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1986.0,
+            "height": 820.0
+          },
+          "effect_chain_order": [
+            "dly-1"
+          ]
+        }
+      }
     }
   ],
   "active_instrument_id": 18,
@@ -445,7 +632,7 @@
   "song": {
     "name": "Expression & Note-Processor Demo",
     "author": "",
-    "description": "A guided walkthrough of Pertylizer's per-note expressions and pattern note-processors. Play from the start. Bars 1-9 (Lead): accent/ghost, gate (staccato→tenuto), vibrato, glide (portamento+glissando), legato (dry→tied), probability (dry→stutter), ornaments. Bars 10-18 (Keys): scale-quantize, chord, chord+strum, chord→arpeggiator and humanize — each processor demo is preceded by a dry \"before\" bar so you hear the contrast.",
+    "description": "A guided walkthrough of Pertylizer's per-note expressions and pattern note-processors. Play from the start. Bars 1-9 (Lead): accent/ghost, gate (staccato→tenuto), vibrato, glide (portamento+glissando), legato (dry→tied), probability (dry→stutter), ornaments. Bars 10-18 (Keys): scale-quantize, chord, chord+strum, chord→arpeggiator and humanize — each processor demo is preceded by a dry \"before\" bar so you hear the contrast. Bars 19-23 (Chip): the custom arpeggiator — SID-style per-frame arps with custom offset cycles ([0,4,7]), sub-grid Ticks(40) and frame-locked MilliHz(50000) rates, octave-multiply and cross-pitch legato.",
     "patterns": [
       {
         "id": 0,
@@ -2470,9 +2657,248 @@
         "automation": [],
         "processors": [],
         "next_note_id": 16
+      },
+      {
+        "id": 18,
+        "name": "13a. Held note (before custom arp)",
+        "description": "A/B reference (dry): one held C note, NO processor — the single source note the custom arp will move under. Compare with the next bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 3840,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 1
+      },
+      {
+        "id": 19,
+        "name": "13. Custom arp - major [0,4,7] @ Ticks(40)",
+        "description": "A/B (with processor): ArpMode::Custom cycles the offset list [0,4,7] over that ONE held note at a sub-grid Ticks(40) rate — the classic SID broken-chord arp, far below the old 1/32-triplet floor. Compare with the previous bar.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 3840,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [
+          {
+            "Arpeggiator": {
+              "mode": "Custom",
+              "rate": {
+                "Ticks": 40
+              },
+              "octaves": 1,
+              "gate": 0.6,
+              "swing": 0.0,
+              "velocity": "AsPlayed",
+              "latch": false,
+              "legato": false,
+              "custom": [
+                0,
+                4,
+                7
+              ]
+            }
+          }
+        ],
+        "next_note_id": 1
+      },
+      {
+        "id": 20,
+        "name": "14. Custom arp tracks a moving line",
+        "description": "Note processor: the SAME custom arp [0,4,7] @ Ticks(40), but the source is a moving melody (C-D-E-G). Each note's own pitch anchors the offset cycle, so the arp figure transposes note-by-note (per-note, not per-chord).",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 960,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 960,
+            "pitch": 62,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 960,
+            "pitch": 64,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 960,
+            "pitch": 67,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [
+          {
+            "Arpeggiator": {
+              "mode": "Custom",
+              "rate": {
+                "Ticks": 40
+              },
+              "octaves": 1,
+              "gate": 0.6,
+              "swing": 0.0,
+              "velocity": "AsPlayed",
+              "latch": false,
+              "legato": false,
+              "custom": [
+                0,
+                4,
+                7
+              ]
+            }
+          }
+        ],
+        "next_note_id": 4
+      },
+      {
+        "id": 21,
+        "name": "15. Legato chip arp (one held envelope)",
+        "description": "A/B (with feature): same [0,4,7] @ Ticks(40), now legato = true with a full gate. The engine's cross-pitch coalesce holds ONE envelope across the whole figure — one attack, only the pitch cycles (true SID behaviour). Compare with bar 19 (re-gated).",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 3840,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [
+          {
+            "Arpeggiator": {
+              "mode": "Custom",
+              "rate": {
+                "Ticks": 40
+              },
+              "octaves": 1,
+              "gate": 1.0,
+              "swing": 0.0,
+              "velocity": "AsPlayed",
+              "latch": false,
+              "legato": true,
+              "custom": [
+                0,
+                4,
+                7
+              ]
+            }
+          }
+        ],
+        "next_note_id": 1
+      },
+      {
+        "id": 22,
+        "name": "16. Frame-locked 50 Hz (MilliHz) + octave-multiply",
+        "description": "Note processor: a minor custom cycle [0,3,7] at a frame-locked MilliHz(50000) = 50 Hz PAL rate (tempo-independent, drift-free), with octaves = 2 multiplying the cycle to [0,3,7,12,15,19]. Legato held envelope.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 3840,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [
+          {
+            "Arpeggiator": {
+              "mode": "Custom",
+              "rate": {
+                "MilliHz": 50000
+              },
+              "octaves": 2,
+              "gate": 1.0,
+              "swing": 0.0,
+              "velocity": "AsPlayed",
+              "latch": false,
+              "legato": true,
+              "custom": [
+                0,
+                3,
+                7
+              ]
+            }
+          }
+        ],
+        "next_note_id": 1
       }
     ],
-    "next_pattern_id": 18,
+    "next_pattern_id": 23,
     "tracks": [
       {
         "id": 0,
@@ -2505,9 +2931,25 @@
           "b": 255
         },
         "mode": "Polyphonic"
+      },
+      {
+        "id": 2,
+        "name": "Chip (custom arp)",
+        "description": "",
+        "instrument": 19,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 255,
+          "g": 170,
+          "b": 90
+        },
+        "mode": "Polyphonic"
       }
     ],
-    "next_track_id": 2,
+    "next_track_id": 3,
     "arrangement": [
       {
         "pattern_id": 0,
@@ -2649,6 +3091,46 @@
         "pattern_id": 11,
         "track_id": 1,
         "start": 65280,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 18,
+        "track_id": 2,
+        "start": 69120,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 19,
+        "track_id": 2,
+        "start": 72960,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 20,
+        "track_id": 2,
+        "start": 76800,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 21,
+        "track_id": 2,
+        "start": 80640,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 22,
+        "track_id": 2,
+        "start": 84480,
         "transpose": 0.0,
         "gain": 1.0,
         "length_override": null

@@ -141,6 +141,21 @@ The `synth` MCP server provides a wide range of tools:
 
 Use `batch_execute` to run multiple operations in a single request for better performance.
 
+### MCP feedback (ALWAYS)
+
+We are actively hardening Pertylizer's MCP, so **every time you use an MCP tool, watch
+for gaps and report them.** Whenever a call errors, returns something unexpected, is
+awkward to use, lacks a tool you needed, or has a confusing/incomplete schema or
+description — **stop and report it to the user**, then investigate what could be
+better:
+
+- What failed or was missing (the exact tool, args, and error/response).
+- Why it got in the way (workaround you had to use, or task you couldn't finish).
+- A concrete improvement (new tool, better validation, clearer description, missing
+  field, array variant, etc.).
+
+Don't silently work around MCP shortcomings — surfacing them is part of the task.
+
 ---
 
 ## Newtype Pattern (CRITICAL)

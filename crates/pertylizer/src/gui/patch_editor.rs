@@ -545,8 +545,11 @@ struct ModAddrTarget {
     id: ModuleId,
     /// Display label, e.g. "Filter 1".
     label: String,
-    /// Modulatable parameters as `(type_id, display label)` — destination picks.
-    dest_params: Vec<(String, String)>,
+    /// Automatable parameters as `(type_id, display label)`. Used both as
+    /// destination picks (modulate this param) and as **source** picks — a script
+    /// or routing can read the live value (`flt-1.cutoff`), normalized 0..1 via the
+    /// descriptor range/curve by `resolve_param_source`.
+    params: Vec<(String, String)>,
     /// Output port names — source picks.
     source_ports: Vec<String>,
 }
@@ -572,7 +575,7 @@ impl ModAddrCatalog {
             .map(|(id, desc)| ModAddrTarget {
                 id: *id,
                 label: format!("{} {}", desc.name, id.instance),
-                dest_params: desc
+                params: desc
                     .parameters
                     .iter()
                     .filter(|p| p.is_automatable())
@@ -610,11 +613,21 @@ impl ModAddrCatalog {
                 instance,
                 name,
             }) => {
-                let base = self.target(module_type, instance).map_or_else(
+                let target = self.target(module_type, instance);
+                let base = target.map_or_else(
                     || format!("{}-{instance}", module_type.prefix()),
                     |t| t.label.clone(),
                 );
-                format!("{base} · {}", name.as_str())
+                // A source can be an output port (`out`) or a param (`cutoff`);
+                // show the param's friendly name when the address matches one.
+                let member = target
+                    .and_then(|t| {
+                        t.params
+                            .iter()
+                            .find(|(tid, _)| tid.as_str() == name.as_str())
+                    })
+                    .map_or_else(|| name.as_str().to_string(), |(_, label)| label.clone());
+                format!("{base} · {member}")
             }
             None => addr.to_string(),
         }
@@ -633,7 +646,7 @@ impl ModAddrCatalog {
         );
         let param = target
             .and_then(|t| {
-                t.dest_params
+                t.params
                     .iter()
                     .find(|(tid, _)| tid.as_str() == d.param.as_str())
             })
@@ -667,6 +680,30 @@ fn sync_slot_addr(slot_addrs: &mut HashMap<String, String>, name: &str, addr: Op
     }
 }
 
+/// A fixed-width `menu_button` shell for the Mod Matrix source/destination tree
+/// pickers, styled like the Script ƒx "Select input" picker (a plain button that
+/// opens a nested menu) rather than a ComboBox. `label` is the current selection
+/// shown on the button; the justified layout stretches it to `width` so the slot
+/// grid stays aligned; `id_salt` keeps slots with identical labels from colliding.
+/// `contents` builds the dropdown tree (mutating its own captured result).
+fn tree_picker_menu(
+    ui: &mut Ui,
+    id_salt: &str,
+    width: f32,
+    label: String,
+    contents: impl FnOnce(&mut Ui),
+) {
+    ui.push_id(id_salt, |ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, ui.spacing().interact_size.y),
+            egui::Layout::top_down_justified(egui::Align::Min),
+            |ui| {
+                ui.menu_button(label, contents);
+            },
+        );
+    });
+}
+
 /// Render a Mod Matrix **source** picker. Returns `Some(selection)` only when the
 /// user changed it (`None` inner value = cleared to no source).
 fn mod_source_picker(
@@ -681,13 +718,53 @@ fn mod_source_picker(
     // Parse `current` once and compare structurally, instead of formatting every
     // candidate's address string per item per frame.
     let current_addr = current.and_then(SrcAddr::parse);
-    egui::ComboBox::from_id_salt(id_salt)
-        .selected_text(text)
-        .width(width)
-        .show_ui(ui, |ui| {
-            if ui.selectable_label(current.is_none(), "(none)").clicked() {
-                result = Some(None);
+    tree_picker_menu(ui, &id_salt, width, text, |ui| {
+        if ui.selectable_label(current.is_none(), "(none)").clicked() {
+            result = Some(None);
+            ui.close();
+        }
+        // Tree: module → output ports + params (a param reads the live value,
+        // `flt-1.cutoff`). Mirrors the Script ƒx "Select input" menu so both
+        // source pickers share one shape.
+        for target in &catalog.modules {
+            if target.source_ports.is_empty() && target.params.is_empty() {
+                continue;
             }
+            ui.menu_button(&target.label, |ui| {
+                for port in &target.source_ports {
+                    let addr = SrcAddr::module(target.id.module_type, target.id.instance, port);
+                    if ui
+                        .selectable_label(current_addr == Some(addr), port.as_str())
+                        .clicked()
+                    {
+                        result = Some(Some(addr));
+                        ui.close();
+                    }
+                }
+                if !target.source_ports.is_empty() && !target.params.is_empty() {
+                    ui.separator();
+                }
+                // Addressed by `type_id`, labelled with the friendly name.
+                // Skip a param whose name collides with an output port:
+                // `resolve_source` resolves the port first, so the param would
+                // be unreachable under this address (and double-highlight).
+                for (type_id, param_label) in &target.params {
+                    if target.source_ports.iter().any(|p| p == type_id) {
+                        continue;
+                    }
+                    let addr = SrcAddr::module(target.id.module_type, target.id.instance, type_id);
+                    if ui
+                        .selectable_label(current_addr == Some(addr), param_label.as_str())
+                        .clicked()
+                    {
+                        result = Some(Some(addr));
+                        ui.close();
+                    }
+                }
+            });
+        }
+        ui.separator();
+        ui.menu_button("Macros", |ui| {
             for m in MacroSource::ALL {
                 let addr = SrcAddr::Macro(m);
                 if ui
@@ -695,21 +772,11 @@ fn mod_source_picker(
                     .clicked()
                 {
                     result = Some(Some(addr));
-                }
-            }
-            for target in &catalog.modules {
-                for port in &target.source_ports {
-                    let addr = SrcAddr::module(target.id.module_type, target.id.instance, port);
-                    let label = format!("{} · {port}", target.label);
-                    if ui
-                        .selectable_label(current_addr == Some(addr), label)
-                        .clicked()
-                    {
-                        result = Some(Some(addr));
-                    }
+                    ui.close();
                 }
             }
         });
+    });
     result
 }
 
@@ -726,26 +793,31 @@ fn mod_dest_picker(
     let text = current.map_or_else(|| "(none)".to_string(), |s| catalog.dest_label(s));
     // Parse `current` once and compare structurally (see `mod_source_picker`).
     let current_addr = current.and_then(DestAddr::parse);
-    egui::ComboBox::from_id_salt(id_salt)
-        .selected_text(text)
-        .width(width)
-        .show_ui(ui, |ui| {
-            if ui.selectable_label(current.is_none(), "(none)").clicked() {
-                result = Some(None);
+    tree_picker_menu(ui, &id_salt, width, text, |ui| {
+        if ui.selectable_label(current.is_none(), "(none)").clicked() {
+            result = Some(None);
+            ui.close();
+        }
+        // Tree: module → modulatable params, mirroring the source picker so
+        // both Mod Matrix dropdowns share one shape.
+        for target in &catalog.modules {
+            if target.params.is_empty() {
+                continue;
             }
-            for target in &catalog.modules {
-                for (type_id, label) in &target.dest_params {
+            ui.menu_button(&target.label, |ui| {
+                for (type_id, label) in &target.params {
                     let addr = DestAddr::new(target.id.module_type, target.id.instance, type_id);
-                    let item = format!("{} · {label}", target.label);
                     if ui
-                        .selectable_label(current_addr == Some(addr), item)
+                        .selectable_label(current_addr == Some(addr), label.as_str())
                         .clicked()
                     {
                         result = Some(Some(addr));
+                        ui.close();
                     }
                 }
-            }
-        });
+            });
+        }
+    });
     result
 }
 
@@ -6468,19 +6540,22 @@ fn set_text_caret(ctx: &egui::Context, id: egui::Id, idx: usize) {
     }
 }
 
-/// The "Select input" tree picker for the ƒx editor: modules → output ports,
-/// plus the macro and context sources. Returns the chosen input (if any) for the
-/// caller to splice into the draft. Sourced from the same catalog as the Mod
-/// Matrix pickers (S1.5c), so it stays in sync with what `resolve_source` binds.
+/// The "Select input" tree picker for the ƒx editor: modules → output ports and
+/// params, plus the macro and context sources. Returns the chosen input (if any)
+/// for the caller to splice into the draft. Sourced from the same catalog as the
+/// Mod Matrix pickers (S1.5c), so it stays in sync with what `resolve_source` binds.
 fn draw_select_input_menu(ui: &mut Ui, catalog: &ModAddrCatalog) -> Option<PickedInput> {
     let mut picked = None;
     ui.menu_button("Select input", |ui| {
         egui::ScrollArea::vertical()
             .max_height(360.0)
             .show(ui, |ui| {
-                // Module output ports — each becomes a `src` binding.
+                // Module output ports and params — each becomes a `src` binding.
+                // A param source (`flt-1.cutoff`) reads the live value normalized
+                // 0..1 via the descriptor range/curve (resolve_param_source),
+                // exactly like a Mod Matrix source.
                 for target in &catalog.modules {
-                    if target.source_ports.is_empty() {
+                    if target.source_ports.is_empty() && target.params.is_empty() {
                         continue;
                     }
                     ui.menu_button(&target.label, |ui| {
@@ -6490,6 +6565,28 @@ fn draw_select_input_menu(ui: &mut Ui, catalog: &ModAddrCatalog) -> Option<Picke
                                     target.id.module_type,
                                     target.id.instance,
                                     port,
+                                )
+                                .to_address_string();
+                                picked = Some(PickedInput::ModuleSource(addr));
+                                ui.close();
+                            }
+                        }
+                        if !target.source_ports.is_empty() && !target.params.is_empty() {
+                            ui.separator();
+                        }
+                        // Params: address by `type_id` (what resolve_param_source
+                        // matches), label with the friendly name. Skip a param
+                        // whose name collides with an output port — `resolve_source`
+                        // resolves the port first, so it would be unreachable.
+                        for (type_id, label) in &target.params {
+                            if target.source_ports.iter().any(|p| p == type_id) {
+                                continue;
+                            }
+                            if ui.button(label).clicked() {
+                                let addr = SrcAddr::module(
+                                    target.id.module_type,
+                                    target.id.instance,
+                                    type_id,
                                 )
                                 .to_address_string();
                                 picked = Some(PickedInput::ModuleSource(addr));

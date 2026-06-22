@@ -1,7 +1,7 @@
 {
   "file_type": "project",
   "version": "1.0",
-  "instrument_count": 2,
+  "instrument_count": 3,
   "active_instrument_id": 18,
   "author_present": true,
   "instruments": [
@@ -62,6 +62,35 @@
       "connection_count": 4,
       "effect_chain_order_len": 2,
       "group_count": 0
+    },
+    {
+      "id": 19,
+      "name": "Chip Lead",
+      "channel": 1,
+      "volume": 0.7,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose_semitones": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description_len": 191,
+      "color_present": false,
+      "allocation_mode": "Polyphonic",
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "sidechain_source_id": null,
+      "patch_name": "Chip Lead",
+      "patch_description_present": true,
+      "module_count": 6,
+      "connection_count": 4,
+      "effect_chain_order_len": 1,
+      "group_count": 0
     }
   ],
   "song": {
@@ -70,10 +99,10 @@
     "default_tempo_bpm": 110.0,
     "time_signature_numerator": 4,
     "time_signature_denominator": 4,
-    "pattern_count": 18,
-    "track_count": 2,
-    "placement_count": 18,
-    "total_notes": 120,
+    "pattern_count": 23,
+    "track_count": 3,
+    "placement_count": 23,
+    "total_notes": 128,
     "tempo_change_count": 0
   },
   "global": {
