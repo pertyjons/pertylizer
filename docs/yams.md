@@ -63,13 +63,16 @@ module_ref = module_id "." member
 module_id  = name [ "-" instance ]      # instance defaults to 1 if omitted
 ```
 
-`lfo-1.out`, `env-2.out`. The member is an **output port** (`out`, `out1`, …).
+`lfo-1.out`, `env-2.out`. The member is usually an **output port** (`out`,
+`out1`, …), but it may also be a **parameter** (`flt-1.cutoff`, `osc-1.detune`).
 
-> **Parameter sources are not wired yet.** An address whose member is a
-> *parameter* rather than an output port (`flt-1.cutoff`) parses and installs
-> without error, but currently resolves to a constant `0` — the resolver only
-> reads output ports. Use a parameter's driving signal (the LFO/envelope output)
-> as the source instead. (Tracked: `ScriptInput::ModuleParam`, TODO §3.5.)
+> **Parameter sources read the live, normalized value.** An address whose member
+> is a *parameter* rather than an output port (`flt-1.cutoff`) reads the
+> parameter's current value, normalized to `0..1` through its descriptor
+> range+curve — so a 1000 Hz cutoff in a 20..20000 Hz log range arrives as a
+> value you can mix with the ±1 of an LFO, not a raw frequency. This lets a
+> script react to what the user/automation does to a knob. A member that is
+> neither a port nor a parameter still reads `0` (disable-and-keep).
 
 > **Dangling sources are kept, not errored.** If a bound module is deleted or
 > renamed, its register simply reads `0` — the routing stays installed and inert

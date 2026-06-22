@@ -1145,14 +1145,41 @@ impl Voice {
                         _ => {}
                     }
                 }
-                // Output port: previous block's first sample (0 if absent — a
-                // dangling address or empty buffer).
-                graph
-                    .get_module_output(id, name)
-                    .map(|buf| if buf.is_empty() { 0.0 } else { buf[0] })
-                    .unwrap_or(0.0)
+                // Output port: previous block's first sample.
+                if let Some(buf) = graph.get_module_output(id, name) {
+                    return if buf.is_empty() { 0.0 } else { buf[0] };
+                }
+                // Parameter source (e.g. `flt-1.cutoff`): read the live value and
+                // normalize it through the param's descriptor range+curve so a
+                // script can mix it with the ±1 / 0..1 of LFOs and macros. Falls
+                // back to 0 for a dangling address or unknown member.
+                Self::resolve_param_source(graph, id, name).unwrap_or(0.0)
             }
         }
+    }
+
+    /// Read a module parameter as a normalized `0..1` source value. Uses the
+    /// graph's **cached** descriptor (zero-allocation, audio-thread-safe) to find
+    /// the param's `range`+`response_curve`, then normalizes the live value the
+    /// same way the Mod Matrix normalizes its destinations — so `flt-1.cutoff`
+    /// (1000 Hz in a 20..20000 log range) arrives as a comparable `0..1`, not a
+    /// raw frequency. Returns `None` if the member is not a parameter of `id`.
+    ///
+    /// (The descriptor lookup is a small linear scan of the module's params each
+    /// block; resolving it once at bind time into a cached accessor is the
+    /// documented follow-up in `plans/yams-realtime-plan.md` Phase 1.)
+    fn resolve_param_source(
+        graph: &ModuleGraph,
+        id: crate::ModuleId,
+        name: synth_core::PortName,
+    ) -> Option<f32> {
+        let desc = graph.module_descriptor(id)?;
+        let param = desc
+            .parameters
+            .iter()
+            .find(|p| p.type_id == name.as_str())?;
+        let raw = graph.get_param(id, &param.id)?;
+        Some(param.response_curve.normalize(raw, param.range))
     }
 
     /// Resolve one script's source registers into `scratch` (a slot's row of
@@ -1574,6 +1601,61 @@ mod tests {
             peak(&mut voice, &ctx) > 0.01,
             "clearing must restore audible output"
         );
+    }
+
+    /// A YAMS `src` binding to a module *parameter* (`flt-1.cutoff`) reads the
+    /// live value normalized through the param's descriptor range+curve — not the
+    /// constant 0 it used to resolve to. An unknown member still reads 0.
+    #[test]
+    fn param_source_reads_normalized_value() {
+        use synth_core::SrcAddr;
+        use synth_modules::Filter;
+
+        let mut voice = Voice::new(VoiceId::new(0));
+        let flt = voice.graph.add_module(Box::new(Filter::new()));
+
+        // Expected = normalize(current cutoff) via the cached descriptor.
+        let (expected, in_unit_range) = {
+            let desc = voice.graph.module_descriptor(flt).expect("descriptor");
+            let cutoff = desc
+                .parameters
+                .iter()
+                .find(|p| p.type_id == "cutoff")
+                .expect("cutoff param");
+            let raw = voice
+                .graph
+                .get_param(flt, &cutoff.id)
+                .expect("cutoff value");
+            let norm = cutoff.response_curve.normalize(raw, cutoff.range);
+            (norm, (0.0..=1.0).contains(&norm))
+        };
+        assert!(in_unit_range, "a normalized param source must land in 0..1");
+
+        let macros = MacroValues {
+            velocity: 0.0,
+            note: 0.0,
+            aftertouch: 0.0,
+            mod_wheel: 0.0,
+            pitch_bend: 0.0,
+            poly_aftertouch: 0.0,
+        };
+        let got = Voice::resolve_source(
+            &voice.graph,
+            SrcAddr::module(ModuleType::Filter, 1, "cutoff"),
+            &macros,
+        );
+        assert!(
+            (got - expected).abs() < 1e-6,
+            "param source {got} != descriptor-normalized {expected}"
+        );
+
+        // An address whose member is neither a port nor a param reads 0.
+        let dangling = Voice::resolve_source(
+            &voice.graph,
+            SrcAddr::module(ModuleType::Filter, 1, "definitely_not_a_param"),
+            &macros,
+        );
+        assert_eq!(dangling, 0.0);
     }
 
     /// A control script's output actually drives the Mod Matrix offset (S2.2c):

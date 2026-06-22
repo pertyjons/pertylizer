@@ -95,6 +95,8 @@ fn main() {
     show_valid("out = bipolar(velocity) * 0.5");
     show_valid("arr maj = [0, 2, 4, 5, 7, 9, 11]\nout = semis(scale_snap(beat, maj))");
     show_valid("arr shape = [0, 0.5, 1, 0.5]\nout = table_lin(shape, phasor(2) * len(shape))");
+    // parameter source: bind a module param (read live + normalized by the engine)
+    show_valid("src cutoff = flt-1.cutoff\nout = cutoff * velocity");
 
     println!("=================  STATEFUL (lag over 6 blocks)  =================\n");
     {
