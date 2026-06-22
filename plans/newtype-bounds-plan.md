@@ -12,6 +12,12 @@
 > a per-*type* one. The revised plan uses **semantic range presets** (named
 > `const ValueRange` per context) as the single source of truth, with no
 > constructor or DSP-path changes.
+>
+> **Endorsed 2026-06-22** by a second senior-DSP review ("proceed immediately"),
+> with three refinements folded in: align each preset's `default` with the param
+> variant's default (§3.3), name presets specifically enough to disambiguate
+> multiple controls of the same unit (§1), and add an optional global drift-lint
+> (§3.5).
 
 ## 0. Why
 
@@ -56,6 +62,12 @@ impl Cents {
 invented — the values above are illustrative; the migration copies the current
 numbers verbatim so behavior is unchanged.)
 
+**Naming:** name a preset specifically enough that it can't be mistaken for a
+different control of the same unit. If only one detune control exists,
+`Cents::DETUNE_RANGE` is fine; if a coarse (±1200 ¢) and a fine (±100 ¢) detune
+both exist, name them by their limit (`DETUNE_FINE_RANGE` / `DETUNE_COARSE_RANGE`)
+so a future call site can't grab the wrong one.
+
 **No `BoundedNewtype` trait, no `const RANGE`, no clamping in `new()`.** Generic
 validation that needs "the bound" takes a `&ValueRange` argument (or reads
 `descriptor.range`) — it never assumes one-range-per-type. `new()` stays an
@@ -96,10 +108,28 @@ per-type single range, the `BoundedNewtype` trait.
    assert_eq!(osc.find_parameter("detune").unwrap().range, Cents::DETUNE_RANGE);
    ```
    plus a clamp round-trip (under/at/over min & max).
+   - **Also assert the two defaults agree.** A descriptor carries a default in
+     *two* places: the `Param` id variant (`Detune(Cents::ZERO)` → 0.0) and
+     `range.default` (what `default_value()` actually returns —
+     `module_traits.rs:799`). `.value_range(preset)` overwrites `range.default`
+     with the preset's, so the preset's `default` must match the variant's value
+     or the system has two conflicting "default" states. Assert
+     `preset.default == <variant>.as_f32()` in the same test (verified: e.g.
+     `Cents::ZERO` for `Detune`; `10.0` for `UnisonDetune`).
 
 **Proof of concept = `Detune`** (the triplicated case in §0): one newtype, one
 commit, three call sites collapsed to one constant. If it reads cleanly, repeat
 for the other presets; if not, stop — nothing else depends on it.
+
+### 3.5 Optional: a global drift-lint (stretch)
+A single test that walks **every** registered module's descriptors and, for each
+param whose unit is a preset-backed newtype, asserts its `.range` is one of the
+approved presets (not a raw literal) — catching a future dev who hand-writes
+`.range(-100.0, 100.0)` instead of reusing `Cents::DETUNE_RANGE`. Valuable, but
+defer until several presets exist, and accept it needs an **allow-list of
+legitimate one-offs** (not every `Hertz`/`Cents` param maps to a shared preset —
+some genuinely have a unique range), or it will flag false positives. Per-param
+assertions (§3.3) come first; this is the belt-and-suspenders layer.
 
 ## 4. Risks
 
