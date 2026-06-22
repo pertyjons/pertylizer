@@ -4,7 +4,7 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use serde::{Deserialize, Serialize};
 
-use super::Hertz;
+use super::{Hertz, ValueRange};
 
 /// Pitch offset in cents (1/100th of a semitone).
 ///
@@ -31,6 +31,21 @@ impl Cents {
     /// One octave.
     pub const OCTAVE: Self = Self(1200.0);
 
+    /// Bounds for the oscillator **fine** detune control (±1 semitone).
+    ///
+    /// Single source of truth shared by the descriptor `.value_range(...)`, the
+    /// GUI/MCP `with_f32` apply clamp, and [`Self::clamp_detune`] — so the three
+    /// can never drift. Default `0.0` matches [`Self::ZERO`], the `Detune` param
+    /// variant's default.
+    pub const DETUNE_RANGE: ValueRange = ValueRange::new(-100.0, 100.0, 0.0);
+
+    /// Bounds for the oscillator **unison** detune spread (0–100 ¢, default 10).
+    ///
+    /// Distinct from [`Self::DETUNE_RANGE`]: unison spread is unipolar and
+    /// defaults to 10 ¢. Single source of truth shared by the `uni_detune`
+    /// descriptor, the `with_f32` apply clamp, and the `set_param` clamp.
+    pub const UNISON_DETUNE_RANGE: ValueRange = ValueRange::new(0.0, 100.0, 10.0);
+
     /// Get the raw value.
     #[inline]
     pub const fn as_f32(self) -> f32 {
@@ -55,10 +70,10 @@ impl Cents {
         Hertz::new(freq.0 * self.to_ratio())
     }
 
-    /// Clamp to a typical detune range.
+    /// Clamp to the oscillator fine-detune range ([`Self::DETUNE_RANGE`]).
     #[inline]
     pub fn clamp_detune(self) -> Self {
-        Self(self.0.clamp(-100.0, 100.0))
+        Self::new(Self::DETUNE_RANGE.clamp(self.0))
     }
 }
 

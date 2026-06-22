@@ -338,8 +338,7 @@ impl Describable for Oscillator {
                     "Frequency",
                 )
                 .description("Base frequency")
-                .range(1.0, 20000.0)
-                .default(440.0)
+                .value_range(Hertz::OSC_RANGE)
                 .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::FrequencySlider)
                 .curve(ResponseCurve::Logarithmic),
@@ -351,8 +350,7 @@ impl Describable for Oscillator {
                     "Detune",
                 )
                 .description("Fine tune in cents")
-                .range(-100.0, 100.0)
-                .default(0.0)
+                .value_range(Cents::DETUNE_RANGE)
                 .unit(ParameterUnit::Cents)
                 .widget(WidgetHint::Knob),
             )
@@ -422,8 +420,7 @@ impl Describable for Oscillator {
                     "Uni Detune",
                 )
                 .description("Unison detune spread in cents")
-                .range(0.0, 100.0)
-                .default(10.0)
+                .value_range(Cents::UNISON_DETUNE_RANGE)
                 .unit(ParameterUnit::Cents)
                 .widget(WidgetHint::Knob),
             )
@@ -625,7 +622,7 @@ impl PolyModule for Oscillator {
             match osc_param {
                 OscillatorParam::Waveform(w) => self.waveform = w,
                 OscillatorParam::Frequency(f) => {
-                    self.frequency = Hertz::new(f.as_f32().clamp(1.0, 20000.0));
+                    self.frequency = Hertz::new(Hertz::OSC_RANGE.clamp(f.as_f32()));
                 }
                 OscillatorParam::Detune(d) => self.detune = d.clamp_detune(),
                 OscillatorParam::Octave(o) => self.octave = o,
@@ -641,7 +638,7 @@ impl PolyModule for Oscillator {
                     self.recalculate_unison_spread();
                 }
                 OscillatorParam::UnisonDetune(c) => {
-                    self.unison_detune = Cents::new(c.as_f32().clamp(0.0, 100.0));
+                    self.unison_detune = Cents::new(Cents::UNISON_DETUNE_RANGE.clamp(c.as_f32()));
                     self.recalculate_unison_spread();
                 }
                 OscillatorParam::UnisonSpread(v) => {
@@ -810,6 +807,76 @@ mod tests {
         assert!(!auto("fm_mode"));
         // Structural/sizing param is excluded (modulatable(false)).
         assert!(!auto("unison"));
+    }
+
+    /// Single-source-of-truth guard: the live `detune` descriptor range, the
+    /// `Cents::DETUNE_RANGE` preset, and the `Detune` param variant default must
+    /// all agree, so descriptor / apply-clamp / `clamp_detune` can never drift.
+    #[test]
+    fn detune_descriptor_matches_preset() {
+        let d = Oscillator::new().descriptor();
+        let detune = d
+            .parameters
+            .iter()
+            .find(|p| p.type_id == "detune")
+            .expect("missing detune param");
+
+        // Descriptor range == preset.
+        assert_eq!(detune.range, Cents::DETUNE_RANGE);
+
+        // Preset default == the `Detune` variant's default value.
+        assert!(
+            (Cents::DETUNE_RANGE.default - OscillatorParam::Detune(Cents::ZERO).as_f32()).abs()
+                < f32::EPSILON
+        );
+
+        // clamp_detune round-trips at/under/over the bounds.
+        assert_eq!(Cents::new(0.0).clamp_detune().as_f32(), 0.0);
+        assert_eq!(Cents::new(-100.0).clamp_detune().as_f32(), -100.0);
+        assert_eq!(Cents::new(100.0).clamp_detune().as_f32(), 100.0);
+        assert_eq!(Cents::new(-250.0).clamp_detune().as_f32(), -100.0);
+        assert_eq!(Cents::new(250.0).clamp_detune().as_f32(), 100.0);
+
+        // The GUI/MCP `with_f32` apply path clamps via the same preset bounds,
+        // so this fourth site can't drift from the descriptor either.
+        let detune_apply = |v: f32| OscillatorParam::Detune(Cents::ZERO).with_f32(v).as_f32();
+        assert_eq!(detune_apply(250.0), Cents::DETUNE_RANGE.max);
+        assert_eq!(detune_apply(-250.0), Cents::DETUNE_RANGE.min);
+        assert_eq!(detune_apply(42.0), 42.0);
+    }
+
+    /// Drift guard for the other oscillator presets: the `frequency` and
+    /// `uni_detune` descriptor ranges match `Hertz::OSC_RANGE` /
+    /// `Cents::UNISON_DETUNE_RANGE`, and the unison apply-clamp uses the preset.
+    #[test]
+    fn frequency_and_unison_descriptors_match_presets() {
+        let d = Oscillator::new().descriptor();
+        let param = |id: &str| {
+            d.parameters
+                .iter()
+                .find(|p| p.type_id == id)
+                .unwrap_or_else(|| panic!("missing param {id}"))
+        };
+        assert_eq!(param("frequency").range, Hertz::OSC_RANGE);
+        assert_eq!(param("uni_detune").range, Cents::UNISON_DETUNE_RANGE);
+
+        // Preset default == the `UnisonDetune` variant's default value.
+        assert!(
+            (Cents::UNISON_DETUNE_RANGE.default
+                - OscillatorParam::unison_detune_default().as_f32())
+            .abs()
+                < f32::EPSILON
+        );
+
+        // The `with_f32` apply path clamps unison detune via the same preset.
+        let uni = |v: f32| {
+            OscillatorParam::UnisonDetune(Cents::ZERO)
+                .with_f32(v)
+                .as_f32()
+        };
+        assert_eq!(uni(250.0), Cents::UNISON_DETUNE_RANGE.max);
+        assert_eq!(uni(-50.0), Cents::UNISON_DETUNE_RANGE.min);
+        assert_eq!(uni(42.0), 42.0);
     }
 
     /// A mod-matrix routing to `osc.detune` actually shifts pitch now (it used

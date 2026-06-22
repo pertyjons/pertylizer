@@ -264,8 +264,7 @@ impl Describable for Filter {
                     "Cutoff",
                 )
                 .description("Cutoff frequency")
-                .range(20.0, 20000.0)
-                .default(1000.0)
+                .value_range(Hertz::FILTER_RANGE)
                 .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::FrequencySlider)
                 .curve(ResponseCurve::Logarithmic),
@@ -441,7 +440,7 @@ impl PolyModule for Filter {
             match filter_param {
                 FilterParam::Mode(m) => self.filter_type = m,
                 FilterParam::Cutoff(c) => {
-                    self.cutoff = c.clamp_audible();
+                    self.cutoff = c.clamp_filter();
                     // Seed the de-zipper anchor so a base change (patch load /
                     // knob) takes effect immediately instead of gliding from the
                     // previous anchor. An active automation override keeps
@@ -547,7 +546,7 @@ impl PolyModule for Filter {
     fn set_param_override(&mut self, param: Param) {
         if let Param::Filter(filter_param) = param {
             match filter_param {
-                FilterParam::Cutoff(c) => self.override_cutoff = Some(c.clamp_audible()),
+                FilterParam::Cutoff(c) => self.override_cutoff = Some(c.clamp_filter()),
                 FilterParam::Resonance(r) => self.override_resonance = Some(r),
                 // Other params are non-automatable (choice/structural); ignore.
                 _ => {}
@@ -661,8 +660,7 @@ impl Describable for LadderFilter {
                     "Cutoff",
                 )
                 .description("Cutoff frequency")
-                .range(20.0, 20000.0)
-                .default(1000.0)
+                .value_range(Hertz::FILTER_RANGE)
                 .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::FrequencySlider)
                 .curve(ResponseCurve::Logarithmic),
@@ -721,7 +719,9 @@ impl PolyModule for LadderFilter {
 
             let effective_cutoff = if cutoff_cv.is_connected() {
                 let mod_amount = cutoff_cv[i];
-                Hertz::new((self.cutoff.as_f32() * (mod_amount * 4.0).exp2()).clamp(20.0, 20000.0))
+                Hertz::new(
+                    Hertz::FILTER_RANGE.clamp(self.cutoff.as_f32() * (mod_amount * 4.0).exp2()),
+                )
             } else {
                 self.cutoff
             };
@@ -737,7 +737,7 @@ impl PolyModule for LadderFilter {
     fn set_param(&mut self, param: Param) {
         if let Param::Filter(filter_param) = param {
             match filter_param {
-                FilterParam::Cutoff(c) => self.cutoff = c.clamp_audible(),
+                FilterParam::Cutoff(c) => self.cutoff = c.clamp_filter(),
                 FilterParam::Resonance(r) => self.resonance = r,
                 FilterParam::Drive(d) => self.drive = d,
                 _ => {}
@@ -864,6 +864,28 @@ mod tests {
         let mut filter = Filter::new();
         filter.set_param(Param::Filter(FilterParam::Cutoff(Hertz::new(4000.0))));
         assert!((filter.cutoff_smoothed - 4000.0).abs() < 0.5);
+    }
+
+    /// Drift guard: both filter descriptors' `cutoff` ranges, `Hertz::FILTER_RANGE`,
+    /// and `clamp_filter` are the same single source of truth.
+    #[test]
+    fn cutoff_descriptors_match_filter_range() {
+        for d in [Filter::new().descriptor(), LadderFilter::new().descriptor()] {
+            let cutoff = d
+                .parameters
+                .iter()
+                .find(|p| p.type_id == "cutoff")
+                .expect("missing cutoff param");
+            assert_eq!(cutoff.range, Hertz::FILTER_RANGE);
+        }
+        assert_eq!(
+            Hertz::new(1.0).clamp_filter().as_f32(),
+            Hertz::FILTER_RANGE.min
+        );
+        assert_eq!(
+            Hertz::new(99_999.0).clamp_filter().as_f32(),
+            Hertz::FILTER_RANGE.max
+        );
     }
 
     #[test]

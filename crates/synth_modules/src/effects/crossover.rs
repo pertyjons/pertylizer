@@ -64,8 +64,7 @@ impl Describable for CrossoverSplitter {
                     "Frequency",
                 )
                 .description("Crossover frequency")
-                .range(20.0, 20000.0)
-                .default(1000.0)
+                .value_range(Hertz::CROSSOVER_RANGE)
                 .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob)
                 .curve(ResponseCurve::Logarithmic),
@@ -135,7 +134,7 @@ impl AudioEffect for CrossoverSplitter {
         if let Param::Crossover(p) = param {
             match p {
                 CrossoverParam::Frequency(f) => {
-                    self.frequency = Hertz::new(f.as_f32().clamp(20.0, 20000.0));
+                    self.frequency = Hertz::new(Hertz::CROSSOVER_RANGE.clamp(f.as_f32()));
                 }
                 CrossoverParam::LowGain(g) => self.low_gain = g,
                 CrossoverParam::HighGain(g) => self.high_gain = g,
@@ -189,5 +188,23 @@ impl AudioEffect for CrossoverSplitter {
 
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         self.sample_rate = sample_rate;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Drift guard: the `frequency` descriptor range and the `set_param`
+    /// apply-clamp share the single `Hertz::CROSSOVER_RANGE` preset.
+    #[test]
+    fn frequency_descriptor_matches_crossover_range() {
+        let d = CrossoverSplitter::new().descriptor();
+        let freq = d
+            .parameters
+            .iter()
+            .find(|p| p.type_id == "frequency")
+            .expect("missing frequency param");
+        assert_eq!(freq.range, Hertz::CROSSOVER_RANGE);
     }
 }

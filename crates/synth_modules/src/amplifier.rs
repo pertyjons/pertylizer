@@ -93,8 +93,7 @@ impl Describable for Amplifier {
                     "Level",
                 )
                 .description("Output gain (0 = silent, 1 = unity, 2 = +6 dB)")
-                .range(0.0, 2.0)
-                .default(1.0)
+                .value_range(Gain::MIXER_RANGE)
                 .widget(WidgetHint::Slider),
             )
             .parameter(
@@ -199,7 +198,7 @@ impl PolyModule for Amplifier {
             let ramp_t = (i + 1) as f32 * inv_n;
             let level_now = level_start + (level_target - level_start) * ramp_t;
             // Apply mod matrix level offset (additive to base level)
-            let base_level = (level_now + self.mod_offset_level.as_f32()).clamp(0.0, 2.0);
+            let base_level = Gain::MIXER_RANGE.clamp(level_now + self.mod_offset_level.as_f32());
             let effective_level = base_level * cv_scaled;
 
             // BipolarValue::new() clamps internally to [-1, 1]
@@ -238,7 +237,7 @@ impl PolyModule for Amplifier {
         if let Param::Amplifier(amp_param) = param {
             match amp_param {
                 AmplifierParam::Level(l) => {
-                    self.level = Gain::new(l.as_f32().clamp(0.0, 2.0));
+                    self.level = Gain::new(Gain::MIXER_RANGE.clamp(l.as_f32()));
                     // Seed the de-zipper anchor so a base change takes effect
                     // immediately rather than gliding from the previous anchor;
                     // an active automation override keeps driving the ramp.
@@ -309,7 +308,7 @@ impl PolyModule for Amplifier {
         if let Param::Amplifier(amp_param) = param {
             match amp_param {
                 AmplifierParam::Level(l) => {
-                    self.override_level = Some(Gain::new(l.as_f32().clamp(0.0, 2.0)));
+                    self.override_level = Some(Gain::new(Gain::MIXER_RANGE.clamp(l.as_f32())));
                 }
                 AmplifierParam::Pan(p) => self.override_pan = Some(p),
                 // CvBipolar is a mode toggle, not an automation target.
@@ -380,8 +379,7 @@ impl Describable for Mixer {
                 "Master",
             )
             .description("Master output gain")
-            .range(0.0, 2.0)
-            .default(1.0)
+            .value_range(Gain::MIXER_RANGE)
             .widget(WidgetHint::Slider),
         );
 
@@ -411,8 +409,7 @@ impl Describable for Mixer {
                         format!("Input {n}"),
                     )
                     .description(format!("Gain for input {n}"))
-                    .range(0.0, 2.0)
-                    .default(1.0)
+                    .value_range(Gain::MIXER_RANGE)
                     .widget(WidgetHint::Slider),
                 );
         }
@@ -469,7 +466,9 @@ impl PolyModule for Mixer {
     fn set_param(&mut self, param: Param) {
         if let Param::Mixer(mixer_param) = param {
             match mixer_param {
-                MixerParam::Master(l) => self.master_level = Gain::new(l.as_f32().clamp(0.0, 2.0)),
+                MixerParam::Master(l) => {
+                    self.master_level = Gain::new(Gain::MIXER_RANGE.clamp(l.as_f32()));
+                }
                 MixerParam::Input1(l) => self.levels[0] = l,
                 MixerParam::Input2(l) => self.levels[1] = l,
                 MixerParam::Input3(l) => self.levels[2] = l,
@@ -562,6 +561,24 @@ mod tests {
     fn test_amplifier_creation() {
         let amp = Amplifier::new();
         assert!((amp.level.as_f32() - 1.0).abs() < 0.001);
+    }
+
+    /// Drift guard: the amplifier `level`, mixer `master`, and mixer `input_1`
+    /// descriptor ranges all share the single `Gain::MIXER_RANGE` preset.
+    #[test]
+    fn level_descriptors_match_mixer_range() {
+        let range_of = |d: &ModuleDescriptor, id: &str| {
+            d.parameters
+                .iter()
+                .find(|p| p.type_id == id)
+                .unwrap_or_else(|| panic!("missing param {id}"))
+                .range
+        };
+        let amp = Amplifier::new().descriptor();
+        assert_eq!(range_of(&amp, "level"), Gain::MIXER_RANGE);
+        let mix = Mixer::new().descriptor();
+        assert_eq!(range_of(&mix, "master"), Gain::MIXER_RANGE);
+        assert_eq!(range_of(&mix, "input_1"), Gain::MIXER_RANGE);
     }
 
     /// The mixer's `master` gain used to be dropped (Mixer never overrode

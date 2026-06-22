@@ -161,8 +161,7 @@ impl Describable for Lfo {
                     "Rate",
                 )
                 .description("LFO rate")
-                .range(0.01, 50.0)
-                .default(1.0)
+                .value_range(Hertz::LFO_RANGE)
                 .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::FrequencySlider)
                 .curve(ResponseCurve::Logarithmic),
@@ -255,17 +254,15 @@ impl PolyModule for Lfo {
                 } else {
                     // Apply mod matrix rate offset
                     Hertz::new(
-                        (self.rate.as_f32() + self.mod_offset_rate.as_f32()).clamp(0.01, 50.0),
+                        Hertz::LFO_RANGE.clamp(self.rate.as_f32() + self.mod_offset_rate.as_f32()),
                     )
                 };
 
                 let effective_rate = if rate_cv_reader.is_connected() {
                     let mod_amount = rate_cv_reader[i];
                     Hertz::new(
-                        base_rate
-                            .apply_fm(BipolarValue::new(mod_amount))
-                            .as_f32()
-                            .clamp(0.01, 50.0),
+                        Hertz::LFO_RANGE
+                            .clamp(base_rate.apply_fm(BipolarValue::new(mod_amount)).as_f32()),
                     )
                 } else {
                     base_rate
@@ -284,7 +281,7 @@ impl PolyModule for Lfo {
         if let Param::Lfo(lfo_param) = param {
             match lfo_param {
                 LfoParam::Waveform(w) => self.waveform = w,
-                LfoParam::Rate(r) => self.rate = Hertz::new(r.as_f32().clamp(0.01, 50.0)),
+                LfoParam::Rate(r) => self.rate = Hertz::new(Hertz::LFO_RANGE.clamp(r.as_f32())),
                 LfoParam::Depth(d) => self.depth = d,
                 LfoParam::Phase(p) => self.phase_offset = p,
                 LfoParam::TempoSync(s) => self.sync_mode = SyncMode::from(s),
@@ -383,6 +380,22 @@ mod tests {
     fn test_lfo_creation() {
         let lfo = Lfo::new();
         assert_eq!(lfo.waveform, LfoWaveform::Sine);
+    }
+
+    /// Drift guard: the `rate` descriptor range, `Hertz::LFO_RANGE`, and
+    /// `clamp_lfo` are all the same single source of truth.
+    #[test]
+    fn rate_descriptor_matches_lfo_range() {
+        let d = Lfo::new().descriptor();
+        let rate = d
+            .parameters
+            .iter()
+            .find(|p| p.type_id == "rate")
+            .expect("missing rate param");
+        assert_eq!(rate.range, Hertz::LFO_RANGE);
+        assert_eq!(Hertz::new(0.005).clamp_lfo().as_f32(), Hertz::LFO_RANGE.min);
+        assert_eq!(Hertz::new(100.0).clamp_lfo().as_f32(), Hertz::LFO_RANGE.max);
+        assert_eq!(Hertz::new(5.0).clamp_lfo().as_f32(), 5.0);
     }
 
     /// `phase` used to hit the dropped `_ => {}` arm; it now flows through the

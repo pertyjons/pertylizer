@@ -682,9 +682,9 @@ impl OscillatorParam {
                 Self::Waveform(Waveform::from_index(value as usize).unwrap_or_default())
             }
             Self::Frequency(_) => Self::Frequency(Hertz::new(value)),
-            // Clamp to the descriptor range (-100..100 cents); mirrors the
+            // Clamp via the single-source detune preset; mirrors the
             // `UnisonDetune` clamp below so every apply path stays in range.
-            Self::Detune(_) => Self::Detune(Cents::new(value.clamp(-100.0, 100.0))),
+            Self::Detune(_) => Self::Detune(Cents::new(Cents::DETUNE_RANGE.clamp(value))),
             Self::Octave(_) => Self::Octave(Semitones::new(value)),
             Self::PulseWidth(_) => Self::PulseWidth(PulseWidth::new(value)),
             Self::Level(_) => Self::Level(Gain::new(value)),
@@ -693,7 +693,9 @@ impl OscillatorParam {
             Self::FmAmount(_) => Self::FmAmount(BipolarValue::new(value)),
             #[allow(clippy::cast_possible_truncation)]
             Self::UnisonVoices(_) => Self::UnisonVoices((value.round() as u8).clamp(1, 7)),
-            Self::UnisonDetune(_) => Self::UnisonDetune(Cents::new(value.clamp(0.0, 100.0))),
+            Self::UnisonDetune(_) => {
+                Self::UnisonDetune(Cents::new(Cents::UNISON_DETUNE_RANGE.clamp(value)))
+            }
             Self::UnisonSpread(_) => Self::UnisonSpread(NormalizedValue::new(value)),
             Self::UnisonPhaseRandom(_) => Self::UnisonPhaseRandom(NormalizedValue::new(value)),
             Self::CrossModAmount(_) => Self::CrossModAmount(NormalizedValue::new(value)),

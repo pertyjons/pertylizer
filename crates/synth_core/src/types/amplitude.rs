@@ -5,7 +5,7 @@ use std::ops::{Add, Mul, Sub};
 
 use serde::{Deserialize, Serialize};
 
-use super::{BipolarValue, Clampable};
+use super::{BipolarValue, Clampable, ValueRange};
 
 /// Linear gain factor (amplitude multiplier).
 ///
@@ -30,6 +30,13 @@ impl Gain {
 
     /// Silence (mute).
     pub const MUTE: Self = Self(0.0);
+
+    /// Bounds for an amplifier / mixer **level** control (0–2, default unity).
+    ///
+    /// `0` = silent, `1` = unity, `2` = +6 dB. Single source of truth shared by
+    /// the amplifier/mixer descriptors `.value_range(...)` and their level
+    /// apply-clamps — so they can't drift.
+    pub const MIXER_RANGE: ValueRange = ValueRange::new(0.0, 2.0, 1.0);
 
     /// Get the raw gain value.
     #[inline]

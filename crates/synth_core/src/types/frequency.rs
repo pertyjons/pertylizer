@@ -4,7 +4,7 @@ use std::f32::consts::TAU;
 
 use serde::{Deserialize, Serialize};
 
-use super::{BipolarValue, Cents, Clampable, Interpolate, Seconds, Semitones};
+use super::{BipolarValue, Cents, Clampable, Interpolate, Seconds, Semitones, ValueRange};
 
 /// Frequency in Hertz.
 ///
@@ -63,14 +63,31 @@ impl Hertz {
 
     // === Range constants ===
 
-    /// Minimum LFO frequency.
-    pub const MIN_LFO: Self = Self(0.01);
-    /// Maximum LFO frequency.
-    pub const MAX_LFO: Self = Self(50.0);
-    /// Minimum filter cutoff.
-    pub const MIN_FILTER: Self = Self(20.0);
-    /// Maximum filter cutoff (Nyquist for 44.1kHz).
-    pub const MAX_FILTER: Self = Self(20000.0);
+    /// Bounds for an **oscillator base-frequency** control (1–20 000 Hz, A4).
+    ///
+    /// Single source of truth for the oscillator frequency descriptor
+    /// `.value_range(...)` and its `set_param` apply-clamp.
+    pub const OSC_RANGE: ValueRange = ValueRange::new(1.0, 20_000.0, 440.0);
+
+    /// Bounds for a **crossover split-frequency** control (20–20 000 Hz, 1 kHz).
+    ///
+    /// Numerically equal to [`Self::FILTER_RANGE`] today but kept distinct: a
+    /// crossover split is a separate control from a filter cutoff and must be
+    /// free to diverge.
+    pub const CROSSOVER_RANGE: ValueRange = ValueRange::new(20.0, 20_000.0, 1_000.0);
+
+    /// Bounds for an LFO **rate** control (0.01–50 Hz, default 1 Hz).
+    ///
+    /// Single source of truth shared by the LFO descriptor `.value_range(...)`,
+    /// the rate apply-clamps, and [`Self::clamp_lfo`] — so they can't drift.
+    pub const LFO_RANGE: ValueRange = ValueRange::new(0.01, 50.0, 1.0);
+
+    /// Bounds for a **filter cutoff** control (20–20 000 Hz, default 1 kHz).
+    ///
+    /// Single source of truth shared by the filter descriptors
+    /// `.value_range(...)` and [`Self::clamp_filter`] — so they can't drift.
+    pub const FILTER_RANGE: ValueRange = ValueRange::new(20.0, 20_000.0, 1_000.0);
+
     /// Sub-bass upper limit.
     pub const SUB_BASS: Self = Self(60.0);
     /// Bass upper limit.
@@ -206,14 +223,14 @@ impl Hertz {
     #[inline]
     #[must_use]
     pub fn clamp_lfo(self) -> Self {
-        Self(self.0.clamp(Self::MIN_LFO.0, Self::MAX_LFO.0))
+        Self::new(Self::LFO_RANGE.clamp(self.0))
     }
 
     /// Clamp to filter range.
     #[inline]
     #[must_use]
     pub fn clamp_filter(self) -> Self {
-        Self(self.0.clamp(Self::MIN_FILTER.0, Self::MAX_FILTER.0))
+        Self::new(Self::FILTER_RANGE.clamp(self.0))
     }
 
     /// Check if frequency is in audible range.
