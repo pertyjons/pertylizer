@@ -333,6 +333,10 @@ pub enum ArpMode {
     Random,
     /// The whole chord re-triggered every step (octave cycles per step).
     Chord,
+    /// A fixed offset loop ([`Arpeggiator::custom`]) applied to the *single*
+    /// source note's own pitch (offset 0 = the note), tracking a moving melody.
+    /// The chiptune / SID arp: one moving note, one held gate, pitch cycles.
+    Custom,
 }
 
 /// Tempo-synced arpeggiator rate, as a division of the 960-PPQN grid.
@@ -405,6 +409,79 @@ impl ArpRate {
     }
 }
 
+/// Most semitone offsets an [`ArpMode::Custom`] cycle holds. Chiptune arps are
+/// short (≤ ~8 steps); the inline cap keeps [`Arpeggiator`] `Copy` and the
+/// audio-thread scratch fixed.
+pub const MAX_ARP_OFFSETS: usize = 16;
+
+/// Bounded, inline list of semitone offsets for [`ArpMode::Custom`] (relative
+/// to the source note's pitch; offset 0 = the note). Inline + `Copy` so
+/// [`Arpeggiator`] stays `Copy`. Serializes as a bare JSON array (`[0,4,7]`).
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ArpOffsets {
+    /// Offset storage; only the first `len` entries are live.
+    pub values: [i8; MAX_ARP_OFFSETS],
+    /// Number of live offsets (≤ [`MAX_ARP_OFFSETS`]).
+    pub len: u8,
+}
+
+impl ArpOffsets {
+    /// Build from a slice, truncating past [`MAX_ARP_OFFSETS`].
+    pub fn new(slice: &[i8]) -> Self {
+        let mut values = [0; MAX_ARP_OFFSETS];
+        let len = slice.len().min(MAX_ARP_OFFSETS);
+        values[..len].copy_from_slice(&slice[..len]);
+        Self {
+            values,
+            len: len as u8,
+        }
+    }
+
+    /// The live offsets.
+    #[must_use]
+    pub fn as_slice(&self) -> &[i8] {
+        &self.values[..self.len as usize]
+    }
+
+    /// Number of live offsets.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    /// Whether the cycle is empty (a `Custom` arp with no offsets emits nothing).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl serde::Serialize for ArpOffsets {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        // Bare JSON array, e.g. [0,4,7].
+        self.as_slice().serialize(s)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ArpOffsets {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // UI/serde thread only; a transient Vec is fine here.
+        Ok(Self::new(&Vec::<i8>::deserialize(d)?))
+    }
+}
+
+impl schemars::JsonSchema for ArpOffsets {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ArpOffsets".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // Identical surface to a plain i8 array.
+        <Vec<i8>>::json_schema(generator)
+    }
+}
+
 /// How the arpeggiator assigns step velocities.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
@@ -459,6 +536,11 @@ pub struct Arpeggiator {
     /// Hold the last chord through gaps (keeps arpeggiating after the source
     /// notes end, using the chord that sounded just before the gap).
     pub latch: bool,
+    /// Semitone offsets cycled when `mode == Custom`, relative to the source
+    /// note's own pitch (offset 0 = the note). `octaves` multiplies the cycle:
+    /// `[0,4,7]` with `octaves == 2` plays `0,4,7, 12,16,19`. Ignored by the
+    /// other modes.
+    pub custom: ArpOffsets,
 }
 
 impl Default for Arpeggiator {
@@ -471,6 +553,7 @@ impl Default for Arpeggiator {
             swing: NormalizedValue::new(0.0),
             velocity: ArpVelocity::AsPlayed,
             latch: false,
+            custom: ArpOffsets::default(),
         }
     }
 }
@@ -675,6 +758,21 @@ impl Arpeggiator {
             return;
         };
 
+        // Custom bypasses the chord-collection model entirely: it cycles a fixed
+        // offset list over the *single* source note's pitch (a moving melody),
+        // not over a held chord.
+        if self.mode == ArpMode::Custom {
+            self.emit_custom(
+                pattern,
+                source_tick,
+                anchor,
+                upstream,
+                (step, duration),
+                buf,
+            );
+            return;
+        }
+
         // Phase 2 (step onsets only): resolve the chord through the upstream
         // chain and emit. The expensive per-note pitch mapping never runs on
         // the ~⌀239 of 240 non-onset ticks.
@@ -697,8 +795,9 @@ impl Arpeggiator {
             ArpMode::Down | ArpMode::DownUp => {
                 held.sort_unstable_by_key(|h| core::cmp::Reverse(h.pitch.as_midi()));
             }
-            // Scan order is start order — exactly "as played".
-            ArpMode::AsPlayed | ArpMode::Random | ArpMode::Chord => {}
+            // Scan order is start order — exactly "as played". (`Custom` returns
+            // earlier and never reaches the held-chord sort.)
+            ArpMode::AsPlayed | ArpMode::Random | ArpMode::Chord | ArpMode::Custom => {}
         }
 
         let octaves = u32::from(self.octaves.clamp(1, 4));
@@ -740,6 +839,65 @@ impl Arpeggiator {
             return; // transposed off the MIDI range — skip this step
         };
         let velocity = self.step_velocity(member.velocity, pos, cycle_len);
+        let _ = buf.push(Self::step_note(pitch, velocity, duration));
+    }
+
+    /// The source note that anchors a [`ArpMode::Custom`] cycle: among the notes
+    /// sounding at `source_tick` whose start is the block anchor, the lowest
+    /// pitch (a deterministic pick for the rare held-chord case; the intended
+    /// use is a single moving note). `None` when nothing is held there.
+    fn anchor_note(
+        pattern: &Pattern,
+        source_tick: PatternTick,
+        anchor: u32,
+    ) -> Option<HeldArpNote> {
+        pattern
+            .notes()
+            .iter()
+            .filter(|n| n.is_playing_at(source_tick) && n.start.0 == anchor)
+            .min_by_key(|n| n.pitch.as_midi())
+            .map(|n| HeldArpNote {
+                pitch: n.pitch,
+                velocity: n.velocity,
+            })
+    }
+
+    /// Emit one [`ArpMode::Custom`] step: cycle the offset list over the source
+    /// note's pitch, with `octaves` multiplying the cycle
+    /// (`offset(pos) = custom[pos % L] + 12·(pos / L)` over `L · octaves` steps).
+    /// The root is viewed through the `upstream` chain (the 1→N seam) — an
+    /// upstream scale-quantize snaps it, a chord contributes its root tone — so
+    /// Custom composes with the rest of the rack like the other modes, while
+    /// still arpeggiating a single moving line.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    fn emit_custom(
+        &self,
+        pattern: &Pattern,
+        source_tick: PatternTick,
+        anchor: u32,
+        upstream: &[NoteProcessor],
+        onset: (u32, u32),
+        buf: &mut ExpansionBuffer,
+    ) {
+        let (step, duration) = onset;
+        let l = self.custom.len() as u32;
+        if l == 0 {
+            return; // an empty cycle has nothing to play
+        }
+        let Some(source) = Self::anchor_note(pattern, source_tick, anchor) else {
+            return;
+        };
+        let root = upstream_pitch(upstream, source.pitch);
+        let octaves = u32::from(self.octaves.clamp(1, 4));
+        let cycle_len = l * octaves;
+        let pos = step % cycle_len;
+        let base = self.custom.as_slice()[(pos % l) as usize];
+        let octave = pos / l;
+        let semis = i32::from(base) + 12 * octave as i32;
+        let Some(pitch) = root.transpose(Semitones::new(semis as f32)) else {
+            return; // transposed off the MIDI range — skip this step
+        };
+        let velocity = self.step_velocity(source.velocity, pos, cycle_len);
         let _ = buf.push(Self::step_note(pitch, velocity, duration));
     }
 
@@ -1900,6 +2058,115 @@ mod tests {
     }
 
     #[test]
+    fn arp_custom_stays_copy() {
+        // Compile-time guard: the bounded inline offset list keeps `Arpeggiator`
+        // (and the rack note processors) `Copy`.
+        fn assert_copy<T: Copy>() {}
+        assert_copy::<ArpOffsets>();
+        assert_copy::<Arpeggiator>();
+    }
+
+    #[test]
+    fn arp_offsets_serde_roundtrip() {
+        // Reads/writes as a bare JSON array, not a struct.
+        let off = ArpOffsets::new(&[0, 4, 7]);
+        let json = serde_json::to_string(&off).unwrap();
+        assert_eq!(json, "[0,4,7]");
+        let back: ArpOffsets = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, off);
+        assert_eq!(back.as_slice(), &[0, 4, 7]);
+
+        // Negative offsets and the empty cycle round-trip too.
+        assert_eq!(
+            serde_json::to_string(&ArpOffsets::new(&[-12, 3])).unwrap(),
+            "[-12,3]"
+        );
+        let empty: ArpOffsets = serde_json::from_str("[]").unwrap();
+        assert!(empty.is_empty());
+
+        // Past the cap is truncated, never a panic.
+        let long: Vec<i8> = (0..32).collect();
+        let capped = ArpOffsets::new(&long);
+        assert_eq!(capped.len(), MAX_ARP_OFFSETS);
+    }
+
+    #[test]
+    fn arp_custom_cycles_offsets() {
+        // [0,4,7] over one held C note → C E G C E G… at the step grid.
+        let mut p = chord_pattern_single(60, 480);
+        let mut a = arp(ArpMode::Custom, 1);
+        a.rate = ArpRate::Ticks(40);
+        a.custom = ArpOffsets::new(&[0, 4, 7]);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(a));
+        let pitches: Vec<u8> = expand_all(&p, 200).iter().map(|(_, m)| *m).collect();
+        assert_eq!(pitches, vec![60, 64, 67, 60, 64], "C E G cycle");
+    }
+
+    #[test]
+    fn arp_custom_octaves_multiply_the_cycle() {
+        // `octaves = 2` plays the cycle then the cycle +12: 0,4,7, 12,16,19.
+        let mut p = chord_pattern_single(60, 480);
+        let mut a = arp(ArpMode::Custom, 2);
+        a.rate = ArpRate::Ticks(40);
+        a.custom = ArpOffsets::new(&[0, 4, 7]);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(a));
+        let pitches: Vec<u8> = expand_all(&p, 240).iter().map(|(_, m)| *m).collect();
+        assert_eq!(pitches, vec![60, 64, 67, 72, 76, 79], "two-octave cycle");
+    }
+
+    #[test]
+    fn arp_custom_tracks_moving_note() {
+        // The offsets apply to each source note's own pitch: a C→D line yields
+        // the figure transposed per note (60,64,67 then 62,66,69).
+        let mut p = Pattern::new(PatternId(0), Duration(3840));
+        let id1 = p.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+        let _ = p.resize_note(id1, Duration(120));
+        let id2 = p.add_note(PatternTick(120), Pitch::new(62).unwrap(), Velocity::MF);
+        let _ = p.resize_note(id2, Duration(120));
+        let mut a = arp(ArpMode::Custom, 1);
+        a.rate = ArpRate::Ticks(40);
+        a.custom = ArpOffsets::new(&[0, 4, 7]);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(a));
+        let pitches: Vec<u8> = expand_all(&p, 240).iter().map(|(_, m)| *m).collect();
+        assert_eq!(
+            pitches,
+            vec![60, 64, 67, 62, 66, 69],
+            "figure transposed per note"
+        );
+    }
+
+    #[test]
+    fn arp_custom_root_seen_through_upstream_quantize() {
+        // An upstream scale-quantize snaps the Custom root before the offsets
+        // apply, exactly as it does for the held-chord modes — C#4 (61), off the
+        // C-major scale, snaps to D4 (62) (nearest, preferring up), then [0,7]
+        // plays 62, 69. Without the upstream pass it would (wrongly) play 61, 68.
+        let mut p = chord_pattern_single(61, 480);
+        let _ = p.add_processor(NoteProcessor::ScaleQuantize(c_major()));
+        let mut a = arp(ArpMode::Custom, 1);
+        a.rate = ArpRate::Ticks(40);
+        a.custom = ArpOffsets::new(&[0, 7]);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(a));
+        let pitches: Vec<u8> = expand_all(&p, 80).iter().map(|(_, m)| *m).collect();
+        assert_eq!(
+            pitches,
+            vec![62, 69],
+            "root snapped to D then offset by 0,7"
+        );
+    }
+
+    #[test]
+    fn arp_custom_empty_cycle_emits_nothing() {
+        // A `Custom` arp with no offsets is silent, not a divide-by-zero.
+        let mut p = chord_pattern_single(60, 480);
+        let mut a = arp(ArpMode::Custom, 1);
+        a.rate = ArpRate::Ticks(40);
+        // custom left at its empty default.
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(a));
+        assert!(expand_all(&p, 200).is_empty());
+    }
+
+    #[test]
     fn arp_suppresses_source_chord() {
         let mut p = chord_pattern(3840);
         let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
@@ -2124,6 +2391,7 @@ mod tests {
             swing: NormalizedValue::new(0.25),
             velocity: ArpVelocity::RampDown,
             latch: true,
+            custom: ArpOffsets::new(&[0, 4, 7]),
         }));
         let json = serde_json::to_string(&p).unwrap();
         let back: Pattern = serde_json::from_str(&json).unwrap();

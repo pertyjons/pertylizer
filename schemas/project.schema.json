@@ -62,8 +62,22 @@
           "const": "Chord",
           "description": "The whole chord re-triggered every step (octave cycles per step).",
           "type": "string"
+        },
+        {
+          "const": "Custom",
+          "description": "A fixed offset loop ([`Arpeggiator::custom`]) applied to the *single*\nsource note's own pitch (offset 0 = the note), tracking a moving melody.\nThe chiptune / SID arp: one moving note, one held gate, pitch cycles.",
+          "type": "string"
         }
       ]
+    },
+    "ArpOffsets": {
+      "items": {
+        "format": "int8",
+        "maximum": 127,
+        "minimum": -128,
+        "type": "integer"
+      },
+      "type": "array"
     },
     "ArpRate": {
       "description": "Tempo-synced arpeggiator rate, as a division of the 960-PPQN grid.",
@@ -184,6 +198,11 @@
       "additionalProperties": false,
       "description": "Arpeggiator (chain stage 2) — the flagship stream generator.\n\nReplaces the source stream: at each step-grid onset it emits one member of\nthe currently *held* chord (every source note sounding at that tick, viewed\nthrough the upstream chain's pitch transforms), and suppresses the source\nchord onsets themselves. Step phase counts from the held chord's earliest\nstart, so the figure restarts on each new chord block. Stateless and\ndeterministic per the rack contract.\n\nTrill / mordent / turn are constrained presets of this generator (NP3/NP6\nexpose them via the per-note ornament menu); they are not separate code.",
       "properties": {
+        "custom": {
+          "$ref": "#/$defs/ArpOffsets",
+          "default": [],
+          "description": "Semitone offsets cycled when `mode == Custom`, relative to the source\nnote's own pitch (offset 0 = the note). `octaves` multiplies the cycle:\n`[0,4,7]` with `octaves == 2` plays `0,4,7, 12,16,19`. Ignored by the\nother modes."
+        },
         "gate": {
           "$ref": "#/$defs/NormalizedValue",
           "default": 0.75,
