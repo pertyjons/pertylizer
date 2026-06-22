@@ -72,6 +72,7 @@ const ID_Y_CV: u32 = 43;
 const ID_POS_CV: u32 = 44;
 const ID_PARAM_A: u32 = 45;
 const ID_PARAM_B: u32 = 46;
+const ID_PHASE: u32 = 47;
 
 /// Global intern pool for port names.
 static INTERN_POOL: LazyLock<RwLock<InternPool>> = LazyLock::new(|| RwLock::new(InternPool::new()));
@@ -140,6 +141,7 @@ impl InternPool {
         pool.intern("pos_cv"); // 44
         pool.intern("param_a"); // 45
         pool.intern("param_b"); // 46
+        pool.intern("phase"); // 47
         pool
     }
 
@@ -272,6 +274,8 @@ impl PortName {
     pub const PARAM_A: Self = Self(ID_PARAM_A);
     /// Parameter B modulation port "param_b".
     pub const PARAM_B: Self = Self(ID_PARAM_B);
+    /// Raw phase-ramp output port "phase" (0→1 accumulator, for hard sync).
+    pub const PHASE: Self = Self(ID_PHASE);
     /// Array of mixer input ports for iteration (IN1 through IN8).
     pub const MIXER_INPUTS: [Self; 8] = [
         Self::IN1,
@@ -421,6 +425,7 @@ mod tests {
         assert_eq!(PortName::POS_CV.as_str(), "pos_cv");
         assert_eq!(PortName::PARAM_A.as_str(), "param_a");
         assert_eq!(PortName::PARAM_B.as_str(), "param_b");
+        assert_eq!(PortName::PHASE.as_str(), "phase");
     }
 
     #[test]

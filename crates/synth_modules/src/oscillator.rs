@@ -83,8 +83,11 @@ pub struct Oscillator {
     // State
     unison_phases: [Phase; MAX_UNISON_VOICES],
     sample_rate: SampleRate,
-    /// Previous sync signal value for edge detection (persists across buffers).
-    prev_sync: NormalizedValue,
+    /// Previous sync-input sample, for master-cycle edge detection (persists
+    /// across buffers). Raw `f32`: the sync input is now an audio-rate signal
+    /// (a bipolar oscillator output or a 0→1 phase ramp), not a `[0,1]` gate,
+    /// so it must not be clamped to a `NormalizedValue`.
+    prev_sync: f32,
 
     // Anti-aliasing mode
     aa_mode: AntiAliasMode,
@@ -113,6 +116,10 @@ pub struct Oscillator {
     output_buffer: AudioBuffer,
     output_buffer_left: AudioBuffer,
     output_buffer_right: AudioBuffer,
+    /// Raw 0→1 phase ramp of voice 0 (the `phase` output port). Drives another
+    /// oscillator's `sync` input for hard sync — unaffected by level, PM, or
+    /// phase offset, so it is a clean, amplitude-independent cycle marker.
+    phase_buffer: AudioBuffer,
 }
 
 impl Oscillator {
@@ -141,7 +148,7 @@ impl Oscillator {
             ); MAX_UNISON_VOICES],
             unison_phases: [Phase::ZERO; MAX_UNISON_VOICES],
             sample_rate: SampleRate::DVD_QUALITY,
-            prev_sync: NormalizedValue::MIN,
+            prev_sync: 0.0,
             mod_offset_pitch: Semitones::ZERO,
             mod_offset_level: BipolarValue::CENTER,
             mod_offsets: ParamModOffsets::new(),
@@ -150,6 +157,7 @@ impl Oscillator {
             output_buffer: AudioBuffer::new(1024),
             output_buffer_left: AudioBuffer::new(1024),
             output_buffer_right: AudioBuffer::new(1024),
+            phase_buffer: AudioBuffer::new(1024),
         }
     }
 
@@ -481,10 +489,11 @@ impl Describable for Oscillator {
                 )
                 .description("Anti-aliasing algorithm"),
             )
-            .port(PortDescriptor::gate_input("sync", "Sync").description("Resets phase on gate. Connect: another Oscillator's output for hard sync sounds"))
+            .port(PortDescriptor::audio_input("sync", "Sync").description("Audio-rate hard sync: resets this oscillator's phase on each master cycle. Connect: another Oscillator's Phase output (best) or its audio output"))
             .port(PortDescriptor::audio_output("out", "Out").description("Audio output (mono sum)"))
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Stereo left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Stereo right output"))
+            .port(PortDescriptor::audio_output("phase", "Phase").description("Raw 0→1 phase ramp (level/PM-independent). Connect: → another Oscillator's Sync input to hard-sync it"))
     }
 }
 
@@ -501,6 +510,7 @@ impl PolyModule for Oscillator {
         self.output_buffer.resize(n_samples);
         self.output_buffer_left.resize(n_samples);
         self.output_buffer_right.resize(n_samples);
+        self.phase_buffer.resize(n_samples);
 
         let fm_reader = inputs.reader(PortName::FM, 0.0);
         let pm_reader = inputs.reader(PortName::PM, 0.0);
@@ -559,14 +569,41 @@ impl PolyModule for Oscillator {
             };
 
             if sync_reader.is_connected() {
+                // Audio-rate hard sync. A master cycle boundary shows up as a
+                // large negative step in the sync signal: a 0→1 phase ramp drops
+                // ~1.0 at its wrap, a bipolar audio master ~2.0 — both clear 0.5,
+                // while a normal monotonic rise never does. (A plain `> 0`
+                // zero-crossing is unreliable: a square has none, sine/triangle
+                // cross twice per cycle, and a band-limited saw rings near its
+                // wrap — hence the phase-ramp output is the preferred master.)
                 let sync_val = sync_reader[i];
-                if sync_val > 0.5 && self.prev_sync.as_f32() <= 0.5 {
-                    for phase in &mut self.unison_phases[..voice_count] {
-                        *phase = Phase::ZERO;
+                if self.prev_sync - sync_val > 0.5 {
+                    // Recover the exact sub-sample wrap instant from a 0→1 ramp so
+                    // the reset is not quantised to the sample grid (which would
+                    // jitter the synced pitch). The master reached its wrap a
+                    // fraction `t` into the [n-1, n] interval, so the slave has
+                    // since advanced `(1 - t)` of one sample. For masters that are
+                    // not a clean 0→1 ramp this degrades gracefully toward a
+                    // sample-aligned reset (`t` clamped, or the guard below).
+                    let dt_master = sync_val - self.prev_sync + 1.0;
+                    let t = if dt_master > 1e-6 {
+                        ((1.0 - self.prev_sync) / dt_master).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let frac = 1.0 - t;
+                    for j in 0..voice_count {
+                        let voice_dt = Hertz::new(freq.as_f32() * self.unison_detune_ratios[j])
+                            .phase_increment(self.sample_rate);
+                        self.unison_phases[j] = Phase::new(frac * voice_dt);
                     }
                 }
-                self.prev_sync = NormalizedValue::new(sync_val);
+                self.prev_sync = sync_val;
             }
+
+            // Raw phase ramp of voice 0 (this sample, after any sync reset, before
+            // advance) — the `phase` output, for hard-syncing a downstream osc.
+            self.phase_buffer[i] = self.unison_phases[0].as_f32();
 
             let pm = pm_reader[i];
             let effective_level =
@@ -614,6 +651,9 @@ impl PolyModule for Oscillator {
         }
         if let Some(out_r) = outputs.get_mut(&PortName::OUT_R) {
             out_r.copy_from(&self.output_buffer_right);
+        }
+        if let Some(phase) = outputs.get_mut(&PortName::PHASE) {
+            phase.copy_from(&self.phase_buffer);
         }
     }
 
@@ -709,7 +749,7 @@ impl PolyModule for Oscillator {
 
     fn reset(&mut self) {
         self.unison_phases = [Phase::ZERO; MAX_UNISON_VOICES];
-        self.prev_sync = NormalizedValue::MIN;
+        self.prev_sync = 0.0;
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
@@ -1007,6 +1047,109 @@ mod tests {
             .map(|(a, b)| (a - b).abs())
             .sum();
         assert!(back < 1e-3, "clearing should revert, residual = {back}");
+    }
+
+    /// Count master-cycle wraps: a large negative step in a ramp/audio signal.
+    fn count_wraps(v: &[f32]) -> usize {
+        let mut prev = v[0];
+        let mut n = 0;
+        for &x in &v[1..] {
+            if prev - x > 0.5 {
+                n += 1;
+            }
+            prev = x;
+        }
+        n
+    }
+
+    fn collect(b: &AudioBuffer) -> Vec<f32> {
+        (0..b.len()).map(|i| b[i]).collect()
+    }
+
+    #[test]
+    fn phase_output_emits_wrapping_ramp() {
+        let mut osc = Oscillator::new();
+        osc.waveform = Waveform::Sawtooth;
+        osc.frequency = Hertz::new(1000.0);
+        osc.sample_rate = SampleRate::DVD_QUALITY;
+        osc.reset();
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        let mut outs = HashMap::new();
+        outs.insert(PortName::PHASE, AudioBuffer::new(256));
+        osc.process(InputPorts::empty(), &mut outs, &ctx);
+
+        let vals = collect(&outs[&PortName::PHASE]);
+        assert!(
+            vals.iter().all(|&v| (0.0..1.0).contains(&v)),
+            "phase ramp must stay in [0, 1)"
+        );
+        // 1000 Hz over 256 samples @ 44.1 kHz ≈ 5.8 cycles → 5 completed wraps.
+        let wraps = count_wraps(&vals);
+        assert!(
+            (5..=6).contains(&wraps),
+            "expected ~6 phase wraps, got {wraps}"
+        );
+    }
+
+    #[test]
+    fn hard_sync_clamps_slave_cycle_to_master() {
+        let sr = SampleRate::DVD_QUALITY.as_f32();
+        let n = 256;
+
+        // Master: clean 0→1 phase ramp at 2000 Hz.
+        let master_dt = 2000.0 / sr;
+        let mut master = AudioBuffer::new(n);
+        let mut p = 0.0f32;
+        for i in 0..n {
+            master[i] = p;
+            p = (p + master_dt).rem_euclid(1.0);
+        }
+        let master_wraps = count_wraps(&collect(&master));
+
+        // Slave far below the master (300 Hz): on its own it nearly completes a
+        // full cycle; under hard sync it is reset every master cycle and so never
+        // climbs far before restarting.
+        let mut osc = Oscillator::new();
+        osc.waveform = Waveform::Sawtooth;
+        osc.frequency = Hertz::new(300.0);
+        osc.sample_rate = SampleRate::DVD_QUALITY;
+        osc.reset();
+
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(n),
+            ..ProcessContext::default()
+        };
+
+        // Free-running reference.
+        let mut outs = HashMap::new();
+        outs.insert(PortName::PHASE, AudioBuffer::new(n));
+        osc.process(InputPorts::empty(), &mut outs, &ctx);
+        let free = collect(&outs[&PortName::PHASE]);
+        let free_max = free.iter().cloned().fold(0.0f32, f32::max);
+
+        // Hard-synced from the master phase ramp.
+        osc.reset();
+        let in_ports = [(PortName::SYNC, &master)];
+        let mut outs2 = HashMap::new();
+        outs2.insert(PortName::PHASE, AudioBuffer::new(n));
+        osc.process(InputPorts::new(&in_ports), &mut outs2, &ctx);
+        let synced = collect(&outs2[&PortName::PHASE]);
+        let synced_max = synced.iter().cloned().fold(0.0f32, f32::max);
+
+        assert!(master_wraps >= 10, "sanity: master should wrap ~11×");
+        assert!(
+            free_max > 0.8,
+            "free-running 300 Hz slave should sweep most of [0,1), max = {free_max}"
+        );
+        // Reset every ~22 samples bounds the slave phase to ~22·(300/44100) ≈ 0.15.
+        assert!(
+            synced_max < 0.3,
+            "hard sync must clamp the slave's cycle to the master, max = {synced_max}"
+        );
     }
 
     #[test]
