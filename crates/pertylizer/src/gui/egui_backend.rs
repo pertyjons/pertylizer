@@ -4339,8 +4339,9 @@ impl SynthApp {
             }
             UndoAction::FreezePattern { pattern_id, .. } => {
                 let mut song_w = self.song.write();
+                let bpm = song_w.tempo_at(synth_sequencer::Tick(0));
                 if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
-                    pattern.freeze_processors();
+                    pattern.freeze_processors(bpm);
                 }
             }
             UndoAction::RestorePattern {

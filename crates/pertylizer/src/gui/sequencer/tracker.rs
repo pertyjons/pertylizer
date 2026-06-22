@@ -252,6 +252,7 @@ fn compute_np_stages(
     if n_proc == 0 {
         return Vec::new();
     }
+    let bpm = song.tempo_at(synth_sequencer::Tick(0));
     let mut buf = ExpansionBuffer::new();
     let mut stages = Vec::with_capacity(n_proc);
     for p in 0..n_proc {
@@ -260,7 +261,7 @@ fn compute_np_stages(
         for r in 0..n_rows {
             let tick = PatternTick((r as u32) * tpr);
             // Cumulative output through processors `0..=p`.
-            pattern.expand_at_tick_through(tick, |_| true, p + 1, &mut buf);
+            pattern.expand_at_tick_through(tick, |_| true, bpm, p + 1, &mut buf);
             rows.push(buf.notes().iter().map(|n| n.pitch).collect());
         }
         stages.push(NpStage { label, rows });

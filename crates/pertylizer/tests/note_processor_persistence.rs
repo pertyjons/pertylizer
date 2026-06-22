@@ -25,7 +25,7 @@ fn play(
     let mut buf = ExpansionBuffer::new();
     let mut out = Vec::new();
     for t in 0..ticks {
-        pattern.expand_at_tick(PatternTick(t), |_| true, &mut buf);
+        pattern.expand_at_tick(PatternTick(t), |_| true, synth_core::Bpm::DEFAULT, &mut buf);
         for n in buf.notes() {
             #[allow(clippy::cast_possible_truncation)]
             out.push((

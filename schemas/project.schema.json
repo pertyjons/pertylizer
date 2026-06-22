@@ -127,6 +127,21 @@
           "const": "ThirtySecondTriplet",
           "description": "1/32 triplet (80 ticks).",
           "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Exact step length in ticks (sub-grid; e.g. 40 = one PAL frame @125 BPM).\nClears the divided-grid floor for chiptune / SID arps. Clamped to ≥1.",
+          "properties": {
+            "Ticks": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "Ticks"
+          ],
+          "type": "object"
         }
       ]
     },

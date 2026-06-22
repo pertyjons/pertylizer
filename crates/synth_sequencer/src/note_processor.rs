@@ -26,7 +26,7 @@
 
 use serde::{Deserialize, Serialize};
 use synth_core::hash::{splitmix64, splitmix64_bipolar};
-use synth_core::{NormalizedValue, Semitones};
+use synth_core::{Bpm, NormalizedValue, Semitones};
 
 use super::ids::NoteId;
 use super::note::{
@@ -365,10 +365,14 @@ pub enum ArpRate {
     ThirtySecondDotted,
     /// 1/32 triplet (80 ticks).
     ThirtySecondTriplet,
+    /// Exact step length in ticks (sub-grid; e.g. 40 = one PAL frame @125 BPM).
+    /// Clears the divided-grid floor for chiptune / SID arps. Clamped to ≥1.
+    Ticks(u32),
 }
 
 impl ArpRate {
-    /// Step length in ticks (all divisions are exact on the 960-PPQN grid).
+    /// Step length in ticks (all named divisions are exact on the 960-PPQN
+    /// grid; [`Self::Ticks`] is the raw sub-grid count, clamped to ≥1).
     pub fn ticks(self) -> Duration {
         match self {
             Self::Quarter => Duration::QUARTER,
@@ -383,6 +387,7 @@ impl ArpRate {
             Self::ThirtySecond => Duration::THIRTY_SECOND,
             Self::ThirtySecondDotted => Duration::THIRTY_SECOND.dotted(),
             Self::ThirtySecondTriplet => Duration::TRIPLET_THIRTY_SECOND,
+            Self::Ticks(n) => Duration(n.max(1)),
         }
     }
 }
@@ -569,6 +574,7 @@ impl Arpeggiator {
         pattern: &Pattern,
         tick: PatternTick,
         upstream: &[NoteProcessor],
+        _bpm: Bpm,
         buf: &mut ExpansionBuffer,
     ) {
         // The arp replaces the source stream: chord onsets never pass through.
@@ -853,6 +859,7 @@ impl NoteProcessor {
         pattern: &Pattern,
         tick: PatternTick,
         upstream: &[NoteProcessor],
+        bpm: Bpm,
         buf: &mut ExpansionBuffer,
     ) {
         match self {
@@ -863,7 +870,7 @@ impl NoteProcessor {
             }
             Self::Chord(c) if c.strum.0 == 0 => c.expand_into(buf),
             Self::Chord(c) => c.expand_strummed(pattern, tick, upstream, buf),
-            Self::Arpeggiator(a) => a.process_at_tick(pattern, tick, upstream, buf),
+            Self::Arpeggiator(a) => a.process_at_tick(pattern, tick, upstream, bpm, buf),
             Self::Humanize(h) => h.apply(tick, buf),
         }
     }
@@ -1350,9 +1357,10 @@ impl Pattern {
         &self,
         tick: PatternTick,
         gate: impl Fn(&Note) -> bool,
+        bpm: Bpm,
         buf: &mut ExpansionBuffer,
     ) {
-        self.expand_at_tick_through(tick, gate, self.processors.len(), buf);
+        self.expand_at_tick_through(tick, gate, bpm, self.processors.len(), buf);
     }
 
     /// As [`Self::expand_at_tick`] but runs only the first `through` processors of
@@ -1364,6 +1372,7 @@ impl Pattern {
         &self,
         tick: PatternTick,
         gate: impl Fn(&Note) -> bool,
+        bpm: Bpm,
         through: usize,
         buf: &mut ExpansionBuffer,
     ) {
@@ -1386,7 +1395,7 @@ impl Pattern {
             // Each processor sees its upstream slice so generators can view
             // source material through the preceding transforms (`map_pitch`).
             let (upstream, rest) = self.processors.split_at(i);
-            rest[0].process_at_tick(self, tick, upstream, buf);
+            rest[0].process_at_tick(self, tick, upstream, bpm, buf);
         }
     }
 
@@ -1397,8 +1406,9 @@ impl Pattern {
     ///
     /// UI-thread only (allocates; walks the full pattern length — generators
     /// may emit at ticks where no source note starts, so every tick is
-    /// visited).
-    pub fn freeze_processors(&mut self) -> usize {
+    /// visited). `bpm` resolves frame-locked arp rates ([`ArpRate::Ticks`] is
+    /// tempo-independent; absolute-rate variants need the tempo).
+    pub fn freeze_processors(&mut self, bpm: Bpm) -> usize {
         let has_ornament = self
             .notes()
             .iter()
@@ -1441,7 +1451,7 @@ impl Pattern {
             .saturating_add(strum_tail);
         for tick in 0..walk_end {
             let t = PatternTick(tick);
-            self.expand_at_tick(t, |_| true, &mut buf);
+            self.expand_at_tick(t, |_| true, bpm, &mut buf);
             for expanded in buf.notes() {
                 frozen.push((t, *expanded));
             }
@@ -1586,17 +1596,22 @@ mod tests {
         let _ = p.add_processor(NoteProcessor::ScaleQuantize(c_major()));
         let mut buf = ExpansionBuffer::new();
 
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         let pitches: Vec<u8> = buf.notes().iter().map(|n| n.pitch.as_midi()).collect();
         assert_eq!(pitches, vec![60, 62, 67]);
 
         // The gate filters source notes before the rack runs.
-        p.expand_at_tick(PatternTick(0), |n| n.pitch.as_midi() != 61, &mut buf);
+        p.expand_at_tick(
+            PatternTick(0),
+            |n| n.pitch.as_midi() != 61,
+            Bpm::DEFAULT,
+            &mut buf,
+        );
         let pitches: Vec<u8> = buf.notes().iter().map(|n| n.pitch.as_midi()).collect();
         assert_eq!(pitches, vec![60, 67]);
 
         // A tick with no starting notes expands to nothing (no generators yet).
-        p.expand_at_tick(PatternTick(240), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(240), |_| true, Bpm::DEFAULT, &mut buf);
         assert!(buf.notes().is_empty());
     }
 
@@ -1604,7 +1619,7 @@ mod tests {
     fn expand_at_tick_without_rack_passes_through() {
         let p = pattern_with_notes(&[61]);
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         assert_eq!(buf.notes().len(), 1);
         assert_eq!(buf.notes()[0].pitch.as_midi(), 61);
     }
@@ -1614,7 +1629,7 @@ mod tests {
         let mut p = pattern_with_notes(&[60, 61, 66]);
         let _ = p.add_processor(NoteProcessor::ScaleQuantize(c_major()));
 
-        let count = p.freeze_processors();
+        let count = p.freeze_processors(Bpm::DEFAULT);
         assert_eq!(count, 3);
         assert!(p.processors().is_empty());
         let pitches: Vec<u8> = p.notes().iter().map(|n| n.pitch.as_midi()).collect();
@@ -1624,7 +1639,7 @@ mod tests {
     #[test]
     fn freeze_without_rack_is_noop() {
         let mut p = pattern_with_notes(&[61]);
-        assert_eq!(p.freeze_processors(), 1);
+        assert_eq!(p.freeze_processors(Bpm::DEFAULT), 1);
         assert_eq!(p.notes()[0].pitch.as_midi(), 61);
     }
 
@@ -1637,7 +1652,7 @@ mod tests {
         assert!(p.length.0 < 5000);
         let _ = p.add_processor(NoteProcessor::ScaleQuantize(c_major()));
 
-        assert_eq!(p.freeze_processors(), 2);
+        assert_eq!(p.freeze_processors(Bpm::DEFAULT), 2);
         let pitches: Vec<(u32, u8)> = p
             .notes()
             .iter()
@@ -1717,7 +1732,7 @@ mod tests {
         let mut buf = ExpansionBuffer::new();
         let mut out = Vec::new();
         for t in 0..ticks {
-            p.expand_at_tick(PatternTick(t), |_| true, &mut buf);
+            p.expand_at_tick(PatternTick(t), |_| true, Bpm::DEFAULT, &mut buf);
             for n in buf.notes() {
                 out.push((t, n.pitch.as_midi()));
             }
@@ -1739,11 +1754,29 @@ mod tests {
     }
 
     #[test]
+    fn arp_rate_ticks_subdivides_below_floor() {
+        // `Ticks(40)` is below the old 80-tick floor (ThirtySecondTriplet @125 BPM
+        // = one PAL frame), and `ticks()` maps it straight through.
+        assert_eq!(ArpRate::Ticks(40).ticks(), Duration(40));
+        // A zero count clamps to a 1-tick floor — never a divide-by-zero onset grid.
+        assert_eq!(ArpRate::Ticks(0).ticks(), Duration(1));
+
+        // A single held note arpeggiated at 40-tick steps emits one onset per 40
+        // ticks (well below the divided-grid floor).
+        let mut p = chord_pattern_single(60, 480);
+        let mut a = arp(ArpMode::Up, 1);
+        a.rate = ArpRate::Ticks(40);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(a));
+        let onsets: Vec<u32> = expand_all(&p, 200).iter().map(|(t, _)| *t).collect();
+        assert_eq!(onsets, vec![0, 40, 80, 120, 160], "40-tick step spacing");
+    }
+
+    #[test]
     fn arp_suppresses_source_chord() {
         let mut p = chord_pattern(3840);
         let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         assert_eq!(
             buf.notes().len(),
             1,
@@ -1780,7 +1813,7 @@ mod tests {
             ..arp(ArpMode::Up, 1)
         }));
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         assert_eq!(buf.notes()[0].duration, Some(Duration(120)));
     }
 
@@ -1834,7 +1867,7 @@ mod tests {
         let mut p = chord_pattern(3840);
         let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Chord, 1)));
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(240), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(240), |_| true, Bpm::DEFAULT, &mut buf);
         let pitches: Vec<u8> = buf.notes().iter().map(|n| n.pitch.as_midi()).collect();
         assert_eq!(pitches, vec![60, 64, 67]);
     }
@@ -1849,7 +1882,7 @@ mod tests {
         let mut buf = ExpansionBuffer::new();
         let mut vels = Vec::new();
         for t in [0u32, 240, 480] {
-            p.expand_at_tick(PatternTick(t), |_| true, &mut buf);
+            p.expand_at_tick(PatternTick(t), |_| true, Bpm::DEFAULT, &mut buf);
             vels.push(buf.notes()[0].velocity.as_f32());
         }
         assert!(
@@ -1908,7 +1941,7 @@ mod tests {
             ..arp(ArpMode::Chord, 1)
         }));
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         assert!(
             buf.notes()
                 .iter()
@@ -1931,7 +1964,7 @@ mod tests {
         let mut buf = ExpansionBuffer::new();
         // Step 1 (odd) is swung to tick 240 + 120 = 360; the next onset is
         // step 2 at 480, so the gap is 120 ticks.
-        p.expand_at_tick(PatternTick(360), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(360), |_| true, Bpm::DEFAULT, &mut buf);
         assert_eq!(buf.notes().len(), 1);
         assert_eq!(
             buf.notes()[0].duration,
@@ -1944,7 +1977,7 @@ mod tests {
     fn arp_freeze_bakes_concrete_steps() {
         let mut p = chord_pattern(960);
         let _ = p.add_processor(NoteProcessor::Arpeggiator(arp(ArpMode::Up, 1)));
-        let count = p.freeze_processors();
+        let count = p.freeze_processors(Bpm::DEFAULT);
         assert_eq!(count, 4, "4 steps over 960 ticks at 16th rate");
         assert!(p.processors().is_empty());
         let starts: Vec<u32> = p.notes().iter().map(|n| n.start.0).collect();
@@ -1977,7 +2010,7 @@ mod tests {
         let mut p = pattern_with_notes(&[60]);
         let _ = p.add_processor(NoteProcessor::Chord(Chord::major()));
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         let pitches: Vec<u8> = buf.notes().iter().map(|n| n.pitch.as_midi()).collect();
         assert_eq!(pitches, vec![60, 64, 67]);
     }
@@ -1990,7 +2023,7 @@ mod tests {
         let _ = p.resize_note(id, Duration(480));
         let _ = p.add_processor(NoteProcessor::Chord(Chord::minor()));
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         let pitches: Vec<u8> = buf.notes().iter().map(|n| n.pitch.as_midi()).collect();
         assert_eq!(pitches, vec![60, 63, 67], "minor triad");
         assert!(
@@ -2007,7 +2040,7 @@ mod tests {
         let mut p = pattern_with_notes(&[60]);
         let _ = p.add_processor(NoteProcessor::Chord(Chord::new(&[])));
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         assert!(buf.notes().is_empty(), "no intervals → no tones");
     }
 
@@ -2045,7 +2078,7 @@ mod tests {
         let _ = p.add_processor(NoteProcessor::Chord(Chord::major()));
         assert_eq!(p.processors()[0].chain_stage(), 0, "quantize before chord");
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         let pitches: Vec<u8> = buf.notes().iter().map(|n| n.pitch.as_midi()).collect();
         assert_eq!(pitches, vec![62, 66, 69]);
     }
@@ -2054,7 +2087,7 @@ mod tests {
     fn chord_freeze_bakes_tones() {
         let mut p = pattern_with_notes(&[60]);
         let _ = p.add_processor(NoteProcessor::Chord(Chord::dominant7()));
-        let count = p.freeze_processors();
+        let count = p.freeze_processors(Bpm::DEFAULT);
         assert_eq!(count, 4, "dominant 7th = four tones");
         assert!(p.processors().is_empty());
         let pitches: Vec<u8> = p.notes().iter().map(|n| n.pitch.as_midi()).collect();
@@ -2113,7 +2146,7 @@ mod tests {
             Chord::minor().with_strum(Duration(20), StrumDirection::Up),
         ));
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(40), |_| true, &mut buf); // third tone (G)
+        p.expand_at_tick(PatternTick(40), |_| true, Bpm::DEFAULT, &mut buf); // third tone (G)
         assert_eq!(buf.notes().len(), 1);
         assert_eq!(buf.notes()[0].pitch.as_midi(), 67);
         assert!((buf.notes()[0].velocity.as_f32() - Velocity::FF.as_f32()).abs() < 1e-6);
@@ -2155,7 +2188,7 @@ mod tests {
             Chord::major().with_strum(Duration(u32::MAX), StrumDirection::Up),
         ));
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         assert_eq!(buf.notes().len(), 1, "first tone at the onset, no panic");
         assert_eq!(buf.notes()[0].pitch.as_midi(), 60);
     }
@@ -2166,7 +2199,7 @@ mod tests {
         let _ = p.add_processor(NoteProcessor::Chord(
             Chord::major().with_strum(Duration(30), StrumDirection::Up),
         ));
-        let count = p.freeze_processors();
+        let count = p.freeze_processors(Bpm::DEFAULT);
         assert_eq!(count, 3);
         let baked: Vec<(u32, u8)> = p
             .notes()
@@ -2206,7 +2239,7 @@ mod tests {
             let mut buf = ExpansionBuffer::new();
             let mut out = Vec::new();
             for i in 0..8 {
-                p.expand_at_tick(PatternTick(i * 960), |_| true, &mut buf);
+                p.expand_at_tick(PatternTick(i * 960), |_| true, Bpm::DEFAULT, &mut buf);
                 for note in buf.notes() {
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     out.push((
@@ -2230,7 +2263,7 @@ mod tests {
             let mut buf = ExpansionBuffer::new();
             let mut out = Vec::new();
             for i in 0..8 {
-                p.expand_at_tick(PatternTick(i * 960), |_| true, &mut buf);
+                p.expand_at_tick(PatternTick(i * 960), |_| true, Bpm::DEFAULT, &mut buf);
                 out.extend(buf.notes().iter().map(|n| n.velocity.as_f32()));
             }
             out
@@ -2246,7 +2279,7 @@ mod tests {
         let base = Velocity::MF.as_f32();
         let mut buf = ExpansionBuffer::new();
         for i in 0..16 {
-            p.expand_at_tick(PatternTick(i * 960), |_| true, &mut buf);
+            p.expand_at_tick(PatternTick(i * 960), |_| true, Bpm::DEFAULT, &mut buf);
             for note in buf.notes() {
                 let v = note.velocity.as_f32();
                 // ±amt of the base, modulo the 0..1 clamp.
@@ -2263,7 +2296,7 @@ mod tests {
         let mut p = uniform_run(4);
         let _ = p.add_processor(NoteProcessor::Humanize(humanize(0.0, 0.0, 99)));
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         assert_eq!(buf.notes()[0].velocity.as_f32(), Velocity::MF.as_f32());
         assert_eq!(buf.notes()[0].duration, Some(Duration(480)));
     }
@@ -2281,7 +2314,7 @@ mod tests {
         let mut buf = ExpansionBuffer::new();
         let mut vels = Vec::new();
         for i in 0..8 {
-            p.expand_at_tick(PatternTick(i * 240), |_| true, &mut buf);
+            p.expand_at_tick(PatternTick(i * 240), |_| true, Bpm::DEFAULT, &mut buf);
             vels.extend(buf.notes().iter().map(|n| n.velocity.as_f32()));
         }
         assert!(
@@ -2297,7 +2330,7 @@ mod tests {
         let mut buf = ExpansionBuffer::new();
         let mut durations = Vec::new();
         for i in 0..8 {
-            p.expand_at_tick(PatternTick(i * 960), |_| true, &mut buf);
+            p.expand_at_tick(PatternTick(i * 960), |_| true, Bpm::DEFAULT, &mut buf);
             durations.extend(buf.notes().iter().map(|n| n.duration.unwrap().0));
         }
         assert!(
@@ -2408,10 +2441,10 @@ mod tests {
         let p = ornamented(480, 60, 960, flam());
         let mut buf = ExpansionBuffer::new();
         // Grace at 360: short (grace_gate 0.5 × spacing 120 = 60 ticks).
-        p.expand_at_tick(PatternTick(360), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(360), |_| true, Bpm::DEFAULT, &mut buf);
         assert_eq!(buf.notes()[0].duration, Some(Duration(60)));
         // Main at 480: keeps the source note's full duration.
-        p.expand_at_tick(PatternTick(480), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(480), |_| true, Bpm::DEFAULT, &mut buf);
         assert_eq!(buf.notes()[0].duration, Some(Duration(960)));
     }
 
@@ -2453,7 +2486,7 @@ mod tests {
         let mut buf = ExpansionBuffer::new();
         let mut vels = Vec::new();
         for t in [0u32, 120, 240, 360] {
-            p.expand_at_tick(PatternTick(t), |_| true, &mut buf);
+            p.expand_at_tick(PatternTick(t), |_| true, Bpm::DEFAULT, &mut buf);
             vels.push(buf.notes()[0].velocity.as_f32());
         }
         assert!(
@@ -2490,7 +2523,7 @@ mod tests {
     #[test]
     fn ornament_freeze_bakes_and_drops_the_field() {
         let mut p = ornamented(480, 60, 240, flam());
-        let count = p.freeze_processors();
+        let count = p.freeze_processors(Bpm::DEFAULT);
         assert_eq!(count, 2, "grace + main baked to concrete notes");
         let baked: Vec<(u32, u8)> = p
             .notes()
@@ -2572,7 +2605,7 @@ mod tests {
             },
         );
         let mut buf = ExpansionBuffer::new();
-        p.expand_at_tick(PatternTick(0), |_| true, &mut buf);
+        p.expand_at_tick(PatternTick(0), |_| true, Bpm::DEFAULT, &mut buf);
         assert_eq!(buf.notes().len(), 1, "main hit at the anchor, no panic");
         assert_eq!(buf.notes()[0].pitch.as_midi(), 60);
     }

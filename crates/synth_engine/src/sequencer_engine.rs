@@ -693,6 +693,7 @@ impl SequencerEngine {
                 pattern.expand_at_tick(
                     PatternTick(pattern_tick),
                     |_| true,
+                    self.cached_tempo,
                     &mut self.scratch_expansion,
                 );
                 self.expansion_drops += u64::from(self.scratch_expansion.dropped());
@@ -777,6 +778,7 @@ impl SequencerEngine {
                         let note_start = Tick(placement_start + u64::from(note.start.0));
                         note_passes_probability(note, note_start, roll_nonce)
                     },
+                    self.cached_tempo,
                     &mut self.scratch_expansion,
                 );
                 self.expansion_drops += u64::from(self.scratch_expansion.dropped());

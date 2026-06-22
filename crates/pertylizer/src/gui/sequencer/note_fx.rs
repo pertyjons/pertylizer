@@ -250,9 +250,10 @@ pub(crate) fn draw_note_fx_panel(
             let mut before = None;
             {
                 let mut song_w = song.write();
+                let bpm = song_w.tempo_at(synth_sequencer::Tick(0));
                 if let Some(pattern) = song_w.pattern_mut(pattern_id) {
                     before = Some(pattern.clone());
-                    pattern.freeze_processors();
+                    pattern.freeze_processors(bpm);
                 }
             }
             if let Some(before) = before {

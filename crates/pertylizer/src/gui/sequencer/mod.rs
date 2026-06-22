@@ -387,7 +387,7 @@ impl SequencerViewState {
                 length: pattern.length,
                 notes: notes.to_vec(),
                 processors: processors.to_vec(),
-                ghosts: compute_ghosts(pattern),
+                ghosts: compute_ghosts(pattern, s.tempo_at(synth_sequencer::Tick(0))),
             });
         }
         self.ghost_cache
@@ -718,7 +718,7 @@ struct GhostCache {
 /// the generated notes for the ghost overlay. Empty when there is nothing to
 /// expand (no rack, no ornaments). Capped to bound a pathological pattern; runs
 /// on the UI thread (allocates), gated by the [`GhostCache`].
-fn compute_ghosts(pattern: &synth_sequencer::Pattern) -> Vec<GhostNote> {
+fn compute_ghosts(pattern: &synth_sequencer::Pattern, bpm: Bpm) -> Vec<GhostNote> {
     const MAX_GHOSTS: usize = 4096;
     // Nothing to preview without a rack or any ornament. `||` short-circuits so
     // the note scan is skipped when a rack is present.
@@ -731,7 +731,7 @@ fn compute_ghosts(pattern: &synth_sequencer::Pattern) -> Vec<GhostNote> {
     let mut buf = ExpansionBuffer::new();
     for t in 0..pattern.length.0 {
         let tick = PatternTick(t);
-        pattern.expand_at_tick(tick, |_| true, &mut buf);
+        pattern.expand_at_tick(tick, |_| true, bpm, &mut buf);
         for en in buf.notes() {
             ghosts.push(GhostNote {
                 start: tick,

@@ -1874,11 +1874,12 @@ impl SynthBridge for AppSynthBridge {
 
     fn freeze_note_processors(&self, pattern_id: u32) -> Result<usize, McpBridgeError> {
         let mut song = self.shared.song.write();
+        let bpm = song.tempo_at(synth_sequencer::Tick(0));
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
-        Ok(pattern.freeze_processors())
+        Ok(pattern.freeze_processors(bpm))
     }
 
     fn set_note_ornament(
