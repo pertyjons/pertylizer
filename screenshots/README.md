@@ -46,6 +46,24 @@ with a live compile status and Format / Apply / Clear / Close buttons. A scripte
 routing lights its ƒx marker, and the script reads its sources (LFOs, envelopes,
 macros like `velocity`/`age`) straight from the expression.
 
+### `script-1.png`
+
+![Script 1](script-1.png)
+
+The *YAMS Lab* instrument — a Script (`scr`) module showcase. The voice
+(Pulse oscillator → Filter → Mixer → Stereo Output) deliberately has **no LFO**:
+every bit of movement comes from two Script modules, each exposing up to eight
+YAMS slots on its own output ports. Two expression editors are open side by side.
+*Rhythm Brain* (top) is tempo-synced and global — `arr` lookup tables indexed by
+the transport `beat` drive an 8-step filter-cutoff sequence and a 5-step
+pulse-width sequence, whose coprime lengths give a 40-beat polyrhythm; both are
+gated by `playing`. *Voice Motion* (bottom) is per-voice and expressive — a
+`src`-bound envelope tapers an `age`/mod-wheel vibrato with a per-note random
+rate, while `rand_smooth` adds resonance drift that is decorrelated across
+simultaneous voices. Together they exercise most of the language: `src`
+bindings, const tables, macros, stateful `phasor`/`rand`/`lag`, and the eager
+evaluation model.
+
 ## Sequencer / Arrangement
 
 ### `seq-1.png`
