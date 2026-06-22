@@ -267,22 +267,16 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   All **7** production call sites converted (the 7 in `synth_engine.rs` / others originally counted
   turned out to be inside `#[cfg(test)]`); test fixtures keep the inline form intentionally.
   Unit test `shared_song_tests::shared_song_wraps_a_readable_song`.
-- [ ] **`OfflineNoteSession` — engine reuse across patch-sweep steps.** `analyze_instrument_range_impl`
-  (`crates/pertylizer/src/mcp_bridge.rs:7366`) and `analyze_velocity_response_impl` (`:7426`) call
-  `analyze_rendered_note` (`:7303`) once per swept value via the `sweep_range` loop; each call goes
-  through `audio::preview::render_note_to_buffer` (`crates/pertylizer/src/audio/preview.rs:203`),
-  which spins up a fresh `SynthEngine::new()` and reloads the instrument's module graph + sample
-  data. For a 60-note semitone-step sweep that's 60 fresh engines; for the default 8-step velocity
-  sweep that's 8. Mirror the existing `OfflineEngineSession`
-  (`crates/pertylizer/src/audio/arrangement_render.rs:219`, ctor `:262`/`new_with_scope` `:274`,
-  `render_range` reuses one engine across calls) — a wrapper that takes
-  `SynthSession` + `SharedSampleLibrary` + `InstrumentId` at construction, builds the engine +
-  loads the patch + samples once, then exposes `render(note, velocity, duration_ms, tail_ms)
-  -> RenderedNote` per call. Reproduce the voice-bleed drain between renders (same problem
-  `OfflineEngineSession` already solves). Determinism tests would mirror
-  `tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`
-  (`:191`). After session-reuse lands, parallelize the sweep target vector with `par_iter` for a
-  2-4× speedup on top. **→ Plan: `plans/offline-note-session-plan.md`.**
+- [x] **`OfflineNoteSession` — engine reuse across patch-sweep steps. — DONE** (commit `c2a3226`).
+  `analyze_instrument_range_impl` / `analyze_velocity_response_impl` now build one
+  `OfflineNoteSession` (`crates/pertylizer/src/audio/preview.rs`) and render each swept note on the
+  reused warmed-up engine instead of one fresh `SynthEngine` per step. Voice-bleed drain mirrors
+  `OfflineEngineSession` (`VOICE_DRAIN_MAX_MS = 400`, `DRAIN_SILENCE_EPSILON = 1e-7`); bit-exact
+  equivalence test `tests/preview_integration.rs::session_render_matches_independent_renders_bit_exact`.
+  **Follow-up hardening (not done) — see `plans/offline-note-session-plan.md` §4:** long reverb/delay
+  tails defeat the 400 ms drain (needs a new `EngineCommand::ResetDsp`/panic for instant isolation +
+  a wet-patch bit-exact test); optional scratch-buffer caching; optional per-worker parallel sweep
+  with a step-count threshold.
 - [x] **Static `#[schemars(range(...))]` on fixed-range numeric MCP fields. — DONE** (commit `650a588`).
   All fixed-range numeric tool fields — MIDI note/pitch (0–127), velocity (0/1–127), MIDI channel
   (1–16), LFO index (1–4) — now carry `#[schemars(range(min, max))]` so their `JsonSchema` exposes
