@@ -291,18 +291,12 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   `tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`
   (`:191`). After session-reuse lands, parallelize the sweep target vector with `par_iter` for a
   2-4× speedup on top.
-- [ ] **Static `#[schemars(range(...))]` on fixed-range numeric MCP fields.** Module/AWE *parameter*
-  values are now validated at the bridge boundary against the descriptor's `ValueRange`
-  (`ParameterDescriptor::validate_f32`), but the *globally* fixed numeric tool fields — MIDI note
-  (0–127), velocity (0–127), MIDI channel (1–16), LFO index (1–4) — still expose only a plain
-  `u8`/`f32` in their `JsonSchema` (prose-only bounds in `#[schemars(description=...)]`; e.g. note
-  `crates/synth_mcp/src/server.rs:742`, velocity `:744`, channel `:746` and `:1840`, LFO index
-  `:3102`; no field uses `#[schemars(range(...))]` today). They are enforced at runtime via
-  `validate_midi_note`/`validate_velocity`/`validate_midi_channel` (`server.rs:105-124`) — LFO index
-  is checked inline (`:7221`) — but a schema-aware client sees no `minimum`/`maximum`. Add
-  `#[schemars(range(min = …, max = …))]` to those fields so the constraint is machine-readable.
-  Verify the attribute syntax/feature against the pinned `schemars` 1.2.1 first (it differs from
-  0.8). Low risk, small; skipped during the 2026-05-27 validation pass for scope.
+- [x] **Static `#[schemars(range(...))]` on fixed-range numeric MCP fields. — DONE** (commit `650a588`).
+  All fixed-range numeric tool fields — MIDI note/pitch (0–127), velocity (0/1–127), MIDI channel
+  (1–16), LFO index (1–4) — now carry `#[schemars(range(min, max))]` so their `JsonSchema` exposes
+  machine-readable `minimum`/`maximum`, not just prose. Covers single-line and multi-line attrs and
+  `Option<u8>` variants; verified against `schemars` 1.2.1. Schema test
+  `server::schema_range_tests::fixed_range_fields_expose_min_max_in_schema` asserts the emitted bounds.
 - [ ] **Uniform machine-readable bounds on `synth_core` newtypes.** Newtype clamping is inconsistent:
   `NormalizedValue`/`BipolarValue`/`Velocity` clamp in `new()` and `Phase` wraps (`rem_euclid`), but
   `Hertz`/`Gain`/`Cents`/`Semitones` are `const fn new` with no clamp, and there is no uniform
