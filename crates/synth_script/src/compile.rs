@@ -183,6 +183,10 @@ impl Compiler {
         self.diags.push(Diagnostic::error(span, message));
     }
 
+    fn warn(&mut self, span: Span, message: impl Into<String>) {
+        self.diags.push(Diagnostic::warning(span, message));
+    }
+
     fn run(&mut self, program: &Program) -> Option<CompiledProgram> {
         for b in &program.bindings {
             self.register_binding(b);
@@ -411,6 +415,23 @@ impl Compiler {
             self.emit_const(0.0);
             return;
         };
+        // Warn on a provably-constant out-of-bounds index. The runtime floors
+        // then clamps (`IndexConst`), so this is never an error — the read is
+        // safe — but a literal/folded index outside `0..=len-1` is almost always
+        // an author mistake. Only indices `const_eval` can fold are checked here;
+        // `len(t)`, sources, and other dynamic indices fall back to the safe
+        // runtime clamp.
+        if let Some(i) = const_eval(index).map(f32::floor)
+            && (i < 0.0 || i >= f32::from(len))
+        {
+            let last = len.saturating_sub(1);
+            self.warn(
+                span,
+                format!(
+                    "array index {i} is out of bounds for `{name}` (length {len}, valid 0..={last}); it clamps to the nearest element at runtime"
+                ),
+            );
+        }
         self.compile_expr(index, depth + 1);
         self.code.push(Op::IndexConst { base, len });
     }
@@ -1330,6 +1351,52 @@ mod tests {
         };
         assert!(approx(at(-5.0), 10.0));
         assert!(approx(at(99.0), 30.0));
+    }
+
+    #[test]
+    fn array_constant_oob_index_warns_but_compiles() {
+        // A provably-constant OOB index is a warning, not an error — the runtime
+        // clamps safely, so the program still compiles.
+        let (prog, diags) = compile("arr t = [1, 2, 3]\nout = t[5]", &CompileOptions::default());
+        assert!(
+            prog.is_some(),
+            "OOB constant index must not be a hard error"
+        );
+        let warns: Vec<_> = diags
+            .iter()
+            .filter(|d| !d.is_error() && d.message.contains("out of bounds"))
+            .collect();
+        assert_eq!(warns.len(), 1, "expected one OOB warning, got {diags:?}");
+
+        // A folded arithmetic index that lands OOB also warns (3 + 4 = 7).
+        let (_p, folded) = compile(
+            "arr t = [1, 2, 3]\nout = t[3 + 4]",
+            &CompileOptions::default(),
+        );
+        assert!(
+            folded
+                .iter()
+                .any(|d| !d.is_error() && d.message.contains("out of bounds"))
+        );
+
+        // A negative constant index warns too.
+        let (_p, neg) = compile(
+            "arr t = [1, 2, 3]\nout = t[0 - 1]",
+            &CompileOptions::default(),
+        );
+        assert!(neg.iter().any(|d| d.message.contains("out of bounds")));
+
+        // In-bounds constant and dynamic indices must NOT warn.
+        for src in [
+            "arr t = [1, 2, 3]\nout = t[2]",
+            "arr t = [1, 2, 3]\nout = t[beat]",
+        ] {
+            let (_p, d) = compile(src, &CompileOptions::default());
+            assert!(
+                !d.iter().any(|x| x.message.contains("out of bounds")),
+                "should not warn for `{src}`: {d:?}"
+            );
+        }
     }
 
     #[test]

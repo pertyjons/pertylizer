@@ -113,6 +113,9 @@ Rules that keep arrays cheap and RT-safe:
   `NaN` index reads element `0`, a too-large one reads the last element. Indexing
   never wraps and never interpolates; for sequencer *wrap*, write it explicitly
   (`seq[floor(beat) % len(seq)]`), and for interpolation use `table_lin` (below).
+  A *constant* index the compiler can prove is out of range (e.g. `seq[8]` on a
+  length-8 table) is a **compile warning** — the runtime still clamps safely, but
+  it flags the likely off-by-one. Dynamic indices are left to the runtime clamp.
 - **`len(name)`** folds to the element count at compile time, so
   `i % len(seq)` costs nothing extra.
 - **`table_lin(arr, pos)`** is the interpolated cousin of `arr[i]`: it lerps
