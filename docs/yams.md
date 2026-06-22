@@ -255,18 +255,28 @@ declared in the header — see [Arrays](#arrays--const-lookup-tables).
 | `slew(x, up, down)` | slew limiter / portamento, separate rise/fall rates |
 | `sah(x, trig)`      | sample-and-hold: latch `x` on a rising edge of `trig` |
 | `accum(x)`          | integrator (running sum) |
+| `accum(x, reset)`   | integrator that zeroes on a rising edge of `reset` |
 | `delta(x)`          | change since previous block |
-| `phasor(rate)`      | own ramp `0 → 1` at `rate` Hz |
+| `phasor(rate)`      | own ramp `0 → 1` at `rate` Hz (free-running) |
+| `phasor(rate, sync)`| ramp that resets to 0 on a rising edge of `sync` (phase-align to note-on / a clock) |
 | `edge(x)`           | rising-edge detector |
 | `counter(trig)`     | event count |
 | `rand([lo, hi])`    | seeded PRNG (latch per note via `gate_on`) |
+| `rand_smooth(rate)` | smooth random LFO: band-limited wander in `[0, 1)`, new target every `1/rate` s |
 | `white()`           | per-block seeded noise |
 
 **Per-voice state.** Each voice gets its own register file. State resets on
 note-on so a reused/stolen voice never leaks the previous note. **Exception:**
-`rand`/`white` *re-seed* (not zero) from `hash(global_seed, voice_index)`, so
-simultaneous voices stay decorrelated (stereo width) yet retriggers are
-deterministic.
+`rand`/`white`/`rand_smooth` *re-seed* (not zero) from
+`hash(global_seed, voice_index)`, so simultaneous voices stay decorrelated
+(stereo width) yet retriggers are deterministic.
+
+**State footprint.** Most stateful ops use one register cell; the cap is 16. The
+synced overloads `phasor(rate, sync)` and `accum(x, reset)` use **two** (the
+value plus the previous block's trigger, for edge detection), and
+`rand_smooth(rate)` uses **three** (phase + two segment endpoints). The synced
+form is what lets a custom LFO phase-align to note-on (`phasor(r, gate_on)`) or to
+the bar.
 
 **Coefficient caching.** For `lag`/`slew`, when the time argument is a *literal*
 (`50ms`) the smoothing coefficient is precomputed at compile time and the audio

@@ -198,6 +198,20 @@ impl CompiledScript {
                     regs.state_set(i, regs.state_get(i) + x);
                     stack.push(regs.state_get(i));
                 }
+                Op::AccumReset(i) => {
+                    let reset = stack.pop();
+                    let x = stack.pop();
+                    let prev = i.saturating_add(1);
+                    let prev_reset = regs.state_get(prev);
+                    let sum = if reset > 0.0 && prev_reset <= 0.0 {
+                        0.0 // rising edge → clear the integrator (skip x this block)
+                    } else {
+                        regs.state_get(i) + x
+                    };
+                    regs.state_set(i, sum);
+                    regs.state_set(prev, reset);
+                    stack.push(regs.state_get(i));
+                }
                 Op::Delta(i) => {
                     let x = stack.pop();
                     let prev = regs.state_get(i);
@@ -208,6 +222,21 @@ impl CompiledScript {
                     let rate = stack.pop();
                     let ph = regs.state_get(i) + rate * dt;
                     regs.state_set(i, ph - ph.floor());
+                    stack.push(regs.state_get(i));
+                }
+                Op::PhasorSync(i) => {
+                    let sync = stack.pop();
+                    let rate = stack.pop();
+                    let prev = i.saturating_add(1);
+                    let prev_sync = regs.state_get(prev);
+                    let ph = if sync > 0.0 && prev_sync <= 0.0 {
+                        0.0 // rising edge → reset phase
+                    } else {
+                        let p = regs.state_get(i) + rate * dt;
+                        p - p.floor()
+                    };
+                    regs.state_set(i, ph);
+                    regs.state_set(prev, sync);
                     stack.push(regs.state_get(i));
                 }
                 Op::Edge(i) => {
@@ -231,6 +260,35 @@ impl CompiledScript {
                     let lo = stack.pop();
                     let u = regs.next_unit();
                     stack.push(lo + (hi - lo) * u);
+                }
+                Op::RandSmooth(i) => {
+                    // Clamp to a non-negative Hz rate: a negative rate would
+                    // drive the phase below 0 (the wrap only catches `>= 1.0`),
+                    // letting the smoothstep output escape [0, 1) unbounded. A
+                    // non-positive rate simply freezes the current segment.
+                    let rate = stack.pop().max(0.0);
+                    let c1 = i.saturating_add(1);
+                    let c2 = i.saturating_add(2);
+                    let mut ph = regs.state_get(i);
+                    let mut start = regs.state_get(c1);
+                    let mut end = regs.state_get(c2);
+                    // Cold start: reset() zeroes all cells, so seed the first
+                    // segment instead of gliding 0 → 0 for the whole first cycle.
+                    if ph == 0.0 && start == 0.0 && end == 0.0 {
+                        start = regs.next_unit();
+                        end = regs.next_unit();
+                    }
+                    ph += rate * dt;
+                    if ph >= 1.0 {
+                        ph -= ph.floor();
+                        start = end;
+                        end = regs.next_unit(); // new per-voice target
+                    }
+                    regs.state_set(i, ph);
+                    regs.state_set(c1, start);
+                    regs.state_set(c2, end);
+                    let t = ph * ph * (3.0 - 2.0 * ph); // smoothstep
+                    stack.push(start + t * (end - start));
                 }
             }
         }
@@ -438,6 +496,80 @@ mod tests {
             script.eval(&[], &mut regs, &EvalContext::new(SR)),
             7.0
         ));
+    }
+
+    #[test]
+    fn phasor_sync_resets_phase_on_rising_edge() {
+        // rate = SR * 0.25 (+0.25/block); sync from source[0]. Cells 0,1.
+        let code = [Op::PushConst(0), Op::PushSource(0), Op::PhasorSync(0)];
+        let script = CompiledScript::new(code.to_vec(), vec![SR * 0.25], 1, 2);
+        let mut regs = RegisterFile::new(0, SEED);
+        let ctx = EvalContext::new(SR);
+        assert!(approx(script.eval(&[0.0], &mut regs, &ctx), 0.25));
+        assert!(approx(script.eval(&[0.0], &mut regs, &ctx), 0.5));
+        // Rising edge of sync → phase resets to 0.
+        assert!(approx(script.eval(&[1.0], &mut regs, &ctx), 0.0));
+        // Sync still high (no new edge) → advances again.
+        assert!(approx(script.eval(&[1.0], &mut regs, &ctx), 0.25));
+    }
+
+    #[test]
+    fn accum_reset_clears_on_rising_edge() {
+        // x = 1.0 const; reset from source[0]. Cells 0,1.
+        let code = [Op::PushConst(0), Op::PushSource(0), Op::AccumReset(0)];
+        let script = CompiledScript::new(code.to_vec(), vec![1.0], 1, 2);
+        let mut regs = RegisterFile::new(0, SEED);
+        let ctx = EvalContext::new(SR);
+        assert!(approx(script.eval(&[0.0], &mut regs, &ctx), 1.0));
+        assert!(approx(script.eval(&[0.0], &mut regs, &ctx), 2.0));
+        // Rising edge → clears (skips x this block).
+        assert!(approx(script.eval(&[1.0], &mut regs, &ctx), 0.0));
+        // Edge held high (no new edge) → resumes accumulating.
+        assert!(approx(script.eval(&[1.0], &mut regs, &ctx), 1.0));
+    }
+
+    #[test]
+    fn rand_smooth_is_seeded_continuous_and_decorrelated() {
+        // rate = SR * 0.25 → quarter-cycle per block. Cells 0,1,2.
+        let code = [Op::PushConst(0), Op::RandSmooth(0)];
+        let script = CompiledScript::new(code.to_vec(), vec![SR * 0.25], 0, 3);
+        let ctx = EvalContext::new(SR);
+
+        let mut v0 = RegisterFile::new(0, SEED);
+        // Cold start must NOT glide 0 → 0: the first block already moves.
+        let a0 = script.eval(&[], &mut v0, &ctx);
+        let a1 = script.eval(&[], &mut v0, &ctx);
+        assert!(
+            a0 != a1 || a0 != 0.0,
+            "first segment must be seeded, not flat 0"
+        );
+        // Output stays inside the seeded value range [0, 1).
+        for _ in 0..16 {
+            let v = script.eval(&[], &mut v0, &ctx);
+            assert!((0.0..1.0).contains(&v), "rand_smooth out of [0,1): {v}");
+        }
+
+        // Different voices decorrelate.
+        let mut v1 = RegisterFile::new(1, SEED);
+        let mut v0b = RegisterFile::new(0, SEED);
+        assert!(script.eval(&[], &mut v1, &ctx) != script.eval(&[], &mut v0b, &ctx));
+    }
+
+    #[test]
+    fn rand_smooth_negative_rate_stays_bounded() {
+        // A negative rate must NOT drive the phase below 0 and let the output
+        // escape [0,1); it freezes instead.
+        let code = [Op::PushConst(0), Op::RandSmooth(0)];
+        let script = CompiledScript::new(code.to_vec(), vec![-100.0], 0, 3);
+        let mut regs = RegisterFile::new(0, SEED);
+        let ctx = EvalContext::new(SR);
+        for _ in 0..32 {
+            let v = script.eval(&[], &mut regs, &ctx);
+            assert!(
+                (0.0..1.0).contains(&v),
+                "escaped [0,1) on negative rate: {v}"
+            );
+        }
     }
 
     #[test]

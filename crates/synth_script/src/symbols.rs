@@ -50,15 +50,29 @@ pub enum Stateful {
     Counter,
     Rand,
     White,
+    RandSmooth,
 }
 
 impl Stateful {
-    /// Number of persistent state cells this op needs.
+    /// Number of persistent state cells this op needs, given how many arguments
+    /// the call site passed. Most ops are fixed, but the synced overloads of
+    /// `phasor`/`accum` allocate a second cell to remember the previous block's
+    /// sync/reset value for edge detection (the 1-arg forms stay at one cell).
     #[must_use]
-    pub fn state_cells(self) -> u16 {
+    pub fn state_cells(self, n_args: usize) -> u16 {
         match self {
             Self::Sah | Self::Counter => 2,
-            Self::Lag | Self::Slew | Self::Accum | Self::Delta | Self::Phasor | Self::Edge => 1,
+            // Synced overload (rate/x + sync/reset) needs phase/sum + prev-trig.
+            Self::Accum | Self::Phasor => {
+                if n_args >= 2 {
+                    2
+                } else {
+                    1
+                }
+            }
+            Self::Lag | Self::Slew | Self::Delta | Self::Edge => 1,
+            // Interpolated value noise: phase + segment start + segment target.
+            Self::RandSmooth => 3,
             Self::Rand | Self::White => 0,
         }
     }
@@ -195,12 +209,13 @@ pub fn resolve_fn(name: &str) -> Option<FnSpec> {
         "lag" => stateful(Stateful::Lag, 2, 2),
         "slew" => stateful(Stateful::Slew, 3, 3),
         "sah" => stateful(Stateful::Sah, 2, 2),
-        "accum" => stateful(Stateful::Accum, 1, 1),
+        "accum" => stateful(Stateful::Accum, 1, 2),
         "delta" => stateful(Stateful::Delta, 1, 1),
-        "phasor" => stateful(Stateful::Phasor, 1, 1),
+        "phasor" => stateful(Stateful::Phasor, 1, 2),
         "edge" => stateful(Stateful::Edge, 1, 1),
         "counter" => stateful(Stateful::Counter, 1, 1),
         "rand" => stateful(Stateful::Rand, 0, 2),
+        "rand_smooth" => stateful(Stateful::RandSmooth, 1, 1),
         "white" => stateful(Stateful::White, 0, 0),
         _ => return None,
     })

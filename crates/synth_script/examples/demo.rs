@@ -88,6 +88,9 @@ fn main() {
     show_valid("src   lfo=lfo-1.out\nout=lfo*0.45+velocity*0.6   # wobble");
     // arrays: a per-beat step sequencer indexing a const table (beat = 2 → step 2)
     show_valid("arr steps = [0.2, 0.5, 0.8, 0.4]\nout = steps[floor(beat) % len(steps)]");
+    // synced phasor (phase-aligns to note-on) and a smooth random LFO
+    show_valid("out = sin(phasor(3, gate_on) * tau) * 0.3");
+    show_valid("out = rand_smooth(0.5) * 0.5");
 
     println!("=================  STATEFUL (lag over 6 blocks)  =================\n");
     {

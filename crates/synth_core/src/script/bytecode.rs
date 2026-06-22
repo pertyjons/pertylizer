@@ -245,16 +245,26 @@ pub enum Op {
     Sah(u16),
     /// Integrator. Pop x; state += x.
     Accum(u16),
+    /// Resettable integrator. Pop reset, pop x; zero the sum on a rising edge of
+    /// `reset`, else add `x`. Cells i (sum), i+1 (prev reset).
+    AccumReset(u16),
     /// Change since the previous block. Pop x.
     Delta(u16),
     /// Own ramp `0→1` at the given rate (Hz). Pop rate.
     Phasor(u16),
+    /// Phase-synced ramp. Pop sync, pop rate; reset phase to 0 on a rising edge
+    /// of `sync`, else advance at `rate` Hz. Cells i (phase), i+1 (prev sync).
+    PhasorSync(u16),
     /// Rising-edge detector → 1.0 on a rising edge, else 0.0. Pop x.
     Edge(u16),
     /// Count rising edges of trig. Pop trig. Cells i, i+1.
     Counter(u16),
     /// Seeded uniform random in `[lo, hi)`. Pop hi, pop lo. Uses the per-voice PRNG.
     Rand,
+    /// Smooth random LFO — interpolated value noise. Pop rate (Hz); latch a new
+    /// per-voice random target each `1/rate` seconds and smoothstep toward it.
+    /// Cells i (phase 0..1), i+1 (segment start), i+2 (segment target).
+    RandSmooth(u16),
 }
 
 /// An immutable, compiled YAMS program. Shared across voices behind an `Arc`;

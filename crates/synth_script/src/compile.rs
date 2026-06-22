@@ -466,7 +466,7 @@ impl Compiler {
     }
 
     fn compile_stateful(&mut self, kind: Stateful, args: &[Expr], span: Span, depth: usize) {
-        let base = self.alloc_state(kind.state_cells(), span);
+        let base = self.alloc_state(kind.state_cells(args.len()), span);
         let d = depth + 1;
         match kind {
             Stateful::Lag => {
@@ -487,15 +487,25 @@ impl Compiler {
             }
             Stateful::Accum => {
                 self.compile_expr(&args[0], d);
-                self.code.push(Op::Accum(base));
+                if args.len() == 2 {
+                    self.compile_expr(&args[1], d); // reset
+                    self.code.push(Op::AccumReset(base));
+                } else {
+                    self.code.push(Op::Accum(base));
+                }
             }
             Stateful::Delta => {
                 self.compile_expr(&args[0], d);
                 self.code.push(Op::Delta(base));
             }
             Stateful::Phasor => {
-                self.compile_expr(&args[0], d);
-                self.code.push(Op::Phasor(base));
+                self.compile_expr(&args[0], d); // rate
+                if args.len() == 2 {
+                    self.compile_expr(&args[1], d); // sync
+                    self.code.push(Op::PhasorSync(base));
+                } else {
+                    self.code.push(Op::Phasor(base));
+                }
             }
             Stateful::Edge => {
                 self.compile_expr(&args[0], d);
@@ -519,6 +529,10 @@ impl Compiler {
                 self.emit_const(-1.0);
                 self.emit_const(1.0);
                 self.code.push(Op::Rand);
+            }
+            Stateful::RandSmooth => {
+                self.compile_expr(&args[0], d); // rate
+                self.code.push(Op::RandSmooth(base));
             }
         }
     }
@@ -965,6 +979,84 @@ mod tests {
             errors("out = rand(5)")
                 .iter()
                 .any(|e| e.contains("arguments"))
+        );
+    }
+
+    fn eval_blocks(prog: &CompiledProgram, fill: impl Fn(&SourceInput) -> f32, n: usize) -> f32 {
+        let sources: Vec<f32> = prog.inputs.iter().map(&fill).collect();
+        let mut regs = RegisterFile::new(0, SEED);
+        let ctx = EvalContext::new(SR);
+        let mut last = 0.0;
+        for _ in 0..n {
+            last = prog.script.eval(&sources, &mut regs, &ctx);
+        }
+        last
+    }
+
+    #[test]
+    fn synced_phasor_allocates_two_cells_and_resets() {
+        // Non-synced phasor stays at one state cell; the synced overload bumps to
+        // two (phase + prev-sync) so it never overwrites a neighbour.
+        let plain = compile_ok("out = phasor(1)");
+        assert_eq!(plain.script.state_count(), 1);
+        let synced = compile_ok("out = phasor(1, gate_on)");
+        assert_eq!(synced.script.state_count(), 2);
+
+        // gate_on high on the first block resets to 0; otherwise it advances.
+        let prog = compile_ok("out = phasor(187.5, gate_on)"); // 187.5/750 = 0.25/block
+        let fill = |hi: bool| {
+            move |inp: &SourceInput| match inp {
+                SourceInput::Context(Context::GateOn) if hi => 1.0,
+                _ => 0.0,
+            }
+        };
+        let mut regs = RegisterFile::new(0, SEED);
+        let ctx = EvalContext::new(SR);
+        let src_lo: Vec<f32> = prog.inputs.iter().map(fill(false)).collect();
+        let src_hi: Vec<f32> = prog.inputs.iter().map(fill(true)).collect();
+        assert!(approx(prog.script.eval(&src_lo, &mut regs, &ctx), 0.25));
+        assert!(approx(prog.script.eval(&src_lo, &mut regs, &ctx), 0.5));
+        assert!(approx(prog.script.eval(&src_hi, &mut regs, &ctx), 0.0)); // edge reset
+    }
+
+    #[test]
+    fn synced_accum_allocates_two_cells() {
+        assert_eq!(compile_ok("out = accum(1)").script.state_count(), 1);
+        assert_eq!(
+            compile_ok("out = accum(1, gate_on)").script.state_count(),
+            2
+        );
+    }
+
+    #[test]
+    fn rand_smooth_allocates_three_cells_and_wanders() {
+        let prog = compile_ok("out = rand_smooth(2)");
+        assert_eq!(prog.script.state_count(), 3);
+        // Stays in [0,1) and is not flat-zero on cold start.
+        let v = eval_blocks(&prog, |_| 0.0, 4);
+        assert!((0.0..1.0).contains(&v), "out of range: {v}");
+    }
+
+    #[test]
+    fn synced_state_counts_against_the_cap() {
+        // 8 synced phasors = 16 cells (exactly the cap); a 9th overflows.
+        let body = (0..8)
+            .map(|_| "phasor(1, gate_on)")
+            .collect::<Vec<_>>()
+            .join(" + ");
+        assert!(
+            compile(&format!("out = {body}"), &CompileOptions::default())
+                .0
+                .is_some()
+        );
+        let over = (0..9)
+            .map(|_| "phasor(1, gate_on)")
+            .collect::<Vec<_>>()
+            .join(" + ");
+        assert!(
+            errors(&format!("out = {over}"))
+                .iter()
+                .any(|e| e.contains("too much state"))
         );
     }
 
