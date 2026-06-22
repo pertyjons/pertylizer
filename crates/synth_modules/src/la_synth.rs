@@ -40,6 +40,10 @@ pub struct LaSynth {
 
     // One-pole lowpass for brightness
     filter_state: f32,
+    /// Sample-rate-independent one-pole LP coefficient for the brightness
+    /// filter, derived from a cutoff frequency (mapped from `brightness`) and
+    /// the current sample rate. Recomputed in `update_times`.
+    brightness_coef: f32,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
 
@@ -63,6 +67,7 @@ impl LaSynth {
             active: false,
             noise_state: 0x1234_5678,
             filter_state: 0.0,
+            brightness_coef: 0.0,
             mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         };
@@ -80,6 +85,23 @@ impl LaSynth {
         if self.total_samples == 0 {
             self.total_samples = 1;
         }
+        self.update_brightness_coef();
+    }
+
+    /// Recompute the sample-rate-independent brightness one-pole coefficient.
+    ///
+    /// `brightness` is mapped exponentially to a cutoff frequency, then turned
+    /// into a one-pole LP coefficient via `1 - exp(-2π·fc/sr)`. Computing the
+    /// coefficient from the actual sample rate keeps the tone character
+    /// constant across sample rates (a fixed per-sample alpha would not).
+    fn update_brightness_coef(&mut self) {
+        let cutoff_hz = crate::math::exponential_frequency_map(
+            self.brightness.as_f32().clamp(0.0, 1.0),
+            500.0,
+            18_000.0,
+        );
+        let inv_sr = 1.0 / self.sample_rate.as_f32();
+        self.brightness_coef = crate::math::one_pole_lp_coef(cutoff_hz, inv_sr);
     }
 
     /// Generate attack transient sample based on attack_type.
@@ -98,11 +120,19 @@ impl LaSynth {
             let noise = self.next_noise();
             noise * (-phase_norm * 5.0).exp()
         } else if t < 0.75 {
-            // Pluck: decaying sine with slight detuning
+            // Pluck: decaying sine with descending pitch.
+            //
+            // Instantaneous frequency sweeps linearly from 1200 Hz (at
+            // phase_norm=0) down to 800 Hz: f(t) = 800 + 400·(1 - phase_norm).
+            // For a swept frequency the phase is the integral 2π·∫₀ᵗ f(τ) dτ,
+            // NOT 2π·f(t)·t. For a linear sweep that integral equals
+            // 2π·t·f_avg where f_avg = (f_start + f(t)) / 2 — using the
+            // instantaneous f(t) directly would double the sweep depth.
             let phase_norm = self.phase / self.attack_samples.max(1) as f32;
-            let freq = 800.0 + 400.0 * (1.0 - phase_norm); // descending pitch
+            let freq_now = 800.0 + 400.0 * (1.0 - phase_norm); // descending pitch
+            let freq_avg = (1200.0 + freq_now) * 0.5; // average over [0, t]
             let t_sec = self.phase / self.sample_rate.as_f32();
-            (t_sec * freq * std::f32::consts::TAU).sin() * (-phase_norm * 6.0).exp()
+            (t_sec * freq_avg * std::f32::consts::TAU).sin() * (-phase_norm * 6.0).exp()
         } else {
             // Hammer: short broadband noise followed by resonant decay
             let phase_norm = self.phase / self.attack_samples.max(1) as f32;
@@ -118,9 +148,10 @@ impl LaSynth {
             }
         };
 
-        // Apply brightness filter (one-pole lowpass)
-        let cutoff = 0.1 + self.brightness.as_f32() * 0.89; // 0.1 to 0.99
-        self.filter_state += cutoff * (raw - self.filter_state);
+        // Apply brightness filter (one-pole lowpass). The coefficient is
+        // sample-rate-independent (derived from a cutoff frequency and the
+        // actual sample rate in `update_brightness_coef`).
+        self.filter_state += self.brightness_coef * (raw - self.filter_state);
 
         self.filter_state * level
     }
@@ -330,7 +361,10 @@ impl PolyModule for LaSynth {
                     self.crossfade_time = Milliseconds::new(v.as_f32().clamp(1.0, 500.0));
                     self.update_times();
                 }
-                LaSynthParam::Brightness(v) => self.brightness = v,
+                LaSynthParam::Brightness(v) => {
+                    self.brightness = v;
+                    self.update_brightness_coef();
+                }
             }
         }
     }

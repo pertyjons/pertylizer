@@ -287,7 +287,9 @@ impl PolyModule for FractalOscillator {
         for i in 0..num_samples {
             // Apply frequency CV (1V/oct)
             let freq = if let Some(cv) = freq_cv {
-                self.note_freq.apply_cv(BipolarValue::new(cv[i])).as_f32()
+                self.note_freq
+                    .apply_cv(BipolarValue::new(crate::math::sanitize_cv(cv[i])))
+                    .as_f32()
             } else {
                 self.note_freq.as_f32()
             };

@@ -220,3 +220,63 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   **allow-list of legitimate one-offs** (not every `Hertz`/`Cents` param maps to a shared preset — some
   genuinely have a unique range), or it produces false positives. Belt-and-suspenders on top of the
   per-param asserts; low priority.
+
+---
+
+## 5. DSP / Audio-Engine Hardening
+
+Follow-ups deferred from the **module critical-review fix pass** (see
+`plans/module-review-plan.md`). The genuine bugs were fixed inline; these are the
+deeper/cross-crate items that a one-line fix could not properly address.
+
+### 5.1 Sanitize CV at the input-read boundary (deeper NaN fix)
+
+- [ ] **Move NaN/Inf coercion to the CV-buffer read boundary instead of per-call-site.** The fix
+  pass added `crate::math::sanitize_cv` (non-finite → 0.0) and wrapped the direct CV-input reads
+  in the filters and oscillators (`cutoff_cv`, `freq_cv`, `fm`, `pm`, `pwm`, `sync`, vowel/breath/
+  pitch CV, …). This works but is **per-call-site and easy to forget** — the review already caught
+  three reads (`pwm`/`sync`/`pm` in `oscillator.rs`) that the first pass missed. A NaN can only enter
+  DSP through a direct CV-input buffer (mod-matrix params are already clamped by
+  `ParamModOffsets::effective()`), so the uniform fix is to sanitize **once at the accessor**: have
+  the input reader return finite-or-zero (e.g. a sanitizing `InputReader::get(i) -> f32`, or coerce
+  when the buffer is filled), then drop the scattered `sanitize_cv` wraps. Closes the bug class
+  instead of playing whack-a-mole. Note `InputReader::Index` currently returns `&f32`, so this needs
+  a value-returning accessor variant.
+
+### 5.2 Promote engine block-size & max-sample-rate to shared `pub const`s
+
+- [ ] **`compressor.rs` and `limiter.rs` hand-copy private engine constants.** `compressor.rs` sizes
+  its sidechain buffer from a local `MAX_SIDECHAIN_SAMPLES = 4096*2` that duplicates the engine's
+  **private** `MAX_BUFFER_SIZE` (4096 frames, itself duplicated in `effect_chain.rs:21`,
+  `voice.rs:49`, `instrument.rs:343`). `limiter.rs` sizes its look-ahead ring from a local
+  `MAX_SAMPLE_RATE = 192_000.0` literal that no other code agrees with (`synth_core` only exposes
+  `SampleRate::{CD,DVD,STUDIO}_QUALITY`, max 96 kHz). If the engine ever raises the max block size or
+  supported sample rate, these copies silently desync → the sidechain buffer truncates a block (wrong
+  gain reduction) or the limiter under-allocates look-ahead (stops honoring 5 ms near peaks). Fix:
+  promote `MAX_BUFFER_SIZE` to a single `pub const` in `synth_core` and add a
+  `SampleRate::MAX_SUPPORTED`, then have the engine *and* these modules reference them.
+
+### 5.3 Convolver: build the IR off the audio thread
+
+- [ ] **`Convolver::rebuild_ir` runs heavy FFT work (and a bounded first-growth allocation) on the
+  audio thread.** The fix pass made `rebuild_ir` allocation-free in steady state (reuses scratch
+  buffers + FFT planners via `PartitionedConvolver::update_ir`), but it is still invoked from
+  `set_param` — which drains on the audio thread — and re-runs up to `MAX_IR_SAMPLES/PARTITION_SIZE`
+  forward FFTs across six convolvers whenever `Ir` type or `DecayTrim` (>0.01 delta) changes. Rapid
+  `DecayTrim` automation therefore re-partitions all six IRs on every move: a sustained CPU spike.
+  The proper fix is the architectural one deliberately skipped: build the new IR on a worker thread
+  and hand it to the audio thread via a lock-free pointer swap (double-buffer). Also note the residual
+  first-growth allocation in `ensure_partition_buffers` is only safe because `new()` seeds the
+  longest default IR (Plate) — a future change constructing with a shorter default would reintroduce
+  an audio-thread allocation.
+
+### 5.4 PadSynth: mark the wavetable dirty on sample-rate change (low priority)
+
+- [ ] **`PadSynth` rebuilds its wavetable lazily in `note_on`, keyed on `self.sample_rate`, but has no
+  `set_sample_rate` override.** The engine propagates the sample rate to voice-graph modules only via
+  `ProcessContext` inside `process()` (established by the `granular_osc` fix in the same pass), so if a
+  `note_on` arrives before the first `process()` at a newly-changed rate, the table is built with the
+  stale rate's harmonic-bin placement for that one note (corrected on the next note). This is
+  **pre-existing** (the old unconditional rebuild had the same staleness) and audibly tiny — one note
+  at a rate-change boundary — so it is low priority. Clean fix: rebuild in `process()` when the
+  context sample rate differs, or add a `set_sample_rate` hook that marks the table dirty.

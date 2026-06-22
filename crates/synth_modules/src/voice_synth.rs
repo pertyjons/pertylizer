@@ -92,6 +92,9 @@ impl BandpassCoeffs {
 /// phase, falls back to zero at the glottal-closure instant, then stays closed.
 #[inline]
 fn glottal_flow(phase: f32, oq: f32) -> f32 {
+    // Guard against a modulated open quotient reaching zero/negative, which
+    // would make `phase / oq` produce Inf/NaN.
+    let oq = oq.max(1e-4);
     if phase >= oq {
         return 0.0;
     }
@@ -168,7 +171,22 @@ impl SubVoice {
     /// Recompute formant coefficients for the current vowel position, applying
     /// this voice's formant jitter and the shared formant shift.
     fn update_coeffs(&mut self, vowel_pos: f32, shift: f32, sample_rate: f32) {
-        let (freqs, bws, gains) = crate::formant_tables::interpolate_vowel(vowel_pos);
+        let tables = crate::formant_tables::interpolate_vowel(vowel_pos);
+        self.update_coeffs_from(&tables, shift, sample_rate);
+    }
+
+    /// Like [`Self::update_coeffs`] but takes the already-interpolated vowel
+    /// tables `(freqs, bws, gains)`. The interpolation is vowel-only (voice
+    /// independent), so callers that update many sub-voices for the same vowel
+    /// hoist it once and reuse the result here, keeping only the per-voice
+    /// jitter scaling and biquad coefficient computation in the loop.
+    fn update_coeffs_from(
+        &mut self,
+        tables: &([f32; NUM_BANDS], [f32; NUM_BANDS], [f32; NUM_BANDS]),
+        shift: f32,
+        sample_rate: f32,
+    ) {
+        let (freqs, bws, gains) = tables;
         let scale = shift * self.formant_jitter;
 
         for band in 0..NUM_BANDS {
@@ -208,6 +226,11 @@ pub struct VoiceSynth {
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
 
+    // Interned custom CV port names (interned once at construction — never on
+    // the audio thread, since `PortName::intern` takes a global write lock).
+    vowel_cv_port: PortName,
+    breath_cv_port: PortName,
+
     // Pre-allocated output buffers
     out_buffer: AudioBuffer,
     out_l_buffer: AudioBuffer,
@@ -235,6 +258,8 @@ impl VoiceSynth {
             sample_rate: SampleRate::DVD_QUALITY,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
             mod_offsets: ParamModOffsets::new(),
+            vowel_cv_port: PortName::intern("vowel_cv"),
+            breath_cv_port: PortName::intern("breath_cv"),
             out_buffer: AudioBuffer::new(1024),
             out_l_buffer: AudioBuffer::new(1024),
             out_r_buffer: AudioBuffer::new(1024),
@@ -478,9 +503,9 @@ impl PolyModule for VoiceSynth {
             return;
         }
 
-        let pitch_cv = inputs.reader(PortName::intern("pitch_cv"), 0.0);
-        let vowel_cv = inputs.reader(PortName::intern("vowel_cv"), 0.0);
-        let breath_cv = inputs.reader(PortName::intern("breath_cv"), 0.0);
+        let pitch_cv = inputs.reader(PortName::PITCH_CV, 0.0);
+        let vowel_cv = inputs.reader(self.vowel_cv_port, 0.0);
+        let breath_cv = inputs.reader(self.breath_cv_port, 0.0);
         let vowel_cv_connected = vowel_cv.is_connected();
 
         // Recompute active count + decorrelation for this block.
@@ -525,9 +550,11 @@ impl PolyModule for VoiceSynth {
         let tilt_fc = 10000.0 * (1.0 - tilt_amt) + 1200.0 * tilt_amt;
         let tilt_coef = crate::math::one_pole_lp_coef(tilt_fc, inv_sr);
 
-        // Initial coefficients for this block.
+        // Initial coefficients for this block. Interpolate the vowel tables once
+        // (voice-independent) and reuse across sub-voices.
+        let mut vowel_tables = crate::formant_tables::interpolate_vowel(self.current_vowel);
         for voice in self.voices[..active].iter_mut() {
-            voice.update_coeffs(self.current_vowel, shift, sr);
+            voice.update_coeffs_from(&vowel_tables, shift, sr);
         }
         let gain_sum: f32 = self.voices[0].gains.iter().sum();
         let norm = if gain_sum > 1e-7 { 1.0 / gain_sum } else { 1.0 };
@@ -535,17 +562,21 @@ impl PolyModule for VoiceSynth {
         for i in 0..num_samples {
             // Vowel CV modulation (shared, gated coefficient recompute).
             if vowel_cv_connected {
-                let target = (vowel_base + vowel_cv[i] * 0.5).clamp(0.0, 1.0);
+                let target =
+                    (vowel_base + crate::math::sanitize_cv(vowel_cv[i]) * 0.5).clamp(0.0, 1.0);
                 if (target - self.current_vowel).abs() > 0.001 {
                     self.current_vowel = target;
+                    // Vowel interpolation is voice-independent: do it once, then
+                    // apply each voice's jitter in `update_coeffs_from`.
+                    vowel_tables = crate::formant_tables::interpolate_vowel(target);
                     for voice in self.voices[..active].iter_mut() {
-                        voice.update_coeffs(target, shift, sr);
+                        voice.update_coeffs_from(&vowel_tables, shift, sr);
                     }
                 }
             }
 
-            let pcv = pitch_cv[i];
-            let breath = (breath_base + breath_cv[i]).clamp(0.0, 1.0);
+            let pcv = crate::math::sanitize_cv(pitch_cv[i]);
+            let breath = (breath_base + crate::math::sanitize_cv(breath_cv[i])).clamp(0.0, 1.0);
 
             let mut raw = 0.0_f32;
             let mut sum_l = 0.0_f32;

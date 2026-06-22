@@ -41,9 +41,11 @@ impl Waveshaper {
     }
 
     /// Apply the selected waveshaping curve to a single sample.
+    ///
+    /// `gain` is the precomputed drive gain (hoisted out of the per-sample
+    /// loop since it only depends on the loop-invariant drive parameter).
     #[inline]
-    fn shape(&self, input: f32) -> f32 {
-        let gain = self.drive_gain();
+    fn shape(&self, input: f32, gain: f32) -> f32 {
         let bias = self.bias.as_f32();
         let sym = self.symmetry.as_f32();
 
@@ -63,7 +65,8 @@ impl Waveshaper {
             WaveshaperCurve::Chebyshev => {
                 // Chebyshev polynomial T_n for harmonic generation
                 // Use symmetry to blend between T2 (even harmonics) and T3 (odd harmonics)
-                let x = driven.clamp(-1.0, 1.0);
+                // Sanitize first so an upstream NaN cannot leak into the recurrence.
+                let x = crate::math::sanitize_cv(driven).clamp(-1.0, 1.0);
                 let t2 = crate::math::chebyshev_t2(x);
                 let t3 = crate::math::chebyshev_t3(x);
                 // Blend: sym=-1 -> pure T2, sym=0 -> equal, sym=+1 -> pure T3
@@ -160,9 +163,12 @@ impl Describable for Waveshaper {
 
 impl AudioEffect for Waveshaper {
     fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext<'_>) {
+        // Drive gain depends only on the (loop-invariant) drive parameter,
+        // so compute it once here instead of per sample inside shape().
+        let gain = self.drive_gain();
         for i in 0..input.len().min(output.len()) {
             let dry = input[i];
-            let shaped = self.shape(dry);
+            let shaped = self.shape(dry, gain);
             output[i] = self.mix.blend(dry, shaped);
         }
     }

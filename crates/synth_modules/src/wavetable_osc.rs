@@ -200,7 +200,7 @@ impl PolyModule for WavetableOsc {
         for i in 0..num_samples {
             // Apply FM
             let freq = if let Some(fm) = fm_input {
-                let fm_val = fm[i];
+                let fm_val = crate::math::sanitize_cv(fm[i]);
                 base_freq.apply_cv(BipolarValue::new(fm_val))
             } else {
                 base_freq

@@ -66,6 +66,9 @@ pub fn formant_shift_factor(norm_shift: f32) -> f32 {
 /// clamp keeps `idx` and `idx + 1` in range for any input.
 #[must_use]
 pub fn interpolate_vowel(vowel: f32) -> ([f32; NUM_BANDS], [f32; NUM_BANDS], [f32; NUM_BANDS]) {
+    // `vowel` may arrive NaN from an exploded LFO/CV source; `clamp` would pass
+    // NaN through, so coerce non-finite input to 0.0 first.
+    let vowel = crate::math::sanitize_cv(vowel);
     let pos = vowel.clamp(0.0, 1.0) * (NUM_VOWELS - 1) as f32;
     let idx = (pos as usize).min(NUM_VOWELS - 2);
     let frac = pos - idx as f32;

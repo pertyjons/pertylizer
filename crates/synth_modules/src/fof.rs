@@ -294,6 +294,10 @@ pub struct Fof {
     inv_sample_rate: f32,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Interned input-port names, cached once so `process()` never interns
+    /// (interning takes an `RwLock::write` — forbidden on the audio thread).
+    vowel_cv_port: PortName,
+    breath_cv_port: PortName,
 
     // Pre-allocated output buffers
     out_buffer: AudioBuffer,
@@ -322,6 +326,8 @@ impl Fof {
             sample_rate: SampleRate::DVD_QUALITY,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
             mod_offsets: ParamModOffsets::new(),
+            vowel_cv_port: PortName::intern("vowel_cv"),
+            breath_cv_port: PortName::intern("breath_cv"),
             out_buffer: AudioBuffer::new(1024),
             out_l_buffer: AudioBuffer::new(1024),
             out_r_buffer: AudioBuffer::new(1024),
@@ -591,9 +597,9 @@ impl PolyModule for Fof {
             return;
         }
 
-        let pitch_cv = inputs.reader(PortName::intern("pitch_cv"), 0.0);
-        let vowel_cv = inputs.reader(PortName::intern("vowel_cv"), 0.0);
-        let breath_cv = inputs.reader(PortName::intern("breath_cv"), 0.0);
+        let pitch_cv = inputs.reader(PortName::PITCH_CV, 0.0);
+        let vowel_cv = inputs.reader(self.vowel_cv_port, 0.0);
+        let breath_cv = inputs.reader(self.breath_cv_port, 0.0);
         let pitch_cv_connected = pitch_cv.is_connected();
         let vowel_cv_connected = vowel_cv.is_connected();
 

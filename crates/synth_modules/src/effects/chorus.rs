@@ -117,7 +117,7 @@ impl Describable for Chorus {
                     "Voices",
                 )
                 .description("Number of chorus voices")
-                .range(1.0, 8.0)
+                .range(1.0, 4.0)
                 .default(2.0)
                 .widget(WidgetHint::Knob),
             )

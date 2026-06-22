@@ -406,10 +406,15 @@ impl PolyModule for Filter {
         // attenuverter that also flips polarity.
         for i in 0..n {
             let input = audio_in[i];
+            // Sanitize: direct CV cables bypass the mod-matrix clamp, so a
+            // NaN/inf here would poison the cutoff coefficient and SVF state.
             let cutoff_mod = Semitones::new(
-                cutoff_cv[i] * self.cutoff_mod_amount.as_f32() * self.env_amount.as_f32() * 48.0,
+                crate::math::sanitize_cv(cutoff_cv[i])
+                    * self.cutoff_mod_amount.as_f32()
+                    * self.env_amount.as_f32()
+                    * 48.0,
             );
-            let res_mod = NormalizedValue::new(res_cv[i]);
+            let res_mod = NormalizedValue::new(crate::math::sanitize_cv(res_cv[i]));
 
             // Linear ramp: sample (n-1) lands exactly on the target.
             #[allow(clippy::cast_precision_loss)]
@@ -607,11 +612,10 @@ impl LadderFilter {
         // Clamp resonance to 0.99 max for stability, then scale to feedback gain
         let k = self.resonance.as_f32().min(0.99) * 4.0;
 
-        let driven = if self.drive.as_f32() > 1.0 {
-            Self::saturate(input * self.drive.as_f32())
-        } else {
-            input
-        };
+        // Drive scales the input gain, but the soft-clip nonlinearity that bounds
+        // the resonance feedback must run unconditionally: with k up to ~3.96 a
+        // purely linear ladder (drive <= 1.0) can overflow at high resonance.
+        let driven = Self::saturate(input * self.drive.as_f32());
 
         let feedback = k * self.delay[3].as_f32();
         let input_with_fb = driven - feedback;
@@ -625,11 +629,9 @@ impl LadderFilter {
             let delay_val = self.delay[i].as_f32();
             let new_stage = (prev - delay_val) * g / (1.0 + g) + delay_val;
 
-            let saturated = if self.drive.as_f32() > 1.0 {
-                Self::saturate(new_stage)
-            } else {
-                new_stage
-            };
+            // Always saturate each stage so the feedback path stays bounded
+            // regardless of drive.
+            let saturated = Self::saturate(new_stage);
             self.stage[i] = FilterState::new(saturated);
             // Trapezoidal integrator state update: 2*output - previous_delay
             self.delay[i] = FilterState::new(2.0 * saturated - delay_val);
@@ -718,7 +720,9 @@ impl PolyModule for LadderFilter {
             let input = audio_in[i];
 
             let effective_cutoff = if cutoff_cv.is_connected() {
-                let mod_amount = cutoff_cv[i];
+                // Sanitize: a direct CV cable bypasses the mod-matrix clamp, so a
+                // NaN/inf here would poison exp2() and the ladder state.
+                let mod_amount = crate::math::sanitize_cv(cutoff_cv[i]);
                 Hertz::new(
                     Hertz::FILTER_RANGE.clamp(self.cutoff.as_f32() * (mod_amount * 4.0).exp2()),
                 )

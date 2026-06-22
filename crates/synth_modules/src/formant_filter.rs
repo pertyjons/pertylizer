@@ -89,6 +89,9 @@ pub struct FormantFilter {
     gains: [Gain; NUM_BANDS],
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Cached interned port name for the vowel CV input (interning locks an
+    /// `RwLock`, so it must never happen on the audio thread).
+    vowel_cv_port: PortName,
     output_buffer: AudioBuffer,
 }
 
@@ -104,6 +107,7 @@ impl FormantFilter {
             coeffs: [BandpassCoeffs::default(); NUM_BANDS],
             gains: [Gain::new(1.0), Gain::new(0.5), Gain::new(0.25)],
             mod_offsets: ParamModOffsets::new(),
+            vowel_cv_port: PortName::intern("vowel_cv"),
             output_buffer: AudioBuffer::new(1024),
         };
         f.update_coeffs();
@@ -218,7 +222,7 @@ impl PolyModule for FormantFilter {
         self.output_buffer.resize(context.samples.as_usize());
 
         let audio_in = inputs.reader(PortName::IN, 0.0);
-        let vowel_cv = inputs.reader(PortName::intern("vowel_cv"), 0.0);
+        let vowel_cv = inputs.reader(self.vowel_cv_port, 0.0);
 
         let mix = self.mod_offsets.effective("mix", self.mix.as_f32());
 

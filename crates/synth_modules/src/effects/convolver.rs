@@ -74,6 +74,13 @@ pub struct Convolver {
     dyn_hi: usize,
     dyn_cf: f32,
 
+    // Pre-allocated IR scratch buffers, reused by rebuild_ir to avoid
+    // per-rebuild heap allocation on the audio thread. Each holds up to
+    // MAX_IR_SAMPLES samples; rebuild_ir truncates/extends in place.
+    ir_scratch: Vec<f32>,
+    ir_soft_scratch: Vec<f32>,
+    ir_loud_scratch: Vec<f32>,
+
     // State
     sample_rate: SampleRate,
 }
@@ -82,9 +89,12 @@ impl Convolver {
     pub fn new() -> Self {
         let sr = SampleRate::DVD_QUALITY;
         let ir_type = ImpulseResponse::Plate;
-        let ir = Self::generate_ir(ir_type, sr, 1.0);
-        let ir_soft = Self::generate_ir_soft(ir_type, sr, 1.0);
-        let ir_loud = Self::generate_ir_loud(ir_type, sr, 1.0);
+        let mut ir = Vec::with_capacity(MAX_IR_SAMPLES);
+        let mut ir_soft = Vec::with_capacity(MAX_IR_SAMPLES);
+        let mut ir_loud = Vec::with_capacity(MAX_IR_SAMPLES);
+        Self::fill_ir(&mut ir, ir_type, sr, 1.0);
+        Self::fill_ir_soft(&mut ir_soft, ir_type, sr, 1.0);
+        Self::fill_ir_loud(&mut ir_loud, ir_type, sr, 1.0);
         Self {
             ir_type,
             mix: NormalizedValue::new(0.3),
@@ -124,12 +134,25 @@ impl Convolver {
             dyn_hi: 1,
             dyn_cf: 0.0,
 
+            // Reuse the freshly generated IR buffers as the rebuild scratch,
+            // each already grown to its starting length / capacity.
+            ir_scratch: ir,
+            ir_soft_scratch: ir_soft,
+            ir_loud_scratch: ir_loud,
+
             sample_rate: sr,
         }
     }
 
-    /// Generate a synthetic impulse response.
-    fn generate_ir(ir_type: ImpulseResponse, sample_rate: SampleRate, decay_trim: f32) -> Vec<f32> {
+    /// Fill `buf` with a synthetic medium-variant impulse response, reusing the
+    /// buffer's allocation (cleared and resized in place; only grows the backing
+    /// store if the trimmed length exceeds the current capacity).
+    fn fill_ir(
+        buf: &mut Vec<f32>,
+        ir_type: ImpulseResponse,
+        sample_rate: SampleRate,
+        decay_trim: f32,
+    ) {
         let sr = sample_rate.as_f32();
         let (duration, decay_rate, character) = match ir_type {
             ImpulseResponse::Plate => (1.5, 3.0, 0.8),
@@ -140,11 +163,12 @@ impl Convolver {
 
         let trimmed_duration = duration * decay_trim;
         let len = ((trimmed_duration * sr) as usize).min(MAX_IR_SAMPLES);
-        let mut ir = vec![0.0f32; len];
+        buf.clear();
+        buf.resize(len, 0.0);
 
         // Simple deterministic noise with exponential decay
         let mut rng_state: u32 = 0x1234_5678;
-        for i in 0..len {
+        for (i, sample) in buf.iter_mut().enumerate() {
             // xorshift32 PRNG
             rng_state ^= rng_state << 13;
             rng_state ^= rng_state >> 17;
@@ -166,53 +190,67 @@ impl Convolver {
                 1.0
             };
 
-            ir[i] = noise * env * early;
+            *sample = noise * env * early;
         }
-
-        ir
     }
 
-    /// Generate a soft IR variant: shorter decay, lower amplitude.
-    fn generate_ir_soft(
+    /// Fill `buf` with the soft IR variant (shorter decay, lower amplitude),
+    /// reusing the buffer's allocation.
+    fn fill_ir_soft(
+        buf: &mut Vec<f32>,
         ir_type: ImpulseResponse,
         sample_rate: SampleRate,
         decay_trim: f32,
-    ) -> Vec<f32> {
-        let mut ir = Self::generate_ir(ir_type, sample_rate, decay_trim);
+    ) {
+        Self::fill_ir(buf, ir_type, sample_rate, decay_trim);
         let sr = sample_rate.as_f32();
-        for (i, sample) in ir.iter_mut().enumerate() {
+        for (i, sample) in buf.iter_mut().enumerate() {
             let extra_decay = (-2.0 * i as f32 / sr).exp();
             *sample *= 0.7 * extra_decay;
         }
-        ir
     }
 
-    /// Generate a loud IR variant: longer tail, slight saturation.
-    fn generate_ir_loud(
+    /// Fill `buf` with the loud IR variant (slight saturation), reusing the
+    /// buffer's allocation.
+    fn fill_ir_loud(
+        buf: &mut Vec<f32>,
         ir_type: ImpulseResponse,
         sample_rate: SampleRate,
         decay_trim: f32,
-    ) -> Vec<f32> {
-        let mut ir = Self::generate_ir(ir_type, sample_rate, decay_trim);
-        for sample in ir.iter_mut() {
+    ) {
+        Self::fill_ir(buf, ir_type, sample_rate, decay_trim);
+        for sample in buf.iter_mut() {
             let s = *sample * 1.3;
             *sample = s / (1.0 + s.abs());
         }
-        ir
     }
 
     fn rebuild_ir(&mut self) {
         let decay = self.decay_trim.as_f32();
-        let ir = Self::generate_ir(self.ir_type, self.sample_rate, decay);
-        let ir_soft = Self::generate_ir_soft(self.ir_type, self.sample_rate, decay);
-        let ir_loud = Self::generate_ir_loud(self.ir_type, self.sample_rate, decay);
+        // Regenerate the three IR variants into the pre-allocated scratch buffers
+        // (no allocation once each buffer has reached its high-water length).
+        Self::fill_ir(&mut self.ir_scratch, self.ir_type, self.sample_rate, decay);
+        Self::fill_ir_soft(
+            &mut self.ir_soft_scratch,
+            self.ir_type,
+            self.sample_rate,
+            decay,
+        );
+        Self::fill_ir_loud(
+            &mut self.ir_loud_scratch,
+            self.ir_type,
+            self.sample_rate,
+            decay,
+        );
 
-        self.conv_left = PartitionedConvolver::new(PARTITION_SIZE, &ir);
-        self.conv_right = PartitionedConvolver::new(PARTITION_SIZE, &ir);
-        self.conv_soft_l = PartitionedConvolver::new(PARTITION_SIZE, &ir_soft);
-        self.conv_soft_r = PartitionedConvolver::new(PARTITION_SIZE, &ir_soft);
-        self.conv_loud_l = PartitionedConvolver::new(PARTITION_SIZE, &ir_loud);
-        self.conv_loud_r = PartitionedConvolver::new(PARTITION_SIZE, &ir_loud);
+        // Swap the IR into each convolver in place, reusing its FFT planner and
+        // partition-spectra pool (allocation-free once warmed up).
+        self.conv_left.update_ir(&self.ir_scratch);
+        self.conv_right.update_ir(&self.ir_scratch);
+        self.conv_soft_l.update_ir(&self.ir_soft_scratch);
+        self.conv_soft_r.update_ir(&self.ir_soft_scratch);
+        self.conv_loud_l.update_ir(&self.ir_loud_scratch);
+        self.conv_loud_r.update_ir(&self.ir_loud_scratch);
 
         self.accum_pos = 0;
         self.input_accum_l.fill(0.0);

@@ -1820,7 +1820,7 @@
                 "voices": {
                   "default": 2.0,
                   "description": "Number of chorus voices",
-                  "maximum": 8.0,
+                  "maximum": 4.0,
                   "minimum": 1.0,
                   "title": "Voices",
                   "type": "number"

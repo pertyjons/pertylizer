@@ -134,12 +134,15 @@ impl PolyModule for BeatDetector {
         let audio_in = inputs.reader(PortName::IN, 0.0);
 
         // Generic mod offsets — all per-block constants, resolved once here.
-        // Envelope follower coefficient from filter frequency
-        let coeff = Hertz::new(
-            self.mod_offsets
-                .effective("filter_freq", self.filter_freq.as_f32()),
-        )
-        .to_exp_coeff(self.sample_rate);
+        // Envelope follower coefficient from filter frequency. The mod offset can
+        // push `filter_freq` negative; a non-positive frequency makes
+        // `to_exp_coeff` return >= 1.0, which turns the one-pole follower into an
+        // unstable feedback loop (NaN/explosion). Clamp to a positive range first.
+        let filter_freq = self
+            .mod_offsets
+            .effective("filter_freq", self.filter_freq.as_f32())
+            .clamp(20.0, 1000.0);
+        let coeff = Hertz::new(filter_freq).to_exp_coeff(self.sample_rate);
         // Threshold from sensitivity (map 0..1 to usable range)
         let threshold_high = 1.0
             - self
@@ -151,8 +154,6 @@ impl PolyModule for BeatDetector {
             .mod_offsets
             .effective("hold_time", self.hold_time.as_f32());
         let hold_samples = (hold_ms * self.sample_rate.as_f32() / 1000.0) as u32;
-
-        let gate_name = PortName::intern("gate");
 
         for i in 0..context.samples.as_usize() {
             let input = audio_in[i].abs();
@@ -182,7 +183,7 @@ impl PolyModule for BeatDetector {
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
             out.copy_from(&self.output_buffer);
         }
-        if let Some(gate_out) = outputs.get_mut(&gate_name) {
+        if let Some(gate_out) = outputs.get_mut(&PortName::GATE) {
             gate_out.copy_from(&self.gate_buffer);
         }
     }

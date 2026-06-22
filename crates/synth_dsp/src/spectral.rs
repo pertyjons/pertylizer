@@ -292,14 +292,20 @@ pub struct PartitionedConvolver {
     partition_size: usize,
     fft: FftProcessor,
 
-    /// Pre-computed IR partition spectra.
+    /// Number of active partitions. The `*_spectra` Vecs may hold more buffers
+    /// than this (a pool kept around to stay allocation-free across IR swaps);
+    /// only the first `num_partitions` are part of the current IR.
+    num_partitions: usize,
+
+    /// Pre-computed IR partition spectra (pool; first `num_partitions` active).
     ir_spectra: Vec<Vec<Complex<f32>>>,
 
     /// Input history ring buffer (time domain).
     input_buffer: Vec<f32>,
     input_pos: usize,
 
-    /// FFT of recent input blocks (frequency domain ring).
+    /// FFT of recent input blocks (frequency domain ring; first
+    /// `num_partitions` active).
     input_spectra: Vec<Vec<Complex<f32>>>,
     input_spectra_pos: usize,
 
@@ -348,6 +354,7 @@ impl PartitionedConvolver {
             fft_size,
             partition_size,
             fft,
+            num_partitions,
             ir_spectra,
             input_buffer: vec![0.0; fft_size],
             input_pos: 0,
@@ -364,12 +371,70 @@ impl PartitionedConvolver {
     pub fn reset(&mut self) {
         self.input_buffer.fill(0.0);
         self.input_pos = 0;
-        for spec in &mut self.input_spectra {
+        for spec in self.input_spectra.iter_mut().take(self.num_partitions) {
             for bin in spec.iter_mut() {
                 *bin = Complex::new(0.0, 0.0);
             }
         }
         self.input_spectra_pos = 0;
+    }
+
+    /// Replace the impulse response in place, reusing existing allocations.
+    ///
+    /// Unlike [`Self::new`], this keeps the FFT planner and scratch buffers and
+    /// reuses the partition-spectra `Vec`s. It only allocates when the new IR has
+    /// *more* partitions than any IR previously held by this convolver (the pool
+    /// of inner `Vec<Complex>` partition buffers grows but is never freed), so
+    /// once the convolver has been driven with a worst-case IR it is fully
+    /// allocation-free. The partition size is fixed at construction and unchanged
+    /// here.
+    ///
+    /// All running state is reset (equivalent to calling [`Self::reset`]).
+    pub fn update_ir(&mut self, ir: &[f32]) {
+        let ps = self.partition_size;
+        let complex_size = self.fft_size / 2 + 1;
+        let num_partitions = ir.len().div_ceil(ps).max(1);
+
+        // Grow the partition-spectra pools to hold `num_partitions` buffers,
+        // reusing existing inner Vecs. The pools are never shrunk; surplus
+        // buffers beyond `num_partitions` stay allocated for reuse on a later,
+        // longer IR. The active count is tracked by `self.num_partitions`.
+        Self::ensure_partition_buffers(&mut self.ir_spectra, num_partitions, complex_size);
+        Self::ensure_partition_buffers(&mut self.input_spectra, num_partitions, complex_size);
+        self.num_partitions = num_partitions;
+
+        // Recompute IR partition spectra in place.
+        for p in 0..num_partitions {
+            self.fft_in.fill(0.0);
+            let start = p * ps;
+            let end = (start + ps).min(ir.len());
+            self.fft_in[..end - start].copy_from_slice(&ir[start..end]);
+            self.fft.forward(&mut self.fft_in, &mut self.fft_out);
+            self.ir_spectra[p].copy_from_slice(&self.fft_out);
+        }
+
+        // Reset running state for the new IR.
+        self.input_buffer.fill(0.0);
+        self.input_pos = 0;
+        for spec in self.input_spectra.iter_mut().take(num_partitions) {
+            for bin in spec.iter_mut() {
+                *bin = Complex::new(0.0, 0.0);
+            }
+        }
+        self.input_spectra_pos = 0;
+    }
+
+    /// Ensure `buffers` has at least `count` entries, each a zeroed
+    /// `complex_size`-length partition spectrum. Reuses existing inner Vecs;
+    /// only allocates new inner Vecs when growing beyond the current length.
+    fn ensure_partition_buffers(
+        buffers: &mut Vec<Vec<Complex<f32>>>,
+        count: usize,
+        complex_size: usize,
+    ) {
+        while buffers.len() < count {
+            buffers.push(vec![Complex::new(0.0, 0.0); complex_size]);
+        }
     }
 
     /// Process a block of exactly `partition_size` samples.
@@ -378,7 +443,7 @@ impl PartitionedConvolver {
     /// in chunks of `partition_size`.
     pub fn process_block(&mut self, input: &[f32], output: &mut [f32]) {
         let ps = self.partition_size;
-        let num_partitions = self.ir_spectra.len();
+        let num_partitions = self.num_partitions;
         let norm = 1.0 / self.fft_size as f32;
 
         // Prepare zero-padded input: [previous_partition | current_partition]
@@ -500,6 +565,42 @@ mod tests {
 
         for &s in &output {
             assert!(s.abs() < 1e-6, "Expected silence, got {}", s);
+        }
+    }
+
+    #[test]
+    fn test_partitioned_convolver_update_ir_matches_new() {
+        let partition_size = 256;
+        // Start with a long IR, then swap to a shorter one and back to a longer
+        // one to exercise the partition-buffer pool (grow / reuse paths).
+        let mut long_ir = vec![0.0f32; partition_size * 4];
+        long_ir[0] = 1.0;
+        long_ir[partition_size] = 0.5;
+        let mut short_ir = vec![0.0f32; partition_size];
+        short_ir[0] = 1.0;
+
+        let mut updated = PartitionedConvolver::new(partition_size, &long_ir);
+        updated.update_ir(&short_ir);
+        updated.update_ir(&long_ir);
+
+        // A fresh convolver built directly from the same IR must match sample-wise.
+        let mut fresh = PartitionedConvolver::new(partition_size, &long_ir);
+
+        let mut input = vec![0.0f32; partition_size];
+        input[0] = 1.0;
+        let mut out_updated = vec![0.0f32; partition_size];
+        let mut out_fresh = vec![0.0f32; partition_size];
+        updated.process_block(&input, &mut out_updated);
+        fresh.process_block(&input, &mut out_fresh);
+
+        for i in 0..partition_size {
+            assert!(
+                (out_updated[i] - out_fresh[i]).abs() < 1e-5,
+                "update_ir output diverged at {}: {} vs {}",
+                i,
+                out_updated[i],
+                out_fresh[i]
+            );
         }
     }
 

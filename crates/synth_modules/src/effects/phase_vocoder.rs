@@ -253,10 +253,16 @@ impl AudioEffect for PhaseVocoder {
             self.mono_in_r[i] = frame.right;
         }
 
+        // Track whether a frozen frame was captured during this block. The STFT
+        // processor may emit zero, one, or several frames per block; the first
+        // frozen frame captures the live spectrum, later ones replay it.
+        let mut captured_left = false;
+        let mut captured_right = false;
+
         // Process left channel
         let prev_phase_l = &mut self.prev_phase_left;
         let phase_accum_l = &mut self.phase_accum_left;
-        let frozen_l = &self.frozen_left;
+        let frozen_l = &mut self.frozen_left;
         let has_frozen = self.has_frozen;
         let temp_mags = &mut self.temp_magnitudes;
         let temp_phs = &mut self.temp_phases;
@@ -265,8 +271,20 @@ impl AudioEffect for PhaseVocoder {
             &self.mono_in_l[..num_frames],
             &mut self.mono_out_l[..num_frames],
             |spectrum| {
-                if freeze && has_frozen {
-                    spectrum.copy_from_slice(frozen_l);
+                if freeze {
+                    if has_frozen || captured_left {
+                        // Spectrum already captured (on an earlier block, or an
+                        // earlier hop of this same block): replay it. Checking the
+                        // per-block `captured_left` flag ensures that when a block
+                        // spans multiple STFT hops we hold the FIRST frozen hop
+                        // rather than letting later hops overwrite it.
+                        spectrum.copy_from_slice(frozen_l);
+                    } else {
+                        // First frozen frame: capture the live spectrum, then play
+                        // it back so this frame already outputs the held content.
+                        frozen_l.copy_from_slice(spectrum);
+                        captured_left = true;
+                    }
                 } else {
                     Self::pitch_shift_spectrum(
                         spectrum,
@@ -285,7 +303,7 @@ impl AudioEffect for PhaseVocoder {
         // Process right channel
         let prev_phase_r = &mut self.prev_phase_right;
         let phase_accum_r = &mut self.phase_accum_right;
-        let frozen_r = &self.frozen_right;
+        let frozen_r = &mut self.frozen_right;
         let temp_mags = &mut self.temp_magnitudes;
         let temp_phs = &mut self.temp_phases;
 
@@ -293,8 +311,15 @@ impl AudioEffect for PhaseVocoder {
             &self.mono_in_r[..num_frames],
             &mut self.mono_out_r[..num_frames],
             |spectrum| {
-                if freeze && has_frozen {
-                    spectrum.copy_from_slice(frozen_r);
+                if freeze {
+                    if has_frozen || captured_right {
+                        // Replay the already-captured spectrum (earlier block or
+                        // earlier hop of this block); see the left-channel note.
+                        spectrum.copy_from_slice(frozen_r);
+                    } else {
+                        frozen_r.copy_from_slice(spectrum);
+                        captured_right = true;
+                    }
                 } else {
                     Self::pitch_shift_spectrum(
                         spectrum,
@@ -310,9 +335,9 @@ impl AudioEffect for PhaseVocoder {
             },
         );
 
-        // Capture frozen spectrum if freeze just activated
-        if freeze && !self.has_frozen {
-            // Will be captured on next STFT frame
+        // Latch the freeze once both channels have captured a frame, so the next
+        // block replays the held spectrum instead of capturing a fresh one.
+        if freeze && captured_left && captured_right {
             self.has_frozen = true;
         }
         if !freeze {

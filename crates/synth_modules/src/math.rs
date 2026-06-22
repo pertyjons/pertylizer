@@ -48,10 +48,26 @@ pub fn variable_clip(x: f32, hardness: f32) -> f32 {
     (k * x).atan() / k.atan().max(0.001)
 }
 
+/// Sanitize a raw control-voltage sample read from a CV-input buffer.
+///
+/// Direct CV-input ports (`cutoff_cv`, `freq_cv`, `fm`, …) carry whatever an
+/// upstream LFO/envelope/oscillator wrote and bypass the mod-matrix
+/// `ParamModOffsets::effective()` clamp, so they can be out of range or `NaN`
+/// (e.g. propagated from an exploded feedback path). Non-finite values are
+/// mapped to `0.0` so they cannot poison downstream DSP state.
+#[inline]
+#[must_use]
+pub fn sanitize_cv(x: f32) -> f32 {
+    if x.is_finite() { x } else { 0.0 }
+}
+
 /// Hard-clip a signal to the \[−1, +1\] range.
+///
+/// `NaN`/`Inf` inputs are treated as `0.0` so a propagated non-finite value
+/// cannot pass through unchanged.
 #[inline]
 pub fn hard_clip(x: f32) -> f32 {
-    x.clamp(-1.0, 1.0)
+    sanitize_cv(x).clamp(-1.0, 1.0)
 }
 
 /// Foldback distortion: reflect the signal at ±`threshold`.
@@ -60,7 +76,7 @@ pub fn hard_clip(x: f32) -> f32 {
 /// into the \[−threshold, +threshold\] range.
 #[inline]
 pub fn foldback(x: f32, threshold: f32) -> f32 {
-    let mut v = x;
+    let mut v = sanitize_cv(x);
     for _ in 0..16 {
         if v > threshold {
             v = threshold - (v - threshold);

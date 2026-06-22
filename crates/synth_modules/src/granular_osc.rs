@@ -114,6 +114,11 @@ pub struct GranularOsc {
     // Pre-allocated source buffer
     source_buffer: Vec<f32>,
     source_len: usize,
+    /// `(source, sample_rate)` the `source_buffer` was last filled with. The
+    /// rebuild guard compares against this — not the live `source`/`sample_rate`
+    /// fields — so the heavy fill runs at most once per *actual* change and is
+    /// never repeated per block. Set to `None` to force a (re)fill.
+    built_with: Option<(GrainSource, SampleRate)>,
 
     // State
     sample_rate: SampleRate,
@@ -150,6 +155,7 @@ impl GranularOsc {
 
             source_buffer: vec![0.0; MAX_SOURCE_SAMPLES],
             source_len: MAX_SOURCE_SAMPLES,
+            built_with: None,
 
             sample_rate: SampleRate::DVD_QUALITY,
             note_freq: Hertz::A4,
@@ -163,13 +169,28 @@ impl GranularOsc {
         // Fill the source buffer up-front so the first render produces audio
         // even if no one calls `set_sample_rate` before `process` and the
         // patch's stored `source` matches the constructor default (in which
-        // case `set_param`'s equality skip would have left the buffer as
-        // zeros, producing silent grains).
+        // case the change-guarded rebuild would skip the fill, leaving the
+        // buffer as zeros and producing silent grains). This also seeds
+        // `built_with` so later guards know what's already in the buffer.
         osc.fill_source_buffer();
         osc
     }
 
+    /// Rebuild the source buffer only if the live `(source, sample_rate)` no
+    /// longer matches what the buffer was last filled with. This is the single
+    /// guarded entry point used from the audio thread (`process`): it skips the
+    /// ~96k-iteration trig fill entirely when nothing changed, so the common
+    /// per-block case is a cheap tuple comparison.
+    fn rebuild_source_buffer_if_changed(&mut self) {
+        if self.built_with == Some((self.source, self.sample_rate)) {
+            return;
+        }
+        self.fill_source_buffer();
+    }
+
     /// Fill the source buffer with the selected waveform at a fixed base pitch.
+    /// Records `(source, sample_rate)` in `built_with` so the guard above can
+    /// short-circuit subsequent calls. Reuses the pre-allocated buffer in place.
     fn fill_source_buffer(&mut self) {
         let sr = self.sample_rate.as_f32();
         self.source_len = (SOURCE_BUFFER_SECONDS * sr) as usize;
@@ -205,6 +226,8 @@ impl GranularOsc {
                 phase -= 1.0;
             }
         }
+
+        self.built_with = Some((self.source, self.sample_rate));
     }
 
     /// Compute grain window envelope value.
@@ -417,12 +440,17 @@ impl PolyModule for GranularOsc {
         // set_sample_rate on them — and this module's pitch and grain timing are
         // tied to the rate its source buffer was filled at. Without this sync an
         // offline render at 44.1 kHz of a buffer filled at the 48 kHz default
-        // plays back ~147 cents flat. Refill only on an actual change (rare:
-        // once at stream start), so the per-sample hot path stays allocation-free.
-        if context.sample_rate != self.sample_rate {
-            self.sample_rate = context.sample_rate;
-            self.fill_source_buffer();
-        }
+        // plays back ~147 cents flat.
+        self.sample_rate = context.sample_rate;
+        // Refill the source buffer only when the source waveform or sample rate
+        // actually changed since the last fill — `rebuild_source_buffer_if_changed`
+        // short-circuits to a tuple comparison otherwise. Done once per block
+        // (not per sample), so the per-sample hot path below stays allocation-free.
+        // Residual cost: the rare block where a change *did* land pays the
+        // ~96k-iteration trig fill on the audio thread. That happens at most once
+        // per genuine waveform/rate change (e.g. switching the Source choice),
+        // not every block, so it can't repeat into a sustained dropout.
+        self.rebuild_source_buffer_if_changed();
 
         let sr = self.sample_rate.as_f32();
         let level = self.mod_offsets.effective("level", self.level.as_f32());
@@ -553,12 +581,11 @@ impl PolyModule for GranularOsc {
                 GranularParam::PanSpread(v) => self.pan_spread = v,
                 GranularParam::Freeze(b) => self.freeze = b,
                 GranularParam::Window(w) => self.window = w,
-                GranularParam::Source(s) => {
-                    if s != self.source {
-                        self.source = s;
-                        self.fill_source_buffer();
-                    }
-                }
+                // Just record the new waveform. The heavy ~96k-iteration refill
+                // is deferred to the next `process` block, which rebuilds via
+                // the change-guarded path — so a Source change drained on the
+                // audio thread costs only a field write here, not a fill.
+                GranularParam::Source(s) => self.source = s,
                 GranularParam::Level(g) => self.level = g,
             }
         }
@@ -633,7 +660,9 @@ impl PolyModule for GranularOsc {
 
     fn set_sample_rate(&mut self, rate: SampleRate) {
         self.sample_rate = rate;
-        self.fill_source_buffer();
+        // Off the audio thread (engine setup). Guarded so it's a no-op when the
+        // rate is unchanged; `process` would otherwise catch the change anyway.
+        self.rebuild_source_buffer_if_changed();
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {

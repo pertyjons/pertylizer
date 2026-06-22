@@ -12,8 +12,18 @@ use synth_core::{
     ProcessContext, ResponseCurve, SampleCount, SampleRate, StereoSample, WidgetHint,
 };
 
-/// Maximum look-ahead in samples at 48kHz (~5ms).
-const MAX_LOOKAHEAD_SAMPLES: usize = 240;
+/// Maximum look-ahead time the limiter advertises (see the `look_ahead`
+/// parameter range, capped at 5 ms).
+const MAX_LOOKAHEAD_MS: f32 = 5.0;
+
+/// Highest sample rate the engine supports. The look-ahead ring buffer is sized
+/// from this so the advertised 5 ms is honored at any sample rate (e.g. 96/192
+/// kHz), not just 48 kHz.
+const MAX_SAMPLE_RATE: f32 = 192_000.0;
+
+/// Buffer capacity (in frames) for the maximum look-ahead time at the highest
+/// supported sample rate: `0.005 * 192000 = 960`.
+const MAX_LOOKAHEAD_SAMPLES: usize = (MAX_LOOKAHEAD_MS / 1000.0 * MAX_SAMPLE_RATE) as usize;
 
 /// Brickwall limiter with look-ahead.
 pub struct Limiter {
@@ -299,9 +309,11 @@ mod tests {
 
         limiter.process(&input, &mut output, &context);
 
-        // After the lookahead buffer has filled, output should be limited
+        // After the lookahead buffer has filled, output should be limited.
+        // Settle past the actual (runtime) lookahead fill, not the full buffer
+        // capacity, which is sized for the maximum supported sample rate.
         let ceiling_linear = Decibels::new(-6.0).to_linear();
-        let settle_offset = MAX_LOOKAHEAD_SAMPLES * 2 + 40; // past lookahead fill + settling
+        let settle_offset = limiter.lookahead_samples * 2 + 40; // past lookahead fill + settling
         for sample in &output[settle_offset..] {
             assert!(
                 sample.abs() <= ceiling_linear + 0.05,

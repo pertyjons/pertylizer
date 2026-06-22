@@ -262,7 +262,7 @@ impl PolyModule for SignalMonitor {
                 }
             }
 
-            self.prev_sample = BipolarValue::new(sample);
+            self.prev_sample = BipolarValue::new(crate::math::sanitize_cv(sample));
         }
     }
 

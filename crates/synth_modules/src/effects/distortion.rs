@@ -25,8 +25,8 @@ pub struct Distortion {
     mix: NormalizedValue,
     bit_depth: BitDepth,
 
-    // Filter state
-    filter_state: FilterState,
+    // Filter state (one per channel: [0] = left, [1] = right)
+    filter_state: [FilterState; 2],
 
     // State
     sample_rate: SampleRate,
@@ -40,7 +40,7 @@ impl Distortion {
             tone: NormalizedValue::new(0.8),
             mix: NormalizedValue::MAX,
             bit_depth: BitDepth::DEFAULT,
-            filter_state: FilterState::ZERO,
+            filter_state: [FilterState::ZERO; 2],
             sample_rate: SampleRate::DVD_QUALITY,
         }
     }
@@ -81,16 +81,26 @@ impl Distortion {
         }
     }
 
-    /// Apply tone filter (one-pole lowpass).
+    /// Tone-filter cutoff coefficient (one-pole lowpass).
+    ///
+    /// Loop-invariant within a `process()` call: `tone` and `sample_rate`
+    /// don't change per sample, so compute this once before the loop.
     #[inline]
-    fn apply_tone(&mut self, input: f32) -> f32 {
+    #[must_use]
+    fn tone_coef(&self) -> f32 {
         // Map tone parameter to cutoff frequency
         let tone = self.tone.as_f32();
         let cutoff = Hertz::new(200.0 + tone * tone * 15000.0);
-        let coef = cutoff.to_exp_coeff(self.sample_rate);
-        self.filter_state =
-            FilterState::new(input * (1.0 - coef) + self.filter_state.as_f32() * coef);
-        self.filter_state.as_f32()
+        cutoff.to_exp_coeff(self.sample_rate)
+    }
+
+    /// Apply the one-pole tone filter for one channel, using a precomputed
+    /// coefficient and per-channel state (`channel`: 0 = left, 1 = right).
+    #[inline]
+    fn apply_tone(&mut self, input: f32, coef: f32, channel: usize) -> f32 {
+        let state = &mut self.filter_state[channel];
+        *state = FilterState::new(input * (1.0 - coef) + state.as_f32() * coef);
+        state.as_f32()
     }
 }
 
@@ -168,16 +178,20 @@ impl Describable for Distortion {
 impl AudioEffect for Distortion {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
         self.sample_rate = context.sample_rate;
+        // Loop-invariant: compute the tone-filter coefficient once per call.
+        let coef = self.tone_coef();
         for i in 0..input.len().min(output.len()) {
+            // Interleaved stereo: even = left (channel 0), odd = right (channel 1).
+            let channel = i % 2;
             let dry = input[i];
             let distorted = self.distort(dry);
-            let filtered = self.apply_tone(distorted);
+            let filtered = self.apply_tone(distorted, coef, channel);
             output[i] = self.mix.blend(dry, filtered);
         }
     }
 
     fn reset(&mut self) {
-        self.filter_state = FilterState::ZERO;
+        self.filter_state = [FilterState::ZERO; 2];
     }
 
     fn set_mix(&mut self, mix: NormalizedValue) {

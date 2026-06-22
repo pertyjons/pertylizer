@@ -416,7 +416,7 @@
         "voices": {
           "default": 2.0,
           "description": "Number of chorus voices",
-          "max": 8.0,
+          "max": 4.0,
           "min": 1.0,
           "modulatable": true,
           "name": "Voices",

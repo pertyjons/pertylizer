@@ -46,6 +46,18 @@ pub struct PadSynth {
     // Scratch buffers for wavetable generation (avoid allocation in note_on)
     freq_amp: Vec<f32>,
 
+    /// Set when a wavetable-affecting input (bandwidth/tilt/detune/base_freq or
+    /// sample_rate) changed since the cached `wavetable` was built. note_on only
+    /// runs the O(N²) `build_wavetable` when this is set, so a plain note press
+    /// at unchanged params reuses the existing table (RT-safe). The table is
+    /// pitch-independent — the MIDI note only sets `phase_increment` — so a new
+    /// note never dirties it.
+    wavetable_dirty: bool,
+
+    /// Sample rate the cached `wavetable` was built at. A change forces a rebuild
+    /// because bin positions are derived from the sample rate.
+    table_sample_rate: SampleRate,
+
     // Playback state
     phase: f64,
     phase_increment: f64,
@@ -72,6 +84,9 @@ impl PadSynth {
 
             wavetable: vec![0.0; TABLE_SIZE],
             freq_amp: vec![0.0; HALF_TABLE],
+            // No table built yet — force the first build on the first note_on.
+            wavetable_dirty: true,
+            table_sample_rate: SampleRate::DVD_QUALITY,
 
             phase: 0.0,
             phase_increment: 0.0,
@@ -90,6 +105,11 @@ impl PadSynth {
     ///    whose width is controlled by the bandwidth parameter.
     /// 3. Apply a real-valued inverse FFT to obtain the time-domain wavetable.
     fn build_wavetable(&mut self, note_freq: Hertz) {
+        // Cache the inputs this table was built from so note_on can skip the
+        // O(N²) rebuild when nothing changed.
+        self.table_sample_rate = self.sample_rate;
+        self.wavetable_dirty = false;
+
         let sr = self.sample_rate.as_f32() as f64;
         let base = note_freq.as_f32() as f64;
         let bw_cents = 25.0 + self.bandwidth.as_f32() as f64 * 175.0; // 25..200 cents
@@ -335,10 +355,24 @@ impl PolyModule for PadSynth {
     fn set_param(&mut self, param: Param) {
         if let Param::PadSynth(p) = param {
             match p {
-                PadSynthParam::Bandwidth(v) => self.bandwidth = v,
-                PadSynthParam::Tilt(v) => self.tilt = v,
-                PadSynthParam::Detune(v) => self.detune = v,
-                PadSynthParam::BaseFreq(hz) => self.base_freq = hz,
+                // Wavetable-build params: mark dirty so the next note_on rebuilds.
+                PadSynthParam::Bandwidth(v) => {
+                    self.bandwidth = v;
+                    self.wavetable_dirty = true;
+                }
+                PadSynthParam::Tilt(v) => {
+                    self.tilt = v;
+                    self.wavetable_dirty = true;
+                }
+                PadSynthParam::Detune(v) => {
+                    self.detune = v;
+                    self.wavetable_dirty = true;
+                }
+                PadSynthParam::BaseFreq(hz) => {
+                    self.base_freq = hz;
+                    self.wavetable_dirty = true;
+                }
+                // Level is applied at process-time, not baked into the table.
                 PadSynthParam::Level(v) => self.level = v,
             }
         }
@@ -380,17 +414,24 @@ impl PolyModule for PadSynth {
         self.phase = 0.0;
         self.active = false;
         self.wavetable.fill(0.0);
+        // Table was zeroed — force a rebuild on the next note_on.
+        self.wavetable_dirty = true;
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         let note_freq = note.to_frequency();
 
-        // Build wavetable using the PADsynth algorithm.
-        // This uses the base_freq for harmonic placement, while note_freq
-        // controls the playback rate. When note_freq == base_freq the table
-        // plays back at its natural rate; other notes pitch-shift by adjusting
-        // the phase increment.
-        self.build_wavetable(self.base_freq);
+        // Build the wavetable using the PADsynth algorithm — but ONLY when its
+        // inputs changed. The table is built from base_freq for harmonic
+        // placement (plus bandwidth/tilt/detune and the sample rate); the MIDI
+        // note pitch is applied purely via phase_increment below, so it does
+        // NOT affect the table. Rebuilding unconditionally here would run an
+        // O(N²) inverse-DFT on the real-time audio thread on every note press,
+        // causing CPU spikes / dropouts. Rebuild only if a wavetable-affecting
+        // param is dirty or the sample rate changed; otherwise reuse the table.
+        if self.wavetable_dirty || self.sample_rate != self.table_sample_rate {
+            self.build_wavetable(self.base_freq);
+        }
 
         // The wavetable encodes one cycle of the base_freq waveform.
         // To play at note_freq, advance phase so one full traversal takes

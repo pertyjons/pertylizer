@@ -146,6 +146,11 @@ pub struct VocalTract {
 
     // Cached
     inv_sample_rate: f32,
+    /// Interned CV port names, interned once at construction so `process()`
+    /// never has to call `PortName::intern` (which locks the global table).
+    tongue_cv_port: PortName,
+    lips_cv_port: PortName,
+    nasality_cv_port: PortName,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
 
@@ -172,6 +177,9 @@ impl VocalTract {
             tract: KellyLochbaumTract::new(N_MAX_SECTIONS),
             note_freq: Hertz::ZERO,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
+            tongue_cv_port: PortName::intern("tongue_cv"),
+            lips_cv_port: PortName::intern("lips_cv"),
+            nasality_cv_port: PortName::intern("nasality_cv"),
             mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         };
@@ -392,9 +400,9 @@ impl PolyModule for VocalTract {
             return;
         }
 
-        let tongue_cv = inputs.reader(PortName::intern("tongue_cv"), 0.0);
-        let lips_cv = inputs.reader(PortName::intern("lips_cv"), 0.0);
-        let nasality_cv = inputs.reader(PortName::intern("nasality_cv"), 0.0);
+        let tongue_cv = inputs.reader(self.tongue_cv_port, 0.0);
+        let lips_cv = inputs.reader(self.lips_cv_port, 0.0);
+        let nasality_cv = inputs.reader(self.nasality_cv_port, 0.0);
         let tongue_cv_connected = tongue_cv.is_connected();
         let lips_cv_connected = lips_cv.is_connected();
         let nasality_cv_connected = nasality_cv.is_connected();
@@ -438,14 +446,18 @@ impl PolyModule for VocalTract {
             if tongue_cv_connected || lips_cv_connected {
                 let mut dirty = false;
                 if tongue_cv_connected {
-                    let target = (base_tongue + tongue_cv[i] * CV_DEPTH).clamp(0.0, 1.0);
+                    // Sanitize the raw CV (NaN/inf → 0) then clamp into the
+                    // Kelly–Lochbaum-valid articulator range [0, 1].
+                    let cv = crate::math::sanitize_cv(tongue_cv[i]);
+                    let target = (base_tongue + cv * CV_DEPTH).clamp(0.0, 1.0);
                     if (target - self.current_tongue).abs() > ARTIC_EPS {
                         self.current_tongue = target;
                         dirty = true;
                     }
                 }
                 if lips_cv_connected {
-                    let target = (base_lips + lips_cv[i] * CV_DEPTH).clamp(0.0, 1.0);
+                    let cv = crate::math::sanitize_cv(lips_cv[i]);
+                    let target = (base_lips + cv * CV_DEPTH).clamp(0.0, 1.0);
                     if (target - self.current_lips).abs() > ARTIC_EPS {
                         self.current_lips = target;
                         dirty = true;
@@ -459,7 +471,8 @@ impl PolyModule for VocalTract {
             // The velum opening is cheap to set (no profile rebuild), so a
             // connected CV can drive it every sample.
             if nasality_cv_connected {
-                self.current_nasality = (base_nasality + nasality_cv[i] * CV_DEPTH).clamp(0.0, 1.0);
+                let cv = crate::math::sanitize_cv(nasality_cv[i]);
+                self.current_nasality = (base_nasality + cv * CV_DEPTH).clamp(0.0, 1.0);
                 self.tract.set_velum(self.current_nasality);
             }
 

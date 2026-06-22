@@ -39,7 +39,9 @@ impl WavetableBank {
             return 0.0;
         }
 
-        // Position to frame index with interpolation
+        // Position to frame index with interpolation. `position` may arrive NaN
+        // from a modulated source; `clamp` passes NaN through, so coerce first.
+        let position = crate::math::sanitize_cv(position);
         let pos = position.clamp(0.0, 1.0) * (num_frames - 1) as f32;
         let frame_idx = pos as usize;
         let frame_frac = pos - frame_idx as f32;

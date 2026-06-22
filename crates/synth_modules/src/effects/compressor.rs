@@ -7,6 +7,13 @@ use synth_core::{
 use synth_core::{CompressorParam, ModuleType, Param};
 use synth_core::{Decibels, Hertz, Milliseconds, NormalizedValue, Ratio, SampleRate};
 
+/// Maximum sidechain buffer capacity in interleaved-stereo samples.
+///
+/// Must match the engine's interleaved-stereo block capacity so the sidechain
+/// buffer can never truncate a process block. The engine caps blocks at 4096
+/// frames (`MAX_BUFFER_SIZE` in `synth_engine`), i.e. 8192 interleaved samples.
+const MAX_SIDECHAIN_SAMPLES: usize = 4096 * 2;
+
 /// Compressor effect with envelope follower and optional sidechain.
 pub struct Compressor {
     // Parameters
@@ -49,7 +56,7 @@ impl Compressor {
             sidechain_filter_freq: Hertz::new(80.0),
             sc_filter_state: 0.0,
             sc_filter_prev_input: 0.0,
-            sidechain_buffer: vec![0.0; 4096],
+            sidechain_buffer: vec![0.0; MAX_SIDECHAIN_SAMPLES],
             sidechain_len: 0,
             envelope: 0.0,
             sample_rate: SampleRate::DVD_QUALITY,

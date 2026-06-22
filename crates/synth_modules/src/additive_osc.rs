@@ -251,7 +251,8 @@ impl PolyModule for AdditiveOsc {
 
             // Apply frequency CV (1V/oct)
             let base_freq = if let Some(cv) = freq_cv {
-                self.note_freq.apply_cv(BipolarValue::new(cv[i]))
+                self.note_freq
+                    .apply_cv(BipolarValue::new(crate::math::sanitize_cv(cv[i])))
             } else {
                 self.note_freq
             };

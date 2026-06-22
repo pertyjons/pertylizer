@@ -198,8 +198,9 @@ impl AudioEffect for Univibe {
                 let mod_freq = mod_freq.clamp(20.0, sr * 0.45);
 
                 // All-pass coefficient from frequency
-                let omega = std::f32::consts::TAU * mod_freq / sr;
-                let coeff = (omega.tan() - 1.0) / (omega.tan() + 1.0);
+                let omega = std::f32::consts::PI * mod_freq / sr;
+                let t = omega.tan();
+                let coeff = (t - 1.0) / (t + 1.0);
 
                 let (out_l, out_r) = stage.process_stereo(sample_l, sample_r, coeff);
                 sample_l = out_l;

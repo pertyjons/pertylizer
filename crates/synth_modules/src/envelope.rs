@@ -271,7 +271,13 @@ impl Envelope {
                     let new_level = sustain_level + (current - sustain_level) * effective_coef;
                     self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
 
-                    if self.level.as_f32() <= sustain_level + 0.001 {
+                    // Only snap to Sustain once the glide has converged from the
+                    // decay side. Normal decay ramps DOWN from peak, so `current`
+                    // sits above `sustain_level` and we finish when it gets close.
+                    // If `sustain` was dynamically raised ABOVE the current level,
+                    // `current` is below the target: glide smoothly UP toward it
+                    // rather than instantly snapping (which would click).
+                    if (self.level.as_f32() - sustain_level).abs() <= 0.001 {
                         self.level = sustain;
                         self.stage = EnvelopeStage::Sustain;
                     }

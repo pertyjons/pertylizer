@@ -19,12 +19,23 @@ use synth_core::{
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
     WidgetHint,
 };
-use synth_core::{FilterState, Gain, MidiNote, SampleRate, Velocity};
+use synth_core::{FilterState, Gain, MidiNote, SampleRate, Seconds, Velocity};
 use synth_core::{ModuleType, NoiseParam, NoiseType, Param};
 
 const LFSR_SEED: u16 = 0x7fff;
 const CHIP_LFSR_SEED: u32 = 0x7ffff8;
 const CHIP_LFSR_MASK: u32 = 0x7fffff;
+
+/// Leak time constant for the brown-noise leaky integrator.
+///
+/// Derived so the per-sample pole coefficient `Seconds::to_exp_coeff`,
+/// `exp(-1 / (tau * sample_rate))`, equals the historical hard-coded `0.99`
+/// at the 48 kHz reference rate
+/// (`SampleRate::DVD_QUALITY`): `0.99 = exp(-1 / (tau * 48000))` ⇒
+/// `tau = -1 / (48000 * ln(0.99)) ≈ 2.0729 ms`. Recomputing the coefficient
+/// from the actual sample rate keeps the low-frequency roll-off consistent
+/// across sample rates instead of thinning out at higher rates.
+const BROWN_LEAK_TAU: Seconds = Seconds::new(0.002_072_899_2);
 
 /// Advanced noise generator with spectral coloring.
 #[derive(Clone)]
@@ -40,6 +51,9 @@ pub struct NoiseGenerator {
 
     // State for brown noise (integrator)
     brown_state: FilterState,
+    /// Sample-rate-dependent leaky-integrator pole coefficient for brown noise.
+    /// Computed from [`BROWN_LEAK_TAU`] and the active sample rate, not per-sample.
+    brown_leak_coeff: f32,
 
     // State for blue/violet noise (differentiator)
     blue_prev: FilterState,
@@ -68,6 +82,7 @@ impl NoiseGenerator {
             pink_running_sum: FilterState::ZERO,
             pink_index: 0,
             brown_state: FilterState::ZERO,
+            brown_leak_coeff: BROWN_LEAK_TAU.to_exp_coeff(SampleRate::DVD_QUALITY),
             blue_prev: FilterState::ZERO,
             violet_prev: [FilterState::ZERO; 2],
             lfsr_state: LFSR_SEED,
@@ -116,9 +131,11 @@ impl NoiseGenerator {
     fn brown_noise(&mut self) -> f32 {
         let white = Self::white_noise();
 
-        // Leaky integrator to prevent DC drift
-        // Coefficient tuned for stable output
-        let new_state = self.brown_state.as_f32() * 0.99 + white * 0.1;
+        // Leaky integrator to prevent DC drift. The pole coefficient is
+        // computed from a fixed time constant and the active sample rate
+        // (see `brown_leak_coeff`) so the low-frequency roll-off is invariant
+        // across sample rates.
+        let new_state = self.brown_state.as_f32() * self.brown_leak_coeff + white * 0.1;
         self.brown_state = FilterState::new(new_state);
 
         // Normalize output (brown noise tends to have lower amplitude)
@@ -263,7 +280,10 @@ impl PolyModule for NoiseGenerator {
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
-        self.sample_rate = context.sample_rate;
+        if self.sample_rate != context.sample_rate {
+            self.sample_rate = context.sample_rate;
+            self.brown_leak_coeff = BROWN_LEAK_TAU.to_exp_coeff(self.sample_rate);
+        }
         self.output_buffer.resize(context.samples.as_usize());
 
         // Effective level = base + normalized mod offset, once per block.

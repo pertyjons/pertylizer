@@ -32,6 +32,9 @@ pub struct ChaoticOsc {
     mod_offsets: ParamModOffsets,
     output_buffer: AudioBuffer,
     output_buffer_y: AudioBuffer,
+    /// Cached interned name for the custom "out_y" port. Interned once in the
+    /// constructor so `process()` never calls `PortName::intern` (which locks).
+    out_y_name: PortName,
 }
 
 impl ChaoticOsc {
@@ -48,6 +51,7 @@ impl ChaoticOsc {
             mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
             output_buffer_y: AudioBuffer::new(1024),
+            out_y_name: PortName::intern("out_y"),
         }
     }
 
@@ -211,8 +215,7 @@ impl PolyModule for ChaoticOsc {
             out.copy_from(&self.output_buffer);
         }
 
-        let out_y_name = PortName::intern("out_y");
-        if let Some(out_y) = outputs.get_mut(&out_y_name) {
+        if let Some(out_y) = outputs.get_mut(&self.out_y_name) {
             out_y.copy_from(&self.output_buffer_y);
         }
     }

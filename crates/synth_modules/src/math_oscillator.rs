@@ -597,7 +597,7 @@ impl PolyModule for MathOscillator {
         for i in 0..context.samples.as_usize() {
             // Apply FM relative to the (modulated) base frequency.
             self.frequency = if let Some(fm) = fm_input {
-                eff_base_freq.apply_fm(BipolarValue::new(fm[i]))
+                eff_base_freq.apply_fm(BipolarValue::new(crate::math::sanitize_cv(fm[i])))
             } else {
                 eff_base_freq
             };

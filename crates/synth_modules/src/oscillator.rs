@@ -546,10 +546,10 @@ impl PolyModule for Oscillator {
         let pulse_width_unmodulated = NormalizedValue::new_unchecked(pulse_width.as_f32());
 
         for i in 0..n_samples {
-            let fm = fm_reader[i] * fm_amount;
+            let fm = crate::math::sanitize_cv(fm_reader[i]) * fm_amount;
 
             // Cross-modulation: adds to FM signal
-            let cross_mod = cross_mod_reader[i] * cross_mod_amount;
+            let cross_mod = crate::math::sanitize_cv(cross_mod_reader[i]) * cross_mod_amount;
 
             let total_fm = fm + cross_mod;
 
@@ -562,7 +562,8 @@ impl PolyModule for Oscillator {
 
             let effective_pulse_width = if pwm_reader.is_connected() {
                 NormalizedValue::new(
-                    (pulse_width.as_f32() + pwm_reader[i] * 0.49).clamp(0.01, 0.99),
+                    (pulse_width.as_f32() + crate::math::sanitize_cv(pwm_reader[i]) * 0.49)
+                        .clamp(0.01, 0.99),
                 )
             } else {
                 pulse_width_unmodulated
@@ -576,7 +577,7 @@ impl PolyModule for Oscillator {
                 // zero-crossing is unreliable: a square has none, sine/triangle
                 // cross twice per cycle, and a band-limited saw rings near its
                 // wrap — hence the phase-ramp output is the preferred master.)
-                let sync_val = sync_reader[i];
+                let sync_val = crate::math::sanitize_cv(sync_reader[i]);
                 if self.prev_sync - sync_val > 0.5 {
                     // Recover the exact sub-sample wrap instant from a 0→1 ramp so
                     // the reset is not quantised to the sample grid (which would
@@ -605,7 +606,7 @@ impl PolyModule for Oscillator {
             // advance) — the `phase` output, for hard-syncing a downstream osc.
             self.phase_buffer[i] = self.unison_phases[0].as_f32();
 
-            let pm = pm_reader[i];
+            let pm = crate::math::sanitize_cv(pm_reader[i]);
             let effective_level =
                 (self.level.as_f32() + self.mod_offset_level.as_f32()).clamp(0.0, 2.0);
 
