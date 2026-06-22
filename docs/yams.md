@@ -424,19 +424,24 @@ apply.
 
 ### Over MCP
 
-Use `set_mod_matrix_script` to install or clear a script on a slot:
+Use `set_mod_matrix_script` to install or clear a script on a slot. Despite the
+name, the host may be a **Mod Matrix** (`mmx-N`) *or* a **Script module**
+(`scr-N`) — on a Mod Matrix the script's `out` is the slot's modulation offset;
+on a Script module it is the value of that slot's `outN` output port:
 
 | Field           | Meaning |
 |-----------------|---------|
 | `instrument_id` | instrument (0 = default) |
-| `module_id`     | the Mod Matrix module, e.g. `mmx-1` |
-| `slot`          | 1-based slot, `1..=16` |
+| `module_id`     | the host module — a Mod Matrix (`mmx-1`) or Script module (`scr-1`) |
+| `slot`          | 1-based slot — Mod Matrix `1..=16`, Script module `1..=8` (drives `out1`..`out8`) |
 | `source`        | YAMS source text; **empty string clears** the slot back to scalar |
 
 A compile error comes back with diagnostics (all errors, not just the first).
-Read back installed scripts with `get_mod_matrix_routings` — a slot with a
-script reports its `script` text and its offset is the script's `out`, not
-`amount × source`.
+Read back installed scripts with `get_mod_matrix_routings` (Mod Matrix — a slot
+with a script reports its `script` text and its offset is the script's `out`, not
+`amount × source`) or with `get_module_info` (a Script module exposes a `scripts`
+array of `{slot, output_port, source}`). `get_yams_reference` returns this
+document over MCP.
 
 ---
 
