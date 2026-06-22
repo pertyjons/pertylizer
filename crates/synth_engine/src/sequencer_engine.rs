@@ -297,7 +297,7 @@ impl SequencerEngine {
     pub fn new(sample_rate: SampleRate) -> Self {
         let default_tempo = Bpm::new(120.0);
         Self {
-            song: Arc::new(RwLock::new(Song::default())),
+            song: crate::shared_song(Song::default()),
             play_state: PlayState::Stopped,
             current_tick: Tick::ZERO,
             cursor_tick: Tick::ZERO,

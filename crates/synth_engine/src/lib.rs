@@ -37,6 +37,17 @@ pub mod visualizers;
 pub mod voice;
 pub mod voice_allocator;
 
+/// Wrap a [`synth_sequencer::Song`] in the shared `Arc<RwLock<Song>>` the engine
+/// and app use for the audio/UI split (audio thread `try_read`s, UI thread
+/// `write`s). Centralizes the otherwise-repeated
+/// `Arc::new(parking_lot::RwLock::new(song))` idiom.
+#[must_use]
+pub fn shared_song(
+    song: synth_sequencer::Song,
+) -> std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>> {
+    std::sync::Arc::new(parking_lot::RwLock::new(song))
+}
+
 // Engine exports
 pub use commands::{
     EffectType, EngineCommand, EngineEvent, InstrumentParam, ModuleId, ModuleTypeId, NoteEvent,
@@ -83,3 +94,19 @@ pub use synth_core::{
     ModuleType, NoiseParam, NoiseType, OscillatorParam, OscilloscopeParam, Param, PhaserParam,
     Port, ReverbParam, SubOscOctave, SubOscParam, SubOscWaveform, Waveform,
 };
+
+#[cfg(test)]
+mod shared_song_tests {
+    use super::shared_song;
+    use synth_sequencer::Song;
+
+    #[test]
+    fn shared_song_wraps_a_readable_song() {
+        let shared = shared_song(Song::new("Demo"));
+        assert_eq!(shared.read().name, "Demo");
+        // A second handle shares the same lock (Arc clone, not a deep copy).
+        let clone = std::sync::Arc::clone(&shared);
+        clone.write().name = "Renamed".to_string();
+        assert_eq!(shared.read().name, "Renamed");
+    }
+}

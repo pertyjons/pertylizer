@@ -114,7 +114,7 @@ pub struct McpSharedState {
 impl McpSharedState {
     #[must_use]
     pub fn new() -> Self {
-        Self::with_song(Arc::new(parking_lot::RwLock::new(Song::new("Untitled"))))
+        Self::with_song(synth_engine::shared_song(Song::new("Untitled")))
     }
 
     /// Create with a pre-existing shared Song (so GUI and MCP share the same instance).

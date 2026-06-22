@@ -10042,7 +10042,7 @@ fn render_analysis_window(
         // which the offline render replays verbatim from the live engine
         // snapshot. Warn rather than produce a misleadingly empty render.
         warnings.extend(instrument_solo_conflicts(session, inst_id));
-        Arc::new(parking_lot::RwLock::new(isolated))
+        synth_engine::shared_song(isolated)
     } else {
         Arc::clone(&shared.song)
     };
@@ -10846,7 +10846,7 @@ pub fn analyze_return_busses_impl(
             if let Some(bus) = variant.return_bus_mut(synth_sequencer::ReturnBusId(*rid)) {
                 bus.mute = true;
             }
-            let muted_song = Arc::new(parking_lot::RwLock::new(variant));
+            let muted_song = synth_engine::shared_song(variant);
             let (muted, _, _) = render_range_to_metrics(
                 &mut engine_session,
                 &muted_song,
@@ -11262,7 +11262,7 @@ fn render_per_track_contributions(
             // one `Song` and just flip the solo flags between renders. The
             // engine read-locks the song only during `render_range`, and we hold
             // the brief write lock between renders, so there is no contention.
-            let chunk_song = std::sync::Arc::new(parking_lot::RwLock::new(base_song.clone()));
+            let chunk_song = synth_engine::shared_song(base_song.clone());
 
             let mut chunk_out = Vec::with_capacity(chunk.len());
             for target in chunk {

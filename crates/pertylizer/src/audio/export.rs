@@ -240,7 +240,7 @@ fn render_to_wav(
     let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
 
     // 3. Set up the song
-    let song = Arc::new(parking_lot::RwLock::new(project.song.clone()));
+    let song = synth_engine::shared_song(project.song.clone());
     handle.send_blocking(EngineCommand::SetSong {
         song: Arc::clone(&song),
     });
