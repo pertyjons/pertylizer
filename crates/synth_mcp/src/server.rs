@@ -739,11 +739,20 @@ pub struct SetModMatrixScriptParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteOnInput {
-    #[schemars(description = "MIDI note number (0-127, where 60 = middle C)")]
+    #[schemars(
+        description = "MIDI note number (0-127, where 60 = middle C)",
+        range(min = 0, max = 127)
+    )]
     pub note: u8,
-    #[schemars(description = "Velocity (0-127, where 127 = maximum)")]
+    #[schemars(
+        description = "Velocity (0-127, where 127 = maximum)",
+        range(min = 0, max = 127)
+    )]
     pub velocity: u8,
-    #[schemars(description = "MIDI channel (1-16, default 1)")]
+    #[schemars(
+        description = "MIDI channel (1-16, default 1)",
+        range(min = 1, max = 16)
+    )]
     pub channel: Option<u8>,
 }
 
@@ -755,9 +764,12 @@ pub struct NoteOnParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteOffInput {
-    #[schemars(description = "MIDI note number (0-127)")]
+    #[schemars(description = "MIDI note number (0-127)", range(min = 0, max = 127))]
     pub note: u8,
-    #[schemars(description = "MIDI channel (1-16, default 1)")]
+    #[schemars(
+        description = "MIDI channel (1-16, default 1)",
+        range(min = 1, max = 16)
+    )]
     pub channel: Option<u8>,
 }
 
@@ -771,9 +783,15 @@ pub struct NoteOffParam {
 pub struct PreviewNoteParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
     pub instrument_id: u64,
-    #[schemars(description = "MIDI note number (0-127, where 60 = middle C)")]
+    #[schemars(
+        description = "MIDI note number (0-127, where 60 = middle C)",
+        range(min = 0, max = 127)
+    )]
     pub note: u8,
-    #[schemars(description = "Velocity (0-127, where 127 = maximum)")]
+    #[schemars(
+        description = "Velocity (0-127, where 127 = maximum)",
+        range(min = 0, max = 127)
+    )]
     pub velocity: u8,
     #[schemars(
         description = "Note duration in milliseconds (default 500). How long the note is held before release."
@@ -789,9 +807,15 @@ pub struct PreviewNoteParam {
 pub struct ValidateInstrumentAudioParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
     pub instrument_id: u64,
-    #[schemars(description = "MIDI note to test (default 60 = middle C)")]
+    #[schemars(
+        description = "MIDI note to test (default 60 = middle C)",
+        range(min = 0, max = 127)
+    )]
     pub note: Option<u8>,
-    #[schemars(description = "Velocity (0-127, default 100)")]
+    #[schemars(
+        description = "Velocity (0-127, default 100)",
+        range(min = 0, max = 127)
+    )]
     pub velocity: Option<u8>,
     #[schemars(description = "Note hold time in milliseconds (default 500)")]
     pub duration_ms: Option<u32>,
@@ -1301,15 +1325,24 @@ pub struct AnalyzePatternParam {
 pub struct AnalyzeInstrumentRangeParam {
     #[schemars(description = "Instrument ID to sweep.")]
     pub instrument_id: u64,
-    #[schemars(description = "Lowest MIDI note in the sweep (0-127, inclusive).")]
+    #[schemars(
+        description = "Lowest MIDI note in the sweep (0-127, inclusive).",
+        range(min = 0, max = 127)
+    )]
     pub low_note: u8,
-    #[schemars(description = "Highest MIDI note in the sweep (0-127, inclusive).")]
+    #[schemars(
+        description = "Highest MIDI note in the sweep (0-127, inclusive).",
+        range(min = 0, max = 127)
+    )]
     pub high_note: u8,
     #[schemars(
         description = "Semitone gap between consecutive sweep steps (default 12 = one note per octave). Smaller values increase resolution at proportional render cost."
     )]
     pub step_semitones: Option<u8>,
-    #[schemars(description = "Velocity to use for every step (1-127, default 100).")]
+    #[schemars(
+        description = "Velocity to use for every step (1-127, default 100).",
+        range(min = 1, max = 127)
+    )]
     pub velocity: Option<u8>,
     #[schemars(
         description = "Note duration in ms (default 400). Held identical across steps so per-step amplitude/brightness curves stay comparable."
@@ -1323,11 +1356,20 @@ pub struct AnalyzeInstrumentRangeParam {
 pub struct AnalyzeVelocityResponseParam {
     #[schemars(description = "Instrument ID to test.")]
     pub instrument_id: u64,
-    #[schemars(description = "MIDI note to hold across the velocity sweep (0-127).")]
+    #[schemars(
+        description = "MIDI note to hold across the velocity sweep (0-127).",
+        range(min = 0, max = 127)
+    )]
     pub note: u8,
-    #[schemars(description = "Lowest velocity in the sweep (1-127, default 1).")]
+    #[schemars(
+        description = "Lowest velocity in the sweep (1-127, default 1).",
+        range(min = 1, max = 127)
+    )]
     pub velocity_low: Option<u8>,
-    #[schemars(description = "Highest velocity in the sweep (1-127, default 127).")]
+    #[schemars(
+        description = "Highest velocity in the sweep (1-127, default 127).",
+        range(min = 1, max = 127)
+    )]
     pub velocity_high: Option<u8>,
     #[schemars(
         description = "Step size between consecutive velocities (default 16 → ~8 steps over 1-127)."
@@ -1375,7 +1417,10 @@ pub struct CreateChordProgressionPatternParam {
         description = "Voicing applied to every chord: 'close' (default), 'drop2', 'drop3', 'open'."
     )]
     pub voicing: Option<String>,
-    #[schemars(description = "Velocity for all placed notes (0-127, default 80).")]
+    #[schemars(
+        description = "Velocity for all placed notes (0-127, default 80).",
+        range(min = 0, max = 127)
+    )]
     pub velocity: Option<u8>,
 }
 
@@ -1689,9 +1734,15 @@ pub struct AnalyzeBassDrumLockParam {
 pub struct AnalyzeNoteParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
     pub instrument_id: u64,
-    #[schemars(description = "MIDI note number (0-127, where 60 = middle C)")]
+    #[schemars(
+        description = "MIDI note number (0-127, where 60 = middle C)",
+        range(min = 0, max = 127)
+    )]
     pub note: u8,
-    #[schemars(description = "Velocity (0-127, where 127 = maximum)")]
+    #[schemars(
+        description = "Velocity (0-127, where 127 = maximum)",
+        range(min = 0, max = 127)
+    )]
     pub velocity: u8,
     #[schemars(
         description = "Note duration in milliseconds (default 500). How long the note is held before release."
@@ -1702,7 +1753,8 @@ pub struct AnalyzeNoteParam {
     )]
     pub tail_ms: Option<u32>,
     #[schemars(
-        description = "Optional MIDI note for pitch-error measurement. When set, the fundamental detector restricts its search to ±tritone around this pitch so it isn't fooled by dominant sub-octaves (sub-bass) or strong upper harmonics (wave-folded patches). Defaults to the actually-played note (`note` shifted by the patch's octave_offset)."
+        description = "Optional MIDI note for pitch-error measurement. When set, the fundamental detector restricts its search to ±tritone around this pitch so it isn't fooled by dominant sub-octaves (sub-bass) or strong upper harmonics (wave-folded patches). Defaults to the actually-played note (`note` shifted by the patch's octave_offset).",
+        range(min = 0, max = 127)
     )]
     pub expected_note: Option<u8>,
 }
@@ -2093,7 +2145,7 @@ pub struct SetInstrumentMixerParam {
 pub struct InstrumentMidiChannelInput {
     #[schemars(description = "Instrument ID")]
     pub instrument_id: u64,
-    #[schemars(description = "MIDI channel (1-16)")]
+    #[schemars(description = "MIDI channel (1-16)", range(min = 1, max = 16))]
     pub channel: u8,
 }
 
@@ -2188,7 +2240,8 @@ pub struct GlideInput {
     )]
     pub from_semitones: Option<f32>,
     #[schemars(
-        description = "Glide source as an absolute MIDI pitch (0-127). Takes precedence over from_semitones."
+        description = "Glide source as an absolute MIDI pitch (0-127). Takes precedence over from_semitones.",
+        range(min = 0, max = 127)
     )]
     pub from_pitch: Option<u8>,
     #[schemars(description = "Glide time in milliseconds. Default 100.")]
@@ -2230,13 +2283,19 @@ pub struct ExpressionInput {
 /// A note to add in a batch operation.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteInput {
-    #[schemars(description = "MIDI pitch (0-127, where 60 = middle C)")]
+    #[schemars(
+        description = "MIDI pitch (0-127, where 60 = middle C)",
+        range(min = 0, max = 127)
+    )]
     pub pitch: u8,
     #[schemars(description = "Start position in beats (0.0 = beginning of pattern)")]
     pub start_beat: f32,
     #[schemars(description = "Duration in beats (1.0 = quarter note, 0.5 = eighth note)")]
     pub duration_beats: f32,
-    #[schemars(description = "Velocity (0-127). Default 100 if omitted.")]
+    #[schemars(
+        description = "Velocity (0-127). Default 100 if omitted.",
+        range(min = 0, max = 127)
+    )]
     pub velocity: Option<u8>,
     #[schemars(
         description = "Tie/legato: connect to the next note without retriggering. Default false."
@@ -2303,13 +2362,19 @@ pub struct AddNotesParam {
 pub struct NoteUpdateInput {
     #[schemars(description = "Note ID to update")]
     pub note_id: u64,
-    #[schemars(description = "New MIDI pitch (0-127), or null to keep current")]
+    #[schemars(
+        description = "New MIDI pitch (0-127), or null to keep current",
+        range(min = 0, max = 127)
+    )]
     pub pitch: Option<u8>,
     #[schemars(description = "New start position in beats, or null to keep current")]
     pub start_beat: Option<f32>,
     #[schemars(description = "New duration in beats, or null to keep current")]
     pub duration_beats: Option<f32>,
-    #[schemars(description = "New velocity (0-127), or null to keep current")]
+    #[schemars(
+        description = "New velocity (0-127), or null to keep current",
+        range(min = 0, max = 127)
+    )]
     pub velocity: Option<u8>,
 }
 
@@ -3223,7 +3288,10 @@ pub struct InstrumentDefInput {
     pub instrument_id: Option<u64>,
     #[schemars(description = "Instrument name")]
     pub name: String,
-    #[schemars(description = "MIDI channel (1-16, optional)")]
+    #[schemars(
+        description = "MIDI channel (1-16, optional)",
+        range(min = 1, max = 16)
+    )]
     pub midi_channel: Option<u8>,
     #[schemars(description = "Volume (0.0-2.0, optional)")]
     pub volume: Option<f32>,
@@ -3247,7 +3315,10 @@ pub struct RebuildInstrumentParam {
     pub instrument_id: u64,
     #[schemars(description = "Instrument name")]
     pub name: String,
-    #[schemars(description = "MIDI channel (1-16, optional)")]
+    #[schemars(
+        description = "MIDI channel (1-16, optional)",
+        range(min = 1, max = 16)
+    )]
     pub midi_channel: Option<u8>,
     #[schemars(description = "Volume (0.0-2.0, optional)")]
     pub volume: Option<f32>,
@@ -3355,7 +3426,10 @@ pub struct SetAwePresetParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetAweLfoParam {
-    #[schemars(description = "LFO index (1-4). AWE has 4 internal LFOs for parameter modulation.")]
+    #[schemars(
+        description = "LFO index (1-4). AWE has 4 internal LFOs for parameter modulation.",
+        range(min = 1, max = 4)
+    )]
     pub index: u8,
     #[schemars(
         description = "LFO rate in Hz (0.01-20.0). Lower = slow sweep, higher = vibrato-like."
@@ -3384,7 +3458,8 @@ pub struct ImportSampleInput {
     #[schemars(description = "Optional display name. Defaults to filename without extension.")]
     pub name: Option<String>,
     #[schemars(
-        description = "Optional root MIDI note (0-127). 60 = C4 (middle C). Determines pitch mapping."
+        description = "Optional root MIDI note (0-127). 60 = C4 (middle C). Determines pitch mapping.",
+        range(min = 0, max = 127)
     )]
     pub root_note: Option<u8>,
 }
@@ -3434,7 +3509,10 @@ pub struct RenameSampleParam {
 pub struct SampleRootNoteInput {
     #[schemars(description = "Sample ID.")]
     pub sample_id: u64,
-    #[schemars(description = "Root MIDI note (0-127). 60=C4, 48=C3, 72=C5.")]
+    #[schemars(
+        description = "Root MIDI note (0-127). 60=C4, 48=C3, 72=C5.",
+        range(min = 0, max = 127)
+    )]
     pub note: u8,
 }
 
@@ -8412,5 +8490,54 @@ mod panic_isolation_tests {
         })
         .await;
         assert_eq!(out, Err("inside block_in_place".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod schema_range_tests {
+    use super::*;
+
+    /// `#[schemars(range(...))]` on fixed-range numeric MCP fields must surface
+    /// machine-readable `minimum`/`maximum` in the generated JSON schema, not
+    /// just prose bounds in the description.
+    #[test]
+    fn fixed_range_fields_expose_min_max_in_schema() {
+        // note/velocity: u8 with range(0, 127); channel: Option<u8> range(1, 16).
+        let schema = serde_json::to_value(schemars::schema_for!(NoteOnInput))
+            .expect("NoteOnInput schema serializes");
+        let props = &schema["properties"];
+
+        assert_eq!(props["note"]["maximum"], serde_json::json!(127), "note max");
+        assert_eq!(props["note"]["minimum"], serde_json::json!(0), "note min");
+        assert_eq!(
+            props["velocity"]["maximum"],
+            serde_json::json!(127),
+            "velocity max"
+        );
+        assert_eq!(
+            props["velocity"]["minimum"],
+            serde_json::json!(0),
+            "velocity min"
+        );
+        // channel is Option<u8>; the bounds attach to the inner number schema.
+        let channel = serde_json::to_string(&props["channel"]).unwrap();
+        assert!(
+            channel.contains("\"maximum\":16") && channel.contains("\"minimum\":1"),
+            "channel 1..=16 bounds missing: {channel}"
+        );
+
+        // LFO index has its own 1..=4 range — guard the distinct bound.
+        let lfo = serde_json::to_value(schemars::schema_for!(SetAweLfoParam))
+            .expect("SetAweLfoParam schema serializes");
+        assert_eq!(
+            lfo["properties"]["index"]["maximum"],
+            serde_json::json!(4),
+            "lfo index max=4"
+        );
+        assert_eq!(
+            lfo["properties"]["index"]["minimum"],
+            serde_json::json!(1),
+            "lfo index min=1"
+        );
     }
 }
