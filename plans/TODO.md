@@ -268,13 +268,13 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   cases become a compile-time impossibility and the `#[allow]` disappears. Touches
   `synth_mcp::server` (the param struct), the bridge impl, and the arrangement-vs-pattern branch
   in `analyze_song_harmony`. Medium impact — pick up when next touching the harmony analyzer.
-- [ ] **`synth_sequencer::shared_song(Song) -> Arc<RwLock<Song>>` constructor.** Grep finds 12 sites
-  that wrap a `Song` in `Arc::new(parking_lot::RwLock::new(...))` verbatim, and no such helper
-  exists yet. Seven are in `crates/synth_engine/src/synth_engine.rs` (4116, 4335, 4377, 4407,
-  4442, 4472, 4501); the rest: `crates/pertylizer/src/mcp_bridge.rs:9962` and `:10378`,
-  `crates/pertylizer/src/audio/export.rs:214`, `crates/pertylizer/src/main.rs:113`,
-  `crates/pertylizer/src/mcp_shared.rs:117`. Strictly cosmetic; not on any hot path. Pick up
-  as a drive-by when next touching one of those sites.
+- [x] **`shared_song(Song) -> Arc<RwLock<Song>>` constructor. — DONE** (commit `ecb339f`).
+  Added as `synth_engine::shared_song` (not `synth_sequencer` as originally suggested — that
+  pure-data crate has no `parking_lot` dep, and adding one purely for this convenience would invert
+  layering; `synth_engine` already owns the shared-song threading model and depends on `parking_lot`).
+  All **7** production call sites converted (the 7 in `synth_engine.rs` / others originally counted
+  turned out to be inside `#[cfg(test)]`); test fixtures keep the inline form intentionally.
+  Unit test `shared_song_tests::shared_song_wraps_a_readable_song`.
 - [ ] **`OfflineNoteSession` — engine reuse across patch-sweep steps.** `analyze_instrument_range_impl`
   (`crates/pertylizer/src/mcp_bridge.rs:7366`) and `analyze_velocity_response_impl` (`:7426`) call
   `analyze_rendered_note` (`:7303`) once per swept value via the `sweep_range` loop; each call goes
