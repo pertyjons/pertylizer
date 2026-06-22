@@ -94,7 +94,7 @@ fn context_to_runtime(c: Context) -> ScriptContext {
         Context::Gate => ScriptContext::Gate,
         Context::GateOn => ScriptContext::GateOn,
         Context::Age => ScriptContext::Age,
-        Context::Sr => ScriptContext::Sr,
+        Context::Cr => ScriptContext::Cr,
         Context::Beat => ScriptContext::Beat,
         Context::BarPhase => ScriptContext::BarPhase,
         Context::Tempo => ScriptContext::Tempo,
@@ -631,18 +631,18 @@ impl Compiler {
 
     /// Emit the `lag` smoothing coefficient onto the stack. If the time argument
     /// is a constant, alpha is precomputed here (coefficient caching); otherwise
-    /// `alpha = 1 - exp(-1 / (sr * t))` is emitted as runtime bytecode.
+    /// `alpha = 1 - exp(-1 / (cr * t))` is emitted as runtime bytecode.
     fn emit_lag_alpha(&mut self, time: &Expr, depth: usize) {
         if let Some(t) = const_eval(time) {
             self.emit_const(self.lag_alpha(t));
             return;
         }
-        // Runtime: 1 - exp(-1 / (t * sr)).  Stack already has x below.
+        // Runtime: 1 - exp(-1 / (t * cr)).  Stack already has x below.
         self.emit_const(1.0);
         self.compile_expr(time, depth + 1);
-        self.push_source(SourceInput::Context(Context::Sr));
-        self.code.push(Op::Mul); // t * sr
-        self.code.push(Op::Div); // 1 / (t * sr)
+        self.push_source(SourceInput::Context(Context::Cr));
+        self.code.push(Op::Mul); // t * cr
+        self.code.push(Op::Div); // 1 / (t * cr)
         self.code.push(Op::Neg);
         self.code.push(Op::Call(Builtin::Exp));
         self.code.push(Op::Neg);
@@ -810,7 +810,7 @@ mod tests {
     use super::*;
     use synth_core::script::{EvalContext, RegisterFile};
 
-    const SR: f32 = 750.0;
+    const CR: f32 = 750.0;
     const SEED: u64 = 0x5EED;
 
     fn compile_ok(src: &str) -> CompiledProgram {
@@ -833,7 +833,7 @@ mod tests {
     fn eval(prog: &CompiledProgram, fill: impl Fn(&SourceInput) -> f32) -> f32 {
         let sources: Vec<f32> = prog.inputs.iter().map(fill).collect();
         let mut regs = RegisterFile::new(0, SEED);
-        prog.script.eval(&sources, &mut regs, &EvalContext::new(SR))
+        prog.script.eval(&sources, &mut regs, &EvalContext::new(CR))
     }
 
     fn approx(a: f32, b: f32) -> bool {
@@ -1009,21 +1009,21 @@ mod tests {
     fn lag_with_constant_time_caches_coefficient() {
         // alpha folded; first block from rest = alpha * x with x = 1.
         let prog = compile_ok("out = lag(velocity, 50ms)");
-        let alpha = 1.0 - (-1.0f32 / (SR * 0.05)).exp();
+        let alpha = 1.0 - (-1.0f32 / (CR * 0.05)).exp();
         assert!(approx(eval(&prog, |_| 1.0), alpha));
     }
 
     #[test]
     fn lag_with_dynamic_time_computes_alpha_at_runtime() {
-        // A non-constant time emits the `1 - exp(-1/(t*sr))` bytecode; with the
+        // A non-constant time emits the `1 - exp(-1/(t*cr))` bytecode; with the
         // same 0.05 s it must match the constant-folded path (guards the Div
         // operand order in the runtime-alpha lowering).
         let prog = compile_ok("out = lag(velocity, mod_wheel)");
-        let alpha = 1.0 - (-1.0f32 / (SR * 0.05)).exp();
+        let alpha = 1.0 - (-1.0f32 / (CR * 0.05)).exp();
         let out = eval(&prog, |inp| match inp {
             SourceInput::Macro(Macro::Velocity) => 1.0,
             SourceInput::Macro(Macro::ModWheel) => 0.05,
-            SourceInput::Context(Context::Sr) => SR,
+            SourceInput::Context(Context::Cr) => CR,
             _ => 0.0,
         });
         assert!(
@@ -1061,6 +1061,19 @@ mod tests {
     }
 
     #[test]
+    fn control_rate_var_is_cr_not_sr() {
+        // The control-rate context var was renamed `sr` → `cr`; the old name is
+        // gone (it conventionally reads as "sample rate", an order-of-magnitude trap).
+        compile_ok("out = cr");
+        assert!(
+            errors("out = sr")
+                .iter()
+                .any(|e| e.contains("unknown identifier")),
+            "`sr` must no longer resolve"
+        );
+    }
+
+    #[test]
     fn arity_errors() {
         assert!(
             errors("out = clamp(1, 2)")
@@ -1077,7 +1090,7 @@ mod tests {
     fn eval_blocks(prog: &CompiledProgram, fill: impl Fn(&SourceInput) -> f32, n: usize) -> f32 {
         let sources: Vec<f32> = prog.inputs.iter().map(&fill).collect();
         let mut regs = RegisterFile::new(0, SEED);
-        let ctx = EvalContext::new(SR);
+        let ctx = EvalContext::new(CR);
         let mut last = 0.0;
         for _ in 0..n {
             last = prog.script.eval(&sources, &mut regs, &ctx);
@@ -1103,7 +1116,7 @@ mod tests {
             }
         };
         let mut regs = RegisterFile::new(0, SEED);
-        let ctx = EvalContext::new(SR);
+        let ctx = EvalContext::new(CR);
         let src_lo: Vec<f32> = prog.inputs.iter().map(fill(false)).collect();
         let src_hi: Vec<f32> = prog.inputs.iter().map(fill(true)).collect();
         assert!(approx(prog.script.eval(&src_lo, &mut regs, &ctx), 0.25));
@@ -1172,7 +1185,7 @@ mod tests {
         // pulse(2) fires once at the start of beats 0, 2, 4, ...
         let prog = compile_ok("out = pulse(2)");
         let mut regs = RegisterFile::new(0, SEED);
-        let ctx = EvalContext::new(SR);
+        let ctx = EvalContext::new(CR);
         let fire = |beat: f32, regs: &mut RegisterFile| {
             let sources: Vec<f32> = prog
                 .inputs

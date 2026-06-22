@@ -11,7 +11,7 @@ fn fill(inp: &SourceInput) -> f32 {
         SourceInput::Macro(Macro::Velocity) => 0.8,
         SourceInput::Macro(Macro::ModWheel) => 0.5,
         SourceInput::Macro(_) => 0.0,
-        SourceInput::Context(Context::Sr) => 750.0,
+        SourceInput::Context(Context::Cr) => 750.0,
         SourceInput::Context(Context::Beat) => 2.0,
         SourceInput::Context(_) => 0.0,
         SourceInput::Module { module, member, .. } if module == "lfo" && member == "out" => 1.0,

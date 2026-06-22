@@ -21,8 +21,9 @@ pub enum ScriptContext {
     GateOn,
     /// Seconds since note-on.
     Age,
-    /// Control rate in Hz.
-    Sr,
+    /// Control rate in Hz (`sample_rate / block_size`), *not* the audio sample
+    /// rate.
+    Cr,
     /// Absolute transport position in beats (grows unbounded while playing).
     Beat,
     /// Phase within the current bar, `0..1` (4/4).

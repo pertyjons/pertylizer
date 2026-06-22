@@ -60,7 +60,7 @@ struct MacroValues {
 }
 
 /// Per-voice control-script context values — the predefined `gate`, `gate_on`,
-/// `age`, `sr` identifiers (Step 2) plus the transport sources `beat`,
+/// `age`, `cr` identifiers (Step 2) plus the transport sources `beat`,
 /// `bar_phase`, `tempo`, `playing` (Phase 1), filled once per block. Transport
 /// newtypes (`BeatPosition`, `Bpm`) are normalized to `f32` here, at the resolve
 /// boundary — the VM only ever sees `f32`.
@@ -71,8 +71,8 @@ struct ScriptCtx {
     gate_on: f32,
     /// Seconds since note-on (block start).
     age: f32,
-    /// Control rate in Hz.
-    sr: f32,
+    /// Control rate in Hz (`sample_rate / block_size`), not the audio sample rate.
+    cr: f32,
     /// Absolute transport position in beats (grows unbounded while playing).
     beat: f32,
     /// Phase within the current bar, `0..1` (4/4).
@@ -943,7 +943,7 @@ impl Voice {
         // every consumer this block) and run before graph processing.
         if self.mod_matrix_id.is_some() || !self.script_module_ids.is_empty() {
             // Control rate = evaluations per second = sample_rate / block_size;
-            // drives time-based script ops (`lag`, `phasor`) and the `sr` var.
+            // drives time-based script ops (`lag`, `phasor`) and the `cr` var.
             let block = samples.as_usize().max(1) as f32;
             let control_rate = context.sample_rate.as_f32() / block;
             let macros = self.macro_values();
@@ -1039,7 +1039,7 @@ impl Voice {
         }
     }
 
-    /// Per-voice control-script context for this block: gate/age/sr (Step 2) plus
+    /// Per-voice control-script context for this block: gate/age/cr (Step 2) plus
     /// the transport sources (Phase 1). Transport newtypes normalize to `f32`
     /// here; `bar_phase` is the 0..1 position within the 4/4 bar.
     fn script_ctx(&self, control_rate: f32, context: &ProcessContext<'_>) -> ScriptCtx {
@@ -1051,7 +1051,7 @@ impl Voice {
             // (sub-5 ms), not exactly 0 — accepted: moving the increment would
             // perturb the voice-stealing priority that also reads `age`.
             age: self.age.to_seconds(context.sample_rate).as_f32(),
-            sr: control_rate,
+            cr: control_rate,
             beat: context.position_beats.as_f32(),
             bar_phase: (context.position_beats.beat_in_bar() / 4.0) as f32,
             tempo: context.tempo.as_f32(),
@@ -1100,7 +1100,7 @@ impl Voice {
         }
 
         // Pass 2: evaluate each active slot against the module's own state.
-        let eval_ctx = EvalContext::new(sctx.sr);
+        let eval_ctx = EvalContext::new(sctx.cr);
         if let Some(module) = self.graph.get_module_mut(id) {
             for (slot, count) in active.iter().enumerate() {
                 if let Some(n) = *count {
@@ -1269,7 +1269,7 @@ impl Voice {
         if self.script_eval_queue.is_empty() {
             return;
         }
-        let eval_ctx = EvalContext::new(sctx.sr);
+        let eval_ctx = EvalContext::new(sctx.cr);
         if let Some(module) = self.graph.get_module_mut(mm_id) {
             for &(slot, n, dest) in &self.script_eval_queue {
                 if let Some(offset) =
@@ -1296,7 +1296,7 @@ impl Voice {
                 ScriptContext::Gate => sctx.gate,
                 ScriptContext::GateOn => sctx.gate_on,
                 ScriptContext::Age => sctx.age,
-                ScriptContext::Sr => sctx.sr,
+                ScriptContext::Cr => sctx.cr,
                 ScriptContext::Beat => sctx.beat,
                 ScriptContext::BarPhase => sctx.bar_phase,
                 ScriptContext::Tempo => sctx.tempo,

@@ -12,7 +12,7 @@ In short: a scalar slot says *"this source, scaled by this knob."* A YAMS slot
 says *"compute the offset however you like — from any combination of sources,
 math, curves, and per-voice state."*
 
-- **Runs per voice, at control rate** (`sr`, typically a few hundred Hz — not
+- **Runs per voice, at control rate** (`cr`, typically a few hundred Hz — not
   audio rate). One independent copy of the script's state per sounding voice.
 - **Compiled offline, evaluated in real time.** The UI/MCP thread compiles the
   source text to a flat bytecode program; the audio thread only ever runs the
@@ -215,7 +215,7 @@ shadowing.
 | `gate`      | `1` while the note is held, else `0` |
 | `gate_on`   | `1` for the single block of note-on, else `0` |
 | `age`       | seconds since note-on |
-| `sr`        | **control** rate in Hz — `sample_rate / block_size`, ~hundreds of Hz (device-dependent). **Not** the audio sample rate; a 48 kHz device yields `sr ≈ 750`, not 48000 |
+| `cr`        | **control** rate in Hz — `sample_rate / block_size`, ~hundreds of Hz (device-dependent). **Not** the audio sample rate; a 48 kHz device yields `cr ≈ 750`, not 48000 |
 | `beat`      | absolute transport position in beats (grows unbounded; `sin(beat * tau)` is a tempo-locked sine) |
 | `bar_phase` | phase within the current bar, `0..1` (4/4); wraps every bar |
 | `tempo`     | transport tempo in BPM (`tempo / 60` is beats per second) |
@@ -253,7 +253,7 @@ they carry per-voice state.
 | Trig      | `sin(x)` · `cos(x)` · `tan(x)` · `atan(x)` · `atan2(y,x)` |
 | Interp    | `lerp(a,b,t)` · `mix(a,b,t)` *(alias of `lerp`)* · `smoothstep(a,b,x)` |
 | Curves    | `sigmoid(x)` · `gauss(x)` |
-| Musical   | `semis(x)` → `2^(x/12)` ratio · `mtof(x)` → Hz from a **normalized** note (`x` in `0..1`, ×127 internally — call `mtof(note)`, *not* `mtof(60)`) · `scale_snap(x, arr)` → snap semitones to a scale (octave-aware) |
+| Musical   | `semis(x)` → `2^(x/12)` ratio · `mtof(m)` → Hz from a **raw MIDI note** (`mtof(69)` = 440 Hz; for the normalized `note` macro use `mtof(note * 127)`) · `scale_snap(x, arr)` → snap semitones to a scale (octave-aware) |
 | Polarity  | `unipolar(x)` → `x*0.5+0.5` (±1 → 0..1) · `bipolar(x)` → `x*2-1` (0..1 → ±1) |
 | Arrays    | `name[i]` index a const table (floor + clamp) · `len(name)` → element count (folds at compile time) · `table_lin(arr, pos)` → linear-interpolated lookup |
 

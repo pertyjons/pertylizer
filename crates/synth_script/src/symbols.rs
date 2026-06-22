@@ -23,9 +23,10 @@ pub enum Context {
     Gate,
     GateOn,
     Age,
-    /// Control rate in Hz (drives time-based stateful math; supplied as an input
-    /// rather than a constant because it depends on the device sample rate).
-    Sr,
+    /// Control rate in Hz (`sample_rate / block_size`), *not* the audio sample
+    /// rate. Drives time-based stateful math; supplied as an input rather than a
+    /// constant because it depends on the device sample rate.
+    Cr,
     /// Absolute transport position in beats (e.g. `sin(beat * tau)` is a
     /// tempo-locked sine). Grows unbounded while playing.
     Beat,
@@ -124,7 +125,7 @@ pub const CONTEXT_CATALOG: &[(&str, &str)] = &[
     ("gate", "Gate (0/1)"),
     ("gate_on", "Gate note-on edge"),
     ("age", "Voice age (s)"),
-    ("sr", "Sample rate"),
+    ("cr", "Control rate (Hz)"),
     ("beat", "Transport beat"),
     ("bar_phase", "Bar phase (0..1)"),
     ("tempo", "Tempo (BPM)"),
@@ -152,7 +153,7 @@ pub fn context_from_name(name: &str) -> Option<Context> {
         "gate" => Context::Gate,
         "gate_on" => Context::GateOn,
         "age" => Context::Age,
-        "sr" => Context::Sr,
+        "cr" => Context::Cr,
         "beat" => Context::Beat,
         "bar_phase" => Context::BarPhase,
         "tempo" => Context::Tempo,

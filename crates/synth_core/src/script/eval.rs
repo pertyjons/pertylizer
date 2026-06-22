@@ -414,14 +414,14 @@ mod tests {
     use super::*;
     use crate::script::bytecode::Op;
 
-    const SR: f32 = 750.0; // 48 kHz / 64-sample blocks
+    const CR: f32 = 750.0; // 48 kHz / 64-sample blocks
     const SEED: u64 = 0x5EED;
 
     fn run(code: &[Op], constants: &[f32], sources: &[f32]) -> f32 {
         let script =
             CompiledScript::new(code.to_vec(), constants.to_vec(), sources.len() as u16, 4);
         let mut regs = RegisterFile::new(0, SEED);
-        script.eval(sources, &mut regs, &EvalContext::new(SR))
+        script.eval(sources, &mut regs, &EvalContext::new(CR))
     }
 
     fn approx(a: f32, b: f32) -> bool {
@@ -444,6 +444,16 @@ mod tests {
     #[test]
     fn reads_a_source() {
         assert!(approx(run(&[Op::PushSource(0)], &[], &[0.5]), 0.5));
+    }
+
+    #[test]
+    fn mtof_takes_raw_midi() {
+        use crate::script::bytecode::Builtin;
+        // Raw MIDI note in (industry standard): A4 = 69 → 440 Hz exactly,
+        // middle C = 60 → ~261.63 Hz. (Not a normalized 0..1 note.)
+        let code = [Op::PushConst(0), Op::Call(Builtin::Mtof)];
+        assert!(approx(run(&code, &[69.0], &[]), 440.0));
+        assert!((run(&code, &[60.0], &[]) - 261.6256).abs() < 0.01);
     }
 
     #[test]
@@ -472,7 +482,7 @@ mod tests {
         let script =
             CompiledScript::new(vec![Op::PushConst(0), Op::Accum(0)], vec![f32::NAN], 0, 1);
         let mut regs = RegisterFile::new(0, SEED);
-        let out = script.eval(&[], &mut regs, &EvalContext::new(SR));
+        let out = script.eval(&[], &mut regs, &EvalContext::new(CR));
         assert_eq!(out, 0.0);
         assert_eq!(regs.state_get(0), 0.0);
     }
@@ -483,18 +493,18 @@ mod tests {
         let code = [Op::PushConst(0), Op::PushConst(1), Op::Lag(0)];
         let script = CompiledScript::new(code.to_vec(), vec![1.0, 0.5], 0, 1);
         let mut regs = RegisterFile::new(0, SEED);
-        let ctx = EvalContext::new(SR);
+        let ctx = EvalContext::new(CR);
         assert!(approx(script.eval(&[], &mut regs, &ctx), 0.5));
         assert!(approx(script.eval(&[], &mut regs, &ctx), 0.75));
     }
 
     #[test]
     fn phasor_advances_by_rate_times_dt() {
-        // rate = SR * 0.25 → +0.25 per block.
+        // rate = CR * 0.25 → +0.25 per block.
         let code = [Op::PushConst(0), Op::Phasor(0)];
-        let script = CompiledScript::new(code.to_vec(), vec![SR * 0.25], 0, 1);
+        let script = CompiledScript::new(code.to_vec(), vec![CR * 0.25], 0, 1);
         let mut regs = RegisterFile::new(0, SEED);
-        let ctx = EvalContext::new(SR);
+        let ctx = EvalContext::new(CR);
         assert!(approx(script.eval(&[], &mut regs, &ctx), 0.25));
         assert!(approx(script.eval(&[], &mut regs, &ctx), 0.5));
     }
@@ -505,7 +515,7 @@ mod tests {
         let code = [Op::PushSource(0), Op::PushSource(1), Op::Sah(0)];
         let script = CompiledScript::new(code.to_vec(), vec![], 2, 2);
         let mut regs = RegisterFile::new(0, SEED);
-        let ctx = EvalContext::new(SR);
+        let ctx = EvalContext::new(CR);
         // trig low → held stays at its initial 0.
         assert!(approx(script.eval(&[5.0, 0.0], &mut regs, &ctx), 0.0));
         // rising edge → sample 5.0.
@@ -522,7 +532,7 @@ mod tests {
         let run_idx = |i: f32| {
             let script = CompiledScript::new(code.to_vec(), consts.clone(), 1, 0);
             let mut regs = RegisterFile::new(0, SEED);
-            script.eval(&[i], &mut regs, &EvalContext::new(SR))
+            script.eval(&[i], &mut regs, &EvalContext::new(CR))
         };
         assert!(approx(run_idx(0.0), 10.0));
         assert!(approx(run_idx(1.9), 20.0)); // floor → 1
@@ -543,18 +553,18 @@ mod tests {
         let script = CompiledScript::new(code.to_vec(), consts, 0, 0);
         let mut regs = RegisterFile::new(0, SEED);
         assert!(approx(
-            script.eval(&[], &mut regs, &EvalContext::new(SR)),
+            script.eval(&[], &mut regs, &EvalContext::new(CR)),
             7.0
         ));
     }
 
     #[test]
     fn phasor_sync_resets_phase_on_rising_edge() {
-        // rate = SR * 0.25 (+0.25/block); sync from source[0]. Cells 0,1.
+        // rate = CR * 0.25 (+0.25/block); sync from source[0]. Cells 0,1.
         let code = [Op::PushConst(0), Op::PushSource(0), Op::PhasorSync(0)];
-        let script = CompiledScript::new(code.to_vec(), vec![SR * 0.25], 1, 2);
+        let script = CompiledScript::new(code.to_vec(), vec![CR * 0.25], 1, 2);
         let mut regs = RegisterFile::new(0, SEED);
-        let ctx = EvalContext::new(SR);
+        let ctx = EvalContext::new(CR);
         assert!(approx(script.eval(&[0.0], &mut regs, &ctx), 0.25));
         assert!(approx(script.eval(&[0.0], &mut regs, &ctx), 0.5));
         // Rising edge of sync → phase resets to 0.
@@ -569,7 +579,7 @@ mod tests {
         let code = [Op::PushConst(0), Op::PushSource(0), Op::AccumReset(0)];
         let script = CompiledScript::new(code.to_vec(), vec![1.0], 1, 2);
         let mut regs = RegisterFile::new(0, SEED);
-        let ctx = EvalContext::new(SR);
+        let ctx = EvalContext::new(CR);
         assert!(approx(script.eval(&[0.0], &mut regs, &ctx), 1.0));
         assert!(approx(script.eval(&[0.0], &mut regs, &ctx), 2.0));
         // Rising edge → clears (skips x this block).
@@ -580,10 +590,10 @@ mod tests {
 
     #[test]
     fn rand_smooth_is_seeded_continuous_and_decorrelated() {
-        // rate = SR * 0.25 → quarter-cycle per block. Cells 0,1,2.
+        // rate = CR * 0.25 → quarter-cycle per block. Cells 0,1,2.
         let code = [Op::PushConst(0), Op::RandSmooth(0)];
-        let script = CompiledScript::new(code.to_vec(), vec![SR * 0.25], 0, 3);
-        let ctx = EvalContext::new(SR);
+        let script = CompiledScript::new(code.to_vec(), vec![CR * 0.25], 0, 3);
+        let ctx = EvalContext::new(CR);
 
         let mut v0 = RegisterFile::new(0, SEED);
         // Cold start must NOT glide 0 → 0: the first block already moves.
@@ -612,7 +622,7 @@ mod tests {
         let code = [Op::PushConst(0), Op::RandSmooth(0)];
         let script = CompiledScript::new(code.to_vec(), vec![-100.0], 0, 3);
         let mut regs = RegisterFile::new(0, SEED);
-        let ctx = EvalContext::new(SR);
+        let ctx = EvalContext::new(CR);
         for _ in 0..32 {
             let v = script.eval(&[], &mut regs, &ctx);
             assert!(
@@ -630,7 +640,7 @@ mod tests {
         let at = |pos: f32| {
             let script = CompiledScript::new(code.to_vec(), consts.clone(), 1, 0);
             let mut regs = RegisterFile::new(0, SEED);
-            script.eval(&[pos], &mut regs, &EvalContext::new(SR))
+            script.eval(&[pos], &mut regs, &EvalContext::new(CR))
         };
         assert!(approx(at(0.0), 0.0));
         assert!(approx(at(0.5), 5.0)); // halfway between 0 and 10
@@ -649,7 +659,7 @@ mod tests {
         let snap = |p: f32| {
             let script = CompiledScript::new(code.to_vec(), consts.clone(), 1, 0);
             let mut regs = RegisterFile::new(0, SEED);
-            script.eval(&[p], &mut regs, &EvalContext::new(SR))
+            script.eval(&[p], &mut regs, &EvalContext::new(CR))
         };
         assert!(approx(snap(0.2), 0.0)); // near C → C
         assert!(approx(snap(3.4), 4.0)); // between D# region → E (4)
@@ -667,7 +677,7 @@ mod tests {
     fn prng_is_per_voice_decorrelated_and_deterministic() {
         let code = [Op::PushConst(0), Op::PushConst(1), Op::Rand];
         let script = CompiledScript::new(code.to_vec(), vec![0.0, 1.0], 0, 0);
-        let ctx = EvalContext::new(SR);
+        let ctx = EvalContext::new(CR);
 
         let mut v0 = RegisterFile::new(0, SEED);
         let mut v1 = RegisterFile::new(1, SEED);

@@ -155,7 +155,7 @@ impl Builtin {
             Self::Sigmoid => 1.0 / (1.0 + (-a).exp()),
             Self::Gauss => (-a * a).exp(),
             Self::Semis => (a / 12.0).exp2(),
-            Self::Mtof => 440.0 * ((a * 127.0 - 69.0) / 12.0).exp2(),
+            Self::Mtof => 440.0 * ((a - 69.0) / 12.0).exp2(),
             Self::Unipolar => a * 0.5 + 0.5,
             Self::Bipolar => a * 2.0 - 1.0,
         }
