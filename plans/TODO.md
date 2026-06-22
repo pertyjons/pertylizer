@@ -282,7 +282,7 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   `OfflineEngineSession` already solves). Determinism tests would mirror
   `tests/arrangement_render_determinism.rs::session_render_range_is_bit_exact_across_three_calls`
   (`:191`). After session-reuse lands, parallelize the sweep target vector with `par_iter` for a
-  2-4× speedup on top.
+  2-4× speedup on top. **→ Plan: `plans/offline-note-session-plan.md`.**
 - [x] **Static `#[schemars(range(...))]` on fixed-range numeric MCP fields. — DONE** (commit `650a588`).
   All fixed-range numeric tool fields — MIDI note/pitch (0–127), velocity (0/1–127), MIDI channel
   (1–16), LFO index (1–4) — now carry `#[schemars(range(min, max))]` so their `JsonSchema` exposes
@@ -300,7 +300,7 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   `crates/synth_core/src/params/oscillators.rs:530` mirrors the descriptor range at
   `crates/synth_modules/src/oscillator.rs:354` by hand). No `BoundedNewtype` trait exists yet.
   Consider one (or a `const RANGE`) so bounds live on the type and descriptors/`with_f32` derive
-  from it. Larger, cross-cutting refactor — plan separately.
+  from it. Larger, cross-cutting refactor — plan separately. **→ Plan: `plans/newtype-bounds-plan.md`.**
 
 ---
 
