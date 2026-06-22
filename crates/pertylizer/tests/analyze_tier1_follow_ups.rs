@@ -571,6 +571,62 @@ fn analyze_harmony_excludes_by_track_id() {
     );
 }
 
+#[test]
+fn analyze_harmony_warns_exclude_drums_in_pattern_scope() {
+    // exclude_drums only has meaning in arrangement scope (tracks carry the
+    // instruments to classify). In pattern scope an explicit value must WARN it
+    // was ignored — mirroring exclude_track_ids — not silently no-op.
+    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
+
+    let mut song = Song::new("PatternScope");
+    let pid = song.create_pattern(SeqDuration(3840));
+    {
+        let pat = song.pattern_mut(pid).expect("pattern");
+        for midi in [60u8, 64, 67] {
+            let _ = pat.add_note(PatternTick(0), Pitch::new(midi).unwrap(), Velocity::MF);
+        }
+    }
+    let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
+
+    let result = analyze_song_harmony(
+        &rig.session,
+        &shared,
+        Some(pid.0), // pattern scope
+        None,
+        None,
+        None,
+        Some(false), // explicit exclude_drums → must warn it is ignored
+        None,
+    )
+    .expect("harmony analysis should succeed");
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("exclude_drums is ignored in pattern scope")),
+        "explicit exclude_drums in pattern scope must warn, got {:?}",
+        result.warnings
+    );
+
+    // Default (None) must NOT warn — only an explicitly-set value is noteworthy.
+    let quiet = analyze_song_harmony(
+        &rig.session,
+        &shared,
+        Some(pid.0),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .expect("harmony analysis should succeed");
+    assert!(
+        !quiet.warnings.iter().any(|w| w.contains("exclude_drums")),
+        "default exclude_drums must not warn, got {:?}",
+        quiet.warnings
+    );
+}
+
 /// Same two-instrument rig but both tracks play melodic pad chords so the
 /// per-track render produces audible output for both. Used for the section
 /// breakdown test.

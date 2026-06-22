@@ -7739,6 +7739,10 @@ pub fn analyze_song_harmony(
     let grouping = grouping_ticks
         .filter(|g| *g > 0)
         .unwrap_or(default_grouping);
+    // Track whether the caller set `exclude_drums` so pattern scope can warn it
+    // was ignored (it only has meaning in arrangement scope, where tracks carry
+    // instruments to classify) — mirroring the `exclude_track_ids` warning below.
+    let exclude_drums_explicit = exclude_drums.is_some();
     let exclude_drums = exclude_drums.unwrap_or(true);
     let explicit_excluded: std::collections::HashSet<TrackId> = exclude_track_ids
         .as_deref()
@@ -7763,6 +7767,11 @@ pub fn analyze_song_harmony(
             if !explicit_excluded.is_empty() {
                 warnings.push(
                     "exclude_track_ids is ignored in pattern scope — a pattern is not tied to a specific track".to_string(),
+                );
+            }
+            if exclude_drums_explicit {
+                warnings.push(
+                    "exclude_drums is ignored in pattern scope — a pattern has no track/instrument assignment to classify".to_string(),
                 );
             }
             let pid_typed = PatternId(pid);
