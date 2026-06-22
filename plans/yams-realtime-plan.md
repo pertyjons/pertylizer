@@ -84,6 +84,19 @@ script machinery is no longer Mod-Matrix-specific.
   `graph.get_module_mut(id).set_voice_index(id.as_u32())` — store it in the
   module, and reseed from the *stored* index on note-on (not from a stale value
   after voice stealing). (All three APIs already exist.)
+- **State hygiene on live swap — clear the slot's `RegisterFile` state when a
+  script is (re)installed.** `set_slot`/`set_script` today `mem::replace` the
+  `Arc<BoundScript>` but leave `regs[slot].state` untouched
+  (`host.rs`, `eval.rs`). State-cell *indices* are positional and bytecode-defined:
+  cell 0 may be a `lag` memory in the old script and a feedback accumulator in the
+  new one. Swapping on a **sounding** voice (GUI/MCP live edit) thus feeds foreign
+  state into the new script — `finite_or_zero` blocks NaN/Inf but not a large finite
+  carryover → DC offset / click at control rate, potential amplitude spike in a
+  Phase 4 audio-rate feedback loop. Fix: have `set_slot` also zero that slot's
+  state cells (reuse the same `reset_state_only` primitive introduced for free-run
+  mode below; leave the PRNG seed so voice decorrelation survives). A swap is
+  already a discontinuity, so starting the new script from known-zero state is more
+  predictable than inheriting the old layout.
 - **Pre-existing `Arc` deallocation hazard — ALREADY FIXED on `main`** (ahead of
   this plan). `SetModScript` is drained in `process_commands()` **on the audio
   thread** (`synth_engine.rs::handle_set_mod_script`), where the replaced
@@ -244,7 +257,13 @@ Self-contained, opt-in, with a budget guard. Builds directly on Phases 0/2.
   cell, so users can write custom IIR (biquad, allpass, feedback FM) as plain
   difference equations. Requires: (a) the scalar VM above; (b) a small **grammar
   addition to declare/reserve state** (e.g. `state s = 0`) so the compiler maps
-  named state to cell indices without colliding with `lag`/`phasor` allocation;
+  named state to cell indices without colliding with `lag`/`phasor` allocation —
+  **route these through the existing `compile.rs::alloc_state`** so they inherit
+  its `next_state > MAX_STATE` check (already emits the `"too much state (max N
+  cells)"` *compile error*, tested) instead of risking a silent index truncation
+  on the audio thread; note `MAX_STATE` is currently **16** cells — fine for a
+  biquad/allpass, but may need raising if an audio-rate script chains several
+  filters, so size it deliberately when Phase 4 lands;
   (c) a `docs/yams.md` stability note — layer-2 `finite_or_zero` stops NaN but not
   amplitude runaway in an unstable loop (user's responsibility).
 - **`first_sample` context var (audio-rate one-shot init).** At control rate
@@ -321,6 +340,87 @@ confirms the audio-rate cost; null test (passthrough) is bit-exact.
   make it support `LoadState`/`StoreState`; only revisit vectorization if
   criterion shows instruction dispatch is the bottleneck on the feed-forward
   subset.
+
+## Resolved by the third review round (DSP/RT)
+
+A later DSP-focused review re-raised several RT hazards. Cross-checked against the
+shipped code, **most are already handled** — recorded here so they aren't relitigated:
+
+- **Denormal protection (FTZ/DAZ) → ALREADY DONE, thread-wide.** `DenormalGuard`
+  (`synth_core/src/types/denormal.rs`) sets FTZ+DAZ via MXCSR on x86_64 and is
+  instantiated at the top of the cpal audio callback
+  (`cpal_backend.rs:319`), with tests asserting the bits set/restore. Because it
+  is set at the callback level it covers the **entire** audio thread, including any
+  future audio-rate YAMS VM feedback loops (Phase 4) — the "decaying IIR FPU stall"
+  concern is already neutralized. `FilterState::flush_denormals()` remains the
+  non-x86 fallback. No action.
+- **Zipper noise / parameter smoothing → ALREADY DONE.** The `lag` opcode exists
+  (`Op::Lag`, `eval.rs`; one-pole in `bytecode.rs`) and is documented in
+  `yams.md` (`lag(mod_wheel, 50ms)`). Whole-buffer fill (Phase 2) already removes
+  the missing-sample case. No action beyond keeping the docs emphasis.
+- **NaN/Inf state poisoning → ALREADY DONE.** `finite_or_zero` sanitizes every
+  `state_set` (layer 2) plus the final output (`eval.rs`). `is_finite` compiles to
+  a cheap exponent-mask check (esp. with FTZ/DAZ on); no pre-optimization needed.
+- **Sample-accurate init (`first_sample`) → OPEN, correctly scoped to Phase 4.**
+  The review is right that an audio-rate DSP module needs a sample-accurate init
+  pulse, not the block-level `gate_on`, to avoid re-running reset logic per sample
+  → clicks. This is exactly the Phase 4 `first_sample` task above; no plan change.
+- **PRNG retrigger determinism → ALREADY DONE; free-run is an optional add (below).**
+  `ScriptHost`/`RegisterFile` re-seed from `voice_index` on note-on
+  (deterministic retrigger, voices decorrelated) — see Phase 0. The review's
+  "free-run/random retrigger" variant is a genuine *feature request*, captured next.
+
+### Optional follow-up — free-run PRNG retrigger mode
+
+Today every note-on re-seeds each slot's PRNG from `voice_index`, so a retrigger of
+the same voice reproduces an **identical** random sequence (reproducible renders,
+consistent transients). Add an opt-in **free-run** policy where note-on zeroes the
+state cells but leaves the PRNG *streaming*, so each retrigger draws fresh
+randomness (analog-style voice drift). Voices stay decorrelated in both modes (the
+per-voice seed is established at allocation via `set_voice_index`, independent of
+the retrigger policy).
+
+- **Mechanism (synth_core):** `RegisterFile::reset_state_only()` (zero `state`,
+  leave `prng_seed`/`prng_counter` untouched) + a `free_run_rng: bool` policy flag
+  on `ScriptHost`; `ScriptHost::note_on` branches on it (`reseed()` vs
+  state-only). `set_voice_index` always full-reseeds (initial per-voice
+  decorrelation) regardless of the flag.
+- **Surface (the actual work):** thread the flag through the host modules
+  (`mod_matrix.rs`, `script_module.rs`), then save/load + MCP toggle + a GUI
+  control. Default stays **deterministic** (current behavior, byte-identical
+  renders).
+- **Semantics — paused-and-resume, not absolute-time.** A voice's PRNG only
+  advances while the voice is *sounding*; an idle/unallocated voice freezes its
+  `prng_counter`, so a later note resumes the stream where it stopped rather than
+  reflecting wall-clock elapsed time. This is the right trade-off for "analog
+  drift" (predictable, reproducible-per-session) and is what this follow-up
+  builds. True absolute-time free-run (drift progresses even while silent) would
+  require folding the engine's running block/sample clock into the seed/counter at
+  note-on — explicitly **out of scope** for this low-priority feature; record it
+  here only as the upgrade path if a patch ever needs it.
+- **Priority:** low / nice-to-have. Only build it if a patch actually wants drift —
+  native LFOs already cover most free-running modulation.
+
+## Resolved by the fourth review round (DSP/RT round 2)
+
+A second pass over the round-3 updates raised three edge-cases. Verdicts after
+cross-checking the code:
+
+- **Live script-swap state poisoning → REAL; folded into Phase 0.** `set_slot`
+  replaces the `Arc` but leaves `regs[slot].state`; a swap on a sounding voice
+  feeds the old script's positional state cells into the new bytecode. Action: zero
+  the slot's state on (re)install (new Phase 0 bullet above, reusing
+  `reset_state_only`; PRNG seed kept for decorrelation).
+- **Free-run PRNG is paused-and-resume, not absolute-time → ACCEPTED trade-off,
+  documented.** The PRNG counter freezes while a voice is idle, so a retrigger
+  resumes the stream rather than reflecting wall-clock time. Fine for analog drift;
+  absolute-time upgrade path (fold the block/sample clock into the seed) recorded
+  in the free-run follow-up but left out of scope. No plan change beyond the note.
+- **Phase 4 `state` declarations exceeding `MAX_STATE` → ALREADY handled by the
+  allocator.** `compile.rs::alloc_state` already emits a `"too much state (max N
+  cells)"` *compile error* when `next_state > MAX_STATE` (tested). Action is only to
+  route the new `state s = …` grammar through that same allocator (clarified in the
+  Phase 4 bullet) and to size `MAX_STATE` deliberately for audio-rate use.
 
 ## Decisions still open before coding
 

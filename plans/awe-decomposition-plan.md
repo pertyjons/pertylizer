@@ -67,6 +67,39 @@ So the genuinely new DSP modules are just **`EarlyReflections`** (PolyModule) an
 (PolyModule); the late tail is an *evolution of the existing `Reverb`*, and modes/convolution
 already ship.
 
+**Packaging (review §2): expose them as one combined `SpatialPanner` PolyModule, not two graph
+nodes.** Two separate mono-in/stereo-out modules that both need the dry source and both sum to the
+stereo bus mean ~6 cables per instrument for basic 3D placement — cable spaghetti for a fundamental
+feature. A single `SpatialPanner` (mono in → pre-mixed Direct+ER stereo out) that *internally* keeps
+the two DSP structs fully separate halves the module/cable count while preserving the clean DSP
+split. This is exactly what the shipped code already does — `SpatialVoiceSlot` bundles
+`early_reflections` + `spatializer` and `process_slot` drives both — so the combined module is the
+natural port of the existing structure. Keep the internal split so the two stages remain
+independently parameterised/modulatable; the merge is a GUI/packaging decision, not a DSP one.
+
+**`SpatialPanner` implementation spec (review round 3):**
+
+- **Ports** — input `"in"` (mono); outputs `"left"` / `"right"` mapped to `PortName::LEFT` /
+  `PortName::RIGHT`. This is the primary stereo convention `voice.rs` looks for when extracting a
+  voice's output (`voice.rs:981`: tries `LEFT`/`RIGHT`, then `out_l`/`out_r`, then mono `out`), so
+  the module drops in as a voice end-stage with no special casing.
+- **Modulatable params** — `x` / `y` / `z` (3D position), `diffusion`, `er_level` (early-reflection
+  balance), `direct_level` (direct-path balance); all carried on the module's `ParamModOffsets` so the
+  Mod Matrix / YAMS can drive them per-voice (§4a).
+- **Parameter smoothing (zipper-noise guard) — mandatory.** Making position a per-voice modulation
+  target means `x/y/z` can move fast (an envelope at note-on), and the spatializer recomputes
+  `gain_left/right` + `shadow_coeff_left/right` in `update()` with **no smoothing today**
+  (`spatializer.rs`), applying them as block-constant values in `process()` → audible zipper noise at
+  block boundaries. The combined module must **ramp the ILD gains and head-shadow coefficients
+  per-sample** across the block (linear ramp or a one-pole). ITD needs **no** smoothing — the
+  interpolated delay (`read_interpolated`) already makes delay changes continuous (and yields a
+  correct natural Doppler on movement).
+- **Geometry at control rate only.** The heavy geometry math (`atan2`/`sin`/`sqrt` for the spatializer
+  and the six ER mirror sources) must run **only at block start**, never inside the per-sample loop —
+  which is already the structure (`update()` / `update_geometry()` are separate from `process()`).
+  Make it an explicit invariant: `process()` reads pre-computed + ramped values; the inner loop does
+  delay reads + one-poles + gain only. This is what keeps 32 voices affordable.
+
 ### 4a. Modulation domain — voice vs bus (pitfalls review §1.2)
 
 A hard constraint that shapes which params live where: **the Mod Matrix / YAMS engine is
@@ -99,15 +132,26 @@ matching the old room presets so factory sounds survive.
 
 ### 3a. Signal topology (explicit)
 
+Spatializer and EarlyReflections run **in parallel** on the same dry mono voice signal — **not**
+in series. Both take **mono in → stereo out** (the spatializer applies ITD/ILD/head-shadow to the
+direct path; ER produces six panned mirror taps), and their stereo outputs are *summed*. Chaining
+them serially (spatializer → ER) would force the spatializer's stereo back to mono at ER's input
+and destroy the ITD/ILD phase. So:
+
 ```
- per voice (patch graph):   osc/filter/env → Spatializer → EarlyReflections ─┐
-                                                                              ├─ voice mix →
- buss (return/master):      → Reverb (FDN tail) → ModalResonator → Convolver → EQ → out
+                               ┌─► Spatializer      (direct: ITD / ILD)      ─┐
+ per voice:  osc/filter/env ───┤                                             ├─► stereo sum ─► voice mix ─┐
+ (mono)                        └─► EarlyReflections (6 panned wall taps)      ─┘                           │
+                                                                                                          ▼
+ buss (return/master):                            → Reverb (FDN tail) → ModalResonator → Convolver → EQ → out
 ```
 
-Per-voice early reflections + spatial position, summed at the voice mix, then a **shared** late
-tail. This is the standard pro-spatial-reverb structure and it falls out naturally from the
-trait seam — no special-case `process_spatial` side-path needed.
+This mirrors the **shipped** per-voice path exactly: `spatial_voice.rs::process_slot` feeds the
+same `mono_sample` into both `early_reflections.process()` and `spatializer.process()` and sums
+the two stereo results (the master-bus monolith path additionally runs a *global* spatializer on
+the summed wet at the very end — `awe_engine.rs:330` — but that is the path we are retiring). Per-voice
+ER + spatial position summed at the voice mix, then a **shared** late tail — the standard
+pro-spatial-reverb structure; no special-case `process_spatial` side-path needed.
 
 ---
 
@@ -137,6 +181,26 @@ user experiences one unified room, while the DSP nodes stay 100 % independent an
 the reviewer's sharpening of option (C): linking at the parameter layer, **not** a shared audio
 `ProcessContext`. **(B) is rejected** — passing shared pointers across the audio graph adds
 synchronization risk for no DSP benefit. Build the macro after the modules exist.
+
+**Refinement (review §3): the macro must be engine-side and automatable, not UI-thread-only.** If
+the "Room Size / Material" fan-out lives purely on the UI thread, a song-length room-size sweep
+forces the user to draw three separate automation lanes (ER + Reverb + modes) and won't reproduce
+in a headless / offline render where no GUI runs. Make the macro an **engine-side global parameter**
+(e.g. `GlobalParam::RoomSize` / `RoomMaterial`) that the sequencer can automate on a single lane and
+that the audio thread fans out to the active room modules per block. This keeps decision (A)'s DSP
+independence intact — the macro only writes the same module params the user could set by hand — while
+making the unified room coherent under automation. This is the same mechanism as the broader
+"Macro controllers" backlog item (`TODO.md §1.3`); build the Room macro on that infrastructure
+rather than a one-off UI fan-out.
+
+**Fan-out site (review round 3): do it once per block at the top of `SynthEngine::process()`.** The
+macro writes params in modules that live in two places — the master/return `EffectChain` and inside
+each active voice — so the audio thread should: (1) read the automated macro value once per block;
+(2) remap + write it to the global `Reverb` / `ModalResonator` params on the master bus; (3) push it
+down through `Instrument` to the active voices' `SpatialPanner` params. Because every write is a plain
+per-block parameter set on owned modules, this is lock-free with **no shared `Arc`/`ProcessContext`
+pointer** — which is exactly why option (B) was rejected. (Per-voice `SpatialPanner` targets reached
+this way still also honor their own Mod-Matrix/YAMS modulation; the macro just sets the base value.)
 
 ---
 
@@ -182,9 +246,11 @@ AWE keeps working until the suite covers it; no big-bang removal.
 - **Phase 3 — spatializer (PolyModule).** Build the per-voice `Spatializer` (pan/ITD/ILD on the
   dry signal), retiring AWE's bespoke `process_spatial` side-path from `SynthEngine` — the single
   biggest core-audio simplification.
-- **Phase 4 — Room macro.** Control/UI-level coherence (§4): one "Room" macro that fans out
-  parameter updates to the active modules; reusable `Room3DWidget` that *reads* module params on
-  the UI thread (DSP stays UI-free).
+- **Phase 4 — Room macro.** Coherence via an **engine-side automatable** "Room" macro (§4
+  refinement): a global param (`GlobalParam::RoomSize`/`RoomMaterial`) the sequencer automates on one
+  lane and the audio thread fans out to the active room modules per block (works headless/offline),
+  built on the `TODO.md §1.3` macro-controller infrastructure; plus a reusable `Room3DWidget` that
+  *reads* module params on the UI thread (DSP stays UI-free).
 - **Phase 5 — retire AWE.** Ship a preset chain (Spatializer + EarlyReflections per voice → Reverb
   → ModalResonator) reproducing a useful AWE-equivalent, then remove the `synth_awe` special-case
   wiring, the `SetAweParameter` command path, and `awe_view.rs`.
@@ -206,8 +272,49 @@ Each phase is independently shippable and reviewable (fits the `/loop` step → 
 6. **3D visualization** — ✅ a reusable `Room3DWidget` that reads module params on the UI thread;
    retire the bespoke `awe_view.rs` render. DSP stays UI-free.
 
+### Resolved by the second review round (DSP/topology)
+
+Cross-checked against the shipped `synth_awe` code:
+
+7. **Voice-graph signal flow** — ✅ **fixed: it's parallel, not serial.** The §3a diagram now shows
+   mono → (Spatializer ∥ EarlyReflections) → stereo sum, matching `spatial_voice.rs::process_slot`
+   (both stages fed the same dry `mono_sample`). The original serial diagram was an error — it would
+   have remixed the spatializer's stereo to mono at ER's input and killed ITD/ILD.
+8. **Module packaging** — ✅ expose the two per-voice stages as **one combined `SpatialPanner`**
+   PolyModule (mono in → Direct+ER stereo out) keeping the DSP structs internally separate — halves
+   cables, mirrors `SpatialVoiceSlot`. GUI/packaging choice, not a DSP change (§3).
+9. **Room macro** — ✅ sharpened to an **engine-side automatable** global param (single sequencer
+   lane, audio-thread fan-out, headless-safe), not a UI-thread-only fan-out; built on the existing
+   macro-controller backlog (§4 refinement, Phase 4).
+10. **Bus-level ER** — ✅ kept as a **profile-gated CPU fallback** (global-position approximation),
+    promoted to a committed deliverable only if Phase-1 profiling shows per-voice ER exceeds budget
+    at high polyphony (§ Still open).
+11. **Air absorption one-pole + Reverb evolution** — ✅ review concurs with the existing decisions
+    (§7.3/§7.4); no change.
+
+### Resolved by the third review round (implementation detail)
+
+All confirmed against `synth_awe`; folded into the §3 `SpatialPanner` spec and §4:
+
+12. **Zipper-noise smoothing** — ✅ `SpatialPanner` must ramp ILD gains + head-shadow coefficients
+    per-sample (none today); ITD already smooth via the interpolated delay (correct Doppler).
+13. **Control-rate geometry** — ✅ made explicit: `atan2`/`sin`/`sqrt` for spatializer + 6 ER mirrors
+    run only at block start (already the `update()` vs `process()` split); inner loop reads ramped
+    values only.
+14. **Port schema** — ✅ defined: `in` (mono) → `left`/`right` (`PortName::LEFT`/`RIGHT`, the
+    convention `voice.rs:981` extracts); modulatable `x`/`y`/`z`/`diffusion`/`er_level`/`direct_level`.
+15. **Macro fan-out site** — ✅ once per block at the top of `SynthEngine::process()`, remapping to
+    master `Reverb`/`ModalResonator` and pushing down to active voices' `SpatialPanner` — lock-free,
+    no shared pointer.
+
 ### Still open
-- Whether to also ship a cheap **buss-level `EarlyReflections`** variant (global position) for
-  CPU-light use, alongside the per-voice one. Lean: defer until asked.
-- Per-voice ER CPU budget at high polyphony (6 delay lines + 12 filters × up to 32 voices). AWE
-  already proves this in `SpatialVoicePool`, but profile in Phase 1.
+- **Cheap buss-level `EarlyReflections` variant as a CPU fallback (review §4 — promote on
+  profiling).** Per-voice ER is the correct default (it's what preserves per-note 3D position), but
+  the cost scales hard: at 32 voices that's 32 × 6 = 192 delay reads + ~384 one-pole filters *per
+  sample*, which can saturate weaker CPUs on a big pad. Offer an opt-in where a `SpatialPanner` with
+  its internal ER disabled sends its position-baked stereo to a **shared bus `EarlyReflections`**.
+  Be honest about the trade-off: a bus ER runs one mirror-tap set on the *summed* signal, so it's a
+  **global-position approximation**, not per-voice distinct reflections — cheaper, lower fidelity.
+  Decision: **profile per-voice ER in Phase 1** (AWE already proves the per-voice path in
+  `SpatialVoicePool`); if it exceeds budget at target polyphony, promote the bus-level variant to a
+  committed Phase-1/2 deliverable rather than leaving it deferred.

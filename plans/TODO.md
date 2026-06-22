@@ -21,8 +21,8 @@
        proper tempo lane.
     3. **Interpolation between adjacent points** (accelerando/ritardando ramps). `tempo_at`
        (`song.rs:697`) is **step-only** — it returns the previous point's bpm with no ramping.
-  This is the real "tempo automation" feature — built on the tempo map, not a generic
-  automation lane.
+       This is the real "tempo automation" feature — built on the tempo map, not a generic
+       automation lane.
 
 ### 1.2 Section markers
 
@@ -110,12 +110,6 @@
   dispatched through the same override layer as A2. Delivers exact *shared* SID-style
   filter sweeps. **S** task — build only when a tune genuinely needs a shared (not
   per-instrument) automated sweep; per-instrument sweeps are already covered by A2.
-- [x] **`ParamId(Arc<str>)` off-thread drop (F1 residual). — RESOLVED.** The full
-  fix shipped: `SequencerEngine::clear_automation_dedup` (`sequencer_engine.rs:656`)
-  drains cleared/replaced automation targets into the dedicated `automation_trash`
-  ring (`set_automation_trash`), and the main thread frees them via
-  `automation_trash_consumer` (`synth_engine.rs:202`). The `ParamId(Arc<str>)` final
-  drop never lands on the audio thread (documented full-channel fallback aside).
 
 **Iceboxed — the rest of Phase E (build on demand only).** The expensive,
 narrow-audience remainder of the old north-star phase. No plan doc; pick up only when a
@@ -205,125 +199,17 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   source set per (slot, script-text) and invalidate when `slot_scripts` changes, rather than
   recompiling unconditionally.
 
-### 3.5 YAMS Script editor follow-ups
-
-- [x] **Detect/warn on recursive or self-referential script source graphs.** A script's
-  sources are *address-based* (`src x = lfo-1.out`, `src y = scr-2.out1`) and are resolved
-  with a **1-block latency** into a scratch buffer — they do **not** flow through the graph's
-  cable connections, so the existing cable cycle-detection (`drag_cycle_blocked`, the topo
-  sort in `graph.rs`) does **not** cover them. Note up front: because YAMS bytecode is
-  straight-line (no loops/recursion — `bytecode.rs:5`) and the 1-block latency breaks the
-  dependency, a self-reference (`scr-1` reading `scr-1.out1`) or a script↔script cycle
-  **cannot** infinite-loop or stack-overflow at runtime; it just reads last block's value.
-  So this is a **UX/correctness warning**, not a safety fix: surface "this script feeds back
-  on itself / forms a cycle" so the user isn't surprised by a 1-block-delayed feedback path.
-  Build a dependency graph over scripted slots (extract each script's `Module{..}` source
-  addresses, same extraction as §3.4) and flag self-edges + cycles in the ƒx editor status
-  line. Decide whether to hard-block or just warn (lean warn — delayed feedback is sometimes
-  intentional, e.g. a leaky integrator).
-
-- [x] **"Select input" picker in the ƒx expression editor.** Add a button (e.g. labelled
-  "Select input") *before* the existing Format button in the script popup
-  (`draw_slot_expression_editor`, `patch_editor.rs`). It opens a **tree picker**: top level =
-  every module in the patch, expandable to that module's selectable members (output ports and
-  modulatable parameters), plus the macro/context sources (`velocity`, `beat`, …). Selecting a
-  leaf inserts a suggested binding into the editor at the cursor — a `src <name> = <address>`
-  line with an auto-derived variable name (e.g. `src lfo1_out = lfo-1.out`) and the assignment.
-  Source the module/parameter list the same way the Mod Matrix address pickers do (S1.5c —
-  the patch descriptor catalog), so it stays in sync with what `resolve_source` can actually
-  bind.
-  — *Done: output ports only (params as YAMS sources are still deferred — `ScriptInput::ModuleParam`
-  needs the cross-crate resolver); macro/context leaves insert bare identifiers.*
-
 ---
 
-## 4. Template Library & Presets
+## 4. AI & Automation
 
-### 4.1 Template library
-
-- [ ] Add patch template directory and `Save Patch as Template` action
-- [ ] Add Patch Template browser to load patch templates
-- [ ] Support optional `license` and `min_app_version` metadata in group templates
-
-### 4.2 Preset sharing
-
-- [ ] Community format for sharing patches online
-
----
-
-## 5. AI & Automation
-
-### 5.1 MCP & AI Interaction
+### 4.1 MCP & AI Interaction
 
 - [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
   `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
-- [ ] Enable AI to "play freely" via MCP to autonomously generate complete songs and arrangements
-- [ ] Implement real-time parameter interpolation (gliding) to allow smoother AI-driven sound design
 
-### 5.2 Technical follow-ups from the MCP music tools plan
+### 4.2 Technical follow-ups from the MCP music tools plan
 
-- [x] **`HarmonyQuery` enum replaces `analyze_song_harmony` argument sprawl. — DONE** (commit `fdcb506`;
-  correctness warning earlier in `6b59a28`). `analyze_song_harmony` now takes a `HarmonyQuery
-  { Pattern{pattern_id} | Arrangement{start_tick, end_tick, exclude_drums, exclude_track_ids} }` +
-  `grouping_ticks` (4 args; the `#[allow(clippy::too_many_arguments)]` is gone). The exclusion options
-  live only on the `Arrangement` variant, so "ignored in pattern scope" is a compile-time impossibility
-  for internal callers. A `harmony_query_from_flat()` mapper centralizes the flat MCP-param→enum
-  conversion and the two pattern-scope "ignored" warnings; the public `analyze_harmony` bridge and
-  `analyze_harmonic_function` both surface them (the latent warning-drop seam in the wrapper callers is
-  resolved). Named `HarmonyQuery`, not `HarmonyScope`, because the latter is the existing serialized
-  *output* enum. Behavior-preserving across all scope/option combos.
-- [x] **`shared_song(Song) -> Arc<RwLock<Song>>` constructor. — DONE** (commit `ecb339f`).
-  Added as `synth_engine::shared_song` (not `synth_sequencer` as originally suggested — that
-  pure-data crate has no `parking_lot` dep, and adding one purely for this convenience would invert
-  layering; `synth_engine` already owns the shared-song threading model and depends on `parking_lot`).
-  All **7** production call sites converted (the 7 in `synth_engine.rs` / others originally counted
-  turned out to be inside `#[cfg(test)]`); test fixtures keep the inline form intentionally.
-  Unit test `shared_song_tests::shared_song_wraps_a_readable_song`.
-- [x] **`OfflineNoteSession` — engine reuse across patch-sweep steps. — DONE** (commit `c2a3226`).
-  `analyze_instrument_range_impl` / `analyze_velocity_response_impl` now build one
-  `OfflineNoteSession` (`crates/pertylizer/src/audio/preview.rs`) and render each swept note on the
-  reused warmed-up engine instead of one fresh `SynthEngine` per step. Voice-bleed drain mirrors
-  `OfflineEngineSession` (`VOICE_DRAIN_MAX_MS = 400`, `DRAIN_SILENCE_EPSILON = 1e-7`); bit-exact
-  equivalence test `tests/preview_integration.rs::session_render_matches_independent_renders_bit_exact`.
-  **Tail-proof isolation done** (commit `9c1fec4`): `EngineCommand::ResetDsp` hard-resets all
-  per-instrument signal-path DSP (voices + effect chain + downsamplers) + master/return chains +
-  modular graph; `OfflineNoteSession::render` sends it before each render instead of the 400 ms
-  drain → bit-exact even with long reverb/delay tails (`session_render_wet_patch_is_tail_proof_bit_exact`).
-  **Remaining optional follow-ups (low priority, none blocking):** cache the per-render scratch
-  `block` as a session field instead of allocating it each `render` (offline thread, harmless);
-  verify/document that all `synth_modules`/`synth_dsp` modules are block-size-agnostic (the
-  sample-accurate note-off trimming already relies on it, same as `OfflineEngineSession`);
-  per-worker parallel sweep gated behind a step-count threshold (one engine build per worker, only
-  worth it for large note-range sweeps); reset the AWE room sim in `ResetDsp` if it is ever used
-  with AWE enabled (currently out of the offline path).
-- [x] **Static `#[schemars(range(...))]` on fixed-range numeric MCP fields. — DONE** (commit `650a588`).
-  All fixed-range numeric tool fields — MIDI note/pitch (0–127), velocity (0/1–127), MIDI channel
-  (1–16), LFO index (1–4) — now carry `#[schemars(range(min, max))]` so their `JsonSchema` exposes
-  machine-readable `minimum`/`maximum`, not just prose. Covers single-line and multi-line attrs and
-  `Option<u8>` variants; verified against `schemars` 1.2.1. Schema test
-  `server::schema_range_tests::fixed_range_fields_expose_min_max_in_schema` asserts the emitted bounds.
-- [x] **Uniform machine-readable bounds on `synth_core` newtypes. — DONE** (commit `f90125f`).
-  Semantic `ValueRange` presets are now the single source of truth per (type, context):
-  `Cents::DETUNE_RANGE`/`UNISON_DETUNE_RANGE`, `Hertz::OSC_RANGE`/`FILTER_RANGE`/`LFO_RANGE`/
-  `CROSSOVER_RANGE`, `Gain::MIXER_RANGE`. The descriptor `.range`, the `with_f32` apply clamp,
-  and the `clamp_*` method all reference the preset, so they can no longer drift; redundant
-  `MIN/MAX_LFO`/`MIN/MAX_FILTER` consts removed and drift-guard tests added per preset. The
-  optional global drift-lint (§3.5) was deferred as a stretch. Plan deleted. Original text:
-  Newtype clamping is inconsistent:
-  `NormalizedValue`/`BipolarValue`/`Velocity` clamp in `new()` and `Phase` wraps (`rem_euclid`), but
-  `Hertz`/`Gain`/`Cents`/`Semitones` are `const fn new` with no clamp, and there is no uniform
-  `const RANGE: ValueRange` on any newtype (only ad-hoc `MIN`/`MAX` on a few) — so a shared
-  "spec → (schema | validation)" abstraction can only read bounds from the per-module
-  `ParameterDescriptor`, never from the type. `Param::with_f32` (`crates/synth_core/src/params/mod.rs:1070`
-  dispatching to per-module impls) then re-clamps ad hoc and sometimes hardcodes a range that
-  duplicates the descriptor (e.g. the 2026-05-27 `Detune::with_f32` `-100..100` clamp at
-  `crates/synth_core/src/params/oscillators.rs:530` mirrors the descriptor range at
-  `crates/synth_modules/src/oscillator.rs:354` by hand — and the same range is restated a third time
-  in `Cents::clamp_detune`). The fix is **semantic `ValueRange` presets** (named `const` per
-  (type, context), e.g. `Cents::DETUNE_RANGE`) that the descriptor, the `with_f32` clamp, and the
-  `clamp_*` method all reference — NOT a single per-type `const RANGE`/`BoundedNewtype` (one newtype
-  serves many contexts; `Hertz` already has `clamp_audible`/`clamp_lfo`/`clamp_filter`). No clamping
-  in `new()`. Incremental, one preset per commit; start with `Detune`. **→ Plan: `plans/newtype-bounds-plan.md`.**
 - [ ] **Nice-to-have: global drift-lint over preset-backed descriptors (was §3.5 of the deleted
   newtype-bounds plan).** The per-preset drift-guard tests that shipped with `f90125f` only cover the
   params they were hand-written for, so a future dev could still hardcode `.range(-100.0, 100.0)` on a
@@ -334,98 +220,3 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   **allow-list of legitimate one-offs** (not every `Hertz`/`Cents` param maps to a shared preset — some
   genuinely have a unique range), or it produces false positives. Belt-and-suspenders on top of the
   per-param asserts; low priority.
-
----
-
-## 6. AWE Improvements
-
-Findings and concrete ideas: `docs/AWE-Improvement-Findings.md`.
-
-### 6.0 AWE acoustic engine — prioritized plan
-
-#### Phase 2 — Medium complexity
-
-- [ ] **7. Per-surface materials** — `MaterialConfig { floor, walls, ceiling }` instead of single global `Material`, ISM
-  uses correct material per reflection
-- [ ] **8. Second-order reflections** — extend ISM from 6 to ~30 taps (configurable `ReflectionOrder(u8)` 1–3)
-- [ ] **10. Resonant objects** — sympathetic resonance from objects in the room (strings, membranes, plates, Helmholtz
-  cavities, loose panels, chimes), implemented as bandpass + feedback at object frequency
-- [ ] **12. Doppler effect** — track radial velocity between source/listener, shift pitch via variable delay read speed:
-  `ratio = v_sound / (v_sound + v_radial)`
-
-### 6.1 Rework room visualization
-
-- [ ] Redesign the 3D isometric room rendering
-- [ ] Improve animations (sound rings, reflection paths)
-- [ ] Better visual clarity for room shape and dimensions
-
-### 6.2 Differentiate effects more clearly
-
-- [ ] Each material/effect should have more distinct visual representation
-- [ ] Color-coded zones, animated textures per material, spectral visualization
-
----
-
-## 7. Visualizer & OSC
-
-### 7.1 OSC control & connectivity
-
-- [ ] OSC enable/disable toggle in Pertylizer settings GUI
-- [ ] `/viz/` OSC control endpoints (effect select, param set, scene load)
-- [ ] OSC `/viz/theme/select` control endpoint
-- [ ] OSC parameter tweaking — live control of intensity, speed, scale per effect
-- [ ] Support connecting multiple OSC clients simultaneously
-
-### 7.2 Post-processing & shaders
-
-- [ ] Chromatic aberration — intensity scales with RMS level
-- [ ] Glitch/distortion effect — triggered by CPU spikes or spectral flux
-- [ ] Kaleidoscope mode — radial scene mirroring (configurable segment count)
-- [ ] CRT/VHS filter — scanlines, color bleed, static noise
-- [ ] Motion blur — strength synced to tempo
-
-### 7.3 Multi-effect layering
-
-- [ ] Show 2–3 effects simultaneously instead of one at a time
-- [ ] Per-instrument visual layers — each instrument gets its own color/effect layer
-- [ ] Blending modes between layers (additive, multiply, screen)
-- [ ] Layer opacity control via OSC
-
-### 7.4 Reactive environment
-
-- [ ] Skybox that reacts to music — stars pulse with RMS, clouds move with tempo
-- [ ] Reactive ground — ripples on note-on, cracks on bass hits
-- [ ] Fog/mist density driven by reverb level or sustain
-- [ ] Day/night cycle driven by song position
-- [ ] Weather effects — rain on high spectral flux, lightning on transients
-
-### 7.5 Advanced simulations
-
-- [ ] Swarm/flock simulation — particles flock or scatter based on dynamics
-- [ ] Cloth simulation — fabric that billows and ripples with FFT energy
-- [ ] Text/typography — display song title, BPM, key in stylized 3D text
-- [ ] AWE spatialization — visualize sound source position in 3D space
-
-### 7.6 Video export
-
-- [ ] Video recording — render to MP4 or image sequence
-
----
-
-## 8. Advanced / Long-term
-
-### 8.1 Audio tracks
-
-- [ ] Import and arrange audio files, not just synth tracks
-
-### 8.2 Audio recording
-
-- [ ] Record external audio via cpal input
-
-### 8.3 Clip launching
-
-- [ ] Ableton-style live mode with follow actions
-
-### 8.4 Plugin export
-
-- [ ] Export instruments as VST3/CLAP plugins
