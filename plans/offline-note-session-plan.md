@@ -82,7 +82,18 @@ state between renders. **Coverage caveat:** it uses `sustain_patch_no_envelope()
 
 Verified against the shipped code; severity calibrated.
 
-### A. Long effect/envelope tails defeat the 400 ms drain — real, accepted limit
+### A. Long effect/envelope tails defeat the 400 ms drain — ✅ DONE (commit `9c1fec4`)
+**Resolved:** `EngineCommand::ResetDsp` now hard-resets all per-instrument signal-path
+DSP (voices + effect chain + oversampling downsamplers) plus the master/return
+effect chains and the modular graph instantly. `OfflineNoteSession::render` sends
+it before each non-first render (applied by the warm-up block) instead of the old
+drain, giving bit-exact isolation regardless of tail length. New guard
+`session_render_wet_patch_is_tail_proof_bit_exact` (8 s reverb) passes — it could
+not under the 400 ms drain. **Not** reset (documented, out of the offline path):
+the AWE room simulation and the one-block sidechain previous-output buffer. The
+original analysis is kept below for context.
+
+
 The drain caps at `VOICE_DRAIN_MAX_MS = 400.0` and the code comment already says
 *"Long reverb/delay tails are best-effort."* A patch with a multi-second reverb /
 delay-feedback tail will **not** reach `DRAIN_SILENCE_EPSILON` within 400 ms, so
@@ -139,8 +150,8 @@ bulk of the win; parallelism is a conditional extra.
 | Engine + sample amortization (`OfflineNoteSession`) | ✅ shipped (`c2a3226`) |
 | Call-site refactor (range + velocity sweeps) | ✅ shipped |
 | Bit-exact equivalence test (dry patch) | ✅ shipped |
-| §4.A long-tail isolation (`EngineCommand::ResetDsp`) | ☐ future — needs engine support |
-| §4.A wet-patch bit-exact test | ☐ future — pairs with the reset |
+| §4.A long-tail isolation (`EngineCommand::ResetDsp`) | ✅ shipped (`9c1fec4`) |
+| §4.A wet-patch bit-exact test (8 s reverb) | ✅ shipped (`9c1fec4`) |
 | §4.B cache scratch `block` | ☐ optional micro-opt |
 | §4.C confirm/doc block-size-agnostic DSP | ☐ verify only |
 | §4.D parallel sweep + step-count threshold | ☐ optional, large sweeps only |
