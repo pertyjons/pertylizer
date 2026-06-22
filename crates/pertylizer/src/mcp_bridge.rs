@@ -4111,16 +4111,18 @@ impl SynthBridge for AppSynthBridge {
         exclude_drums: Option<bool>,
         exclude_track_ids: Option<Vec<u16>>,
     ) -> Result<AnalyzeHarmonyResult, McpBridgeError> {
-        analyze_song_harmony(
-            &self.session,
-            &self.shared,
+        let (query, mut scope_warnings) = harmony_query_from_flat(
             pattern_id,
             arrangement_start_tick,
             arrangement_end_tick,
-            grouping_ticks,
             exclude_drums,
             exclude_track_ids,
-        )
+        );
+        let mut result = analyze_song_harmony(&self.session, &self.shared, query, grouping_ticks)?;
+        // Surface the flat-API "ignored in pattern scope" warnings first.
+        scope_warnings.append(&mut result.warnings);
+        result.warnings = scope_warnings;
+        Ok(result)
     }
 
     fn analyze_pattern(&self, pattern_id: u32) -> Result<AnalyzePatternResult, McpBridgeError> {
@@ -7715,23 +7717,77 @@ fn merge_consecutive_chord_events(events: Vec<HarmonyChordEvent>) -> Vec<Harmony
     out
 }
 
-/// Implementation of the `analyze_harmony` bridge method.
+/// Input scope for [`analyze_song_harmony`]: a single pattern, or an arrangement
+/// range plus its track-exclusion options. The exclusion options live **only** on
+/// the `Arrangement` variant, so passing them in pattern scope is a compile-time
+/// impossibility for internal callers. The flat MCP params map in via
+/// [`harmony_query_from_flat`], which is the one place that warns if a client
+/// sends the nonsensical pattern-id-plus-exclusion combo.
 #[doc(hidden)]
-#[allow(clippy::too_many_arguments)]
-pub fn analyze_song_harmony(
-    session: &SynthSession,
-    shared: &McpSharedState,
+pub enum HarmonyQuery {
+    Pattern {
+        pattern_id: u32,
+    },
+    Arrangement {
+        start_tick: Option<u64>,
+        end_tick: Option<u64>,
+        exclude_drums: bool,
+        exclude_track_ids: Vec<u16>,
+    },
+}
+
+/// Map the flat `analyze_harmony` MCP params into a [`HarmonyQuery`], returning
+/// any "ignored in pattern scope" warnings — the only place the flat API can
+/// express a pattern id alongside arrangement-only exclusion options. Internal
+/// callers build a `HarmonyQuery` directly and so can't hit this case.
+#[doc(hidden)]
+#[must_use]
+pub fn harmony_query_from_flat(
     pattern_id: Option<u32>,
     arrangement_start_tick: Option<u64>,
     arrangement_end_tick: Option<u64>,
-    grouping_ticks: Option<u32>,
     exclude_drums: Option<bool>,
     exclude_track_ids: Option<Vec<u16>>,
+) -> (HarmonyQuery, Vec<String>) {
+    match pattern_id {
+        Some(pattern_id) => {
+            let mut warnings = Vec::new();
+            if exclude_track_ids.as_ref().is_some_and(|v| !v.is_empty()) {
+                warnings.push(
+                    "exclude_track_ids is ignored in pattern scope — a pattern is not tied to a specific track".to_string(),
+                );
+            }
+            if exclude_drums.is_some() {
+                warnings.push(
+                    "exclude_drums is ignored in pattern scope — a pattern has no track/instrument assignment to classify".to_string(),
+                );
+            }
+            (HarmonyQuery::Pattern { pattern_id }, warnings)
+        }
+        None => (
+            HarmonyQuery::Arrangement {
+                start_tick: arrangement_start_tick,
+                end_tick: arrangement_end_tick,
+                exclude_drums: exclude_drums.unwrap_or(true),
+                exclude_track_ids: exclude_track_ids.unwrap_or_default(),
+            },
+            Vec::new(),
+        ),
+    }
+}
+
+/// Implementation of the `analyze_harmony` bridge method.
+#[doc(hidden)]
+pub fn analyze_song_harmony(
+    session: &SynthSession,
+    shared: &McpSharedState,
+    query: HarmonyQuery,
+    grouping_ticks: Option<u32>,
 ) -> Result<AnalyzeHarmonyResult, McpBridgeError> {
     use synth_sequencer::{PatternId, SeqInstrumentId, TrackId};
 
     let song = shared.song.read();
-    let default_grouping = if pattern_id.is_some() {
+    let default_grouping = if matches!(query, HarmonyQuery::Pattern { .. }) {
         DEFAULT_PATTERN_GROUPING_TICKS
     } else {
         DEFAULT_ARRANGEMENT_GROUPING_TICKS
@@ -7739,15 +7795,6 @@ pub fn analyze_song_harmony(
     let grouping = grouping_ticks
         .filter(|g| *g > 0)
         .unwrap_or(default_grouping);
-    // Track whether the caller set `exclude_drums` so pattern scope can warn it
-    // was ignored (it only has meaning in arrangement scope, where tracks carry
-    // instruments to classify) — mirroring the `exclude_track_ids` warning below.
-    let exclude_drums_explicit = exclude_drums.is_some();
-    let exclude_drums = exclude_drums.unwrap_or(true);
-    let explicit_excluded: std::collections::HashSet<TrackId> = exclude_track_ids
-        .as_deref()
-        .map(|ids| ids.iter().copied().map(TrackId).collect())
-        .unwrap_or_default();
     let mut warnings: Vec<String> = Vec::new();
 
     // Lock in the time signature once per request so chord-event bar/beat
@@ -7756,24 +7803,16 @@ pub fn analyze_song_harmony(
     // scope start; that's accurate enough for the typical case where TS
     // changes are rare.
     let default_ts = song.default_time_signature;
-    let scope_time_signature = match (pattern_id, arrangement_start_tick) {
-        (Some(_), _) => default_ts,
-        (None, Some(t)) => song.time_signature_at(synth_sequencer::Tick(t)),
-        (None, None) => default_ts,
+    let scope_time_signature = match &query {
+        HarmonyQuery::Arrangement {
+            start_tick: Some(t),
+            ..
+        } => song.time_signature_at(synth_sequencer::Tick(*t)),
+        _ => default_ts,
     };
 
-    let (scope, notes, range_start, range_end) = match pattern_id {
-        Some(pid) => {
-            if !explicit_excluded.is_empty() {
-                warnings.push(
-                    "exclude_track_ids is ignored in pattern scope — a pattern is not tied to a specific track".to_string(),
-                );
-            }
-            if exclude_drums_explicit {
-                warnings.push(
-                    "exclude_drums is ignored in pattern scope — a pattern has no track/instrument assignment to classify".to_string(),
-                );
-            }
+    let (scope, notes, range_start, range_end) = match query {
+        HarmonyQuery::Pattern { pattern_id: pid } => {
             let pid_typed = PatternId(pid);
             let Some(pattern) = song.pattern(pid_typed) else {
                 return Err(McpBridgeError::Other(format!("Pattern {pid} not found")));
@@ -7802,9 +7841,15 @@ pub fn analyze_song_harmony(
                 u64::from(length_ticks),
             )
         }
-        None => {
-            let (start, end) =
-                resolve_arrangement_range(&song, arrangement_start_tick, arrangement_end_tick)?;
+        HarmonyQuery::Arrangement {
+            start_tick,
+            end_tick,
+            exclude_drums,
+            exclude_track_ids,
+        } => {
+            let (start, end) = resolve_arrangement_range(&song, start_tick, end_tick)?;
+            let explicit_excluded: std::collections::HashSet<TrackId> =
+                exclude_track_ids.iter().copied().map(TrackId).collect();
 
             // Resolve which tracks to skip. A track is excluded when either:
             //   1. It appears in the explicit `exclude_track_ids` list, or
@@ -8594,16 +8639,14 @@ fn analyze_harmonic_function_impl(
     // Reuse the harmony analyzer end-to-end so the key inference + chord
     // identification + drum-exclusion behaviour stays in lock-step with
     // analyze_harmony.
-    let harmony = analyze_song_harmony(
-        session,
-        shared,
+    let (harmony_query, scope_warnings) = harmony_query_from_flat(
         pattern_id,
         arrangement_start_tick,
         arrangement_end_tick,
-        grouping_ticks,
         exclude_drums,
         exclude_track_ids,
-    )?;
+    );
+    let harmony = analyze_song_harmony(session, shared, harmony_query, grouping_ticks)?;
 
     let key_mode = harmony
         .inferred_key
@@ -8625,7 +8668,9 @@ fn analyze_harmonic_function_impl(
 
     let analysis = crate::analysis::harmonic_function::analyze(&chord_inputs, tonic, key_mode);
 
-    let mut warnings = harmony.warnings.clone();
+    // Pattern-scope "ignored exclude_*" warnings first, then the analyzers'.
+    let mut warnings = scope_warnings;
+    warnings.extend(harmony.warnings.iter().cloned());
     warnings.extend(analysis.warnings.iter().cloned());
 
     let chord_events: Vec<ChordFunctionEvent> = harmony
@@ -9320,12 +9365,15 @@ pub fn analyze_tension_curve_impl(
     let harmony = analyze_song_harmony(
         session,
         shared,
-        pattern_id,
-        arrangement_start_tick,
-        arrangement_end_tick,
+        harmony_query_from_flat(
+            pattern_id,
+            arrangement_start_tick,
+            arrangement_end_tick,
+            Some(exclude_drums_v),
+            Some(exclude_track_ids_v.clone()),
+        )
+        .0,
         grouping_ticks_opt,
-        Some(exclude_drums_v),
-        Some(exclude_track_ids_v.clone()),
     )?;
     let key_mode = harmony
         .inferred_key
@@ -9589,12 +9637,15 @@ pub fn suggest_music_fixes_impl(
         match analyze_song_harmony(
             session,
             shared,
-            pattern_id,
-            arrangement_start_tick,
-            arrangement_end_tick,
+            harmony_query_from_flat(
+                pattern_id,
+                arrangement_start_tick,
+                arrangement_end_tick,
+                Some(exclude_drums_v),
+                Some(exclude_track_ids_v.clone()),
+            )
+            .0,
             None,
-            Some(exclude_drums_v),
-            Some(exclude_track_ids_v.clone()),
         ) {
             Ok(r) => Some(r),
             Err(e) => {

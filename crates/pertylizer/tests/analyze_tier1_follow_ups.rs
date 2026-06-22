@@ -26,9 +26,9 @@ use synth_sequencer::{
 };
 
 use pertylizer::mcp_bridge::{
-    analyze_masking_matrix_impl, analyze_master_chain_impl, analyze_mix_bus_impl,
+    HarmonyQuery, analyze_masking_matrix_impl, analyze_master_chain_impl, analyze_mix_bus_impl,
     analyze_return_busses_impl, analyze_section_impl, analyze_song_harmony,
-    compare_mix_before_after_impl,
+    compare_mix_before_after_impl, harmony_query_from_flat,
 };
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
@@ -372,12 +372,13 @@ fn analyze_harmony_default_excludes_drum_tracks() {
     let result = analyze_song_harmony(
         &rig.session,
         &shared,
-        None,       // arrangement scope
-        Some(0),    // start
-        Some(3840), // end
+        HarmonyQuery::Arrangement {
+            start_tick: Some(0),
+            end_tick: Some(3840),
+            exclude_drums: true,
+            exclude_track_ids: vec![],
+        },
         Some(3840), // single grouping window across the whole bar
-        None,       // exclude_drums defaults to true
-        None,       // no explicit exclude_track_ids
     )
     .expect("harmony analysis should succeed");
 
@@ -421,12 +422,13 @@ fn analyze_harmony_default_excludes_uncategorized_inferred_drums() {
     let result = analyze_song_harmony(
         &rig.session,
         &shared,
-        None,
-        Some(0),
+        HarmonyQuery::Arrangement {
+            start_tick: Some(0),
+            end_tick: Some(3840),
+            exclude_drums: true,
+            exclude_track_ids: vec![],
+        },
         Some(3840),
-        Some(3840),
-        None, // exclude_drums defaults to true
-        None,
     )
     .expect("harmony analysis should succeed");
 
@@ -473,12 +475,13 @@ fn analyze_harmony_default_excludes_uncategorized_sampler_drums() {
     let result = analyze_song_harmony(
         &rig.session,
         &shared,
-        None,
-        Some(0),
+        HarmonyQuery::Arrangement {
+            start_tick: Some(0),
+            end_tick: Some(3840),
+            exclude_drums: true,
+            exclude_track_ids: vec![],
+        },
         Some(3840),
-        Some(3840),
-        None, // exclude_drums defaults to true
-        None,
     )
     .expect("harmony analysis should succeed");
 
@@ -516,12 +519,13 @@ fn analyze_harmony_explicit_disable_lets_drums_pollute() {
     let result = analyze_song_harmony(
         &rig.session,
         &shared,
-        None,
-        Some(0),
+        HarmonyQuery::Arrangement {
+            start_tick: Some(0),
+            end_tick: Some(3840),
+            exclude_drums: false, // explicitly disable drum filter
+            exclude_track_ids: vec![],
+        },
         Some(3840),
-        Some(3840),
-        Some(false), // explicitly disable drum filter
-        None,
     )
     .expect("harmony analysis should succeed");
 
@@ -551,12 +555,13 @@ fn analyze_harmony_excludes_by_track_id() {
     let result = analyze_song_harmony(
         &rig.session,
         &shared,
-        None,
-        Some(0),
+        HarmonyQuery::Arrangement {
+            start_tick: Some(0),
+            end_tick: Some(3840),
+            exclude_drums: false, // category-based filter off
+            exclude_track_ids: vec![drum_track_id],
+        },
         Some(3840),
-        Some(3840),
-        Some(false), // category-based filter off
-        Some(vec![drum_track_id]),
     )
     .expect("harmony analysis should succeed");
 
@@ -572,58 +577,44 @@ fn analyze_harmony_excludes_by_track_id() {
 }
 
 #[test]
-fn analyze_harmony_warns_exclude_drums_in_pattern_scope() {
-    // exclude_drums only has meaning in arrangement scope (tracks carry the
-    // instruments to classify). In pattern scope an explicit value must WARN it
-    // was ignored — mirroring exclude_track_ids — not silently no-op.
-    let rig = setup_two_instruments(InstrumentCategory::Uncategorized);
-
-    let mut song = Song::new("PatternScope");
-    let pid = song.create_pattern(SeqDuration(3840));
-    {
-        let pat = song.pattern_mut(pid).expect("pattern");
-        for midi in [60u8, 64, 67] {
-            let _ = pat.add_note(PatternTick(0), Pitch::new(midi).unwrap(), Velocity::MF);
-        }
-    }
-    let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
-
-    let result = analyze_song_harmony(
-        &rig.session,
-        &shared,
-        Some(pid.0), // pattern scope
-        None,
-        None,
-        None,
-        Some(false), // explicit exclude_drums → must warn it is ignored
-        None,
-    )
-    .expect("harmony analysis should succeed");
+fn harmony_query_warns_exclude_options_in_pattern_scope() {
+    // exclude_drums / exclude_track_ids only have meaning in arrangement scope.
+    // The flat→query mapper must WARN (not silently no-op) when a pattern id is
+    // paired with them, and build a Pattern query that structurally omits them —
+    // so internal callers can never express the nonsensical combo.
+    let (q, warns) = harmony_query_from_flat(Some(7), None, None, Some(false), Some(vec![1]));
+    assert!(matches!(q, HarmonyQuery::Pattern { pattern_id: 7 }));
     assert!(
-        result
-            .warnings
+        warns
             .iter()
             .any(|w| w.contains("exclude_drums is ignored in pattern scope")),
-        "explicit exclude_drums in pattern scope must warn, got {:?}",
-        result.warnings
+        "explicit exclude_drums must warn: {warns:?}"
+    );
+    assert!(
+        warns
+            .iter()
+            .any(|w| w.contains("exclude_track_ids is ignored in pattern scope")),
+        "explicit exclude_track_ids must warn: {warns:?}"
     );
 
-    // Default (None) must NOT warn — only an explicitly-set value is noteworthy.
-    let quiet = analyze_song_harmony(
-        &rig.session,
-        &shared,
-        Some(pid.0),
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-    .expect("harmony analysis should succeed");
+    // Default (None) exclude_drums + no track ids → no warnings.
+    let (q2, warns2) = harmony_query_from_flat(Some(7), None, None, None, None);
+    assert!(matches!(q2, HarmonyQuery::Pattern { .. }));
+    assert!(warns2.is_empty(), "defaults must not warn: {warns2:?}");
+
+    // Arrangement scope (no pattern id) never warns and carries the options.
+    let (q3, warns3) =
+        harmony_query_from_flat(None, Some(0), Some(3840), Some(false), Some(vec![2]));
+    assert!(matches!(
+        q3,
+        HarmonyQuery::Arrangement {
+            exclude_drums: false,
+            ..
+        }
+    ));
     assert!(
-        !quiet.warnings.iter().any(|w| w.contains("exclude_drums")),
-        "default exclude_drums must not warn, got {:?}",
-        quiet.warnings
+        warns3.is_empty(),
+        "arrangement scope must not warn: {warns3:?}"
     );
 }
 
