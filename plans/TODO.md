@@ -277,9 +277,13 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   per-instrument signal-path DSP (voices + effect chain + downsamplers) + master/return chains +
   modular graph; `OfflineNoteSession::render` sends it before each render instead of the 400 ms
   drain → bit-exact even with long reverb/delay tails (`session_render_wet_patch_is_tail_proof_bit_exact`).
-  **Remaining optional follow-ups — see `plans/offline-note-session-plan.md` §4:** scratch-buffer
-  caching (§4.B); per-worker parallel sweep with a step-count threshold (§4.D); AWE-tail reset if
-  ResetDsp is ever used with AWE enabled.
+  **Remaining optional follow-ups (low priority, none blocking):** cache the per-render scratch
+  `block` as a session field instead of allocating it each `render` (offline thread, harmless);
+  verify/document that all `synth_modules`/`synth_dsp` modules are block-size-agnostic (the
+  sample-accurate note-off trimming already relies on it, same as `OfflineEngineSession`);
+  per-worker parallel sweep gated behind a step-count threshold (one engine build per worker, only
+  worth it for large note-range sweeps); reset the AWE room sim in `ResetDsp` if it is ever used
+  with AWE enabled (currently out of the offline path).
 - [x] **Static `#[schemars(range(...))]` on fixed-range numeric MCP fields. — DONE** (commit `650a588`).
   All fixed-range numeric tool fields — MIDI note/pitch (0–127), velocity (0/1–127), MIDI channel
   (1–16), LFO index (1–4) — now carry `#[schemars(range(min, max))]` so their `JsonSchema` exposes
