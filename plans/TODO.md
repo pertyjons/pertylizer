@@ -250,24 +250,16 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
 
 ### 5.2 Technical follow-ups from the MCP music tools plan
 
-- [ ] **`HarmonyScope` enum to fix `analyze_song_harmony` argument sprawl.** `analyze_song_harmony`
-  (`crates/pertylizer/src/mcp_bridge.rs:7721`) takes 8 arguments and carries
-  `#[allow(clippy::too_many_arguments)]`. Two of them
-  (`exclude_drums`, `exclude_track_ids`) are only meaningful in arrangement scope.
-  **The correctness bug is fixed:** `exclude_drums` now also warns when set in pattern
-  scope (commit `6b59a28`), so the enforcement is consistent. **Remaining (non-bug cleanup):**
-  the enum refactor itself, to drop the `#[allow]` and make "ignored in pattern scope" a
-  compile-time impossibility. Also a *latent* seam — `analyze_tension_curve_impl` /
-  `analyze_section`'s harmony sub-call pass `Some(exclude_drums.unwrap_or(true))`, normalizing
-  `None`→`Some(true)`, so a future change that forwarded `harmony.warnings` through those callers
-  would emit a spurious pattern-scope warning; the enum refactor resolves this seam too. Introduce
-  `enum HarmonyScope { Pattern { pattern_id: PatternId }, Arrangement { start: Option<u64>,
-  end: Option<u64>, exclude_drums: bool, exclude_track_ids: HashSet<TrackId> } }` at the bridge
-  boundary; the flat `AnalyzeHarmonyParam` (`crates/synth_mcp/src/server.rs:1011`, JSON-schema
-  layer requires it) maps into the enum inside the bridge. Both "ignored in pattern scope"
-  cases become a compile-time impossibility and the `#[allow]` disappears. Touches
-  `synth_mcp::server` (the param struct), the bridge impl, and the arrangement-vs-pattern branch
-  in `analyze_song_harmony`. Medium impact — pick up when next touching the harmony analyzer.
+- [x] **`HarmonyQuery` enum replaces `analyze_song_harmony` argument sprawl. — DONE** (commit `fdcb506`;
+  correctness warning earlier in `6b59a28`). `analyze_song_harmony` now takes a `HarmonyQuery
+  { Pattern{pattern_id} | Arrangement{start_tick, end_tick, exclude_drums, exclude_track_ids} }` +
+  `grouping_ticks` (4 args; the `#[allow(clippy::too_many_arguments)]` is gone). The exclusion options
+  live only on the `Arrangement` variant, so "ignored in pattern scope" is a compile-time impossibility
+  for internal callers. A `harmony_query_from_flat()` mapper centralizes the flat MCP-param→enum
+  conversion and the two pattern-scope "ignored" warnings; the public `analyze_harmony` bridge and
+  `analyze_harmonic_function` both surface them (the latent warning-drop seam in the wrapper callers is
+  resolved). Named `HarmonyQuery`, not `HarmonyScope`, because the latter is the existing serialized
+  *output* enum. Behavior-preserving across all scope/option combos.
 - [x] **`shared_song(Song) -> Arc<RwLock<Song>>` constructor. — DONE** (commit `ecb339f`).
   Added as `synth_engine::shared_song` (not `synth_sequencer` as originally suggested — that
   pure-data crate has no `parking_lot` dep, and adding one purely for this convenience would invert
