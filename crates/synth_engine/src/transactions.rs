@@ -399,6 +399,7 @@ impl EngineCommand {
                 channel: *channel,
             },
             Self::AllNotesOff => Self::AllNotesOff,
+            Self::ResetDsp => Self::ResetDsp,
             Self::PitchBend { value, channel } => Self::PitchBend {
                 value: *value,
                 channel: *channel,

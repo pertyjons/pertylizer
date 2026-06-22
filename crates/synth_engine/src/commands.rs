@@ -403,6 +403,20 @@ pub enum EngineCommand {
     /// All notes off.
     AllNotesOff,
 
+    /// Hard-reset the DSP state in the per-instrument signal path to silence
+    /// **instantly** — every instrument's voices (envelopes/filters/oscillator
+    /// phase), its effect chain, its oversampling downsamplers, plus the master
+    /// effect chain, every return bus's effect chain, and the modular graph.
+    /// Unlike [`Self::AllNotesOff`] (which only triggers the release phase and
+    /// lets tails ring), this zeroes delay lines and reverb buffers so the next
+    /// render starts from a clean slate — tail-proof isolation between offline
+    /// renders. Real-time safe.
+    ///
+    /// Not reset (out of scope — not in the offline single-instrument render
+    /// path): the AWE room simulation, and the one-block sidechain
+    /// previous-output buffer (self-heals after one block).
+    ResetDsp,
+
     /// Pitch bend (type-safe bipolar value).
     /// GUI/MIDI handler converts raw MIDI (0-16383) to BipolarValue (-1.0 to 1.0).
     PitchBend {
@@ -1136,6 +1150,7 @@ impl std::fmt::Debug for EngineCommand {
                 .field("channel", channel)
                 .finish(),
             Self::AllNotesOff => write!(f, "AllNotesOff"),
+            Self::ResetDsp => write!(f, "ResetDsp"),
             Self::PitchBend { value, channel } => f
                 .debug_struct("PitchBend")
                 .field("value", value)

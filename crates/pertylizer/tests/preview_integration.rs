@@ -945,3 +945,58 @@ fn session_render_same_note_is_bit_exact_across_three_calls() {
     assert_eq!(second, third, "render 2 vs 3 not bit-exact");
     assert!(rms(&extract_left(&first)) > 1e-4, "render produced silence");
 }
+
+/// Tail-proof isolation: with a long (8 s) reverb tail, a reused session must
+/// STILL be bit-exact with fresh-engine renders. This is the `ResetDsp` payoff —
+/// the previous note's multi-second reverb tail is hard-reset before each render,
+/// so it cannot bleed in. The old best-effort 400 ms drain could not flush an 8 s
+/// tail, so this case would have failed under it.
+#[test]
+fn session_render_wet_patch_is_tail_proof_bit_exact() {
+    let rig = setup_with_patch(&sustain_patch_with_reverb());
+    let notes = [60u8, 67, 48];
+
+    // Independent baseline: a fresh engine per note (no prior tail to bleed).
+    let independent: Vec<Vec<f32>> = notes
+        .iter()
+        .map(|&n| {
+            render_note_to_buffer(
+                &rig.session,
+                &rig.sample_library,
+                rig.instrument_id,
+                MidiNote::new(n),
+                Velocity::from_midi(100),
+                200,
+                100,
+            )
+            .expect("independent render")
+            .samples
+        })
+        .collect();
+
+    // Reused session: each render after the first ResetDsp-clears the 8 s tail.
+    let (mut sess, _warnings) =
+        OfflineNoteSession::new(&rig.session, &rig.sample_library, rig.instrument_id)
+            .expect("build session");
+    let reused: Vec<Vec<f32>> = notes
+        .iter()
+        .map(|&n| {
+            sess.render(MidiNote::new(n), Velocity::from_midi(100), 200, 100)
+                .expect("session render")
+                .samples
+        })
+        .collect();
+
+    for (i, (ind, reu)) in independent.iter().zip(reused.iter()).enumerate() {
+        assert_eq!(
+            ind, reu,
+            "wet note {} (idx {i}): reused render differs — a reverb tail bled across the ResetDsp boundary",
+            notes[i]
+        );
+    }
+    // Sanity: the wet patch actually produces signal (the reverb is live).
+    assert!(
+        rms(&extract_left(&reused[0])) > 1e-4,
+        "wet render is silent — reverb not engaged"
+    );
+}

@@ -306,6 +306,17 @@ impl VoiceAllocator {
         }
     }
 
+    /// Hard-reset every voice to idle, zeroing its DSP state (envelopes,
+    /// filters, oscillator phase, per-voice delay lines) **instantly** — unlike
+    /// [`all_notes_off`](Self::all_notes_off), which only triggers the release
+    /// phase. Used for tail-proof isolation between offline renders.
+    pub fn reset_voices(&mut self) {
+        self.held_notes.clear();
+        for voice in &mut self.voices {
+            voice.reset();
+        }
+    }
+
     /// Kill all voices immediately.
     pub fn panic(&mut self) {
         self.held_notes.clear();

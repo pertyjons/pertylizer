@@ -1059,6 +1059,22 @@ impl Instrument {
         self.allocator.all_notes_off();
     }
 
+    /// Hard-reset all DSP state instantly: every voice (envelopes/filters/
+    /// oscillator phase/per-voice delay lines), the instrument's effect chain
+    /// (delay lines, reverb buffers), and the oversampling downsamplers'
+    /// half-band FIR delay lines. Distinct from [`all_notes_off`](Self::all_notes_off),
+    /// which only releases and lets tails ring — this returns the instrument to a
+    /// clean slate for tail-proof isolation between offline renders.
+    pub fn reset_dsp(&mut self) {
+        self.allocator.reset_voices();
+        self.effect_chain.reset();
+        // Half-band FIR state carried by the 2x/4x oversampling downsamplers —
+        // otherwise only reset on an oversampling-factor change, so it would
+        // survive the reset and colour the next render's first samples.
+        self.downsampler_l.reset();
+        self.downsampler_r.reset();
+    }
+
     /// Apply a transient automation override to a module, fanned out to every
     /// voice in the pool so all currently allocated voices reflect the
     /// automation value. The override is also written to the template

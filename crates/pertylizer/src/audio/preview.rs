@@ -129,10 +129,6 @@ pub(crate) fn load_sample_data_for_samplers(
     }
 }
 
-/// Drain cap and silence floor for the voice-bleed drain between renders on a
-/// reused [`OfflineNoteSession`]. Mirror the arrangement-render values.
-const VOICE_DRAIN_MAX_MS: f32 = 400.0;
-const DRAIN_SILENCE_EPSILON: f32 = 1e-7;
 /// Output channel count for offline note renders (always stereo).
 const CHANNELS: usize = 2;
 
@@ -146,9 +142,10 @@ const CHANNELS: usize = 2;
 /// `analyze_velocity_response`) build the session once instead of one engine
 /// per step.
 ///
-/// Mirrors [`crate::audio::arrangement_render::OfflineEngineSession`]: the first
-/// `render` warms the engine up, and every subsequent call first drains any
-/// voices still ringing from the previous note so renders stay independent.
+/// The first `render` warms the engine up; every subsequent call first sends
+/// [`EngineCommand::ResetDsp`] to hard-reset all DSP state (voices + effect
+/// chains, incl. long reverb/delay tails) so renders stay fully independent and
+/// bit-exact with the one-shot fresh-engine path — tail-proof isolation.
 pub struct OfflineNoteSession {
     engine: SynthEngine,
     handle: synth_engine::EngineHandle,
@@ -475,43 +472,31 @@ impl OfflineNoteSession {
         let hw_sample_rate = HwSampleRate(PREVIEW_SAMPLE_RATE);
         let mut block = vec![0.0f32; BUFFER_SIZE * CHANNELS];
 
+        // On a reused engine, hard-reset all DSP state before this note so the
+        // previous note's tail — including long reverb/delay/envelope tails that
+        // the old best-effort drain could not fully flush — cannot bleed in. The
+        // reset is applied by the warm-up block below, leaving the engine on the
+        // same clean-slate footing as a freshly-built one (tail-proof isolation,
+        // and bit-exact with the one-shot fresh-engine path).
         if self.first_call_done {
-            // Voice-bleed drain: process silent blocks until the previous note's
-            // released voices fall below the silence floor, capped at
-            // `VOICE_DRAIN_MAX_MS`. Long reverb/delay tails are best-effort.
-            let drain_ctx = AudioCallbackContext {
-                sample_rate: hw_sample_rate,
-                frames: BUFFER_SIZE,
-                channels: CHANNELS as u16,
-                stream_time: 0.0,
-                sample_position: u64::MAX,
-                output_latency: synth_core::Seconds::ZERO,
-            };
-            let max_blocks = ((VOICE_DRAIN_MAX_MS / 1000.0) * PREVIEW_SAMPLE_RATE as f32
-                / BUFFER_SIZE as f32)
-                .ceil() as usize;
-            for _ in 0..max_blocks {
-                block.fill(0.0);
-                self.engine.process(&mut block, &drain_ctx);
-                if block.iter().all(|s| s.abs() < DRAIN_SILENCE_EPSILON) {
-                    break;
-                }
-            }
-        } else {
-            // Warm up: process one buffer so the engine applies queued commands
-            // and initializes. Sentinel sample_position keeps the engine from
-            // seeing a duplicate position 0 when real rendering starts.
-            let init_context = AudioCallbackContext {
-                sample_rate: hw_sample_rate,
-                frames: BUFFER_SIZE,
-                channels: CHANNELS as u16,
-                stream_time: 0.0,
-                sample_position: u64::MAX,
-                output_latency: synth_core::Seconds::ZERO,
-            };
-            self.engine.process(&mut block, &init_context);
-            self.first_call_done = true;
+            self.handle.send_blocking(EngineCommand::ResetDsp);
         }
+        // Warm-up / reset-apply block: process one buffer so queued commands take
+        // effect before the note plays — the patch-load commands on the first
+        // call, the `ResetDsp` on every later call. The sentinel `sample_position`
+        // keeps the engine from seeing a duplicate position 0 when real rendering
+        // starts.
+        let init_context = AudioCallbackContext {
+            sample_rate: hw_sample_rate,
+            frames: BUFFER_SIZE,
+            channels: CHANNELS as u16,
+            stream_time: 0.0,
+            sample_position: u64::MAX,
+            output_latency: synth_core::Seconds::ZERO,
+        };
+        block.fill(0.0);
+        self.engine.process(&mut block, &init_context);
+        self.first_call_done = true;
 
         // Calculate frame counts
         let note_frames = (f64::from(duration_ms) / 1000.0 * f64::from(PREVIEW_SAMPLE_RATE)) as u64;

@@ -379,6 +379,7 @@ impl EngineHub {
             EngineCommand::NoteOn { .. }
             | EngineCommand::NoteOff { .. }
             | EngineCommand::AllNotesOff
+            | EngineCommand::ResetDsp
             | EngineCommand::PitchBend { .. }
             | EngineCommand::ModWheel { .. }
             | EngineCommand::Aftertouch { .. }

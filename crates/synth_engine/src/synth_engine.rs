@@ -987,6 +987,10 @@ impl SynthEngine {
                 self.handle_all_notes_off();
             }
 
+            EngineCommand::ResetDsp => {
+                self.handle_reset_dsp();
+            }
+
             // MIDI controllers
             EngineCommand::PitchBend { value, channel } => {
                 self.handle_pitch_bend(value, channel);
@@ -1924,6 +1928,31 @@ impl SynthEngine {
         self.clear_all_param_overrides();
 
         let _ = self.event_producer.try_push(EngineEvent::AllNotesReleased);
+    }
+
+    /// Hard-reset the per-instrument signal path's DSP state to silence instantly
+    /// — every instrument's voices (envelopes/filters/oscillator phase), effect
+    /// chain, and oversampling downsamplers, plus the master effect chain, every
+    /// return bus's effect chain, and the modular graph. Unlike
+    /// `handle_all_notes_off` (which only releases and lets tails ring), this
+    /// zeroes delay lines and reverb buffers so a subsequent render starts from a
+    /// clean slate — tail-proof isolation between offline renders. Real-time safe:
+    /// only touches pre-allocated DSP buffers, no alloc/lock.
+    ///
+    /// Not reset (out of the offline single-instrument render path): the AWE room
+    /// simulation and the one-block sidechain previous-output buffer (the latter
+    /// self-heals after one block, and the offline render uses no sidechain).
+    fn handle_reset_dsp(&mut self) {
+        for instrument in &mut self.instruments {
+            instrument.reset_dsp();
+        }
+        self.master_effects.reset();
+        for bus in &mut self.return_busses {
+            bus.effect_chain_mut().reset();
+        }
+        if self.use_modular_routing {
+            self.module_graph.reset();
+        }
     }
 
     /// Revert every transient automation override (instruments + modular graph)
