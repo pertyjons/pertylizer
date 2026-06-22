@@ -8101,7 +8101,7 @@ impl SynthMcpServer {
                        `get_mod_matrix_routings` (Mod Matrix slots expose `script`)."
     )]
     async fn get_yams_reference(&self, _params: Parameters<NoParams>) -> String {
-        include_str!("../../../docs/yams.md").to_string()
+        synth_script::REFERENCE.to_string()
     }
 
     #[tool(
