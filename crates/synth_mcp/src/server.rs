@@ -3792,6 +3792,7 @@ impl SynthMcpServer {
             "get_module_type_info" => get_module_type_info(GetModuleTypeInfoParam),
             "search_modules" => search_modules(SearchModulesParam),
             "list_port_types" => list_port_types(NoParams),
+            "get_yams_reference" => get_yams_reference(NoParams),
             "check_connection" => check_connection(CheckConnectionParam),
 
             // Parameters
@@ -8088,6 +8089,19 @@ impl SynthMcpServer {
             },
         ];
         to_json(&types)
+    }
+
+    #[tool(
+        description = "Get the full YAMS (Yet Another Modulation Script) language reference as \
+                       Markdown: grammar, statements (src/let/out, arr lookup tables), the function \
+                       set, context variables, macros, and the array index / OOB rules. Read this \
+                       before authoring a script for `set_mod_matrix_script`, which installs YAMS on \
+                       a Mod Matrix OR Script (scr) module slot. Read back installed scripts via \
+                       `get_module_info` (Script modules expose a `scripts` array) or \
+                       `get_mod_matrix_routings` (Mod Matrix slots expose `script`)."
+    )]
+    async fn get_yams_reference(&self, _params: Parameters<NoParams>) -> String {
+        include_str!("../../../docs/yams.md").to_string()
     }
 
     #[tool(

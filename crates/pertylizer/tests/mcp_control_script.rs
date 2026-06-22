@@ -115,3 +115,107 @@ async fn set_mod_matrix_script_compiles_clears_and_validates() {
     .await;
     assert!(cleared.starts_with("OK: cleared"), "clear: {cleared}");
 }
+
+#[test]
+fn script_module_readback_via_get_module_info() {
+    // §3.2: a Script (`scr`) module must expose its declared output ports
+    // (`out1`..`out8`) even when unconnected, plus the installed scripts per
+    // slot — symmetric with set_mod_matrix_script so a client can inspect/diff.
+    // Needs a live (pumped) engine so the module reaches the shared graph that
+    // get_module_info reads; the server-dispatch rig drops the engine.
+    use pertylizer::mcp_bridge::AppSynthBridge;
+    use pertylizer::patch::{ModuleBuilder, Patch};
+    use synth_core::audio::SampleRate as HwSampleRate;
+    use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
+    use synth_engine::instrument::InstrumentId;
+    use synth_mcp::SynthBridge;
+
+    let (mut engine, handle) = SynthEngine::new();
+    let song = Arc::new(PlRwLock::new(Song::new("ScrReadback")));
+    let _ = handle
+        .command_sender()
+        .send(synth_engine::EngineCommand::SetSong {
+            song: Arc::clone(&song),
+        });
+    let session = Arc::new(SynthSession::new(
+        handle.command_sender(),
+        Arc::clone(&handle.state),
+    ));
+    session
+        .add_instrument_with_id(InstrumentId::FIRST, "Test")
+        .expect("add instrument");
+
+    let stream_info = synth_core::StreamInfo {
+        sample_rate: HwSampleRate(44_100),
+        buffer_size: synth_core::BufferSize(256),
+        channels: synth_core::ChannelCount::Stereo,
+        output_latency: std::time::Duration::ZERO,
+        input_latency: None,
+    };
+    engine.on_stream_start(&stream_info);
+    let ctx = AudioCallbackContext {
+        sample_rate: HwSampleRate(44_100),
+        frames: 256,
+        channels: 2,
+        stream_time: 0.0,
+        sample_position: 0,
+        output_latency: synth_core::Seconds::ZERO,
+    };
+    let mut block = vec![0.0f32; 256 * 2];
+    engine.process(&mut block, &ctx);
+
+    // A Script module with one slot occupied — apply_patch installs the script.
+    let mut patch = Patch::new("ScrReadback");
+    let mut scr = ModuleBuilder::new(1, ModuleType::Script).build();
+    scr.scripts
+        .insert("1".to_string(), "out = velocity * 0.5".to_string());
+    patch.add_module(scr);
+    let _ = session.apply_patch(InstrumentId::FIRST, &patch);
+    for _ in 0..16 {
+        block.fill(0.0);
+        engine.process(&mut block, &ctx);
+    }
+
+    let sample_library = Arc::new(std::sync::RwLock::new(
+        synth_sampler::SampleLibrary::default(),
+    ));
+    let shared = Arc::new(McpSharedState::with_song(Arc::clone(&song)));
+    let bridge = AppSynthBridge::new(Arc::clone(&session), shared, sample_library);
+
+    let info = bridge
+        .get_module_info(InstrumentId::FIRST.as_u64(), "scr-1")
+        .expect("get_module_info scr-1");
+
+    assert!(
+        info.output_ports.iter().any(|p| p == "out1")
+            && info.output_ports.iter().any(|p| p == "out8"),
+        "scr output ports out1..out8 must be listed even unconnected: {:?}",
+        info.output_ports
+    );
+    let scripts = info
+        .scripts
+        .expect("scripts array present for a Script module");
+    assert_eq!(scripts.len(), 1, "one slot installed");
+    assert_eq!(scripts[0].slot, 1);
+    assert_eq!(scripts[0].output_port, "out1");
+    assert_eq!(
+        scripts[0].source, "out = velocity * 0.5",
+        "installed source must round-trip"
+    );
+}
+
+#[tokio::test]
+async fn get_yams_reference_returns_language_docs() {
+    // §3.3: the YAMS language reference must be reachable over MCP, not just on
+    // disk, so an agent can author scripts without reverse-engineering grammar.
+    let server = build_server();
+    let doc = call(&server, "get_yams_reference", serde_json::json!({})).await;
+    assert!(
+        doc.len() > 1000,
+        "reference should be the full doc, got {} bytes",
+        doc.len()
+    );
+    for needle in ["YAMS", "out", "src", "arr"] {
+        assert!(doc.contains(needle), "reference missing '{needle}'");
+    }
+}

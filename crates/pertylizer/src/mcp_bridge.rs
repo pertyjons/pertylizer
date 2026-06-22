@@ -475,6 +475,48 @@ impl SynthBridge for AppSynthBridge {
                 if is_mod_matrix && outputs.is_empty() {
                     outputs.push(MATRIX_VIRTUAL_PORT.to_string());
                 }
+
+                // Script (`scr`) modules: surface every declared output port
+                // (`out1`..`out8`) even when unconnected, and read back the
+                // installed YAMS scripts per slot — symmetric with
+                // `set_mod_matrix_script`, so a client can inspect/diff a Script
+                // module it just configured.
+                let is_script = m.module_type == ModuleType::Script;
+                let scripts = if is_script {
+                    if let Some(desc) = descriptor.as_ref() {
+                        for p in &desc.ports {
+                            if p.direction == PortDirection::Output {
+                                let name = p.name.as_str().to_string();
+                                if !outputs.contains(&name) {
+                                    outputs.push(name);
+                                }
+                            }
+                        }
+                    }
+                    let mut slots: Vec<synth_mcp::types::ScriptSlotInfo> = m
+                        .scripts
+                        .iter()
+                        .filter_map(|(slot_key, source)| {
+                            // Keys are 1-based; the canonical generator is 0-based
+                            // and returns None past the module's real port count,
+                            // so a stray out-of-range slot is skipped rather than
+                            // reported as a phantom port.
+                            let slot = slot_key.parse::<u8>().ok()?;
+                            let output_port = synth_modules::script_module::output_port_name(
+                                usize::from(slot.checked_sub(1)?),
+                            )?;
+                            Some(synth_mcp::types::ScriptSlotInfo {
+                                slot,
+                                output_port,
+                                source: source.clone(),
+                            })
+                        })
+                        .collect();
+                    slots.sort_by_key(|s| s.slot);
+                    Some(slots)
+                } else {
+                    None
+                };
                 if matrix_sources.contains(&m.id)
                     && !outputs.iter().any(|p| p == MATRIX_VIRTUAL_PORT)
                 {
@@ -527,6 +569,7 @@ impl SynthBridge for AppSynthBridge {
                     input_ports: inputs,
                     output_ports: outputs,
                     mod_matrix_routings,
+                    scripts,
                 }
             })
             .collect())

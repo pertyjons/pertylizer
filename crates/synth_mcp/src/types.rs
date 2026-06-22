@@ -77,6 +77,24 @@ pub struct ModuleInfo {
     /// for Mod Matrix modules; absent on every other module type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mod_matrix_routings: Option<Vec<MatrixRoutingInfo>>,
+    /// Installed YAMS control scripts. Populated only for Script (`scr`)
+    /// modules — one entry per occupied slot, empty when none are installed;
+    /// absent on every other module type. (Mod Matrix scripts are surfaced via
+    /// `mod_matrix_routings[].script` instead.)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scripts: Option<Vec<ScriptSlotInfo>>,
+}
+
+/// One occupied script slot of a Script (`scr`) module: the YAMS source and the
+/// output port it drives. Read-back symmetric with `set_mod_matrix_script`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ScriptSlotInfo {
+    /// 1-based slot index (1..=8 for the Script module).
+    pub slot: u8,
+    /// Output port this slot drives (e.g. `"out1"`).
+    pub output_port: String,
+    /// The slot's YAMS control script source text.
+    pub source: String,
 }
 
 /// A module instance plus its free-text per-instance description (intent).

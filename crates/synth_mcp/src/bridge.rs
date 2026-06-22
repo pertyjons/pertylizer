@@ -2518,6 +2518,7 @@ mod insert_anchor_tests {
             input_ports: vec![],
             output_ports: vec![],
             mod_matrix_routings: None,
+            scripts: None,
         }
     }
 
