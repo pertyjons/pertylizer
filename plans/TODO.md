@@ -299,9 +299,12 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   dispatching to per-module impls) then re-clamps ad hoc and sometimes hardcodes a range that
   duplicates the descriptor (e.g. the 2026-05-27 `Detune::with_f32` `-100..100` clamp at
   `crates/synth_core/src/params/oscillators.rs:530` mirrors the descriptor range at
-  `crates/synth_modules/src/oscillator.rs:354` by hand). No `BoundedNewtype` trait exists yet.
-  Consider one (or a `const RANGE`) so bounds live on the type and descriptors/`with_f32` derive
-  from it. Larger, cross-cutting refactor — plan separately. **→ Plan: `plans/newtype-bounds-plan.md`.**
+  `crates/synth_modules/src/oscillator.rs:354` by hand — and the same range is restated a third time
+  in `Cents::clamp_detune`). The fix is **semantic `ValueRange` presets** (named `const` per
+  (type, context), e.g. `Cents::DETUNE_RANGE`) that the descriptor, the `with_f32` clamp, and the
+  `clamp_*` method all reference — NOT a single per-type `const RANGE`/`BoundedNewtype` (one newtype
+  serves many contexts; `Hertz` already has `clamp_audible`/`clamp_lfo`/`clamp_filter`). No clamping
+  in `new()`. Incremental, one preset per commit; start with `Detune`. **→ Plan: `plans/newtype-bounds-plan.md`.**
 
 ---
 

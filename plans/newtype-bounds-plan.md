@@ -1,98 +1,121 @@
-# Plan: uniform machine-readable bounds on `synth_core` newtypes
+# Plan: single-source parameter bounds via semantic `ValueRange` presets
 
-> From TODO §5.2 (last bullet). The TODO itself rates this **"larger,
-> cross-cutting refactor — plan separately"** — this is that separate plan.
-> Architecture cleanup, not a bug.
+> From TODO §5.2 (last bullet). Architecture cleanup, not a bug.
+>
+> **REVISED 2026-06-22 after a senior-DSP review.** The original design (a single
+> `const RANGE` per newtype + a `BoundedNewtype` trait + clamping in `new()`) is
+> **rejected** — one newtype serves many parameter contexts with different
+> ranges, so there is no single correct range for `Hertz`/`Gain`/`Cents`, and
+> clamping in `new()` would corrupt intermediate DSP math (FM, filter sweeps).
+> The codebase already proves this: `Hertz` carries `clamp_audible` / `clamp_lfo`
+> / `clamp_filter` and `Cents` carries `clamp_detune` — per-*context* clamps, not
+> a per-*type* one. The revised plan uses **semantic range presets** (named
+> `const ValueRange` per context) as the single source of truth, with no
+> constructor or DSP-path changes.
 
 ## 0. Why
 
-Newtype clamping/bounds are inconsistent today:
+The same numeric bound is currently restated in up to **three** places that can
+drift. For the oscillator `detune` (±100 ¢):
 
-- `NormalizedValue` / `BipolarValue` / `Velocity` clamp in `new()`; `Phase` wraps
-  (`rem_euclid`).
-- `Hertz` / `Gain` / `Cents` / `Semitones` are `const fn new` with **no clamp**.
-- There is **no uniform `const RANGE: ValueRange`** on any newtype — only ad-hoc
-  `MIN`/`MAX` on a few.
+1. the descriptor — `ParameterDescriptor` `.range(-100.0, 100.0)`
+   (`crates/synth_modules/src/oscillator.rs` ~`:354`),
+2. the `with_f32` apply clamp — `Cents::new(value.clamp(-100.0, 100.0))`
+   (`crates/synth_core/src/params/oscillators.rs:687`),
+3. the type's own clamp method — `Cents::clamp_detune()`
+   (used at `oscillator.rs:630` / `:771`).
 
-Consequences:
-1. A shared "spec → (schema | validation)" abstraction can only read bounds from
-   the per-module `ParameterDescriptor`, never from the type itself.
-2. `Param::with_f32` (`crates/synth_core/src/params/mod.rs:1070`, dispatching to
-   per-module impls) re-clamps ad hoc and sometimes **hardcodes a range that
-   duplicates the descriptor** — e.g. `Detune::with_f32`'s `-100..100` clamp
-   (`crates/synth_core/src/params/oscillators.rs:530`) hand-mirrors the descriptor
-   range at `crates/synth_modules/src/oscillator.rs:354`. Two sources of truth that
-   can drift.
+Three literals for one bound. The same pattern exists for `Hertz` (descriptor
+ranges vs. `clamp_audible`/`clamp_lfo`/`clamp_filter`), `Gain`, etc. Goal: **one
+named constant per (type, context)** that the descriptor, the `with_f32` clamp,
+and the type's clamp method all reference — so GUI, MCP validation, and internal
+conversion can never disagree.
 
-Goal: bounds live **on the type**, and descriptors / `with_f32` derive from them —
-one source of truth.
+## 1. The shape — semantic `ValueRange` presets (Option C)
 
-## 1. The shape — `BoundedNewtype` (or `const RANGE`)
+`ValueRange` (`crates/synth_core/src/types/range.rs`) already has what we need:
+`const fn new(min, max, default)`, public `min`/`max`/`default`, and `clamp(v)`.
+Define presets as associated `const`s on each newtype, **named by context**:
 
-Two candidate designs; decide before coding:
-
-### Option A — a `BoundedNewtype` trait
 ```rust
-pub trait BoundedNewtype: Copy {
-    const RANGE: ValueRange;        // min / max / default (+ maybe curve)
-    fn clamped(raw: f32) -> Self;   // new(raw.clamp(RANGE.min, RANGE.max))
+// crates/synth_core/src/types/frequency.rs
+impl Hertz {
+    pub const OSC_RANGE:    ValueRange = ValueRange::new(1.0,  20_000.0, 440.0);
+    pub const FILTER_RANGE: ValueRange = ValueRange::new(20.0, 20_000.0, 1_000.0);
+    pub const LFO_RANGE:    ValueRange = ValueRange::new(0.01, 50.0,     1.0);
+}
+
+// crates/synth_core/src/types/pitch.rs
+impl Cents {
+    pub const DETUNE_RANGE:        ValueRange = ValueRange::new(-100.0, 100.0, 0.0);
+    pub const UNISON_DETUNE_RANGE: ValueRange = ValueRange::new(0.0,    100.0, 10.0);
 }
 ```
-- Each newtype implements it once; `new()` (or a `clamped` ctor) routes through
-  `RANGE`. Descriptors can read `T::RANGE` instead of restating literals.
 
-### Option B — a plain `const RANGE` per newtype (no trait)
-- Simpler, but no generic code can be written over "any bounded newtype" — every
-  consumer names the concrete type. Loses the descriptor-derivation win.
+(Exact ranges/defaults must be **read off the existing descriptors/clamps**, not
+invented — the values above are illustrative; the migration copies the current
+numbers verbatim so behavior is unchanged.)
 
-**Lean Option A** — the trait is what unlocks "descriptor derives from the type"
-and a generic validate path. But confirm `ValueRange` (synth_core) already carries
-min/max/default/curve in the shape needed, or extend it.
+**No `BoundedNewtype` trait, no `const RANGE`, no clamping in `new()`.** Generic
+validation that needs "the bound" takes a `&ValueRange` argument (or reads
+`descriptor.range`) — it never assumes one-range-per-type. `new()` stays an
+unclamped `const fn`, so FM/filter intermediate math is untouched and the
+real-time audio path gains zero branches.
 
-## 2. Scope decisions (resolve before coding — this is the risky part)
+## 2. Scope decisions (resolve before coding)
 
-1. **Which newtypes get bounds?** The naturally-bounded ones: `Hertz` (audio
-   range? or unbounded — a frequency can legitimately be >20 kHz for LFO-as-audio
-   edge cases), `Gain`, `Cents`, `Semitones`, plus the already-clamping ones
-   retrofitted onto the trait. **`Hertz` is the contentious one** — clamping it
-   globally could break legitimate out-of-audio uses; it may need to stay
-   unbounded or carry a very wide range. Enumerate each newtype and decide
-   bounded-vs-not explicitly.
-2. **Does `new()` start clamping?** Changing `const fn new` on `Hertz`/`Gain`/etc.
-   to clamp is a **behavior change** — every existing construction now clamps.
-   Audit call sites for any that rely on unclamped values (e.g. intermediate math
-   that briefly exceeds range). Possibly introduce `new` (unclamped, const) +
-   `clamped` (bounded) rather than changing `new`.
-3. **`const fn` constraint.** `clamp` on f32 is `const`-incompatible in older Rust;
-   verify against the toolchain whether `RANGE`-based clamping can stay `const fn`
-   or must drop `const`.
+1. **Which (type, context) presets exist?** Enumerate from the *current* code, not
+   from first principles — every place a `ValueRange`/`.range()`/`.clamp(min,max)`
+   literal or a `clamp_*` method appears. Candidates: `Hertz` osc/filter/LFO (the
+   three `clamp_*` already imply these), `Cents` detune/unison, `Gain`
+   channel-level/boost, `Semitones` transpose. Only create a preset where a real
+   duplication exists today.
+2. **Where each preset lives.** On the newtype it bounds (`Hertz` in
+   `frequency.rs`, `Cents` in `pitch.rs`, …) so it sits beside the `clamp_*`
+   method it will back.
+3. **`clamp_*` methods reference the preset.** Re-express existing
+   `Cents::clamp_detune` / `Hertz::clamp_lfo` etc. as
+   `Self::new(SELF::X_RANGE.clamp(self.as_f32()))` so the method and the constant
+   can't diverge. (Keeps the ergonomic method; removes the second literal.)
 
-## 3. Migration steps (once the shape is decided)
+Explicitly **out of scope** (the rejected Option A): clamping in `new()`, a
+per-type single range, the `BoundedNewtype` trait.
 
-1. Add `ValueRange` `const`s + the trait impl to each chosen newtype in
-   `synth_core` (one newtype per commit — small, reviewable).
-2. Route the per-module `ParameterDescriptor` ranges to read from `T::RANGE` where
-   a descriptor's range duplicates a newtype's (start with the documented
-   `Detune` duplication — descriptor at `oscillator.rs:354` ↔ `with_f32` clamp at
-   `oscillators.rs:530`).
-3. Collapse the ad-hoc `with_f32` re-clamps to the trait's `clamped`.
-4. Tests: round-trip each newtype's clamp at min/max/over/under; assert the
-   descriptor range equals `T::RANGE` for the migrated params so they can't drift.
+## 3. Migration steps (one (type,context) per commit)
+
+1. Add the `const ValueRange` preset(s) for one newtype, copying the *exact*
+   current min/max/default.
+2. Point the three sites at it:
+   - descriptor → `.value_range(Cents::DETUNE_RANGE)` (the builder already exists,
+     `module_traits.rs:681` — no new extension method needed),
+   - `with_f32` → `Cents::new(Cents::DETUNE_RANGE.clamp(value))`,
+   - the `clamp_*` method → `Self::new(Self::DETUNE_RANGE.clamp(self.as_f32()))`.
+3. **Drift-guard test:** assert the live descriptor's `.range` equals the preset,
+   so descriptor and clamp can never disagree:
+   ```rust
+   assert_eq!(osc.find_parameter("detune").unwrap().range, Cents::DETUNE_RANGE);
+   ```
+   plus a clamp round-trip (under/at/over min & max).
+
+**Proof of concept = `Detune`** (the triplicated case in §0): one newtype, one
+commit, three call sites collapsed to one constant. If it reads cleanly, repeat
+for the other presets; if not, stop — nothing else depends on it.
 
 ## 4. Risks
 
-- **Cross-cutting** — touches `synth_core` newtypes used everywhere; a wrong
-  clamp on `new()` is a silent value change across the whole engine. Hence the
-  "audit `new()` call sites" gate and the one-newtype-per-commit cadence.
-- **`Hertz` clamping** is the highest-risk single decision.
-- Net win is maintainability (one source of truth for bounds), not runtime
-  behavior — so the bar for "don't change observable behavior" is high; lean on
-  the per-newtype round-trip tests and the descriptor==RANGE assertions.
+Much lower than the original Option A:
+- **No behavior change** — presets copy the existing literals verbatim; `new()`
+  and the DSP path are untouched (the big Option-A risk — clamping intermediate
+  FM/filter math — is gone by construction).
+- The only real risk is fat-fingering a copied min/max/default; the
+  descriptor==preset assertion + clamp round-trip catch that.
+- Cross-cutting only in breadth (many descriptors), not depth — and it's
+  commit-per-preset, so each step is small and independently verifiable.
 
 ## 5. Recommendation
 
-Do this **only when** the schema/validation unification it enables is actually
-being built (the descriptor-derives-from-type payoff). Standalone, it's a large
-refactor with mostly latent benefit. Start with the single concrete win — the
-`Detune` descriptor/`with_f32` duplication — as a proof of concept (one newtype,
-one commit) before committing to the full sweep.
+Still best done **when the schema/validation unification that consumes these
+presets is being built** — standalone it's maintainability-only. But it is now
+low-risk and incremental: ship the `Detune` proof-of-concept first (it removes a
+genuine three-way drift hazard), then extend preset-by-preset as adjacent code is
+touched, rather than as one big sweep.
