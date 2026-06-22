@@ -91,6 +91,10 @@ fn main() {
     // synced phasor (phase-aligns to note-on) and a smooth random LFO
     show_valid("out = sin(phasor(3, gate_on) * tau) * 0.3");
     show_valid("out = rand_smooth(0.5) * 0.5");
+    // ergonomic helpers + scale-aware pitch quantize (beat = 2 here)
+    show_valid("out = bipolar(velocity) * 0.5");
+    show_valid("arr maj = [0, 2, 4, 5, 7, 9, 11]\nout = semis(scale_snap(beat, maj))");
+    show_valid("arr shape = [0, 0.5, 1, 0.5]\nout = table_lin(shape, phasor(2) * len(shape))");
 
     println!("=================  STATEFUL (lag over 6 blocks)  =================\n");
     {

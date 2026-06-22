@@ -58,6 +58,10 @@ pub enum Builtin {
     Gauss,
     Semis,
     Mtof,
+    /// `x * 0.5 + 0.5` — map a bipolar `[-1, 1]` signal to unipolar `[0, 1]`.
+    Unipolar,
+    /// `x * 2 - 1` — map a unipolar `[0, 1]` signal to bipolar `[-1, 1]`.
+    Bipolar,
 }
 
 impl Builtin {
@@ -81,7 +85,9 @@ impl Builtin {
             | Self::Sigmoid
             | Self::Gauss
             | Self::Semis
-            | Self::Mtof => 1,
+            | Self::Mtof
+            | Self::Unipolar
+            | Self::Bipolar => 1,
             Self::Min | Self::Max | Self::Quantize | Self::Pow | Self::Atan2 => 2,
             Self::Clamp | Self::Lerp | Self::Smoothstep => 3,
         }
@@ -150,6 +156,8 @@ impl Builtin {
             Self::Gauss => (-a * a).exp(),
             Self::Semis => (a / 12.0).exp2(),
             Self::Mtof => 440.0 * ((a * 127.0 - 69.0) / 12.0).exp2(),
+            Self::Unipolar => a * 0.5 + 0.5,
+            Self::Bipolar => a * 2.0 - 1.0,
         }
     }
 }
@@ -265,6 +273,22 @@ pub enum Op {
     /// per-voice random target each `1/rate` seconds and smoothstep toward it.
     /// Cells i (phase 0..1), i+1 (segment start), i+2 (segment target).
     RandSmooth(u16),
+
+    // ---- array-taking ops (the array lives in the constant pool) -----------
+    /// Linear-interpolated table lookup. Pop `pos`; return the lerp between
+    /// `pool[base + floor(pos)]` and its next neighbour by `fract(pos)`, with
+    /// `pos` clamped to `0..len-1`. `len` is always ≥ 1.
+    TableLin {
+        base: u16,
+        len: u16,
+    },
+    /// Snap a value (in semitones) to the nearest member of a scale table baked
+    /// at `pool[base..base+len]`, octave-aware (each member is tested at ±12 so a
+    /// pitch class near the octave boundary snaps across it). Pop the value.
+    ScaleSnap {
+        base: u16,
+        len: u16,
+    },
 }
 
 /// An immutable, compiled YAMS program. Shared across voices behind an `Arc`;

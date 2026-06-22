@@ -390,8 +390,16 @@ impl Compiler {
         self.emit_const(0.0);
     }
 
+    /// Resolve an array name to its `(base, len)` in the constant pool, if any.
+    fn find_array(&self, name: &str) -> Option<(u16, u16)> {
+        self.arrays
+            .iter()
+            .find(|a| a.name == name)
+            .map(|a| (a.base, a.len))
+    }
+
     fn compile_index(&mut self, name: &str, index: &Expr, span: Span, depth: usize) {
-        let Some(arr) = self.arrays.iter().find(|a| a.name == name) else {
+        let Some((base, len)) = self.find_array(name) else {
             if self.name_taken(name)
                 || macro_from_name(name).is_some()
                 || context_from_name(name).is_some()
@@ -403,7 +411,6 @@ impl Compiler {
             self.emit_const(0.0);
             return;
         };
-        let (base, len) = (arr.base, arr.len);
         self.compile_expr(index, depth + 1);
         self.code.push(Op::IndexConst { base, len });
     }
@@ -414,6 +421,23 @@ impl Compiler {
         // normal function table (an array name is never a stack value).
         if name == "len" {
             self.compile_len(args, span);
+            return;
+        }
+        // `table_lin`/`scale_snap` take an array argument that is never a stack
+        // value, so they lower to dedicated opcodes carrying the array's pool
+        // location — handled before the normal stack-argument function table.
+        if name == "table_lin" {
+            self.compile_array_fn(name, args, span, depth, 0, |base, len| Op::TableLin {
+                base,
+                len,
+            });
+            return;
+        }
+        if name == "scale_snap" {
+            self.compile_array_fn(name, args, span, depth, 1, |base, len| Op::ScaleSnap {
+                base,
+                len,
+            });
             return;
         }
         let Some(spec) = resolve_fn(name) else {
@@ -453,9 +477,9 @@ impl Compiler {
             return;
         }
         if let Expr::Var { name, .. } = &args[0]
-            && let Some(arr) = self.arrays.iter().find(|a| a.name == *name)
+            && let Some((_, len)) = self.find_array(name)
         {
-            self.emit_const(f32::from(arr.len));
+            self.emit_const(f32::from(len));
             return;
         }
         self.error(
@@ -463,6 +487,51 @@ impl Compiler {
             "expected an array name as the argument to `len`",
         );
         self.emit_const(0.0);
+    }
+
+    /// Compile an array-taking builtin (`table_lin`, `scale_snap`) to its
+    /// dedicated opcode. `arr_arg` is the index of the array-name argument; the
+    /// other argument is the numeric operand pushed onto the stack. The opcode
+    /// (built by `make_op` from the resolved `base`/`len`) reads the table
+    /// directly from the constant pool — the array is never a stack value.
+    fn compile_array_fn(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        span: Span,
+        depth: usize,
+        arr_arg: usize,
+        make_op: impl Fn(u16, u16) -> Op,
+    ) {
+        if args.len() != 2 {
+            self.error(span, format!("wrong number of arguments to `{name}`"));
+            for arg in args {
+                self.compile_expr(arg, depth + 1);
+            }
+            self.emit_const(0.0);
+            return;
+        }
+        let val_arg = 1 - arr_arg;
+        let Expr::Var { name: arr_name, .. } = &args[arr_arg] else {
+            self.error(
+                args[arr_arg].span(),
+                format!("`{name}` expects an array name as argument {}", arr_arg + 1),
+            );
+            self.compile_expr(&args[val_arg], depth + 1);
+            self.emit_const(0.0);
+            return;
+        };
+        let Some((base, len)) = self.find_array(arr_name) else {
+            self.error(
+                args[arr_arg].span(),
+                format!("`{arr_name}` is not an array"),
+            );
+            self.compile_expr(&args[val_arg], depth + 1);
+            self.emit_const(0.0);
+            return;
+        };
+        self.compile_expr(&args[val_arg], depth + 1);
+        self.code.push(make_op(base, len));
     }
 
     fn compile_stateful(&mut self, kind: Stateful, args: &[Expr], span: Span, depth: usize) {
@@ -533,6 +602,29 @@ impl Compiler {
             Stateful::RandSmooth => {
                 self.compile_expr(&args[0], d); // rate
                 self.code.push(Op::RandSmooth(base));
+            }
+            Stateful::Pulse => {
+                // pulse(div) = edge((floor(beat) % div) == 0): a single-block
+                // trigger at the start of every `div`-th beat. The level-based
+                // edge trick only works for an integer divisor ≥ 2 — `div == 1`
+                // makes `% 1` permanently 0 (one fire, never re-armed), and
+                // `0`/fractional divisors degenerate the same way. Reject those
+                // when the divisor is a constant rather than fail silently.
+                if let Some(v) = const_eval(&args[0])
+                    && !(v >= 2.0 && (v - v.floor()).abs() < f32::EPSILON)
+                {
+                    self.error(
+                        span,
+                        "pulse(div) needs an integer divisor ≥ 2 (e.g. pulse(4))",
+                    );
+                }
+                self.push_source(SourceInput::Context(Context::Beat));
+                self.code.push(Op::Call(Builtin::Floor));
+                self.compile_expr(&args[0], d); // div
+                self.code.push(Op::Rem);
+                self.emit_const(0.0);
+                self.code.push(Op::Eq);
+                self.code.push(Op::Edge(base));
             }
         }
     }
@@ -1058,6 +1150,124 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("too much state"))
         );
+    }
+
+    #[test]
+    fn unipolar_bipolar_fold_and_eval() {
+        // Both are stateless builtins, so a constant argument folds.
+        assert!(approx(
+            eval(&compile_ok("out = unipolar(-1)"), |_| 0.0),
+            0.0
+        ));
+        assert!(approx(eval(&compile_ok("out = unipolar(1)"), |_| 0.0), 1.0));
+        assert!(approx(eval(&compile_ok("out = bipolar(0)"), |_| 0.0), -1.0));
+        assert!(approx(eval(&compile_ok("out = bipolar(1)"), |_| 0.0), 1.0));
+        // unipolar(bipolar(x)) is the identity.
+        let prog = compile_ok("out = unipolar(bipolar(velocity))");
+        assert!(approx(eval(&prog, |_| 0.7), 0.7));
+    }
+
+    #[test]
+    fn pulse_fires_on_period_beat_edges() {
+        // pulse(2) fires once at the start of beats 0, 2, 4, ...
+        let prog = compile_ok("out = pulse(2)");
+        let mut regs = RegisterFile::new(0, SEED);
+        let ctx = EvalContext::new(SR);
+        let fire = |beat: f32, regs: &mut RegisterFile| {
+            let sources: Vec<f32> = prog
+                .inputs
+                .iter()
+                .map(|inp| match inp {
+                    SourceInput::Context(Context::Beat) => beat,
+                    _ => 0.0,
+                })
+                .collect();
+            prog.script.eval(&sources, regs, &ctx)
+        };
+        // Sub-beat blocks within beat 0: rising edge on the first, then held.
+        assert!(approx(fire(0.0, &mut regs), 1.0)); // entering beat 0 (0 % 2 == 0)
+        assert!(approx(fire(0.5, &mut regs), 0.0)); // still beat 0, no new edge
+        assert!(approx(fire(1.5, &mut regs), 0.0)); // beat 1: 1 % 2 != 0
+        assert!(approx(fire(2.2, &mut regs), 1.0)); // beat 2: 2 % 2 == 0 → fires
+        assert!(approx(fire(3.0, &mut regs), 0.0)); // beat 3: no
+    }
+
+    #[test]
+    fn pulse_rejects_degenerate_constant_divisors() {
+        // div=1 (%1 always 0), 0, and fractional all silently fire once with the
+        // edge trick — reject them at compile time when the divisor is constant.
+        for bad in ["pulse(1)", "pulse(0)", "pulse(0.5)", "pulse(-2)"] {
+            assert!(
+                errors(&format!("out = {bad}"))
+                    .iter()
+                    .any(|e| e.contains("integer divisor")),
+                "`{bad}` should be rejected"
+            );
+        }
+        // A valid constant and a non-constant divisor both compile.
+        assert!(compile_ok("out = pulse(4)").script.state_count() == 1);
+        compile_ok("out = pulse(2 + 2)");
+    }
+
+    #[test]
+    fn table_lin_interpolates_an_array() {
+        let prog = compile_ok("arr s = [0, 10, 20]\nout = table_lin(s, beat)");
+        let at = |beat: f32| {
+            eval(&prog, |inp| match inp {
+                SourceInput::Context(Context::Beat) => beat,
+                _ => 0.0,
+            })
+        };
+        assert!(approx(at(0.5), 5.0));
+        assert!(approx(at(1.5), 15.0));
+    }
+
+    #[test]
+    fn scale_snap_snaps_to_an_array_scale() {
+        let prog = compile_ok("arr maj = [0, 2, 4, 5, 7, 9, 11]\nout = scale_snap(beat, maj)");
+        let snap = |p: f32| {
+            eval(&prog, |inp| match inp {
+                SourceInput::Context(Context::Beat) => p,
+                _ => 0.0,
+            })
+        };
+        assert!(approx(snap(3.4), 4.0));
+        assert!(approx(snap(11.8), 12.0)); // octave-aware
+    }
+
+    #[test]
+    fn array_fn_on_non_array_is_an_error() {
+        assert!(
+            errors("let x = 1\nout = table_lin(x, beat)")
+                .iter()
+                .any(|e| e.contains("not an array"))
+        );
+        assert!(
+            errors("arr s = [1]\nout = scale_snap(beat, 5)")
+                .iter()
+                .any(|e| e.contains("expects an array name"))
+        );
+    }
+
+    #[test]
+    fn array_fn_arity_is_checked() {
+        assert!(
+            errors("arr s = [1, 2]\nout = table_lin(s)")
+                .iter()
+                .any(|e| e.contains("arguments"))
+        );
+    }
+
+    #[test]
+    fn array_builtins_are_reserved_names() {
+        for name in ["table_lin", "scale_snap", "unipolar", "bipolar", "pulse"] {
+            assert!(
+                errors(&format!("let {name} = 1\nout = 0"))
+                    .iter()
+                    .any(|e| e.contains("shadow")),
+                "`{name}` must be reserved"
+            );
+        }
     }
 
     #[test]

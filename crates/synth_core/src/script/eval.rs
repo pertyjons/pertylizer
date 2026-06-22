@@ -290,6 +290,56 @@ impl CompiledScript {
                     let t = ph * ph * (3.0 - 2.0 * ph); // smoothstep
                     stack.push(start + t * (end - start));
                 }
+
+                Op::TableLin { base, len } => {
+                    let pos = stack.pop();
+                    let last = len.saturating_sub(1);
+                    // Clamp pos into 0..=last; floor → lower index, fract → blend.
+                    let p = if pos.is_nan() {
+                        0.0
+                    } else {
+                        pos.clamp(0.0, f32::from(last))
+                    };
+                    let frac = p - p.floor();
+                    let i0 = p.floor() as u16; // in 0..=last (p is clamped)
+                    let i1 = (i0 + 1).min(last); // next neighbour, clamped
+                    let a = self
+                        .constants
+                        .get(base.saturating_add(i0) as usize)
+                        .copied()
+                        .unwrap_or(0.0);
+                    let b = self
+                        .constants
+                        .get(base.saturating_add(i1) as usize)
+                        .copied()
+                        .unwrap_or(0.0);
+                    stack.push(a + (b - a) * frac);
+                }
+                Op::ScaleSnap { base, len } => {
+                    let p = stack.pop();
+                    // Split into octave + pitch class, then snap the pitch class
+                    // to the nearest table member testing S, S-12, S+12 so a class
+                    // just under the octave can snap up to the next root.
+                    let octave = (p / 12.0).floor();
+                    let pc = p - 12.0 * octave;
+                    let mut best = 0.0;
+                    let mut best_dist = f32::INFINITY;
+                    for k in 0..len {
+                        let s = self
+                            .constants
+                            .get(base.saturating_add(k) as usize)
+                            .copied()
+                            .unwrap_or(0.0);
+                        for cand in [s - 12.0, s, s + 12.0] {
+                            let d = (pc - cand).abs();
+                            if d < best_dist {
+                                best_dist = d;
+                                best = cand;
+                            }
+                        }
+                    }
+                    stack.push(12.0 * octave + best);
+                }
             }
         }
 
@@ -570,6 +620,47 @@ mod tests {
                 "escaped [0,1) on negative rate: {v}"
             );
         }
+    }
+
+    #[test]
+    fn table_lin_interpolates_and_clamps() {
+        // Table [0, 10, 20] at base 0; pos from source[0].
+        let consts = vec![0.0, 10.0, 20.0];
+        let code = [Op::PushSource(0), Op::TableLin { base: 0, len: 3 }];
+        let at = |pos: f32| {
+            let script = CompiledScript::new(code.to_vec(), consts.clone(), 1, 0);
+            let mut regs = RegisterFile::new(0, SEED);
+            script.eval(&[pos], &mut regs, &EvalContext::new(SR))
+        };
+        assert!(approx(at(0.0), 0.0));
+        assert!(approx(at(0.5), 5.0)); // halfway between 0 and 10
+        assert!(approx(at(1.25), 12.5)); // 10 + 0.25*(20-10)
+        assert!(approx(at(2.0), 20.0));
+        assert!(approx(at(5.0), 20.0)); // clamp high
+        assert!(approx(at(-1.0), 0.0)); // clamp low
+        assert!(approx(at(f32::NAN), 0.0)); // NaN → 0
+    }
+
+    #[test]
+    fn scale_snap_is_octave_aware() {
+        // Major scale pitch classes.
+        let consts = vec![0.0, 2.0, 4.0, 5.0, 7.0, 9.0, 11.0];
+        let code = [Op::PushSource(0), Op::ScaleSnap { base: 0, len: 7 }];
+        let snap = |p: f32| {
+            let script = CompiledScript::new(code.to_vec(), consts.clone(), 1, 0);
+            let mut regs = RegisterFile::new(0, SEED);
+            script.eval(&[p], &mut regs, &EvalContext::new(SR))
+        };
+        assert!(approx(snap(0.2), 0.0)); // near C → C
+        assert!(approx(snap(3.4), 4.0)); // between D# region → E (4)
+        assert!(approx(snap(6.6), 7.0)); // → G
+        // Octave-aware: 11.8 is numerically closest to 11 (B) but musically
+        // closest to 12 (C of the next octave) via the +12 candidate.
+        assert!(approx(snap(11.8), 12.0));
+        // Works in a higher octave: 24.2 → 24 (C two octaves up).
+        assert!(approx(snap(24.2), 24.0));
+        // And below zero: -0.2 → 0 (root), -1.0 → -1 (B below, i.e. 11-12).
+        assert!(approx(snap(-0.2), 0.0));
     }
 
     #[test]

@@ -51,6 +51,7 @@ pub enum Stateful {
     Rand,
     White,
     RandSmooth,
+    Pulse,
 }
 
 impl Stateful {
@@ -70,7 +71,8 @@ impl Stateful {
                     1
                 }
             }
-            Self::Lag | Self::Slew | Self::Delta | Self::Edge => 1,
+            // `pulse` desugars to an `edge(...)` over the transport, one cell.
+            Self::Lag | Self::Slew | Self::Delta | Self::Edge | Self::Pulse => 1,
             // Interpolated value noise: phase + segment start + segment target.
             Self::RandSmooth => 3,
             Self::Rand | Self::White => 0,
@@ -206,6 +208,8 @@ pub fn resolve_fn(name: &str) -> Option<FnSpec> {
         "gauss" => stateless(B::Gauss),
         "semis" => stateless(B::Semis),
         "mtof" => stateless(B::Mtof),
+        "unipolar" => stateless(B::Unipolar),
+        "bipolar" => stateless(B::Bipolar),
         "lag" => stateful(Stateful::Lag, 2, 2),
         "slew" => stateful(Stateful::Slew, 3, 3),
         "sah" => stateful(Stateful::Sah, 2, 2),
@@ -216,6 +220,7 @@ pub fn resolve_fn(name: &str) -> Option<FnSpec> {
         "counter" => stateful(Stateful::Counter, 1, 1),
         "rand" => stateful(Stateful::Rand, 0, 2),
         "rand_smooth" => stateful(Stateful::RandSmooth, 1, 1),
+        "pulse" => stateful(Stateful::Pulse, 1, 1),
         "white" => stateful(Stateful::White, 0, 0),
         _ => return None,
     })
@@ -225,8 +230,12 @@ pub fn resolve_fn(name: &str) -> Option<FnSpec> {
 /// keyword — i.e. cannot be bound by `src`/`let` (decision #5).
 #[must_use]
 pub fn is_reserved(name: &str) -> bool {
-    matches!(name, "src" | "let" | "out" | "arr" | "len")
-        || resolve_fn(name).is_some()
+    // `table_lin`/`scale_snap` take an array argument and are lowered to dedicated
+    // opcodes in the compiler (not `resolve_fn`), so they are reserved by name.
+    matches!(
+        name,
+        "src" | "let" | "out" | "arr" | "len" | "table_lin" | "scale_snap"
+    ) || resolve_fn(name).is_some()
         || macro_from_name(name).is_some()
         || context_from_name(name).is_some()
         || constant_value(name).is_some()

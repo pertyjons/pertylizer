@@ -110,6 +110,14 @@ Rules that keep arrays cheap and RT-safe:
   *wrap*, write it explicitly: `seq[floor(beat) % len(seq)]`.
 - **`len(name)`** folds to the element count at compile time, so
   `i % len(seq)` costs nothing extra.
+- **`table_lin(arr, pos)`** is the interpolated cousin of `arr[i]`: it lerps
+  between neighbours (`pos` in `0..len-1`, clamped), so a smooth-LFO shape table
+  reads without the zipper noise of stepped indexing.
+- **`scale_snap(x, arr)`** snaps a value in semitones to the nearest member of a
+  scale table, octave-aware (a pitch class near the octave boundary snaps across
+  it). With `arr maj = [0, 2, 4, 5, 7, 9, 11]`, `out = semis(scale_snap(x * 24,
+  maj))` turns a continuous source into musical scale-degree steps instead of a
+  glissando. Both take an array name (not a value) as one argument.
 
 Caps: at most 16 arrays, and at most 256 elements total across all of them.
 Exceeding either is a compile error (never a silent truncation). An empty array
@@ -240,8 +248,9 @@ they carry per-voice state.
 | Trig      | `sin(x)` · `cos(x)` · `tan(x)` · `atan(x)` · `atan2(y,x)` |
 | Interp    | `lerp(a,b,t)` · `mix(a,b,t)` *(alias of `lerp`)* · `smoothstep(a,b,x)` |
 | Curves    | `sigmoid(x)` · `gauss(x)` |
-| Musical   | `semis(x)` → `2^(x/12)` ratio · `mtof(x)` → Hz, keyboard-tracking |
-| Arrays    | `name[i]` index a const table (floor + clamp) · `len(name)` → element count (folds at compile time) |
+| Musical   | `semis(x)` → `2^(x/12)` ratio · `mtof(x)` → Hz, keyboard-tracking · `scale_snap(x, arr)` → snap semitones to a scale (octave-aware) |
+| Polarity  | `unipolar(x)` → `x*0.5+0.5` (±1 → 0..1) · `bipolar(x)` → `x*2-1` (0..1 → ±1) |
+| Arrays    | `name[i]` index a const table (floor + clamp) · `len(name)` → element count (folds at compile time) · `table_lin(arr, pos)` → linear-interpolated lookup |
 
 `sqrt`/`log` of non-positive inputs and `x/0` are clamped (NaN-free), so dead
 branches can't poison state. Array indexing and `len` operate on `arr` tables
@@ -261,6 +270,7 @@ declared in the header — see [Arrays](#arrays--const-lookup-tables).
 | `phasor(rate, sync)`| ramp that resets to 0 on a rising edge of `sync` (phase-align to note-on / a clock) |
 | `edge(x)`           | rising-edge detector |
 | `counter(trig)`     | event count |
+| `pulse(div)`        | trigger at the start of every `div`-th beat (beats 0, div, 2·div, …); `div` must be a constant integer ≥ 2 |
 | `rand([lo, hi])`    | seeded PRNG (latch per note via `gate_on`) |
 | `rand_smooth(rate)` | smooth random LFO: band-limited wander in `[0, 1)`, new target every `1/rate` s |
 | `white()`           | per-block seeded noise |
