@@ -215,7 +215,7 @@ shadowing.
 | `gate`      | `1` while the note is held, else `0` |
 | `gate_on`   | `1` for the single block of note-on, else `0` |
 | `age`       | seconds since note-on |
-| `sr`        | control rate in Hz (device-dependent) |
+| `sr`        | **control** rate in Hz — `sample_rate / block_size`, ~hundreds of Hz (device-dependent). **Not** the audio sample rate; a 48 kHz device yields `sr ≈ 750`, not 48000 |
 | `beat`      | absolute transport position in beats (grows unbounded; `sin(beat * tau)` is a tempo-locked sine) |
 | `bar_phase` | phase within the current bar, `0..1` (4/4); wraps every bar |
 | `tempo`     | transport tempo in BPM (`tempo / 60` is beats per second) |
@@ -233,8 +233,8 @@ ramp that mutes when the transport stops.
 > **Source polarity matters.** Bound sources arrive normalized per the scaling
 > contract: output ports are ±1 and macros are already normalized. You must know
 > each source's polarity — e.g. an `lfo-1.out` is `-1..1` but an `env-1.out` is
-> `0..1`. (Parameter sources, which would map through their descriptor range, are
-> not wired yet — see *Module addresses* above.)
+> `0..1`. Parameter sources (`flt-1.cutoff`) arrive in `0..1`, mapped through the
+> param's descriptor range+curve — see *Module addresses* above.
 
 ---
 
@@ -253,7 +253,7 @@ they carry per-voice state.
 | Trig      | `sin(x)` · `cos(x)` · `tan(x)` · `atan(x)` · `atan2(y,x)` |
 | Interp    | `lerp(a,b,t)` · `mix(a,b,t)` *(alias of `lerp`)* · `smoothstep(a,b,x)` |
 | Curves    | `sigmoid(x)` · `gauss(x)` |
-| Musical   | `semis(x)` → `2^(x/12)` ratio · `mtof(x)` → Hz, keyboard-tracking · `scale_snap(x, arr)` → snap semitones to a scale (octave-aware) |
+| Musical   | `semis(x)` → `2^(x/12)` ratio · `mtof(x)` → Hz from a **normalized** note (`x` in `0..1`, ×127 internally — call `mtof(note)`, *not* `mtof(60)`) · `scale_snap(x, arr)` → snap semitones to a scale (octave-aware) |
 | Polarity  | `unipolar(x)` → `x*0.5+0.5` (±1 → 0..1) · `bipolar(x)` → `x*2-1` (0..1 → ±1) |
 | Arrays    | `name[i]` index a const table (floor + clamp) · `len(name)` → element count (folds at compile time) · `table_lin(arr, pos)` → linear-interpolated lookup |
 
@@ -265,8 +265,8 @@ declared in the header — see [Arrays](#arrays--const-lookup-tables).
 
 | Function            | Meaning |
 |---------------------|---------|
-| `lag(x, t)`         | one-pole smoothing (e.g. mod-wheel glide) |
-| `slew(x, up, down)` | slew limiter / portamento, separate rise/fall rates |
+| `lag(x, t)`         | one-pole (exponential) smoothing toward `x`, time constant `t` — decelerates near the target (e.g. mod-wheel glide) |
+| `slew(x, up, down)` | **linear** slew limiter / portamento — constant rate, `up`/`down` in **units per second** (separate rise/fall) |
 | `sah(x, trig)`      | sample-and-hold: latch `x` on a rising edge of `trig` |
 | `accum(x)`          | integrator (running sum) |
 | `accum(x, reset)`   | integrator that zeroes on a rising edge of `reset` |
@@ -275,9 +275,9 @@ declared in the header — see [Arrays](#arrays--const-lookup-tables).
 | `phasor(rate, sync)`| ramp that resets to 0 on a rising edge of `sync` (phase-align to note-on / a clock) |
 | `edge(x)`           | rising-edge detector |
 | `counter(trig)`     | event count |
-| `pulse(div)`        | trigger at the start of every `div`-th beat (beats 0, div, 2·div, …); `div` must be a constant integer ≥ 2 |
+| `pulse(div)`        | trigger at the start of every `div`-th beat (beats 0, div, 2·div, …). `div` must be an integer ≥ 2: a *constant* is checked at compile time, but a *dynamic* `div` is accepted unchecked and **must stay an integer ≥ 2 at runtime** — a value < 2 (e.g. 1) makes `% div` stick at 0 and the trigger freezes |
 | `rand([lo, hi])`    | seeded PRNG (latch per note via `gate_on`) |
-| `rand_smooth(rate)` | smooth random LFO: band-limited wander in `[0, 1)`, new target every `1/rate` s |
+| `rand_smooth(rate)` | smooth random LFO: band-limited wander in `[0, 1)`, new target every `1/rate` s. Unipolar — wrap in `bipolar(…)` for ±1 (e.g. pitch drift) |
 | `white()`           | per-block seeded noise |
 
 **Per-voice state.** Each voice gets its own register file. State resets on
