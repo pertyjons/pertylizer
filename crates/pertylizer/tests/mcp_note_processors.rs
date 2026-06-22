@@ -127,6 +127,58 @@ fn note_processor_rack_round_trip_via_bridge() {
 }
 
 #[test]
+fn chiptune_arp_round_trips_via_bridge() {
+    // The chiptune payoff: a Custom arp with a sub-grid rate, a bare-array
+    // offset list, and legato must round-trip through the MCP pass-through with
+    // no tool-signature change (externally-tagged JSON straight into serde).
+    let bridge = build_bridge();
+    let pid = bridge.create_pattern("chip", 4.0).expect("create pattern");
+    bridge.add_note(pid, 60, 0.0, 1.0, 100).expect("add note");
+
+    bridge
+        .add_note_processor(
+            pid,
+            json!({ "Arpeggiator": {
+                "mode": "Custom",
+                "rate": { "Ticks": 40 },
+                "legato": true,
+                "custom": [0, 4, 7]
+            }}),
+        )
+        .expect("add chiptune arp");
+
+    let procs = bridge.list_note_processors(pid).expect("list");
+    assert_eq!(procs.len(), 1);
+    assert_eq!(procs[0].kind, "arpeggiator");
+    let cfg = &procs[0].config["Arpeggiator"];
+    assert_eq!(cfg["mode"], "Custom");
+    assert_eq!(cfg["rate"]["Ticks"], 40, "sub-grid rate round-trips");
+    assert_eq!(cfg["legato"], true);
+    assert_eq!(cfg["custom"], json!([0, 4, 7]), "offsets as a bare array");
+
+    // The listed config feeds straight back through set (full round-trip).
+    bridge
+        .set_note_processor(pid, 0, procs[0].config.clone())
+        .expect("round-trip the listed config");
+
+    // The frame-locked MilliHz variant parses too (50 Hz PAL).
+    bridge
+        .set_note_processor(
+            pid,
+            0,
+            json!({ "Arpeggiator": {
+                "mode": "Custom",
+                "rate": { "MilliHz": 50_000 },
+                "legato": true,
+                "custom": [0, 12, 7, 4]
+            }}),
+        )
+        .expect("frame-locked MilliHz arp accepted");
+    let procs = bridge.list_note_processors(pid).expect("list again");
+    assert_eq!(procs[0].config["Arpeggiator"]["rate"]["MilliHz"], 50_000);
+}
+
+#[test]
 fn set_and_clear_note_ornament_via_bridge() {
     let bridge = build_bridge();
     let pid = bridge

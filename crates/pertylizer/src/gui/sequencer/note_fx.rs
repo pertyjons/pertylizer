@@ -22,8 +22,9 @@ use eframe::egui::{self, Color32, RichText};
 use parking_lot::RwLock;
 use synth_core::NormalizedValue;
 use synth_sequencer::{
-    ArpMode, ArpRate, ArpVelocity, Arpeggiator, Chord, Duration as SeqDuration, Humanize, NoteName,
-    NoteProcessor, PatternId, PitchClass, ScaleMask, ScaleQuantize, Song, StrumDirection,
+    ArpMode, ArpRate, ArpVelocity, Arpeggiator, Chord, Duration as SeqDuration, Humanize,
+    MAX_ARP_OFFSETS, NoteName, NoteProcessor, PatternId, PitchClass, ScaleMask, ScaleQuantize,
+    Song, StrumDirection,
 };
 
 use crate::gui::theme::theme;
@@ -419,7 +420,7 @@ fn edit_arpeggiator(ui: &mut egui::Ui, index: usize, a: &mut Arpeggiator, any_dr
         ui.label("Mode");
         enum_combo(ui, (index, "mode"), &mut a.mode, &ARP_MODES);
         ui.label("Rate");
-        enum_combo(ui, (index, "rate"), &mut a.rate, &ARP_RATES);
+        arp_rate_widget(ui, index, a, any_dragged);
     });
     ui.horizontal(|ui| {
         ui.label("Octaves");
@@ -428,10 +429,107 @@ fn edit_arpeggiator(ui: &mut egui::Ui, index: usize, a: &mut Arpeggiator, any_dr
         ui.label("Vel");
         enum_combo(ui, (index, "vel"), &mut a.velocity, &ARP_VELS);
         ui.checkbox(&mut a.latch, "Latch");
+        ui.checkbox(&mut a.legato, "Legato").on_hover_text(
+            "Hold one envelope across the figure (glide between steps). Use a high Gate.",
+        );
     });
+    if a.mode == ArpMode::Custom {
+        edit_arp_offsets(ui, &mut a.custom, any_dragged);
+    }
     ui.horizontal(|ui| {
         knob_normalized(ui, "Gate", &mut a.gate, any_dragged);
         knob_normalized(ui, "Swing", &mut a.swing, any_dragged);
+    });
+}
+
+/// Rate picker: the named divisions plus the two data-carrying chiptune rates
+/// (`Ticks`, `Hz`). When a data rate is selected an adjacent `DragValue` edits
+/// its tick count / frequency.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+fn arp_rate_widget(ui: &mut egui::Ui, index: usize, a: &mut Arpeggiator, any_dragged: &mut bool) {
+    let selected = match a.rate {
+        ArpRate::Ticks(_) => "Ticks",
+        ArpRate::MilliHz(_) => "Hz",
+        other => ARP_RATES
+            .iter()
+            .find(|(v, _)| *v == other)
+            .map_or("", |(_, l)| l),
+    };
+    egui::ComboBox::from_id_salt((index, "rate"))
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for (v, l) in ARP_RATES {
+                ui.selectable_value(&mut a.rate, v, l);
+            }
+            // Switching *into* a data rate seeds a musical default (one PAL
+            // frame @125 BPM / 50 Hz); staying on it keeps the edited value.
+            if ui
+                .selectable_label(matches!(a.rate, ArpRate::Ticks(_)), "Ticks (sub-grid)")
+                .clicked()
+                && !matches!(a.rate, ArpRate::Ticks(_))
+            {
+                a.rate = ArpRate::Ticks(40);
+            }
+            if ui
+                .selectable_label(matches!(a.rate, ArpRate::MilliHz(_)), "Hz (frame-locked)")
+                .clicked()
+                && !matches!(a.rate, ArpRate::MilliHz(_))
+            {
+                a.rate = ArpRate::MilliHz(50_000);
+            }
+        });
+    match &mut a.rate {
+        ArpRate::Ticks(n) => {
+            let resp = ui.add(egui::DragValue::new(n).range(1..=3840).suffix(" tk"));
+            *any_dragged |= resp.dragged();
+        }
+        ArpRate::MilliHz(m) => {
+            // Authored in Hz; stored as integer millihertz.
+            let mut hz = *m as f32 / 1000.0;
+            let resp = ui.add(
+                egui::DragValue::new(&mut hz)
+                    .range(0.1..=240.0)
+                    .speed(0.1)
+                    .suffix(" Hz"),
+            );
+            if resp.changed() {
+                *m = (hz * 1000.0).round().max(1.0) as u32;
+            }
+            *any_dragged |= resp.dragged();
+        }
+        _ => {}
+    }
+}
+
+/// Inline editor for the `Custom` offset cycle: a row of semitone `DragValue`s
+/// plus add/remove buttons, capped at [`MAX_ARP_OFFSETS`].
+fn edit_arp_offsets(
+    ui: &mut egui::Ui,
+    custom: &mut synth_sequencer::ArpOffsets,
+    any_dragged: &mut bool,
+) {
+    ui.horizontal(|ui| {
+        ui.label("Offsets");
+        let len = custom.len();
+        for i in 0..len {
+            let resp = ui.add(
+                egui::DragValue::new(&mut custom.values[i])
+                    .range(-48..=48)
+                    .speed(0.2),
+            );
+            *any_dragged |= resp.dragged();
+        }
+        if len < MAX_ARP_OFFSETS && ui.small_button("+").on_hover_text("Add step").clicked() {
+            custom.values[len] = 0;
+            custom.len += 1;
+        }
+        if len > 0 && ui.small_button("−").on_hover_text("Remove step").clicked() {
+            custom.len -= 1;
+            // Zero the vacated slot so the beyond-`len` bytes stay 0 — keeps the
+            // derived `PartialEq` in step with the live offsets (no stale-byte
+            // false "dirty" diff after add→edit→remove).
+            custom.values[custom.len as usize] = 0;
+        }
     });
 }
 
@@ -488,7 +586,7 @@ fn enum_combo<T: PartialEq + Copy>(
         });
 }
 
-const ARP_MODES: [(ArpMode, &str); 7] = [
+const ARP_MODES: [(ArpMode, &str); 8] = [
     (ArpMode::Up, "Up"),
     (ArpMode::Down, "Down"),
     (ArpMode::UpDown, "Up-Down"),
@@ -496,6 +594,7 @@ const ARP_MODES: [(ArpMode, &str); 7] = [
     (ArpMode::AsPlayed, "As played"),
     (ArpMode::Random, "Random"),
     (ArpMode::Chord, "Chord"),
+    (ArpMode::Custom, "Custom"),
 ];
 
 const ARP_RATES: [(ArpRate, &str); 12] = [
