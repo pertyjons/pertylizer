@@ -536,6 +536,11 @@ pub struct Arpeggiator {
     /// Hold the last chord through gaps (keeps arpeggiating after the source
     /// notes end, using the chord that sounded just before the gap).
     pub latch: bool,
+    /// Hold one envelope across the whole figure (chip-style): each step is
+    /// stamped `legato`, so the engine glides between steps instead of
+    /// re-gating (one attack, pitch cycles). Needs a `gate` near 1.0 so steps
+    /// meet end-to-end — a short gate leaves a hole the legato join can't span.
+    pub legato: bool,
     /// Semitone offsets cycled when `mode == Custom`, relative to the source
     /// note's own pitch (offset 0 = the note). `octaves` multiplies the cycle:
     /// `[0,4,7]` with `octaves == 2` plays `0,4,7, 12,16,19`. Ignored by the
@@ -553,6 +558,7 @@ impl Default for Arpeggiator {
             swing: NormalizedValue::new(0.0),
             velocity: ArpVelocity::AsPlayed,
             latch: false,
+            legato: false,
             custom: ArpOffsets::default(),
         }
     }
@@ -811,7 +817,7 @@ impl Arpeggiator {
             for h in held.iter() {
                 if let Some(pitch) = h.pitch.transpose(Semitones::new(12.0 * oct as f32)) {
                     let velocity = self.step_velocity(h.velocity, oct, octaves);
-                    let _ = buf.push(Self::step_note(pitch, velocity, duration));
+                    let _ = buf.push(self.step_note(pitch, velocity, duration));
                 }
             }
             return;
@@ -839,7 +845,7 @@ impl Arpeggiator {
             return; // transposed off the MIDI range — skip this step
         };
         let velocity = self.step_velocity(member.velocity, pos, cycle_len);
-        let _ = buf.push(Self::step_note(pitch, velocity, duration));
+        let _ = buf.push(self.step_note(pitch, velocity, duration));
     }
 
     /// The source note that anchors a [`ArpMode::Custom`] cycle: among the notes
@@ -898,7 +904,7 @@ impl Arpeggiator {
             return; // transposed off the MIDI range — skip this step
         };
         let velocity = self.step_velocity(source.velocity, pos, cycle_len);
-        let _ = buf.push(Self::step_note(pitch, velocity, duration));
+        let _ = buf.push(self.step_note(pitch, velocity, duration));
     }
 
     /// Apply the velocity mode to one step (ramps span a cycle). A one-step
@@ -919,12 +925,14 @@ impl Arpeggiator {
         Velocity::new(base.as_f32() * factor)
     }
 
-    fn step_note(pitch: Pitch, velocity: Velocity, duration_ticks: u32) -> ExpandedNote {
+    fn step_note(&self, pitch: Pitch, velocity: Velocity, duration_ticks: u32) -> ExpandedNote {
         ExpandedNote {
             duration: Some(Duration(duration_ticks)),
             pitch,
             velocity,
-            legato: false,
+            // Stamp each step `legato` so the engine's cross-pitch coalesce
+            // (Phase B3) holds one envelope across the whole figure.
+            legato: self.legato,
             glide: None,
             expression: None,
         }
@@ -2156,6 +2164,38 @@ mod tests {
     }
 
     #[test]
+    fn arp_legato_stamps_steps() {
+        // The `legato` flag rides each emitted step (so the engine coalesces the
+        // figure into one held envelope); off by default it does not.
+        let mut p = chord_pattern_single(60, 480);
+        let mut a = arp(ArpMode::Custom, 1);
+        a.rate = ArpRate::Ticks(40);
+        a.custom = ArpOffsets::new(&[0, 4, 7]);
+        a.legato = true;
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(a));
+        let mut buf = ExpansionBuffer::new();
+        p.expand_at_tick(PatternTick(40), |_| true, Bpm::DEFAULT, &mut buf);
+        assert!(!buf.notes().is_empty());
+        assert!(
+            buf.notes().iter().all(|n| n.legato),
+            "each step stamped legato"
+        );
+
+        // Default (legato off) leaves steps un-tied.
+        let mut p2 = chord_pattern_single(60, 480);
+        let mut a2 = arp(ArpMode::Custom, 1);
+        a2.rate = ArpRate::Ticks(40);
+        a2.custom = ArpOffsets::new(&[0, 4, 7]);
+        let _ = p2.add_processor(NoteProcessor::Arpeggiator(a2));
+        let mut buf2 = ExpansionBuffer::new();
+        p2.expand_at_tick(PatternTick(40), |_| true, Bpm::DEFAULT, &mut buf2);
+        assert!(
+            buf2.notes().iter().all(|n| !n.legato),
+            "steps not legato by default"
+        );
+    }
+
+    #[test]
     fn arp_custom_empty_cycle_emits_nothing() {
         // A `Custom` arp with no offsets is silent, not a divide-by-zero.
         let mut p = chord_pattern_single(60, 480);
@@ -2391,11 +2431,25 @@ mod tests {
             swing: NormalizedValue::new(0.25),
             velocity: ArpVelocity::RampDown,
             latch: true,
+            legato: true,
             custom: ArpOffsets::new(&[0, 4, 7]),
         }));
         let json = serde_json::to_string(&p).unwrap();
         let back: Pattern = serde_json::from_str(&json).unwrap();
         assert_eq!(back.processors(), p.processors());
+    }
+
+    #[test]
+    fn arp_back_compat() {
+        // An arp serialized before the `custom`/`legato` fields (and the
+        // data-carrying rate variants) existed still deserializes — the new
+        // fields fall back to their defaults — and equals a default arp.
+        let json = r#"{"mode":"Up","rate":"Sixteenth","octaves":1,"gate":0.75,
+                       "swing":0.0,"velocity":"AsPlayed","latch":false}"#;
+        let a: Arpeggiator = serde_json::from_str(json).unwrap();
+        assert!(!a.legato, "missing legato defaults to false");
+        assert!(a.custom.is_empty(), "missing custom defaults to empty");
+        assert_eq!(a, Arpeggiator::default(), "old arp == default arp");
     }
 
     // --- Chord (NP4) --------------------------------------------------------

@@ -1566,6 +1566,58 @@ mod tests {
     }
 
     #[test]
+    fn arp_legato_holds_one_envelope() {
+        use synth_sequencer::{ArpMode, ArpOffsets, ArpRate, Arpeggiator, NoteProcessor};
+        // A Custom arp over a single held note, gate 1.0 so steps meet
+        // end-to-end. With `legato` the whole figure is one held envelope (the
+        // engine glides between steps — only the final NoteOff); without it,
+        // every step re-gates (a NoteOff per step).
+        fn run(legato: bool) -> (usize, usize) {
+            let mut song = Song::new("ArpLegato").with_tempo(Bpm::new(120.0));
+            let pattern_id = song.create_pattern(Duration::WHOLE);
+            if let Some(pattern) = song.pattern_mut(pattern_id) {
+                // One C4 held for five 480-tick steps (0,480,960,1440,1920).
+                let id = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+                let _ = pattern.resize_note(id, Duration(2400));
+                let _ = pattern.add_processor(NoteProcessor::Arpeggiator(Arpeggiator {
+                    mode: ArpMode::Custom,
+                    rate: ArpRate::Ticks(480),
+                    gate: NormalizedValue::new(1.0),
+                    legato,
+                    custom: ArpOffsets::new(&[0, 4, 7]),
+                    ..Arpeggiator::default()
+                }));
+            }
+            let track_id = song.create_track("T");
+            song.place_pattern(pattern_id, track_id, Tick::ZERO);
+
+            let mut seq =
+                SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            seq.play();
+            let mut events = Vec::new();
+            // 2400 ticks @120 BPM = 1.25s; 1.4s covers the final NoteOff.
+            let frames = (SampleRate::DVD_QUALITY.as_f32() * 1.4).round() as usize;
+            seq.process(SampleCount::new(frames), &mut events);
+            let ons = events.iter().filter(|e| e.is_note_on()).count();
+            let offs = events.iter().filter(|e| e.is_note_off()).count();
+            (ons, offs)
+        }
+
+        let (ons_legato, offs_legato) = run(true);
+        assert_eq!(
+            (ons_legato, offs_legato),
+            (5, 1),
+            "legato arp: five gliding step NoteOns, a single (final) NoteOff"
+        );
+        let (ons_plain, offs_plain) = run(false);
+        assert_eq!(
+            (ons_plain, offs_plain),
+            (5, 5),
+            "non-legato arp: every step re-gates (a NoteOff per step)"
+        );
+    }
+
+    #[test]
     fn expansion_overflow_drops_and_counts() {
         use synth_sequencer::MAX_EXPANSION_EVENTS_PER_TICK;
         // More simultaneous note-ons than the per-tick cap: the overflow policy

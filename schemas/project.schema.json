@@ -213,6 +213,11 @@
           "description": "Hold the last chord through gaps (keeps arpeggiating after the source\nnotes end, using the chord that sounded just before the gap).",
           "type": "boolean"
         },
+        "legato": {
+          "default": false,
+          "description": "Hold one envelope across the whole figure (chip-style): each step is\nstamped `legato`, so the engine glides between steps instead of\nre-gating (one attack, pitch cycles). Needs a `gate` near 1.0 so steps\nmeet end-to-end — a short gate leaves a hole the legato join can't span.",
+          "type": "boolean"
+        },
         "mode": {
           "$ref": "#/$defs/ArpMode",
           "default": "Up",
