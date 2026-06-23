@@ -406,15 +406,15 @@ impl PolyModule for Filter {
         // attenuverter that also flips polarity.
         for i in 0..n {
             let input = audio_in[i];
-            // Sanitize: direct CV cables bypass the mod-matrix clamp, so a
-            // NaN/inf here would poison the cutoff coefficient and SVF state.
+            // `InputReader::get` sanitizes: direct CV cables bypass the mod-matrix
+            // clamp, so a NaN/inf here would poison the cutoff coefficient and SVF state.
             let cutoff_mod = Semitones::new(
-                crate::math::sanitize_cv(cutoff_cv[i])
+                cutoff_cv.get(i)
                     * self.cutoff_mod_amount.as_f32()
                     * self.env_amount.as_f32()
                     * 48.0,
             );
-            let res_mod = NormalizedValue::new(crate::math::sanitize_cv(res_cv[i]));
+            let res_mod = NormalizedValue::new(res_cv.get(i));
 
             // Linear ramp: sample (n-1) lands exactly on the target.
             #[allow(clippy::cast_precision_loss)]
@@ -720,9 +720,9 @@ impl PolyModule for LadderFilter {
             let input = audio_in[i];
 
             let effective_cutoff = if cutoff_cv.is_connected() {
-                // Sanitize: a direct CV cable bypasses the mod-matrix clamp, so a
-                // NaN/inf here would poison exp2() and the ladder state.
-                let mod_amount = crate::math::sanitize_cv(cutoff_cv[i]);
+                // `InputReader::get` sanitizes: a direct CV cable bypasses the mod-matrix
+                // clamp, so a NaN/inf here would poison exp2() and the ladder state.
+                let mod_amount = cutoff_cv.get(i);
                 Hertz::new(
                     Hertz::FILTER_RANGE.clamp(self.cutoff.as_f32() * (mod_amount * 4.0).exp2()),
                 )

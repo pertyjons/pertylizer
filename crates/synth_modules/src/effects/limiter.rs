@@ -18,8 +18,8 @@ const MAX_LOOKAHEAD_MS: f32 = 5.0;
 
 /// Highest sample rate the engine supports. The look-ahead ring buffer is sized
 /// from this so the advertised 5 ms is honored at any sample rate (e.g. 96/192
-/// kHz), not just 48 kHz.
-const MAX_SAMPLE_RATE: f32 = 192_000.0;
+/// kHz), not just 48 kHz. Single source of truth: `SampleRate::MAX_SUPPORTED`.
+const MAX_SAMPLE_RATE: f32 = SampleRate::MAX_SUPPORTED.as_f32();
 
 /// Buffer capacity (in frames) for the maximum look-ahead time at the highest
 /// supported sample rate: `0.005 * 192000 = 960`.

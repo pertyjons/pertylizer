@@ -231,7 +231,10 @@ deeper/cross-crate items that a one-line fix could not properly address.
 
 ### 5.1 Sanitize CV at the input-read boundary (deeper NaN fix)
 
-- [ ] **Move NaN/Inf coercion to the CV-buffer read boundary instead of per-call-site.** The fix
+- [x] **Move NaN/Inf coercion to the CV-buffer read boundary instead of per-call-site.** (Done —
+  `InputReader::get(i)` is the sanitizing accessor; all 16 reader-based CV reads migrated. The
+  `inputs.get()→&AudioBuffer` osc reads + non-CV scalar reads keep explicit `sanitize_cv`. See
+  `plans/dsp-hardening-plan.md` §5.1.) The fix
   pass added `crate::math::sanitize_cv` (non-finite → 0.0) and wrapped the direct CV-input reads
   in the filters and oscillators (`cutoff_cv`, `freq_cv`, `fm`, `pm`, `pwm`, `sync`, vowel/breath/
   pitch CV, …). This works but is **per-call-site and easy to forget** — the review already caught
@@ -245,7 +248,7 @@ deeper/cross-crate items that a one-line fix could not properly address.
 
 ### 5.2 Promote engine block-size & max-sample-rate to shared `pub const`s
 
-- [ ] **`compressor.rs` and `limiter.rs` hand-copy private engine constants.** `compressor.rs` sizes
+- [x] **`compressor.rs` and `limiter.rs` hand-copy private engine constants.** `compressor.rs` sizes
   its sidechain buffer from a local `MAX_SIDECHAIN_SAMPLES = 4096*2` that duplicates the engine's
   **private** `MAX_BUFFER_SIZE` (4096 frames, itself duplicated in `effect_chain.rs:21`,
   `voice.rs:49`, `instrument.rs:343`). `limiter.rs` sizes its look-ahead ring from a local
@@ -258,8 +261,10 @@ deeper/cross-crate items that a one-line fix could not properly address.
 
 ### 5.3 Convolver: build the IR off the audio thread
 
-- [ ] **`Convolver::rebuild_ir` runs heavy FFT work (and a bounded first-growth allocation) on the
-  audio thread.** The fix pass made `rebuild_ir` allocation-free in steady state (reuses scratch
+- [x] **`Convolver::rebuild_ir` runs heavy FFT work (and a bounded first-growth allocation) on the
+  audio thread.** (Done — per-instance worker thread builds the IR spectra off-thread and the audio
+  thread swaps them in lock-free; pools pre-reserved so swaps never allocate. See
+  `plans/dsp-hardening-plan.md` §5.3. Not yet ear-verified in-app.) The fix pass made `rebuild_ir` allocation-free in steady state (reuses scratch
   buffers + FFT planners via `PartitionedConvolver::update_ir`), but it is still invoked from
   `set_param` — which drains on the audio thread — and re-runs up to `MAX_IR_SAMPLES/PARTITION_SIZE`
   forward FFTs across six convolvers whenever `Ir` type or `DecayTrim` (>0.01 delta) changes. Rapid
@@ -272,8 +277,11 @@ deeper/cross-crate items that a one-line fix could not properly address.
 
 ### 5.4 PadSynth: mark the wavetable dirty on sample-rate change (low priority)
 
-- [ ] **`PadSynth` rebuilds its wavetable lazily in `note_on`, keyed on `self.sample_rate`, but has no
-  `set_sample_rate` override.** The engine propagates the sample rate to voice-graph modules only via
+- [x] **`PadSynth` rebuilds its wavetable lazily in `note_on`, keyed on `self.sample_rate`, but has no
+  `set_sample_rate` override.** (Done — see `plans/dsp-hardening-plan.md` §5.4. The substantive bug was
+  actually the **`phase_increment`** staleness, not just the wavetable: fixed by deferring the
+  `pitch / sample_rate` division to `process()`. `process()` setting `self.sample_rate` from the context
+  also makes the wavetable rebuild guard see the current rate for any note after the first block.) The engine propagates the sample rate to voice-graph modules only via
   `ProcessContext` inside `process()` (established by the `granular_osc` fix in the same pass), so if a
   `note_on` arrives before the first `process()` at a newly-changed rate, the table is built with the
   stale rate's harmonic-bin placement for that one note (corrected on the next note). This is

@@ -6,6 +6,12 @@
 //! - Pre-delay, decay trim, brightness controls
 //! - Stereo processing (dual convolver)
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use ringbuf::HeapRb;
+use ringbuf::traits::{Consumer, Producer, Split};
+
 use crate::math::{buffer_rms, dynamic_convolution_weights};
 use synth_core::module_traits::ChoiceOption;
 use synth_core::{
@@ -13,13 +19,127 @@ use synth_core::{
     ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor,
     ParameterUnit, ProcessContext, SampleCount, SampleRate, StereoSample, WidgetHint,
 };
-use synth_dsp::PartitionedConvolver;
+use synth_dsp::{IrSpectra, IrSpectraBuilder, PartitionedConvolver};
 
 /// Partition size for convolution FFT.
 const PARTITION_SIZE: usize = 512;
 
 /// Maximum IR length in samples (~2s at 48kHz).
 const MAX_IR_SAMPLES: usize = 96_000;
+
+/// Worst-case partition count for an IR up to `MAX_IR_SAMPLES` long. Each
+/// convolver pre-reserves this many partition-spectra buffers so an off-thread IR
+/// swap never allocates on the audio thread.
+const MAX_PARTITIONS: usize = MAX_IR_SAMPLES.div_ceil(PARTITION_SIZE);
+
+/// Request sent to the IR-build worker thread: rebuild all six IR-variant spectra
+/// for these parameters.
+struct IrRequest {
+    ir_type: ImpulseResponse,
+    sample_rate: SampleRate,
+    decay_trim: f32,
+}
+
+/// Freshly built IR partition spectra for all six convolvers (medium/soft/loud ×
+/// L/R), handed back from the worker for a lock-free pointer swap on the audio
+/// thread. After the swap each field holds the *old* (displaced) spectra and is
+/// returned to the worker to be dropped off-thread.
+struct IrResult {
+    left: IrSpectra,
+    right: IrSpectra,
+    soft_l: IrSpectra,
+    soft_r: IrSpectra,
+    loud_l: IrSpectra,
+    loud_r: IrSpectra,
+}
+
+/// Build all six IR-variant spectra for `req` using the worker's scratch. Runs off
+/// the audio thread (worker thread, or the calling thread in the no-worker
+/// fallback). L and R share an IR, so each variant is built once and cloned.
+fn build_ir_result(
+    builder: &mut IrSpectraBuilder,
+    ir: &mut Vec<f32>,
+    ir_soft: &mut Vec<f32>,
+    ir_loud: &mut Vec<f32>,
+    req: &IrRequest,
+) -> IrResult {
+    Convolver::fill_ir(ir, req.ir_type, req.sample_rate, req.decay_trim);
+    Convolver::fill_ir_soft(ir_soft, req.ir_type, req.sample_rate, req.decay_trim);
+    Convolver::fill_ir_loud(ir_loud, req.ir_type, req.sample_rate, req.decay_trim);
+    let left = builder.build(ir);
+    let soft_l = builder.build(ir_soft);
+    let loud_l = builder.build(ir_loud);
+    IrResult {
+        right: left.clone(),
+        soft_r: soft_l.clone(),
+        loud_r: loud_l.clone(),
+        left,
+        soft_l,
+        loud_l,
+    }
+}
+
+/// IR-build worker loop. Parks when idle (0% CPU); woken by `unpark` when a request
+/// is queued, when the audio thread frees a result slot, or on shutdown. Coalesces:
+/// only the most recent pending request is built. Drops returned (old) spectra here,
+/// off the audio thread.
+///
+/// A freshly built result is **never dropped**: if the result slot is full it is
+/// held in `pending` and re-delivered once the audio thread drains the slot (which
+/// unparks us). Combined with request coalescing this guarantees the convolver
+/// converges to the *latest* requested IR — dropping a built result would otherwise
+/// strand it on a stale IR.
+fn ir_worker(
+    mut req_rx: ringbuf::HeapCons<IrRequest>,
+    mut res_tx: ringbuf::HeapProd<IrResult>,
+    mut trash_rx: ringbuf::HeapCons<IrResult>,
+    shutdown: Arc<AtomicBool>,
+) {
+    let mut builder = IrSpectraBuilder::new(PARTITION_SIZE);
+    let mut ir = Vec::with_capacity(MAX_IR_SAMPLES);
+    let mut ir_soft = Vec::with_capacity(MAX_IR_SAMPLES);
+    let mut ir_loud = Vec::with_capacity(MAX_IR_SAMPLES);
+    // A built-but-undelivered result (the result slot was full). Held and retried,
+    // never dropped, so the latest IR is never lost.
+    let mut pending: Option<IrResult> = None;
+
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
+        // Drop displaced (old) spectra off the audio thread.
+        while trash_rx.try_pop().is_some() {}
+
+        // Re-deliver a previously undeliverable result first.
+        if let Some(result) = pending.take()
+            && let Err(result) = res_tx.try_push(result)
+        {
+            pending = Some(result);
+        }
+
+        // Build the latest queued request — but only while not holding an
+        // undelivered result, otherwise the newer build would have to be dropped.
+        if pending.is_none() {
+            let mut latest = None;
+            while let Some(r) = req_rx.try_pop() {
+                latest = Some(r);
+            }
+            if let Some(req) = latest {
+                let result =
+                    build_ir_result(&mut builder, &mut ir, &mut ir_soft, &mut ir_loud, &req);
+                if let Err(result) = res_tx.try_push(result) {
+                    pending = Some(result);
+                }
+                // Loop again to drain trash / retry delivery promptly.
+                continue;
+            }
+        }
+
+        // Idle, or holding an undelivered result waiting for the audio thread to
+        // free a result slot (it unparks us when it drains one). Park until woken.
+        std::thread::park();
+    }
+}
 
 /// Convolution reverb with generated impulse responses.
 ///
@@ -74,12 +194,18 @@ pub struct Convolver {
     dyn_hi: usize,
     dyn_cf: f32,
 
-    // Pre-allocated IR scratch buffers, reused by rebuild_ir to avoid
-    // per-rebuild heap allocation on the audio thread. Each holds up to
-    // MAX_IR_SAMPLES samples; rebuild_ir truncates/extends in place.
-    ir_scratch: Vec<f32>,
-    ir_soft_scratch: Vec<f32>,
-    ir_loud_scratch: Vec<f32>,
+    // IR-build worker (off-thread FFT). The heavy spectra build runs on this
+    // thread; the audio thread only swaps the finished spectra in (lock-free).
+    // `Option` so `Drop` can take the handle for the join handshake, and so the
+    // module degrades gracefully (synchronous rebuild) if the thread can't spawn.
+    rebuild_tx: Option<ringbuf::HeapProd<IrRequest>>,
+    result_rx: Option<ringbuf::HeapCons<IrResult>>,
+    trash_tx: Option<ringbuf::HeapProd<IrResult>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+    shutdown: Arc<AtomicBool>,
+    /// A param changed while the worker was mid-build; re-request after the next
+    /// result is drained so we always converge on the latest IR.
+    rebuild_dirty: bool,
 
     // State
     sample_rate: SampleRate,
@@ -95,6 +221,38 @@ impl Convolver {
         Self::fill_ir(&mut ir, ir_type, sr, 1.0);
         Self::fill_ir_soft(&mut ir_soft, ir_type, sr, 1.0);
         Self::fill_ir_loud(&mut ir_loud, ir_type, sr, 1.0);
+
+        // Build the six convolvers and pre-reserve the worst-case partition pools
+        // so a later off-thread IR swap never allocates on the audio thread.
+        let make = |ir: &[f32]| {
+            let mut c = PartitionedConvolver::new(PARTITION_SIZE, ir);
+            c.reserve_partitions(MAX_PARTITIONS);
+            c
+        };
+        let conv_left = make(&ir);
+        let conv_right = make(&ir);
+        let conv_soft_l = make(&ir_soft);
+        let conv_soft_r = make(&ir_soft);
+        let conv_loud_l = make(&ir_loud);
+        let conv_loud_r = make(&ir_loud);
+
+        // Spawn the IR-build worker. On the (very unlikely) spawn failure the
+        // module falls back to building synchronously in `request_rebuild`.
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let (rebuild_tx, rebuild_rx) = HeapRb::<IrRequest>::new(1).split();
+        let (res_tx, result_rx) = HeapRb::<IrResult>::new(2).split();
+        let (trash_tx, trash_rx) = HeapRb::<IrResult>::new(4).split();
+        let worker_shutdown = Arc::clone(&shutdown);
+        let worker = std::thread::Builder::new()
+            .name("convolver-ir".to_string())
+            .spawn(move || ir_worker(rebuild_rx, res_tx, trash_rx, worker_shutdown))
+            .ok();
+        let (rebuild_tx, result_rx, trash_tx) = if worker.is_some() {
+            (Some(rebuild_tx), Some(result_rx), Some(trash_tx))
+        } else {
+            (None, None, None)
+        };
+
         Self {
             ir_type,
             mix: NormalizedValue::new(0.3),
@@ -103,13 +261,12 @@ impl Convolver {
             brightness: NormalizedValue::new(0.8),
             dynamic_mode: NormalizedValue::MIN,
 
-            conv_left: PartitionedConvolver::new(PARTITION_SIZE, &ir),
-            conv_right: PartitionedConvolver::new(PARTITION_SIZE, &ir),
-
-            conv_soft_l: PartitionedConvolver::new(PARTITION_SIZE, &ir_soft),
-            conv_soft_r: PartitionedConvolver::new(PARTITION_SIZE, &ir_soft),
-            conv_loud_l: PartitionedConvolver::new(PARTITION_SIZE, &ir_loud),
-            conv_loud_r: PartitionedConvolver::new(PARTITION_SIZE, &ir_loud),
+            conv_left,
+            conv_right,
+            conv_soft_l,
+            conv_soft_r,
+            conv_loud_l,
+            conv_loud_r,
 
             delay_buf_l: vec![0.0; 48_000],
             delay_buf_r: vec![0.0; 48_000],
@@ -134,11 +291,12 @@ impl Convolver {
             dyn_hi: 1,
             dyn_cf: 0.0,
 
-            // Reuse the freshly generated IR buffers as the rebuild scratch,
-            // each already grown to its starting length / capacity.
-            ir_scratch: ir,
-            ir_soft_scratch: ir_soft,
-            ir_loud_scratch: ir_loud,
+            rebuild_tx,
+            result_rx,
+            trash_tx,
+            worker,
+            shutdown,
+            rebuild_dirty: false,
 
             sample_rate: sr,
         }
@@ -225,33 +383,9 @@ impl Convolver {
         }
     }
 
-    fn rebuild_ir(&mut self) {
-        let decay = self.decay_trim.as_f32();
-        // Regenerate the three IR variants into the pre-allocated scratch buffers
-        // (no allocation once each buffer has reached its high-water length).
-        Self::fill_ir(&mut self.ir_scratch, self.ir_type, self.sample_rate, decay);
-        Self::fill_ir_soft(
-            &mut self.ir_soft_scratch,
-            self.ir_type,
-            self.sample_rate,
-            decay,
-        );
-        Self::fill_ir_loud(
-            &mut self.ir_loud_scratch,
-            self.ir_type,
-            self.sample_rate,
-            decay,
-        );
-
-        // Swap the IR into each convolver in place, reusing its FFT planner and
-        // partition-spectra pool (allocation-free once warmed up).
-        self.conv_left.update_ir(&self.ir_scratch);
-        self.conv_right.update_ir(&self.ir_scratch);
-        self.conv_soft_l.update_ir(&self.ir_soft_scratch);
-        self.conv_soft_r.update_ir(&self.ir_soft_scratch);
-        self.conv_loud_l.update_ir(&self.ir_loud_scratch);
-        self.conv_loud_r.update_ir(&self.ir_loud_scratch);
-
+    /// Flush the block accumulators after an IR swap (mirrors the old inline
+    /// rebuild's tail reset).
+    fn reset_accumulators(&mut self) {
         self.accum_pos = 0;
         self.input_accum_l.fill(0.0);
         self.input_accum_r.fill(0.0);
@@ -261,6 +395,84 @@ impl Convolver {
         self.output_soft_r.fill(0.0);
         self.output_loud_l.fill(0.0);
         self.output_loud_r.fill(0.0);
+    }
+
+    /// Swap freshly built spectra into the six convolvers — **no FFT, no alloc** on
+    /// the audio thread (the FFTs ran on the worker). `result` is left holding the
+    /// displaced (old) spectra for off-thread disposal.
+    fn apply_result(&mut self, result: &mut IrResult) {
+        self.conv_left.swap_ir_spectra(&mut result.left);
+        self.conv_right.swap_ir_spectra(&mut result.right);
+        self.conv_soft_l.swap_ir_spectra(&mut result.soft_l);
+        self.conv_soft_r.swap_ir_spectra(&mut result.soft_r);
+        self.conv_loud_l.swap_ir_spectra(&mut result.loud_l);
+        self.conv_loud_r.swap_ir_spectra(&mut result.loud_r);
+        self.reset_accumulators();
+    }
+
+    /// Request an IR rebuild for the current params: hand the (heavy, FFT-bound)
+    /// build to the worker thread so the audio thread never runs it. If the
+    /// worker's single request slot is full it sets `rebuild_dirty`, so
+    /// `drain_rebuild` re-requests once the pending build lands — coalescing rapid
+    /// automation to the latest value. Falls back to a synchronous build only if
+    /// the worker thread couldn't be spawned.
+    fn request_rebuild(&mut self) {
+        let req = IrRequest {
+            ir_type: self.ir_type,
+            sample_rate: self.sample_rate,
+            decay_trim: self.decay_trim.as_f32(),
+        };
+        if self.rebuild_tx.is_some() && self.worker.is_some() {
+            let pushed = self
+                .rebuild_tx
+                .as_mut()
+                .is_some_and(|tx| tx.try_push(req).is_ok());
+            if pushed {
+                if let Some(worker) = self.worker.as_ref() {
+                    worker.thread().unpark();
+                }
+                self.rebuild_dirty = false;
+            } else {
+                // Worker busy; converge after it finishes (see `drain_rebuild`).
+                self.rebuild_dirty = true;
+            }
+        } else {
+            self.rebuild_now_inline(&req);
+        }
+    }
+
+    /// Drain a finished IR build (if any) and swap it in. Called at the top of
+    /// `process`. Returns the displaced spectra to the worker for off-thread drop,
+    /// and re-requests if a param changed while the worker was busy.
+    fn drain_rebuild(&mut self) {
+        let popped = self
+            .result_rx
+            .as_mut()
+            .and_then(ringbuf::traits::Consumer::try_pop);
+        if let Some(mut result) = popped {
+            self.apply_result(&mut result);
+            // Hand the old spectra back to the worker to drop off the audio thread;
+            // if the trash slot is full it drops here (rare, one-off).
+            if let Some(trash) = self.trash_tx.as_mut() {
+                let _ = trash.try_push(result);
+            }
+            if let Some(worker) = self.worker.as_ref() {
+                worker.thread().unpark();
+            }
+            if self.rebuild_dirty {
+                self.request_rebuild();
+            }
+        }
+    }
+
+    /// Synchronous IR rebuild on the calling thread — the no-worker fallback only.
+    fn rebuild_now_inline(&mut self, req: &IrRequest) {
+        let mut builder = IrSpectraBuilder::new(PARTITION_SIZE);
+        let mut ir = Vec::with_capacity(MAX_IR_SAMPLES);
+        let mut ir_soft = Vec::with_capacity(MAX_IR_SAMPLES);
+        let mut ir_loud = Vec::with_capacity(MAX_IR_SAMPLES);
+        let mut result = build_ir_result(&mut builder, &mut ir, &mut ir_soft, &mut ir_loud, req);
+        self.apply_result(&mut result);
     }
 
     fn update_delay(&mut self) {
@@ -361,6 +573,10 @@ impl Describable for Convolver {
 impl AudioEffect for Convolver {
     #[allow(clippy::too_many_lines)]
     fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext<'_>) {
+        // Swap in any IR the worker finished building since the last block (no FFT
+        // or allocation on the audio thread; the worker did the heavy work).
+        self.drain_rebuild();
+
         let num_frames = input.len() / 2;
         let mix = self.mix.as_f32();
 
@@ -491,7 +707,7 @@ impl AudioEffect for Convolver {
                 ConvolverParam::Ir(ir) => {
                     if ir != self.ir_type {
                         self.ir_type = ir;
-                        self.rebuild_ir();
+                        self.request_rebuild();
                     }
                 }
                 ConvolverParam::Mix(v) => self.mix = v,
@@ -502,7 +718,7 @@ impl AudioEffect for Convolver {
                 ConvolverParam::DecayTrim(v) => {
                     if (v.as_f32() - self.decay_trim.as_f32()).abs() > 0.01 {
                         self.decay_trim = v;
-                        self.rebuild_ir();
+                        self.request_rebuild();
                     }
                 }
                 ConvolverParam::Brightness(v) => self.brightness = v,
@@ -581,8 +797,118 @@ impl AudioEffect for Convolver {
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
         if sample_rate != self.sample_rate {
             self.sample_rate = sample_rate;
-            self.rebuild_ir();
+            self.request_rebuild();
             self.update_delay();
         }
+    }
+}
+
+impl Drop for Convolver {
+    fn drop(&mut self) {
+        // Signal the worker to exit, then unpark it so a parked worker actually
+        // wakes to observe the flag, and join — otherwise each dropped Convolver
+        // (project reload, track delete) would leak a parked thread.
+        self.shutdown.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            worker.thread().unpark();
+            let _ = worker.join();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ringbuf::traits::Observer;
+
+    #[test]
+    fn convolver_spawns_and_drop_joins_worker() {
+        let c = Convolver::new();
+        assert!(c.worker.is_some(), "IR-build worker thread should spawn");
+        // Dropping must signal + join the worker without hanging or panicking.
+        drop(c);
+    }
+
+    #[test]
+    fn off_thread_rebuild_delivers_and_stays_finite() {
+        let mut c = Convolver::new();
+        let ctx = ProcessContext::default();
+        // Interleaved stereo, a couple of partitions' worth.
+        let input = vec![0.1f32; PARTITION_SIZE * 2 * 2];
+        let mut output = vec![0.0f32; input.len()];
+
+        // Baseline render is finite.
+        c.process(&input, &mut output, &ctx);
+        assert!(output.iter().all(|s| s.is_finite()));
+
+        // Trigger an off-thread IR rebuild (Plate -> Hall).
+        c.set_param(Param::Convolver(ConvolverParam::Ir(ImpulseResponse::Hall)));
+
+        // The worker must deliver a finished build within a bounded wait.
+        let mut delivered = false;
+        for _ in 0..2000 {
+            if c.result_rx.as_ref().is_some_and(|rx| !rx.is_empty()) {
+                delivered = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(delivered, "worker did not deliver the rebuilt IR in time");
+
+        // Draining + swapping the new IR in `process` stays finite and doesn't panic.
+        c.process(&input, &mut output, &ctx);
+        assert!(output.iter().all(|s| s.is_finite()));
+        // The result was consumed and no re-request is pending.
+        assert!(!c.rebuild_dirty);
+        assert!(
+            c.result_rx
+                .as_ref()
+                .is_some_and(ringbuf::traits::Observer::is_empty)
+        );
+    }
+
+    #[test]
+    fn rapid_ir_changes_settle_without_livelock() {
+        // Rapidly change the IR several times, then process until quiescent. The
+        // worker never drops a built result and strands a stale IR (it holds and
+        // re-delivers), so the system converges: no pending result, no dirty flag,
+        // finite output — and crucially it terminates (no livelock).
+        let mut c = Convolver::new();
+        let ctx = ProcessContext::default();
+        let input = vec![0.05f32; PARTITION_SIZE * 2 * 2];
+        let mut output = vec![0.0f32; input.len()];
+
+        for ir in [
+            ImpulseResponse::Hall,
+            ImpulseResponse::Room,
+            ImpulseResponse::Spring,
+            ImpulseResponse::Plate,
+        ] {
+            c.set_param(Param::Convolver(ConvolverParam::Ir(ir)));
+        }
+
+        let mut settled = false;
+        for _ in 0..5000 {
+            c.process(&input, &mut output, &ctx);
+            assert!(output.iter().all(|s| s.is_finite()));
+            let quiescent = !c.rebuild_dirty
+                && c.result_rx
+                    .as_ref()
+                    .is_some_and(ringbuf::traits::Observer::is_empty);
+            if quiescent {
+                // Let the worker settle, then confirm it stays quiescent (converged).
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                if !c.rebuild_dirty
+                    && c.result_rx
+                        .as_ref()
+                        .is_some_and(ringbuf::traits::Observer::is_empty)
+                {
+                    settled = true;
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(settled, "convolver did not settle after rapid IR changes");
     }
 }

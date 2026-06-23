@@ -18,6 +18,9 @@ impl SampleRate {
     pub const CD_QUALITY: Self = Self(44100);
     pub const DVD_QUALITY: Self = Self(48000);
     pub const STUDIO_QUALITY: Self = Self(96000);
+    /// The highest sample rate the engine supports — the engine-wide ceiling.
+    /// Kept in sync with the DSP [`crate::types::SampleRate::MAX_SUPPORTED`].
+    pub const MAX_SUPPORTED: Self = Self(192_000);
 
     #[inline]
     pub fn as_f32(self) -> f32 {
@@ -65,6 +68,13 @@ impl From<SampleRate> for crate::types::SampleRate {
         Self::new(rate.0 as f32)
     }
 }
+
+/// The largest block any `process()` will ever be handed, in frames.
+///
+/// All fixed real-time scratch buffers size from this single source of truth
+/// (the engine's voice/instrument/effect-chain buffers, the compressor sidechain,
+/// …) so they can't silently desync if the maximum block size ever changes.
+pub const MAX_BLOCK_SIZE: usize = 4096;
 
 /// Buffer size in frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -234,3 +244,23 @@ pub enum AudioError {
 
 /// Result type for audio operations.
 pub type AudioResult<T> = Result<T, AudioError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn engine_ceilings_are_the_documented_contract() {
+        // These are the single source of truth for fixed real-time scratch buffers
+        // (engine block buffers, compressor sidechain, limiter look-ahead). Pin them
+        // so a change here is a deliberate, reviewed contract change — not a silent
+        // desync against a hand-copied literal elsewhere.
+        assert_eq!(MAX_BLOCK_SIZE, 4096);
+        assert_eq!(SampleRate::MAX_SUPPORTED.0, 192_000);
+        assert_eq!(
+            crate::types::SampleRate::MAX_SUPPORTED.as_f32(),
+            192_000.0,
+            "config and DSP SampleRate ceilings must agree"
+        );
+    }
+}

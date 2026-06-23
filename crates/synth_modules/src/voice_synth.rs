@@ -562,8 +562,7 @@ impl PolyModule for VoiceSynth {
         for i in 0..num_samples {
             // Vowel CV modulation (shared, gated coefficient recompute).
             if vowel_cv_connected {
-                let target =
-                    (vowel_base + crate::math::sanitize_cv(vowel_cv[i]) * 0.5).clamp(0.0, 1.0);
+                let target = (vowel_base + vowel_cv.get(i) * 0.5).clamp(0.0, 1.0);
                 if (target - self.current_vowel).abs() > 0.001 {
                     self.current_vowel = target;
                     // Vowel interpolation is voice-independent: do it once, then
@@ -575,8 +574,8 @@ impl PolyModule for VoiceSynth {
                 }
             }
 
-            let pcv = crate::math::sanitize_cv(pitch_cv[i]);
-            let breath = (breath_base + crate::math::sanitize_cv(breath_cv[i])).clamp(0.0, 1.0);
+            let pcv = pitch_cv.get(i);
+            let breath = (breath_base + breath_cv.get(i)).clamp(0.0, 1.0);
 
             let mut raw = 0.0_f32;
             let mut sum_l = 0.0_f32;

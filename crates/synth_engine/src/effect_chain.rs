@@ -17,8 +17,8 @@ use crate::visualizers::VisualizationBuffer;
 use synth_core::ModuleType;
 use synth_core::{AudioBuffer, AudioEffect, ProcessContext, SampleRate};
 
-/// Maximum buffer size in samples (mono). Matches instrument.rs.
-const MAX_BUFFER_SIZE: usize = 4096;
+// Maximum buffer size in samples (mono) — the engine-wide block ceiling.
+use synth_core::MAX_BLOCK_SIZE as MAX_BUFFER_SIZE;
 
 // ============================================================================
 // EnabledState - Descriptive enum for on/off state

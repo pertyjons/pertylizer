@@ -61,6 +61,14 @@ pub struct PadSynth {
     // Playback state
     phase: f64,
     phase_increment: f64,
+    /// The pitch the note should sound at. `phase_increment` is *derived* from
+    /// this and the current sample rate once per block in `process()` — never
+    /// baked at `note_on`/`set_voice_pitch`. The engine propagates the render
+    /// rate to voice-graph modules only via `ProcessContext`, so deferring the
+    /// `pitch / sample_rate` division to `process()` (where the rate is known
+    /// current) avoids the octave-off glitch a `note_on` fired before the first
+    /// `process()` at a non-default rate would otherwise produce.
+    current_pitch: Hertz,
     active: bool,
     sample_rate: SampleRate,
     /// Generic mod-matrix offsets. Only `level` is a control-rate destination —
@@ -90,6 +98,7 @@ impl PadSynth {
 
             phase: 0.0,
             phase_increment: 0.0,
+            current_pitch: Hertz::new(261.63), // C4
             active: false,
             sample_rate: SampleRate::DVD_QUALITY,
             mod_offsets: ParamModOffsets::new(),
@@ -336,6 +345,15 @@ impl PolyModule for PadSynth {
         }
 
         let level = self.mod_offsets.effective("level", self.level.as_f32());
+
+        // Derive the phase increment from the current pitch and the render sample
+        // rate here — not at note_on/set_voice_pitch — so it always tracks the rate
+        // the engine just propagated via `context.sample_rate` (set above). Clamp via
+        // the shared `Hertz::OSC_RANGE` preset, the same idiom every other voice-pitch
+        // module uses.
+        let sr = self.sample_rate.as_f32() as f64;
+        let pitch = Hertz::new(Hertz::OSC_RANGE.clamp(self.current_pitch.as_f32()));
+        self.phase_increment = f64::from(pitch.as_f32()) / sr;
         let inc = self.phase_increment;
 
         for i in 0..num_samples {
@@ -433,12 +451,11 @@ impl PolyModule for PadSynth {
             self.build_wavetable(self.base_freq);
         }
 
-        // The wavetable encodes one cycle of the base_freq waveform.
-        // To play at note_freq, advance phase so one full traversal takes
-        // sr/note_freq samples: phase_inc = note_freq / sr.
-        let sr = self.sample_rate.as_f32() as f64;
-        let note_f = note_freq.as_f32() as f64;
-        self.phase_increment = note_f / sr;
+        // The wavetable encodes one cycle of the base_freq waveform; the note
+        // pitch is applied purely via `phase_increment`, which `process()` derives
+        // from `current_pitch` and the (then-current) sample rate. Just record the
+        // target pitch here — do not bake the increment at the (possibly stale) rate.
+        self.current_pitch = note_freq;
 
         self.phase = 0.0;
         self.active = true;
@@ -446,12 +463,10 @@ impl PolyModule for PadSynth {
 
     fn set_voice_pitch(&mut self, freq: Hertz) {
         // The wavetable is baked from base_freq and stays put; the note pitch is
-        // only the phase increment, so retuning is a cheap recompute — no O(N²)
-        // table rebuild. Mirrors the note_on formula `inc = freq / sr`.
-        let sr = self.sample_rate.as_f32() as f64;
-        if sr > 0.0 {
-            self.phase_increment = f64::from(freq.as_f32().clamp(1.0, 20_000.0)) / sr;
-        }
+        // only the phase increment, which `process()` derives from `current_pitch`
+        // and the current sample rate (no O(N²) table rebuild). Just record the
+        // target pitch — the clamp + division happen at the single site in process().
+        self.current_pitch = freq;
     }
 
     fn note_off(&mut self) {
@@ -503,6 +518,37 @@ mod tests {
         });
         let est_up = amdf_fundamental(&up[2048..], srf, f * 2.0);
         assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
+    }
+
+    /// Regression: the phase increment must track the *render* sample rate, not the
+    /// rate that happened to be cached when `note_on` fired. The engine propagates
+    /// the rate only via `ProcessContext`, so a note triggered before the first
+    /// `process()` at a non-default rate used to render an octave off. With the
+    /// division deferred to `process()`, the increment follows the context rate.
+    #[test]
+    fn phase_increment_follows_render_rate_not_note_on_rate() {
+        // Construct at the 48 kHz default, trigger A4 while still at 48 kHz...
+        let mut pad = PadSynth::new();
+        pad.note_on(MidiNote(69), Velocity::MAX); // A4 = 440 Hz
+        let f = MidiNote(69).to_frequency().as_f32() as f64;
+
+        // ...then render the first block at 96 kHz.
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(64),
+            sample_rate: SampleRate::HIGH_RES,
+            ..ProcessContext::default()
+        };
+        let mut outs = HashMap::new();
+        outs.insert(PortName::OUT, AudioBuffer::new(64));
+        pad.process(InputPorts::empty(), &mut outs, &ctx);
+
+        let expected = f / SampleRate::HIGH_RES.as_f32() as f64; // 440 / 96000
+        let wrong = f / SampleRate::DVD_QUALITY.as_f32() as f64; // 440 / 48000 (the old bug)
+        assert!(
+            (pad.phase_increment - expected).abs() < 1e-9,
+            "increment {} should track render rate ({expected}), not note_on rate ({wrong})",
+            pad.phase_increment
+        );
     }
 
     #[test]

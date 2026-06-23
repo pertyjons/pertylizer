@@ -296,6 +296,25 @@ impl<'a> InputReader<'a> {
     pub fn as_slice(&self) -> Option<&'a [f32]> {
         self.buffer.map(AudioBuffer::as_slice)
     }
+
+    /// Read sample `i`, coercing non-finite (NaN/Inf) values to `0.0`.
+    ///
+    /// This is the single sanitize boundary for direct CV-input cables: a NaN/Inf
+    /// fed into DSP poisons feedback state and silences/explodes a voice, and a
+    /// direct CV buffer is the only way one can enter (mod-matrix offsets are
+    /// already clamped in `ParamModOffsets::effective`). **All modules reading a CV
+    /// input must use `get(i)` rather than the raw `Index` (`reader[i]`)**, so the
+    /// coercion can never be forgotten at a call site. The connected-default is
+    /// already finite, so the branch only ever fires for live buffers.
+    #[inline]
+    #[must_use]
+    pub fn get(&self, i: usize) -> f32 {
+        let v = match self.buffer {
+            Some(buf) => buf[i],
+            None => self.default,
+        };
+        if v.is_finite() { v } else { 0.0 }
+    }
 }
 
 impl std::ops::Index<usize> for InputReader<'_> {
@@ -1498,6 +1517,29 @@ mod tests {
         assert_eq!(reader[3], 4.0);
         assert!(reader.as_slice().is_some());
         assert_eq!(reader.as_slice().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn input_reader_get_sanitizes_non_finite_cv() {
+        // The single sanitize boundary: a NaN/Inf in a connected CV buffer must read
+        // back as a finite 0.0, while ordinary finite values pass through unchanged.
+        let mut buf = AudioBuffer::new(4);
+        buf[0] = f32::NAN;
+        buf[1] = f32::INFINITY;
+        buf[2] = f32::NEG_INFINITY;
+        buf[3] = 0.75;
+
+        let ports_data = [(PortName::CV, &buf)];
+        let ports = InputPorts::new(&ports_data);
+        let reader = ports.reader(PortName::CV, 0.0);
+
+        assert_eq!(reader.get(0), 0.0, "NaN coerced to 0");
+        assert_eq!(reader.get(1), 0.0, "+Inf coerced to 0");
+        assert_eq!(reader.get(2), 0.0, "-Inf coerced to 0");
+        assert_eq!(reader.get(3), 0.75, "finite value passes through");
+        // An unconnected reader returns its (finite) default.
+        let empty = InputPorts::empty();
+        assert_eq!(empty.reader(PortName::CV, 0.0).get(7), 0.0);
     }
 
     #[test]
