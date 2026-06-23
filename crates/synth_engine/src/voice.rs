@@ -935,8 +935,9 @@ impl Voice {
         let bend_semitones = self.expression.pitch_bend_range * self.pitch_bend.as_f32();
         let freq = (bend_semitones + self.vibrato_offset).apply(base_freq);
 
-        // Set oscillator frequencies in the graph before processing
-        self.graph.set_oscillator_frequency(freq);
+        // Deliver the modulated note pitch to every pitch-tracking sound source
+        // (oscillators, sampler, …) in the graph before processing.
+        self.graph.set_voice_pitch(freq);
 
         // === Control scripts: evaluate the Mod Matrix and Script modules ===
         // Both read the same per-block source snapshot (so `gate_on` is seen by

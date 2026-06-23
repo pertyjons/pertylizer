@@ -9,13 +9,18 @@ use std::sync::Arc;
 
 use synth_core::ChannelCount;
 use synth_core::{
-    AudioBuffer, Cents, Describable, Gain, InputPorts, MidiNote, ModuleCategory, ModuleDescriptor,
-    ModuleType, NormalizedValue, Param, ParamModOffsets, ParameterDescriptor, ParameterUnit,
-    PlayDirection, PolyModule, PortDescriptor, PortName, ProcessContext, SampleId, SampleRate,
-    SamplerParam, SamplerPlayMode, Velocity, WidgetHint,
+    AudioBuffer, Cents, Describable, Gain, Hertz, InputPorts, MidiNote, ModuleCategory,
+    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParamModOffsets, ParameterDescriptor,
+    ParameterUnit, PlayDirection, PolyModule, PortDescriptor, PortName, ProcessContext, SampleId,
+    SampleRate, SamplerParam, SamplerPlayMode, Velocity, WidgetHint,
 };
 use synth_sampler::playback::{PlaybackState, SamplePlayer};
 use synth_sampler::types::{CropRegion, LoopRegion};
+
+/// Pitch-CV input range in octaves (Eurorack 1V/oct: `1.0` = +1 octave). The
+/// raw CV is clamped to ±this before being applied, to keep playback speed sane
+/// and the audio thread safe against runaway/denormal speeds.
+const PITCH_CV_RANGE_OCTAVES: f32 = 6.0;
 
 /// Sampler module — plays samples as voice sources.
 #[derive(Clone)]
@@ -44,6 +49,14 @@ pub struct Sampler {
     // Playback state
     player: Option<SamplePlayer>,
     sample_rate: SampleRate,
+    /// Base playback speed for the held note (note pitch × fine-tune). Set at
+    /// note-on and refreshed every block by `set_voice_pitch`, so the sampler
+    /// follows continuous voice pitch (glide / vibrato / pitch-bend) instead of
+    /// the pitch latched at trigger. The per-block `pitch_cv` input is
+    /// multiplied on top of this in `process`.
+    base_speed: f64,
+    /// Effective fine-tune (cents) sampled at note-on; folded into `base_speed`.
+    active_fine_tune_cents: f64,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     /// `level` is resolved per block; `fine_tune` / `start_offset` /
     /// `velocity_sensitivity` are sampled at note-on (they configure the player).
@@ -77,6 +90,8 @@ impl Sampler {
 
             player: None,
             sample_rate: SampleRate::DVD_QUALITY,
+            base_speed: 1.0,
+            active_fine_tune_cents: 0.0,
             mod_offsets: ParamModOffsets::new(),
 
             // Pre-allocate for up to 8192 stereo frames. Grow-only: if a larger
@@ -242,6 +257,12 @@ impl Describable for Sampler {
                 )
                 .description("Playback direction"),
             )
+            .port(
+                PortDescriptor::control_input("pitch_cv", "Pitch CV").description(
+                    "Modulates playback pitch (v/oct: +1.0 = +1 octave), on top of the note \
+                     pitch. Connect: LFO for vibrato, Envelope for pitch sweep, Mod Matrix.",
+                ),
+            )
             .port(PortDescriptor::audio_output("out", "Out").description("Sample audio output"))
     }
 }
@@ -249,7 +270,7 @@ impl Describable for Sampler {
 impl PolyModule for Sampler {
     fn process(
         &mut self,
-        _inputs: InputPorts<'_>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext<'_>,
     ) {
@@ -265,7 +286,19 @@ impl PolyModule for Sampler {
             self.render_buffer.resize(render_len, 0.0);
         }
 
+        // Per-block pitch-CV (control rate): a v/oct modulation multiplied on top
+        // of the note pitch (`base_speed`, maintained by `set_voice_pitch`). An
+        // unconnected port reads 0.0 → factor 1.0, so this is a no-op unless a
+        // mod source (LFO / envelope / mod matrix) is patched in.
+        let pitch_cv = inputs.reader(PortName::PITCH_CV, 0.0);
+        let cv_octaves = crate::math::sanitize_cv(if n_samples > 0 { pitch_cv[0] } else { 0.0 })
+            .clamp(-PITCH_CV_RANGE_OCTAVES, PITCH_CV_RANGE_OCTAVES);
+        let target_speed = self.base_speed * 2.0_f64.powf(f64::from(cv_octaves));
+
         if let Some(ref mut player) = self.player {
+            // Drive continuous pitch: note pitch × pitch-CV, applied each block.
+            player.set_speed(target_speed);
+
             // Clear render buffer
             self.render_buffer[..render_len].fill(0.0);
 
@@ -368,6 +401,23 @@ impl PolyModule for Sampler {
         self.load_sample(data, channels, frame_count, None, None, root_note);
     }
 
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // Follow the voice's modulated note pitch continuously (glide / vibrato /
+        // pitch-bend). When pitch tracking is off the sampler ignores the played
+        // note (fixed-rate playback), so leave `base_speed` at its note-on,
+        // fine-tune-only value. `process` multiplies `pitch_cv` on top of this.
+        if !self.pitch_tracking {
+            return;
+        }
+        let root_freq = self.root_note.to_frequency().as_f32();
+        if root_freq > 0.0 && freq.as_f32() > 0.0 {
+            // speed = freq / root_freq × fine-tune. At freq == note pitch this
+            // equals the note-on `base_speed`; it scales with the modulation.
+            let fine_factor = 2.0_f64.powf(self.active_fine_tune_cents / 1200.0);
+            self.base_speed = (f64::from(freq.as_f32()) / f64::from(root_freq)) * fine_factor;
+        }
+    }
+
     fn note_on(&mut self, note: MidiNote, velocity: Velocity) {
         let Some(ref data) = self.sample_data else {
             return;
@@ -397,12 +447,21 @@ impl PolyModule for Sampler {
             loop_region,
         );
 
-        // Apply pitch: either tracking (follows MIDI note) or just fine-tune
+        // Pitch: seed this note's base playback speed (note pitch × fine-tune).
+        // `set_voice_pitch` then refreshes `base_speed` every block while the
+        // note sounds (so glide / vibrato / pitch-bend track continuously) and
+        // `process` multiplies the `pitch_cv` input on top. Store the effective
+        // fine-tune for that per-block refresh.
+        self.active_fine_tune_cents = f64::from(fine_tune);
         if self.pitch_tracking {
-            player.set_pitch(note, self.root_note, f64::from(fine_tune));
-        } else if fine_tune.abs() > 0.001 {
-            player.set_fine_tune(f64::from(fine_tune));
+            // Seed through the exact same formula the per-block refresh uses, so
+            // the note-on speed and the first `set_voice_pitch` agree.
+            self.set_voice_pitch(note.to_frequency());
+        } else {
+            // Fixed-rate playback: fine-tune only (the played note is ignored).
+            self.base_speed = 2.0_f64.powf(self.active_fine_tune_cents / 1200.0);
         }
+        player.set_speed(self.base_speed);
 
         // Set velocity
         let vel_gain = 1.0 - vel_amount + vel_amount * velocity.as_f32();
@@ -506,6 +565,78 @@ mod tests {
         assert!(
             (restored - base).abs() < base * 0.1,
             "clearing reverts level: base={base}, restored={restored}"
+        );
+    }
+
+    /// Render `pitch_cv` (octaves) connected, counting frames until the
+    /// non-looping sample is exhausted. Higher playback speed → exhausts sooner.
+    fn frames_until_silent_with_cv(cv_octaves: f32) -> usize {
+        let mut s = loaded_sampler();
+        s.note_on(MidiNote(60), Velocity::new(1.0)); // C4 == root → base_speed 1
+        let mut cv = AudioBuffer::new(64);
+        for i in 0..64 {
+            cv[i] = cv_octaves;
+        }
+        let mut total = 0;
+        for _ in 0..400 {
+            let mut out = HashMap::new();
+            out.insert(PortName::OUT, AudioBuffer::new(64));
+            let ports = [(PortName::PITCH_CV, &cv)];
+            s.process(InputPorts::new(&ports), &mut out, &ctx(64));
+            total += 64;
+            let e: f32 = (0..64).map(|i| out[&PortName::OUT][i].abs()).sum();
+            if e < 1e-6 {
+                break;
+            }
+        }
+        total
+    }
+
+    /// A — `set_voice_pitch` makes the sampler follow continuous voice pitch:
+    /// doubling the note frequency each block doubles playback speed, so a
+    /// non-looping sample is consumed ~twice as fast.
+    #[test]
+    fn voice_pitch_modulates_sampler_playback_speed() {
+        fn frames_until_silent(pitch_mul: f32) -> usize {
+            let mut s = loaded_sampler();
+            s.note_on(MidiNote(60), Velocity::new(1.0)); // C4 == root
+            let root = MidiNote(60).to_frequency().as_f32();
+            let mut total = 0;
+            for _ in 0..400 {
+                s.set_voice_pitch(Hertz::new(root * pitch_mul));
+                let e = render_energy(&mut s, 64);
+                total += 64;
+                if e < 1e-6 {
+                    break;
+                }
+            }
+            total
+        }
+        let normal = frames_until_silent(1.0);
+        let fast = frames_until_silent(2.0);
+        assert!(
+            fast < normal,
+            "2x voice pitch should exhaust the sample sooner: normal={normal}, fast={fast}"
+        );
+        assert!(
+            (fast as f32) <= (normal as f32) * 0.75,
+            "2x pitch should roughly halve the duration: normal={normal}, fast={fast}"
+        );
+    }
+
+    /// B — the `pitch_cv` input port modulates playback pitch on top of the note
+    /// pitch: +1 octave of CV doubles the speed; an unconnected/0 CV is a no-op.
+    #[test]
+    fn pitch_cv_input_modulates_sampler_playback_speed() {
+        let normal = frames_until_silent_with_cv(0.0);
+        let up = frames_until_silent_with_cv(1.0); // +1 octave → 2x speed
+        assert!(
+            up < normal,
+            "+1 octave pitch CV should exhaust the sample sooner: normal={normal}, up={up}"
+        );
+        assert!(
+            (up as f32) <= (normal as f32) * 0.75,
+            "+1 octave CV should roughly halve the duration: normal={normal}, up={up}"
         );
     }
 }

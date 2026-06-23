@@ -753,6 +753,13 @@ impl PolyModule for Oscillator {
         self.prev_sync = 0.0;
     }
 
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // Track the voice's per-block modulated note pitch. Identical to
+        // `set_param(Frequency)` — detune/octave/FM still apply on top in
+        // `process`. (Was the oscillator-only `set_oscillator_frequency` path.)
+        self.frequency = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+    }
+
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.set_note(note);
         let n = self.unison_voice_count.as_usize();

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use crate::ChannelCount;
 use crate::params::{ModuleType, Param};
 pub use crate::types::{
-    BeatPosition, Bpm, MidiNote, NormalizedValue, SampleCount, SamplePosition, SampleRate,
+    BeatPosition, Bpm, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, SampleRate,
     ValueRange, Velocity,
 };
 
@@ -1158,6 +1158,21 @@ pub trait PolyModule: Describable + Send {
 
     /// Trigger note on.
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
+
+    /// Deliver the voice's per-block note pitch to a pitch-tracking sound source.
+    ///
+    /// The [`Voice`](../../synth_engine) calls this every block with the played
+    /// note's *modulated* fundamental frequency (base pitch, glide, pitch-bend
+    /// and per-note vibrato combined). Any module that is a pitched sound source
+    /// tracking the played note — oscillators, the sampler, etc. — overrides so it
+    /// follows continuous pitch modulation, not just the pitch latched at
+    /// [`note_on`](Self::note_on).
+    ///
+    /// Default: no-op. Effects, modulators and fixed-rate sources ignore the
+    /// voice pitch. This is the generalised replacement for the former
+    /// oscillator-only `set_oscillator_frequency` path — pitch tracking is now a
+    /// per-module capability rather than a hard-coded module-type special case.
+    fn set_voice_pitch(&mut self, _freq: Hertz) {}
 
     /// Trigger note off.
     fn note_off(&mut self) {}

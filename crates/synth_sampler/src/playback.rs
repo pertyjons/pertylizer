@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use synth_core::{ChannelCount, MidiNote, Velocity};
+use synth_core::{ChannelCount, Velocity};
 
 use crate::types::{CropRegion, LoopRegion, PlaybackPosition};
 
@@ -118,15 +118,16 @@ impl SamplePlayer {
         }
     }
 
-    /// Set the playback speed from a MIDI note offset with optional fine-tune in cents.
-    pub fn set_pitch(&mut self, target_note: MidiNote, root_note: MidiNote, fine_tune_cents: f64) {
-        let semitones = f64::from(target_note.0) - f64::from(root_note.0) + fine_tune_cents / 100.0;
-        self.speed = 2.0_f64.powf(semitones / 12.0);
-    }
-
-    /// Set fine-tune in cents without pitch tracking (speed relative to 1.0).
-    pub fn set_fine_tune(&mut self, cents: f64) {
-        self.speed = 2.0_f64.powf(cents / 1200.0);
+    /// Set the playback speed (magnitude) directly.
+    ///
+    /// Used by the Sampler module to drive continuous pitch each block (note
+    /// pitch from the voice × the `pitch_cv` input). Direction is applied
+    /// separately, so this stores the non-negative magnitude. Non-finite input
+    /// is ignored (keeps the previous speed) to keep the audio thread safe.
+    pub fn set_speed(&mut self, speed: f64) {
+        if speed.is_finite() {
+            self.speed = speed.max(0.0);
+        }
     }
 
     /// Set reverse playback direction.

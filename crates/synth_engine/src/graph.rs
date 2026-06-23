@@ -489,16 +489,18 @@ impl ModuleGraph {
             .map(|(id, _)| *id)
     }
 
-    /// Set the base frequency for all oscillator modules in the graph.
-    /// Used by Voice to inject the note frequency before processing.
-    pub fn set_oscillator_frequency(&mut self, freq: synth_core::Hertz) {
-        use synth_core::{OscillatorParam, Param};
-
-        for (&id, node) in self.nodes.iter_mut() {
-            if id.module_type == ModuleType::Oscillator {
-                node.module
-                    .set_param(Param::Oscillator(OscillatorParam::Frequency(freq)));
-            }
+    /// Deliver the voice's per-block note pitch to every pitch-tracking sound
+    /// source in the graph. Used by Voice to inject the (modulated) note
+    /// frequency before processing.
+    ///
+    /// Modules opt in by overriding [`PolyModule::set_voice_pitch`]; oscillators
+    /// and the sampler track it, everything else ignores it. This replaces the
+    /// former `== ModuleType::Oscillator` special case — pitch tracking is now a
+    /// per-module capability, so any pitched source (sub-osc, wavetable, …) can
+    /// follow continuous pitch simply by implementing the trait method.
+    pub fn set_voice_pitch(&mut self, freq: synth_core::Hertz) {
+        for node in self.nodes.values_mut() {
+            node.module.set_voice_pitch(freq);
         }
     }
 
