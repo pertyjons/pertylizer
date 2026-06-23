@@ -34,8 +34,11 @@ field `process` reads for pitch, instead of only setting it in `note_on`."**
 **Membership test** (verified exhaustively against the codebase, not memory): a
 module is in scope iff it is **category `Oscillator`** *and* its `note_on` sets
 pitch from the note (`self.note_freq = note.to_frequency()` or equivalent). That
-yields **13** modules below (`Oscillator` + `Sampler` already done). `pitch_cv`
+yields **12** modules below (`Oscillator` + `Sampler` already done). `pitch_cv`
 input ports are **out of scope** — oscillators already have FM/freq-CV inputs.
+
+> Every in-scope module's `note_on` was re-verified to set `note_freq` from the
+> note; a DSP review caught one that does *not* (`LaSynth`) — now Excluded.
 
 ### Excluded (and why — all verified)
 - **`ChaoticOsc`** (`chaotic_osc.rs`) — category **LFO**; `note_on` is an empty
@@ -47,6 +50,14 @@ input ports are **out of scope** — oscillators already have FM/freq-CV inputs.
   pitch comes from a parameter, not the note. ⚠ It arguably *should* be
   note-pitched (Karplus-style), but that is a **separate change** (making it
   note-pitched at all), not continuous-pitch — out of scope here, flagged.
+- **`LaSynth`** (`la_synth.rs`) — category Oscillator, but `note_on` **ignores
+  the note** (`_note`); its transient generators use **hardcoded** frequencies
+  (pluck sweep 1200→800 Hz, hammer 300 Hz) and the sustain stage is a passthrough
+  of `PortName::IN` (there's even a `test_passthrough_without_note`). There is no
+  pitch state to update, so `set_voice_pitch` would be a no-op. Making it
+  note-pitched (scaling the transient sweeps to the note) is a separate feature,
+  not this rollout. *(Caught by DSP review; the plan previously mislisted it in
+  Tier 2.)*
 - **`MechanicalNoise` / `BodyResonance` / `KeyboardPanner`** (PhysicalModeling) —
   none is a note-pitched source: noise trigger, an input resonator, and a
   note→pan mapper respectively. Out of scope.
@@ -63,30 +74,39 @@ input ports are **out of scope** — oscillators already have FM/freq-CV inputs.
 ### Tier 2 — medium (pitch fans out to many derived values; recompute per block)
 | Module | File | Note |
 |--------|------|------|
-| AdditiveOsc | `additive_osc.rs` | partials already recompute from `base_freq` each block — just feed the modulated base |
-| VoiceSynth | `voice_synth.rs` | `note_freq`/`base_freq` drives the source–filter; **vibrato on a voice is high value** |
+| AdditiveOsc | `additive_osc.rs` | partials already recompute from `note_freq` each sample — just feed the modulated base |
+| VoiceSynth | `voice_synth.rs` | unison voices recompute phase increments per sample from `note_freq`; **vibrato on a voice is high value** |
 | AmFormant | `am_formant.rs` | `note_freq` drives the AM-formant synthesis; pitched, vibrato meaningful |
-| LaSynth | `la_synth.rs` | PCM+partial pitch |
-| FractalOscillator | `fractal_osc.rs` | base freq behind the fractal generator |
+| FractalOscillator | `fractal_osc.rs` | `note_freq` scales the fractal generator |
 
-### Tier 3 — harder (pitch is woven into grain / formant scheduling; mind smoothing)
-| Module | File | Note |
+### Tier 3 — harder (pitch is woven into grain / formant scheduling; needs care)
+| Module | File | Note + required care |
 |--------|------|------|
-| VocalTract | `vocal_tract.rs` | glottal-source F0; high value (voice vibrato) |
-| Fof | `fof.rs` | fundamental F0 drives grain scheduling + per-band `phase_inc` |
-| GranularOsc | `granular_osc.rs` | pitch is grain playback rate, not a single phase increment |
+| VocalTract | `vocal_tract.rs` | glottal-source F0; high value (voice vibrato). **⚠ amplitude discontinuity:** `inc = note_freq·inv_sr` is per block (L434) and the excitation is `(flow − prev_flow)/inc` (L481) — a derivative *divided by* `inc`, so a block-rate `inc` jump steps the excitation amplitude → click under fast modulation. **Mitigation: per-sample (or block-interpolated) `inc`**, not the block-snapped value. This is qualitatively worse than the FM-sideband effect (it's an amplitude step), so smoothing here is effectively required, not optional. |
+| Fof | `fof.rs` | fundamental F0 drives grain scheduling + per-band `phase_inc`; recompute from `note_freq`, watch for the same divide-by-`inc`-style normalization. |
+| GranularOsc | `granular_osc.rs` | **⚠ contract decision:** each grain captures `rate` at spawn (`Grain.rate`, L52); modulating pitch only affects *new* grains, so active grains don't bend → with long grains, fast vibrato smears into a "pitch trail"/cluster. Lush as a granular feature, wrong for instrument glides. **Decide:** keep trails (cheap, do nothing) *or* store a per-grain pitch-offset ratio and compute `active_rate = note_freq/SOURCE_BASE_FREQ · grain.offset` in `process` (true continuous bend). |
 
 ## Quality concerns
 
-- **Click/zipper:** a phase-accumulator oscillator is click-free by construction
-  — only the phase *increment* changes, the phase stays continuous (Tier 1 and
-  most of Tier 2 are safe). The risk is in **resampling / grain** modules (Tier 3,
-  WavetableOsc) where a block-rate pitch jump can step audibly under fast
-  modulation. For those, smooth the pitch toward the target across the block (or
-  per sample) rather than snapping. Note any module that snaps.
-- **Control rate:** `set_voice_pitch` is called once per block. That matches the
-  existing oscillator behaviour and is fine for glide/vibrato at audio-block
-  granularity; per-sample pitch is not required.
+`set_voice_pitch` is called **once per block**, and the engine's default block is
+**256 samples** (`graph.rs`, ≈ 5.3 ms / ≈ 188 Hz block rate at 48 kHz) and is
+resizable upward. So pitch changes are step functions at block boundaries — large
+enough blocks that steep/fast modulation is audible. Three distinct severities:
+
+1. **Phase-accumulator oscillators (Tier 1 + VoiceSynth/AdditiveOsc/MathOsc):**
+   click-free by construction — only the phase *increment* steps, the phase stays
+   continuous. The only artefact is block-rate FM sidebands, inaudible for gentle
+   vibrato (≈6 Hz over ~31 updates/cycle), faintly audible only under steep bends
+   or fast LFO. **Smoothing optional** — skip unless an ear-check flags it. *(The
+   review suggested smoothing VoiceSynth too; it's the same benign FM-sideband
+   class as Tier 1, so it's optional there, not required.)*
+2. **Amplitude-discontinuity modules (VocalTract, and any module that *divides*
+   by the per-block pitch step):** here a stepped `inc` steps the output
+   *amplitude*, not just adds sidebands → an actual click. **Smoothing /
+   per-sample `inc` effectively required** (see Tier 3).
+3. **Grain-capture modules (GranularOsc, partly Fof):** pitch is latched per grain
+   at spawn; the question isn't zipper but the trail-vs-bend contract (Tier 3).
+
 - **Behaviour-preserving for static notes:** a held note with no
   glide/vibrato/bend must sound exactly as before — the per-block value then
   equals the `note_on` pitch (assert this in tests).
@@ -96,10 +116,14 @@ input ports are **out of scope** — oscillators already have FM/freq-CV inputs.
 One module per commit, gated (`cargo build` / `clippy --all-targets` / `test` /
 `fmt`), reviewable independently. Suggested order = value × ease:
 
+0. **Phase 0 — test infra:** the shared **AMDF** pitch estimator + the
+   `note_on(F) → set_voice_pitch(2F)` harness, so complex modules are testable
+   from Phase 2 on.
 1. **Phase 1 (Tier 1):** SubOsc, MathOsc, PadSynth, WavetableOsc, RingMod.
 2. **Phase 2 (Tier 2):** VoiceSynth + AdditiveOsc first (melodic value), then
-   AmFormant, LaSynth, FractalOsc.
-3. **Phase 3 (Tier 3):** VocalTract, Fof, GranularOsc — with smoothing care.
+   AmFormant, FractalOsc.
+3. **Phase 3 (Tier 3):** VocalTract (per-sample `inc`), Fof, GranularOsc —
+   *after* deciding the granular trail-vs-bend contract.
 
 Stop after any phase if priorities change; each module is independently complete.
 
@@ -114,9 +138,15 @@ Per module, a behavioural regression test mirroring the sampler's
 3. Assert that *without* `set_voice_pitch` the output stays at `F` (static-note
    no-regression).
 
-Add a shared test helper that estimates a block's fundamental by zero-crossing
-rate (sufficient for the simple oscillators); Tier 3 may need a coarse FFT-bin
-peak instead. Keep the existing sampler/oscillator tests green.
+**Pitch estimator — build this first, before Phase 2.** Zero-crossing rate is
+*not* robust for the harmonic-rich / formant-heavy / noise-coupled outputs
+(AdditiveOsc, VoiceSynth, VocalTract, Fof) — harmonics cross zero several times
+per cycle and wreck the estimate. Use an **AMDF** (Average Magnitude Difference
+Function) detector in the shared helper instead:
+`AMDF(τ) = Σ |x(n) − x(n−τ)|`, with the pitch period = the `τ` minimizing it over
+a bounded lag window. It's cheap, a few lines of Rust, and robust against formant
+peaks and harmonic shift — one helper that works for every tier. Keep the
+existing sampler/oscillator tests green.
 
 ## Verification (after the code)
 
@@ -126,9 +156,14 @@ ear-check the tracker importer needs.
 
 ## Out of scope / open
 
-- `ChaoticOsc` / `Fooglers` note-pitch decision — making them note-pitched at all
-  is a separate change from continuous-pitch (see Excluded). `Fooglers` (a
-  click-excited waveguide) is the more defensible candidate to become pitched.
+- **Make excluded modules note-pitched at all** — `LaSynth` (scale its transient
+  sweeps to the note), `Fooglers` (Karplus-style: note → delay length), and
+  `ChaoticOsc`. Each is a separate *feature* (giving the module note pitch),
+  distinct from this rollout (continuous pitch for already-note-pitched sources).
+  `Fooglers` and `LaSynth` are the more defensible candidates.
+- **GranularOsc trail-vs-bend contract** — decide before Phase 3 (Tier 3).
+  Default leaning: continuous bend (store a per-grain pitch-offset ratio), since
+  the importer's instrument glides want a coherent sweep, not a cluster.
 - `pitch_cv` input ports on the oscillators (they already have FM/freq-CV; revisit
   only if a modular pitch-CV path is specifically wanted).
 - Per-sample (vs per-block) pitch smoothing — only if a Tier 3 module audibly
