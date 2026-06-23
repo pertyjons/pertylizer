@@ -136,7 +136,7 @@ One module per commit, gated (`cargo build` / `clippy --all-targets` / `test` /
   - [x] WavetableOsc
   - [x] RingMod
 - [ ] **Phase 2 (Tier 2):**
-  - [ ] VoiceSynth
+  - [x] VoiceSynth
   - [ ] AdditiveOsc
   - [ ] AmFormant
   - [ ] FractalOsc

@@ -747,6 +747,14 @@ impl PolyModule for VoiceSynth {
         self.derive_decorrelation();
     }
 
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // `process` derives the glottal/formant rate from `note_freq` each block,
+        // so tracking the modulated note pitch (glide / vibrato / bend) is just
+        // updating `note_freq`. Per-voice phases accumulate continuously — the
+        // note_on phase decorrelation is one-time seeding and isn't disturbed.
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+    }
+
     fn note_off(&mut self) {
         // Amplitude envelope is handled by the host patch (Envelope → Amplifier).
     }
@@ -779,6 +787,33 @@ impl VoiceSynth {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voice_pitch_harness::{amdf_fundamental, render_mono};
+
+    /// `set_voice_pitch` retunes the glottal source via `note_freq` (read live by
+    /// `process`): 2× voice pitch doubles the rendered fundamental; a static note
+    /// holds. Measured at A2 (formant-rich output → AMDF over a low pitch).
+    #[test]
+    fn voice_synth_tracks_voice_pitch() {
+        let sr = SampleRate::DVD_QUALITY;
+        let srf = sr.as_f32();
+        let note = MidiNote(45); // A2 ≈ 110 Hz
+        let f = note.to_frequency().as_f32();
+        let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
+
+        let mut s = VoiceSynth::new();
+        s.note_on(note, Velocity::MAX);
+        let stat = render_mono(&mut s, sr, 6, 1024, |_| {});
+        let est_stat = amdf_fundamental(&stat[3072..], srf, f);
+        assert!(cents(est_stat, f).abs() < 50.0, "static {est_stat}");
+
+        let mut s2 = VoiceSynth::new();
+        s2.note_on(note, Velocity::MAX);
+        let up = render_mono(&mut s2, sr, 6, 1024, |m| {
+            m.set_voice_pitch(Hertz::new(f * 2.0));
+        });
+        let est_up = amdf_fundamental(&up[3072..], srf, f * 2.0);
+        assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
+    }
 
     fn ctx(n: usize) -> ProcessContext<'static> {
         ProcessContext {
