@@ -138,7 +138,7 @@ One module per commit, gated (`cargo build` / `clippy --all-targets` / `test` /
 - [ ] **Phase 2 (Tier 2):**
   - [x] VoiceSynth
   - [x] AdditiveOsc
-  - [ ] AmFormant
+  - [x] AmFormant
   - [ ] FractalOsc
 - [ ] **Phase 3 (Tier 3):**
   - [ ] VocalTract (per-sample `inc`)

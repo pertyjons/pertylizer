@@ -293,6 +293,13 @@ impl PolyModule for AmFormant {
         self.reset();
     }
 
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // `process` reads `note_freq` live as the AM modulator frequency, so
+        // tracking the modulated note pitch (glide / vibrato / bend) is just
+        // updating `note_freq`. Phase accumulates continuously — no click.
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+    }
+
     fn note_off(&mut self) {
         // Envelope controls release; nothing to do here
     }
@@ -310,6 +317,50 @@ impl PolyModule for AmFormant {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voice_pitch_harness::{amdf_fundamental, render_mono};
+
+    /// `set_voice_pitch` retunes the AM modulator (`note_freq`, read live by
+    /// `process`): 2× voice pitch doubles the modulation rate; a static note
+    /// holds. The pitch here is the AM rate over inharmonic formant carriers, so
+    /// we measure the *envelope* (rectified + smoothed) — AMDF on the raw output
+    /// would lock onto the carriers. Full depth makes the envelope periodic at
+    /// the note rate.
+    #[test]
+    fn am_formant_tracks_voice_pitch() {
+        let sr = SampleRate::DVD_QUALITY;
+        let srf = sr.as_f32();
+        let note = MidiNote(45); // A2 ≈ 110 Hz
+        let f = note.to_frequency().as_f32();
+        let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
+
+        // Extract the AM envelope: rectify, then a 1-pole low-pass that smooths
+        // the carrier ripple but follows the note-rate modulation.
+        let envelope = |sig: &[f32]| -> Vec<f32> {
+            let mut env = 0.0f32;
+            sig.iter()
+                .map(|&x| {
+                    env += 0.02 * (x.abs() - env);
+                    env
+                })
+                .collect()
+        };
+
+        let mut s = AmFormant::new();
+        s.depth = NormalizedValue::new(1.0); // full AM → envelope dips to 0 each cycle
+        s.note_on(note, Velocity::MAX);
+        let stat = render_mono(&mut s, sr, 6, 1024, |_| {});
+        let est_stat = amdf_fundamental(&envelope(&stat)[3072..], srf, f);
+        assert!(cents(est_stat, f).abs() < 50.0, "static {est_stat}");
+
+        let mut s2 = AmFormant::new();
+        s2.depth = NormalizedValue::new(1.0);
+        s2.note_on(note, Velocity::MAX);
+        let up = render_mono(&mut s2, sr, 6, 1024, |m| {
+            m.set_voice_pitch(Hertz::new(f * 2.0));
+        });
+        let est_up = amdf_fundamental(&envelope(&up)[3072..], srf, f * 2.0);
+        assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
+    }
 
     #[test]
     fn test_am_formant_creation() {
