@@ -130,6 +130,10 @@ pub struct VocalTract {
     // Source state
     glottal_phase: Phase,
     prev_flow: f32,
+    /// Glottal phase increment, ramped per sample toward `note_freq / sr` so a
+    /// block-rate pitch change doesn't step the excitation amplitude (the
+    /// excitation divides by it) — see `process`.
+    current_inc: f32,
     rng_state: u32,
 
     // Effective (CV-modulated) articulator values — never written back to the
@@ -170,6 +174,7 @@ impl VocalTract {
             level: NormalizedValue::new(0.8),
             glottal_phase: Phase::ZERO,
             prev_flow: 0.0,
+            current_inc: 1e-5,
             rng_state: RNG_SEED,
             current_tongue: 0.5,
             current_lips: 0.5,
@@ -431,7 +436,16 @@ impl PolyModule for VocalTract {
         self.tract.set_velum(self.current_nasality);
 
         let inv_sr = self.inv_sample_rate;
-        let inc = (self.note_freq.as_f32() * inv_sr).max(1e-5);
+        // Ramp the glottal increment across the block toward `note_freq/sr`
+        // instead of snapping it: the excitation is `(flow - prev_flow)/inc`, so
+        // a stepped `inc` under fast pitch modulation steps the excitation
+        // amplitude — an audible click. One add/sample (below) smooths it.
+        let target_inc = (self.note_freq.as_f32() * inv_sr).max(1e-5);
+        let d_inc = if num_samples > 0 {
+            (target_inc - self.current_inc) / num_samples as f32
+        } else {
+            0.0
+        };
         let level = self.mod_offsets.effective("level", self.level.as_f32());
         let breath = self
             .mod_offsets
@@ -475,6 +489,10 @@ impl PolyModule for VocalTract {
                 self.current_nasality = (base_nasality + cv * CV_DEPTH).clamp(0.0, 1.0);
                 self.tract.set_velum(self.current_nasality);
             }
+
+            // Per-sample glottal increment (ramped, not snapped — see above).
+            self.current_inc = (self.current_inc + d_inc).max(1e-5);
+            let inc = self.current_inc;
 
             // Glottal flow derivative (pitch-independent amplitude).
             let flow = glottal_flow(self.glottal_phase.as_f32(), GLOTTAL_OQ);
@@ -583,6 +601,15 @@ impl PolyModule for VocalTract {
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.note_freq = note.to_frequency();
         self.reset();
+        // Seed the ramp at the note's pitch so the first block doesn't glide in.
+        self.current_inc = (self.note_freq.as_f32() * self.inv_sample_rate).max(1e-5);
+    }
+
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // Track the modulated note pitch (glide / vibrato / bend). `process`
+        // ramps `current_inc` toward `note_freq/sr` across the block, so a
+        // block-rate change here doesn't click.
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
     }
 
     fn note_off(&mut self) {
@@ -601,6 +628,33 @@ impl PolyModule for VocalTract {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voice_pitch_harness::{amdf_fundamental, render_mono};
+
+    /// `set_voice_pitch` retunes the glottal source via `note_freq` (ramped into
+    /// `current_inc` each block): 2× voice pitch doubles the rendered
+    /// fundamental; a static note holds. Measured at A2 (formant-rich output).
+    #[test]
+    fn vocal_tract_tracks_voice_pitch() {
+        let sr = SampleRate::DVD_QUALITY;
+        let srf = sr.as_f32();
+        let note = MidiNote(45); // A2 ≈ 110 Hz
+        let f = note.to_frequency().as_f32();
+        let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
+
+        let mut s = VocalTract::new();
+        s.note_on(note, Velocity::MAX);
+        let stat = render_mono(&mut s, sr, 8, 1024, |_| {});
+        let est_stat = amdf_fundamental(&stat[4096..], srf, f);
+        assert!(cents(est_stat, f).abs() < 50.0, "static {est_stat}");
+
+        let mut s2 = VocalTract::new();
+        s2.note_on(note, Velocity::MAX);
+        let up = render_mono(&mut s2, sr, 8, 1024, |m| {
+            m.set_voice_pitch(Hertz::new(f * 2.0));
+        });
+        let est_up = amdf_fundamental(&up[4096..], srf, f * 2.0);
+        assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
+    }
 
     fn ctx(n: usize) -> ProcessContext<'static> {
         ProcessContext {

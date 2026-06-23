@@ -141,7 +141,7 @@ One module per commit, gated (`cargo build` / `clippy --all-targets` / `test` /
   - [x] AmFormant
   - [x] FractalOsc
 - [ ] **Phase 3 (Tier 3):**
-  - [ ] VocalTract (per-sample `inc`)
+  - [x] VocalTract (per-sample `inc`)
   - [ ] Fof
   - [ ] GranularOsc (*after* deciding the trail-vs-bend contract)
 
