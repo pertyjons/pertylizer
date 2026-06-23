@@ -124,9 +124,41 @@ impl Describable for Delay {
                     Param::Delay(DelayParam::Time(Seconds::new(0.375))),
                     "Time",
                 )
-                .description("Delay time")
+                .description("Delay time (link: sets both left and right)")
                 .range(0.001, MAX_DELAY_SECONDS)
                 .default(0.375)
+                .unit(ParameterUnit::Seconds)
+                .curve(ResponseCurve::Logarithmic)
+                // "Link both" macro: settable via MCP/automation (sets L and R
+                // together) but Hidden from the GUI auto-renderer — the displayed
+                // and persisted state lives in time_left/time_right, so a visible
+                // Time knob would show a permanently stale value (it is not emitted
+                // by get_params). Retained in the descriptor so older patches that
+                // saved a "time" key still resolve and load.
+                .widget(WidgetHint::Hidden),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "time_left",
+                    Param::Delay(DelayParam::TimeLeft(Seconds::new(0.375))),
+                    "Time L",
+                )
+                .description("Left-channel delay time")
+                .range(0.001, MAX_DELAY_SECONDS)
+                .default(0.375)
+                .unit(ParameterUnit::Seconds)
+                .widget(WidgetHint::TimeSlider)
+                .curve(ResponseCurve::Logarithmic),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "time_right",
+                    Param::Delay(DelayParam::TimeRight(Seconds::new(0.5))),
+                    "Time R",
+                )
+                .description("Right-channel delay time")
+                .range(0.001, MAX_DELAY_SECONDS)
+                .default(0.5)
                 .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::TimeSlider)
                 .curve(ResponseCurve::Logarithmic),
@@ -162,6 +194,31 @@ impl Describable for Delay {
                 .description("Feedback high-cut filter")
                 .range(0.0, 1.0)
                 .default(0.4)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "tempo_sync",
+                    Param::Delay(DelayParam::TempoSync(false)),
+                    "Tempo Sync",
+                )
+                .description("Sync delay time to host tempo (uses Division instead of Time)")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .modulatable(false)
+                .widget(WidgetHint::Toggle),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "sync_division",
+                    Param::Delay(DelayParam::SyncDivision(BeatDivision::QUARTER)),
+                    "Division",
+                )
+                .description("Beats per echo when tempo-synced (1 = quarter note)")
+                .range(0.125, 4.0)
+                .default(1.0)
+                .unit(ParameterUnit::Beats)
+                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
     }
@@ -341,7 +398,8 @@ impl AudioEffect for Delay {
     fn get_params(&self) -> Vec<Param> {
         vec![
             Param::Delay(DelayParam::Mode(self.mode)),
-            Param::Delay(DelayParam::Time(self.time_left)),
+            // `Time` is the write-only link-both macro; the persisted state lives
+            // in TimeLeft/TimeRight, so it is intentionally not emitted here.
             Param::Delay(DelayParam::TimeLeft(self.time_left)),
             Param::Delay(DelayParam::TimeRight(self.time_right)),
             Param::Delay(DelayParam::Feedback(self.feedback)),

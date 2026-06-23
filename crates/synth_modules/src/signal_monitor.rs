@@ -186,6 +186,18 @@ impl Describable for SignalMonitor {
                 .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "freeze",
+                    Param::SignalMonitor(SignalMonitorParam::Frozen(false)),
+                    "Freeze",
+                )
+                .description("Freeze the display (stop capturing)")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .modulatable(false)
+                .widget(WidgetHint::Toggle),
+            )
             .port(
                 PortDescriptor::audio_input("in", "In")
                     .description("Audio to display. Connect any signal to see the waveform"),

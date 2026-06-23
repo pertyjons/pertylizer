@@ -615,6 +615,11 @@ pub struct ParameterDescriptor {
     pub choices: Option<Vec<ChoiceOption>>,
     /// Can this parameter be modulated.
     pub modulatable: bool,
+    /// Optional quantization step in value units (e.g. `1.0` for an integer
+    /// knob). When set, the GUI knob snaps drags to the nearest multiple of
+    /// `step` offset from `range.min`, so discrete params (segment counts,
+    /// indices) land on exact values and reach `max` cleanly. `None` = continuous.
+    pub step: Option<f32>,
 }
 
 /// Error returned when a value fails validation against a [`ParameterDescriptor`].
@@ -658,6 +663,7 @@ impl ParameterDescriptor {
             response_curve: ResponseCurve::Linear,
             choices: None,
             modulatable: true,
+            step: None,
         }
     }
 
@@ -685,6 +691,7 @@ impl ParameterDescriptor {
             response_curve: ResponseCurve::Linear,
             choices: Some(choices),
             modulatable: false,
+            step: None,
         }
     }
 
@@ -716,6 +723,15 @@ impl ParameterDescriptor {
         self.range = self
             .range
             .with_default(value.clamp(self.range.min, self.range.max));
+        self
+    }
+
+    /// Set a quantization step in value units (e.g. `1.0` for an integer knob).
+    /// The GUI knob snaps drags to the nearest multiple of `step` offset from
+    /// `range.min`. A non-positive step is ignored (stays continuous).
+    #[must_use]
+    pub fn step(mut self, step: f32) -> Self {
+        self.step = (step > 0.0).then_some(step);
         self
     }
 

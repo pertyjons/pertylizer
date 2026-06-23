@@ -389,7 +389,7 @@ impl Default for Mseg {
 
 impl Describable for Mseg {
     fn descriptor(&self) -> ModuleDescriptor {
-        ModuleDescriptor::new("mseg", "MSEG")
+        let mut desc = ModuleDescriptor::new("mseg", "MSEG")
             .description("Multi-Stage Envelope Generator with up to 16 segments")
             .category(ModuleCategory::Envelope)
             .tag("envelope")
@@ -404,6 +404,7 @@ impl Describable for Mseg {
                 .description("Number of active segments (1-16)")
                 .range(1.0, 16.0)
                 .default(4.0)
+                .step(1.0)
                 .unit(ParameterUnit::None)
                 // Structural/sizing count: not a continuous modulation target.
                 .modulatable(false)
@@ -418,6 +419,7 @@ impl Describable for Mseg {
                 .description("Segment index where envelope holds until gate off (0-15)")
                 .range(0.0, 15.0)
                 .default(2.0)
+                .step(1.0)
                 .unit(ParameterUnit::None)
                 // Discrete segment index: not a continuous modulation target.
                 .modulatable(false)
@@ -439,6 +441,34 @@ impl Describable for Mseg {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "loop_start",
+                    Param::Mseg(MsegParam::LoopStart(0)),
+                    "Loop Start",
+                )
+                .description("First segment of the loop (0-15)")
+                .range(0.0, 15.0)
+                .default(0.0)
+                .step(1.0)
+                .unit(ParameterUnit::None)
+                .modulatable(false)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "loop_end",
+                    Param::Mseg(MsegParam::LoopEnd(1)),
+                    "Loop End",
+                )
+                .description("Last segment of the loop (0-15)")
+                .range(0.0, 15.0)
+                .default(1.0)
+                .step(1.0)
+                .unit(ParameterUnit::None)
+                .modulatable(false)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "time_scale",
                     Param::Mseg(MsegParam::TimeScale(TimeScale::UNITY)),
                     "Time Scale",
@@ -448,8 +478,55 @@ impl Describable for Mseg {
                 .default(1.0)
                 .unit(ParameterUnit::None)
                 .widget(WidgetHint::Knob),
-            )
-            .port(PortDescriptor::gate_input("gate", "Gate").description("Gate input (>0.5 = on)"))
+            );
+
+        // Per-segment shape (time/level/curve) for every slot. Hidden from the
+        // auto-renderer (MSEG wants a graphical editor) but kept in the descriptor
+        // so the envelope shape round-trips through descriptor-driven save/load
+        // and is settable via MCP. Inactive slots (index >= segment_count) have no
+        // matching get_params() entry and are simply skipped on save.
+        for i in 0..MAX_SEGMENTS as u8 {
+            desc = desc
+                .parameter(
+                    ParameterDescriptor::float(
+                        format!("seg{i}_time"),
+                        Param::Mseg(MsegParam::SegmentTime(i, Seconds::new(0.1))),
+                        format!("Seg {i} Time"),
+                    )
+                    .description("Segment duration in seconds")
+                    .range(0.0, 60.0)
+                    .default(0.1)
+                    .unit(ParameterUnit::Seconds)
+                    .modulatable(false)
+                    .widget(WidgetHint::Hidden),
+                )
+                .parameter(
+                    ParameterDescriptor::float(
+                        format!("seg{i}_level"),
+                        Param::Mseg(MsegParam::SegmentLevel(i, NormalizedValue::MIN)),
+                        format!("Seg {i} Level"),
+                    )
+                    .description("Segment target level")
+                    .range(0.0, 1.0)
+                    .default(0.0)
+                    .modulatable(false)
+                    .widget(WidgetHint::Hidden),
+                )
+                .parameter(
+                    ParameterDescriptor::float(
+                        format!("seg{i}_curve"),
+                        Param::Mseg(MsegParam::SegmentCurve(i, BipolarValue::CENTER)),
+                        format!("Seg {i} Curve"),
+                    )
+                    .description("Segment curve (-1 log, 0 linear, +1 exp)")
+                    .range(-1.0, 1.0)
+                    .default(0.0)
+                    .modulatable(false)
+                    .widget(WidgetHint::Hidden),
+                );
+        }
+
+        desc.port(PortDescriptor::gate_input("gate", "Gate").description("Gate input (>0.5 = on)"))
             .port(
                 PortDescriptor::gate_input("trigger", "Trigger")
                     .description("Trigger input (retrigger on rising edge)"),

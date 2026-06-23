@@ -144,6 +144,18 @@ impl Describable for Oscilloscope {
                 .default(0.5)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "freeze",
+                    Param::Oscilloscope(OscilloscopeParam::Frozen(false)),
+                    "Freeze",
+                )
+                .description("Freeze the display (stop capturing)")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .modulatable(false)
+                .widget(WidgetHint::Toggle),
+            )
         // No ports - visualizers receive the final output signal automatically
     }
 }

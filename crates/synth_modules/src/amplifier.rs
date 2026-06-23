@@ -414,6 +414,28 @@ impl Describable for Mixer {
                 );
         }
 
+        desc = desc
+            .parameter(
+                ParameterDescriptor::float("mute", Param::Mixer(MixerParam::Mute(false)), "Mute")
+                    .description("Silence the mixer output")
+                    .range(0.0, 1.0)
+                    .default(0.0)
+                    .modulatable(false)
+                    .widget(WidgetHint::Toggle),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "limit",
+                    Param::Mixer(MixerParam::Limit(false)),
+                    "Limit",
+                )
+                .description("Soft tanh output limiter")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .modulatable(false)
+                .widget(WidgetHint::Toggle),
+            );
+
         desc = desc.port(PortDescriptor::audio_output("out", "Out").description("Mixad output"));
 
         desc
