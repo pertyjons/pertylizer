@@ -153,10 +153,10 @@ impl PolyModule for VectorMixer {
             let mut y_val = y_base;
 
             if let Some(cv) = x_cv {
-                x_val = (x_val + cv[i]).clamp(-1.0, 1.0);
+                x_val = (x_val + crate::math::sanitize_cv(cv[i])).clamp(-1.0, 1.0);
             }
             if let Some(cv) = y_cv {
-                y_val = (y_val + cv[i]).clamp(-1.0, 1.0);
+                y_val = (y_val + crate::math::sanitize_cv(cv[i])).clamp(-1.0, 1.0);
             }
 
             let xn = crate::math::bipolar_to_unipolar(x_val);

@@ -584,7 +584,8 @@ impl SynthEngine {
             pre_record_loop: None,
             pending_recorded_notes: None,
             audio_input_consumer: None,
-            audio_input_buffer: vec![0.0; 8192], // Pre-allocate for up to 4096 stereo frames
+            // Pre-allocate for up to MAX_BLOCK_SIZE stereo (interleaved) frames.
+            audio_input_buffer: vec![0.0; synth_core::MAX_BLOCK_SIZE * 2],
             callback_duration_sum: 0.0,
             callback_count: 0,
         };
@@ -1557,9 +1558,11 @@ impl SynthEngine {
         let seq_id = synth_sequencer::SeqInstrumentId(instrument.id().as_u64() as u16);
         self.instrument_mapping.insert(seq_id, instrument.id());
         // Pre-allocate this instrument's sidechain output buffer so the
-        // audio thread never grows the map. 4096 × 2 = max interleaved frame.
-        self.prev_instrument_outputs
-            .insert(instrument.id(), AudioBuffer::new(4096 * 2));
+        // audio thread never grows the map. MAX_BLOCK_SIZE × 2 = max interleaved frame.
+        self.prev_instrument_outputs.insert(
+            instrument.id(),
+            AudioBuffer::new(synth_core::MAX_BLOCK_SIZE * 2),
+        );
         // Pre-allocate the track-control entry (neutral until a track claims it).
         self.track_controls
             .insert(instrument.id(), TrackControl::NEUTRAL);

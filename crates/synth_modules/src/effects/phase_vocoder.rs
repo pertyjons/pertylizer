@@ -8,6 +8,7 @@
 
 use synth_dsp::Complex;
 
+use synth_core::MAX_BLOCK_SIZE;
 use synth_core::module_traits::ChoiceOption;
 use synth_core::{
     AudioEffect, Describable, FftSizeOption, ModuleCategory, ModuleDescriptor, ModuleType,
@@ -16,8 +17,11 @@ use synth_core::{
 };
 use synth_dsp::{StftProcessor, WindowType};
 
-/// Maximum block size for pre-allocated mono buffers.
-const MAX_BLOCK_SIZE: usize = 4096;
+/// Maximum FFT size supported (the largest `FftSizeOption`).
+const MAX_FFT: usize = 4096;
+/// Number of complex bins for the max FFT — the worst-case size for every
+/// per-bin scratch buffer, so they never reallocate on an FFT-size change.
+const MAX_BINS: usize = MAX_FFT / 2 + 1;
 
 /// Phase vocoder with pitch shifting.
 pub struct PhaseVocoder {
@@ -27,9 +31,11 @@ pub struct PhaseVocoder {
     fft_size_option: FftSizeOption,
     mix: NormalizedValue,
 
-    // STFT processors (stereo)
-    stft_left: StftProcessor,
-    stft_right: StftProcessor,
+    // STFT processors, stereo × one per FftSizeOption. Pre-built in `new()` (off
+    // the audio thread, where FFT planning allocates); switching FFT size is then
+    // an O(1) index change — no allocation or re-planning on the audio thread.
+    stft_left_pool: Vec<StftProcessor>,
+    stft_right_pool: Vec<StftProcessor>,
 
     // Phase accumulation for pitch shifting
     phase_accum_left: Vec<f32>,
@@ -55,9 +61,14 @@ pub struct PhaseVocoder {
 
 impl PhaseVocoder {
     pub fn new() -> Self {
-        let fft_size = 1024;
-        let hop_size = fft_size / 4;
-        let complex_size = fft_size / 2 + 1;
+        // One STFT per FftSizeOption, per channel — built once here, off the audio
+        // thread. hop = size/4 (75% overlap), matching the inline convention.
+        let make_pool = || {
+            FftSizeOption::ALL
+                .iter()
+                .map(|o| StftProcessor::new(o.size(), o.size() / 4, WindowType::Hann))
+                .collect()
+        };
 
         Self {
             pitch_shift: Semitones(0.0),
@@ -65,20 +76,22 @@ impl PhaseVocoder {
             fft_size_option: FftSizeOption::Fft1024,
             mix: NormalizedValue::MAX,
 
-            stft_left: StftProcessor::new(fft_size, hop_size, WindowType::Hann),
-            stft_right: StftProcessor::new(fft_size, hop_size, WindowType::Hann),
+            stft_left_pool: make_pool(),
+            stft_right_pool: make_pool(),
 
-            phase_accum_left: vec![0.0; complex_size],
-            phase_accum_right: vec![0.0; complex_size],
-            prev_phase_left: vec![0.0; complex_size],
-            prev_phase_right: vec![0.0; complex_size],
+            // Worst-case (MAX_BINS) so an FFT-size switch never reallocates; the
+            // active region [0..complex_size) is reset on each switch.
+            phase_accum_left: vec![0.0; MAX_BINS],
+            phase_accum_right: vec![0.0; MAX_BINS],
+            prev_phase_left: vec![0.0; MAX_BINS],
+            prev_phase_right: vec![0.0; MAX_BINS],
 
-            frozen_left: vec![Complex::new(0.0, 0.0); complex_size],
-            frozen_right: vec![Complex::new(0.0, 0.0); complex_size],
+            frozen_left: vec![Complex::new(0.0, 0.0); MAX_BINS],
+            frozen_right: vec![Complex::new(0.0, 0.0); MAX_BINS],
             has_frozen: false,
 
-            temp_magnitudes: vec![0.0; complex_size],
-            temp_phases: vec![0.0; complex_size],
+            temp_magnitudes: vec![0.0; MAX_BINS],
+            temp_phases: vec![0.0; MAX_BINS],
 
             mono_in_l: vec![0.0; MAX_BLOCK_SIZE],
             mono_in_r: vec![0.0; MAX_BLOCK_SIZE],
@@ -87,24 +100,21 @@ impl PhaseVocoder {
         }
     }
 
-    fn rebuild_stft(&mut self) {
-        let fft_size = self.fft_size_option.size();
-        let hop_size = fft_size / 4;
-        let complex_size = fft_size / 2 + 1;
-
-        self.stft_left = StftProcessor::new(fft_size, hop_size, WindowType::Hann);
-        self.stft_right = StftProcessor::new(fft_size, hop_size, WindowType::Hann);
-
-        self.phase_accum_left = vec![0.0; complex_size];
-        self.phase_accum_right = vec![0.0; complex_size];
-        self.prev_phase_left = vec![0.0; complex_size];
-        self.prev_phase_right = vec![0.0; complex_size];
-        self.frozen_left = vec![Complex::new(0.0, 0.0); complex_size];
-        self.frozen_right = vec![Complex::new(0.0, 0.0); complex_size];
+    /// Reset the currently-active STFT processors and clear all per-bin phase /
+    /// freeze state. Called on FFT-size change (the destination processor must
+    /// start clean), and on `reset()` — all allocation-free (processors pre-built,
+    /// buffers pre-sized to `MAX_BINS`; this only zeroes them).
+    fn reset_active(&mut self) {
+        let idx = self.fft_size_option.index();
+        self.stft_left_pool[idx].reset();
+        self.stft_right_pool[idx].reset();
+        self.phase_accum_left.fill(0.0);
+        self.phase_accum_right.fill(0.0);
+        self.prev_phase_left.fill(0.0);
+        self.prev_phase_right.fill(0.0);
+        self.frozen_left.fill(Complex::new(0.0, 0.0));
+        self.frozen_right.fill(Complex::new(0.0, 0.0));
         self.has_frozen = false;
-
-        self.temp_magnitudes = vec![0.0; complex_size];
-        self.temp_phases = vec![0.0; complex_size];
     }
 
     /// Pitch shifting via phase vocoder technique.
@@ -243,6 +253,7 @@ impl AudioEffect for PhaseVocoder {
         let freeze = self.freeze;
         let fft_size = self.fft_size_option.size();
         let hop_size = fft_size / 4;
+        let idx = self.fft_size_option.index();
 
         // Deinterleave — use pre-allocated buffers, clamp to max size
         let num_frames = num_frames.min(MAX_BLOCK_SIZE);
@@ -267,10 +278,12 @@ impl AudioEffect for PhaseVocoder {
         let temp_mags = &mut self.temp_magnitudes;
         let temp_phs = &mut self.temp_phases;
 
-        self.stft_left.process(
+        self.stft_left_pool[idx].process(
             &self.mono_in_l[..num_frames],
             &mut self.mono_out_l[..num_frames],
             |spectrum| {
+                // `frozen_l` is pre-sized to MAX_BINS; slice to the active spectrum.
+                let n = spectrum.len();
                 if freeze {
                     if has_frozen || captured_left {
                         // Spectrum already captured (on an earlier block, or an
@@ -278,11 +291,11 @@ impl AudioEffect for PhaseVocoder {
                         // per-block `captured_left` flag ensures that when a block
                         // spans multiple STFT hops we hold the FIRST frozen hop
                         // rather than letting later hops overwrite it.
-                        spectrum.copy_from_slice(frozen_l);
+                        spectrum.copy_from_slice(&frozen_l[..n]);
                     } else {
                         // First frozen frame: capture the live spectrum, then play
                         // it back so this frame already outputs the held content.
-                        frozen_l.copy_from_slice(spectrum);
+                        frozen_l[..n].copy_from_slice(spectrum);
                         captured_left = true;
                     }
                 } else {
@@ -307,17 +320,18 @@ impl AudioEffect for PhaseVocoder {
         let temp_mags = &mut self.temp_magnitudes;
         let temp_phs = &mut self.temp_phases;
 
-        self.stft_right.process(
+        self.stft_right_pool[idx].process(
             &self.mono_in_r[..num_frames],
             &mut self.mono_out_r[..num_frames],
             |spectrum| {
+                let n = spectrum.len();
                 if freeze {
                     if has_frozen || captured_right {
                         // Replay the already-captured spectrum (earlier block or
                         // earlier hop of this block); see the left-channel note.
-                        spectrum.copy_from_slice(frozen_r);
+                        spectrum.copy_from_slice(&frozen_r[..n]);
                     } else {
-                        frozen_r.copy_from_slice(spectrum);
+                        frozen_r[..n].copy_from_slice(spectrum);
                         captured_right = true;
                     }
                 } else {
@@ -362,7 +376,8 @@ impl AudioEffect for PhaseVocoder {
                 PhaseVocoderParam::FftSize(f) => {
                     if f != self.fft_size_option {
                         self.fft_size_option = f;
-                        self.rebuild_stft();
+                        // O(1) index switch — just reset the now-active processor + state.
+                        self.reset_active();
                     }
                 }
                 PhaseVocoderParam::Mix(v) => self.mix = v,
@@ -404,13 +419,7 @@ impl AudioEffect for PhaseVocoder {
     }
 
     fn reset(&mut self) {
-        self.stft_left.reset();
-        self.stft_right.reset();
-        self.phase_accum_left.fill(0.0);
-        self.phase_accum_right.fill(0.0);
-        self.prev_phase_left.fill(0.0);
-        self.prev_phase_right.fill(0.0);
-        self.has_frozen = false;
+        self.reset_active();
     }
 
     fn set_mix(&mut self, mix: NormalizedValue) {
@@ -423,5 +432,60 @@ impl AudioEffect for PhaseVocoder {
 
     fn tail_samples(&self) -> SampleCount {
         SampleCount::new(self.fft_size_option.size())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx(frames: usize) -> ProcessContext<'static> {
+        ProcessContext {
+            samples: synth_core::SampleCount::new(frames),
+            ..ProcessContext::default()
+        }
+    }
+
+    /// Switching FFT size now swaps a pre-built pool index (was an audio-thread
+    /// STFT rebuild + 7 allocations). Cycle through every size while pitch-shifting,
+    /// then freeze and switch size *while frozen* — the freeze path's
+    /// `copy_from_slice` against the `MAX_BINS`-sized frozen buffer must slice to the
+    /// active spectrum or it panics on a length mismatch. Assert finite + no panic.
+    #[test]
+    fn fft_size_switch_and_freeze_stays_finite() {
+        let mut pv = PhaseVocoder::new();
+        pv.set_param(Param::PhaseVocoder(PhaseVocoderParam::PitchShift(
+            Semitones(7.0),
+        )));
+        let frames = 400usize;
+        let input: Vec<f32> = (0..frames * 2)
+            .map(|i| (i as f32 * 0.021).sin() * 0.4)
+            .collect();
+        let mut output = vec![0.0f32; frames * 2];
+
+        for opt in FftSizeOption::ALL {
+            pv.set_param(Param::PhaseVocoder(PhaseVocoderParam::FftSize(opt)));
+            for _ in 0..8 {
+                pv.process(&input, &mut output, &ctx(frames));
+                assert!(
+                    output.iter().all(|s| s.is_finite()),
+                    "non-finite output at fft size {}",
+                    opt.size()
+                );
+            }
+        }
+
+        // Freeze (exercises the frozen-buffer copy_from_slice slicing), then switch
+        // size while frozen — must not panic.
+        pv.set_param(Param::PhaseVocoder(PhaseVocoderParam::Freeze(true)));
+        for _ in 0..4 {
+            pv.process(&input, &mut output, &ctx(frames));
+            assert!(output.iter().all(|s| s.is_finite()));
+        }
+        pv.set_param(Param::PhaseVocoder(PhaseVocoderParam::FftSize(
+            FftSizeOption::Fft4096,
+        )));
+        pv.process(&input, &mut output, &ctx(frames));
+        assert!(output.iter().all(|s| s.is_finite()));
     }
 }

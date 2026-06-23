@@ -189,7 +189,7 @@ impl PolyModule for Amplifier {
                 (mono, mono)
             };
 
-            let cv = cv_in[i];
+            let cv = cv_in.get(i);
             // In bipolar mode, CV can be negative (ring modulation)
             // In unipolar mode, CV is clamped to positive (standard VCA)
             let cv_scaled = if self.cv_bipolar { cv } else { cv.max(0.0) };
@@ -203,7 +203,7 @@ impl PolyModule for Amplifier {
 
             // BipolarValue::new() clamps internally to [-1, 1]
             let effective_pan = if pan_cv.is_connected() {
-                BipolarValue::new(pan.as_f32() + pan_cv[i] + self.mod_offset_pan.as_f32())
+                BipolarValue::new(pan.as_f32() + pan_cv.get(i) + self.mod_offset_pan.as_f32())
             } else {
                 BipolarValue::new((pan.as_f32() + self.mod_offset_pan.as_f32()).clamp(-1.0, 1.0))
             };

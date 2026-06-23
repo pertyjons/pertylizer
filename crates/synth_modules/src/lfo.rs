@@ -83,8 +83,8 @@ impl Lfo {
     #[inline]
     fn generate_sample(&mut self, effective_rate: Hertz, effective_phase_offset: f32) -> f32 {
         let phase_inc = effective_rate.phase_increment(self.sample_rate);
-        let phase = self.phase.advance(effective_phase_offset).as_f32();
-        let phase_wrapped = Phase::new_unchecked(phase);
+        let phase_wrapped = self.phase.advance(effective_phase_offset);
+        let phase = phase_wrapped.as_f32();
 
         let raw = match self.waveform {
             LfoWaveform::Sine => phase_wrapped.sin(),

@@ -441,6 +441,13 @@ impl PolyModule for VocalTract {
         // a stepped `inc` under fast pitch modulation steps the excitation
         // amplitude — an audible click. One add/sample (below) smooths it.
         let target_inc = (self.note_freq.as_f32() * inv_sr).max(1e-5);
+        // First block after note_on (sentinel `current_inc == 0`): snap exactly to
+        // the rate-correct increment so the note starts on-pitch with no stale-rate
+        // glide. `current_inc` is otherwise always ≥ 1e-5 (see the per-sample
+        // `.max(1e-5)` below), so this only ever fires right after note_on.
+        if self.current_inc <= 0.0 {
+            self.current_inc = target_inc;
+        }
         let d_inc = if num_samples > 0 {
             (target_inc - self.current_inc) / num_samples as f32
         } else {
@@ -601,8 +608,14 @@ impl PolyModule for VocalTract {
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.note_freq = note.to_frequency();
         self.reset();
-        // Seed the ramp at the note's pitch so the first block doesn't glide in.
-        self.current_inc = (self.note_freq.as_f32() * self.inv_sample_rate).max(1e-5);
+        // Sentinel: the first `process()` block snaps `current_inc` exactly to the
+        // rate-correct `note_freq/sr` (see process). Seeding here would bake a
+        // possibly-stale `inv_sample_rate` — the engine only delivers the render
+        // rate via `ProcessContext`, so a note triggered before the first process()
+        // at a non-default rate would start the glottal increment at the wrong rate
+        // (wrong excitation amplitude / a pop). A real increment is always
+        // `freq/sr ≥ 1e-5 > 0`, so 0.0 unambiguously means "not yet seeded".
+        self.current_inc = 0.0;
     }
 
     fn set_voice_pitch(&mut self, freq: Hertz) {
@@ -691,6 +704,38 @@ mod tests {
         let out = &outputs[&PortName::OUT];
         let max = (0..64).map(|i| out[i].abs()).fold(0.0_f32, f32::max);
         assert!(max < 0.001, "Should be silent without note_on, max={max}");
+    }
+
+    /// Regression: the glottal increment must track the *render* sample rate, not
+    /// the (stale) rate cached when `note_on` fired. Construct at the 48 kHz default,
+    /// `note_on`, then render one block at 96 kHz: the increment snaps exactly to
+    /// `note_freq / 96000`, not `note_freq / 48000` (the old stale-rate seed → pop).
+    #[test]
+    fn glottal_increment_follows_render_rate_not_note_on_rate() {
+        let mut v = VocalTract::new();
+        let note = MidiNote::new(57); // A3 ≈ 220 Hz
+        v.note_on(note, Velocity::MAX);
+        let f = note.to_frequency().as_f32();
+
+        let n = 256;
+        let mut outputs = HashMap::new();
+        outputs.insert(PortName::OUT, AudioBuffer::new(n));
+        let ctx96 = ProcessContext {
+            samples: synth_core::SampleCount::new(n),
+            sample_rate: SampleRate::HIGH_RES,
+            ..ProcessContext::default()
+        };
+        v.process(InputPorts::empty(), &mut outputs, &ctx96);
+
+        let expected = f / SampleRate::HIGH_RES.as_f32();
+        let wrong = f / SampleRate::DVD_QUALITY.as_f32();
+        assert!(
+            (v.current_inc - expected).abs() < 1e-7,
+            "glottal increment {} should track render rate ({expected}), not note_on rate ({wrong})",
+            v.current_inc
+        );
+        let b = &outputs[&PortName::OUT];
+        assert!((0..n).all(|i| b[i].is_finite()), "output must stay finite");
     }
 
     #[test]

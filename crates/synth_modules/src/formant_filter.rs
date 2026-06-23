@@ -243,7 +243,7 @@ impl PolyModule for FormantFilter {
         for i in 0..context.samples.as_usize() {
             // Apply vowel CV modulation
             if vowel_cv.is_connected() {
-                let mod_val = vowel_cv[i];
+                let mod_val = vowel_cv.get(i);
                 let new_vowel =
                     NormalizedValue::new((self.vowel.as_f32() + mod_val * 0.5).clamp(0.0, 1.0));
                 // Only recalculate coefficients if vowel changed significantly
@@ -410,5 +410,33 @@ mod tests {
                 assert!(ff.coeffs[band].a2.is_finite());
             }
         }
+    }
+
+    /// A NaN/Inf on vowel_cv must not poison the bandpass coefficients. Sanitizing
+    /// at the read keeps the filtered output finite.
+    #[test]
+    fn formant_filter_nan_vowel_cv_stays_finite() {
+        let mut ff = FormantFilter::new();
+        let block = 256usize;
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(block),
+            ..ProcessContext::default()
+        };
+        let mut audio = AudioBuffer::new(block);
+        let mut cv = AudioBuffer::new(block);
+        for i in 0..block {
+            audio[i] = if i % 4 < 2 { 0.5 } else { -0.5 };
+            cv[i] = if i % 2 == 0 { f32::NAN } else { f32::INFINITY };
+        }
+        let in_ports = [(PortName::IN, &audio), (ff.vowel_cv_port, &cv)];
+        let inputs = InputPorts::new(&in_ports);
+        let mut outs = HashMap::new();
+        outs.insert(PortName::OUT, AudioBuffer::new(block));
+        ff.process(inputs, &mut outs, &ctx);
+        let b = &outs[&PortName::OUT];
+        assert!(
+            (0..block).all(|i| b[i].is_finite()),
+            "NaN/Inf vowel_cv must not yield non-finite output"
+        );
     }
 }

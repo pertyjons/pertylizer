@@ -6,6 +6,7 @@
 //! - Spectral FIR smoothing across frequency bins
 //! - Freeze mode (holds current spectrum)
 
+use synth_core::MAX_BLOCK_SIZE;
 use synth_core::{
     AudioEffect, Describable, FftSizeOption, ModuleCategory, ModuleDescriptor, ModuleType,
     NormalizedValue, Param, ParameterDescriptor, ProcessContext, SampleRate, SpectralBlurParam,
@@ -17,8 +18,6 @@ use synth_dsp::{Complex, StftProcessor, WindowType};
 const MAX_FFT: usize = 4096;
 /// Number of complex bins for max FFT.
 const MAX_BINS: usize = MAX_FFT / 2 + 1;
-/// Maximum block size for pre-allocated mono buffers.
-const MAX_BLOCK_SIZE: usize = 4096;
 
 /// STFT-based spectral blur/smear effect.
 pub struct SpectralBlur {
@@ -29,9 +28,11 @@ pub struct SpectralBlur {
     freeze: bool,
     mix: NormalizedValue,
 
-    // STFT processors (one per channel)
-    stft_l: StftProcessor,
-    stft_r: StftProcessor,
+    // STFT processors, one per channel × one per FftSizeOption. Pre-built in
+    // `new()` (off the audio thread, where FFT planning may allocate); switching
+    // FFT size is then an O(1) index change with no allocation or re-planning.
+    stft_l_pool: Vec<StftProcessor>,
+    stft_r_pool: Vec<StftProcessor>,
 
     // Smoothed magnitude buffers per channel
     mag_smooth_l: Vec<f32>,
@@ -50,8 +51,14 @@ pub struct SpectralBlur {
 
 impl SpectralBlur {
     pub fn new() -> Self {
-        let fft_size = 1024;
-        let hop = fft_size / 4;
+        // One STFT per FftSizeOption, per channel — built once here, off the audio
+        // thread. hop = size/4 (75% overlap), matching the inline convention.
+        let make_pool = || {
+            FftSizeOption::ALL
+                .iter()
+                .map(|o| StftProcessor::new(o.size(), o.size() / 4, WindowType::Hann))
+                .collect()
+        };
         Self {
             fft_size: FftSizeOption::Fft1024,
             blur_time: NormalizedValue::new(0.7),
@@ -59,8 +66,8 @@ impl SpectralBlur {
             freeze: false,
             mix: NormalizedValue::MAX,
 
-            stft_l: StftProcessor::new(fft_size, hop, WindowType::Hann),
-            stft_r: StftProcessor::new(fft_size, hop, WindowType::Hann),
+            stft_l_pool: make_pool(),
+            stft_r_pool: make_pool(),
 
             mag_smooth_l: vec![0.0; MAX_BINS],
             mag_smooth_r: vec![0.0; MAX_BINS],
@@ -75,11 +82,14 @@ impl SpectralBlur {
         }
     }
 
-    fn rebuild_stft(&mut self) {
-        let size = self.fft_size.size();
-        let hop = size / 4;
-        self.stft_l = StftProcessor::new(size, hop, WindowType::Hann);
-        self.stft_r = StftProcessor::new(size, hop, WindowType::Hann);
+    /// Reset the currently-active STFT processors and clear the smoothing state.
+    /// Called on FFT-size change (the destination processor must start clean),
+    /// sample-rate change, and `reset()` — all allocation-free (the processors are
+    /// pre-built in `new()`; this only zeroes ring/accumulator state).
+    fn reset_active(&mut self) {
+        let idx = self.fft_size.index();
+        self.stft_l_pool[idx].reset();
+        self.stft_r_pool[idx].reset();
         self.mag_smooth_l.fill(0.0);
         self.mag_smooth_r.fill(0.0);
     }
@@ -181,7 +191,8 @@ impl Describable for SpectralBlur {
 
 impl AudioEffect for SpectralBlur {
     fn process(&mut self, input: &[f32], output: &mut [f32], context: &ProcessContext<'_>) {
-        let fft_size = self.stft_l.fft_size();
+        let idx = self.fft_size.index();
+        let fft_size = self.fft_size.size();
         let num_bins = fft_size / 2 + 1;
         let blur_time = self.blur_time.as_f32();
         let blur_freq = self.blur_freq.as_f32();
@@ -202,7 +213,7 @@ impl AudioEffect for SpectralBlur {
         let mag_temp = &mut self.mag_temp;
 
         // Process left channel
-        self.stft_l.process(
+        self.stft_l_pool[idx].process(
             &self.mono_l[..frames],
             &mut self.out_l[..frames],
             |spectrum| {
@@ -236,7 +247,7 @@ impl AudioEffect for SpectralBlur {
         let mag_temp = &mut self.mag_temp;
 
         // Process right channel
-        self.stft_r.process(
+        self.stft_r_pool[idx].process(
             &self.mono_r[..frames],
             &mut self.out_r[..frames],
             |spectrum| {
@@ -272,10 +283,7 @@ impl AudioEffect for SpectralBlur {
     }
 
     fn reset(&mut self) {
-        self.stft_l.reset();
-        self.stft_r.reset();
-        self.mag_smooth_l.fill(0.0);
-        self.mag_smooth_r.fill(0.0);
+        self.reset_active();
     }
 
     fn set_mix(&mut self, mix: NormalizedValue) {
@@ -291,7 +299,8 @@ impl AudioEffect for SpectralBlur {
                 SpectralBlurParam::FftSize(v) => {
                     if v != self.fft_size {
                         self.fft_size = v;
-                        self.rebuild_stft();
+                        // O(1) index switch — just reset the now-active processor.
+                        self.reset_active();
                     }
                 }
                 SpectralBlurParam::BlurTime(v) => self.blur_time = v,
@@ -337,7 +346,52 @@ impl AudioEffect for SpectralBlur {
     }
 
     fn set_sample_rate(&mut self, sample_rate: SampleRate) {
+        // The STFT is sample-rate-agnostic (it works in samples); just reset state.
         self.sample_rate = sample_rate;
-        self.rebuild_stft();
+        self.reset_active();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx(frames: usize) -> ProcessContext<'static> {
+        ProcessContext {
+            samples: synth_core::SampleCount::new(frames),
+            ..ProcessContext::default()
+        }
+    }
+
+    /// Switching FFT size (which used to rebuild the STFT + allocate on the audio
+    /// thread) now just swaps a pre-built pool index. Cycle through every size
+    /// while processing, plus freeze, and assert the output stays finite and
+    /// nothing panics (the pool index + pre-sized buffers must all stay in range).
+    #[test]
+    fn fft_size_switch_and_freeze_stays_finite() {
+        let mut sb = SpectralBlur::new();
+        let frames = 400usize; // not partition-aligned, to exercise accumulation
+        let input: Vec<f32> = (0..frames * 2)
+            .map(|i| (i as f32 * 0.013).sin() * 0.5)
+            .collect();
+        let mut output = vec![0.0f32; frames * 2];
+
+        for opt in FftSizeOption::ALL {
+            sb.set_param(Param::SpectralBlur(SpectralBlurParam::FftSize(opt)));
+            for _ in 0..8 {
+                sb.process(&input, &mut output, &ctx(frames));
+                assert!(
+                    output.iter().all(|s| s.is_finite()),
+                    "non-finite output at fft size {}",
+                    opt.size()
+                );
+            }
+        }
+
+        sb.set_param(Param::SpectralBlur(SpectralBlurParam::Freeze(true)));
+        for _ in 0..4 {
+            sb.process(&input, &mut output, &ctx(frames));
+            assert!(output.iter().all(|s| s.is_finite()));
+        }
     }
 }

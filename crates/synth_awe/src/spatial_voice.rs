@@ -14,8 +14,8 @@ use crate::types::{Meters, MetersPerSecond, Position3};
 /// Maximum number of simultaneous spatial voice slots.
 pub const MAX_SPATIAL_VOICES: usize = 16;
 
-/// Pre-allocated mono buffer size per voice (samples).
-const VOICE_BUFFER_SIZE: SampleCount = SampleCount::new(4096);
+/// Pre-allocated mono buffer size per voice (samples) — the engine-wide block ceiling.
+const VOICE_BUFFER_SIZE: SampleCount = SampleCount::new(synth_core::MAX_BLOCK_SIZE);
 
 /// Delay line size for per-voice early reflections (16K samples, ~170ms at 96kHz).
 const PER_VOICE_MAX_DELAY: SampleCount = SampleCount::new(16_384);

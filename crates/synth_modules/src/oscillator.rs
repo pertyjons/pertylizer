@@ -227,14 +227,15 @@ impl Oscillator {
         effective_pulse_width: NormalizedValue,
     ) -> (f32, Phase) {
         let dt = freq.phase_increment(self.sample_rate);
-        let p = (phase.advance(phase_mod).as_f32() + self.phase_offset.as_f32()) % 1.0;
+        let p_phase = phase.advance(phase_mod).advance(self.phase_offset.as_f32());
+        let p = p_phase.as_f32();
 
         let sample = match self.waveform {
             Waveform::Sine => crate::math::fast_sin_turns(p),
             Waveform::Triangle => {
                 // Triangle uses BLAMP (not BLEP) — no MinBLEP alternative needed.
                 // Raw mode skips the band-limiting for the naive aliased edge.
-                let mut tri = Phase::new_unchecked(p).triangle();
+                let mut tri = p_phase.triangle();
                 if self.aa_mode != AntiAliasMode::Raw {
                     let dist_to_peak = p - 0.25;
                     tri += poly_blamp(dist_to_peak, dt) * 4.0;
@@ -244,7 +245,7 @@ impl Oscillator {
                 tri
             }
             Waveform::Sawtooth => {
-                let mut saw = Phase::new_unchecked(p).sawtooth();
+                let mut saw = p_phase.sawtooth();
                 match self.aa_mode {
                     AntiAliasMode::PolyBlep => saw -= poly_blep(p, dt),
                     AntiAliasMode::MinBlep => saw -= Self::minblep_correction(p, dt),
@@ -253,31 +254,31 @@ impl Oscillator {
                 saw
             }
             Waveform::Square => {
-                let mut sq = Phase::new_unchecked(p).pulse(NormalizedValue::CENTER);
+                let mut sq = p_phase.pulse(NormalizedValue::CENTER);
                 match self.aa_mode {
                     AntiAliasMode::PolyBlep => {
                         sq += poly_blep(p, dt);
-                        sq -= poly_blep((p + 0.5).rem_euclid(1.0), dt);
+                        sq -= poly_blep(p_phase.advance(0.5).as_f32(), dt);
                     }
                     AntiAliasMode::MinBlep => {
                         sq += Self::minblep_correction(p, dt);
-                        sq -= Self::minblep_correction((p + 0.5).rem_euclid(1.0), dt);
+                        sq -= Self::minblep_correction(p_phase.advance(0.5).as_f32(), dt);
                     }
                     AntiAliasMode::Raw => {} // naive — leave the raw aliased edge
                 }
                 sq
             }
             Waveform::Pulse => {
-                let mut pulse = Phase::new_unchecked(p).pulse(effective_pulse_width);
+                let mut pulse = p_phase.pulse(effective_pulse_width);
                 let pw = effective_pulse_width.as_f32().clamp(0.01, 0.99);
                 match self.aa_mode {
                     AntiAliasMode::PolyBlep => {
                         pulse += poly_blep(p, dt);
-                        pulse -= poly_blep((p + (1.0 - pw)).rem_euclid(1.0), dt);
+                        pulse -= poly_blep(p_phase.advance(1.0 - pw).as_f32(), dt);
                     }
                     AntiAliasMode::MinBlep => {
                         pulse += Self::minblep_correction(p, dt);
-                        pulse -= Self::minblep_correction((p + (1.0 - pw)).rem_euclid(1.0), dt);
+                        pulse -= Self::minblep_correction(p_phase.advance(1.0 - pw).as_f32(), dt);
                     }
                     AntiAliasMode::Raw => {} // naive — leave the raw aliased edge
                 }
@@ -290,7 +291,7 @@ impl Oscillator {
                 let num_harmonics =
                     (self.sample_rate.as_f32() / (2.0 * freq.as_f32())).max(1.0) as u32;
                 synth_dsp::oscillators::dsf_sawtooth(
-                    Phase::new_unchecked(p),
+                    p_phase,
                     num_harmonics,
                     NormalizedValue::new(0.95),
                 )
