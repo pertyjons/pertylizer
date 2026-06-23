@@ -73,6 +73,18 @@ Low / behaviour-preserving (same coercion, applied at the read). Mechanical.
 
 ## B — Fix `vocal_tract` stale-rate glottal increment (5.4 class) — *one real bug*
 
+> ✅ **DONE (the real bug)** — `note_on` now sets the `current_inc = 0.0` sentinel and the
+> first `process()` block snaps it to the rate-correct `note_freq/sr` (no stale-rate glide).
+> Regression test `glottal_increment_follows_render_rate_not_note_on_rate` (note_on at 48 kHz
+> default, render one block at 96 kHz → increment == `f/96000`). Build/clippy/test/fmt green.
+>
+> ⏸️ **DEFERRED — unison onset timing** (`voice_synth.rs:722`, `fof.rs:843`, `la_synth.rs`).
+> The onset sample-count is consumed by `voice.restart(..., onset)` *inside* `note_on`, so
+> the seconds→samples deferral needs restructuring the voice-trigger path in two modules.
+> The payoff is cosmetic (unison stagger timing slightly off at non-48 kHz rates,
+> self-corrects on the next note) — poor risk/reward for an invasive change to the trigger
+> semantics, so left for a dedicated pass. Not a correctness/pitch issue.
+
 **Why:** `vocal_tract.rs:605` (`note_on`) seeds `self.current_inc = note_freq.as_f32() *
 self.inv_sample_rate` using a possibly-stale `inv_sample_rate` (the engine only propagates
 the render rate via `ProcessContext` in `process()`). A note triggered before the first
