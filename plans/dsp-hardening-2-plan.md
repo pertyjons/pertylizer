@@ -135,6 +135,22 @@ value (mirror PadSynth's `phase_increment_follows_render_rate_not_note_on_rate`)
 
 ## C — Move `phase_vocoder` / `spectral_blur` FFT rebuilds off the audio thread (5.3 class) — *heaviest*
 
+> ✅ **DONE** — both effects now hold a pre-built `Vec<StftProcessor>` pool (one per
+> `FftSizeOption`, ×2 channels), built in `new()` off the audio thread. `set_param(FftSize)`
+> is an O(1) index switch + `reset_active()` (no `StftProcessor::new`, no FFT re-plan, no
+> alloc). All per-bin scratch (phase accum / prev phase / frozen / temp) pre-sized to
+> `MAX_BINS` (2049); the freeze path's `copy_from_slice` slices the `MAX_BINS` frozen buffer
+> to the active spectrum (`[..n]`) to avoid a length-mismatch panic. The two private
+> `const MAX_BLOCK_SIZE = 4096` (the **D** fold) replaced with `use synth_core::MAX_BLOCK_SIZE`.
+> `rebuild_stft` deleted. Tests `fft_size_switch_and_freeze_stays_finite` (both effects)
+> cycle every size + freeze and assert finite/no-panic. Build/clippy/test/fmt green.
+>
+> ⚠️ **Bookkeeping note:** these Class-C changes were accidentally committed by another
+> agent inside `b0d6b66f` ("Refactor Phase usage in Oscillator and LFO…") together with an
+> unrelated `Phase`-type refactor of `lfo.rs`/`oscillator.rs`. The C implementation is
+> intact and green; history is just mislabeled (branch is local, left as-is rather than
+> rewriting over the other agent's intentional work).
+
 **Why:** Both effects rebuild their STFT machinery on the audio thread when `FftSize`
 changes (`set_param` is drained on the audio thread):
 - `phase_vocoder.rs:365` → `rebuild_stft()` (`:90`) creates 2 `StftProcessor`s + **7
