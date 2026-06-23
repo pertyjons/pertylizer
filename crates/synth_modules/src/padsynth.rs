@@ -444,6 +444,16 @@ impl PolyModule for PadSynth {
         self.active = true;
     }
 
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // The wavetable is baked from base_freq and stays put; the note pitch is
+        // only the phase increment, so retuning is a cheap recompute — no O(N²)
+        // table rebuild. Mirrors the note_on formula `inc = freq / sr`.
+        let sr = self.sample_rate.as_f32() as f64;
+        if sr > 0.0 {
+            self.phase_increment = f64::from(freq.as_f32().clamp(1.0, 20_000.0)) / sr;
+        }
+    }
+
     fn note_off(&mut self) {
         // Let envelope handle fade-out; keep active for tail
     }
@@ -456,6 +466,44 @@ impl PolyModule for PadSynth {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voice_pitch_harness::{amdf_fundamental, render_mono};
+    use synth_core::{MidiNote, NormalizedValue, SampleRate, Velocity};
+
+    /// `set_voice_pitch` retunes the pad by recomputing the phase increment (the
+    /// baked wavetable stays): 2× voice pitch doubles the rendered fundamental;
+    /// a static note holds. Measured at a low note (A2) with narrow bandwidth so
+    /// the 64-harmonic table stays below Nyquist at both F and 2F (at high notes
+    /// the upper harmonics alias and corrupt the estimate); pitch *tracking* is
+    /// independent of pitch and bandwidth.
+    #[test]
+    fn padsynth_tracks_voice_pitch() {
+        let sr = SampleRate::DVD_QUALITY;
+        let srf = sr.as_f32();
+        let note = MidiNote(45); // A2 ≈ 110 Hz → 2F = 220, alias-free
+        let f = note.to_frequency().as_f32();
+        let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
+
+        let narrow = || {
+            let mut s = PadSynth::new();
+            s.set_param(Param::PadSynth(PadSynthParam::Bandwidth(
+                NormalizedValue::new(0.02),
+            )));
+            s.note_on(note, Velocity::MAX);
+            s
+        };
+
+        let mut s = narrow();
+        let stat = render_mono(&mut s, sr, 4, 1024, |_| {});
+        let est_stat = amdf_fundamental(&stat[2048..], srf, f);
+        assert!(cents(est_stat, f).abs() < 50.0, "static {est_stat}");
+
+        let mut s2 = narrow();
+        let up = render_mono(&mut s2, sr, 4, 1024, |m| {
+            m.set_voice_pitch(Hertz::new(f * 2.0));
+        });
+        let est_up = amdf_fundamental(&up[2048..], srf, f * 2.0);
+        assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
+    }
 
     #[test]
     fn test_padsynth_creation() {
