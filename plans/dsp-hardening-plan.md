@@ -227,6 +227,25 @@ Add a sanitizing value accessor to `InputReader` and migrate the CV-buffer reads
 
 ## 5.3 — Convolver: build the IR off the audio thread (heaviest; do last)
 
+> ✅ **DONE** — implemented the per-instance worker-thread design. synth_dsp gained
+> `IrSpectra` (opaque spectra pool), `IrSpectraBuilder` (off-thread FFT builder), and
+> `PartitionedConvolver::{reserve_partitions, swap_ir_spectra}` (alloc-free pointer swap).
+> `Convolver` spawns a parked `convolver-ir` worker in `new()`; `set_param(Ir/DecayTrim)` /
+> `set_sample_rate` enqueue a request + unpark; `process()` drains a finished build and
+> swaps it in lock-free, sending the old spectra back for off-thread drop. `Drop` signals +
+> unparks + joins. Pools pre-reserved to `MAX_PARTITIONS` (188) so swaps never allocate.
+>
+> **Adversarial review fix:** the worker now **holds an undelivered result and retries**
+> rather than dropping it when the result slot is full — the original drop-newest-on-full
+> could strand the convolver on a stale IR (no convergence to the latest). Tests:
+> `swap_ir_spectra_matches_inline_update_ir` (bit-exact equivalence with the old path),
+> `convolver_spawns_and_drop_joins_worker` (no thread leak), `off_thread_rebuild_delivers_…`
+> (async delivery + finite output), `rapid_ir_changes_settle_without_livelock` (convergence).
+> Known accepted residual: `unpark()` is a bounded non-blocking futex wake on the audio
+> thread, but only on IR-change events — steady-state `process()` does one lock-free
+> `try_pop` and nothing else. Build/clippy/test/fmt green. **Not yet ear-verified in-app**
+> (the plan's manual "automate DecayTrim, listen for dropouts" check still wants doing).
+
 **Why:** `Convolver::rebuild_ir` (`convolver.rs:228`) is invoked from `set_param`
 (`convolver.rs:491` for `Ir`, `505` for `DecayTrim` with a `>0.01` delta guard), which
 drains **on the audio thread**. It regenerates three IR variants and calls

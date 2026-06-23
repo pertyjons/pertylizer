@@ -29,7 +29,10 @@ pub use filters::{
 };
 pub use oscillators::poly_blep;
 pub use oversampling::{Downsampler, OversamplingFactor};
-pub use spectral::{FftProcessor, PartitionedConvolver, StftProcessor, WindowType, fill_window};
+pub use spectral::{
+    FftProcessor, IrSpectra, IrSpectraBuilder, PartitionedConvolver, StftProcessor, WindowType,
+    fill_window,
+};
 pub use waveguide::KellyLochbaumTract;
 
 // Re-export Complex for use by downstream crates (e.g. phase vocoder)

@@ -261,8 +261,10 @@ deeper/cross-crate items that a one-line fix could not properly address.
 
 ### 5.3 Convolver: build the IR off the audio thread
 
-- [ ] **`Convolver::rebuild_ir` runs heavy FFT work (and a bounded first-growth allocation) on the
-  audio thread.** The fix pass made `rebuild_ir` allocation-free in steady state (reuses scratch
+- [x] **`Convolver::rebuild_ir` runs heavy FFT work (and a bounded first-growth allocation) on the
+  audio thread.** (Done — per-instance worker thread builds the IR spectra off-thread and the audio
+  thread swaps them in lock-free; pools pre-reserved so swaps never allocate. See
+  `plans/dsp-hardening-plan.md` §5.3. Not yet ear-verified in-app.) The fix pass made `rebuild_ir` allocation-free in steady state (reuses scratch
   buffers + FFT planners via `PartitionedConvolver::update_ir`), but it is still invoked from
   `set_param` — which drains on the audio thread — and re-runs up to `MAX_IR_SAMPLES/PARTITION_SIZE`
   forward FFTs across six convolvers whenever `Ir` type or `DecayTrim` (>0.01 delta) changes. Rapid

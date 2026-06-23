@@ -4255,6 +4255,7 @@ name = "synth_modules"
 version = "0.1.0"
 dependencies = [
  "fastrand",
+ "ringbuf",
  "serde",
  "synth_core",
  "synth_dsp",

@@ -495,6 +495,116 @@ impl PartitionedConvolver {
         // Advance input spectra ring
         self.input_spectra_pos = (self.input_spectra_pos + 1) % num_partitions;
     }
+
+    /// Pre-grow the IR and input partition-spectra pools to `max_partitions` so a
+    /// later [`Self::swap_ir_spectra`] never has to allocate on the audio thread.
+    /// Call once at construction with the worst-case partition count.
+    pub fn reserve_partitions(&mut self, max_partitions: usize) {
+        let complex_size = self.fft_size / 2 + 1;
+        Self::ensure_partition_buffers(&mut self.ir_spectra, max_partitions, complex_size);
+        Self::ensure_partition_buffers(&mut self.input_spectra, max_partitions, complex_size);
+    }
+
+    /// Replace the IR partition spectra from a pre-built [`IrSpectra`] **with no
+    /// FFT work** — the spectra were computed off the audio thread by
+    /// [`IrSpectraBuilder`]. `incoming`'s pool is swapped with the convolver's
+    /// current one, so the displaced (old) pool travels back out in `incoming` for
+    /// the caller to drop off-thread. Running state is reset, as in
+    /// [`Self::update_ir`].
+    ///
+    /// Allocation-free as long as `input_spectra` already holds at least
+    /// `incoming.num_partitions()` buffers — guarantee this by calling
+    /// [`Self::reserve_partitions`] once at construction with the worst-case count.
+    pub fn swap_ir_spectra(&mut self, incoming: &mut IrSpectra) {
+        debug_assert_eq!(
+            incoming.partition_size, self.partition_size,
+            "IrSpectra built for a different partition size"
+        );
+        let n = incoming.spectra.len().max(1);
+        std::mem::swap(&mut self.ir_spectra, &mut incoming.spectra);
+        self.num_partitions = n;
+
+        // Defensive: a no-op once `reserve_partitions` has covered the worst case,
+        // so the audio thread never actually allocates here.
+        let complex_size = self.fft_size / 2 + 1;
+        Self::ensure_partition_buffers(&mut self.input_spectra, n, complex_size);
+
+        // Reset running state for the new IR (mirrors `update_ir`).
+        self.input_buffer.fill(0.0);
+        self.input_pos = 0;
+        for spec in self.input_spectra.iter_mut().take(n) {
+            for bin in spec.iter_mut() {
+                *bin = Complex::new(0.0, 0.0);
+            }
+        }
+        self.input_spectra_pos = 0;
+    }
+}
+
+/// A pre-computed pool of IR partition spectra, built off the audio thread by
+/// [`IrSpectraBuilder`] and swapped into a [`PartitionedConvolver`] via
+/// [`PartitionedConvolver::swap_ir_spectra`]. Opaque: callers move it across a
+/// channel without touching the FFT internals.
+#[derive(Clone)]
+pub struct IrSpectra {
+    partition_size: usize,
+    spectra: Vec<Vec<Complex<f32>>>,
+}
+
+impl IrSpectra {
+    /// Number of partitions (active IR spectra) in this pool.
+    #[must_use]
+    pub fn num_partitions(&self) -> usize {
+        self.spectra.len()
+    }
+}
+
+/// Off-thread builder for [`IrSpectra`]. Owns an FFT planner and scratch buffers
+/// so the heavy forward-FFT-per-partition work can run on a worker thread, keeping
+/// it off the real-time audio thread. Produces spectra bit-identical to the inline
+/// [`PartitionedConvolver::update_ir`] path for the same IR and partition size.
+pub struct IrSpectraBuilder {
+    partition_size: usize,
+    fft: FftProcessor,
+    fft_in: Vec<f32>,
+    fft_out: Vec<Complex<f32>>,
+}
+
+impl IrSpectraBuilder {
+    /// Create a builder for the given partition size (must match the target
+    /// convolver's partition size).
+    #[must_use]
+    pub fn new(partition_size: usize) -> Self {
+        let fft_size = partition_size * 2;
+        let complex_size = fft_size / 2 + 1;
+        Self {
+            partition_size,
+            fft: FftProcessor::new(fft_size),
+            fft_in: vec![0.0; fft_size],
+            fft_out: vec![Complex::new(0.0, 0.0); complex_size],
+        }
+    }
+
+    /// Compute the partition spectra for `ir`, allocating a fresh pool. Intended to
+    /// run off the audio thread.
+    #[must_use]
+    pub fn build(&mut self, ir: &[f32]) -> IrSpectra {
+        let ps = self.partition_size;
+        let num_partitions = ir.len().div_ceil(ps).max(1);
+        let mut spectra = Vec::with_capacity(num_partitions);
+        for p in 0..num_partitions {
+            self.fft_in.fill(0.0);
+            let start = p * ps;
+            let end = (start + ps).min(ir.len());
+            self.fft_in[..end - start].copy_from_slice(&ir[start..end]);
+            self.fft.forward(&mut self.fft_in, &mut self.fft_out);
+            spectra.push(self.fft_out.clone());
+        }
+        IrSpectra {
+            partition_size: ps,
+            spectra,
+        }
+    }
 }
 
 // ============================================================================
@@ -600,6 +710,51 @@ mod tests {
                 i,
                 out_updated[i],
                 out_fresh[i]
+            );
+        }
+    }
+
+    #[test]
+    fn swap_ir_spectra_matches_inline_update_ir() {
+        // The off-thread path (IrSpectraBuilder::build + swap_ir_spectra) must
+        // produce sample-identical output to the inline update_ir path for the
+        // same IR — this is what lets the worker build the spectra off the audio
+        // thread without changing the sound.
+        let partition_size = 256;
+        let mut long_ir = vec![0.0f32; partition_size * 4];
+        long_ir[0] = 1.0;
+        long_ir[partition_size] = 0.5;
+        long_ir[partition_size * 3] = -0.25;
+
+        // Reference: built inline.
+        let mut inline = PartitionedConvolver::new(partition_size, &long_ir);
+
+        // Swapped: start from a different IR, then swap in the long one via the
+        // builder + reserve_partitions (worst-case pool) + swap_ir_spectra.
+        let mut short_ir = vec![0.0f32; partition_size];
+        short_ir[0] = 1.0;
+        let mut swapped = PartitionedConvolver::new(partition_size, &short_ir);
+        swapped.reserve_partitions(8);
+        let mut builder = IrSpectraBuilder::new(partition_size);
+        let mut spectra = builder.build(&long_ir);
+        assert_eq!(spectra.num_partitions(), 4);
+        swapped.swap_ir_spectra(&mut spectra);
+
+        let mut input = vec![0.0f32; partition_size];
+        input[0] = 1.0;
+        input[5] = -0.5;
+        let mut out_inline = vec![0.0f32; partition_size];
+        let mut out_swapped = vec![0.0f32; partition_size];
+        inline.process_block(&input, &mut out_inline);
+        swapped.process_block(&input, &mut out_swapped);
+
+        for i in 0..partition_size {
+            assert!(
+                (out_inline[i] - out_swapped[i]).abs() < 1e-6,
+                "swap diverged at {}: {} vs {}",
+                i,
+                out_inline[i],
+                out_swapped[i]
             );
         }
     }
