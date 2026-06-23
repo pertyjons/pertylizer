@@ -698,6 +698,22 @@
                   "title": "Level",
                   "type": "number"
                 },
+                "octave": {
+                  "default": 0.0,
+                  "description": "Coarse tune in semitones — unit: st",
+                  "maximum": 24.0,
+                  "minimum": -24.0,
+                  "title": "Octave",
+                  "type": "number"
+                },
+                "phase": {
+                  "default": 0.0,
+                  "description": "Start phase offset (0–1 turns)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Phase",
+                  "type": "number"
+                },
                 "pulse_width": {
                   "default": 0.5,
                   "description": "Pulse width for pulse waveform — unit: %",
@@ -1254,6 +1270,30 @@
                   "title": "Rate",
                   "type": "number"
                 },
+                "retrigger": {
+                  "default": 0.0,
+                  "description": "Restart the cycle on the Retrig gate edge",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Retrigger",
+                  "type": "number"
+                },
+                "sync_division": {
+                  "default": 1.0,
+                  "description": "Beats per LFO cycle when tempo-synced (1 = quarter note) — unit: beats",
+                  "maximum": 4.0,
+                  "minimum": 0.125,
+                  "title": "Division",
+                  "type": "number"
+                },
+                "tempo_sync": {
+                  "default": 0.0,
+                  "description": "Sync rate to host tempo (uses Division instead of Rate)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Tempo Sync",
+                  "type": "number"
+                },
                 "waveform": {
                   "description": "LFO waveform",
                   "enum": [
@@ -1419,12 +1459,28 @@
                   "title": "Input 8",
                   "type": "number"
                 },
+                "limit": {
+                  "default": 0.0,
+                  "description": "Soft tanh output limiter",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Limit",
+                  "type": "number"
+                },
                 "master": {
                   "default": 1.0,
                   "description": "Master output gain",
                   "maximum": 2.0,
                   "minimum": 0.0,
                   "title": "Master",
+                  "type": "number"
+                },
+                "mute": {
+                  "default": 0.0,
+                  "description": "Silence the mixer output",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Mute",
                   "type": "number"
                 }
               },
@@ -1557,12 +1613,44 @@
                   "title": "Mode",
                   "type": "string"
                 },
+                "sync_division": {
+                  "default": 1.0,
+                  "description": "Beats per echo when tempo-synced (1 = quarter note) — unit: beats",
+                  "maximum": 4.0,
+                  "minimum": 0.125,
+                  "title": "Division",
+                  "type": "number"
+                },
+                "tempo_sync": {
+                  "default": 0.0,
+                  "description": "Sync delay time to host tempo (uses Division instead of Time)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Tempo Sync",
+                  "type": "number"
+                },
                 "time": {
                   "default": 0.375,
-                  "description": "Delay time — unit: s",
+                  "description": "Delay time (link: sets both left and right) — unit: s",
                   "maximum": 2.0,
                   "minimum": 0.0010000000474974513,
                   "title": "Time",
+                  "type": "number"
+                },
+                "time_left": {
+                  "default": 0.375,
+                  "description": "Left-channel delay time — unit: s",
+                  "maximum": 2.0,
+                  "minimum": 0.0010000000474974513,
+                  "title": "Time L",
+                  "type": "number"
+                },
+                "time_right": {
+                  "default": 0.5,
+                  "description": "Right-channel delay time — unit: s",
+                  "maximum": 2.0,
+                  "minimum": 0.0010000000474974513,
+                  "title": "Time R",
                   "type": "number"
                 },
                 "tone": {
@@ -2270,6 +2358,14 @@
               "default": {},
               "description": "Parameter values for this module.",
               "properties": {
+                "freeze": {
+                  "default": 0.0,
+                  "description": "Freeze the display (stop capturing)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Freeze",
+                  "type": "number"
+                },
                 "gain": {
                   "default": 1.0,
                   "description": "Vertical gain",
@@ -3081,6 +3177,406 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Loop",
+                  "type": "number"
+                },
+                "loop_end": {
+                  "default": 1.0,
+                  "description": "Last segment of the loop (0-15)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Loop End",
+                  "type": "number"
+                },
+                "loop_start": {
+                  "default": 0.0,
+                  "description": "First segment of the loop (0-15)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Loop Start",
+                  "type": "number"
+                },
+                "seg0_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 0 Curve",
+                  "type": "number"
+                },
+                "seg0_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 0 Level",
+                  "type": "number"
+                },
+                "seg0_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 0 Time",
+                  "type": "number"
+                },
+                "seg10_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 10 Curve",
+                  "type": "number"
+                },
+                "seg10_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 10 Level",
+                  "type": "number"
+                },
+                "seg10_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 10 Time",
+                  "type": "number"
+                },
+                "seg11_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 11 Curve",
+                  "type": "number"
+                },
+                "seg11_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 11 Level",
+                  "type": "number"
+                },
+                "seg11_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 11 Time",
+                  "type": "number"
+                },
+                "seg12_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 12 Curve",
+                  "type": "number"
+                },
+                "seg12_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 12 Level",
+                  "type": "number"
+                },
+                "seg12_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 12 Time",
+                  "type": "number"
+                },
+                "seg13_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 13 Curve",
+                  "type": "number"
+                },
+                "seg13_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 13 Level",
+                  "type": "number"
+                },
+                "seg13_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 13 Time",
+                  "type": "number"
+                },
+                "seg14_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 14 Curve",
+                  "type": "number"
+                },
+                "seg14_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 14 Level",
+                  "type": "number"
+                },
+                "seg14_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 14 Time",
+                  "type": "number"
+                },
+                "seg15_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 15 Curve",
+                  "type": "number"
+                },
+                "seg15_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 15 Level",
+                  "type": "number"
+                },
+                "seg15_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 15 Time",
+                  "type": "number"
+                },
+                "seg1_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 1 Curve",
+                  "type": "number"
+                },
+                "seg1_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 1 Level",
+                  "type": "number"
+                },
+                "seg1_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 1 Time",
+                  "type": "number"
+                },
+                "seg2_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 2 Curve",
+                  "type": "number"
+                },
+                "seg2_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 2 Level",
+                  "type": "number"
+                },
+                "seg2_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 2 Time",
+                  "type": "number"
+                },
+                "seg3_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 3 Curve",
+                  "type": "number"
+                },
+                "seg3_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 3 Level",
+                  "type": "number"
+                },
+                "seg3_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 3 Time",
+                  "type": "number"
+                },
+                "seg4_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 4 Curve",
+                  "type": "number"
+                },
+                "seg4_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 4 Level",
+                  "type": "number"
+                },
+                "seg4_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 4 Time",
+                  "type": "number"
+                },
+                "seg5_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 5 Curve",
+                  "type": "number"
+                },
+                "seg5_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 5 Level",
+                  "type": "number"
+                },
+                "seg5_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 5 Time",
+                  "type": "number"
+                },
+                "seg6_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 6 Curve",
+                  "type": "number"
+                },
+                "seg6_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 6 Level",
+                  "type": "number"
+                },
+                "seg6_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 6 Time",
+                  "type": "number"
+                },
+                "seg7_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 7 Curve",
+                  "type": "number"
+                },
+                "seg7_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 7 Level",
+                  "type": "number"
+                },
+                "seg7_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 7 Time",
+                  "type": "number"
+                },
+                "seg8_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 8 Curve",
+                  "type": "number"
+                },
+                "seg8_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 8 Level",
+                  "type": "number"
+                },
+                "seg8_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 8 Time",
+                  "type": "number"
+                },
+                "seg9_curve": {
+                  "default": 0.0,
+                  "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Seg 9 Curve",
+                  "type": "number"
+                },
+                "seg9_level": {
+                  "default": 0.0,
+                  "description": "Segment target level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seg 9 Level",
+                  "type": "number"
+                },
+                "seg9_time": {
+                  "default": 0.10000000149011612,
+                  "description": "Segment duration in seconds — unit: s",
+                  "maximum": 60.0,
+                  "minimum": 0.0,
+                  "title": "Seg 9 Time",
                   "type": "number"
                 },
                 "segments": {
@@ -4200,6 +4696,14 @@
               "default": {},
               "description": "Parameter values for this module.",
               "properties": {
+                "freeze": {
+                  "default": 0.0,
+                  "description": "Freeze the display (stop capturing)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Freeze",
+                  "type": "number"
+                },
                 "gain": {
                   "default": 1.0,
                   "description": "Vertical gain",

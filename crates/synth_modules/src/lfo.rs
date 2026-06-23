@@ -188,6 +188,43 @@ impl Describable for Lfo {
                 .default(0.0)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "tempo_sync",
+                    Param::Lfo(LfoParam::tempo_sync_default()),
+                    "Tempo Sync",
+                )
+                .description("Sync rate to host tempo (uses Division instead of Rate)")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .modulatable(false)
+                .widget(WidgetHint::Toggle),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "sync_division",
+                    Param::Lfo(LfoParam::sync_division_default()),
+                    "Division",
+                )
+                .description("Beats per LFO cycle when tempo-synced (1 = quarter note)")
+                .range(0.125, 4.0)
+                .default(1.0)
+                .unit(ParameterUnit::Beats)
+                .modulatable(false)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "retrigger",
+                    Param::Lfo(LfoParam::retrigger_default()),
+                    "Retrigger",
+                )
+                .description("Restart the cycle on the Retrig gate edge")
+                .range(0.0, 1.0)
+                .default(0.0)
+                .modulatable(false)
+                .widget(WidgetHint::Toggle),
+            )
             .port(
                 PortDescriptor::gate_input("retrigger", "Retrig").description(
                     "Restarts the LFO cycle. Connect: Envelope Gate, another LFO, Euclidean Gate",

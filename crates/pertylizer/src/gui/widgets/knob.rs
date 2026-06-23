@@ -15,6 +15,9 @@ pub struct Knob<'a> {
     label: String,
     size: f32,
     accent_color: Color32,
+    /// Optional quantization step in value units (e.g. `1.0` for integer knobs).
+    /// Drags snap to the nearest multiple of `step` offset from `range.min`.
+    step: Option<f32>,
     /// Optional Mod Matrix marker `(glyph, color)` painted in the knob's corner —
     /// kept off the label so it never widens the cell (S1.5a).
     mod_marker: Option<(&'static str, Color32)>,
@@ -30,6 +33,7 @@ impl<'a> Knob<'a> {
             label: String::new(),
             size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
+            step: None,
             mod_marker: None,
         }
     }
@@ -43,7 +47,27 @@ impl<'a> Knob<'a> {
             label: descriptor.name.clone(),
             size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
+            step: descriptor.step,
             mod_marker: None,
+        }
+    }
+
+    /// Set a quantization step in value units (drags snap to it).
+    #[must_use]
+    pub fn step(mut self, step: f32) -> Self {
+        self.step = (step > 0.0).then_some(step);
+        self
+    }
+
+    /// Snap a value to the nearest `step` multiple offset from `range.min`,
+    /// clamped to the range. No-op when no step is set.
+    fn snapped(&self, value: f32) -> f32 {
+        match self.step {
+            Some(step) if step > 0.0 => {
+                let snapped = self.range.min + ((value - self.range.min) / step).round() * step;
+                snapped.clamp(self.range.min, self.range.max)
+            }
+            _ => value,
         }
     }
 
@@ -112,7 +136,7 @@ impl<'a> Knob<'a> {
         let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
         if response.double_clicked() {
-            *self.value = self.range.default.clamp(self.range.min, self.range.max);
+            *self.value = self.snapped(self.range.default.clamp(self.range.min, self.range.max));
         }
 
         if response.dragged() {
@@ -120,7 +144,7 @@ impl<'a> Knob<'a> {
             let sensitivity = t.style.knob_sensitivity;
             let normalized = self.response_curve.normalize(*self.value, self.range);
             let new_normalized = (normalized + delta * sensitivity).clamp(0.0, 1.0);
-            *self.value = self.response_curve.denormalize(new_normalized, self.range);
+            *self.value = self.snapped(self.response_curve.denormalize(new_normalized, self.range));
         }
 
         let painter = ui.painter();

@@ -278,7 +278,9 @@ impl AudioEffect for Phaser {
             Param::Phaser(PhaserParam::Rate(self.rate)),
             Param::Phaser(PhaserParam::Depth(self.depth)),
             Param::Phaser(PhaserParam::Feedback(self.feedback)),
-            Param::Phaser(PhaserParam::Stages(NUM_STAGES as u8)),
+            // `stages` is a fixed compile-time constant with a no-op setter, so it
+            // is not persistable state — excluded from the snapshot (it has no
+            // descriptor entry and would be dropped on save anyway).
             Param::Phaser(PhaserParam::CenterFreq(self.center_freq)),
             Param::Phaser(PhaserParam::Mix(self.mix)),
         ]

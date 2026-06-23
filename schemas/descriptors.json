@@ -690,13 +690,53 @@
           "name": "Mode",
           "unit": "none"
         },
+        "sync_division": {
+          "default": 1.0,
+          "description": "Beats per echo when tempo-synced (1 = quarter note)",
+          "max": 4.0,
+          "min": 0.125,
+          "modulatable": false,
+          "name": "Division",
+          "response_curve": "linear",
+          "unit": "beats"
+        },
+        "tempo_sync": {
+          "default": 0.0,
+          "description": "Sync delay time to host tempo (uses Division instead of Time)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Tempo Sync",
+          "response_curve": "linear",
+          "unit": "none"
+        },
         "time": {
           "default": 0.375,
-          "description": "Delay time",
+          "description": "Delay time (link: sets both left and right)",
           "max": 2.0,
           "min": 0.0010000000474974513,
           "modulatable": true,
           "name": "Time",
+          "response_curve": "logarithmic",
+          "unit": "seconds"
+        },
+        "time_left": {
+          "default": 0.375,
+          "description": "Left-channel delay time",
+          "max": 2.0,
+          "min": 0.0010000000474974513,
+          "modulatable": true,
+          "name": "Time L",
+          "response_curve": "logarithmic",
+          "unit": "seconds"
+        },
+        "time_right": {
+          "default": 0.5,
+          "description": "Right-channel delay time",
+          "max": 2.0,
+          "min": 0.0010000000474974513,
+          "modulatable": true,
+          "name": "Time R",
           "response_curve": "logarithmic",
           "unit": "seconds"
         },
@@ -2250,6 +2290,36 @@
           "response_curve": "logarithmic",
           "unit": "hertz"
         },
+        "retrigger": {
+          "default": 0.0,
+          "description": "Restart the cycle on the Retrig gate edge",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Retrigger",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "sync_division": {
+          "default": 1.0,
+          "description": "Beats per LFO cycle when tempo-synced (1 = quarter note)",
+          "max": 4.0,
+          "min": 0.125,
+          "modulatable": false,
+          "name": "Division",
+          "response_curve": "linear",
+          "unit": "beats"
+        },
+        "tempo_sync": {
+          "default": 0.0,
+          "description": "Sync rate to host tempo (uses Division instead of Rate)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Tempo Sync",
+          "response_curve": "linear",
+          "unit": "none"
+        },
         "waveform": {
           "choices": [
             {
@@ -2712,6 +2782,16 @@
           "response_curve": "linear",
           "unit": "none"
         },
+        "limit": {
+          "default": 0.0,
+          "description": "Soft tanh output limiter",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Limit",
+          "response_curve": "linear",
+          "unit": "none"
+        },
         "master": {
           "default": 1.0,
           "description": "Master output gain",
@@ -2719,6 +2799,16 @@
           "min": 0.0,
           "modulatable": true,
           "name": "Master",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "mute": {
+          "default": 0.0,
+          "description": "Silence the mixer output",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Mute",
           "response_curve": "linear",
           "unit": "none"
         }
@@ -6247,6 +6337,508 @@
           "response_curve": "linear",
           "unit": "none"
         },
+        "loop_end": {
+          "default": 1.0,
+          "description": "Last segment of the loop (0-15)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Loop End",
+          "response_curve": "linear",
+          "step": 1.0,
+          "unit": "none"
+        },
+        "loop_start": {
+          "default": 0.0,
+          "description": "First segment of the loop (0-15)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Loop Start",
+          "response_curve": "linear",
+          "step": 1.0,
+          "unit": "none"
+        },
+        "seg0_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 0 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg0_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 0 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg0_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 0 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg10_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 10 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg10_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 10 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg10_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 10 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg11_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 11 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg11_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 11 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg11_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 11 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg12_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 12 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg12_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 12 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg12_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 12 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg13_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 13 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg13_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 13 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg13_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 13 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg14_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 14 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg14_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 14 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg14_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 14 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg15_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 15 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg15_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 15 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg15_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 15 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg1_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 1 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg1_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 1 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg1_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 1 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg2_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 2 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg2_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 2 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg2_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 2 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg3_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 3 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg3_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 3 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg3_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 3 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg4_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 4 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg4_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 4 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg4_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 4 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg5_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 5 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg5_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 5 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg5_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 5 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg6_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 6 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg6_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 6 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg6_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 6 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg7_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 7 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg7_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 7 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg7_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 7 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg8_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 8 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg8_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 8 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg8_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 8 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
+        "seg9_curve": {
+          "default": 0.0,
+          "description": "Segment curve (-1 log, 0 linear, +1 exp)",
+          "max": 1.0,
+          "min": -1.0,
+          "modulatable": false,
+          "name": "Seg 9 Curve",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg9_level": {
+          "default": 0.0,
+          "description": "Segment target level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 9 Level",
+          "response_curve": "linear",
+          "unit": "none"
+        },
+        "seg9_time": {
+          "default": 0.10000000149011612,
+          "description": "Segment duration in seconds",
+          "max": 60.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seg 9 Time",
+          "response_curve": "linear",
+          "unit": "seconds"
+        },
         "segments": {
           "default": 4.0,
           "description": "Number of active segments (1-16)",
@@ -6255,6 +6847,7 @@
           "modulatable": false,
           "name": "Segments",
           "response_curve": "linear",
+          "step": 1.0,
           "unit": "none"
         },
         "sustain_seg": {
@@ -6265,6 +6858,7 @@
           "modulatable": false,
           "name": "Sustain Seg",
           "response_curve": "linear",
+          "step": 1.0,
           "unit": "none"
         },
         "time_scale": {
@@ -6426,6 +7020,26 @@
           "response_curve": "linear",
           "unit": "none"
         },
+        "octave": {
+          "default": 0.0,
+          "description": "Coarse tune in semitones",
+          "max": 24.0,
+          "min": -24.0,
+          "modulatable": false,
+          "name": "Octave",
+          "response_curve": "linear",
+          "unit": "semitones"
+        },
+        "phase": {
+          "default": 0.0,
+          "description": "Start phase offset (0–1 turns)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Phase",
+          "response_curve": "linear",
+          "unit": "none"
+        },
         "pulse_width": {
           "default": 0.5,
           "description": "Pulse width for pulse waveform",
@@ -6531,6 +7145,16 @@
       "description": "Oscilloscope waveform display",
       "name": "Scope",
       "parameters": {
+        "freeze": {
+          "default": 0.0,
+          "description": "Freeze the display (stop capturing)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Freeze",
+          "response_curve": "linear",
+          "unit": "none"
+        },
         "gain": {
           "default": 1.0,
           "description": "Vertical gain",
@@ -7291,6 +7915,16 @@
       "description": "Signal Monitor — inline waveform display (pass-through)",
       "name": "Sig Mon",
       "parameters": {
+        "freeze": {
+          "default": 0.0,
+          "description": "Freeze the display (stop capturing)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Freeze",
+          "response_curve": "linear",
+          "unit": "none"
+        },
         "gain": {
           "default": 1.0,
           "description": "Vertical gain",

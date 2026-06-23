@@ -137,11 +137,13 @@ impl AudioEffect for LevelMeter {
     }
 
     fn get_params(&self) -> Vec<Param> {
-        vec![
-            Param::LevelMeter(LevelMeterParam::PeakHold(self.peak_hold_time)),
-            Param::LevelMeter(LevelMeterParam::DecayRate(self.decay_rate)),
-            Param::LevelMeter(LevelMeterParam::ShowRms(self.show_rms)),
-        ]
+        // `decay_rate` and `show_rms` are not consumed by `process()` or the
+        // meter display, so they have no descriptor and are intentionally not
+        // emitted here (they would be dropped on save anyway). Re-add them once
+        // the meter ballistics / RMS-vs-peak display actually read them.
+        vec![Param::LevelMeter(LevelMeterParam::PeakHold(
+            self.peak_hold_time,
+        ))]
     }
 
     fn reset(&mut self) {

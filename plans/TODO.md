@@ -199,6 +199,88 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
   source set per (slot, script-text) and invalidate when `slot_scripts` changes, rather than
   recompiling unconditionally.
 
+### 3.5 MSEG UI overhaul (problematic — needs review)
+
+- [ ] **The MSEG module UI is very problematic and must be reworked.** MSEG is a multi-segment
+  envelope (up to 16 segments, each with time/level/curve, plus loop start/end), but it currently has
+  **no graphical editor** — the only UI is the generic descriptor-driven knob grid. Consequences:
+    1. **The actual envelope shape is not editable in the GUI.** The 48 per-segment params
+       (`seg{0..15}_{time,level,curve}`) are deliberately `WidgetHint::Hidden` (added so the shape
+       round-trips through save/load and is MCP-settable — see the State Sync work), so the only way
+       to draw/shape the envelope today is per-id via MCP `set_parameter`. There is no way to do it by
+       hand in the app.
+    2. **The visible knobs are awkward.** `Segments`/`Sustain Seg`/`Loop Start`/`Loop End` are integer
+       knobs (now `.step(1.0)`-snapped) and `Time Scale` is a multiplier — a grid of knobs is a poor fit
+       for what is fundamentally a *curve*.
+  Fix direction: build a proper **graphical multi-segment envelope editor** (drag segment
+  nodes for time/level, drag handles for per-segment curve, visible sustain + loop-region markers),
+  rendered via a custom widget (`WidgetHint::EnvelopeEditor` already exists as a hint). The Hidden
+  segment params can stay as the persistence/MCP backing; the editor just reads/writes them. Also
+  consider an array-style MCP tool (`set_mseg_segments`) so the shape can be set in one call instead of
+  ~50 individual `set_parameter`s. Review the whole MSEG UX as part of this.
+
+### 3.6 Integer (value-kind) marker on parameters — replace the `step` proxy
+
+- [ ] **Add an explicit integer / value-kind marker to `ParameterDescriptor` and stop using
+  `.step(1.0)` as a proxy for "this is an integer".** Several params are genuinely integer-typed in the
+  engine but get flattened to `f32` at the descriptor boundary, which loses that fact for every generic
+  consumer (GUI, MCP, schema). As a stopgap the MSEG count/index knobs got `.step(1.0)` (knob snapping —
+  `crates/pertylizer/src/gui/widgets/knob.rs` `snapped()`, fed by `ParameterDescriptor.step`). That only
+  fixes drag-snapping; it does **not** fix value display or type metadata, and `step=1.0` is an indirect
+  way of saying "integer". A first-class marker (e.g. `value_kind: ValueKind { Float, Integer }`, or
+  `is_integer: bool`) is the deeper model and would drive snap **and** formatting **and** schema typing
+  from one place; `step` can then stay only as a *general* fractional-quantization mechanism (0.25, 0.5,
+  10.0 …) if we ever actually need it — decide whether to keep both or fold `step` into the value-kind.
+
+  **The marker also has to settle three layers that currently disagree — investigate each:**
+    1. **Engine (source of truth).** The values are already typed: `MsegParam::{SegmentCount,
+       SustainSegment, LoopStart, LoopEnd}` are `u8`; `with_f32` already does `value as u8`, so the
+       engine *always* receives integers regardless of the knob. Audit the full param set for the same
+       shape: integer-backed (`u8`/`i32`/`usize`) params exposed as float knobs (e.g. oscillator
+       `unison` voice count, any other count/index/“N” params), and **also boolean-backed toggles**
+       (`mute`/`limit`/`freeze`/`tempo_sync`/`retrigger` — `bool` rendered as float 0/1 with
+       `WidgetHint::Toggle`). The marker should probably cover Int *and* Bool, not just Int. Produce the
+       list of which `Param` variants are int/bool-backed vs genuinely continuous.
+    2. **MCP / `descriptors.json`** (`crates/pertylizer/src/bin/gen_schemas.rs` `parameter_descriptor`).
+       Integer params are currently advertised as `number`; with a marker, emit `"type": "integer"` (and
+       booleans as `"boolean"`) so an LLM/client sends `4`, not `4.0`. Today only `min`/`max`/`default`/
+       `response_curve` (+ the new `step`) are emitted. Also reconsider whether `validate_f32` at the MCP
+       boundary should round/reject non-integers for these.
+    3. **Project files / `ParamValue`** (`crates/pertylizer/src/patch.rs`). `ParamValue` *already* has
+       `Int(i32)` and `Bool(bool)` variants, but integer/bool params currently serialize as
+       `Float(as_f32())` (see `from_param` → `Self::Float(p.as_f32())`). Decide whether int/bool params
+       should round-trip as `Int`/`Bool` in saved `.json` (cleaner, self-describing files) and wire
+       `from_param`/`to_param` to consult the marker. Note any migration concern for existing projects
+       that stored these as floats.
+
+  **Display:** `ParameterUnit::None` formats `{:.2}` (`module_traits.rs` `format`), so integer knobs show
+  "4.00"/"16.00" in the tooltip. The marker should make integer display decimal-free ("4"). — Net: the
+  marker is the root-cause fix; `step` was the bandaid. Keep `step` only if a real fractional-quantization
+  need appears.
+
+### 3.7 Visualizer module bugs (reported in-app)
+
+Three issues observed with the visualizer modules (`Oscilloscope`, `SpectrumAnalyzer`, `LevelMeter`,
+`SignalMonitor`) in the patch editor. Not yet root-caused — pointers below are starting points.
+
+- [ ] **Visualizer modules can't be removed — the top-right close (✕) button does nothing.** Removing a
+  visualizer node via the header close button fails (other module types presumably remove fine). Likely a
+  gap in the delete/remove path for visualizer module types specifically. Start in
+  `crates/pertylizer/src/gui/patch_editor.rs` (the module header close-button handler / `remove`/delete
+  flow) and the `RemoveModule` command dispatch in `crates/synth_engine/src/synth_engine.rs` — check
+  whether visualizers (which are `AudioEffect`s in `synth_engine/src/visualizers/`, not voice-graph
+  `PolyModule`s, and are registered/created on a separate path — see `module_factory.rs` /
+  `patch_bridge.rs` visualizer special-cases) are handled by the remove path or silently skipped.
+- [ ] **Enlarge the visualizer graph area.** The scope/spectrum/meter render areas are a bit small; bump
+  the default graph size for more usable detail. See the widget renderers
+  `crates/pertylizer/src/gui/widgets/{scope,spectrum,meter}.rs` and wherever the visualizer node sizes
+  its draw rect.
+- [ ] **SpectrumAnalyzer sometimes draws stray horizontal lines outside the graph rect.** The spectrum
+  graph occasionally renders horizontal "glitch" lines outside its own bounds. Likely an unclipped
+  painter draw or an out-of-range bin/`y` value (NaN/Inf or a value not clamped to the plot rect) in
+  `crates/pertylizer/src/gui/widgets/spectrum.rs` — add rect clipping and/or clamp/sanitize the plotted
+  values, and confirm the painter is clipped to the graph rect.
+
 ---
 
 ## 4. AI & Automation

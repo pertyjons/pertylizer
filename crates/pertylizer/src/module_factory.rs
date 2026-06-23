@@ -427,4 +427,55 @@ mod tests {
             "module types in ALL_MODULE_TYPES with no descriptor: {missing:?}"
         );
     }
+
+    /// Resolve a module's descriptor *and* its `get_params()` snapshot, covering
+    /// voice modules, effects, and visualizers (mirrors [`get_descriptor`]).
+    fn descriptor_and_params(mt: ModuleType) -> Option<(ModuleDescriptor, Vec<synth_core::Param>)> {
+        if let Some((m, d)) = create_voice_module(mt) {
+            return Some((d, m.get_params()));
+        }
+        if let Some((e, d)) = create_effect(mt) {
+            return Some((d, e.get_params()));
+        }
+        match mt {
+            ModuleType::Oscilloscope => {
+                let m = synth_engine::visualizers::Oscilloscope::new();
+                Some((m.descriptor(), m.get_params()))
+            }
+            ModuleType::LevelMeter => {
+                let m = synth_engine::visualizers::LevelMeter::new();
+                Some((m.descriptor(), m.get_params()))
+            }
+            ModuleType::SpectrumAnalyzer => {
+                let m = synth_engine::visualizers::SpectrumAnalyzer::new();
+                Some((m.descriptor(), m.get_params()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Every parameter a module emits from `get_params()` must have a matching
+    /// descriptor entry. Project save iterates `descriptor.parameters` and matches
+    /// each against `get_params()` (`create_patch_from_editor`), so a param in
+    /// `get_params()` with no descriptor entry is **silently dropped on save** —
+    /// lost on reload, no GUI knob, not settable via MCP. This guards the whole
+    /// module set against that class of state-sync mismatch.
+    #[test]
+    fn get_params_have_descriptor_entries() {
+        let mut offenders = Vec::new();
+        for &mt in ALL_MODULE_TYPES.iter() {
+            let Some((desc, params)) = descriptor_and_params(mt) else {
+                continue;
+            };
+            for p in &params {
+                if !desc.parameters.iter().any(|d| p.same_kind(&d.id)) {
+                    offenders.push(format!("{mt:?}: {p:?}"));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "get_params() entries with no descriptor (silently dropped on save): {offenders:#?}"
+        );
+    }
 }

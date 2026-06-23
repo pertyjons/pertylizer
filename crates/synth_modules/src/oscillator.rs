@@ -365,6 +365,35 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "octave",
+                    Param::Oscillator(OscillatorParam::octave_default()),
+                    "Octave",
+                )
+                .description("Coarse tune in semitones")
+                .range(-24.0, 24.0)
+                .default(0.0)
+                .unit(ParameterUnit::Semitones)
+                // Coarse pitch is set by the dedicated `pitch`/`frequency` mod
+                // targets, not this base param, so it is not a mod target itself.
+                .modulatable(false)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "phase",
+                    Param::Oscillator(OscillatorParam::Phase(Phase::ZERO)),
+                    "Phase",
+                )
+                .description("Start phase offset (0–1 turns)")
+                .range(0.0, 1.0)
+                .default(0.0)
+                // `process` does not apply a generic mod offset to phase, so it is
+                // not a modulation target.
+                .modulatable(false)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "pulse_width",
                     Param::Oscillator(OscillatorParam::PulseWidth(PulseWidthParam::SQUARE)),
                     "Pulse Width",
