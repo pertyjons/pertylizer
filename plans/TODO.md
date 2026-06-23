@@ -245,7 +245,7 @@ deeper/cross-crate items that a one-line fix could not properly address.
 
 ### 5.2 Promote engine block-size & max-sample-rate to shared `pub const`s
 
-- [ ] **`compressor.rs` and `limiter.rs` hand-copy private engine constants.** `compressor.rs` sizes
+- [x] **`compressor.rs` and `limiter.rs` hand-copy private engine constants.** `compressor.rs` sizes
   its sidechain buffer from a local `MAX_SIDECHAIN_SAMPLES = 4096*2` that duplicates the engine's
   **private** `MAX_BUFFER_SIZE` (4096 frames, itself duplicated in `effect_chain.rs:21`,
   `voice.rs:49`, `instrument.rs:343`). `limiter.rs` sizes its look-ahead ring from a local

@@ -28,8 +28,8 @@ pub mod types;
 // Re-export all types at crate root for convenience
 pub use audio::{
     AudioBackend, AudioCallbackContext, AudioError, AudioHost, AudioHostTrait, AudioProcessor,
-    AudioResult, AudioStream, BufferSize, ChannelCount, DeviceInfo, DeviceType, StreamConfig,
-    StreamInfo,
+    AudioResult, AudioStream, BufferSize, ChannelCount, DeviceInfo, DeviceType, MAX_BLOCK_SIZE,
+    StreamConfig, StreamInfo,
 };
 pub use module_traits::*;
 pub use params::*;

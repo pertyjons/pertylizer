@@ -378,6 +378,13 @@ impl SampleRate {
     pub const DVD_QUALITY: Self = Self(48000.0);
     pub const HIGH_RES: Self = Self(96000.0);
 
+    /// The highest sample rate the engine supports — the engine-wide ceiling.
+    ///
+    /// Real-time look-ahead / scratch buffers that must hold a worst-case number
+    /// of samples (e.g. the limiter's look-ahead ring) size themselves from this
+    /// rather than a hand-copied literal, so they can't desync if the ceiling moves.
+    pub const MAX_SUPPORTED: Self = Self(192_000.0);
+
     /// Get the raw value.
     #[inline]
     pub const fn as_f32(self) -> f32 {

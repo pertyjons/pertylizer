@@ -339,8 +339,8 @@ impl Default for MidiChannel {
     }
 }
 
-/// Maximum buffer size for instrument audio buffers.
-const MAX_BUFFER_SIZE: usize = 4096;
+// Maximum buffer size for instrument audio buffers — the engine-wide block ceiling.
+use synth_core::MAX_BLOCK_SIZE as MAX_BUFFER_SIZE;
 
 /// Soft clipper threshold - signals above this level start to be compressed.
 const SOFT_CLIP_THRESHOLD: f32 = 0.8;

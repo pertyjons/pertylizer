@@ -45,8 +45,8 @@ impl VoiceId {
     }
 }
 
-/// Maximum buffer size we support.
-const MAX_BUFFER_SIZE: usize = 4096;
+// Maximum buffer size we support — the engine-wide block ceiling.
+use synth_core::MAX_BLOCK_SIZE as MAX_BUFFER_SIZE;
 
 /// Per-voice values of the six true macro sources, computed once per block and
 /// read when resolving a routing whose source is a [`MacroSource`].
