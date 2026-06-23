@@ -685,6 +685,14 @@ impl PolyModule for MathOscillator {
         }
     }
 
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // `process` recomputes `self.frequency` from `base_frequency` each block
+        // (mod-offset + FM on top), so the modulated note pitch must land on
+        // `base_frequency` — writing `self.frequency` would be overwritten. Same
+        // clamp the `Frequency` param uses.
+        self.base_frequency = Hertz::new(freq.as_f32().clamp(20.0, 20000.0));
+    }
+
     fn note_off(&mut self) {
         // Most algorithms don't need special handling
     }
@@ -697,6 +705,33 @@ impl PolyModule for MathOscillator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voice_pitch_harness::{amdf_fundamental, render_mono};
+    use synth_core::{MidiNote, SampleRate, Velocity};
+
+    /// `set_voice_pitch` retunes the oscillator via `base_frequency` (which
+    /// `process` re-reads each block): 2× voice pitch doubles the rendered
+    /// fundamental; a static note holds. Default algo is a clean SineFM.
+    #[test]
+    fn math_osc_tracks_voice_pitch() {
+        let sr = SampleRate::DVD_QUALITY;
+        let srf = sr.as_f32();
+        let f = MidiNote::A4.to_frequency().as_f32();
+        let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
+
+        let mut s = MathOscillator::new();
+        s.note_on(MidiNote::A4, Velocity::MAX);
+        let stat = render_mono(&mut s, sr, 4, 1024, |_| {});
+        let est_stat = amdf_fundamental(&stat[2048..], srf, f);
+        assert!(cents(est_stat, f).abs() < 50.0, "static {est_stat}");
+
+        let mut s2 = MathOscillator::new();
+        s2.note_on(MidiNote::A4, Velocity::MAX);
+        let up = render_mono(&mut s2, sr, 4, 1024, |m| {
+            m.set_voice_pitch(Hertz::new(f * 2.0));
+        });
+        let est_up = amdf_fundamental(&up[2048..], srf, f * 2.0);
+        assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
+    }
 
     #[test]
     fn test_math_oscillator_creation() {

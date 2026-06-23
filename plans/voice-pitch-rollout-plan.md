@@ -131,7 +131,7 @@ One module per commit, gated (`cargo build` / `clippy --all-targets` / `test` /
   (`voice_pitch_harness.rs`), validated end-to-end against `Oscillator`.
 - [ ] **Phase 1 (Tier 1):**
   - [x] SubOsc
-  - [ ] MathOsc
+  - [x] MathOsc
   - [ ] PadSynth
   - [ ] WavetableOsc
   - [ ] RingMod
