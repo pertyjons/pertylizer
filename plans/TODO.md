@@ -272,8 +272,11 @@ deeper/cross-crate items that a one-line fix could not properly address.
 
 ### 5.4 PadSynth: mark the wavetable dirty on sample-rate change (low priority)
 
-- [ ] **`PadSynth` rebuilds its wavetable lazily in `note_on`, keyed on `self.sample_rate`, but has no
-  `set_sample_rate` override.** The engine propagates the sample rate to voice-graph modules only via
+- [x] **`PadSynth` rebuilds its wavetable lazily in `note_on`, keyed on `self.sample_rate`, but has no
+  `set_sample_rate` override.** (Done — see `plans/dsp-hardening-plan.md` §5.4. The substantive bug was
+  actually the **`phase_increment`** staleness, not just the wavetable: fixed by deferring the
+  `pitch / sample_rate` division to `process()`. `process()` setting `self.sample_rate` from the context
+  also makes the wavetable rebuild guard see the current rate for any note after the first block.) The engine propagates the sample rate to voice-graph modules only via
   `ProcessContext` inside `process()` (established by the `granular_osc` fix in the same pass), so if a
   `note_on` arrives before the first `process()` at a newly-changed rate, the table is built with the
   stale rate's harmonic-bin placement for that one note (corrected on the next note). This is

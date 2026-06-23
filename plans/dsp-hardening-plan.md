@@ -77,6 +77,12 @@ under-allocates look-ahead (drops the 5 ms guarantee near peaks).
 
 ## 5.4 — PadSynth: fix stale sample-rate (pitch bug — upgraded from low prio)
 
+> ✅ **DONE** — added `current_pitch: Hertz`; `note_on`/`set_voice_pitch` now record the
+> pitch, and `process()` derives `phase_increment` from it + the render rate each block
+> (clamped via `Hertz::OSC_RANGE`). Regression test
+> `phase_increment_follows_render_rate_not_note_on_rate` asserts the increment tracks the
+> context rate (96 kHz), not the note_on-time default (48 kHz). Build/clippy/test/fmt green.
+
 **Why (corrected scope — the review caught a real pitch bug my first draft missed):**
 PadSynth has **two** sample-rate dependencies, and the original TODO only named one:
 1. **Wavetable harmonic-bin placement** — built in `build_wavetable` keyed on
