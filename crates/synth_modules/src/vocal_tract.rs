@@ -460,9 +460,9 @@ impl PolyModule for VocalTract {
             if tongue_cv_connected || lips_cv_connected {
                 let mut dirty = false;
                 if tongue_cv_connected {
-                    // Sanitize the raw CV (NaN/inf → 0) then clamp into the
-                    // Kelly–Lochbaum-valid articulator range [0, 1].
-                    let cv = crate::math::sanitize_cv(tongue_cv[i]);
+                    // `InputReader::get` sanitizes the raw CV (NaN/inf → 0); then clamp
+                    // into the Kelly–Lochbaum-valid articulator range [0, 1].
+                    let cv = tongue_cv.get(i);
                     let target = (base_tongue + cv * CV_DEPTH).clamp(0.0, 1.0);
                     if (target - self.current_tongue).abs() > ARTIC_EPS {
                         self.current_tongue = target;
@@ -470,7 +470,7 @@ impl PolyModule for VocalTract {
                     }
                 }
                 if lips_cv_connected {
-                    let cv = crate::math::sanitize_cv(lips_cv[i]);
+                    let cv = lips_cv.get(i);
                     let target = (base_lips + cv * CV_DEPTH).clamp(0.0, 1.0);
                     if (target - self.current_lips).abs() > ARTIC_EPS {
                         self.current_lips = target;
@@ -485,7 +485,7 @@ impl PolyModule for VocalTract {
             // The velum opening is cheap to set (no profile rebuild), so a
             // connected CV can drive it every sample.
             if nasality_cv_connected {
-                let cv = crate::math::sanitize_cv(nasality_cv[i]);
+                let cv = nasality_cv.get(i);
                 self.current_nasality = (base_nasality + cv * CV_DEPTH).clamp(0.0, 1.0);
                 self.tract.set_velum(self.current_nasality);
             }

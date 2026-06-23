@@ -291,7 +291,7 @@ impl PolyModule for Sampler {
         // unconnected port reads 0.0 → factor 1.0, so this is a no-op unless a
         // mod source (LFO / envelope / mod matrix) is patched in.
         let pitch_cv = inputs.reader(PortName::PITCH_CV, 0.0);
-        let cv_octaves = crate::math::sanitize_cv(if n_samples > 0 { pitch_cv[0] } else { 0.0 })
+        let cv_octaves = (if n_samples > 0 { pitch_cv.get(0) } else { 0.0 })
             .clamp(-PITCH_CV_RANGE_OCTAVES, PITCH_CV_RANGE_OCTAVES);
         let target_speed = self.base_speed * 2.0_f64.powf(f64::from(cv_octaves));
 

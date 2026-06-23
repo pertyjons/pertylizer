@@ -231,7 +231,10 @@ deeper/cross-crate items that a one-line fix could not properly address.
 
 ### 5.1 Sanitize CV at the input-read boundary (deeper NaN fix)
 
-- [ ] **Move NaN/Inf coercion to the CV-buffer read boundary instead of per-call-site.** The fix
+- [x] **Move NaN/Inf coercion to the CV-buffer read boundary instead of per-call-site.** (Done —
+  `InputReader::get(i)` is the sanitizing accessor; all 16 reader-based CV reads migrated. The
+  `inputs.get()→&AudioBuffer` osc reads + non-CV scalar reads keep explicit `sanitize_cv`. See
+  `plans/dsp-hardening-plan.md` §5.1.) The fix
   pass added `crate::math::sanitize_cv` (non-finite → 0.0) and wrapped the direct CV-input reads
   in the filters and oscillators (`cutoff_cv`, `freq_cv`, `fm`, `pm`, `pwm`, `sync`, vowel/breath/
   pitch CV, …). This works but is **per-call-site and easy to forget** — the review already caught

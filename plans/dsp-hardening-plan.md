@@ -157,6 +157,15 @@ This recompute is one division per block — negligible.
 
 ## 5.1 — Sanitize CV at the input-read boundary
 
+> ✅ **DONE** — added the sanitizing `InputReader::get(i) -> f32` accessor and migrated all
+> 16 `InputReader`-based CV reads (oscillator ×5, filter ×3, lfo, voice_synth ×3,
+> vocal_tract ×3, sampler) from `sanitize_cv(reader[i])` to `reader.get(i)`. The 4
+> buffer-based osc reads (`inputs.get()` → `Option<&AudioBuffer>`: additive/fractal/math/
+> wavetable) and the 4 non-CV scalar `sanitize_cv` calls (signal_monitor, wavetable_data,
+> formant_tables, waveshaper) keep the explicit call by design; `math.rs::sanitize_cv`
+> stays. Boundary test `input_reader_get_sanitizes_non_finite_cv` added. Build/clippy/test/
+> fmt green.
+
 **Why:** NaN/Inf can only enter DSP through a **direct CV-input buffer** (mod-matrix
 offsets are already clamped by `ParamModOffsets::effective()` → `norm.clamp(0.0,1.0)`,
 `module_traits.rs:1112`). The fix pass added `crate::math::sanitize_cv`
