@@ -224,6 +224,13 @@ impl PolyModule for SubOscillator {
         self.phase = Phase::ZERO;
     }
 
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // Track the voice's modulated note pitch (glide / vibrato / bend); the
+        // octave divisor still applies in `generate_sample`. Phase accumulates
+        // continuously, so only the step size changes — no click.
+        self.base_frequency = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+    }
+
     fn note_off(&mut self) {
         // Sub-oscillator doesn't need to do anything on note off
     }
@@ -236,6 +243,33 @@ impl PolyModule for SubOscillator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voice_pitch_harness::{amdf_fundamental, render_mono};
+    use synth_core::{MidiNote, SampleRate, Velocity};
+
+    /// `set_voice_pitch` continuously retunes the sub-osc: 2× voice pitch doubles
+    /// the rendered fundamental; a static note stays put. Default octave is −1,
+    /// so the output sits an octave below the note (`base / 2`).
+    #[test]
+    fn sub_osc_tracks_voice_pitch() {
+        let sr = SampleRate::DVD_QUALITY;
+        let srf = sr.as_f32();
+        let f = MidiNote::A4.to_frequency().as_f32();
+        let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
+
+        let mut s = SubOscillator::new();
+        s.note_on(MidiNote::A4, Velocity::MAX);
+        let stat = render_mono(&mut s, sr, 4, 1024, |_| {});
+        let est_stat = amdf_fundamental(&stat[2048..], srf, f / 2.0);
+        assert!(cents(est_stat, f / 2.0).abs() < 50.0, "static {est_stat}");
+
+        let mut s2 = SubOscillator::new();
+        s2.note_on(MidiNote::A4, Velocity::MAX);
+        let up = render_mono(&mut s2, sr, 4, 1024, |m| {
+            m.set_voice_pitch(Hertz::new(f * 2.0));
+        });
+        let est_up = amdf_fundamental(&up[2048..], srf, f); // base 880 / 2 = 440
+        assert!(cents(est_up, f).abs() < 50.0, "2x {est_up}");
+    }
 
     #[test]
     fn test_sub_osc_creation() {
