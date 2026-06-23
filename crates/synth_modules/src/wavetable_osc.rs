@@ -285,6 +285,13 @@ impl PolyModule for WavetableOsc {
         self.phase = Phase::ZERO;
     }
 
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // `effective_freq()` derives the playback frequency from `note_freq` each
+        // block (octave + detune on top), so the modulated note pitch lands on
+        // `note_freq`. Phase accumulates continuously — no click.
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+    }
+
     fn note_off(&mut self) {
         // Nothing to do
     }
@@ -297,6 +304,35 @@ impl PolyModule for WavetableOsc {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voice_pitch_harness::{amdf_fundamental, render_mono};
+    use synth_core::SampleRate;
+
+    /// `set_voice_pitch` retunes the table read via `note_freq` (which
+    /// `effective_freq` re-reads each block): 2× voice pitch doubles the rendered
+    /// fundamental; a static note holds. Measured at A2 to keep table harmonics
+    /// below Nyquist at both F and 2F.
+    #[test]
+    fn wavetable_osc_tracks_voice_pitch() {
+        let sr = SampleRate::DVD_QUALITY;
+        let srf = sr.as_f32();
+        let note = MidiNote(45); // A2 ≈ 110 Hz
+        let f = note.to_frequency().as_f32();
+        let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
+
+        let mut s = WavetableOsc::new();
+        s.note_on(note, Velocity::MAX);
+        let stat = render_mono(&mut s, sr, 4, 1024, |_| {});
+        let est_stat = amdf_fundamental(&stat[2048..], srf, f);
+        assert!(cents(est_stat, f).abs() < 50.0, "static {est_stat}");
+
+        let mut s2 = WavetableOsc::new();
+        s2.note_on(note, Velocity::MAX);
+        let up = render_mono(&mut s2, sr, 4, 1024, |m| {
+            m.set_voice_pitch(Hertz::new(f * 2.0));
+        });
+        let est_up = amdf_fundamental(&up[2048..], srf, f * 2.0);
+        assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
+    }
 
     /// `detune` is now a working pitch mod destination (it used to be dropped):
     /// a normalized offset shifts the effective frequency, clearing reverts.
