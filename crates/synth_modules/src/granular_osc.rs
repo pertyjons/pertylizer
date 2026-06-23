@@ -40,16 +40,20 @@ const SOURCE_BASE_FREQ: f32 = 110.0;
 #[allow(dead_code)]
 struct Grain {
     active: bool,
-    /// Start position in source buffer (in samples, fractional). Captured from the
-    /// shared free-running playhead at spawn time so overlapping grains stay
-    /// phase-coherent.
-    start_pos: f32,
-    /// Current position within the grain (in samples).
+    /// Current read position in the source buffer (samples, fractional). Seeded
+    /// at the shared playhead on spawn, then **accumulated** per sample so the
+    /// grain bends continuously when the voice pitch changes mid-grain — a stored
+    /// absolute `rate` multiplied by `pos` would jump the read position the
+    /// instant the rate changed (phase tear).
+    read_pos: f32,
+    /// Current position within the grain (in samples) — drives the envelope.
     pos: f32,
     /// Grain length in samples.
     length: usize,
-    /// Playback rate (1.0 = normal pitch).
-    rate: f32,
+    /// This grain's per-grain pitch detune (from pitch-spread), as a ratio. The
+    /// live playback rate is `base_rate · pitch_ratio`, where `base_rate` tracks
+    /// the (modulated) note pitch each block.
+    pitch_ratio: f32,
     /// Stereo pan (-1 left, +1 right).
     pan: BipolarValue,
 }
@@ -58,10 +62,10 @@ impl Default for Grain {
     fn default() -> Self {
         Self {
             active: false,
-            start_pos: 0.0,
+            read_pos: 0.0,
             pos: 0.0,
             length: 0,
-            rate: 1.0,
+            pitch_ratio: 1.0,
             pan: BipolarValue::CENTER,
         }
     }
@@ -262,21 +266,23 @@ impl GranularOsc {
             (base_pos + self.rng.next_bipolar() * spread * 0.5) * self.source_len as f32;
         let start = self.playhead + pos_offset;
 
-        // Pitch variation (semitones -> rate)
+        // Per-grain pitch detune (pitch-spread, in semitones → ratio). The live
+        // playback rate is `base_rate · pitch_ratio` (computed per sample in
+        // `process`), so an active grain bends with the note instead of being
+        // frozen at its spawn-time pitch.
         let pitch_spread_semitones = self.pitch_spread.as_f32() * 24.0;
         let pitch_offset = self.rng.next_bipolar() * pitch_spread_semitones;
-        let rate = (self.note_freq.as_f32() / SOURCE_BASE_FREQ)
-            * crate::math::semitones_to_ratio(pitch_offset);
+        let pitch_ratio = crate::math::semitones_to_ratio(pitch_offset);
 
         // Pan
         let pan = BipolarValue::new(self.rng.next_bipolar() * self.pan_spread.as_f32());
 
         self.grains[idx] = Grain {
             active: true,
-            start_pos: start,
+            read_pos: start,
             pos: 0.0,
             length: grain_samples,
-            rate,
+            pitch_ratio,
             pan,
         };
     }
@@ -531,7 +537,7 @@ impl PolyModule for GranularOsc {
                 // Read from source buffer with linear interpolation, wrapping at the
                 // buffer end so a grain that runs past it loops back instead of reading
                 // silence (the buffer holds a whole number of source cycles).
-                let read_pos = (grain.start_pos + grain.pos * grain.rate).rem_euclid(source_len_f);
+                let read_pos = grain.read_pos.rem_euclid(source_len_f);
                 let idx = (read_pos as usize).min(self.source_len - 1);
                 let frac = read_pos - idx as f32;
                 let s0 = self.source_buffer[idx];
@@ -544,6 +550,10 @@ impl PolyModule for GranularOsc {
                 let sample = crate::math::lerp(s0, s1, frac);
 
                 mix += sample * env;
+                // Accumulate the read position at the *current* rate so a mid-grain
+                // pitch change bends smoothly (no jump). `base_rate` already tracks
+                // the modulated note pitch this block.
+                grain.read_pos += base_rate * grain.pitch_ratio;
                 grain.pos += 1.0;
             }
 
@@ -654,6 +664,14 @@ impl PolyModule for GranularOsc {
         self.samples_until_next_grain = 0.0;
     }
 
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // `process` derives `base_rate = note_freq / SOURCE_BASE_FREQ` each block
+        // and accumulates each active grain's read position at `base_rate ·
+        // pitch_ratio`, so updating `note_freq` bends both new *and* already-
+        // playing grains continuously (no jump — see the `Grain.read_pos` note).
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+    }
+
     fn note_off(&mut self) {
         // Grains continue until they finish naturally
     }
@@ -673,7 +691,41 @@ impl PolyModule for GranularOsc {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voice_pitch_harness::{amdf_fundamental, render_mono};
     use synth_core::Velocity;
+
+    /// `set_voice_pitch` retunes the grain playback rate via `note_freq` (read
+    /// live as `base_rate` each block, accumulated into every active grain's read
+    /// position): 2× voice pitch doubles the rendered fundamental; a static note
+    /// holds. Spreads zeroed so the overlap-add reconstructs the source cleanly.
+    #[test]
+    fn granular_osc_tracks_voice_pitch() {
+        let sr = SampleRate::DVD_QUALITY;
+        let srf = sr.as_f32();
+        let note = MidiNote(45); // A2 ≈ 110 Hz (rate 1.0 at SOURCE_BASE_FREQ)
+        let f = note.to_frequency().as_f32();
+        let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
+
+        let clean = || {
+            let mut s = GranularOsc::new();
+            s.position_spread = NormalizedValue::MIN;
+            s.pitch_spread = NormalizedValue::MIN;
+            s.note_on(note, Velocity::MAX);
+            s
+        };
+
+        let mut s = clean();
+        let stat = render_mono(&mut s, sr, 8, 1024, |_| {});
+        let est_stat = amdf_fundamental(&stat[4096..], srf, f);
+        assert!(cents(est_stat, f).abs() < 50.0, "static {est_stat}");
+
+        let mut s2 = clean();
+        let up = render_mono(&mut s2, sr, 8, 1024, |m| {
+            m.set_voice_pitch(Hertz::new(f * 2.0));
+        });
+        let est_up = amdf_fundamental(&up[4096..], srf, f * 2.0);
+        assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
+    }
 
     /// `level` is a working mod destination via the generic store, and the
     /// transiently-applied spawn-time params are restored after each block.

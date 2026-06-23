@@ -140,10 +140,11 @@ One module per commit, gated (`cargo build` / `clippy --all-targets` / `test` /
   - [x] AdditiveOsc
   - [x] AmFormant
   - [x] FractalOsc
-- [ ] **Phase 3 (Tier 3):**
+- [x] **Phase 3 (Tier 3):**
   - [x] VocalTract (per-sample `inc`)
   - [x] Fof
-  - [ ] GranularOsc (*after* deciding the trail-vs-bend contract)
+  - [x] GranularOsc (**decided: continuous bend** — `Grain` refactored to an
+    accumulating `read_pos` + per-grain `pitch_ratio`; active grains bend)
 
 Stop after any phase if priorities change; each module is independently complete.
 
@@ -184,11 +185,11 @@ ear-check the tracker importer needs.
   `ChaoticOsc`. Each is a separate *feature* (giving the module note pitch),
   distinct from this rollout (continuous pitch for already-note-pitched sources).
   `Fooglers` and `LaSynth` are the more defensible candidates.
-- **GranularOsc trail-vs-bend contract** — decide before Phase 3 (Tier 3).
-  Default leaning: continuous bend, since the importer's instrument glides want a
-  coherent sweep, not a cluster — but it requires the accumulating-playhead `Grain`
-  refactor (see Tier 3), not a one-liner. If that cost isn't worth it, trails is a
-  legitimate (do-nothing) fallback.
+- ~~**GranularOsc trail-vs-bend contract**~~ — **DECIDED: continuous bend.** The
+  `Grain` was refactored to an accumulating `read_pos` (+ per-grain `pitch_ratio`)
+  so active grains bend with the note, a coherent sweep for instrument glides. The
+  v2 playhead-jump bug is avoided by accumulating the position rather than
+  recomputing `start_pos + pos·rate`.
 - `pitch_cv` input ports on the oscillators (they already have FM/freq-CV; revisit
   only if a modular pitch-CV path is specifically wanted).
 - Per-sample (vs per-block) pitch smoothing — only if a Tier 3 module audibly
