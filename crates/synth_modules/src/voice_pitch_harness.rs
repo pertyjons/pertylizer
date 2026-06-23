@@ -38,10 +38,11 @@ pub(crate) fn amdf_fundamental(signal: &[f32], sample_rate: f32, expected_hz: f3
     sample_rate / best_lag as f32
 }
 
-/// Render `blocks × block_len` mono samples from a source `module` at `sr`,
-/// calling `before_block` immediately before each `process` (the seam where a
-/// test pushes the per-block voice pitch). Returns the concatenated `OUT`
-/// signal. The default sample rate is [`SampleRate::DVD_QUALITY`] (48 kHz).
+/// Render `blocks × block_len` samples from a source `module` at `sr`, calling
+/// `before_block` immediately before each `process` (the seam where a test
+/// pushes the per-block voice pitch). Returns one channel of output: the mono
+/// `OUT` port when the module writes it, else the left channel (`OUT_L`) for
+/// stereo sources. The default sample rate is [`SampleRate::DVD_QUALITY`].
 pub(crate) fn render_mono(
     module: &mut dyn PolyModule,
     sr: SampleRate,
@@ -58,10 +59,19 @@ pub(crate) fn render_mono(
     let mut out = Vec::with_capacity(blocks * block_len);
     for _ in 0..blocks {
         before_block(module);
+        // Provide all three common source ports; pick whichever the module fills.
         let mut outs = HashMap::new();
         outs.insert(PortName::OUT, AudioBuffer::new(block_len));
+        outs.insert(PortName::OUT_L, AudioBuffer::new(block_len));
+        outs.insert(PortName::OUT_R, AudioBuffer::new(block_len));
         module.process(InputPorts::empty(), &mut outs, &ctx);
-        let b = &outs[&PortName::OUT];
+        let mono = &outs[&PortName::OUT];
+        let has_mono = (0..mono.len()).any(|i| mono[i] != 0.0);
+        let b = if has_mono {
+            mono
+        } else {
+            &outs[&PortName::OUT_L]
+        };
         for i in 0..b.len() {
             out.push(b[i]);
         }

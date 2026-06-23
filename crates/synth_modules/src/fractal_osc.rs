@@ -361,6 +361,13 @@ impl PolyModule for FractalOscillator {
         self.note_freq = note.to_frequency();
     }
 
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // `process` reads `note_freq` live each sample to scale the fractal
+        // generator, so tracking the modulated note pitch is just updating
+        // `note_freq`. Phase accumulates continuously — no click.
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+    }
+
     fn note_off(&mut self) {
         // Nothing to do — envelope controls note release
     }
@@ -378,6 +385,42 @@ impl PolyModule for FractalOscillator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voice_pitch_harness::{amdf_fundamental, render_mono};
+
+    /// `set_voice_pitch` retunes the fractal generator via `note_freq` (read live
+    /// by `process`): 2× voice pitch doubles the rendered fundamental; a static
+    /// note holds. Measured at A2.
+    #[test]
+    fn fractal_osc_tracks_voice_pitch() {
+        let sr = SampleRate::DVD_QUALITY;
+        let srf = sr.as_f32();
+        let note = MidiNote(45); // A2 ≈ 110 Hz
+        let f = note.to_frequency().as_f32();
+        let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
+
+        // roughness = 0 collapses the Weierstrass sum to the n=0 partial only,
+        // i.e. a pure sine at note_freq — cleanly measurable. The fractal upper
+        // partials sit at the slightly-inharmonic freq·b^n, which has no clean
+        // AMDF fundamental; pitch *tracking* is independent of roughness.
+        let pure = || {
+            let mut s = FractalOscillator::new();
+            s.roughness = NormalizedValue::MIN;
+            s.note_on(note, Velocity::MAX);
+            s
+        };
+
+        let mut s = pure();
+        let stat = render_mono(&mut s, sr, 4, 1024, |_| {});
+        let est_stat = amdf_fundamental(&stat[2048..], srf, f);
+        assert!(cents(est_stat, f).abs() < 50.0, "static {est_stat}");
+
+        let mut s2 = pure();
+        let up = render_mono(&mut s2, sr, 4, 1024, |m| {
+            m.set_voice_pitch(Hertz::new(f * 2.0));
+        });
+        let est_up = amdf_fundamental(&up[2048..], srf, f * 2.0);
+        assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
+    }
 
     #[test]
     fn test_fractal_osc_creation() {
