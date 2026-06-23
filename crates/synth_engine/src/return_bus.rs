@@ -46,8 +46,8 @@ pub struct ReturnBusChannel {
 
 impl ReturnBusChannel {
     /// Maximum interleaved frame size pre-allocated for the input buffer
-    /// (4096 stereo frames), matching the per-instrument sidechain cache.
-    const MAX_FRAME: usize = 4096 * 2;
+    /// (`MAX_BLOCK_SIZE` stereo frames), matching the per-instrument sidechain cache.
+    const MAX_FRAME: usize = synth_core::MAX_BLOCK_SIZE * 2;
 
     /// Create a new, empty return-bus channel at unity gain / centre pan.
     #[must_use]

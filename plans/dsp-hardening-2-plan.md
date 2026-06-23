@@ -202,6 +202,13 @@ buffers). No ear-check strictly required since there's no threading/latency elem
 
 ## D — Finish the shared-constant unification (5.2 class) — *cleanup, trivial*
 
+> ✅ **DONE (engine + AWE sites)** — `return_bus.rs` `MAX_FRAME`, `synth_engine.rs` audio-input
+> ring + per-instrument sidechain buffer, and `spatial_voice.rs` `VOICE_BUFFER_SIZE` now
+> derive from `synth_core::MAX_BLOCK_SIZE` (value-identical: 8192 / 4096). `SampleCount::new`
+> is const-fn so the AWE `const` still evaluates. The two effect private consts
+> (`phase_vocoder.rs:20`, `spectral_blur.rs:21`) land with **C** since those files are rewritten
+> there. Build/clippy/test/fmt green.
+
 **Why:** Six `4096`/`8192` block-size literals escaped the 5.2 sweep and still duplicate
 `synth_core::MAX_BLOCK_SIZE`:
 
