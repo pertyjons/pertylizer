@@ -603,8 +603,12 @@ impl PolyModule for MathOscillator {
             };
 
             // Per-sample Mod A/B CV adds on top of the modulated param base.
-            let a = mod_a.map_or(base_a, |ma| (base_a + ma[i] * 0.5).clamp(0.0, 1.0));
-            let b = mod_b.map_or(base_b, |mb| (base_b + mb[i] * 0.5).clamp(0.0, 1.0));
+            let a = mod_a.map_or(base_a, |ma| {
+                (base_a + crate::math::sanitize_cv(ma[i]) * 0.5).clamp(0.0, 1.0)
+            });
+            let b = mod_b.map_or(base_b, |mb| {
+                (base_b + crate::math::sanitize_cv(mb[i]) * 0.5).clamp(0.0, 1.0)
+            });
 
             self.output_buffer[i] = self.generate_sample(a, b, c) * level;
         }

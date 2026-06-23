@@ -15,6 +15,15 @@ One commit per class (C may be two). Gate each with the usual
 
 ## A — Sanitize the remaining direct CV reads (5.1 class) — *highest value, mechanical*
 
+> ✅ **DONE** — all 12 CV reads migrated: `InputReader` sites (`fof` vowel/pitch/breath,
+> `formant_filter` vowel, `amplifier` level/pan) → `.get(i)`; `Option<&AudioBuffer>` sites
+> (`ring_mod` FREQ_CV, `vector_mixer` X/Y_CV, `wavetable_osc` POS_CV, `math_oscillator`
+> mod A/B) → `sanitize_cv(buf[i])`. Re-audit confirms no raw CV reads remain in the touched
+> files. NaN-specific tests added for both patterns (`ring_mod_nan_freq_cv_stays_finite`,
+> `formant_filter_nan_vowel_cv_stays_finite`) — note fof's pre-existing inf-CV test only
+> covered Inf (which `clamp` already tamed); NaN was the real gap, now closed.
+> Build/clippy/test/fmt green.
+
 **Why:** The 5.1 sweep only migrated reads that *already* called `sanitize_cv`. A NaN/Inf
 from a direct CV cable still poisons DSP state (silenced/exploded voice). The audit found
 **10 unsanitized CV reads in 7 modules**, each feeding a dangerous sink (exp2 / division /

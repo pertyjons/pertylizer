@@ -208,7 +208,7 @@ impl PolyModule for WavetableOsc {
 
             // Apply position CV
             let position = if let Some(cv) = pos_cv {
-                (base_position + cv[i]).clamp(0.0, 1.0)
+                (base_position + crate::math::sanitize_cv(cv[i])).clamp(0.0, 1.0)
             } else {
                 base_position
             };

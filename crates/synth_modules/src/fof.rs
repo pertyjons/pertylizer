@@ -673,7 +673,7 @@ impl PolyModule for Fof {
         for i in 0..num_samples {
             // Vowel CV: recompute per-voice targets/norms on a position shift.
             if vowel_cv_connected {
-                let target_vowel = (vowel_base + vowel_cv[i] * VOWEL_CV_DEPTH).clamp(0.0, 1.0);
+                let target_vowel = (vowel_base + vowel_cv.get(i) * VOWEL_CV_DEPTH).clamp(0.0, 1.0);
                 if (target_vowel - self.current_vowel).abs() > 0.001 {
                     self.current_vowel = target_vowel;
                     for v in 0..active {
@@ -689,11 +689,13 @@ impl PolyModule for Fof {
             }
 
             let pcv = if pitch_cv_connected {
-                pitch_cv[i].clamp(-MAX_PITCH_CV_SEMITONES, MAX_PITCH_CV_SEMITONES)
+                pitch_cv
+                    .get(i)
+                    .clamp(-MAX_PITCH_CV_SEMITONES, MAX_PITCH_CV_SEMITONES)
             } else {
                 0.0
             };
-            let breath = (breath_base + breath_cv[i]).clamp(0.0, 1.0);
+            let breath = (breath_base + breath_cv.get(i)).clamp(0.0, 1.0);
 
             let mut raw = 0.0_f32;
             let mut sum_l = 0.0_f32;

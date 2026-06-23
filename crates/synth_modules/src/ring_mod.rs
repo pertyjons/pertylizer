@@ -226,7 +226,7 @@ impl PolyModule for RingMod {
             // Apply frequency CV if connected
             let freq = if let Some(cv) = freq_cv {
                 // CV scales freq exponentially: +1V = double freq
-                carrier_freq.apply_cv(BipolarValue::new(cv[i]))
+                carrier_freq.apply_cv(BipolarValue::new(crate::math::sanitize_cv(cv[i])))
             } else {
                 carrier_freq
             };
@@ -436,5 +436,35 @@ mod tests {
 
         let params = rm.get_params();
         assert_eq!(params.len(), 5);
+    }
+
+    /// A NaN/Inf on FREQ_CV must not poison the carrier (the CV feeds `apply_cv`
+    /// → exp2). Sanitizing at the read keeps the ring-modulated output finite.
+    #[test]
+    fn ring_mod_nan_freq_cv_stays_finite() {
+        let mut rm = RingMod::new();
+        rm.note_on(MidiNote(60), Velocity::MAX);
+        rm.set_sample_rate(SampleRate::DVD_QUALITY);
+        let block = 256usize;
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(block),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        let mut dc = AudioBuffer::new(block);
+        let mut cv = AudioBuffer::new(block);
+        for i in 0..block {
+            dc[i] = 1.0;
+            cv[i] = if i % 2 == 0 { f32::NAN } else { f32::INFINITY };
+        }
+        let ins = [(PortName::IN, dc), (PortName::FREQ_CV, cv)];
+        let mut outs = HashMap::new();
+        outs.insert(PortName::OUT, AudioBuffer::new(block));
+        rm.process(InputPorts::from_owned(&ins), &mut outs, &ctx);
+        let b = &outs[&PortName::OUT];
+        assert!(
+            (0..block).all(|i| b[i].is_finite()),
+            "NaN/Inf FREQ_CV must not yield non-finite output"
+        );
     }
 }
