@@ -82,9 +82,9 @@ input ports are **out of scope** — oscillators already have FM/freq-CV inputs.
 ### Tier 3 — harder (pitch is woven into grain / formant scheduling; needs care)
 | Module | File | Note + required care |
 |--------|------|------|
-| VocalTract | `vocal_tract.rs` | glottal-source F0; high value (voice vibrato). **⚠ amplitude discontinuity:** `inc = note_freq·inv_sr` is per block (L434) and the excitation is `(flow − prev_flow)/inc` (L481) — a derivative *divided by* `inc`, so a block-rate `inc` jump steps the excitation amplitude → click under fast modulation. **Mitigation: per-sample (or block-interpolated) `inc`**, not the block-snapped value. This is qualitatively worse than the FM-sideband effect (it's an amplitude step), so smoothing here is effectively required, not optional. |
+| VocalTract | `vocal_tract.rs` | glottal-source F0; high value (voice vibrato). **⚠ amplitude discontinuity:** `inc = note_freq·inv_sr` is per block (L434) and the excitation is `(flow − prev_flow)/inc` (L481) — a derivative *divided by* `inc`, so a block-rate `inc` jump steps the excitation amplitude → click under fast modulation. **Mitigation: linearly ramp `inc` across the block** — hold `current_inc`, compute `d_inc = (target_inc − current_inc)/block_len`, and `current_inc += d_inc` inside the sample loop (one extra add/sample, negligible) so the excitation derivative stays smooth. Effectively required here, not optional. |
 | Fof | `fof.rs` | fundamental F0 drives grain scheduling + per-band `phase_inc`; recompute from `note_freq`, watch for the same divide-by-`inc`-style normalization. |
-| GranularOsc | `granular_osc.rs` | **⚠ contract decision:** each grain captures `rate` at spawn (`Grain.rate`, L52); modulating pitch only affects *new* grains, so active grains don't bend → with long grains, fast vibrato smears into a "pitch trail"/cluster. Lush as a granular feature, wrong for instrument glides. **Decide:** keep trails (cheap, do nothing) *or* store a per-grain pitch-offset ratio and compute `active_rate = note_freq/SOURCE_BASE_FREQ · grain.offset` in `process` (true continuous bend). |
+| GranularOsc | `granular_osc.rs` | **⚠ contract decision:** each grain captures `rate` at spawn (`Grain.rate`, L52); modulating pitch only affects *new* grains, so active grains don't bend → with long grains, fast vibrato smears into a "pitch trail"/cluster. Lush as a granular feature, wrong for instrument glides. **Decide:** (a) keep trails (cheap, do nothing) *or* (b) true continuous bend. **⚠ bend can't be a naive rate swap:** today `read_pos = (start_pos + pos·rate)` (L534) with `pos += 1` per sample, so making `rate` dynamic rescales the *whole* elapsed offset → an instantaneous read-position jump (phase tear / crackle, momentary reverse). Bend therefore needs a **`Grain` refactor to an accumulating playhead**: store a per-grain `pitch_offset_ratio` (not absolute rate), keep `pos` for the envelope, and advance `read_pos += base_rate·pitch_offset_ratio` per sample (`read_pos` is the new accumulated field). More than a one-liner — that's the cost of option (b). |
 
 ## Quality concerns
 
@@ -110,6 +110,17 @@ enough blocks that steep/fast modulation is audible. Three distinct severities:
 - **Behaviour-preserving for static notes:** a held note with no
   glide/vibrato/bend must sound exactly as before — the per-block value then
   equals the `note_on` pitch (assert this in tests).
+
+### Real-time safety
+`set_voice_pitch` runs on the audio thread (inside `Voice::process_audio`), and
+each module is owned there (`Box<dyn PolyModule>` per voice graph node). So the
+pitch fields are **plain `f32`/`Hertz`, not atomics** — there's no cross-thread
+sharing to guard, which keeps the struct compact and cache-friendly. The impls
+must stay alloc-free and panic-free (plain field writes + arithmetic) per the
+project's RT rules. Note: the call is a **virtual dispatch** through the
+`dyn PolyModule` vtable, so `#[inline]` on the impl does **not** cross it — but
+it's one vtable call per module per *block* (control rate), which is negligible;
+don't add `#[inline]` expecting it to help here.
 
 ## Phasing
 
@@ -144,9 +155,12 @@ Per module, a behavioural regression test mirroring the sampler's
 per cycle and wreck the estimate. Use an **AMDF** (Average Magnitude Difference
 Function) detector in the shared helper instead:
 `AMDF(τ) = Σ |x(n) − x(n−τ)|`, with the pitch period = the `τ` minimizing it over
-a bounded lag window. It's cheap, a few lines of Rust, and robust against formant
-peaks and harmonic shift — one helper that works for every tier. Keep the
-existing sampler/oscillator tests green.
+a **bounded** lag window around the expected period (e.g. ±35%:
+`lag ∈ [0.65·P, 1.35·P]` where `P = sample_rate/expected_hz`). The bound both
+speeds it up and avoids octave-jump errors; normalize each lag's sum by its
+overlap count (`N − τ`). It's cheap, a few lines of Rust, and robust against
+formant peaks and harmonic shift — one helper for every tier, living in a shared
+test module. Keep the existing sampler/oscillator tests green.
 
 ## Verification (after the code)
 
@@ -162,8 +176,10 @@ ear-check the tracker importer needs.
   distinct from this rollout (continuous pitch for already-note-pitched sources).
   `Fooglers` and `LaSynth` are the more defensible candidates.
 - **GranularOsc trail-vs-bend contract** — decide before Phase 3 (Tier 3).
-  Default leaning: continuous bend (store a per-grain pitch-offset ratio), since
-  the importer's instrument glides want a coherent sweep, not a cluster.
+  Default leaning: continuous bend, since the importer's instrument glides want a
+  coherent sweep, not a cluster — but it requires the accumulating-playhead `Grain`
+  refactor (see Tier 3), not a one-liner. If that cost isn't worth it, trails is a
+  legitimate (do-nothing) fallback.
 - `pitch_cv` input ports on the oscillators (they already have FM/freq-CV; revisit
   only if a modular pitch-CV path is specifically wanted).
 - Per-sample (vs per-block) pitch smoothing — only if a Tier 3 module audibly
