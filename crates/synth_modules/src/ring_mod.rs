@@ -302,6 +302,13 @@ impl PolyModule for RingMod {
         self.carrier_phase = Phase::ZERO;
     }
 
+    fn set_voice_pitch(&mut self, freq: Hertz) {
+        // The carrier key-tracks the note (blended by `track_keyboard` in
+        // `effective_carrier_freq`); follow the modulated note pitch so
+        // glide/vibrato bend the carrier and its sidebands. Phase-continuous.
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+    }
+
     fn note_off(&mut self) {
         // Nothing to do
     }
@@ -314,6 +321,58 @@ impl PolyModule for RingMod {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::voice_pitch_harness::amdf_fundamental;
+
+    /// With full key-tracking and a DC input (so output == carrier), 2× voice
+    /// pitch doubles the carrier fundamental; a static note holds. freq_ratio
+    /// 0.5 → ratio 1.0, so the carrier equals the note pitch.
+    #[test]
+    fn ring_mod_carrier_tracks_voice_pitch() {
+        let sr = SampleRate::DVD_QUALITY;
+        let srf = sr.as_f32();
+        let note = MidiNote(45); // A2 ≈ 110 Hz
+        let f = note.to_frequency().as_f32();
+        let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
+        let block = 1024usize;
+
+        let run = |voice_pitch: Option<f32>| -> f32 {
+            let mut rm = RingMod::new();
+            rm.track_keyboard = NormalizedValue::new(1.0); // fully track the note
+            rm.freq_ratio = NormalizedValue::new(0.5); // ratio 1.0
+            rm.mix = NormalizedValue::new(1.0); // fully wet → output == carrier
+            rm.note_on(note, Velocity::MAX);
+            rm.set_sample_rate(sr);
+            let ctx = ProcessContext {
+                samples: synth_core::SampleCount::new(block),
+                sample_rate: sr,
+                ..ProcessContext::default()
+            };
+            let mut dc = AudioBuffer::new(block);
+            for i in 0..block {
+                dc[i] = 1.0;
+            }
+            let ins = [(PortName::IN, dc)];
+            let mut out = Vec::with_capacity(block * 4);
+            for _ in 0..4 {
+                if let Some(vp) = voice_pitch {
+                    rm.set_voice_pitch(Hertz::new(vp));
+                }
+                let mut outs = HashMap::new();
+                outs.insert(PortName::OUT, AudioBuffer::new(block));
+                rm.process(InputPorts::from_owned(&ins), &mut outs, &ctx);
+                let b = &outs[&PortName::OUT];
+                for i in 0..b.len() {
+                    out.push(b[i]);
+                }
+            }
+            amdf_fundamental(&out[2048..], srf, voice_pitch.map_or(f, |_| f * 2.0))
+        };
+
+        let est_stat = run(None);
+        assert!(cents(est_stat, f).abs() < 50.0, "static {est_stat}");
+        let est_up = run(Some(f * 2.0));
+        assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
+    }
 
     #[test]
     fn test_ring_mod_creation() {

@@ -129,12 +129,12 @@ One module per commit, gated (`cargo build` / `clippy --all-targets` / `test` /
 
 - [x] **Phase 0 — test infra:** shared **AMDF** estimator + `render_mono` harness
   (`voice_pitch_harness.rs`), validated end-to-end against `Oscillator`.
-- [ ] **Phase 1 (Tier 1):**
+- [x] **Phase 1 (Tier 1):**
   - [x] SubOsc
   - [x] MathOsc
   - [x] PadSynth
   - [x] WavetableOsc
-  - [ ] RingMod
+  - [x] RingMod
 - [ ] **Phase 2 (Tier 2):**
   - [ ] VoiceSynth
   - [ ] AdditiveOsc
