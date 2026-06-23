@@ -62,6 +62,9 @@ pub mod voice_synth;
 pub mod wavetable_data;
 pub mod wavetable_osc;
 
+#[cfg(test)]
+mod voice_pitch_harness;
+
 // Physical modeling modules
 pub mod body_resonance;
 pub mod keyboard_panner;

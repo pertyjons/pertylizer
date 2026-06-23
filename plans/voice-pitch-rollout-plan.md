@@ -127,14 +127,23 @@ don't add `#[inline]` expecting it to help here.
 One module per commit, gated (`cargo build` / `clippy --all-targets` / `test` /
 `fmt`), reviewable independently. Suggested order = value × ease:
 
-0. **Phase 0 — test infra:** the shared **AMDF** pitch estimator + the
-   `note_on(F) → set_voice_pitch(2F)` harness, so complex modules are testable
-   from Phase 2 on.
-1. **Phase 1 (Tier 1):** SubOsc, MathOsc, PadSynth, WavetableOsc, RingMod.
-2. **Phase 2 (Tier 2):** VoiceSynth + AdditiveOsc first (melodic value), then
-   AmFormant, FractalOsc.
-3. **Phase 3 (Tier 3):** VocalTract (per-sample `inc`), Fof, GranularOsc —
-   *after* deciding the granular trail-vs-bend contract.
+- [x] **Phase 0 — test infra:** shared **AMDF** estimator + `render_mono` harness
+  (`voice_pitch_harness.rs`), validated end-to-end against `Oscillator`.
+- [ ] **Phase 1 (Tier 1):**
+  - [ ] SubOsc
+  - [ ] MathOsc
+  - [ ] PadSynth
+  - [ ] WavetableOsc
+  - [ ] RingMod
+- [ ] **Phase 2 (Tier 2):**
+  - [ ] VoiceSynth
+  - [ ] AdditiveOsc
+  - [ ] AmFormant
+  - [ ] FractalOsc
+- [ ] **Phase 3 (Tier 3):**
+  - [ ] VocalTract (per-sample `inc`)
+  - [ ] Fof
+  - [ ] GranularOsc (*after* deciding the trail-vs-bend contract)
 
 Stop after any phase if priorities change; each module is independently complete.
 
