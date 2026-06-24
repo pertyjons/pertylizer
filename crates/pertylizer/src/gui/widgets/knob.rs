@@ -189,12 +189,13 @@ impl<'a> Knob<'a> {
 
         // Mouse-wheel / trackpad scroll over the knob adjusts its value.
         if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            // Negated: scroll down increases, scroll up decreases.
+            let scroll = -ui.input(|i| i.smooth_scroll_delta.y);
             if scroll != 0.0 {
                 if let Some(step) = self.step {
                     // Accumulate scroll units and emit whole steps, keeping the
                     // remainder so a smooth trackpad swipe ticks one step at a time
-                    // (and a mouse notch ≈ one step). Scroll up increases.
+                    // (and a mouse notch ≈ one step).
                     let acc_id = response.id.with("knob_scroll_acc");
                     let acc = ui.memory(|m| m.data.get_temp::<f32>(acc_id)).unwrap_or(0.0) + scroll;
                     let steps = (acc / SCROLL_UNITS_PER_STEP).trunc();
