@@ -950,14 +950,38 @@ impl ParameterDescriptor {
         if !value.is_finite() {
             return Err(ParamValueError::NotFinite);
         }
-        if !self.range.contains(value) {
-            return Err(ParamValueError::OutOfRange {
-                value,
-                min: self.range.min,
-                max: self.range.max,
-            });
+        match self.kind {
+            // Bool: accept any finite value; `with_f32` maps it via `> 0.5`.
+            ParamKind::Bool => Ok(value),
+            // Integer: round to nearest (lenient — a `4.3` from an automation/LFO
+            // sweep is accepted, not rejected), then range-check the *rounded*
+            // value. The rounded value is returned so the caller applies — and can
+            // echo — exactly what took effect (Phase 5 / §14.1).
+            ParamKind::Integer => {
+                let rounded = value.round();
+                if self.range.contains(rounded) {
+                    Ok(rounded)
+                } else {
+                    Err(ParamValueError::OutOfRange {
+                        value: rounded,
+                        min: self.range.min,
+                        max: self.range.max,
+                    })
+                }
+            }
+            // Continuous / Enum / Reference: range / choice-index check as before.
+            _ => {
+                if self.range.contains(value) {
+                    Ok(value)
+                } else {
+                    Err(ParamValueError::OutOfRange {
+                        value,
+                        min: self.range.min,
+                        max: self.range.max,
+                    })
+                }
+            }
         }
-        Ok(value)
     }
 }
 
@@ -1789,6 +1813,29 @@ mod tests {
             pd.validate_f32(f32::INFINITY),
             Err(ParamValueError::NotFinite)
         );
+    }
+
+    #[test]
+    fn validate_f32_is_kind_aware() {
+        use crate::params::MsegParam;
+        // Integer: rounds (lenient), then range-checks the rounded value.
+        let int =
+            ParameterDescriptor::float("segments", Param::Mseg(MsegParam::SegmentCount(4)), "Seg")
+                .range(1.0, 16.0);
+        assert_eq!(int.validate_f32(4.3), Ok(4.0)); // 4.3 → 4
+        assert_eq!(int.validate_f32(15.6), Ok(16.0)); // rounds up, still in range
+        assert!(int.validate_f32(20.0).is_err()); // out of range → rejected
+        assert!(int.validate_f32(0.4).is_err()); // rounds to 0, below min 1
+
+        // Bool: accepts any finite value (mapped via `> 0.5` downstream).
+        let b = ParameterDescriptor::float(
+            "loop_enabled",
+            Param::Mseg(MsegParam::LoopEnabled(false)),
+            "Loop",
+        );
+        assert_eq!(b.validate_f32(5.0), Ok(5.0));
+        assert_eq!(b.validate_f32(0.0), Ok(0.0));
+        assert_eq!(b.validate_f32(f32::NAN), Err(ParamValueError::NotFinite));
     }
 
     #[test]

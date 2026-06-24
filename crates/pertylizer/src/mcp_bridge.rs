@@ -224,16 +224,20 @@ impl AppSynthBridge {
         };
 
         let value = resolve_param_value(&value, Some(pd), param_name)?;
-        pd.validate_f32(value)
-            .map_err(|source| McpBridgeError::InvalidParameterValue {
-                name: pd.name.clone(),
-                source,
-            })?;
+        // Kind-aware validation: rounds integers, accepts bools, rejects
+        // out-of-range. Use the returned value so the applied + echoed value is
+        // exactly what took effect (e.g. a `4.3` integer becomes `4`).
+        let value =
+            pd.validate_f32(value)
+                .map_err(|source| McpBridgeError::InvalidParameterValue {
+                    name: pd.name.clone(),
+                    source,
+                })?;
 
         let info = ParameterInfo {
             name: pd.name.clone(),
             value,
-            display: pd.unit.format(value),
+            display: pd.format(value),
             min: Some(pd.range.min),
             max: Some(pd.range.max),
             default: Some(pd.range.default),
@@ -1213,14 +1217,18 @@ impl SynthBridge for AppSynthBridge {
             // parameter's native f32, rejecting unknown choices at the boundary
             // instead of silently mapping them to index 0.
             let value = resolve_param_value(&value, param_desc, param_name)?;
-            // Validate against the parameter's range BEFORE applying.
-            if let Some(pd) = param_desc {
+            // Kind-aware validation BEFORE applying — rounds integers, accepts
+            // bools, rejects out-of-range. Use the returned value so a rounded
+            // integer (e.g. `4.3` → `4`) is what actually gets applied.
+            let value = if let Some(pd) = param_desc {
                 pd.validate_f32(value)
                     .map_err(|source| McpBridgeError::InvalidParameterValue {
                         name: pd.name.clone(),
                         source,
-                    })?;
-            }
+                    })?
+            } else {
+                value
+            };
             (value, crate::patch::ParamValue::Float(value))
         };
 

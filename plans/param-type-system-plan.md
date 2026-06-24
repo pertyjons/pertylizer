@@ -430,7 +430,7 @@ per `CLAUDE.md`). Dependency order:
 | 2b    | `curve` audit (no silent auto-flip; behavioral) ✅ **done**          | engine        | medium         | 1          |
 | 3     | Kind-aware display (decimal-free ints; bool) ✅ **done**             | core+GUI      | low            | 1          |
 | 4     | Serialization emits `Int`/`Bool`; consistent int rounding ✅ **done** | serialization | low            | 1          |
-| 5     | Schema `type`/`kind`; MCP validation by kind                         | schema/MCP    | low            | 1          |
+| 5     | Schema `type`/`kind`; MCP validation by kind — 5a ✅, 5b (DTOs) next  | schema/MCP    | low            | 1          |
 | 6     | GUI interaction polish (snap/scroll/text by kind)                    | GUI           | medium         | 3          |
 | 7     | `ModuleParam` shared trait (recommended)                             | engine        | medium (churn) | 1          |
 | 8     | `#[derive(ParamReflect)]` proc-macro — **skipped**                   | —             | —              | —          |
@@ -1013,9 +1013,16 @@ unit; the full gate must be green before each commit.
   stays off the `f32` path; **u64 ≥ 2³³ round-trip test** added. *(done)*
 - [x] Normalized `PatchParamValue::SampleId` to the struct shape `{"sample_id": N}`
   (matches `ParamValue`); updated its one construction site. *(done)*
-- [ ] *(Phase 5)* `gen_schemas`: emit `"type": integer|boolean|number` + `value_kind`. MCP
-  validation: round fractional integers + echo, reject out-of-range, before the
-  `with_f32` clamp. Extend the Group-B DTOs with `value_kind`.
+- [x] *(Phase 5a)* `gen_schemas` emits `"type": integer|boolean|number` + a
+  `value_kind` classifier for every param (`kind_id`/`json_type` helpers);
+  `descriptors.json` regenerated. `validate_f32` is now **kind-aware**: rounds
+  integers (lenient) then range-checks the rounded value, accepts any finite for
+  bools, range-checks Continuous/Enum as before — returning the validated value.
+  Both MCP `set_parameter` paths **capture** it, so a `4.3` integer is applied *and*
+  echoed as `4`. Kind-aware `validate_f32` test added. *(done)*
+- [ ] *(Phase 5b)* Extend the Group-B DTOs (`ParamTypeInfo`, `ParameterInfo`,
+  `ReturnEffectParamInfo`, `PatchParamInfo`) with `value_kind`; add an `Int` path to
+  the MCP input carriers (`BridgeParamValue`, `ParamValueInput`).
 
 **Step 5 — Trait (Phase 7):**
 
