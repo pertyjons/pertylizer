@@ -431,7 +431,7 @@ per `CLAUDE.md`). Dependency order:
 | 3     | Kind-aware display (decimal-free ints; bool) ✅ **done**             | core+GUI      | low            | 1          |
 | 4     | Serialization emits `Int`/`Bool`; consistent int rounding ✅ **done** | serialization | low            | 1          |
 | 5     | Schema `type`/`kind`; MCP validation by kind ✅ **done** (5a+5b)      | schema/MCP    | low            | 1          |
-| 6     | GUI interaction polish (snap/scroll/text by kind)                    | GUI           | medium         | 3          |
+| 6     | GUI interaction polish — bool/int dispatch ✅; scroll deferred        | GUI           | medium         | 3          |
 | 7     | `ModuleParam` shared trait (recommended)                             | engine        | medium (churn) | 1          |
 | 8     | `#[derive(ParamReflect)]` proc-macro — **skipped**                   | —             | —              | —          |
 
@@ -996,9 +996,14 @@ unit; the full gate must be green before each commit.
   consumer). Regenerated `schemas/descriptors.json` (step omitted — the proper
   integer signal lands in Phase 5). Added a `ParamKind::format` acceptance test.
   *(done)*
-- [ ] *(Phase 6)* `param_grid.rs` slider: integer kind → `min_decimals(0)`/
-  `max_decimals(0)` + snapping; scroll-wheel stepping on `Knob`; bool always a
-  checkbox.
+- [x] *(Phase 6)* Integer slider snapping (`step_by(1.0)` + 0 decimals) and a
+  **kind-aware render group** (`param_render_group`): a `Bool` param that renders is
+  always a checkbox regardless of widget hint, while a `Hidden` bool stays hidden.
+  Unit test added. *(done — needs in-app eyeball, per the phase's verify step)*
+- [ ] *(Phase 6 — deferred, needs in-app tuning)* scroll-wheel stepping on `Knob`
+  (integer ±1 / continuous fine step) and integer drag-sensitivity: a new feature
+  with magic-number tuning + scroll-vs-panel-consumption that must be verified
+  visually, so not shipped blind in the autonomous loop.
 
 **Step 4 — Serialization + schema/MCP (Phase 4 / 5):**
 
