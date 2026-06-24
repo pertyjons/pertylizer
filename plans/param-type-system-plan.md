@@ -5,9 +5,11 @@
 > value-kind model is live end-to-end: engine `ParamKind`/`ScalarParam` → descriptor
 > `kind`/derived `unit` → kind-aware display → typed serialization → schema `type`/
 > `value_kind` + kind-aware MCP validation → kind-aware GUI dispatch → `ModuleParam`
-> trait (Phase 7, delegation macro, zero churn). **Remaining:** Phase 8 (proc-macro)
-> skipped (§14.4); two small in-app-eyeball follow-ups (knob scroll-wheel §9; the 2
-> enum-as-float descriptors → `choice()`); strict load-validation deferred (§16).
+> trait (Phase 7, delegation macro, zero churn). Phases 3/6 GUI polish (kind-aware
+> dispatch, responsive integer drag, knob scroll-wheel) and the two enum-as-float →
+> `choice()` conversions are done + verified in-app. **Remaining:** Phase 8
+> (proc-macro) skipped (§14.4); strict load-validation deferred (§16); the optional
+> `ModuleParam` single-definition cleanup parked in `plans/TODO.md` §3.8.
 > Review-complete after 3 review passes (all 6 decisions resolved, §14).
 > **Scope:** Maximal — a first-class value-kind model threaded through every layer
 > (engine → descriptor → serialization → schema/MCP → GUI), plus newtype-derived
@@ -975,13 +977,13 @@ unit; the full gate must be green before each commit.
   `module_factory.rs` over `ModuleType::all()`; `kind == id.kind()` enforced for
   every param.)*
 
-> **Phase 1 follow-up (deferred):** the sweep surfaced **two enum-typed params built
-> with `float()` instead of `choice()`** → `kind == Enum` but no choice list:
-> `SpectralBlur/fft_size` (should mirror PhaseVocoder's `choice()` over
-> `FftSizeOption::ALL` — a copy-paste miss) and `KeyboardPanner/invert` (`Polarity`,
-> a 0/1 knob). Converting them changes widget + serialization behavior (Phase 3/4
-> territory), so they are **allow-listed** in the sweep test for now. Fix when
-> touching those modules' UI/serialization.
+> **Phase 1 follow-up — DONE (`59afe14a`):** the two enum-typed params built with
+> `float()` (so `kind == Enum` but no choice list) were converted to `choice()`:
+> `SpectralBlur/fft_size` → a real dropdown (via a shared `FftSizeOption::to_choices()`
+> that PhaseVocoder now also uses) and `KeyboardPanner/invert` → a true binary
+> `Polarity` choice kept rendered as a checkbox (`WidgetHint::Toggle`). The sweep
+> allow-list is removed (every `Enum` param now carries choices); serialization moved
+> from `Float(index)` to `Choice(id)` (old float-encoded projects still load).
 
 **Step 2 — Unit derivation + curve audit (Phase 2a / 2b):**
 
