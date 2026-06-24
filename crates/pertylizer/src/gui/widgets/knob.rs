@@ -52,11 +52,8 @@ impl<'a> Knob<'a> {
             label: descriptor.name.clone(),
             size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
-            // Integer params snap to whole numbers by default — the kind supplies
-            // the step so descriptors no longer need an explicit `.step(1.0)`.
-            step: descriptor
-                .step
-                .or_else(|| (descriptor.kind == ParamKind::Integer).then_some(1.0)),
+            // Integer params snap to whole numbers — the kind supplies the step.
+            step: (descriptor.kind == ParamKind::Integer).then_some(1.0),
             mod_marker: None,
         }
     }

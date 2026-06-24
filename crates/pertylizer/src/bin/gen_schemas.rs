@@ -160,9 +160,6 @@ fn parameter_descriptor(param: &ParameterDescriptor) -> Value {
             "response_curve".to_string(),
             json!(response_curve_id(param.response_curve)),
         );
-        if let Some(step) = param.step {
-            obj.insert("step".to_string(), json!(step));
-        }
     }
     Value::Object(obj)
 }
