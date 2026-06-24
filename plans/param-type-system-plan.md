@@ -1034,10 +1034,12 @@ unit; the full gate must be green before each commit.
 - [x] *(Phase 6)* **integer drag-sensitivity** — done (`54b7e82e`): stepped knobs
   accumulate an unsnapped value in egui memory across the drag and move in value
   space at a fixed `STEP_DRAG_PIXELS` (range-independent). Confirmed good in-app.
-- [ ] *(Phase 6 — deferred, blocked on input hardware)* scroll-wheel stepping on
-  `Knob` (integer ±1 / continuous fine step): needs in-app verification + handling
-  the scroll-vs-panel consumption. Parked until a mouse/trackpad is available to
-  test (a laptop trackpad's two-finger scroll also exercises it).
+- [x] *(Phase 6)* **scroll-wheel stepping on `Knob`** — done (`6845e3e2`,
+  `5855c760`, `bfe416f8`): stepped knobs accumulate scroll units → whole steps
+  (mouse notch ≈ one step, trackpad accumulates), continuous knobs nudge in
+  normalized/curve space; vertical scroll is consumed so the enclosing ScrollArea
+  doesn't also scroll; scroll down = increase. Tuned + verified in-app (trackpad):
+  both work, panel doesn't scroll, speed/direction confirmed. **Phase 6 fully done.**
 
 **Step 4 — Serialization + schema/MCP (Phase 4 / 5):**
 
