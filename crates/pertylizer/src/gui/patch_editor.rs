@@ -2357,6 +2357,10 @@ impl PatchEditor {
             let area = egui::Area::new(window_id)
                 .order(Order::Background)
                 .movable(true)
+                // A movable Area defaults to Sense::DRAG only; add click sense so
+                // the body registers secondary clicks for its right-click menu
+                // (drag still moves it, selection still works via drag_started).
+                .sense(egui::Sense::click_and_drag())
                 .constrain_to(visible_rect)
                 .constrain(false)
                 .current_pos(screen_pos);
@@ -2863,6 +2867,17 @@ impl PatchEditor {
                 &group_layout,
                 &mut bring_to_front,
             );
+
+            // Right-click on a module's empty body opens the same rack context
+            // menu as the canvas background (Copy/Cut/Paste, groups, add module).
+            // A new module drops near this module's logical position.
+            area_response.response.context_menu(|ui| {
+                let (selected, _) =
+                    self.bg_context_menu_contents(ui, &mut result, panel_position, None);
+                if let Some(sel) = selected {
+                    result.context_add = Some((sel, panel_position, None));
+                }
+            });
 
             // Handle close (delete module) — triggered by close button.
             // If the module is in a signal chain, bypass it (reconnect around it).
@@ -4297,9 +4312,7 @@ impl PatchEditor {
     }
 
     /// Draw the background right-click context menu for adding modules.
-    #[allow(clippy::too_many_lines)]
     fn draw_bg_context_menu(&mut self, response: &egui::Response, result: &mut PatchEditorResult) {
-        use egui_remixicon::icons as ri;
         let menu_state = self.bg_context_menu;
         let world_pos = menu_state.map(|s| s.world_pos).unwrap_or_default();
         let menu_cable = menu_state.and_then(|s| s.cable);
@@ -4307,17 +4320,70 @@ impl PatchEditor {
         let mut cable_action_taken = false;
 
         response.context_menu(|ui| {
-            // --- Layout ---
-            ui.label(
-                egui::RichText::new("Layout")
-                    .color(theme().colors.text_secondary)
-                    .size(11.0),
-            );
+            let (s, c) = self.bg_context_menu_contents(ui, result, world_pos, menu_cable);
+            selected = s;
+            cable_action_taken = c;
+        });
+
+        if cable_action_taken {
+            self.bg_context_menu = None;
+            return;
+        }
+
+        if let Some(sel) = selected {
+            result.context_add = Some((sel, world_pos, menu_cable));
+            self.bg_context_menu = None;
+        }
+
+        // Clear stored state when context menu closes
+        if !response.context_menu_opened() {
+            self.bg_context_menu = None;
+        }
+    }
+
+    /// The shared body of the rack context menu (Clipboard, groups, Insert
+    /// Template, cable actions, and the Add-module submenus). Shown from both the
+    /// canvas background and a module's empty body. Returns the picked palette
+    /// selection (which the caller turns into `context_add` at `world_pos`) and
+    /// whether a cable action was taken.
+    #[allow(clippy::too_many_lines)]
+    fn bg_context_menu_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        result: &mut PatchEditorResult,
+        world_pos: Pos2,
+        menu_cable: Option<Connection>,
+    ) -> (Option<PaletteSelection>, bool) {
+        use egui_remixicon::icons as ri;
+        let mut selected: Option<PaletteSelection> = None;
+        let mut cable_action_taken = false;
+
+        {
+            // --- Clipboard --- (the backend owns the clipboard; copy/cut act on
+            // the current selection, paste is validated against clipboard state.)
+            let has_selection = !self.effective_selection().is_empty();
             if ui
-                .button(format!("{} Auto Layout", ri::LAYOUT_GRID_FILL))
+                .add_enabled(
+                    has_selection,
+                    egui::Button::new(format!("{} Copy", ri::FILE_COPY_LINE)),
+                )
                 .clicked()
             {
-                result.request_auto_layout = true;
+                result.request_copy = true;
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    has_selection,
+                    egui::Button::new(format!("{} Cut", ri::SCISSORS_CUT_LINE)),
+                )
+                .clicked()
+            {
+                result.request_cut = true;
+                ui.close();
+            }
+            if ui.button(format!("{} Paste", ri::CLIPBOARD_LINE)).clicked() {
+                result.request_paste = true;
                 ui.close();
             }
 
@@ -4418,22 +4484,9 @@ impl PatchEditor {
                     },
                 );
             }
-        });
-
-        if cable_action_taken {
-            self.bg_context_menu = None;
-            return;
         }
 
-        if let Some(sel) = selected {
-            result.context_add = Some((sel, world_pos, menu_cable));
-            self.bg_context_menu = None;
-        }
-
-        // Clear stored state when context menu closes
-        if !response.context_menu_opened() {
-            self.bg_context_menu = None;
-        }
+        (selected, cable_action_taken)
     }
 
     /// Helper for background context menu items — uses shared palette_label for icon + color.
@@ -5539,6 +5592,12 @@ pub struct PatchEditorResult {
     /// `(module_id, new_description)`. Empty string clears. Routed to
     /// `session.set_module_description` by the backend.
     pub module_description_actions: Vec<(ModuleId, String)>,
+    /// Clipboard requests from the rack's right-click menu. The backend owns the
+    /// clipboard, so it consumes these after `show()` returns: copy/cut act on the
+    /// current selection, paste drops the clipboard at an offset.
+    pub request_copy: bool,
+    pub request_cut: bool,
+    pub request_paste: bool,
 }
 
 /// Actions from the Audio Input module panel.

@@ -135,7 +135,8 @@ fn draw_arrangement_toolbar(
 ) {
     let t = theme();
     let beats_per_bar = data.time_sig.numerator as u64;
-    ui.horizontal(|ui| {
+    // Secondary controls row under the transport bar (shared toolbar styling).
+    crate::gui::toolbar::secondary_row(ui, |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         ui.label(RichText::new("Zoom").color(t.colors.text_dim).size(10.0));
         if ui.small_button("-").on_hover_text("Zoom out").clicked() {

@@ -599,165 +599,162 @@ pub fn draw_awe_view(
 ) -> AweViewAction {
     let mut action = AweViewAction::None;
     // Top toolbar
-    egui::Panel::top("awe_toolbar").show_inside(ui, |ui| {
-        ui.horizontal(|ui| {
-            let toggle_label = if *awe_enabled { "AWE: ON" } else { "AWE: OFF" };
-            let toggle_color = if *awe_enabled {
-                theme().colors.meter_green
+    super::toolbar::top(ui, "awe_toolbar", |ui| {
+        let toggle_label = if *awe_enabled { "AWE: ON" } else { "AWE: OFF" };
+        let toggle_color = if *awe_enabled {
+            theme().colors.meter_green
+        } else {
+            theme().colors.text_dim
+        };
+        if ui
+            .button(egui::RichText::new(toggle_label).color(toggle_color))
+            .clicked()
+        {
+            *awe_enabled = !*awe_enabled;
+            handle.send(EngineCommand::SetAweEnabled {
+                enabled: *awe_enabled,
+            });
+        }
+
+        ui.separator();
+
+        // Preset selector
+        let presets = awe_presets();
+        let mut standard_indices = Vec::new();
+        let mut extreme_indices = Vec::new();
+        for (i, preset) in presets.iter().enumerate() {
+            if is_extreme_preset(preset) {
+                extreme_indices.push(i);
             } else {
-                theme().colors.text_dim
-            };
-            if ui
-                .button(egui::RichText::new(toggle_label).color(toggle_color))
-                .clicked()
-            {
-                *awe_enabled = !*awe_enabled;
-                handle.send(EngineCommand::SetAweEnabled {
-                    enabled: *awe_enabled,
-                });
+                standard_indices.push(i);
             }
-
-            ui.separator();
-
-            // Preset selector
-            let presets = awe_presets();
-            let mut standard_indices = Vec::new();
-            let mut extreme_indices = Vec::new();
-            for (i, preset) in presets.iter().enumerate() {
-                if is_extreme_preset(preset) {
-                    extreme_indices.push(i);
-                } else {
-                    standard_indices.push(i);
+        }
+        let preset_label = ui_state
+            .selected_preset
+            .and_then(|i| presets.get(i))
+            .map_or("-- Preset --", |p| p.name);
+        let mut new_preset = ui_state.selected_preset;
+        let mut apply_user_preset_idx: Option<usize> = None;
+        egui::ComboBox::from_id_salt("awe_preset")
+            .selected_text(preset_label)
+            .show_ui(ui, |ui| {
+                // User presets
+                if !ui_state.user_presets.is_empty() {
+                    ui.label("User");
+                    for (i, user_preset) in ui_state.user_presets.iter().enumerate() {
+                        let hover = if user_preset.preset.description.is_empty() {
+                            user_preset.path.display().to_string()
+                        } else {
+                            user_preset.preset.description.clone()
+                        };
+                        if ui
+                            .selectable_label(false, &user_preset.preset.name)
+                            .on_hover_text(hover)
+                            .clicked()
+                        {
+                            apply_user_preset_idx = Some(i);
+                        }
+                    }
+                    ui.separator();
                 }
-            }
-            let preset_label = ui_state
-                .selected_preset
-                .and_then(|i| presets.get(i))
-                .map_or("-- Preset --", |p| p.name);
-            let mut new_preset = ui_state.selected_preset;
-            let mut apply_user_preset_idx: Option<usize> = None;
-            egui::ComboBox::from_id_salt("awe_preset")
-                .selected_text(preset_label)
-                .show_ui(ui, |ui| {
-                    // User presets
-                    if !ui_state.user_presets.is_empty() {
-                        ui.label("User");
-                        for (i, user_preset) in ui_state.user_presets.iter().enumerate() {
-                            let hover = if user_preset.preset.description.is_empty() {
-                                user_preset.path.display().to_string()
-                            } else {
-                                user_preset.preset.description.clone()
-                            };
+                // Built-in standard presets
+                if !standard_indices.is_empty() {
+                    ui.label("Standard");
+                    for i in &standard_indices {
+                        if let Some(preset) = presets.get(*i) {
+                            let selected = ui_state.selected_preset == Some(*i);
                             if ui
-                                .selectable_label(false, &user_preset.preset.name)
-                                .on_hover_text(hover)
+                                .selectable_label(selected, preset.name)
+                                .on_hover_text(preset.description)
                                 .clicked()
                             {
-                                apply_user_preset_idx = Some(i);
-                            }
-                        }
-                        ui.separator();
-                    }
-                    // Built-in standard presets
-                    if !standard_indices.is_empty() {
-                        ui.label("Standard");
-                        for i in &standard_indices {
-                            if let Some(preset) = presets.get(*i) {
-                                let selected = ui_state.selected_preset == Some(*i);
-                                if ui
-                                    .selectable_label(selected, preset.name)
-                                    .on_hover_text(preset.description)
-                                    .clicked()
-                                {
-                                    new_preset = Some(*i);
-                                }
+                                new_preset = Some(*i);
                             }
                         }
                     }
-                    if !extreme_indices.is_empty() {
-                        ui.separator();
-                        ui.label("Extreme");
-                        for i in &extreme_indices {
-                            if let Some(preset) = presets.get(*i) {
-                                let selected = ui_state.selected_preset == Some(*i);
-                                if ui
-                                    .selectable_label(selected, preset.name)
-                                    .on_hover_text(preset.description)
-                                    .clicked()
-                                {
-                                    new_preset = Some(*i);
-                                }
+                }
+                if !extreme_indices.is_empty() {
+                    ui.separator();
+                    ui.label("Extreme");
+                    for i in &extreme_indices {
+                        if let Some(preset) = presets.get(*i) {
+                            let selected = ui_state.selected_preset == Some(*i);
+                            if ui
+                                .selectable_label(selected, preset.name)
+                                .on_hover_text(preset.description)
+                                .clicked()
+                            {
+                                new_preset = Some(*i);
                             }
                         }
                     }
-                });
-            if new_preset != ui_state.selected_preset
-                && let Some(idx) = new_preset
-                && let Some(preset) = presets.get(idx)
-            {
-                apply_awe_preset(idx, preset, handle, awe_enabled, ui_state);
-            }
-            if let Some(idx) = apply_user_preset_idx {
-                let user_preset = &ui_state.user_presets[idx].preset;
-                let state = user_preset.state.clone();
-                let name = user_preset.name.clone();
-                let description = user_preset.description.clone();
-                let tags = user_preset.tags.clone();
-                ui_state.restore_from(&state);
-                ui_state.selected_preset = None;
-                ui_state.current_preset_name = name;
-                ui_state.current_preset_description = description;
-                ui_state.current_preset_tags = tags;
-                *awe_enabled = state.enabled;
-                handle.send(EngineCommand::SetAweEnabled {
-                    enabled: state.enabled,
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::RoomShape(state.room),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::Material(state.material),
-                });
-                handle.send(EngineCommand::SetAweState {
-                    snapshot: state.snapshot,
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::SpatialEnabled(state.spatial_enabled),
-                });
-                handle.send(EngineCommand::SetAweParameter {
-                    param: AweParam::NoteMapping(state.note_mapping),
-                });
-            }
+                }
+            });
+        if new_preset != ui_state.selected_preset
+            && let Some(idx) = new_preset
+            && let Some(preset) = presets.get(idx)
+        {
+            apply_awe_preset(idx, preset, handle, awe_enabled, ui_state);
+        }
+        if let Some(idx) = apply_user_preset_idx {
+            let user_preset = &ui_state.user_presets[idx].preset;
+            let state = user_preset.state.clone();
+            let name = user_preset.name.clone();
+            let description = user_preset.description.clone();
+            let tags = user_preset.tags.clone();
+            ui_state.restore_from(&state);
+            ui_state.selected_preset = None;
+            ui_state.current_preset_name = name;
+            ui_state.current_preset_description = description;
+            ui_state.current_preset_tags = tags;
+            *awe_enabled = state.enabled;
+            handle.send(EngineCommand::SetAweEnabled {
+                enabled: state.enabled,
+            });
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::RoomShape(state.room),
+            });
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::Material(state.material),
+            });
+            handle.send(EngineCommand::SetAweState {
+                snapshot: state.snapshot,
+            });
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::SpatialEnabled(state.spatial_enabled),
+            });
+            handle.send(EngineCommand::SetAweParameter {
+                param: AweParam::NoteMapping(state.note_mapping),
+            });
+        }
 
+        ui.separator();
+
+        // Show current preset name with tooltip
+        if !ui_state.current_preset_name.is_empty() {
+            let name_label = ui.label(
+                egui::RichText::new(&ui_state.current_preset_name)
+                    .color(theme().colors.accent_green),
+            );
+            let mut tooltip_parts = Vec::new();
+            if !ui_state.current_preset_description.is_empty() {
+                tooltip_parts.push(ui_state.current_preset_description.clone());
+            }
+            if !ui_state.current_preset_tags.is_empty() {
+                tooltip_parts.push(format!("Tags: {}", ui_state.current_preset_tags.join(", ")));
+            }
+            if !tooltip_parts.is_empty() {
+                name_label.on_hover_text(tooltip_parts.join("\n"));
+            }
             ui.separator();
+        }
 
-            // Show current preset name with tooltip
-            if !ui_state.current_preset_name.is_empty() {
-                let name_label = ui.label(
-                    egui::RichText::new(&ui_state.current_preset_name)
-                        .color(theme().colors.accent_green),
-                );
-                let mut tooltip_parts = Vec::new();
-                if !ui_state.current_preset_description.is_empty() {
-                    tooltip_parts.push(ui_state.current_preset_description.clone());
-                }
-                if !ui_state.current_preset_tags.is_empty() {
-                    tooltip_parts
-                        .push(format!("Tags: {}", ui_state.current_preset_tags.join(", ")));
-                }
-                if !tooltip_parts.is_empty() {
-                    name_label.on_hover_text(tooltip_parts.join("\n"));
-                }
-                ui.separator();
-            }
-
-            if ui.button("Save Preset...").clicked() {
-                action = AweViewAction::SavePreset;
-            }
-            if ui.button("Load Preset...").clicked() {
-                action = AweViewAction::LoadPreset;
-            }
-        });
+        if ui.button("Save Preset...").clicked() {
+            action = AweViewAction::SavePreset;
+        }
+        if ui.button("Load Preset...").clicked() {
+            action = AweViewAction::LoadPreset;
+        }
     });
 
     // Right side panel with controls

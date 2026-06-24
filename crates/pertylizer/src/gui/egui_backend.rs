@@ -1849,61 +1849,14 @@ impl SynthApp {
                 ui.close();
             }
             ui.separator();
-            let has_selection = self
-                .active_patch_editor_ref()
-                .is_some_and(|e| !e.effective_selection().is_empty());
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new(format!("{} Copy", ri::FILE_COPY_LINE))
-                        .shortcut_text("Ctrl+C"),
-                )
-                .clicked()
-            {
-                self.copy_selected_modules();
-                ui.close();
-            }
-            if ui
-                .add_enabled(
-                    !self.clipboard.is_empty(),
-                    egui::Button::new(format!("{} Paste", ri::CLIPBOARD_LINE))
-                        .shortcut_text("Ctrl+V"),
-                )
-                .clicked()
-            {
-                self.paste_modules_at_offset();
-                ui.close();
-            }
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new(format!("{} Duplicate", ri::FILE_COPY_2_LINE))
-                        .shortcut_text("Ctrl+D"),
-                )
-                .clicked()
-            {
-                self.duplicate_selected_modules();
-                ui.close();
-            }
-            ui.separator();
+            // Copy / Paste / Cut live in the rack's right-click menu (and the
+            // Ctrl+C/V/X shortcuts); Analyze Patch lives on the patch context bar.
             if ui
                 .button(format!("{} Optimize Project", ri::DELETE_BIN_LINE))
                 .on_hover_text("Remove unused patterns, tracks, and instruments")
                 .clicked()
             {
                 self.optimize_project();
-                ui.close();
-            }
-            ui.separator();
-            if ui
-                .add(
-                    egui::Button::new(format!("{} Analyze Patch…", ri::FILE_SEARCH_LINE))
-                        .shortcut_text("Ctrl+Shift+A"),
-                )
-                .on_hover_text("Open the offline analyze view for the active instrument")
-                .clicked()
-            {
-                self.analyze_window.open();
                 ui.close();
             }
         });
@@ -2118,6 +2071,499 @@ impl SynthApp {
         }
     }
 
+    /// Patch/instrument context bar, docked over the rack editor (the left
+    /// instrument list stays full-height to its left). Carries a compact subset
+    /// of the active instrument's properties — color, name, category, MIDI
+    /// channel, volume, pan, voice mode — edited inline, plus Auto Layout /
+    /// Analyze Patch / a button that opens the full Edit-Instrument window for
+    /// the long tail. Mirrors the mutation paths in `render_instrument_edit_window`
+    /// (edit the `InstrumentUiState` here, push to session/engine afterwards).
+    /// Returns `true` if Auto Layout was requested this frame.
+    fn render_patch_toolbar(&mut self, ui: &mut egui::Ui, active_id: InstrumentId) -> bool {
+        use egui_remixicon::icons as ri;
+        use synth_engine::InstrumentCategory;
+        let Some(idx) = self.instruments.iter().position(|i| i.id == active_id) else {
+            return false;
+        };
+
+        let mut send_category = false;
+        let mut send_midi: Option<MidiChannel> = None;
+        let mut send_volume = false;
+        let mut send_pan = false;
+        let mut send_transpose = false;
+        let mut send_oversampling = false;
+        let mut send_max_voices = false;
+        let mut send_mode = false;
+        let mut send_stealing = false;
+        let mut send_vel_amp = false;
+        let mut send_vel_filter = false;
+        let mut send_sidechain: Option<Option<InstrumentId>> = None;
+        let mut send_color = false;
+        let mut open_edit = false;
+        let mut open_analyze = false;
+        let mut auto_layout = false;
+        // Other-instrument list for the sidechain picker, captured before the
+        // mutable borrow of the active instrument below.
+        let other_instruments: Vec<(InstrumentId, String)> = self
+            .instruments
+            .iter()
+            .filter(|i| i.id != active_id)
+            .map(|i| (i.id, i.name.clone()))
+            .collect();
+
+        super::toolbar::top(ui, "patch_toolbar", |ui| {
+            let inst = &mut self.instruments[idx];
+
+            // Color swatch
+            let mut color = inst
+                .color
+                .as_deref()
+                .and_then(crate::gui::patch_editor::parse_hex_color)
+                .unwrap_or(Color32::from_rgba_unmultiplied(128, 128, 128, 255));
+            if egui::color_picker::color_edit_button_srgba(
+                ui,
+                &mut color,
+                egui::color_picker::Alpha::BlendOrAdditive,
+            )
+            .on_hover_text("Instrument color")
+            .changed()
+            {
+                inst.color = Some(crate::gui::patch_editor::color32_to_hex(color));
+                send_color = true;
+            }
+
+            // Category
+            let mut cat = inst.category;
+            egui::ComboBox::from_id_salt("patch_bar_category")
+                .selected_text(cat.name())
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    for variant in [
+                        InstrumentCategory::Uncategorized,
+                        InstrumentCategory::Drums,
+                        InstrumentCategory::Bass,
+                        InstrumentCategory::Pad,
+                        InstrumentCategory::Lead,
+                        InstrumentCategory::Arp,
+                        InstrumentCategory::Keys,
+                        InstrumentCategory::FX,
+                    ] {
+                        ui.selectable_value(&mut cat, variant, variant.name());
+                    }
+                })
+                .response
+                .on_hover_text("Instrument category");
+            if cat != inst.category {
+                inst.category = cat;
+                send_category = true;
+            }
+
+            ui.separator();
+
+            // MIDI channel
+            ui.label(RichText::new("Ch").color(theme().colors.text_dim));
+            let channel = inst.channel;
+            let channel_label = if channel.is_omni() {
+                "Omni".to_string()
+            } else {
+                format!("{}", channel.as_one_indexed())
+            };
+            egui::ComboBox::from_id_salt("patch_bar_midi_ch")
+                .selected_text(channel_label)
+                .width(60.0)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(channel.is_omni(), "Omni").clicked() {
+                        inst.channel = MidiChannel::OMNI;
+                        send_midi = Some(MidiChannel::OMNI);
+                    }
+                    for ch in 1..=16u8 {
+                        let Some(midi_ch) = MidiChannel::from_one_indexed(ch) else {
+                            continue;
+                        };
+                        let is_selected = !channel.is_omni() && channel.as_one_indexed() == ch;
+                        if ui
+                            .selectable_label(is_selected, format!("Ch {ch}"))
+                            .clicked()
+                        {
+                            inst.channel = midi_ch;
+                            send_midi = Some(midi_ch);
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("MIDI input channel (Omni = respond to all channels)");
+
+            // Volume
+            ui.label(RichText::new("Vol").color(theme().colors.text_dim));
+            let mut vol = inst.volume.as_f32();
+            if ui
+                .add(
+                    egui::DragValue::new(&mut vol)
+                        .range(0.0..=1.0)
+                        .speed(0.005)
+                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                )
+                .on_hover_text("Instrument volume")
+                .changed()
+                && !inst.muted
+            {
+                inst.set_volume(synth_core::Gain::new(vol));
+                send_volume = true;
+            }
+
+            // Pan
+            ui.label(RichText::new("Pan").color(theme().colors.text_dim));
+            let mut pan = inst.pan.as_f32();
+            if ui
+                .add(
+                    egui::DragValue::new(&mut pan)
+                        .range(-1.0..=1.0)
+                        .speed(0.01)
+                        .custom_formatter(|v, _| {
+                            if v.abs() < 0.01 {
+                                "C".to_string()
+                            } else if v < 0.0 {
+                                format!("L{:.0}", -v * 100.0)
+                            } else {
+                                format!("R{:.0}", v * 100.0)
+                            }
+                        }),
+                )
+                .on_hover_text("Stereo pan")
+                .changed()
+            {
+                inst.pan = synth_core::BipolarValue::new(pan);
+                send_pan = true;
+            }
+
+            // Voice mode
+            let current = inst.allocation_mode;
+            egui::ComboBox::from_id_salt("patch_bar_alloc_mode")
+                .selected_text(format!("{current:?}"))
+                .width(95.0)
+                .show_ui(ui, |ui| {
+                    for mode in [
+                        synth_engine::voice_allocator::AllocationMode::Polyphonic,
+                        synth_engine::voice_allocator::AllocationMode::Mono,
+                        synth_engine::voice_allocator::AllocationMode::Legato,
+                        synth_engine::voice_allocator::AllocationMode::Unison,
+                    ] {
+                        if ui
+                            .selectable_label(current == mode, format!("{mode:?}"))
+                            .clicked()
+                        {
+                            inst.allocation_mode = mode;
+                            send_mode = true;
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Voice allocation mode (Polyphonic, Mono, Legato, Unison)");
+
+            // Voice stealing strategy
+            let current_steal = inst.stealing_strategy;
+            egui::ComboBox::from_id_salt("patch_bar_stealing")
+                .selected_text(format!("{current_steal:?}"))
+                .width(95.0)
+                .show_ui(ui, |ui| {
+                    for strategy in [
+                        synth_engine::voice_allocator::StealingStrategy::Oldest,
+                        synth_engine::voice_allocator::StealingStrategy::Quietest,
+                        synth_engine::voice_allocator::StealingStrategy::LowestPriority,
+                        synth_engine::voice_allocator::StealingStrategy::SameNote,
+                        synth_engine::voice_allocator::StealingStrategy::None,
+                    ] {
+                        if ui
+                            .selectable_label(current_steal == strategy, format!("{strategy:?}"))
+                            .clicked()
+                        {
+                            inst.stealing_strategy = strategy;
+                            send_stealing = true;
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Which voice is reused when all are busy");
+
+            ui.separator();
+
+            // Transpose
+            ui.label(RichText::new("Tr").color(theme().colors.text_dim));
+            let mut transpose = inst.transpose.as_f32().round() as i32;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut transpose)
+                        .range(-24..=24)
+                        .speed(0.1)
+                        .suffix(" st"),
+                )
+                .on_hover_text("Transpose in semitones (-24 to +24)")
+                .changed()
+            {
+                inst.transpose = synth_core::Semitones::new(transpose.clamp(-24, 24) as f32);
+                send_transpose = true;
+            }
+
+            // Oversampling
+            ui.label(RichText::new("OS").color(theme().colors.text_dim));
+            let current_os = inst.oversampling;
+            egui::ComboBox::from_id_salt("patch_bar_os")
+                .selected_text(current_os.name())
+                .width(55.0)
+                .show_ui(ui, |ui| {
+                    for factor in synth_dsp::OversamplingFactor::ALL {
+                        if ui
+                            .selectable_label(current_os == factor, factor.name())
+                            .clicked()
+                        {
+                            inst.oversampling = factor;
+                            send_oversampling = true;
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Oversampling factor (reduces aliasing)");
+
+            // Max voices
+            ui.label(RichText::new("Voices").color(theme().colors.text_dim));
+            let mut voices = inst.max_voices.0 as i32;
+            if ui
+                .add(egui::DragValue::new(&mut voices).range(1..=128).speed(0.2))
+                .on_hover_text("Maximum polyphony (1–128). Takes effect on project reload.")
+                .changed()
+            {
+                inst.max_voices = synth_core::VoiceCount::new(voices.clamp(1, 128) as u8);
+                send_max_voices = true;
+            }
+
+            ui.separator();
+
+            // Velocity → amp
+            ui.label(
+                RichText::new(format!("Vel{}A", ri::ARROW_RIGHT_S_LINE))
+                    .color(theme().colors.text_dim),
+            );
+            let mut va = inst.velocity_amp_sensitivity.as_f32();
+            if ui
+                .add(
+                    egui::DragValue::new(&mut va)
+                        .range(0.0..=1.0)
+                        .speed(0.005)
+                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                )
+                .on_hover_text("Velocity to amplitude sensitivity (0 = flat, 1 = full)")
+                .changed()
+            {
+                inst.velocity_amp_sensitivity = synth_core::NormalizedValue::new(va);
+                send_vel_amp = true;
+            }
+
+            // Velocity → filter
+            ui.label(
+                RichText::new(format!("Vel{}F", ri::ARROW_RIGHT_S_LINE))
+                    .color(theme().colors.text_dim),
+            );
+            let mut vf = inst.velocity_filter_sensitivity.as_f32();
+            if ui
+                .add(
+                    egui::DragValue::new(&mut vf)
+                        .range(0.0..=1.0)
+                        .speed(0.005)
+                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                )
+                .on_hover_text("Velocity to filter cutoff sensitivity (0 = none, 1 = full)")
+                .changed()
+            {
+                inst.velocity_filter_sensitivity = synth_core::NormalizedValue::new(vf);
+                send_vel_filter = true;
+            }
+
+            ui.separator();
+
+            // Sidechain source
+            ui.label(RichText::new("SC").color(theme().colors.text_dim));
+            let current_sc = inst.sidechain_source_id;
+            let sc_label = match current_sc {
+                Some(src) => other_instruments
+                    .iter()
+                    .find(|(id, _)| *id == src)
+                    .map(|(_, n)| n.clone())
+                    .unwrap_or_else(|| format!("#{}", src.as_u64())),
+                None => "— None —".to_owned(),
+            };
+            egui::ComboBox::from_id_salt("patch_bar_sidechain")
+                .selected_text(sc_label)
+                .width(120.0)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(current_sc.is_none(), "— None —")
+                        .clicked()
+                        && current_sc.is_some()
+                    {
+                        inst.sidechain_source_id = None;
+                        send_sidechain = Some(None);
+                    }
+                    for (id, name) in &other_instruments {
+                        let selected = current_sc == Some(*id);
+                        if ui.selectable_label(selected, name).clicked() && current_sc != Some(*id)
+                        {
+                            inst.sidechain_source_id = Some(*id);
+                            send_sidechain = Some(Some(*id));
+                        }
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Route another instrument's audio output into this instrument's \
+                    compressors for pumping/ducking (the compressor's Sidechain Enabled \
+                    parameter must also be on).",
+                );
+
+            // Right-aligned actions: Auto Layout · Analyze · Edit…
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button(
+                        RichText::new(format!("{} Edit…", ri::EDIT_LINE))
+                            .color(theme().colors.text_secondary),
+                    )
+                    .on_hover_text("Edit all instrument properties")
+                    .clicked()
+                {
+                    open_edit = true;
+                }
+                if ui
+                    .button(
+                        RichText::new(format!("{} Analyze", ri::FILE_SEARCH_LINE))
+                            .color(theme().colors.text_secondary),
+                    )
+                    .on_hover_text("Open the offline analyze view for this patch")
+                    .clicked()
+                {
+                    open_analyze = true;
+                }
+                if ui
+                    .button(
+                        RichText::new(format!("{} Auto Layout", ri::LAYOUT_GRID_FILL))
+                            .color(theme().colors.text_secondary),
+                    )
+                    .on_hover_text("Tidy the module layout")
+                    .clicked()
+                {
+                    auto_layout = true;
+                }
+            });
+        });
+
+        // Apply collected changes (kept out of the UI closure so we never borrow
+        // session/engine while the InstrumentUiState is borrowed for editing).
+        if send_category {
+            let cat = self.instruments[idx].category;
+            if let Err(e) = self.session.set_instrument_category(active_id, cat) {
+                eprintln!("Failed to set instrument category {active_id:?}: {e}");
+            }
+        }
+        if let Some(channel) = send_midi {
+            self.handle.send(EngineCommand::SetInstrumentMidiChannel {
+                instrument_id: active_id,
+                channel,
+            });
+        }
+        if send_volume {
+            let volume = self.instruments[idx].volume;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: active_id,
+                param: synth_engine::InstrumentParam::Volume(volume),
+            });
+        }
+        if send_pan {
+            let pan = self.instruments[idx].pan;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: active_id,
+                param: synth_engine::InstrumentParam::Pan(pan),
+            });
+        }
+        if send_transpose {
+            let transpose = self.instruments[idx].transpose;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: active_id,
+                param: synth_engine::InstrumentParam::Transpose(transpose),
+            });
+        }
+        if send_oversampling {
+            let os = self.instruments[idx].oversampling;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: active_id,
+                param: synth_engine::InstrumentParam::OversamplingFactor(os),
+            });
+        }
+        if send_mode {
+            let mode = self.instruments[idx].allocation_mode;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: active_id,
+                param: synth_engine::InstrumentParam::AllocationMode(mode),
+            });
+        }
+        if send_stealing {
+            let strategy = self.instruments[idx].stealing_strategy;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: active_id,
+                param: synth_engine::InstrumentParam::StealingStrategy(strategy),
+            });
+        }
+        if send_vel_amp {
+            let s = self.instruments[idx].velocity_amp_sensitivity;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: active_id,
+                param: synth_engine::InstrumentParam::VelocityAmpSensitivity(s),
+            });
+        }
+        if send_vel_filter {
+            let s = self.instruments[idx].velocity_filter_sensitivity;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: active_id,
+                param: synth_engine::InstrumentParam::VelocityFilterSensitivity(s),
+            });
+        }
+        if send_color {
+            let color = self.instruments[idx].color.clone();
+            if let Err(e) = self
+                .session
+                .set_instrument_color(active_id, color.as_deref())
+            {
+                eprintln!("Failed to set instrument color {active_id:?}: {e}");
+            }
+        }
+        if let Some(source) = send_sidechain
+            && let Err(e) = self.session.set_sidechain_source(active_id, source)
+        {
+            eprintln!("Failed to set sidechain source for {active_id:?}: {e}");
+        }
+        if open_edit {
+            self.instrument_edit_target = Some(active_id);
+        }
+        if open_analyze {
+            self.analyze_window.open();
+        }
+        if send_category
+            || send_color
+            || send_midi.is_some()
+            || send_volume
+            || send_pan
+            || send_transpose
+            || send_oversampling
+            || send_max_voices
+            || send_mode
+            || send_stealing
+            || send_vel_amp
+            || send_vel_filter
+            || send_sidechain.is_some()
+        {
+            self.mark_dirty();
+        }
+
+        auto_layout
+    }
+
     /// Rack-view central panel: render the active instrument's patch editor and
     /// apply every result it returns (parameter/connection/bypass/reorder edits,
     /// module removal, audio-input actions, inline signal monitors, quick-add and
@@ -2128,7 +2574,16 @@ impl SynthApp {
         active_id: InstrumentId,
         mcp_auto_layout: bool,
     ) {
+        // Clipboard requests from the rack's right-click menu, applied after the
+        // patch-editor borrow ends (copy/cut/paste need &mut self, not the editor).
+        let mut do_copy = false;
+        let mut do_cut = false;
+        let mut do_paste = false;
         egui::CentralPanel::default().show_inside(ui, |ui| {
+            // Context bar docked over the rack editor; returns whether its Auto
+            // Layout button was clicked this frame.
+            let toolbar_auto_layout = self.render_patch_toolbar(ui, active_id);
+
             // Get the active instrument's patch editor
             let Some(patch_editor) = self
                 .instruments
@@ -2193,6 +2648,9 @@ impl SynthApp {
                 &automated_modules,
             );
             let had_mutations = result.has_mutations();
+            do_copy = result.request_copy;
+            do_cut = result.request_cut;
+            do_paste = result.request_paste;
 
             // Route on the engine-side distinction between effect-chain
             // modules (separate ordered chain) and voice-graph modules
@@ -2528,7 +2986,7 @@ impl SynthApp {
             // Only here do we clear the MCP pending flag —
             // a request issued while another view was
             // active waits until the next Rack frame.
-            if result.request_auto_layout || mcp_auto_layout {
+            if result.request_auto_layout || mcp_auto_layout || toolbar_auto_layout {
                 patch_editor.apply_auto_layout(&effect_chain_order);
                 self.mark_dirty();
                 #[cfg(feature = "mcp")]
@@ -2544,6 +3002,18 @@ impl SynthApp {
                 self.mark_dirty();
             }
         });
+
+        // Clipboard actions need &mut self (the patch-editor borrow above is now
+        // released). Paste validates clipboard state internally.
+        if do_copy {
+            self.copy_selected_modules();
+        }
+        if do_cut {
+            self.cut_selected_modules();
+        }
+        if do_paste {
+            self.paste_modules_at_offset();
+        }
     }
 
     /// Rack-view left panel: the instrument list (click to activate, double-click
@@ -3503,26 +3973,9 @@ impl SynthApp {
         let mut name_changed = false;
         let mut category_changed = false;
         let mut other_changed = false;
-        let mut send_midi_channel: Option<MidiChannel> = None;
-        let mut send_volume = false;
-        let mut send_pan = false;
-        let mut send_transpose = false;
-        let mut send_oversampling = false;
-        let mut send_alloc_mode = false;
-        let mut send_stealing = false;
-        let mut send_vel_amp = false;
-        let mut send_vel_filter = false;
         let mut send_description = false;
         let mut send_patch_description = false;
         let mut send_color = false;
-        let mut send_sidechain: Option<Option<InstrumentId>> = None;
-        // Other-instrument list captured before the mutable borrow.
-        let other_instruments: Vec<(InstrumentId, String)> = self
-            .instruments
-            .iter()
-            .filter(|i| i.id != target_id)
-            .map(|i| (i.id, i.name.clone()))
-            .collect();
 
         egui::Window::new(title)
             .id(egui::Id::new((
@@ -3630,313 +4083,6 @@ impl SynthApp {
                         send_color = true;
                     }
                 });
-
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(t.spacing.sm);
-
-                // ── Performance controls (mirrors the strip above the keyboard) ──
-
-                // MIDI channel
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("MIDI Channel").color(t.colors.text_dim));
-                    let channel = inst.channel;
-                    let channel_label = if channel.is_omni() {
-                        "Omni".to_string()
-                    } else {
-                        format!("Ch {}", channel.as_one_indexed())
-                    };
-                    egui::ComboBox::from_id_salt("instrument_edit_midi_ch")
-                        .selected_text(channel_label)
-                        .width(80.0)
-                        .show_ui(ui, |ui| {
-                            if ui.selectable_label(channel.is_omni(), "Omni").clicked() {
-                                inst.channel = MidiChannel::OMNI;
-                                send_midi_channel = Some(MidiChannel::OMNI);
-                            }
-                            for ch in 1..=16u8 {
-                                let Some(midi_ch) = MidiChannel::from_one_indexed(ch) else {
-                                    continue;
-                                };
-                                let is_selected =
-                                    !channel.is_omni() && channel.as_one_indexed() == ch;
-                                if ui
-                                    .selectable_label(is_selected, format!("Ch {ch}"))
-                                    .clicked()
-                                {
-                                    inst.channel = midi_ch;
-                                    send_midi_channel = Some(midi_ch);
-                                }
-                            }
-                        });
-                });
-
-                ui.add_space(t.spacing.sm);
-
-                // Volume + Mute + Solo on one row
-                let muted = inst.muted;
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Volume").color(t.colors.text_dim));
-                    let mut vol = inst.volume.as_f32();
-                    let vol_resp = ui
-                        .add(
-                            egui::Slider::new(&mut vol, 0.0..=1.0)
-                                .fixed_decimals(2)
-                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
-                        )
-                        .on_hover_text("Instrument volume");
-                    if vol_resp.changed() && !muted {
-                        inst.set_volume(synth_core::Gain::new(vol));
-                        send_volume = true;
-                    }
-                });
-
-                ui.add_space(t.spacing.sm);
-
-                // Pan slider
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Pan").color(t.colors.text_dim));
-                    let mut pan = inst.pan.as_f32();
-                    let resp = ui
-                        .add(
-                            egui::Slider::new(&mut pan, -1.0..=1.0)
-                                .fixed_decimals(2)
-                                .custom_formatter(|v, _| {
-                                    if v.abs() < 0.01 {
-                                        "C".to_string()
-                                    } else if v < 0.0 {
-                                        format!("L{:.0}", -v * 100.0)
-                                    } else {
-                                        format!("R{:.0}", v * 100.0)
-                                    }
-                                }),
-                        )
-                        .on_hover_text("Stereo pan position");
-                    if resp.changed() {
-                        inst.pan = synth_core::BipolarValue::new(pan);
-                        send_pan = true;
-                    }
-                });
-
-                ui.add_space(t.spacing.sm);
-
-                // Transpose
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Transpose").color(t.colors.text_dim));
-                    let mut transpose = inst.transpose.as_f32().round() as i32;
-                    let resp = ui
-                        .add(
-                            egui::DragValue::new(&mut transpose)
-                                .range(-24..=24)
-                                .speed(0.1)
-                                .suffix(" st"),
-                        )
-                        .on_hover_text("Transpose in semitones (-24 to +24)");
-                    if resp.changed() {
-                        let new_transpose =
-                            synth_core::Semitones::new(transpose.clamp(-24, 24) as f32);
-                        inst.transpose = new_transpose;
-                        send_transpose = true;
-                    }
-                });
-
-                ui.add_space(t.spacing.sm);
-
-                // Oversampling
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Oversampling").color(t.colors.text_dim));
-                    let current_os = inst.oversampling;
-                    egui::ComboBox::from_id_salt("instrument_edit_os")
-                        .selected_text(current_os.name())
-                        .width(80.0)
-                        .show_ui(ui, |ui| {
-                            for factor in synth_dsp::OversamplingFactor::ALL {
-                                if ui
-                                    .selectable_label(current_os == factor, factor.name())
-                                    .clicked()
-                                {
-                                    inst.oversampling = factor;
-                                    send_oversampling = true;
-                                }
-                            }
-                        })
-                        .response
-                        .on_hover_text("Oversampling factor (reduces aliasing)");
-                });
-
-                ui.add_space(t.spacing.sm);
-
-                // Polyphony / voice count. Changing this only takes effect
-                // after the project is reloaded — the engine can't resize
-                // the voice pool at runtime.
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Max voices").color(t.colors.text_dim));
-                    let mut voices = inst.max_voices.0 as i32;
-                    let resp = ui
-                        .add(egui::DragValue::new(&mut voices).range(1..=128).speed(0.2))
-                        .on_hover_text(
-                            "Maximum polyphony (1–128). Takes effect on project reload.",
-                        );
-                    if resp.changed() {
-                        inst.max_voices = synth_core::VoiceCount::new(voices.clamp(1, 128) as u8);
-                        other_changed = true;
-                    }
-                });
-
-                ui.add_space(t.spacing.sm);
-
-                // Allocation mode
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Mode").color(t.colors.text_dim));
-                    let current = inst.allocation_mode;
-                    egui::ComboBox::from_id_salt("instrument_edit_alloc_mode")
-                        .selected_text(format!("{current:?}"))
-                        .width(110.0)
-                        .show_ui(ui, |ui| {
-                            for mode in [
-                                synth_engine::voice_allocator::AllocationMode::Polyphonic,
-                                synth_engine::voice_allocator::AllocationMode::Mono,
-                                synth_engine::voice_allocator::AllocationMode::Legato,
-                                synth_engine::voice_allocator::AllocationMode::Unison,
-                            ] {
-                                if ui
-                                    .selectable_label(current == mode, format!("{mode:?}"))
-                                    .clicked()
-                                {
-                                    inst.allocation_mode = mode;
-                                    send_alloc_mode = true;
-                                }
-                            }
-                        });
-                });
-
-                ui.add_space(t.spacing.sm);
-
-                // Voice stealing strategy (which voice is reused when all are busy)
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Steal").color(t.colors.text_dim));
-                    let current = inst.stealing_strategy;
-                    egui::ComboBox::from_id_salt("instrument_edit_stealing")
-                        .selected_text(format!("{current:?}"))
-                        .width(110.0)
-                        .show_ui(ui, |ui| {
-                            for strategy in [
-                                synth_engine::voice_allocator::StealingStrategy::Oldest,
-                                synth_engine::voice_allocator::StealingStrategy::Quietest,
-                                synth_engine::voice_allocator::StealingStrategy::LowestPriority,
-                                synth_engine::voice_allocator::StealingStrategy::SameNote,
-                                synth_engine::voice_allocator::StealingStrategy::None,
-                            ] {
-                                if ui
-                                    .selectable_label(current == strategy, format!("{strategy:?}"))
-                                    .clicked()
-                                {
-                                    inst.stealing_strategy = strategy;
-                                    send_stealing = true;
-                                }
-                            }
-                        })
-                        .response
-                        .on_hover_text(
-                            "Which voice is reused when all are busy: Oldest, Quietest, \
-                             LowestPriority, SameNote, or None (ignore new notes when full)",
-                        );
-                });
-
-                ui.add_space(t.spacing.sm);
-
-                // Velocity → amp sensitivity
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!(
-                            "Vel {} Amp",
-                            egui_remixicon::icons::ARROW_RIGHT_S_LINE
-                        ))
-                        .color(t.colors.text_dim),
-                    );
-                    let mut s = inst.velocity_amp_sensitivity.as_f32();
-                    let resp = ui
-                        .add(
-                            egui::Slider::new(&mut s, 0.0..=1.0)
-                                .fixed_decimals(2)
-                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
-                        )
-                        .on_hover_text("Velocity to amplitude sensitivity (0 = flat, 1 = full)");
-                    if resp.changed() {
-                        inst.velocity_amp_sensitivity = synth_core::NormalizedValue::new(s);
-                        send_vel_amp = true;
-                    }
-                });
-
-                ui.add_space(t.spacing.sm);
-
-                // Velocity → filter sensitivity
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!(
-                            "Vel {} Filter",
-                            egui_remixicon::icons::ARROW_RIGHT_S_LINE
-                        ))
-                        .color(t.colors.text_dim),
-                    );
-                    let mut s = inst.velocity_filter_sensitivity.as_f32();
-                    let resp = ui
-                        .add(
-                            egui::Slider::new(&mut s, 0.0..=1.0)
-                                .fixed_decimals(2)
-                                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
-                        )
-                        .on_hover_text(
-                            "Velocity to filter cutoff sensitivity (0 = none, 1 = full)",
-                        );
-                    if resp.changed() {
-                        inst.velocity_filter_sensitivity = synth_core::NormalizedValue::new(s);
-                        send_vel_filter = true;
-                    }
-                });
-
-                ui.add_space(t.spacing.sm);
-
-                // Sidechain source
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Sidechain").color(t.colors.text_dim));
-                    let current = inst.sidechain_source_id;
-                    let label = match current {
-                        Some(src) => other_instruments
-                            .iter()
-                            .find(|(id, _)| *id == src)
-                            .map(|(_, n)| n.clone())
-                            .unwrap_or_else(|| format!("#{}", src.as_u64())),
-                        None => "— None —".to_owned(),
-                    };
-                    egui::ComboBox::from_id_salt("instrument_edit_sidechain")
-                        .selected_text(label)
-                        .width(160.0)
-                        .show_ui(ui, |ui| {
-                            if ui.selectable_label(current.is_none(), "— None —").clicked()
-                                && current.is_some()
-                            {
-                                inst.sidechain_source_id = None;
-                                send_sidechain = Some(None);
-                            }
-                            for (id, name) in &other_instruments {
-                                let selected = current == Some(*id);
-                                if ui.selectable_label(selected, name).clicked()
-                                    && current != Some(*id)
-                                {
-                                    inst.sidechain_source_id = Some(*id);
-                                    send_sidechain = Some(Some(*id));
-                                }
-                            }
-                        })
-                        .response
-                        .on_hover_text(
-                            "Route another instrument's audio output into this \
-                            instrument's compressors for classic pumping/ducking. \
-                            The compressor's Sidechain Enabled parameter must also \
-                            be on. Detection latency is ~1 audio buffer.",
-                        );
-                });
             });
 
         if !open {
@@ -3954,68 +4100,6 @@ impl SynthApp {
             if let Err(e) = self.session.set_instrument_category(target_id, cat) {
                 eprintln!("Failed to set instrument category {target_id:?}: {e}");
             }
-        }
-        if let Some(channel) = send_midi_channel {
-            self.handle.send(EngineCommand::SetInstrumentMidiChannel {
-                instrument_id: target_id,
-                channel,
-            });
-        }
-        if send_volume {
-            let volume = self.instruments[idx].volume;
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: target_id,
-                param: synth_engine::InstrumentParam::Volume(volume),
-            });
-        }
-        if send_pan {
-            let pan = self.instruments[idx].pan;
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: target_id,
-                param: synth_engine::InstrumentParam::Pan(pan),
-            });
-        }
-        if send_transpose {
-            let transpose = self.instruments[idx].transpose;
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: target_id,
-                param: synth_engine::InstrumentParam::Transpose(transpose),
-            });
-        }
-        if send_oversampling {
-            let os = self.instruments[idx].oversampling;
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: target_id,
-                param: synth_engine::InstrumentParam::OversamplingFactor(os),
-            });
-        }
-        if send_alloc_mode {
-            let mode = self.instruments[idx].allocation_mode;
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: target_id,
-                param: synth_engine::InstrumentParam::AllocationMode(mode),
-            });
-        }
-        if send_stealing {
-            let strategy = self.instruments[idx].stealing_strategy;
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: target_id,
-                param: synth_engine::InstrumentParam::StealingStrategy(strategy),
-            });
-        }
-        if send_vel_amp {
-            let s = self.instruments[idx].velocity_amp_sensitivity;
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: target_id,
-                param: synth_engine::InstrumentParam::VelocityAmpSensitivity(s),
-            });
-        }
-        if send_vel_filter {
-            let s = self.instruments[idx].velocity_filter_sensitivity;
-            self.handle.send(EngineCommand::SetInstrumentParameter {
-                instrument_id: target_id,
-                param: synth_engine::InstrumentParam::VelocityFilterSensitivity(s),
-            });
         }
         if send_description {
             let description = self.instruments[idx].description.clone();
@@ -4046,27 +4130,12 @@ impl SynthApp {
                 eprintln!("Failed to set instrument color {target_id:?}: {e}");
             }
         }
-        if let Some(source) = send_sidechain
-            && let Err(e) = self.session.set_sidechain_source(target_id, source)
-        {
-            eprintln!("Failed to set sidechain source for {target_id:?}: {e}");
-        }
         if name_changed
             || category_changed
             || other_changed
-            || send_midi_channel.is_some()
-            || send_volume
-            || send_pan
-            || send_transpose
-            || send_oversampling
-            || send_alloc_mode
-            || send_stealing
-            || send_vel_amp
-            || send_vel_filter
             || send_description
             || send_patch_description
             || send_color
-            || send_sidechain.is_some()
         {
             self.mark_dirty();
         }
@@ -4087,7 +4156,7 @@ impl SynthApp {
         }
     }
 
-    /// Handle Ctrl+C (copy), Ctrl+V (paste), Ctrl+D (duplicate) keyboard shortcuts.
+    /// Handle Ctrl+C (copy), Ctrl+V (paste), Ctrl+X (cut) keyboard shortcuts.
     fn handle_clipboard_shortcuts(&mut self, ctx: &egui::Context) {
         // Only handle clipboard shortcuts in Rack view
         if self.active_view != AppView::Rack {
@@ -4099,12 +4168,12 @@ impl SynthApp {
             return;
         }
 
-        let (ctrl_c, ctrl_v, ctrl_d) = ctx.input(|i| {
+        let (ctrl_c, ctrl_v, ctrl_x) = ctx.input(|i| {
             let cmd = i.modifiers.command;
             (
                 cmd && !i.modifiers.shift && i.key_pressed(egui::Key::C),
                 cmd && !i.modifiers.shift && i.key_pressed(egui::Key::V),
-                cmd && !i.modifiers.shift && i.key_pressed(egui::Key::D),
+                cmd && !i.modifiers.shift && i.key_pressed(egui::Key::X),
             )
         });
 
@@ -4112,8 +4181,8 @@ impl SynthApp {
             self.copy_selected_modules();
         } else if ctrl_v {
             self.paste_modules_at_offset();
-        } else if ctrl_d {
-            self.duplicate_selected_modules();
+        } else if ctrl_x {
+            self.cut_selected_modules();
         }
     }
 
@@ -4168,10 +4237,58 @@ impl SynthApp {
         self.mark_dirty();
     }
 
-    /// Duplicate selected modules: copy + paste at an offset.
-    fn duplicate_selected_modules(&mut self) {
+    /// Cut selected modules: copy them to the clipboard, then remove them. Mirrors
+    /// the removal path in `render_rack_central`, including the automation-lane
+    /// guard so a lane is never silently orphaned.
+    fn cut_selected_modules(&mut self) {
         self.copy_selected_modules();
-        self.paste_modules_at_offset();
+        let Some(active_id) = self.active_instrument_id else {
+            return;
+        };
+        let Some(idx) = self.instruments.iter().position(|i| i.id == active_id) else {
+            return;
+        };
+        let selection = self.instruments[idx].patch_editor.effective_selection();
+        if selection.is_empty() {
+            return;
+        }
+        let seq_id = synth_sequencer::SeqInstrumentId::new(active_id.as_u64() as u16);
+        let mut removed_any = false;
+        for module_id in selection {
+            // Don't orphan an automation lane that still targets this module.
+            let referenced = self.song.read().is_module_automated(
+                seq_id,
+                module_id.module_type,
+                module_id.instance,
+            );
+            if referenced {
+                self.dialog_state.set_status(format!(
+                    "Can't cut {:?} #{}: an automation lane targets it. Delete the lane first.",
+                    module_id.module_type, module_id.instance
+                ));
+                continue;
+            }
+            let has_vis_buffer = self.instruments[idx]
+                .patch_editor
+                .module_descriptor(module_id)
+                .is_some_and(|d| {
+                    d.category == ModuleCategory::Visualizer
+                        || d.type_id.0 == "signal_monitor"
+                        || d.type_id.0 == "inline_signal_monitor"
+                });
+            if let Err(e) = self.session.remove_module(active_id, module_id) {
+                eprintln!("Failed to remove module {module_id:?}: {e}");
+                continue;
+            }
+            self.instruments[idx].patch_editor.remove_module(module_id);
+            if has_vis_buffer {
+                self.handle.remove_visualization_buffer(module_id);
+            }
+            removed_any = true;
+        }
+        if removed_any {
+            self.mark_dirty();
+        }
     }
 
     /// Optimize the project by removing unused patterns, tracks, and instruments.

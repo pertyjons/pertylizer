@@ -54,11 +54,11 @@ pub(super) fn draw_transport_bar(
     let rec_state = handle.state.transport.recording_state();
     let metro_on = handle.state.transport.is_metronome_on();
 
-    // Read time signature and song name from the song (non-blocking).
-    let (time_sig, song_name) = song
+    // Read time signature from the song (non-blocking).
+    let time_sig = song
         .try_read()
-        .map(|s| (s.time_signature_at(current_tick), s.name.clone()))
-        .unwrap_or((TimeSignature::COMMON, String::new()));
+        .map(|s| s.time_signature_at(current_tick))
+        .unwrap_or(TimeSignature::COMMON);
 
     // Phrase boundaries are the sorted, de-duplicated start and end ticks of
     // every placement (plus the song start) — the musical anchors the ◀◀/▶▶
@@ -87,12 +87,6 @@ pub(super) fn draw_transport_bar(
 
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-
-        // Song name
-        if !song_name.is_empty() {
-            ui.label(RichText::new(&song_name).color(t.colors.accent_cyan));
-            ui.separator();
-        }
 
         // Go to start
         if ui

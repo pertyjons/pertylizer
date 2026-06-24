@@ -182,45 +182,38 @@ pub(crate) fn draw_pattern_view(
                     .and_then(|s| s.pattern_playhead_for(pattern_id, current_tick))
             };
 
-            // Editor-mode toggle: piano roll vs tracker (read-only in T1).
-            ui.horizontal(|ui| {
-                ui.selectable_value(
-                    &mut pattern_view_state.editor_mode,
-                    PatternEditorMode::PianoRoll,
-                    "Piano roll",
-                );
-                ui.selectable_value(
-                    &mut pattern_view_state.editor_mode,
-                    PatternEditorMode::Tracker,
-                    "Tracker",
-                );
-
-                // Note FX toggle. In piano-roll mode the piano-roll toolbar
-                // already carries this button, so only surface it here in
-                // tracker mode (which has no such toolbar) — one toggle per
-                // context, no duplicate.
-                if pattern_view_state.editor_mode == PatternEditorMode::Tracker {
-                    ui.separator();
-                    let np_count = song
-                        .try_read()
-                        .and_then(|s| s.pattern(pattern_id).map(|p| p.processors().len()))
-                        .unwrap_or(0);
-                    if ui
-                        .selectable_label(
-                            seq_view_state.note_fx_panel_open,
-                            format!("Note FX ({np_count})"),
-                        )
-                        .on_hover_text("Show/hide the note-processor rack for this pattern")
-                        .clicked()
-                    {
-                        seq_view_state.note_fx_panel_open = !seq_view_state.note_fx_panel_open;
-                    }
-                }
-            });
-            ui.separator();
-
             match pattern_view_state.editor_mode {
                 PatternEditorMode::Tracker => {
+                    // The tracker has no toolbar of its own, so the docked context
+                    // bar here carries the mode selector + the Note FX toggle. (In
+                    // piano-roll mode those live in the piano-roll's own row 1.)
+                    crate::gui::toolbar::top(ui, "pattern_toolbar", |ui| {
+                        ui.selectable_value(
+                            &mut pattern_view_state.editor_mode,
+                            PatternEditorMode::PianoRoll,
+                            "Piano roll",
+                        );
+                        ui.selectable_value(
+                            &mut pattern_view_state.editor_mode,
+                            PatternEditorMode::Tracker,
+                            "Tracker",
+                        );
+                        ui.separator();
+                        let np_count = song
+                            .try_read()
+                            .and_then(|s| s.pattern(pattern_id).map(|p| p.processors().len()))
+                            .unwrap_or(0);
+                        if ui
+                            .selectable_label(
+                                seq_view_state.note_fx_panel_open,
+                                format!("Note FX ({np_count})"),
+                            )
+                            .on_hover_text("Show/hide the note-processor rack for this pattern")
+                            .clicked()
+                        {
+                            seq_view_state.note_fx_panel_open = !seq_view_state.note_fx_panel_open;
+                        }
+                    });
                     draw_tracker(
                         ui,
                         &data,
@@ -244,6 +237,7 @@ pub(crate) fn draw_pattern_view(
                         seq_view_state,
                         instruments,
                         undo_manager,
+                        Some(&mut pattern_view_state.editor_mode),
                     ) {
                         seq_view_state.close_piano_roll();
                         handle.send(EngineCommand::SetSoloPattern(None));

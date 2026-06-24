@@ -1111,9 +1111,9 @@ pub(crate) fn draw_sequencer_view(
     }
 
     // Transport bar at the top
-    let is_playing = egui::Panel::top("sequencer_transport")
-        .show_inside(ui, |ui| draw_transport_bar(ui, handle, song, view_state))
-        .inner;
+    let is_playing = super::toolbar::top(ui, "sequencer_transport", |ui| {
+        draw_transport_bar(ui, handle, song, view_state)
+    });
 
     // Request repaint during playback for smooth position updates. While
     // stopped, keep repainting for a few frames after a transport jump / seek /
@@ -1223,6 +1223,7 @@ pub(crate) fn draw_sequencer_view(
                         view_state,
                         instruments,
                         undo_manager,
+                        None,
                     ) {
                         view_state.close_piano_roll();
                         // Closing the piano roll resumes normal multi-pattern playback.

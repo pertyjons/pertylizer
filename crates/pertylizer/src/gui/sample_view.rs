@@ -1,9 +1,9 @@
 //! Sample view — browse, import, edit, and preview samples.
 //!
 //! Layout:
-//! - Left sidebar: sample list with names and durations
-//! - Center: waveform display with crop handles and loop markers
-//! - Right/bottom: properties panel and toolbar
+//! - Left sidebar: sample list (full height)
+//! - Center: a top toolbar (waveform-editing tools | input & recording controls,
+//!   split by a clear divider), then the waveform display and properties panel
 
 use std::sync::{Arc, RwLock};
 
@@ -178,91 +178,6 @@ pub fn draw_sample_view(
     let mut action = SampleViewAction::None;
     let t = theme();
 
-    // ---- Toolbar (top) ----
-    // Import / Export / Delete live in the list header and per-row kebab menu;
-    // this toolbar carries only the waveform-editing actions.
-    egui::Panel::top("sample_toolbar").show_inside(ui, |ui| {
-        ui.horizontal(|ui| {
-            let has_selection = state.selected_sample.is_some();
-
-            // Zoom controls
-            if ui
-                .button(egui::RichText::new(ri::ZOOM_IN_LINE).color(t.colors.text_secondary))
-                .clicked()
-            {
-                state.zoom = (state.zoom * 0.5).max(0.01);
-                state.peaks_dirty = true;
-            }
-            if ui
-                .button(egui::RichText::new(ri::ZOOM_OUT_LINE).color(t.colors.text_secondary))
-                .clicked()
-            {
-                state.zoom = (state.zoom * 2.0).min(1000.0);
-                state.peaks_dirty = true;
-            }
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new(
-                        egui::RichText::new("Fit All").color(t.colors.text_secondary),
-                    ),
-                )
-                .clicked()
-            {
-                state.scroll_offset = 0.0;
-                state.zoom = 1.0;
-                state.peaks_dirty = true;
-            }
-
-            ui.separator();
-
-            // Normalize
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new(
-                        egui::RichText::new("Normalize").color(t.colors.text_secondary),
-                    ),
-                )
-                .clicked()
-                && let Some(id) = state.selected_sample
-            {
-                normalize_sample(library, id);
-                state.peaks_dirty = true;
-            }
-
-            // Reverse
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new(
-                        egui::RichText::new("Reverse").color(t.colors.text_secondary),
-                    ),
-                )
-                .clicked()
-                && let Some(id) = state.selected_sample
-            {
-                reverse_sample(library, id);
-                state.peaks_dirty = true;
-            }
-
-            // Auto-trim
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new(
-                        egui::RichText::new("Auto-trim").color(t.colors.text_secondary),
-                    ),
-                )
-                .clicked()
-                && let Some(id) = state.selected_sample
-            {
-                auto_trim_sample(library, id);
-                state.peaks_dirty = true;
-            }
-        });
-    });
-
     // ---- Sample list (left sidebar) ----
     egui::Panel::left("sample_list_panel")
         .default_size(list_panel::DEFAULT_WIDTH)
@@ -407,133 +322,213 @@ pub fn draw_sample_view(
     // ---- Input monitor bar (bottom) ----
     audio_input.drain_gui_buffer();
 
-    egui::Panel::bottom("sample_input_bar")
-        .min_size(28.0)
-        .show_inside(ui, |ui| {
-            ui.horizontal_centered(|ui| {
-                // Input device selector
-                ui.label(egui::RichText::new("Input:").color(t.colors.text_secondary));
-                let current_name = state.selected_input_device.as_deref().unwrap_or("Default");
-                egui::ComboBox::from_id_salt("input_device_selector")
-                    .selected_text(current_name)
-                    .width(180.0)
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(state.selected_input_device.is_none(), "Default")
-                            .clicked()
-                        {
-                            state.selected_input_device = None;
-                        }
-                        for dev in &state.cached_input_devices {
-                            let selected =
-                                state.selected_input_device.as_deref() == Some(&dev.name);
-                            if ui.selectable_label(selected, &dev.name).clicked() {
-                                state.selected_input_device = Some(dev.name.clone());
-                            }
-                        }
-                    });
+    // ---- Central panel: waveform-editing toolbar + waveform + properties ----
+    egui::CentralPanel::default().show_inside(ui, |ui| {
+        // Waveform-editing toolbar, docked over the editor — the left list stays
+        // full-height to its left, matching the Pattern view. Import / Export /
+        // Delete live in the list header and per-row kebab menu.
+        super::toolbar::top(ui, "sample_toolbar", |ui| {
+            let has_selection = state.selected_sample.is_some();
 
-                ui.separator();
+            // Zoom controls
+            if ui
+                .button(egui::RichText::new(ri::ZOOM_IN_LINE).color(t.colors.text_secondary))
+                .clicked()
+            {
+                state.zoom = (state.zoom * 0.5).max(0.01);
+                state.peaks_dirty = true;
+            }
+            if ui
+                .button(egui::RichText::new(ri::ZOOM_OUT_LINE).color(t.colors.text_secondary))
+                .clicked()
+            {
+                state.zoom = (state.zoom * 2.0).min(1000.0);
+                state.peaks_dirty = true;
+            }
+            if ui
+                .add_enabled(
+                    has_selection,
+                    egui::Button::new(
+                        egui::RichText::new("Fit All").color(t.colors.text_secondary),
+                    ),
+                )
+                .clicked()
+            {
+                state.scroll_offset = 0.0;
+                state.zoom = 1.0;
+                state.peaks_dirty = true;
+            }
 
-                // Level meter
-                let peak = audio_input.peak_level();
-                let meter_width = 80.0;
-                let meter_height = 12.0;
-                let (meter_rect, _) = ui.allocate_exact_size(
-                    egui::vec2(meter_width, meter_height),
-                    egui::Sense::hover(),
-                );
-                let painter = ui.painter_at(meter_rect);
-                painter.rect_filled(meter_rect, 2.0, t.colors.bg_panel);
-                let fill_w = (peak.min(1.0) * meter_width).max(0.0);
-                if fill_w > 0.0 {
-                    let fill_color = if peak > 0.9 {
-                        t.colors.meter_red
-                    } else if peak > 0.6 {
-                        t.colors.meter_yellow
-                    } else {
-                        t.colors.meter_green
-                    };
-                    let fill_rect = egui::Rect::from_min_size(
-                        meter_rect.left_top(),
-                        egui::vec2(fill_w, meter_height),
-                    );
-                    painter.rect_filled(fill_rect, 2.0, fill_color);
-                }
+            ui.separator();
 
-                ui.separator();
+            // Normalize
+            if ui
+                .add_enabled(
+                    has_selection,
+                    egui::Button::new(
+                        egui::RichText::new("Normalize").color(t.colors.text_secondary),
+                    ),
+                )
+                .clicked()
+                && let Some(id) = state.selected_sample
+            {
+                normalize_sample(library, id);
+                state.peaks_dirty = true;
+            }
 
-                // Monitor toggle
-                let input_state = audio_input.state();
-                let is_monitoring = input_state != InputState::Idle;
-                let monitor_label = if is_monitoring {
-                    format!("{} Monitor: ON", ri::MIC_FILL)
-                } else {
-                    format!("{} Monitor", ri::MIC_LINE)
-                };
-                let monitor_color = if is_monitoring {
-                    t.colors.meter_green
-                } else {
-                    t.colors.text_dim
-                };
-                if ui
-                    .button(egui::RichText::new(monitor_label).color(monitor_color))
-                    .clicked()
-                {
-                    if is_monitoring {
-                        action = SampleViewAction::StopMonitoring;
-                    } else {
-                        action = SampleViewAction::StartMonitoring;
+            // Reverse
+            if ui
+                .add_enabled(
+                    has_selection,
+                    egui::Button::new(
+                        egui::RichText::new("Reverse").color(t.colors.text_secondary),
+                    ),
+                )
+                .clicked()
+                && let Some(id) = state.selected_sample
+            {
+                reverse_sample(library, id);
+                state.peaks_dirty = true;
+            }
+
+            // Auto-trim
+            if ui
+                .add_enabled(
+                    has_selection,
+                    egui::Button::new(
+                        egui::RichText::new("Auto-trim").color(t.colors.text_secondary),
+                    ),
+                )
+                .clicked()
+                && let Some(id) = state.selected_sample
+            {
+                auto_trim_sample(library, id);
+                state.peaks_dirty = true;
+            }
+
+            // ── Clear divider between the two groups on this one row:
+            //    waveform-editing tools (left) | input & recording (right). ──
+            ui.add_space(t.spacing.lg);
+            ui.separator();
+            ui.add_space(t.spacing.lg);
+
+            // Input device selector
+            ui.label(egui::RichText::new("Input:").color(t.colors.text_secondary));
+            let current_name = state.selected_input_device.as_deref().unwrap_or("Default");
+            egui::ComboBox::from_id_salt("input_device_selector")
+                .selected_text(current_name)
+                .width(180.0)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(state.selected_input_device.is_none(), "Default")
+                        .clicked()
+                    {
+                        state.selected_input_device = None;
                     }
-                }
+                    for dev in &state.cached_input_devices {
+                        let selected = state.selected_input_device.as_deref() == Some(&dev.name);
+                        if ui.selectable_label(selected, &dev.name).clicked() {
+                            state.selected_input_device = Some(dev.name.clone());
+                        }
+                    }
+                });
 
-                ui.separator();
+            ui.separator();
 
-                // Record button
-                let is_recording = input_state == InputState::Recording;
-                let rec_label = if is_recording {
-                    format!("{} Stop", ri::STOP_FILL)
-                } else {
-                    format!("{} Rec", ri::RECORD_CIRCLE_FILL)
-                };
-                let rec_color = if is_recording {
+            // Level meter
+            let peak = audio_input.peak_level();
+            let meter_width = 80.0;
+            let meter_height = 12.0;
+            let (meter_rect, _) =
+                ui.allocate_exact_size(egui::vec2(meter_width, meter_height), egui::Sense::hover());
+            let painter = ui.painter_at(meter_rect);
+            painter.rect_filled(meter_rect, 2.0, t.colors.bg_panel);
+            let fill_w = (peak.min(1.0) * meter_width).max(0.0);
+            if fill_w > 0.0 {
+                let fill_color = if peak > 0.9 {
                     t.colors.meter_red
-                } else if is_monitoring {
-                    t.colors.text_primary
+                } else if peak > 0.6 {
+                    t.colors.meter_yellow
                 } else {
-                    t.colors.text_dim
+                    t.colors.meter_green
                 };
-                if ui
-                    .add_enabled(
-                        is_monitoring,
-                        egui::Button::new(egui::RichText::new(rec_label).color(rec_color)),
-                    )
-                    .clicked()
-                {
-                    if is_recording {
-                        action = SampleViewAction::StopRecording;
-                    } else {
-                        action = SampleViewAction::StartRecording;
-                    }
-                }
+                let fill_rect = egui::Rect::from_min_size(
+                    meter_rect.left_top(),
+                    egui::vec2(fill_w, meter_height),
+                );
+                painter.rect_filled(fill_rect, 2.0, fill_color);
+            }
 
-                // Recording timer
-                if is_recording {
-                    let secs = audio_input.recorded_seconds();
-                    let mins = (secs / 60.0) as u32;
-                    let remaining = secs - f64::from(mins) * 60.0;
-                    ui.label(
-                        egui::RichText::new(format!("{mins}:{remaining:04.1}"))
-                            .color(t.colors.meter_red)
-                            .monospace(),
-                    );
-                    ctx.request_repaint();
+            ui.separator();
+
+            // Monitor toggle
+            let input_state = audio_input.state();
+            let is_monitoring = input_state != InputState::Idle;
+            let monitor_label = if is_monitoring {
+                format!("{} Monitor: ON", ri::MIC_FILL)
+            } else {
+                format!("{} Monitor", ri::MIC_LINE)
+            };
+            let monitor_color = if is_monitoring {
+                t.colors.meter_green
+            } else {
+                t.colors.text_dim
+            };
+            if ui
+                .button(egui::RichText::new(monitor_label).color(monitor_color))
+                .clicked()
+            {
+                if is_monitoring {
+                    action = SampleViewAction::StopMonitoring;
+                } else {
+                    action = SampleViewAction::StartMonitoring;
                 }
-            });
+            }
+
+            ui.separator();
+
+            // Record button
+            let is_recording = input_state == InputState::Recording;
+            let rec_label = if is_recording {
+                format!("{} Stop", ri::STOP_FILL)
+            } else {
+                format!("{} Rec", ri::RECORD_CIRCLE_FILL)
+            };
+            let rec_color = if is_recording {
+                t.colors.meter_red
+            } else if is_monitoring {
+                t.colors.text_primary
+            } else {
+                t.colors.text_dim
+            };
+            if ui
+                .add_enabled(
+                    is_monitoring,
+                    egui::Button::new(egui::RichText::new(rec_label).color(rec_color)),
+                )
+                .clicked()
+            {
+                if is_recording {
+                    action = SampleViewAction::StopRecording;
+                } else {
+                    action = SampleViewAction::StartRecording;
+                }
+            }
+
+            // Recording timer
+            if is_recording {
+                let secs = audio_input.recorded_seconds();
+                let mins = (secs / 60.0) as u32;
+                let remaining = secs - f64::from(mins) * 60.0;
+                ui.label(
+                    egui::RichText::new(format!("{mins}:{remaining:04.1}"))
+                        .color(t.colors.meter_red)
+                        .monospace(),
+                );
+                ctx.request_repaint();
+            }
         });
 
-    // ---- Central panel: waveform + properties ----
-    egui::CentralPanel::default().show_inside(ui, |ui| {
         if let Some(id) = state.selected_sample {
             if let Ok(lib) = library.read() {
                 if let Some(sample) = lib.get(id) {

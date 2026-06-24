@@ -1292,11 +1292,12 @@ pub(crate) fn draw_piano_roll(
     view_state: &mut SequencerViewState,
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
     undo_manager: &mut crate::undo::UndoManager,
+    editor_mode: Option<&mut crate::gui::pattern_view::PatternEditorMode>,
 ) -> bool {
     let t = theme();
     let keep_open = {
         let mut ctx = PianoRollCtx::new(data, song, view_state, handle, undo_manager, instruments);
-        draw_piano_roll_toolbar(&mut ctx, ui, is_playing)
+        draw_piano_roll_toolbar(&mut ctx, ui, is_playing, editor_mode)
     };
 
     ui.separator();
@@ -2508,6 +2509,7 @@ fn draw_piano_roll_toolbar(
     ctx: &mut PianoRollCtx<'_>,
     ui: &mut egui::Ui,
     is_playing: bool,
+    editor_mode: Option<&mut crate::gui::pattern_view::PatternEditorMode>,
 ) -> bool {
     let data = ctx.data;
     let song = ctx.song;
@@ -2517,13 +2519,42 @@ fn draw_piano_roll_toolbar(
     let instruments = ctx.instruments;
     let t = theme();
     let mut keep_open = true;
+    // The Pattern view (Some) shows a read-only name and no description; the
+    // sequencer's piano roll (None) keeps the inline rename + description editors
+    // (the arrangement's "Rename Pattern" drives that inline name editor).
+    let is_pattern_view = editor_mode.is_some();
 
-    // ── Toolbar ──
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
+    // ── Toolbar (row 1: docked context bar) ──
+    crate::gui::toolbar::top(ui, "piano_roll_toolbar", |ui| {
+        // Editor-mode selector. The Pattern view passes Some(editor_mode) so the
+        // bar carries the Piano-roll/Tracker switch; the sequencer's bottom-panel
+        // piano roll passes None (it has no mode switch).
+        if let Some(mode) = editor_mode {
+            ui.selectable_value(
+                mode,
+                crate::gui::pattern_view::PatternEditorMode::PianoRoll,
+                "Piano roll",
+            );
+            ui.selectable_value(
+                mode,
+                crate::gui::pattern_view::PatternEditorMode::Tracker,
+                "Tracker",
+            );
+            ui.separator();
+        }
 
-        // Pattern name (editable via rename context menu)
-        if view_state.editing_pattern_name.as_ref().map(|(id, _)| *id) == Some(data.pattern_id) {
+        // Pattern name. Read-only label in the Pattern view (rename happens there
+        // via the browser's edit dialog); inline-editable in the sequencer's piano
+        // roll, where the arrangement's "Rename Pattern" drives this editor.
+        if is_pattern_view {
+            ui.label(
+                RichText::new(&data.pattern_name)
+                    .size(14.0)
+                    .color(t.colors.accent_cyan),
+            );
+        } else if view_state.editing_pattern_name.as_ref().map(|(id, _)| *id)
+            == Some(data.pattern_id)
+        {
             if let Some((_, ref mut name_buf)) = view_state.editing_pattern_name {
                 let resp = ui.add(
                     egui::TextEdit::singleline(name_buf)
@@ -2552,49 +2583,52 @@ fn draw_piano_roll_toolbar(
             }
         }
 
-        // Pattern description (editable inline; utility metadata, no undo)
-        if view_state
-            .editing_pattern_description
-            .as_ref()
-            .map(|(id, _)| *id)
-            == Some(data.pattern_id)
-        {
-            if let Some((_, ref mut desc_buf)) = view_state.editing_pattern_description {
-                let resp = ui.add(
-                    egui::TextEdit::singleline(desc_buf)
-                        .desired_width(180.0)
-                        .hint_text("Description")
-                        .font(egui::FontId::proportional(12.0)),
-                );
-                // Commit on every change so switching patterns mid-edit can't
-                // strand the buffer; lost_focus (incl. Enter on a singleline)
-                // ends the edit session.
-                if resp.changed() {
-                    commit_pattern_description(song, data.pattern_id, desc_buf.clone());
+        // Pattern description — only in the sequencer's piano roll; the Pattern
+        // view bar shows no description.
+        if !is_pattern_view {
+            if view_state
+                .editing_pattern_description
+                .as_ref()
+                .map(|(id, _)| *id)
+                == Some(data.pattern_id)
+            {
+                if let Some((_, ref mut desc_buf)) = view_state.editing_pattern_description {
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(desc_buf)
+                            .desired_width(180.0)
+                            .hint_text("Description")
+                            .font(egui::FontId::proportional(12.0)),
+                    );
+                    // Commit on every change so switching patterns mid-edit can't
+                    // strand the buffer; lost_focus (incl. Enter on a singleline)
+                    // ends the edit session.
+                    if resp.changed() {
+                        commit_pattern_description(song, data.pattern_id, desc_buf.clone());
+                    }
+                    if resp.lost_focus() {
+                        view_state.editing_pattern_description = None;
+                    } else if !resp.has_focus() {
+                        resp.request_focus();
+                    }
                 }
-                if resp.lost_focus() {
-                    view_state.editing_pattern_description = None;
-                } else if !resp.has_focus() {
-                    resp.request_focus();
-                }
-            }
-        } else {
-            let desc_text = if data.pattern_description.is_empty() {
-                RichText::new("+ description")
-                    .size(12.0)
-                    .italics()
-                    .color(t.colors.text_dim)
             } else {
-                RichText::new(&data.pattern_description)
-                    .size(12.0)
-                    .color(t.colors.text_secondary)
-            };
-            let desc_resp = ui
-                .add(egui::Label::new(desc_text).sense(Sense::click()))
-                .on_hover_text("Double-click to edit pattern description");
-            if desc_resp.double_clicked() {
-                view_state.editing_pattern_description =
-                    Some((data.pattern_id, data.pattern_description.clone()));
+                let desc_text = if data.pattern_description.is_empty() {
+                    RichText::new("+ description")
+                        .size(12.0)
+                        .italics()
+                        .color(t.colors.text_dim)
+                } else {
+                    RichText::new(&data.pattern_description)
+                        .size(12.0)
+                        .color(t.colors.text_secondary)
+                };
+                let desc_resp = ui
+                    .add(egui::Label::new(desc_text).sense(Sense::click()))
+                    .on_hover_text("Double-click to edit pattern description");
+                if desc_resp.double_clicked() {
+                    view_state.editing_pattern_description =
+                        Some((data.pattern_id, data.pattern_description.clone()));
+                }
             }
         }
 
@@ -2731,11 +2765,8 @@ fn draw_piano_roll_toolbar(
         });
     });
 
-    ui.add_space(t.spacing.xxs);
-
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-
+    // ── Toolbar (row 2: secondary tools/grid row) ──
+    crate::gui::toolbar::secondary_row(ui, |ui| {
         // Tool selector
         let select_label = if view_state.edit_tool == EditTool::Select {
             RichText::new("Select").color(t.colors.accent_primary)

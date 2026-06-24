@@ -273,50 +273,70 @@ pub fn draw_mixer_view(
     let mut mutation: Option<MixerMutation> = None;
     let mut action: Option<MixerViewAction> = None;
 
-    // ── Toolbar ──
-    ui.horizontal(|ui| {
-        ui.heading(RichText::new("Mixer").color(t.colors.text_primary));
-        ui.add_space(t.spacing.lg);
-        if ui
-            .button(RichText::new("+ Return Bus").color(t.colors.accent_green))
-            .on_hover_text("Create a new effect-send return bus")
-            .clicked()
-        {
-            mutation = Some(MixerMutation::CreateReturn);
-        }
-    });
-    ui.separator();
-
-    egui::ScrollArea::horizontal()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.horizontal_top(|ui| {
-                for ch in &snapshot.channels {
-                    let eng_id = instruments
-                        .iter()
-                        .find(|i| i.id.0 == u64::from(ch.instrument.0))
-                        .map(|i| i.id);
-                    if draw_channel_strip(ui, ch, &snapshot.return_ids, song, handle, eng_id, state)
-                    {
-                        action = Some(MixerViewAction::EditChannelFx(ch.instrument));
-                    }
+    // Fill the view background with the theme's panel color — this view draws
+    // straight into the frame's central area, which is otherwise unfilled.
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE.fill(t.colors.bg_panel))
+        .show_inside(ui, |ui| {
+            // ── Toolbar ──
+            super::toolbar::top(ui, "mixer_toolbar", |ui| {
+                ui.label(RichText::new("Mixer").color(t.colors.text_primary).strong());
+                ui.add_space(t.spacing.lg);
+                if ui
+                    .button(RichText::new("+ Return Bus").color(t.colors.accent_green))
+                    .on_hover_text("Create a new effect-send return bus")
+                    .clicked()
+                {
+                    mutation = Some(MixerMutation::CreateReturn);
                 }
-
-                if !snapshot.returns.is_empty() {
-                    ui.separator();
-                }
-
-                for rb in &snapshot.returns {
-                    let fx = return_effects.get(&rb.id).cloned().unwrap_or_default();
-                    if draw_return_strip(ui, rb, song, handle, &fx, &snapshot.return_ids, state) {
-                        mutation = Some(MixerMutation::DeleteReturn(rb.id));
-                    }
-                }
-
-                ui.separator();
-
-                draw_master_strip(ui, handle, &master_effects);
             });
+
+            egui::ScrollArea::horizontal()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
+                        for ch in &snapshot.channels {
+                            let eng_id = instruments
+                                .iter()
+                                .find(|i| i.id.0 == u64::from(ch.instrument.0))
+                                .map(|i| i.id);
+                            if draw_channel_strip(
+                                ui,
+                                ch,
+                                &snapshot.return_ids,
+                                song,
+                                handle,
+                                eng_id,
+                                state,
+                            ) {
+                                action = Some(MixerViewAction::EditChannelFx(ch.instrument));
+                            }
+                        }
+
+                        if !snapshot.returns.is_empty() {
+                            ui.separator();
+                        }
+
+                        for rb in &snapshot.returns {
+                            let fx = return_effects.get(&rb.id).cloned().unwrap_or_default();
+                            if draw_return_strip(
+                                ui,
+                                rb,
+                                song,
+                                handle,
+                                &fx,
+                                &snapshot.return_ids,
+                                state,
+                            ) {
+                                mutation = Some(MixerMutation::DeleteReturn(rb.id));
+                            }
+                        }
+
+                        ui.separator();
+
+                        draw_master_strip(ui, handle, &master_effects);
+                    });
+                });
         });
 
     if let Some(mutation) = mutation {
