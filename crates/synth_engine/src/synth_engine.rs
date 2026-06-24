@@ -1570,6 +1570,10 @@ impl SynthEngine {
         // thread refreshes it (clear + push) without ever growing the vec.
         self.channel_sends
             .insert(instrument.id(), Vec::with_capacity(MAX_CHANNEL_SENDS));
+        // Mirror the freshly-added instrument's graph into shared_graph so
+        // offline/GUI readers (e.g. sample-usage detection, analyze_*) see it
+        // immediately on project load — not only after the first edit.
+        self.update_shared_graph_for_instrument(&instrument);
         self.instruments.push(instrument);
         self.update_shared_instruments();
     }

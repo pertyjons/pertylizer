@@ -20,9 +20,10 @@ use synth_engine::{EngineCommand, EngineHandle};
 use synth_sequencer::{Duration as SeqDuration, PatternId, PatternTick, Song, Tick};
 
 use crate::gui::instrument_rack::InstrumentUiState;
+use crate::gui::list_panel;
 use crate::gui::sequencer::{
-    SequencerViewState, collect_piano_roll_data, commit_pattern_rename, draw_note_fx_panel,
-    draw_piano_roll, draw_tracker,
+    SequencerViewState, collect_piano_roll_data, commit_pattern_description, commit_pattern_rename,
+    draw_note_fx_panel, draw_piano_roll, draw_tracker,
 };
 use crate::gui::theme::theme;
 use crate::undo::UndoManager;
@@ -51,6 +52,16 @@ pub enum PatternEditorMode {
 pub struct PatternViewState {
     pub search_query: String,
     pub editor_mode: PatternEditorMode,
+    /// Open pattern "Rename / edit…" popup, if any.
+    pub editing: Option<PatternEditState>,
+}
+
+/// Buffers for the pattern edit popup (name + description), opened from a row's
+/// kebab menu. Edits commit to the song on change.
+pub struct PatternEditState {
+    pub id: PatternId,
+    pub name: String,
+    pub description: String,
 }
 
 // ============================================================================
@@ -70,21 +81,15 @@ struct PatternBrowserRow {
     length_beats: f32,
 }
 
-/// Snapshot of the song's patterns partitioned by usage, filtered by search.
-#[derive(Debug, Clone, Default)]
-struct PatternBrowserData {
-    used: Vec<PatternBrowserRow>,
-    orphans: Vec<PatternBrowserRow>,
-}
-
-/// Build a `PatternBrowserData` snapshot from the shared `Song`.
+/// Build the flat, usage-sorted pattern list from the shared `Song`.
 ///
-/// Returns `None` if the song is currently write-locked (caller should skip
-/// rendering this frame and try again next frame).
+/// Patterns placed in the arrangement (`placement_count > 0`) sort first;
+/// orphans sink to the bottom and render dimmed. Returns `None` if the song is
+/// currently write-locked (caller should skip rendering this frame).
 fn collect_pattern_browser_data(
     song: &Arc<RwLock<Song>>,
     query: &str,
-) -> Option<PatternBrowserData> {
+) -> Option<Vec<PatternBrowserRow>> {
     let song = song.try_read()?;
 
     let mut counts: HashMap<PatternId, u32> = HashMap::new();
@@ -93,32 +98,30 @@ fn collect_pattern_browser_data(
     }
 
     let needle = query.to_lowercase();
-    let mut data = PatternBrowserData::default();
+    let mut rows = Vec::new();
 
     for pattern in song.patterns() {
         let name_lower = pattern.name.to_lowercase();
         if !needle.is_empty() && !name_lower.contains(&needle) {
             continue;
         }
-        let count = counts.get(&pattern.id).copied().unwrap_or(0);
-        let row = PatternBrowserRow {
+        rows.push(PatternBrowserRow {
             id: pattern.id,
             name: pattern.name.clone(),
             name_lower,
-            placement_count: count,
+            placement_count: counts.get(&pattern.id).copied().unwrap_or(0),
             length_beats: pattern.length.as_beats(),
-        };
-        if count > 0 {
-            data.used.push(row);
-        } else {
-            data.orphans.push(row);
-        }
+        });
     }
 
-    data.used.sort_by(|a, b| a.name_lower.cmp(&b.name_lower));
-    data.orphans.sort_by(|a, b| a.name_lower.cmp(&b.name_lower));
+    // Used first, then alphabetical — orphans gather (dimmed) at the bottom.
+    rows.sort_by(|a, b| {
+        (b.placement_count > 0)
+            .cmp(&(a.placement_count > 0))
+            .then_with(|| a.name_lower.cmp(&b.name_lower))
+    });
 
-    Some(data)
+    Some(rows)
 }
 
 // ============================================================================
@@ -136,6 +139,7 @@ pub(crate) fn draw_pattern_view(
     undo_manager: &mut UndoManager,
 ) {
     draw_pattern_browser(ui, song, seq_view_state, pattern_view_state, undo_manager);
+    draw_pattern_edit_window(&ui.ctx().clone(), song, pattern_view_state, undo_manager);
 
     // Note FX rack inspector (right-docked; declared before the central panel so
     // it spans the full height to the right of both editors). Shown for the
@@ -281,43 +285,24 @@ fn draw_pattern_browser(
     undo_manager: &mut UndoManager,
 ) {
     egui::Panel::left("pattern_browser")
-        .default_size(220.0)
-        .min_size(160.0)
+        .default_size(list_panel::DEFAULT_WIDTH)
+        .min_size(list_panel::MIN_WIDTH)
         .show_inside(ui, |ui| {
-            let t = theme();
-
-            ui.horizontal(|ui| {
-                ui.heading(
-                    egui::RichText::new(format!("{} Patterns", ri::PIANO_FILL))
-                        .color(t.colors.text_primary),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button(
-                            egui::RichText::new(ri::ADD_LINE.to_string())
-                                .color(t.colors.accent_primary),
-                        )
-                        .on_hover_text("New pattern")
-                        .clicked()
-                    {
-                        let new_id = {
-                            let mut song_w = song.write();
-                            song_w.create_pattern(default_new_pattern_length())
-                        };
-                        seq_view_state.opened_pattern = Some(new_id);
-                    }
-                });
+            // Header + search pinned to the top.
+            let mut add_clicked = false;
+            egui::Panel::top("pattern_browser_head").show_inside(ui, |ui| {
+                add_clicked = list_panel::header(ui, ri::PIANO_FILL, "Patterns", "New pattern");
+                list_panel::search_box(ui, &mut pattern_view_state.search_query);
             });
-            ui.separator();
+            if add_clicked {
+                let new_id = {
+                    let mut song_w = song.write();
+                    song_w.create_pattern(default_new_pattern_length())
+                };
+                seq_view_state.opened_pattern = Some(new_id);
+            }
 
-            ui.add(
-                egui::TextEdit::singleline(&mut pattern_view_state.search_query)
-                    .hint_text("Search…")
-                    .desired_width(f32::INFINITY),
-            );
-            ui.add_space(t.spacing.xs);
-
-            let Some(data) = collect_pattern_browser_data(song, &pattern_view_state.search_query)
+            let Some(rows) = collect_pattern_browser_data(song, &pattern_view_state.search_query)
             else {
                 return;
             };
@@ -325,44 +310,21 @@ fn draw_pattern_browser(
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-                    for (label, rows) in [("Used", &data.used[..]), ("Orphans", &data.orphans[..])]
-                    {
-                        draw_browser_section(ui, label, rows, song, seq_view_state, undo_manager);
+                    if rows.is_empty() {
+                        list_panel::empty(ui, "No patterns");
+                    }
+                    for row in &rows {
+                        draw_browser_row(
+                            ui,
+                            row,
+                            song,
+                            seq_view_state,
+                            &mut pattern_view_state.editing,
+                            undo_manager,
+                        );
                     }
                 });
         });
-}
-
-fn draw_browser_section(
-    ui: &mut egui::Ui,
-    label: &str,
-    rows: &[PatternBrowserRow],
-    song: &Arc<RwLock<Song>>,
-    seq_view_state: &mut SequencerViewState,
-    undo_manager: &mut UndoManager,
-) {
-    let t = theme();
-    egui::CollapsingHeader::new(
-        egui::RichText::new(format!("{} ({})", label, rows.len()))
-            .color(t.colors.text_secondary)
-            .small(),
-    )
-    .id_salt(label)
-    .default_open(true)
-    .show(ui, |ui| {
-        if rows.is_empty() {
-            ui.label(
-                egui::RichText::new("—")
-                    .color(t.colors.text_dim)
-                    .italics()
-                    .small(),
-            );
-            return;
-        }
-        for row in rows {
-            draw_browser_row(ui, row, song, seq_view_state, undo_manager);
-        }
-    });
 }
 
 fn draw_browser_row(
@@ -370,120 +332,170 @@ fn draw_browser_row(
     row: &PatternBrowserRow,
     song: &Arc<RwLock<Song>>,
     seq_view_state: &mut SequencerViewState,
+    editing: &mut Option<PatternEditState>,
     undo_manager: &mut UndoManager,
 ) {
-    let t = theme();
     let is_selected = seq_view_state.opened_pattern == Some(row.id);
-    let is_renaming = matches!(
-        seq_view_state.editing_pattern_name.as_ref(),
-        Some((id, _)) if *id == row.id
+    let used = row.placement_count > 0;
+    let name_text = if row.name.is_empty() {
+        format!("pattern-{}", row.id.0)
+    } else {
+        row.name.clone()
+    };
+
+    let mut edit = false;
+    let mut duplicate = false;
+    let mut delete = false;
+    let response = list_panel::row(
+        ui,
+        is_selected,
+        &name_text,
+        list_panel::row_text_color(is_selected, used),
+        |ui| {
+            if ui
+                .button(format!("{} Rename / edit…", ri::EDIT_LINE))
+                .clicked()
+            {
+                edit = true;
+                ui.close();
+            }
+            if ui.button("Duplicate").clicked() {
+                duplicate = true;
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .button(egui::RichText::new("Delete").color(theme().colors.accent_red))
+                .clicked()
+            {
+                delete = true;
+                ui.close();
+            }
+        },
     );
 
-    let fill = if is_selected {
-        t.colors.bg_widget
+    // Usage tooltip — surfaces what the dimming means.
+    let tip = if used {
+        format!(
+            "Used — {} placement{} · {:.0} beats",
+            row.placement_count,
+            if row.placement_count == 1 { "" } else { "s" },
+            row.length_beats
+        )
     } else {
-        egui::Color32::TRANSPARENT
+        format!("Unused · {:.0} beats", row.length_beats)
     };
-    let frame = egui::Frame::NONE
-        .fill(fill)
-        .inner_margin(egui::Margin::symmetric(6, 4))
-        .corner_radius(egui::CornerRadius::same(3));
+    let response = response.on_hover_text(tip);
 
-    let response = frame
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if is_renaming {
-                    if let Some((_, name_buf)) = seq_view_state.editing_pattern_name.as_mut() {
-                        let resp = ui
-                            .add(egui::TextEdit::singleline(name_buf).desired_width(f32::INFINITY));
-                        if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            commit_pattern_rename(song, undo_manager, row.id, name_buf.clone());
-                            seq_view_state.editing_pattern_name = None;
-                        } else if !resp.has_focus() {
-                            resp.request_focus();
-                        }
-                    }
-                } else {
-                    let name_text = if row.name.is_empty() {
-                        format!("pattern-{}", row.id.0)
-                    } else {
-                        row.name.clone()
-                    };
-                    let name_color = if is_selected {
-                        t.colors.accent_cyan
-                    } else {
-                        t.colors.text_primary
-                    };
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(name_text).color(name_color))
-                            .truncate(),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if row.placement_count > 0 {
-                            ui.label(
-                                egui::RichText::new(format!("{}×", row.placement_count))
-                                    .color(t.colors.text_dim)
-                                    .small(),
-                            );
-                        }
-                        ui.label(
-                            egui::RichText::new(format!("{:.0}b", row.length_beats))
-                                .color(t.colors.text_dim)
-                                .small(),
-                        );
-                    });
-                }
+    if edit {
+        let description = song
+            .try_read()
+            .and_then(|s| s.pattern(row.id).map(|p| p.description.clone()))
+            .unwrap_or_default();
+        *editing = Some(PatternEditState {
+            id: row.id,
+            name: row.name.clone(),
+            description,
+        });
+    } else if duplicate {
+        let new_id = {
+            let mut song_w = song.write();
+            song_w.duplicate_pattern(row.id)
+        };
+        if let Some(new_id) = new_id {
+            seq_view_state.opened_pattern = Some(new_id);
+        }
+    } else if delete {
+        let captured = {
+            let mut song_w = song.write();
+            let placements: Vec<_> = song_w
+                .arrangement()
+                .iter()
+                .filter(|p| p.pattern_id == row.id)
+                .cloned()
+                .collect();
+            song_w
+                .delete_pattern(row.id)
+                .map(|deleted| (deleted, placements))
+        };
+        if let Some((pat, plcs)) = captured {
+            undo_manager.push(crate::undo::UndoAction::DeletePattern {
+                pattern: pat,
+                placements: plcs,
             });
-        })
-        .response
-        .interact(egui::Sense::click());
-
-    if !is_renaming && response.clicked() {
+            if seq_view_state.opened_pattern == Some(row.id) {
+                seq_view_state.close_piano_roll();
+            }
+        }
+    } else if response.clicked() {
         seq_view_state.opened_pattern = Some(row.id);
     }
+}
 
-    response.context_menu(|ui| {
-        if ui.button("Rename").clicked() {
-            seq_view_state.editing_pattern_name = Some((row.id, row.name.clone()));
-            ui.close();
-        }
-        if ui.button("Duplicate").clicked() {
-            let new_id = {
-                let mut song_w = song.write();
-                song_w.duplicate_pattern(row.id)
-            };
-            if let Some(new_id) = new_id {
-                seq_view_state.opened_pattern = Some(new_id);
+/// Pattern "Rename / edit…" popup (name + description), opened from a row's
+/// kebab menu. Mirrors the instrument edit window. Commits on change.
+fn draw_pattern_edit_window(
+    ctx: &egui::Context,
+    song: &Arc<RwLock<Song>>,
+    pattern_view_state: &mut PatternViewState,
+    undo_manager: &mut UndoManager,
+) {
+    // Drop the popup if the target pattern is gone (e.g. deleted while open).
+    let Some(id) = pattern_view_state.editing.as_ref().map(|e| e.id) else {
+        return;
+    };
+    if song
+        .try_read()
+        .map(|s| s.pattern(id).is_none())
+        .unwrap_or(false)
+    {
+        pattern_view_state.editing = None;
+        return;
+    }
+    let Some(edit) = pattern_view_state.editing.as_mut() else {
+        return;
+    };
+    let t = theme();
+    let title = format!("{} Edit pattern", ri::EDIT_LINE);
+    let mut open = true;
+    let mut name_done = false;
+
+    egui::Window::new(title)
+        .id(egui::Id::new(("pattern_edit_window", id.0)))
+        .open(&mut open)
+        .resizable(true)
+        .default_size([360.0, 260.0])
+        .show(ctx, |ui| {
+            ui.label(egui::RichText::new("Name").color(t.colors.text_dim));
+            // Buffer the name in `edit.name` and commit once on defocus, so the
+            // rename produces a single undo entry rather than one per keystroke.
+            if ui.text_edit_singleline(&mut edit.name).lost_focus() {
+                name_done = true;
             }
-            ui.close();
-        }
-        ui.separator();
-        if ui
-            .button(egui::RichText::new("Delete").color(t.colors.accent_red))
-            .clicked()
-        {
-            let captured = {
-                let mut song_w = song.write();
-                let placements: Vec<_> = song_w
-                    .arrangement()
-                    .iter()
-                    .filter(|p| p.pattern_id == row.id)
-                    .cloned()
-                    .collect();
-                song_w
-                    .delete_pattern(row.id)
-                    .map(|deleted| (deleted, placements))
-            };
-            if let Some((pat, plcs)) = captured {
-                undo_manager.push(crate::undo::UndoAction::DeletePattern {
-                    pattern: pat,
-                    placements: plcs,
-                });
-                if seq_view_state.opened_pattern == Some(row.id) {
-                    seq_view_state.close_piano_roll();
-                }
+
+            ui.add_space(t.spacing.md);
+
+            ui.label(egui::RichText::new("Description").color(t.colors.text_dim));
+            if ui
+                .add(
+                    egui::TextEdit::multiline(&mut edit.description)
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY),
+                )
+                .changed()
+            {
+                commit_pattern_description(song, id, edit.description.clone());
             }
-            ui.close();
-        }
-    });
+        });
+
+    // Commit the buffered name once, on defocus or window close. Skip empties so
+    // a cleared field can't blank the pattern name. `commit_pattern_rename` is a
+    // no-op when unchanged, so calling on both paths is safe.
+    let new_name = edit.name.clone();
+    if (name_done || !open) && !new_name.is_empty() {
+        commit_pattern_rename(song, undo_manager, id, new_name);
+    }
+    if !open {
+        pattern_view_state.editing = None;
+    }
 }

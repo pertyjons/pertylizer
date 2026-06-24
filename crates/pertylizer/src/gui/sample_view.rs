@@ -11,6 +11,7 @@ use eframe::egui::{self, Color32};
 use egui_remixicon::icons as ri;
 
 use crate::audio::input::{AudioInputManager, InputState};
+use crate::gui::list_panel;
 use crate::gui::theme::theme;
 use synth_core::SampleCount;
 use synth_sampler::{CropRegion, FrameIndex, LoopRegion, SampleId, SampleLibrary};
@@ -89,20 +90,17 @@ pub struct SampleViewState {
     peak_cache: Option<WaveformPeaks>,
     /// Whether peak cache needs rebuilding.
     peaks_dirty: bool,
-    /// Editing the sample name.
-    editing_name: bool,
-    /// Temporary name buffer for editing.
-    name_buffer: String,
-    /// Editing the sample description.
-    editing_description: bool,
-    /// Temporary description buffer for editing.
-    description_buffer: String,
+    /// Open "Rename / edit…" popup, if any. Name + description are edited here,
+    /// not inline in the properties panel.
+    editing: Option<SampleEditState>,
     /// Selected input device name.
     pub selected_input_device: Option<String>,
     /// Cached input device list (refreshed on demand, not every frame).
     pub cached_input_devices: Vec<synth_core::audio::DeviceInfo>,
     /// Whether the device list needs refreshing.
     pub devices_dirty: bool,
+    /// Sample-list search filter.
+    pub sample_search: String,
 }
 
 impl Default for SampleViewState {
@@ -113,15 +111,21 @@ impl Default for SampleViewState {
             scroll_offset: 0.0,
             peak_cache: None,
             peaks_dirty: true,
-            editing_name: false,
-            name_buffer: String::new(),
-            editing_description: false,
-            description_buffer: String::new(),
+            editing: None,
             selected_input_device: None,
             cached_input_devices: Vec::new(),
             devices_dirty: true,
+            sample_search: String::new(),
         }
     }
+}
+
+/// Buffers for the sample "Rename / edit…" popup, opened from a row's kebab
+/// menu. Edits commit to the sample library on change.
+pub struct SampleEditState {
+    pub id: SampleId,
+    pub name: String,
+    pub description: String,
 }
 
 impl SampleViewState {
@@ -168,51 +172,18 @@ pub fn draw_sample_view(
     library: &Arc<RwLock<SampleLibrary>>,
     state: &mut SampleViewState,
     audio_input: &mut AudioInputManager,
+    used_sample_ids: &std::collections::HashSet<u64>,
 ) -> SampleViewAction {
     let ctx = ui.ctx().clone();
     let mut action = SampleViewAction::None;
     let t = theme();
 
     // ---- Toolbar (top) ----
+    // Import / Export / Delete live in the list header and per-row kebab menu;
+    // this toolbar carries only the waveform-editing actions.
     egui::Panel::top("sample_toolbar").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
-            // Import
-            if ui
-                .button(
-                    egui::RichText::new(format!("{} Import WAV", ri::FOLDER_OPEN_FILL))
-                        .color(t.colors.text_primary),
-                )
-                .clicked()
-            {
-                action = SampleViewAction::ImportWav;
-            }
-
-            // Export
             let has_selection = state.selected_sample.is_some();
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new(
-                        egui::RichText::new(format!("{} Export WAV", ri::DOWNLOAD_2_FILL)).color(
-                            if has_selection {
-                                t.colors.text_primary
-                            } else {
-                                t.colors.text_dim
-                            },
-                        ),
-                    ),
-                )
-                .clicked()
-                && let Some(id) = state.selected_sample
-                && let Ok(lib) = library.read()
-                && let Some(meta) = lib.get_meta(id)
-            {
-                action = SampleViewAction::ExportWav {
-                    name: meta.name.clone(),
-                };
-            }
-
-            ui.separator();
 
             // Zoom controls
             if ui
@@ -289,129 +260,148 @@ pub fn draw_sample_view(
                 auto_trim_sample(library, id);
                 state.peaks_dirty = true;
             }
-
-            // Delete
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new(
-                        egui::RichText::new(format!("{} Delete", ri::DELETE_BIN_FILL))
-                            .color(t.colors.meter_red),
-                    ),
-                )
-                .clicked()
-                && let Some(id) = state.selected_sample
-            {
-                if let Ok(mut lib) = library.write() {
-                    lib.remove(id);
-                }
-                state.selected_sample = None;
-                state.peak_cache = None;
-                state.peaks_dirty = true;
-            }
         });
     });
 
     // ---- Sample list (left sidebar) ----
     egui::Panel::left("sample_list_panel")
-        .default_size(180.0)
-        .min_size(140.0)
+        .default_size(list_panel::DEFAULT_WIDTH)
+        .min_size(list_panel::MIN_WIDTH)
         .show_inside(ui, |ui| {
-            ui.heading(
-                egui::RichText::new(format!("{} Samples", ri::MUSIC_FILL))
-                    .color(t.colors.text_primary),
-            );
-            ui.separator();
+            // Header + search pinned to the top.
+            egui::Panel::top("sample_list_head").show_inside(ui, |ui| {
+                if list_panel::header(ui, ri::MUSIC_FILL, "Samples", "Import sample") {
+                    action = SampleViewAction::ImportWav;
+                }
+                list_panel::search_box(ui, &mut state.sample_search);
+            });
 
-            // Sample list
-            if let Ok(lib) = library.read() {
-                let metas = lib.list();
-                if metas.is_empty() {
-                    ui.label(
-                        egui::RichText::new("No samples loaded")
-                            .color(t.colors.text_dim)
-                            .italics(),
-                    );
-                } else {
-                    egui::ScrollArea::vertical()
-                        .content_margin(egui::Margin::same(6))
-                        .show(ui, |ui| {
-                            for meta in &metas {
-                                let is_selected = state.selected_sample == Some(meta.id);
-                                let duration = meta.duration_seconds();
+            // Snapshot the library into owned rows so the kebab menus can mutate
+            // it (rename, delete) without holding the read guard across a write.
+            struct SampleRow {
+                id: SampleId,
+                name: String,
+                description: String,
+                duration: f64,
+                channels: synth_core::ChannelCount,
+            }
+            let rows: Vec<SampleRow> = library
+                .read()
+                .map(|lib| {
+                    lib.list()
+                        .iter()
+                        .map(|m| SampleRow {
+                            id: m.id,
+                            name: m.name.clone(),
+                            description: m.description.clone(),
+                            duration: m.duration_seconds(),
+                            channels: m.channels,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
 
-                                let label = format!(
-                                    "{}\n{:.1}s  {}",
-                                    meta.name,
-                                    duration,
-                                    match meta.channels {
-                                        synth_core::ChannelCount::Mono => "Mono",
-                                        synth_core::ChannelCount::Stereo => "Stereo",
-                                        synth_core::ChannelCount::Multi(n) =>
-                                        // borrow checker: can't return &str for format,
-                                        // so use a static match for common cases
-                                            if n <= 2 {
-                                                "Stereo"
-                                            } else {
-                                                "Multi"
-                                            },
-                                    }
-                                );
+            let needle = state.sample_search.to_lowercase();
+            let shown: Vec<&SampleRow> = rows
+                .iter()
+                .filter(|r| needle.is_empty() || r.name.to_lowercase().contains(&needle))
+                .collect();
 
-                                let text_color = if is_selected {
-                                    t.colors.text_primary
+            egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    if shown.is_empty() {
+                        list_panel::empty(ui, "No samples");
+                    }
+                    for row in &shown {
+                        let is_selected = state.selected_sample == Some(row.id);
+                        let used = used_sample_ids.contains(&row.id.0);
+
+                        let mut select = false;
+                        let mut rename = false;
+                        let mut export = false;
+                        let mut delete = false;
+                        let response = list_panel::row(
+                            ui,
+                            is_selected,
+                            &row.name,
+                            list_panel::row_text_color(is_selected, used),
+                            |ui| {
+                                if ui
+                                    .button(format!("{} Rename / edit…", ri::EDIT_LINE))
+                                    .clicked()
+                                {
+                                    rename = true;
+                                    ui.close();
+                                }
+                                if ui.button("Export WAV…").clicked() {
+                                    export = true;
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if ui
+                                    .button(
+                                        egui::RichText::new("Delete").color(t.colors.accent_red),
+                                    )
+                                    .clicked()
+                                {
+                                    delete = true;
+                                    ui.close();
+                                }
+                            },
+                        );
+
+                        let chan = match row.channels {
+                            synth_core::ChannelCount::Mono => "Mono",
+                            synth_core::ChannelCount::Stereo => "Stereo",
+                            synth_core::ChannelCount::Multi(n) => {
+                                if n <= 2 {
+                                    "Stereo"
                                 } else {
-                                    t.colors.text_secondary
-                                };
-
-                                let resp = ui.selectable_label(
-                                    is_selected,
-                                    egui::RichText::new(label).color(text_color),
-                                );
-
-                                if resp.clicked() && !is_selected {
-                                    state.selected_sample = Some(meta.id);
-                                    state.peaks_dirty = true;
-                                    state.scroll_offset = 0.0;
-                                    state.zoom = 1.0;
-                                    state.editing_name = false;
-                                    // Drop any in-progress description edit so its
-                                    // buffer can't commit onto the newly selected sample.
-                                    state.editing_description = false;
+                                    "Multi"
                                 }
                             }
-                        });
+                        };
+                        let response = response.on_hover_text(format!(
+                            "{} · {:.1}s {}",
+                            if used { "Used" } else { "Unused" },
+                            row.duration,
+                            chan,
+                        ));
+                        if response.clicked() && !is_selected {
+                            select = true;
+                        }
 
-                    ui.separator();
-
-                    // Memory usage
-                    let total_bytes: usize = metas
-                        .iter()
-                        .map(|m| {
-                            m.frame_count.as_usize()
-                                * m.channels.count() as usize
-                                * std::mem::size_of::<f32>()
-                        })
-                        .sum();
-                    let mb = total_bytes as f64 / (1024.0 * 1024.0);
-                    ui.label(
-                        egui::RichText::new(format!("{} samples — {:.1} MB", metas.len(), mb))
-                            .color(t.colors.text_dim)
-                            .small(),
-                    );
-                }
-            }
-
-            ui.add_space(t.spacing.md);
-            if ui
-                .button(
-                    egui::RichText::new(format!("{} Import", ri::ADD_LINE))
-                        .color(t.colors.accent_primary),
-                )
-                .clicked()
-            {
-                action = SampleViewAction::ImportWav;
-            }
+                        if select || rename {
+                            state.selected_sample = Some(row.id);
+                            state.peaks_dirty = true;
+                            state.scroll_offset = 0.0;
+                            state.zoom = 1.0;
+                        }
+                        if rename {
+                            state.editing = Some(SampleEditState {
+                                id: row.id,
+                                name: row.name.clone(),
+                                description: row.description.clone(),
+                            });
+                        }
+                        if export {
+                            action = SampleViewAction::ExportWav {
+                                name: row.name.clone(),
+                            };
+                        }
+                        if delete {
+                            if let Ok(mut lib) = library.write() {
+                                lib.remove(row.id);
+                            }
+                            if state.selected_sample == Some(row.id) {
+                                state.selected_sample = None;
+                                state.peak_cache = None;
+                                state.peaks_dirty = true;
+                            }
+                        }
+                    }
+                });
         });
 
     // ---- Input monitor bar (bottom) ----
@@ -576,7 +566,82 @@ pub fn draw_sample_view(
         }
     });
 
+    draw_sample_edit_window(&ctx, library, state);
+
     action
+}
+
+/// Sample "Rename / edit…" popup (name + description), opened from a row's kebab
+/// menu. Mirrors the instrument/pattern edit windows. Commits on change.
+fn draw_sample_edit_window(
+    ctx: &egui::Context,
+    library: &Arc<RwLock<SampleLibrary>>,
+    state: &mut SampleViewState,
+) {
+    // Drop the popup if the target sample is gone (e.g. deleted while open).
+    let Some(id) = state.editing.as_ref().map(|e| e.id) else {
+        return;
+    };
+    if library
+        .read()
+        .map(|l| l.get_meta(id).is_none())
+        .unwrap_or(false)
+    {
+        state.editing = None;
+        return;
+    }
+    let Some(edit) = state.editing.as_mut() else {
+        return;
+    };
+    let t = theme();
+    let mut open = true;
+    let mut name_done = false;
+
+    egui::Window::new(format!("{} Edit sample", ri::EDIT_LINE))
+        .id(egui::Id::new(("sample_edit_window", id.0)))
+        .open(&mut open)
+        .resizable(true)
+        .default_size([360.0, 240.0])
+        .show(ctx, |ui| {
+            ui.label(egui::RichText::new("Name").color(t.colors.text_dim));
+            // Buffer the name and commit once on defocus, not per keystroke.
+            if ui.text_edit_singleline(&mut edit.name).lost_focus() {
+                name_done = true;
+            }
+
+            ui.add_space(t.spacing.md);
+
+            ui.label(egui::RichText::new("Description").color(t.colors.text_dim));
+            if ui
+                .add(
+                    egui::TextEdit::multiline(&mut edit.description)
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY),
+                )
+                .changed()
+                && let Ok(mut lib) = library.write()
+                && let Some(m) = lib.get_meta(id)
+            {
+                let mut updated = m.clone();
+                updated.description = edit.description.clone();
+                lib.update_meta(id, updated);
+            }
+        });
+
+    // Commit the buffered name once, on defocus or window close. Skip empties.
+    let new_name = edit.name.clone();
+    if (name_done || !open)
+        && !new_name.is_empty()
+        && let Ok(mut lib) = library.write()
+        && let Some(m) = lib.get_meta(id)
+    {
+        let mut updated = m.clone();
+        updated.name = new_name;
+        lib.update_meta(id, updated);
+    }
+    if !open {
+        state.editing = None;
+    }
 }
 
 // ============================================================================
@@ -799,63 +864,19 @@ fn draw_properties(
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
-            // Name
+            // Name (read-only; edit via the list's "Rename / edit…" popup)
             ui.label(egui::RichText::new("Name:").color(t.colors.text_secondary));
-            if state.editing_name {
-                let resp = ui.text_edit_singleline(&mut state.name_buffer);
-                if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if !state.name_buffer.is_empty()
-                        && let Ok(mut lib) = library.write()
-                        && let Some(m) = lib.get_meta(id)
-                    {
-                        let mut updated = m.clone();
-                        updated.name = state.name_buffer.clone();
-                        lib.update_meta(id, updated);
-                    }
-                    state.editing_name = false;
-                }
-            } else {
-                let resp = ui.label(egui::RichText::new(&meta.name).color(t.colors.text_primary));
-                if resp.double_clicked() {
-                    state.editing_name = true;
-                    state.name_buffer = meta.name.clone();
-                }
-            }
+            ui.label(egui::RichText::new(&meta.name).color(t.colors.text_primary));
             ui.end_row();
 
-            // Description
+            // Description (read-only; edit via the "Rename / edit…" popup)
             ui.label(egui::RichText::new("Description:").color(t.colors.text_secondary));
-            if state.editing_description {
-                let resp = ui.add(
-                    egui::TextEdit::multiline(&mut state.description_buffer)
-                        .desired_rows(2)
-                        .desired_width(f32::INFINITY),
-                );
-                // Commit on every change so dismissing the panel can't strand
-                // the buffer; lost_focus just ends the edit session.
-                if resp.changed()
-                    && let Ok(mut lib) = library.write()
-                    && let Some(m) = lib.get_meta(id)
-                {
-                    let mut updated = m.clone();
-                    updated.description = state.description_buffer.clone();
-                    lib.update_meta(id, updated);
-                }
-                if resp.lost_focus() {
-                    state.editing_description = false;
-                }
+            let desc = if meta.description.is_empty() {
+                egui::RichText::new("—").color(t.colors.text_dim)
             } else {
-                let text = if meta.description.is_empty() {
-                    egui::RichText::new("(double-click to add)").color(t.colors.text_dim)
-                } else {
-                    egui::RichText::new(&meta.description).color(t.colors.text_primary)
-                };
-                let resp = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
-                if resp.double_clicked() {
-                    state.editing_description = true;
-                    state.description_buffer = meta.description.clone();
-                }
-            }
+                egui::RichText::new(&meta.description).color(t.colors.text_primary)
+            };
+            ui.label(desc);
             ui.end_row();
 
             // Duration

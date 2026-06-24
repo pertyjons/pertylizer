@@ -242,6 +242,9 @@ struct SynthApp {
     current_patch_name: String,
     current_patch_path: Option<PathBuf>,
 
+    // Instrument-list search filter (Rack view).
+    instrument_search: String,
+
     // Project state
     current_project_path: Option<PathBuf>,
 
@@ -411,6 +414,7 @@ impl SynthApp {
             dialog_state,
             current_patch_name: patch_name,
             current_patch_path: None,
+            instrument_search: String::new(),
             current_project_path: None,
             glide_time,
             instruments,
@@ -901,11 +905,28 @@ impl eframe::App for SynthApp {
                         self.sample_view_state.devices_dirty = false;
                     }
 
+                    // Samples referenced by any sampler module (by raw id) — used
+                    // to dim unused samples in the list.
+                    let used_sample_ids: std::collections::HashSet<u64> = self
+                        .session
+                        .state()
+                        .shared_graph
+                        .get_all_modules()
+                        .iter()
+                        .flat_map(|m| &m.parameters)
+                        .filter_map(|p| match p {
+                            synth_core::params::Param::Sampler(
+                                synth_core::params::SamplerParam::SampleSelect(id),
+                            ) => Some(id.0),
+                            _ => None,
+                        })
+                        .collect();
                     let action = crate::gui::sample_view::draw_sample_view(
                         ui,
                         &self.sample_library,
                         &mut self.sample_view_state,
                         &mut self.audio_input,
+                        &used_sample_ids,
                     );
                     match action {
                         crate::gui::sample_view::SampleViewAction::None => {}
@@ -2525,65 +2546,112 @@ impl SynthApp {
         });
     }
 
-    /// Rack-view left panel: the instrument list (click to activate, pencil or
-    /// double-click to edit, button to add a new instrument).
+    /// Rack-view left panel: the instrument list (click to activate, double-click
+    /// or the kebab menu to edit/delete, `+` in the header to add one). Unused
+    /// instruments — those no track plays — render dimmed.
     fn render_instruments_panel(&mut self, ui: &mut egui::Ui, active_id: InstrumentId) {
-        egui::Panel::left("instruments_panel")
-            .default_size(180.0)
-            .min_size(140.0)
-            .show_inside(ui, |ui| {
-                use egui_remixicon::icons as ri;
-                let t = theme();
+        use crate::gui::list_panel;
+        use egui_remixicon::icons as ri;
 
-                ui.heading(
-                    RichText::new(format!("{} Instruments", ri::MUSIC_2_FILL))
-                        .color(t.colors.text_primary),
-                );
-                ui.separator();
+        egui::Panel::left("instruments_panel")
+            .default_size(list_panel::DEFAULT_WIDTH)
+            .min_size(list_panel::MIN_WIDTH)
+            .show_inside(ui, |ui| {
+                // Header + search pinned to the top.
+                let mut add_clicked = false;
+                egui::Panel::top("instruments_head").show_inside(ui, |ui| {
+                    add_clicked =
+                        list_panel::header(ui, ri::MUSIC_2_FILL, "Instruments", "New instrument");
+                    list_panel::search_box(ui, &mut self.instrument_search);
+                });
+                if add_clicked {
+                    self.add_new_instrument();
+                }
+
+                // Track-usage counts: an instrument is "used" when at least one
+                // sequencer track routes to it. `None` = song busy, treat all as
+                // used (don't dim) this frame.
+                let usage: Option<std::collections::HashMap<InstrumentId, u32>> =
+                    self.song.try_read().map(|song| {
+                        let mut counts = std::collections::HashMap::new();
+                        for track in song.tracks() {
+                            *counts
+                                .entry(InstrumentId::from(track.instrument))
+                                .or_insert(0) += 1;
+                        }
+                        counts
+                    });
+                let needle = self.instrument_search.to_lowercase();
+
+                let shown = self
+                    .instruments
+                    .iter()
+                    .filter(|i| needle.is_empty() || i.name.to_lowercase().contains(&needle))
+                    .count();
 
                 let mut clicked: Option<InstrumentId> = None;
                 let mut edit_requested: Option<InstrumentId> = None;
+                let mut delete_requested: Option<InstrumentId> = None;
                 egui::ScrollArea::vertical()
-                    .content_margin(egui::Margin::same(6))
+                    .auto_shrink([false; 2])
                     .show(ui, |ui| {
+                        if shown == 0 {
+                            list_panel::empty(ui, "No instruments");
+                        }
                         for inst in &self.instruments {
+                            if !needle.is_empty() && !inst.name.to_lowercase().contains(&needle) {
+                                continue;
+                            }
                             let is_active = inst.id == active_id;
-                            let text_color = if is_active {
-                                t.colors.text_primary
+                            let track_count = usage
+                                .as_ref()
+                                .map_or(1, |m| m.get(&inst.id).copied().unwrap_or(0));
+                            let used = track_count > 0;
+
+                            let response = list_panel::row(
+                                ui,
+                                is_active,
+                                &inst.name,
+                                list_panel::row_text_color(is_active, used),
+                                |ui| {
+                                    if ui
+                                        .button(format!("{} Rename / edit…", ri::EDIT_LINE))
+                                        .clicked()
+                                    {
+                                        edit_requested = Some(inst.id);
+                                        ui.close();
+                                    }
+                                    ui.separator();
+                                    if ui
+                                        .button(
+                                            RichText::new(format!(
+                                                "{} Delete…",
+                                                ri::DELETE_BIN_LINE
+                                            ))
+                                            .color(theme().colors.accent_red),
+                                        )
+                                        .clicked()
+                                    {
+                                        delete_requested = Some(inst.id);
+                                        ui.close();
+                                    }
+                                },
+                            );
+                            let tip = if used {
+                                format!(
+                                    "Used — {track_count} track{}",
+                                    if track_count == 1 { "" } else { "s" }
+                                )
                             } else {
-                                t.colors.text_secondary
+                                "Unused — no track plays this instrument".to_owned()
                             };
-                            ui.horizontal(|ui| {
-                                let resp = ui.selectable_label(
-                                    is_active,
-                                    RichText::new(&inst.name).color(text_color),
-                                );
-                                if resp.clicked() && !is_active {
-                                    clicked = Some(inst.id);
-                                }
-                                if resp.double_clicked() {
-                                    edit_requested = Some(inst.id);
-                                }
-                                // Pencil icon on the right opens the
-                                // edit window without changing the
-                                // active instrument.
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        let btn = ui.add(
-                                            egui::Button::new(
-                                                RichText::new(ri::EDIT_LINE)
-                                                    .color(t.colors.text_dim),
-                                            )
-                                            .frame(false)
-                                            .small(),
-                                        );
-                                        if btn.on_hover_text("Edit instrument…").clicked() {
-                                            edit_requested = Some(inst.id);
-                                        }
-                                    },
-                                );
-                            });
+                            let response = response.on_hover_text(tip);
+                            if response.clicked() && !is_active {
+                                clicked = Some(inst.id);
+                            }
+                            if response.double_clicked() {
+                                edit_requested = Some(inst.id);
+                            }
                         }
                     });
 
@@ -2594,16 +2662,8 @@ impl SynthApp {
                 if let Some(id) = edit_requested {
                     self.instrument_edit_target = Some(id);
                 }
-
-                ui.add_space(t.spacing.md);
-                if ui
-                    .button(
-                        RichText::new(format!("{} New Instrument", ri::ADD_LINE))
-                            .color(t.colors.accent_green),
-                    )
-                    .clicked()
-                {
-                    self.add_new_instrument();
+                if let Some(id) = delete_requested {
+                    self.pending_instrument_delete = Some(id);
                 }
             });
     }

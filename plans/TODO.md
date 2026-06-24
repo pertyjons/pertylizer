@@ -230,6 +230,45 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
       inherent method, and add `use synth_core::prelude::*` where the compiler flags missing
       trait scope. Let the compiler drive the call-site fixes; gate per crate.
 
+### 3.7 Unified list-panel follow-ups (deferred from code review)
+
+Surfaced during the shared left-list-panel work (`feat/uniform-list-panels`,
+2026-06-24, `gui/list_panel.rs` + Instruments/Patterns/Samples panels). None are
+correctness bugs (those were fixed in that branch); these are the cleanup/
+efficiency/altitude items deliberately left out of that change.
+
+- [ ] **Cache sample-usage instead of recomputing every frame.** The Sample view
+  rebuilds `used_sample_ids` on every repaint by calling
+  `self.session.state().shared_graph.get_all_modules()` (which clones *every*
+  module snapshot incl. its full `parameters` vec) and scanning for
+  `Param::Sampler(SamplerParam::SampleSelect(..))` — see the sample-view call site
+  in `gui/egui_backend.rs` (the `used_sample_ids` block just before
+  `draw_sample_view`). Only runs while the Sample tab is open, but it allocates +
+  walks the whole graph ~60×/sec. Fix: cache the id set and invalidate on a
+  graph-version change (`shared_graph.version()`), or expose a lighter query that
+  yields just the referenced `SampleId`s without cloning snapshots.
+- [ ] **Generalize the per-panel scaffolding (altitude).** `list_panel::row`/
+  `header`/`search_box` centralize the row visuals, but the three call sites
+  (`render_instruments_panel` in `gui/egui_backend.rs`, `draw_browser_row` in
+  `gui/pattern_view.rs`, and the sample loop in `gui/sample_view.rs`) still repeat
+  the same surrounding boilerplate: build the used/unused tooltip string, dispatch
+  `clicked()`/`double_clicked()`, apply the search-needle filter, and render the
+  empty-state placeholder. A higher-altitude helper taking
+  `(selected, used, name, tip, kebab) -> RowOutcome { clicked, double_clicked }`
+  would remove the repetition the first pass left behind.
+- [ ] **Drop the redundant `select` flag in the sample row loop**
+  (`gui/sample_view.rs`). It is only ever read in `if select || rename` and
+  `rename` already implies selection; the selection assignment can test the row
+  response (and `rename`) directly. Pure cleanup, no behavior change.
+- [ ] **Detach deleted samples from referencing sampler modules.** Deleting a
+  sample from the list kebab (and the old toolbar Delete before it) calls
+  `SampleLibrary::remove(id)` but leaves any `Sampler` module still holding that
+  `SampleSelect(id)` pointing at a now-missing sample. Pre-existing (not a
+  regression from the list-panel work), but the kebab makes deletion easier to
+  reach. Confirm the sampler/engine tolerates a missing referenced sample
+  gracefully (silent → no sound vs. panic), and consider warning on / blocking
+  deletion of an in-use sample, or resetting referencing modules to "no sample".
+
 ---
 
 ## 4. AI & Automation
