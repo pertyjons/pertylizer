@@ -2115,7 +2115,7 @@
                 },
                 "ratio": {
                   "default": 4.0,
-                  "description": "Compression ratio",
+                  "description": "Compression ratio — unit: :1",
                   "maximum": 20.0,
                   "minimum": 1.0,
                   "title": "Ratio",
@@ -2376,7 +2376,7 @@
                 },
                 "time": {
                   "default": 0.009999999776482582,
-                  "description": "Time scale (zoom)",
+                  "description": "Time scale (zoom) — unit: s",
                   "maximum": 0.10000000149011612,
                   "minimum": 0.0010000000474974513,
                   "title": "Time",
@@ -3112,7 +3112,7 @@
                 },
                 "octave": {
                   "default": 0.0,
-                  "description": "Octave offset (-2 to +2) — unit: st",
+                  "description": "Octave offset (-2 to +2) — unit: oct",
                   "maximum": 2.0,
                   "minimum": -2.0,
                   "title": "Octave",
@@ -4714,7 +4714,7 @@
                 },
                 "time": {
                   "default": 0.009999999776482582,
-                  "description": "Time scale (zoom)",
+                  "description": "Time scale (zoom) — unit: s",
                   "maximum": 0.10000000149011612,
                   "minimum": 0.0010000000474974513,
                   "title": "Time",

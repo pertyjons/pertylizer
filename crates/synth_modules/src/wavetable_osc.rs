@@ -139,7 +139,9 @@ impl Describable for WavetableOsc {
                 .description("Octave offset (-2 to +2)")
                 .range(-2.0, 2.0)
                 .default(0.0)
-                .unit(ParameterUnit::Semitones) // Using semitones as closest unit
+                // Unit derives from the `Octaves` value type (`oct`); the old
+                // `.unit(Semitones)` was a "closest unit" workaround from before
+                // `ParameterUnit::Octaves` was wired through the type (Phase 2a).
                 // Quantized to integer octaves in `effective_freq`, so a smooth
                 // mod offset is meaningless — not a mod destination.
                 .modulatable(false)

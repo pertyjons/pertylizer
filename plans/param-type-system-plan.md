@@ -419,7 +419,7 @@ per `CLAUDE.md`). Dependency order:
 |-------|-------|-------|------|-----------|
 | 0 | Audit & taxonomy table ✅ **done** (`docs/param-kinds.md`) | (doc) | none | — |
 | 1 | `ParamKind` + `ScalarParam` + `kind()` + descriptor field ✅ **done** | engine | low | 0 |
-| 2a | Derive `unit` from newtype; drift-assert test | engine | low | 1 |
+| 2a | Derive `unit` from newtype; drift-assert test ✅ **done** | engine | low | 1 |
 | 2b | `curve` audit (no silent auto-flip; behavioral) | engine | medium | 1 |
 | 3 | Kind-aware display (decimal-free ints; bool) | core+GUI | low | 1 |
 | 4 | Serialization emits `Int`/`Bool`; consistent int rounding | serialization | low | 1 |
@@ -940,14 +940,20 @@ unit; the full gate must be green before each commit.
 > touching those modules' UI/serialization.
 
 **Step 2 — Unit derivation + curve audit (Phase 2a / 2b):**
-- [ ] Seed `unit` in `float()` from `id.unit()`.
-- [ ] Unit-drift test (explicit `.unit()` == `id.unit()` modulo allow-list); fix the
-      drift bugs it surfaces; delete redundant `.unit()` calls in a separate commit.
+- [x] Seed `unit` in `float()` from `id.unit()`. *(done)*
+- [x] Unit-drift test (`descriptor_unit_matches_type_unless_allow_listed` in
+      `module_factory.rs`). Surfaced 30 mismatches; triaged: 27 are benign
+      `Percent`-over-unitless-`Continuous` presentation (one principled allow rule),
+      and **2 real fixes at the source** — `BeatDivision`'s type-unit set to `Beats`,
+      and `WavetableOsc/octave`'s stale `.unit(Semitones)` removed so it derives
+      `Octaves` (`st`→`oct`). Regenerated `schemas/*.json`. *(done)*
+- [ ] *(Phase 2a cleanup — separate commit)* delete now-redundant `.unit()` calls
+      equal to the derived default (e.g. `sync_division`'s `.unit(Beats)`).
 - [ ] Curve **audit** test (explicit curve vs `id.default_curve()`); resolve each
       mismatch by an explicit curve or an `intentional_*` allow-list entry. **Do NOT
-      auto-apply curve in `float()`** (§14.6) — keep `Linear` the fallback.
+      auto-apply curve in `float()`** (§14.6) — keep `Linear` the fallback. *(Phase 2b)*
 - [ ] Tighten `is_automatable` to `modulatable && kind == Continuous`; ship the
-      before/after regression test.
+      before/after regression test. *(Phase 2b)*
 
 **Step 3 — Display + interaction (Phase 3 / 6):**
 - [ ] Centralized `format_value(kind, unit, value)`; route `Knob` and `Slider`

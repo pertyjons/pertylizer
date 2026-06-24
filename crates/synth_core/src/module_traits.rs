@@ -722,13 +722,18 @@ impl ParameterDescriptor {
     /// - `name`: Display name shown in the UI (safe to rename freely).
     pub fn float(type_id: impl Into<String>, id: Param, name: impl Into<String>) -> Self {
         let kind = id.kind();
+        // Phase 2a: the display unit is derived from the parameter's value type
+        // (`Hertz` → `Hz`, …), killing hand-typed unit drift. Override per descriptor
+        // with `.unit()` for the rare legitimate case (e.g. `NormalizedValue` as
+        // `Percent`). `response_curve` is NOT derived — that is behavioral (§14.6).
+        let unit = id.unit();
         Self {
             type_id: type_id.into(),
             id,
             name: name.into(),
             description: String::new(),
             range: ValueRange::UNIT,
-            unit: ParameterUnit::None,
+            unit,
             widget_hint: WidgetHint::Knob,
             response_curve: ResponseCurve::Linear,
             choices: None,

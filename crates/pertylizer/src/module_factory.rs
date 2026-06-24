@@ -496,6 +496,59 @@ mod tests {
         );
     }
 
+    /// Phase 2a: a descriptor's display `unit` must equal its value type's natural
+    /// unit (`id.unit()`), unless the param is a deliberate override on the
+    /// allow-list below. `float()` now seeds `unit` from the type, so any remaining
+    /// mismatch is an *explicit* `.unit(X)` that disagrees with the type — either a
+    /// legitimate override (kept on the allow-list) or a real drift bug (to fix).
+    #[test]
+    fn descriptor_unit_matches_type_unless_allow_listed() {
+        use synth_core::{ParamKind, ParameterUnit};
+        // Genuine type-vs-type overrides (a real unit deliberately replacing the
+        // type's unit): (module, type_id, override unit). None remain — the two
+        // historical mismatches were fixed at the source (BeatDivision → Beats at
+        // the type level; WavetableOsc/octave's stale `.unit(Semitones)` removed so
+        // it derives `Octaves`).
+        let allow: &[(ModuleType, &str, ParameterUnit)] = &[];
+        let mut violations: Vec<String> = Vec::new();
+        for mt in ALL_MODULE_TYPES.iter().copied() {
+            let Some(desc) = get_descriptor(mt) else {
+                continue;
+            };
+            for p in &desc.parameters {
+                let want = p.id.unit();
+                if p.unit == want {
+                    continue;
+                }
+                // A unitless Continuous value (NormalizedValue, PulseWidth, …)
+                // presented as a percentage is a legitimate display choice, never
+                // drift — allow `Percent` over a type-unit of `None`.
+                if want == ParameterUnit::None
+                    && p.unit == ParameterUnit::Percent
+                    && p.kind == ParamKind::Continuous
+                {
+                    continue;
+                }
+                if allow
+                    .iter()
+                    .any(|&(m, id, u)| m == mt && id == p.type_id.as_str() && u == p.unit)
+                {
+                    continue;
+                }
+                violations.push(format!(
+                    "{mt:?}/{}: descriptor.unit={:?} != id.unit()={want:?}",
+                    p.type_id, p.unit
+                ));
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "unit-drift violations ({} — triage each as override→allow-list or bug→fix):\n{}",
+            violations.len(),
+            violations.join("\n")
+        );
+    }
+
     /// Resolve a module's descriptor *and* its `get_params()` snapshot, covering
     /// voice modules, effects, and visualizers (mirrors [`get_descriptor`]).
     fn descriptor_and_params(mt: ModuleType) -> Option<(ModuleDescriptor, Vec<synth_core::Param>)> {

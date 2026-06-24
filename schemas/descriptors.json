@@ -467,7 +467,7 @@
           "modulatable": true,
           "name": "Ratio",
           "response_curve": "linear",
-          "unit": "none"
+          "unit": "ratio"
         },
         "release": {
           "default": 100.0,
@@ -7173,7 +7173,7 @@
           "modulatable": true,
           "name": "Time",
           "response_curve": "linear",
-          "unit": "none"
+          "unit": "seconds"
         },
         "trig": {
           "default": 0.5,
@@ -7943,7 +7943,7 @@
           "modulatable": false,
           "name": "Time",
           "response_curve": "linear",
-          "unit": "none"
+          "unit": "seconds"
         },
         "trig": {
           "default": 0.5,
@@ -8677,7 +8677,7 @@
           "modulatable": false,
           "name": "Octave",
           "response_curve": "linear",
-          "unit": "semitones"
+          "unit": "octaves"
         },
         "position": {
           "default": 0.0,
