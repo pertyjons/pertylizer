@@ -10,8 +10,8 @@
 
 use synth_core::{
     AudioEffect, Describable, Gain, Hertz, ModuleCategory, ModuleDescriptor, ModuleType,
-    NormalizedValue, Param, ParameterDescriptor, ParameterUnit, ProcessContext, ReverbParam,
-    SampleCount, SampleRate, Seconds, StereoSample, WidgetHint,
+    NormalizedValue, Param, ParameterDescriptor, ProcessContext, ReverbParam, SampleCount,
+    SampleRate, Seconds, StereoSample, WidgetHint,
 };
 use synth_dsp::FdnCore;
 
@@ -236,7 +236,6 @@ impl Describable for Reverb {
                 .description("Initial delay before reverb onset")
                 .range(0.0, 0.5)
                 .default(0.0)
-                .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::TimeSlider),
             )
             .parameter(
@@ -248,7 +247,6 @@ impl Describable for Reverb {
                 .description("Highpass filter frequency for reverb tail")
                 .range(20.0, 500.0)
                 .default(80.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

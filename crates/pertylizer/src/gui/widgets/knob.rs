@@ -4,7 +4,21 @@ use eframe::egui::{self, Color32, Pos2, Response, Sense, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
 use synth_core::ValueRange;
-use synth_core::{ParameterDescriptor, ParameterUnit, ResponseCurve};
+use synth_core::{ParamKind, ParameterDescriptor, ParameterUnit, ResponseCurve};
+
+/// Pixels of vertical drag per discrete step on a stepped (integer/quantized)
+/// knob. Range-independent on purpose, so small-range integer knobs (e.g. MSEG
+/// segment counts / loop points) aren't sluggish — every `step` is the same
+/// drag distance regardless of how many steps the range spans.
+const STEP_DRAG_PIXELS: f32 = 8.0;
+
+/// Scroll units per discrete step on a stepped knob (≈ one mouse-wheel notch);
+/// a smooth trackpad swipe accumulates toward it. Tunable feel constant.
+const SCROLL_UNITS_PER_STEP: f32 = 40.0;
+
+/// Continuous-knob scroll sensitivity (normalized value per scroll unit), so a
+/// wheel notch nudges the value a couple of percent. Tunable feel constant.
+const SCROLL_CONT_SENSITIVITY: f32 = 0.000_625;
 
 /// A rotary knob widget.
 pub struct Knob<'a> {
@@ -12,6 +26,9 @@ pub struct Knob<'a> {
     range: ValueRange,
     response_curve: ResponseCurve,
     unit: ParameterUnit,
+    /// Value-kind, driving display (decimal-free integers, `On`/`Off` bools) and
+    /// the default integer snapping step.
+    kind: ParamKind,
     label: String,
     size: f32,
     accent_color: Color32,
@@ -30,6 +47,7 @@ impl<'a> Knob<'a> {
             range: ValueRange::symmetric(min, max),
             response_curve: ResponseCurve::Linear,
             unit: ParameterUnit::None,
+            kind: ParamKind::Continuous,
             label: String::new(),
             size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
@@ -44,10 +62,12 @@ impl<'a> Knob<'a> {
             range: descriptor.range,
             response_curve: descriptor.response_curve,
             unit: descriptor.unit,
+            kind: descriptor.kind,
             label: descriptor.name.clone(),
             size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
-            step: descriptor.step,
+            // Integer params snap to whole numbers — the kind supplies the step.
+            step: (descriptor.kind == ParamKind::Integer).then_some(1.0),
             mod_marker: None,
         }
     }
@@ -84,9 +104,9 @@ impl<'a> Knob<'a> {
         self
     }
 
-    /// Format the value with the appropriate unit suffix
+    /// Format the value, kind-aware (decimal-free integers, `On`/`Off` bools).
     fn format_value(&self) -> String {
-        self.unit.format(*self.value)
+        self.kind.format(self.unit, *self.value)
     }
 
     #[must_use]
@@ -141,10 +161,63 @@ impl<'a> Knob<'a> {
 
         if response.dragged() {
             let delta = -response.drag_delta().y;
-            let sensitivity = t.style.knob_sensitivity;
-            let normalized = self.response_curve.normalize(*self.value, self.range);
-            let new_normalized = (normalized + delta * sensitivity).clamp(0.0, 1.0);
-            *self.value = self.snapped(self.response_curve.denormalize(new_normalized, self.range));
+            if let Some(step) = self.step {
+                // Stepped (integer/quantized) knob: accumulate an unsnapped value
+                // across frames in egui memory so sub-step drag isn't discarded by
+                // snapping each frame, and move in value space at a fixed
+                // pixels-per-step rate (range-independent — small ranges stay
+                // responsive). Snap only the value we write out.
+                let acc_id = response.id.with("knob_drag_acc");
+                let prev = if response.drag_started() {
+                    *self.value
+                } else {
+                    ui.memory(|m| m.data.get_temp::<f32>(acc_id))
+                        .unwrap_or(*self.value)
+                };
+                let acc = (prev + delta * (step / STEP_DRAG_PIXELS))
+                    .clamp(self.range.min, self.range.max);
+                ui.memory_mut(|m| m.data.insert_temp(acc_id, acc));
+                *self.value = self.snapped(acc);
+            } else {
+                // Continuous knob: smooth movement in normalized (curve) space.
+                let sensitivity = t.style.knob_sensitivity;
+                let normalized = self.response_curve.normalize(*self.value, self.range);
+                let new_normalized = (normalized + delta * sensitivity).clamp(0.0, 1.0);
+                *self.value = self.response_curve.denormalize(new_normalized, self.range);
+            }
+        }
+
+        // Mouse-wheel / trackpad scroll over the knob adjusts its value.
+        if response.hovered() {
+            // Negated: scroll down increases, scroll up decreases.
+            let scroll = -ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll != 0.0 {
+                if let Some(step) = self.step {
+                    // Accumulate scroll units and emit whole steps, keeping the
+                    // remainder so a smooth trackpad swipe ticks one step at a time
+                    // (and a mouse notch ≈ one step).
+                    let acc_id = response.id.with("knob_scroll_acc");
+                    let acc = ui.memory(|m| m.data.get_temp::<f32>(acc_id)).unwrap_or(0.0) + scroll;
+                    let steps = (acc / SCROLL_UNITS_PER_STEP).trunc();
+                    if steps != 0.0 {
+                        *self.value = self.snapped(
+                            (*self.value + steps * step).clamp(self.range.min, self.range.max),
+                        );
+                    }
+                    ui.memory_mut(|m| {
+                        m.data
+                            .insert_temp(acc_id, acc - steps * SCROLL_UNITS_PER_STEP)
+                    });
+                } else {
+                    let normalized = self.response_curve.normalize(*self.value, self.range);
+                    let new_normalized =
+                        (normalized + scroll * SCROLL_CONT_SENSITIVITY).clamp(0.0, 1.0);
+                    *self.value = self.response_curve.denormalize(new_normalized, self.range);
+                }
+                // Consume the vertical scroll so an enclosing ScrollArea (patch
+                // editor / mixer) doesn't also scroll while adjusting the knob.
+                ui.ctx().input_mut(|i| i.smooth_scroll_delta.y = 0.0);
+            }
         }
 
         let painter = ui.painter();

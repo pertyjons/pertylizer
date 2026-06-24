@@ -9,8 +9,8 @@
 use synth_core::NoiseState;
 use synth_core::{
     AudioEffect, BipolarValue, Describable, GranularFxParam, Milliseconds, ModuleCategory,
-    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
-    ProcessContext, SampleRate, Seconds, StereoSample, WidgetHint,
+    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ProcessContext,
+    SampleRate, Seconds, StereoSample, WidgetHint,
 };
 
 const MAX_GRAINS: usize = 64;
@@ -174,7 +174,6 @@ impl Describable for GranularFx {
                 .description("Capture buffer length")
                 .range(0.5, 4.0)
                 .default(2.0)
-                .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -186,7 +185,6 @@ impl Describable for GranularFx {
                 .description("Length of each grain in milliseconds")
                 .range(10.0, 120.0)
                 .default(40.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

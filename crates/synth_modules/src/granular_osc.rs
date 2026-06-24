@@ -311,7 +311,6 @@ impl Describable for GranularOsc {
                 .description("Length of each grain in milliseconds")
                 .range(5.0, 500.0)
                 .default(50.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

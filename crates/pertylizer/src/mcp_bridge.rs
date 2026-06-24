@@ -224,16 +224,20 @@ impl AppSynthBridge {
         };
 
         let value = resolve_param_value(&value, Some(pd), param_name)?;
-        pd.validate_f32(value)
-            .map_err(|source| McpBridgeError::InvalidParameterValue {
-                name: pd.name.clone(),
-                source,
-            })?;
+        // Kind-aware validation: rounds integers, accepts bools, rejects
+        // out-of-range. Use the returned value so the applied + echoed value is
+        // exactly what took effect (e.g. a `4.3` integer becomes `4`).
+        let value =
+            pd.validate_f32(value)
+                .map_err(|source| McpBridgeError::InvalidParameterValue {
+                    name: pd.name.clone(),
+                    source,
+                })?;
 
         let info = ParameterInfo {
             name: pd.name.clone(),
             value,
-            display: pd.unit.format(value),
+            display: pd.format(value),
             min: Some(pd.range.min),
             max: Some(pd.range.max),
             default: Some(pd.range.default),
@@ -244,6 +248,7 @@ impl AppSynthBridge {
             type_id: Some(pd.type_id.clone()),
             is_automatable: Some(pd.is_automatable()),
             response_curve: Some(format!("{:?}", pd.response_curve)),
+            value_kind: Some(pd.kind),
         };
         Ok((mid, pd.id.with_f32(value), info))
     }
@@ -563,6 +568,7 @@ impl SynthBridge for AppSynthBridge {
                                 type_id: pd.map(|pd| pd.type_id.clone()),
                                 is_automatable: pd.map(|pd| pd.is_automatable()),
                                 response_curve: pd.map(|pd| format!("{:?}", pd.response_curve)),
+                                value_kind: pd.map(|pd| pd.kind),
                             }
                         })
                         .collect(),
@@ -1213,14 +1219,18 @@ impl SynthBridge for AppSynthBridge {
             // parameter's native f32, rejecting unknown choices at the boundary
             // instead of silently mapping them to index 0.
             let value = resolve_param_value(&value, param_desc, param_name)?;
-            // Validate against the parameter's range BEFORE applying.
-            if let Some(pd) = param_desc {
+            // Kind-aware validation BEFORE applying — rounds integers, accepts
+            // bools, rejects out-of-range. Use the returned value so a rounded
+            // integer (e.g. `4.3` → `4`) is what actually gets applied.
+            let value = if let Some(pd) = param_desc {
                 pd.validate_f32(value)
                     .map_err(|source| McpBridgeError::InvalidParameterValue {
                         name: pd.name.clone(),
                         source,
-                    })?;
-            }
+                    })?
+            } else {
+                value
+            };
             (value, crate::patch::ParamValue::Float(value))
         };
 
@@ -1255,6 +1265,7 @@ impl SynthBridge for AppSynthBridge {
                 type_id: Some(pd.type_id.clone()),
                 is_automatable: Some(pd.is_automatable()),
                 response_curve: Some(format!("{:?}", pd.response_curve)),
+                value_kind: Some(pd.kind),
             });
         }
         Ok(ParameterInfo {
@@ -1268,6 +1279,7 @@ impl SynthBridge for AppSynthBridge {
             type_id: None,
             is_automatable: None,
             response_curve: None,
+            value_kind: None,
         })
     }
 
@@ -1346,11 +1358,17 @@ impl SynthBridge for AppSynthBridge {
                                         ParamValue::Float(f) => PatchParamValue::Float(*f),
                                         ParamValue::Int(i) => PatchParamValue::Int(*i),
                                         ParamValue::SampleId { sample_id } => {
-                                            PatchParamValue::SampleId(*sample_id)
+                                            PatchParamValue::SampleId {
+                                                sample_id: *sample_id,
+                                            }
                                         }
                                         ParamValue::Bool(b) => PatchParamValue::Bool(*b),
                                         ParamValue::Choice(s) => PatchParamValue::Choice(s.clone()),
                                     },
+                                    // The `PatchParamValue` variant already conveys
+                                    // the type here; a per-param descriptor lookup
+                                    // would rebuild a module instance, so left None.
+                                    value_kind: None,
                                 })
                                 .collect(),
                         })
@@ -7047,7 +7065,8 @@ fn return_effect_info(effect: &synth_engine::ReturnEffectSnapshot) -> synth_mcp:
                 name: pd.map(|pd| pd.name.clone()).unwrap_or_default(),
                 type_id: pd.map(|pd| pd.type_id.clone()).unwrap_or_default(),
                 value,
-                display: pd.map_or_else(|| format!("{value}"), |pd| pd.unit.format(value)),
+                display: pd.map_or_else(|| format!("{value}"), |pd| pd.format(value)),
+                value_kind: pd.map(|pd| pd.kind),
             }
         })
         .collect();
@@ -12516,6 +12535,7 @@ fn build_module_type_info(
                     })
                     .collect()
             }),
+            value_kind: Some(p.kind),
         })
         .collect();
 

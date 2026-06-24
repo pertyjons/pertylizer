@@ -10,8 +10,8 @@
 
 use synth_core::{
     AudioEffect, BbdDelayParam, BufferIndex, Describable, FilterState, Hertz, ModuleCategory,
-    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
-    ProcessContext, ResponseCurve, SampleCount, SampleRate, Seconds, StereoSample, WidgetHint,
+    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ProcessContext,
+    ResponseCurve, SampleCount, SampleRate, Seconds, StereoSample, WidgetHint,
 };
 
 /// Maximum delay time in seconds for the BBD delay.
@@ -174,7 +174,6 @@ impl Describable for BbdDelay {
                 .description("Delay time")
                 .range(0.01, MAX_DELAY_SECONDS)
                 .default(0.3)
-                .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::TimeSlider)
                 .curve(ResponseCurve::Logarithmic),
             )

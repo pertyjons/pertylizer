@@ -428,6 +428,196 @@ mod tests {
         );
     }
 
+    /// Phase 1 acceptance: every parameter of every module descriptor must satisfy
+    /// the `ParamKind` invariants — the classifier matches `id.kind()`, and the
+    /// `kind`/`choices` relationship holds:
+    ///   - `Enum`                       ⇒ `choices.is_some()`
+    ///   - `{Continuous, Integer, Bool}` ⇒ `choices.is_none()`
+    ///   - `choices.is_some()`          ⇒ `kind ∈ {Enum, Reference}` (mod-matrix
+    ///     pickers are `Reference`; the `SampleId` reference carries no choices)
+    #[test]
+    fn param_kind_invariants_hold_for_every_descriptor() {
+        use synth_core::ParamKind;
+        // Every `Enum`-kind param now carries a choice list (`SpectralBlur/fft_size`
+        // and `KeyboardPanner/invert` were converted from `float()` to `choice()`),
+        // so there are no enum-as-float exceptions left — the invariant holds for all.
+        let mut violations: Vec<String> = Vec::new();
+        for mt in ALL_MODULE_TYPES.iter().copied() {
+            let Some(desc) = get_descriptor(mt) else {
+                continue;
+            };
+            for p in &desc.parameters {
+                let kind = p.kind;
+                // Construction wiring must hold for EVERY parameter, no exceptions.
+                if kind != p.id.kind() {
+                    violations.push(format!(
+                        "{mt:?}/{}: descriptor.kind={kind:?} != id.kind()={:?}",
+                        p.type_id,
+                        p.id.kind()
+                    ));
+                }
+                let has_choices = p.choices.is_some();
+                let ok = match kind {
+                    ParamKind::Enum => has_choices,
+                    ParamKind::Continuous | ParamKind::Integer | ParamKind::Bool => !has_choices,
+                    ParamKind::Reference => true, // choices optional (picker vs id)
+                };
+                if !ok {
+                    violations.push(format!(
+                        "{mt:?}/{}: kind={kind:?} but choices.is_some()={has_choices}",
+                        p.type_id
+                    ));
+                }
+                if has_choices && !matches!(kind, ParamKind::Enum | ParamKind::Reference) {
+                    violations.push(format!(
+                        "{mt:?}/{}: has choices but kind={kind:?} (expected Enum or Reference)",
+                        p.type_id
+                    ));
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "ParamKind invariant violations:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    /// Phase 2a: a descriptor's display `unit` must equal its value type's natural
+    /// unit (`id.unit()`), unless the param is a deliberate override on the
+    /// allow-list below. `float()` now seeds `unit` from the type, so any remaining
+    /// mismatch is an *explicit* `.unit(X)` that disagrees with the type — either a
+    /// legitimate override (kept on the allow-list) or a real drift bug (to fix).
+    #[test]
+    fn descriptor_unit_matches_type_unless_allow_listed() {
+        use synth_core::{ParamKind, ParameterUnit};
+        // Genuine type-vs-type overrides (a real unit deliberately replacing the
+        // type's unit): (module, type_id, override unit). None remain — the two
+        // historical mismatches were fixed at the source (BeatDivision → Beats at
+        // the type level; WavetableOsc/octave's stale `.unit(Semitones)` removed so
+        // it derives `Octaves`).
+        let allow: &[(ModuleType, &str, ParameterUnit)] = &[];
+        let mut violations: Vec<String> = Vec::new();
+        for mt in ALL_MODULE_TYPES.iter().copied() {
+            let Some(desc) = get_descriptor(mt) else {
+                continue;
+            };
+            for p in &desc.parameters {
+                let want = p.id.unit();
+                if p.unit == want {
+                    continue;
+                }
+                // A unitless Continuous value (NormalizedValue, PulseWidth, …)
+                // presented as a percentage is a legitimate display choice, never
+                // drift — allow `Percent` over a type-unit of `None`.
+                if want == ParameterUnit::None
+                    && p.unit == ParameterUnit::Percent
+                    && p.kind == ParamKind::Continuous
+                {
+                    continue;
+                }
+                if allow
+                    .iter()
+                    .any(|&(m, id, u)| m == mt && id == p.type_id.as_str() && u == p.unit)
+                {
+                    continue;
+                }
+                violations.push(format!(
+                    "{mt:?}/{}: descriptor.unit={:?} != id.unit()={want:?}",
+                    p.type_id, p.unit
+                ));
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "unit-drift violations ({} — triage each as override→allow-list or bug→fix):\n{}",
+            violations.len(),
+            violations.join("\n")
+        );
+    }
+
+    /// Phase 2b: tightening `is_automatable` from `modulatable && choices.is_none()`
+    /// to `modulatable && kind == Continuous` removes sequencer-automation
+    /// eligibility from exactly the params below — non-continuous targets
+    /// (`Integer` counts/notes, `Bool` toggles) that the old `choices.is_none()`
+    /// rule let through but that cannot be meaningfully ramped by a normalized
+    /// lane. They keep their **mod-matrix** eligibility
+    /// (which uses `modulatable` directly, unchanged). This guard pins the exact
+    /// set so any change — especially the real regression of dropping a *Continuous*
+    /// param — is surfaced for review.
+    #[test]
+    fn is_automatable_tightening_drops_only_non_continuous() {
+        let mut dropped: Vec<String> = Vec::new();
+        for mt in ALL_MODULE_TYPES.iter().copied() {
+            let Some(desc) = get_descriptor(mt) else {
+                continue;
+            };
+            for p in &desc.parameters {
+                let old = p.modulatable && p.choices.is_none();
+                if old && !p.is_automatable() {
+                    dropped.push(format!("{mt:?}/{}", p.type_id));
+                }
+            }
+        }
+        dropped.sort();
+        let mut expected = [
+            "Chorus/voices",
+            "Compressor/sidechain",
+            "EnsembleChorus/voices",
+            "GranularFx/freeze",
+            "KeyboardPanner/center",
+            "ModalResonator/base_note",
+            "ModalResonator/modes",
+            "PhaseVocoder/freeze",
+            "SpectralBlur/freeze",
+        ];
+        expected.sort_unstable();
+        assert_eq!(
+            dropped, expected,
+            "set of params losing automation eligibility changed — review (a \
+             Continuous param here would be a real regression)"
+        );
+    }
+
+    /// Phase 4: the `ParamValue` that `from_param` produces must have the variant
+    /// dictated by the descriptor's `kind` — the `ParamValue` ↔ `ParamKind` bridge
+    /// (plan §1.5). Swept across every real descriptor's default value.
+    #[test]
+    fn param_value_variant_matches_kind() {
+        use crate::patch::ParamValue;
+        use synth_core::ParamKind;
+        let mut bad: Vec<String> = Vec::new();
+        for mt in ALL_MODULE_TYPES.iter().copied() {
+            let Some(desc) = get_descriptor(mt) else {
+                continue;
+            };
+            for p in &desc.parameters {
+                let pv = ParamValue::from_param(&p.id, p);
+                let ok = match p.kind {
+                    ParamKind::Continuous => matches!(pv, ParamValue::Float(_)),
+                    ParamKind::Integer => matches!(pv, ParamValue::Int(_)),
+                    ParamKind::Bool => matches!(pv, ParamValue::Bool(_)),
+                    // Enums map their index to a choice id. (No enum-as-float params
+                    // remain; the bare-`Enum` arm is a defensive fallback.)
+                    ParamKind::Enum if p.choices.is_some() => matches!(pv, ParamValue::Choice(_)),
+                    ParamKind::Enum => matches!(pv, ParamValue::Float(_)),
+                    // Sample id → struct SampleId; mod-matrix address → Choice string.
+                    ParamKind::Reference => {
+                        matches!(pv, ParamValue::Choice(_) | ParamValue::SampleId { .. })
+                    }
+                };
+                if !ok {
+                    bad.push(format!("{mt:?}/{}: kind={:?} -> {pv:?}", p.type_id, p.kind));
+                }
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "ParamValue variant disagrees with kind:\n{}",
+            bad.join("\n")
+        );
+    }
+
     /// Resolve a module's descriptor *and* its `get_params()` snapshot, covering
     /// voice modules, effects, and visualizers (mirrors [`get_descriptor`]).
     fn descriptor_and_params(mt: ModuleType) -> Option<(ModuleDescriptor, Vec<synth_core::Param>)> {

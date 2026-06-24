@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use synth_core::module_traits::ChoiceOption;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
@@ -124,7 +125,6 @@ impl Describable for KeyboardPanner {
                 .description("Center note for panning (MIDI note)")
                 .range(0.0, 127.0)
                 .default(60.0)
-                .unit(ParameterUnit::None)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -136,21 +136,24 @@ impl Describable for KeyboardPanner {
                 .description("Pan curve shape (-1 to 1)")
                 .range(-1.0, 1.0)
                 .default(0.0)
-                .unit(ParameterUnit::None)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
-                ParameterDescriptor::float(
+                ParameterDescriptor::choice(
                     "invert",
                     Param::KeyboardPanner(KeyboardPannerParam::Invert(Polarity::Normal)),
                     "Invert",
+                    vec![
+                        ChoiceOption::new("normal", "Normal")
+                            .with_description("Normal panning direction (low notes left)"),
+                        ChoiceOption::new("inverted", "Inverted")
+                            .with_description("Inverted panning direction (low notes right)"),
+                    ],
                 )
                 .description("Invert panning direction")
-                .range(0.0, 1.0)
-                .default(0.0)
-                .unit(ParameterUnit::None)
-                // Discrete polarity toggle, not a continuous automation target.
-                .modulatable(false)
+                // A true binary choice (Normal/Inverted), but rendered as a
+                // checkbox rather than a dropdown — `choice()` already sets
+                // `modulatable = false`.
                 .widget(WidgetHint::Toggle),
             )
             .port(PortDescriptor::audio_input("in", "In").description("Mono input"))

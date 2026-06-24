@@ -10,8 +10,8 @@
 use synth_core::{
     AudioEffect, BeatDivision, Bpm, BufferIndex, DelayMode, DelayParam, Describable, FilterState,
     Hertz, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param,
-    ParameterDescriptor, ParameterUnit, ProcessContext, ResponseCurve, SampleCount, SampleRate,
-    Seconds, StereoSample, TempoSyncState, WidgetHint,
+    ParameterDescriptor, ProcessContext, ResponseCurve, SampleCount, SampleRate, Seconds,
+    StereoSample, TempoSyncState, WidgetHint,
 };
 
 /// Maximum delay time in seconds.
@@ -127,7 +127,6 @@ impl Describable for Delay {
                 .description("Delay time (link: sets both left and right)")
                 .range(0.001, MAX_DELAY_SECONDS)
                 .default(0.375)
-                .unit(ParameterUnit::Seconds)
                 .curve(ResponseCurve::Logarithmic)
                 // "Link both" macro: settable via MCP/automation (sets L and R
                 // together) but Hidden from the GUI auto-renderer — the displayed
@@ -146,7 +145,6 @@ impl Describable for Delay {
                 .description("Left-channel delay time")
                 .range(0.001, MAX_DELAY_SECONDS)
                 .default(0.375)
-                .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::TimeSlider)
                 .curve(ResponseCurve::Logarithmic),
             )
@@ -159,7 +157,6 @@ impl Describable for Delay {
                 .description("Right-channel delay time")
                 .range(0.001, MAX_DELAY_SECONDS)
                 .default(0.5)
-                .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::TimeSlider)
                 .curve(ResponseCurve::Logarithmic),
             )
@@ -217,7 +214,6 @@ impl Describable for Delay {
                 .description("Beats per echo when tempo-synced (1 = quarter note)")
                 .range(0.125, 4.0)
                 .default(1.0)
-                .unit(ParameterUnit::Beats)
                 .modulatable(false)
                 .widget(WidgetHint::Knob),
             )

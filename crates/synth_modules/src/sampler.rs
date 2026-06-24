@@ -198,7 +198,6 @@ impl Describable for Sampler {
                 .description("Fine-tune in cents")
                 .range(-100.0, 100.0)
                 .default(0.0)
-                .unit(ParameterUnit::Cents)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

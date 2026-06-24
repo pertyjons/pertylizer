@@ -6,7 +6,7 @@
 //! - Smooth interpolated delay reading
 
 use synth_core::{
-    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
+    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     ProcessContext, WidgetHint,
 };
 use synth_core::{BufferIndex, Hertz, NormalizedValue, Phase, SampleRate, VoiceCount};
@@ -85,7 +85,6 @@ impl Describable for Chorus {
                 .description("LFO rate")
                 .range(0.1, 5.0)
                 .default(0.5)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

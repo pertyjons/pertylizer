@@ -298,7 +298,6 @@ impl Describable for PadSynth {
                 .description("Base frequency for wavetable generation")
                 .range(20.0, 2000.0)
                 .default(261.63)
-                .unit(ParameterUnit::Hertz)
                 .curve(ResponseCurve::Exponential)
                 // Wavetable-build param (see bandwidth) — not control-rate.
                 .modulatable(false)

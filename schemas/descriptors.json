@@ -14,7 +14,9 @@
           "modulatable": true,
           "name": "Brightness",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 1.0,
@@ -24,7 +26,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "odd_even": {
           "default": 0.5,
@@ -34,7 +38,9 @@
           "modulatable": true,
           "name": "Odd/Even",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "randomize": {
           "default": 0.10000000149011612,
@@ -44,7 +50,9 @@
           "modulatable": false,
           "name": "Randomize",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "stretch": {
           "default": 0.0,
@@ -54,7 +62,9 @@
           "modulatable": true,
           "name": "Stretch",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "tilt": {
           "default": 0.5,
@@ -64,7 +74,9 @@
           "modulatable": true,
           "name": "Tilt",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -80,7 +92,9 @@
           "modulatable": true,
           "name": "Carrier",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "depth": {
           "default": 0.800000011920929,
@@ -90,7 +104,9 @@
           "modulatable": true,
           "name": "Depth",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 0.800000011920929,
@@ -100,7 +116,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "vowel": {
           "default": 0.0,
@@ -110,7 +128,9 @@
           "modulatable": true,
           "name": "Vowel",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -126,7 +146,9 @@
           "modulatable": false,
           "name": "CV Bipolar",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "level": {
           "default": 1.0,
@@ -136,7 +158,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "pan": {
           "default": 0.0,
@@ -146,7 +170,9 @@
           "modulatable": true,
           "name": "Pan",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -162,7 +188,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         }
       }
     },
@@ -178,7 +206,9 @@
           "modulatable": true,
           "name": "Clock Noise",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "feedback": {
           "default": 0.5,
@@ -188,7 +218,9 @@
           "modulatable": true,
           "name": "Feedback",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 0.5,
@@ -198,7 +230,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "time": {
           "default": 0.30000001192092896,
@@ -208,7 +242,9 @@
           "modulatable": true,
           "name": "Time",
           "response_curve": "logarithmic",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "tone": {
           "default": 0.5,
@@ -218,7 +254,9 @@
           "modulatable": true,
           "name": "Tone",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "wow_flutter": {
           "default": 0.30000001192092896,
@@ -228,7 +266,9 @@
           "modulatable": true,
           "name": "Wow/Flutter",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -244,7 +284,9 @@
           "modulatable": true,
           "name": "Filter",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "hold_time": {
           "default": 50.0,
@@ -254,7 +296,9 @@
           "modulatable": true,
           "name": "Hold",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "sensitivity": {
           "default": 0.5,
@@ -264,7 +308,9 @@
           "modulatable": true,
           "name": "Sensitivity",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -280,7 +326,9 @@
           "modulatable": true,
           "name": "Bright",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "freq": {
           "default": 200.0,
@@ -290,7 +338,9 @@
           "modulatable": true,
           "name": "Freq",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 0.30000001192092896,
@@ -300,7 +350,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "resonance": {
           "default": 0.5,
@@ -310,7 +362,9 @@
           "modulatable": true,
           "name": "Resonance",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "size": {
           "default": 0.5,
@@ -320,7 +374,9 @@
           "modulatable": true,
           "name": "Size",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         }
       }
     },
@@ -336,7 +392,9 @@
           "modulatable": true,
           "name": "Chaos",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "depth": {
           "default": 1.0,
@@ -346,7 +404,9 @@
           "modulatable": true,
           "name": "Depth",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "rate": {
           "default": 1.0,
@@ -356,7 +416,9 @@
           "modulatable": true,
           "name": "Rate",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "system": {
           "choices": [
@@ -375,7 +437,8 @@
           "description": "Chaotic dynamical system",
           "modulatable": false,
           "name": "System",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         }
       }
     },
@@ -391,7 +454,9 @@
           "modulatable": true,
           "name": "Depth",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 0.5,
@@ -401,7 +466,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "rate": {
           "default": 0.5,
@@ -411,7 +478,9 @@
           "modulatable": true,
           "name": "Rate",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "voices": {
           "default": 2.0,
@@ -421,7 +490,9 @@
           "modulatable": true,
           "name": "Voices",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         }
       }
     },
@@ -437,7 +508,9 @@
           "modulatable": true,
           "name": "Attack",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "makeup": {
           "default": 0.0,
@@ -447,7 +520,9 @@
           "modulatable": true,
           "name": "Makeup",
           "response_curve": "linear",
-          "unit": "decibels"
+          "type": "number",
+          "unit": "decibels",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -457,7 +532,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "ratio": {
           "default": 4.0,
@@ -467,7 +544,9 @@
           "modulatable": true,
           "name": "Ratio",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "ratio",
+          "value_kind": "continuous"
         },
         "release": {
           "default": 100.0,
@@ -477,7 +556,9 @@
           "modulatable": true,
           "name": "Release",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "sc_filter": {
           "default": 80.0,
@@ -487,7 +568,9 @@
           "modulatable": true,
           "name": "SC Filter",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "sidechain": {
           "default": 0.0,
@@ -497,7 +580,9 @@
           "modulatable": true,
           "name": "Sidechain",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "threshold": {
           "default": -20.0,
@@ -507,7 +592,9 @@
           "modulatable": true,
           "name": "Threshold",
           "response_curve": "linear",
-          "unit": "decibels"
+          "type": "number",
+          "unit": "decibels",
+          "value_kind": "continuous"
         }
       }
     },
@@ -523,7 +610,9 @@
           "modulatable": true,
           "name": "Brightness",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "decay": {
           "default": 1.0,
@@ -533,7 +622,9 @@
           "modulatable": true,
           "name": "Decay",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "dynamic": {
           "default": 0.0,
@@ -543,7 +634,9 @@
           "modulatable": true,
           "name": "Dynamic",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "ir_type": {
           "choices": [
@@ -572,7 +665,8 @@
           "description": "Impulse response type (Plate, Room, Spring, Hall)",
           "modulatable": false,
           "name": "IR Type",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "mix": {
           "default": 0.30000001192092896,
@@ -582,7 +676,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "pre_delay": {
           "default": 0.0,
@@ -592,7 +688,9 @@
           "modulatable": true,
           "name": "Pre-Delay",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         }
       }
     },
@@ -608,7 +706,9 @@
           "modulatable": true,
           "name": "Frequency",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "high_gain": {
           "default": 1.0,
@@ -618,7 +718,9 @@
           "modulatable": true,
           "name": "High Gain",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "low_gain": {
           "default": 1.0,
@@ -628,7 +730,9 @@
           "modulatable": true,
           "name": "Low Gain",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -638,7 +742,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -654,7 +760,9 @@
           "modulatable": true,
           "name": "Feedback",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 0.5,
@@ -664,7 +772,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mode": {
           "choices": [
@@ -688,7 +798,8 @@
           "description": "Delay mode",
           "modulatable": false,
           "name": "Mode",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "sync_division": {
           "default": 1.0,
@@ -698,7 +809,9 @@
           "modulatable": false,
           "name": "Division",
           "response_curve": "linear",
-          "unit": "beats"
+          "type": "number",
+          "unit": "beats",
+          "value_kind": "continuous"
         },
         "tempo_sync": {
           "default": 0.0,
@@ -708,7 +821,9 @@
           "modulatable": false,
           "name": "Tempo Sync",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "time": {
           "default": 0.375,
@@ -718,7 +833,9 @@
           "modulatable": true,
           "name": "Time",
           "response_curve": "logarithmic",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "time_left": {
           "default": 0.375,
@@ -728,7 +845,9 @@
           "modulatable": true,
           "name": "Time L",
           "response_curve": "logarithmic",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "time_right": {
           "default": 0.5,
@@ -738,7 +857,9 @@
           "modulatable": true,
           "name": "Time R",
           "response_curve": "logarithmic",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "tone": {
           "default": 0.4000000059604645,
@@ -748,7 +869,9 @@
           "modulatable": true,
           "name": "Tone",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -764,7 +887,9 @@
           "modulatable": true,
           "name": "Bit Depth",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "drive": {
           "default": 0.5,
@@ -774,7 +899,9 @@
           "modulatable": true,
           "name": "Drive",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -784,7 +911,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "tone": {
           "default": 0.800000011920929,
@@ -794,7 +923,9 @@
           "modulatable": true,
           "name": "Tone",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "type": {
           "choices": [
@@ -833,7 +964,8 @@
           "description": "Distortion algorithm",
           "modulatable": false,
           "name": "Type",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         }
       }
     },
@@ -849,7 +981,9 @@
           "modulatable": true,
           "name": "Depth",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "rate": {
           "default": 0.20000000298023224,
@@ -859,7 +993,9 @@
           "modulatable": true,
           "name": "Rate",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "smoothness": {
           "default": 0.699999988079071,
@@ -869,7 +1005,9 @@
           "modulatable": true,
           "name": "Smooth",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -885,7 +1023,9 @@
           "modulatable": true,
           "name": "Base Delay",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "depth": {
           "default": 1.2000000476837158,
@@ -895,7 +1035,9 @@
           "modulatable": true,
           "name": "Depth",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 0.5,
@@ -905,7 +1047,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "noise": {
           "default": 0.10000000149011612,
@@ -915,7 +1059,9 @@
           "modulatable": true,
           "name": "Noise",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "rate": {
           "default": 0.6000000238418579,
@@ -925,7 +1071,9 @@
           "modulatable": true,
           "name": "Rate",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "stereo_width": {
           "default": 1.0,
@@ -935,7 +1083,9 @@
           "modulatable": true,
           "name": "Stereo Width",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "tone": {
           "default": 0.4000000059604645,
@@ -945,7 +1095,9 @@
           "modulatable": true,
           "name": "Tone",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "voices": {
           "default": 2.0,
@@ -955,7 +1107,9 @@
           "modulatable": true,
           "name": "Voices",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         }
       }
     },
@@ -971,7 +1125,9 @@
           "modulatable": true,
           "name": "Atk Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "attack": {
           "default": 0.009999999776482582,
@@ -981,7 +1137,9 @@
           "modulatable": true,
           "name": "Attack",
           "response_curve": "exponential",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "dec_curve": {
           "default": 0.0,
@@ -991,7 +1149,9 @@
           "modulatable": true,
           "name": "Dec Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "decay": {
           "default": 0.10000000149011612,
@@ -1001,7 +1161,9 @@
           "modulatable": true,
           "name": "Decay",
           "response_curve": "exponential",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "rel_curve": {
           "default": 0.0,
@@ -1011,7 +1173,9 @@
           "modulatable": true,
           "name": "Rel Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "release": {
           "default": 0.30000001192092896,
@@ -1021,7 +1185,9 @@
           "modulatable": true,
           "name": "Release",
           "response_curve": "exponential",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "sustain": {
           "default": 0.699999988079071,
@@ -1031,7 +1197,9 @@
           "modulatable": true,
           "name": "Sustain",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "vel_sens": {
           "default": 1.0,
@@ -1041,7 +1209,9 @@
           "modulatable": true,
           "name": "Vel Sens",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -1057,7 +1227,9 @@
           "modulatable": true,
           "name": "Attack",
           "response_curve": "logarithmic",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "release": {
           "default": 50.0,
@@ -1067,7 +1239,9 @@
           "modulatable": true,
           "name": "Release",
           "response_curve": "logarithmic",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "sensitivity": {
           "default": 0.5,
@@ -1077,7 +1251,9 @@
           "modulatable": true,
           "name": "Sensitivity",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         }
       }
     },
@@ -1093,7 +1269,9 @@
           "modulatable": true,
           "name": "High Freq",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "high_gain": {
           "default": 0.0,
@@ -1103,7 +1281,9 @@
           "modulatable": true,
           "name": "High Gain",
           "response_curve": "linear",
-          "unit": "decibels"
+          "type": "number",
+          "unit": "decibels",
+          "value_kind": "continuous"
         },
         "low_freq": {
           "default": 200.0,
@@ -1113,7 +1293,9 @@
           "modulatable": true,
           "name": "Low Freq",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "low_gain": {
           "default": 0.0,
@@ -1123,7 +1305,9 @@
           "modulatable": true,
           "name": "Low Gain",
           "response_curve": "linear",
-          "unit": "decibels"
+          "type": "number",
+          "unit": "decibels",
+          "value_kind": "continuous"
         },
         "mid_freq": {
           "default": 1000.0,
@@ -1133,7 +1317,9 @@
           "modulatable": true,
           "name": "Mid Freq",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "mid_gain": {
           "default": 0.0,
@@ -1143,7 +1329,9 @@
           "modulatable": true,
           "name": "Mid Gain",
           "response_curve": "linear",
-          "unit": "decibels"
+          "type": "number",
+          "unit": "decibels",
+          "value_kind": "continuous"
         },
         "mid_q": {
           "default": 1.0,
@@ -1153,7 +1341,9 @@
           "modulatable": true,
           "name": "Mid Q",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -1163,7 +1353,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -1179,7 +1371,9 @@
           "modulatable": false,
           "name": "Pulses",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "rotation": {
           "default": 0.0,
@@ -1189,7 +1383,9 @@
           "modulatable": false,
           "name": "Rotation",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "steps": {
           "default": 16.0,
@@ -1199,7 +1395,9 @@
           "modulatable": false,
           "name": "Steps",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "swing": {
           "default": 0.0,
@@ -1209,7 +1407,9 @@
           "modulatable": true,
           "name": "Swing",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -1225,7 +1425,9 @@
           "modulatable": true,
           "name": "Cutoff",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "cv_amt": {
           "default": 1.0,
@@ -1235,7 +1437,9 @@
           "modulatable": true,
           "name": "CV Amt",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "drive": {
           "default": 1.0,
@@ -1245,7 +1449,9 @@
           "modulatable": true,
           "name": "Drive",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "env_amt": {
           "default": 0.25,
@@ -1255,7 +1461,9 @@
           "modulatable": true,
           "name": "Env Amt",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "key_track": {
           "default": 0.0,
@@ -1265,7 +1473,9 @@
           "modulatable": true,
           "name": "Key Track",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "model": {
           "choices": [
@@ -1299,7 +1509,8 @@
           "description": "Filter character model",
           "modulatable": false,
           "name": "Model",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "morph": {
           "default": 0.0,
@@ -1309,7 +1520,9 @@
           "modulatable": true,
           "name": "Morph",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "resonance": {
           "default": 0.0,
@@ -1319,7 +1532,9 @@
           "modulatable": true,
           "name": "Resonance",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "type": {
           "choices": [
@@ -1363,7 +1578,8 @@
           "description": "Filter type",
           "modulatable": false,
           "name": "Type",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         }
       }
     },
@@ -1379,7 +1595,9 @@
           "modulatable": true,
           "name": "Delay",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "depth": {
           "default": 0.699999988079071,
@@ -1389,7 +1607,9 @@
           "modulatable": true,
           "name": "Depth",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "feedback": {
           "default": 0.699999988079071,
@@ -1399,7 +1619,9 @@
           "modulatable": true,
           "name": "Feedback",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 0.5,
@@ -1409,7 +1631,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "rate": {
           "default": 0.30000001192092896,
@@ -1419,7 +1643,9 @@
           "modulatable": true,
           "name": "Rate",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         }
       }
     },
@@ -1435,7 +1661,9 @@
           "modulatable": true,
           "name": "Bandwidth",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "breathiness": {
           "default": 0.0,
@@ -1445,7 +1673,9 @@
           "modulatable": true,
           "name": "Breathiness",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "formant_shift": {
           "default": 0.5,
@@ -1455,7 +1685,9 @@
           "modulatable": true,
           "name": "Formant Shift",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 0.800000011920929,
@@ -1465,7 +1697,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "skirt": {
           "default": 0.30000001192092896,
@@ -1475,7 +1709,9 @@
           "modulatable": true,
           "name": "Skirt",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "unison_detune": {
           "default": 15.0,
@@ -1485,7 +1721,9 @@
           "modulatable": true,
           "name": "Unison Detune",
           "response_curve": "linear",
-          "unit": "cents"
+          "type": "number",
+          "unit": "cents",
+          "value_kind": "continuous"
         },
         "unison_spread": {
           "default": 0.699999988079071,
@@ -1495,7 +1733,9 @@
           "modulatable": true,
           "name": "Unison Spread",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "unison_voices": {
           "default": 0.0,
@@ -1505,7 +1745,9 @@
           "modulatable": false,
           "name": "Unison Voices",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "vibrato_depth": {
           "default": 0.0,
@@ -1515,7 +1757,9 @@
           "modulatable": true,
           "name": "Vibrato Depth",
           "response_curve": "linear",
-          "unit": "cents"
+          "type": "number",
+          "unit": "cents",
+          "value_kind": "continuous"
         },
         "vibrato_rate": {
           "default": 5.5,
@@ -1525,7 +1769,9 @@
           "modulatable": true,
           "name": "Vibrato Rate",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "vowel": {
           "default": 0.0,
@@ -1535,7 +1781,9 @@
           "modulatable": true,
           "name": "Vowel",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -1551,7 +1799,9 @@
           "modulatable": true,
           "name": "Damping",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "feedback": {
           "default": 0.800000011920929,
@@ -1561,7 +1811,9 @@
           "modulatable": true,
           "name": "Feedback",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 0.5,
@@ -1571,7 +1823,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "tap1": {
           "default": 0.30000001192092896,
@@ -1581,7 +1835,9 @@
           "modulatable": true,
           "name": "Tap 1",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "tap2": {
           "default": 0.699999988079071,
@@ -1591,7 +1847,9 @@
           "modulatable": true,
           "name": "Tap 2",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -1607,7 +1865,9 @@
           "modulatable": true,
           "name": "Cutoff",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -1617,7 +1877,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "resonance": {
           "default": 0.5,
@@ -1627,7 +1889,9 @@
           "modulatable": true,
           "name": "Resonance",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "vowel": {
           "default": 0.0,
@@ -1637,7 +1901,9 @@
           "modulatable": true,
           "name": "Vowel",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -1653,7 +1919,9 @@
           "modulatable": true,
           "name": "Dispersion",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 1.0,
@@ -1663,7 +1931,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "roughness": {
           "default": 0.5,
@@ -1673,7 +1943,9 @@
           "modulatable": true,
           "name": "Roughness",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "spacing": {
           "default": 0.10999999940395355,
@@ -1683,7 +1955,9 @@
           "modulatable": true,
           "name": "Spacing",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "spread": {
           "default": 0.5,
@@ -1693,7 +1967,9 @@
           "modulatable": true,
           "name": "Spread",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -1709,7 +1985,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mode": {
           "default": 0.0,
@@ -1719,7 +1997,9 @@
           "modulatable": true,
           "name": "Mode",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "shift": {
           "default": 0.0,
@@ -1729,7 +2009,9 @@
           "modulatable": true,
           "name": "Shift",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         }
       }
     },
@@ -1745,7 +2027,9 @@
           "modulatable": true,
           "name": "Buffer",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "density": {
           "default": 0.6000000238418579,
@@ -1755,7 +2039,9 @@
           "modulatable": true,
           "name": "Density",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "freeze": {
           "default": 0.0,
@@ -1765,7 +2051,9 @@
           "modulatable": true,
           "name": "Freeze",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "grain_size": {
           "default": 40.0,
@@ -1775,7 +2063,9 @@
           "modulatable": true,
           "name": "Grain Size",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -1785,7 +2075,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "pan_spread": {
           "default": 0.5,
@@ -1795,7 +2087,9 @@
           "modulatable": true,
           "name": "Pan Spread",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "pitch_spread": {
           "default": 0.20000000298023224,
@@ -1805,7 +2099,9 @@
           "modulatable": true,
           "name": "Pitch Spread",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "pos_spread": {
           "default": 0.30000001192092896,
@@ -1815,7 +2111,9 @@
           "modulatable": true,
           "name": "Pos Spread",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "position": {
           "default": 0.5,
@@ -1825,7 +2123,9 @@
           "modulatable": true,
           "name": "Position",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -1841,7 +2141,9 @@
           "modulatable": true,
           "name": "Density",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "freeze": {
           "default": 0.0,
@@ -1851,7 +2153,9 @@
           "modulatable": false,
           "name": "Freeze",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "grain_size": {
           "default": 50.0,
@@ -1861,7 +2165,9 @@
           "modulatable": true,
           "name": "Grain Size",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 1.0,
@@ -1871,7 +2177,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "pan_spread": {
           "default": 0.0,
@@ -1881,7 +2189,9 @@
           "modulatable": true,
           "name": "Pan Spread",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "pitch_spread": {
           "default": 0.0,
@@ -1891,7 +2201,9 @@
           "modulatable": true,
           "name": "Pitch Spread",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "pos_spread": {
           "default": 0.10000000149011612,
@@ -1901,7 +2213,9 @@
           "modulatable": true,
           "name": "Pos Spread",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "position": {
           "default": 0.0,
@@ -1911,7 +2225,9 @@
           "modulatable": true,
           "name": "Position",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "source": {
           "choices": [
@@ -1945,7 +2261,8 @@
           "description": "Source waveform used to fill the grain buffer",
           "modulatable": false,
           "name": "Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "window": {
           "choices": [
@@ -1969,7 +2286,8 @@
           "description": "Grain envelope shape",
           "modulatable": false,
           "name": "Window",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         }
       }
     },
@@ -1985,7 +2303,9 @@
           "modulatable": true,
           "name": "Center",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "curve": {
           "default": 0.0,
@@ -1995,17 +2315,29 @@
           "modulatable": true,
           "name": "Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "invert": {
-          "default": 0.0,
+          "choices": [
+            {
+              "description": "Normal panning direction (low notes left)",
+              "id": "normal",
+              "name": "Normal"
+            },
+            {
+              "description": "Inverted panning direction (low notes right)",
+              "id": "inverted",
+              "name": "Inverted"
+            }
+          ],
+          "default": "normal",
           "description": "Invert panning direction",
-          "max": 1.0,
-          "min": 0.0,
           "modulatable": false,
           "name": "Invert",
-          "response_curve": "linear",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "spread": {
           "default": 0.5,
@@ -2015,7 +2347,9 @@
           "modulatable": true,
           "name": "Spread",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         }
       }
     },
@@ -2031,7 +2365,9 @@
           "modulatable": false,
           "name": "Bipolar",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "curve": {
           "choices": [
@@ -2090,7 +2426,8 @@
           "description": "Easing curve shape",
           "modulatable": false,
           "name": "Curve",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "duration": {
           "default": 0.5,
@@ -2100,7 +2437,9 @@
           "modulatable": true,
           "name": "Duration",
           "response_curve": "logarithmic",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "loop_mode": {
           "choices": [
@@ -2124,7 +2463,8 @@
           "description": "Loop behaviour (one-shot, loop, ping-pong)",
           "modulatable": false,
           "name": "Loop Mode",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "overshoot": {
           "default": 0.5,
@@ -2134,7 +2474,9 @@
           "modulatable": true,
           "name": "Overshoot",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "retrigger": {
           "default": 1.0,
@@ -2144,7 +2486,9 @@
           "modulatable": false,
           "name": "Retrigger",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         }
       }
     },
@@ -2160,7 +2504,9 @@
           "modulatable": true,
           "name": "Attack Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "attack_time": {
           "default": 30.0,
@@ -2170,7 +2516,9 @@
           "modulatable": true,
           "name": "Attack Time",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "attack_type": {
           "default": 0.0,
@@ -2180,7 +2528,9 @@
           "modulatable": true,
           "name": "Attack Type",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "brightness": {
           "default": 0.5,
@@ -2190,7 +2540,9 @@
           "modulatable": true,
           "name": "Brightness",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "x_fade_time": {
           "default": 50.0,
@@ -2200,7 +2552,9 @@
           "modulatable": true,
           "name": "X-Fade Time",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         }
       }
     },
@@ -2216,7 +2570,9 @@
           "modulatable": true,
           "name": "Cutoff",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "drive": {
           "default": 1.0,
@@ -2226,7 +2582,9 @@
           "modulatable": true,
           "name": "Drive",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "resonance": {
           "default": 0.0,
@@ -2236,7 +2594,9 @@
           "modulatable": true,
           "name": "Resonance",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -2252,7 +2612,9 @@
           "modulatable": true,
           "name": "Hold",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         }
       }
     },
@@ -2268,7 +2630,9 @@
           "modulatable": true,
           "name": "Depth",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "phase": {
           "default": 0.0,
@@ -2278,7 +2642,9 @@
           "modulatable": true,
           "name": "Phase",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "rate": {
           "default": 1.0,
@@ -2288,7 +2654,9 @@
           "modulatable": true,
           "name": "Rate",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "retrigger": {
           "default": 0.0,
@@ -2298,7 +2666,9 @@
           "modulatable": false,
           "name": "Retrigger",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "sync_division": {
           "default": 1.0,
@@ -2308,7 +2678,9 @@
           "modulatable": false,
           "name": "Division",
           "response_curve": "linear",
-          "unit": "beats"
+          "type": "number",
+          "unit": "beats",
+          "value_kind": "continuous"
         },
         "tempo_sync": {
           "default": 0.0,
@@ -2318,7 +2690,9 @@
           "modulatable": false,
           "name": "Tempo Sync",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "waveform": {
           "choices": [
@@ -2357,7 +2731,8 @@
           "description": "LFO waveform",
           "modulatable": false,
           "name": "Waveform",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         }
       }
     },
@@ -2373,7 +2748,9 @@
           "modulatable": true,
           "name": "Ceiling",
           "response_curve": "linear",
-          "unit": "decibels"
+          "type": "number",
+          "unit": "decibels",
+          "value_kind": "continuous"
         },
         "look_ahead": {
           "default": 3.0,
@@ -2383,7 +2760,9 @@
           "modulatable": true,
           "name": "Look-Ahead",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -2393,7 +2772,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "release": {
           "default": 100.0,
@@ -2403,7 +2784,9 @@
           "modulatable": true,
           "name": "Release",
           "response_curve": "logarithmic",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         }
       }
     },
@@ -2513,7 +2896,8 @@
           "description": "Synthesis algorithm",
           "modulatable": false,
           "name": "Algorithm",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "frequency": {
           "default": 440.0,
@@ -2523,7 +2907,9 @@
           "modulatable": true,
           "name": "Frequency",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 1.0,
@@ -2533,7 +2919,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "param_a": {
           "default": 0.5,
@@ -2543,7 +2931,9 @@
           "modulatable": true,
           "name": "Param A",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "param_b": {
           "default": 0.5,
@@ -2553,7 +2943,9 @@
           "modulatable": true,
           "name": "Param B",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "param_c": {
           "default": 0.5,
@@ -2563,7 +2955,9 @@
           "modulatable": true,
           "name": "Param C",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -2579,7 +2973,9 @@
           "modulatable": true,
           "name": "Cutoff",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "duration": {
           "default": 10.0,
@@ -2589,7 +2985,9 @@
           "modulatable": true,
           "name": "Duration",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 0.10000000149011612,
@@ -2599,7 +2997,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "type": {
           "choices": [
@@ -2628,7 +3028,8 @@
           "description": "Type of mechanical noise",
           "modulatable": false,
           "name": "Type",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "vel_sens": {
           "default": 0.5,
@@ -2638,7 +3039,9 @@
           "modulatable": true,
           "name": "Vel Sens",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         }
       }
     },
@@ -2654,7 +3057,9 @@
           "modulatable": true,
           "name": "Mid Gain",
           "response_curve": "linear",
-          "unit": "decibels"
+          "type": "number",
+          "unit": "decibels",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -2664,7 +3069,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "rotation": {
           "default": 0.0,
@@ -2674,7 +3081,9 @@
           "modulatable": true,
           "name": "Rotation",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "side_gain": {
           "default": 0.0,
@@ -2684,7 +3093,9 @@
           "modulatable": true,
           "name": "Side Gain",
           "response_curve": "linear",
-          "unit": "decibels"
+          "type": "number",
+          "unit": "decibels",
+          "value_kind": "continuous"
         },
         "width": {
           "default": 0.5,
@@ -2694,7 +3105,9 @@
           "modulatable": true,
           "name": "Width",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -2710,7 +3123,9 @@
           "modulatable": true,
           "name": "Input 1",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "input_2": {
           "default": 1.0,
@@ -2720,7 +3135,9 @@
           "modulatable": true,
           "name": "Input 2",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "input_3": {
           "default": 1.0,
@@ -2730,7 +3147,9 @@
           "modulatable": true,
           "name": "Input 3",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "input_4": {
           "default": 1.0,
@@ -2740,7 +3159,9 @@
           "modulatable": true,
           "name": "Input 4",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "input_5": {
           "default": 1.0,
@@ -2750,7 +3171,9 @@
           "modulatable": true,
           "name": "Input 5",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "input_6": {
           "default": 1.0,
@@ -2760,7 +3183,9 @@
           "modulatable": true,
           "name": "Input 6",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "input_7": {
           "default": 1.0,
@@ -2770,7 +3195,9 @@
           "modulatable": true,
           "name": "Input 7",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "input_8": {
           "default": 1.0,
@@ -2780,7 +3207,9 @@
           "modulatable": true,
           "name": "Input 8",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "limit": {
           "default": 0.0,
@@ -2790,7 +3219,9 @@
           "modulatable": false,
           "name": "Limit",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "master": {
           "default": 1.0,
@@ -2800,7 +3231,9 @@
           "modulatable": true,
           "name": "Master",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mute": {
           "default": 0.0,
@@ -2810,7 +3243,9 @@
           "modulatable": false,
           "name": "Mute",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         }
       }
     },
@@ -2845,7 +3280,8 @@
           "description": "Number of modulation slots (grid dimensions)",
           "modulatable": false,
           "name": "Grid Size",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "slot_10_amount": {
           "default": 0.0,
@@ -2855,7 +3291,9 @@
           "modulatable": false,
           "name": "Slot 10 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_10_dest": {
           "choices": [
@@ -2959,7 +3397,8 @@
           "description": "Modulation destination for slot 10",
           "modulatable": false,
           "name": "Slot 10 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_10_enabled": {
           "default": 1.0,
@@ -2969,7 +3408,9 @@
           "modulatable": false,
           "name": "Slot 10 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_10_source": {
           "choices": [
@@ -3058,7 +3499,8 @@
           "description": "Modulation source for slot 10",
           "modulatable": false,
           "name": "Slot 10 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_11_amount": {
           "default": 0.0,
@@ -3068,7 +3510,9 @@
           "modulatable": false,
           "name": "Slot 11 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_11_dest": {
           "choices": [
@@ -3172,7 +3616,8 @@
           "description": "Modulation destination for slot 11",
           "modulatable": false,
           "name": "Slot 11 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_11_enabled": {
           "default": 1.0,
@@ -3182,7 +3627,9 @@
           "modulatable": false,
           "name": "Slot 11 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_11_source": {
           "choices": [
@@ -3271,7 +3718,8 @@
           "description": "Modulation source for slot 11",
           "modulatable": false,
           "name": "Slot 11 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_12_amount": {
           "default": 0.0,
@@ -3281,7 +3729,9 @@
           "modulatable": false,
           "name": "Slot 12 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_12_dest": {
           "choices": [
@@ -3385,7 +3835,8 @@
           "description": "Modulation destination for slot 12",
           "modulatable": false,
           "name": "Slot 12 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_12_enabled": {
           "default": 1.0,
@@ -3395,7 +3846,9 @@
           "modulatable": false,
           "name": "Slot 12 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_12_source": {
           "choices": [
@@ -3484,7 +3937,8 @@
           "description": "Modulation source for slot 12",
           "modulatable": false,
           "name": "Slot 12 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_13_amount": {
           "default": 0.0,
@@ -3494,7 +3948,9 @@
           "modulatable": false,
           "name": "Slot 13 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_13_dest": {
           "choices": [
@@ -3598,7 +4054,8 @@
           "description": "Modulation destination for slot 13",
           "modulatable": false,
           "name": "Slot 13 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_13_enabled": {
           "default": 1.0,
@@ -3608,7 +4065,9 @@
           "modulatable": false,
           "name": "Slot 13 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_13_source": {
           "choices": [
@@ -3697,7 +4156,8 @@
           "description": "Modulation source for slot 13",
           "modulatable": false,
           "name": "Slot 13 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_14_amount": {
           "default": 0.0,
@@ -3707,7 +4167,9 @@
           "modulatable": false,
           "name": "Slot 14 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_14_dest": {
           "choices": [
@@ -3811,7 +4273,8 @@
           "description": "Modulation destination for slot 14",
           "modulatable": false,
           "name": "Slot 14 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_14_enabled": {
           "default": 1.0,
@@ -3821,7 +4284,9 @@
           "modulatable": false,
           "name": "Slot 14 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_14_source": {
           "choices": [
@@ -3910,7 +4375,8 @@
           "description": "Modulation source for slot 14",
           "modulatable": false,
           "name": "Slot 14 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_15_amount": {
           "default": 0.0,
@@ -3920,7 +4386,9 @@
           "modulatable": false,
           "name": "Slot 15 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_15_dest": {
           "choices": [
@@ -4024,7 +4492,8 @@
           "description": "Modulation destination for slot 15",
           "modulatable": false,
           "name": "Slot 15 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_15_enabled": {
           "default": 1.0,
@@ -4034,7 +4503,9 @@
           "modulatable": false,
           "name": "Slot 15 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_15_source": {
           "choices": [
@@ -4123,7 +4594,8 @@
           "description": "Modulation source for slot 15",
           "modulatable": false,
           "name": "Slot 15 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_16_amount": {
           "default": 0.0,
@@ -4133,7 +4605,9 @@
           "modulatable": false,
           "name": "Slot 16 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_16_dest": {
           "choices": [
@@ -4237,7 +4711,8 @@
           "description": "Modulation destination for slot 16",
           "modulatable": false,
           "name": "Slot 16 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_16_enabled": {
           "default": 1.0,
@@ -4247,7 +4722,9 @@
           "modulatable": false,
           "name": "Slot 16 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_16_source": {
           "choices": [
@@ -4336,7 +4813,8 @@
           "description": "Modulation source for slot 16",
           "modulatable": false,
           "name": "Slot 16 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_1_amount": {
           "default": 0.0,
@@ -4346,7 +4824,9 @@
           "modulatable": false,
           "name": "Slot 1 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_1_dest": {
           "choices": [
@@ -4450,7 +4930,8 @@
           "description": "Modulation destination for slot 1",
           "modulatable": false,
           "name": "Slot 1 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_1_enabled": {
           "default": 1.0,
@@ -4460,7 +4941,9 @@
           "modulatable": false,
           "name": "Slot 1 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_1_source": {
           "choices": [
@@ -4549,7 +5032,8 @@
           "description": "Modulation source for slot 1",
           "modulatable": false,
           "name": "Slot 1 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_2_amount": {
           "default": 0.0,
@@ -4559,7 +5043,9 @@
           "modulatable": false,
           "name": "Slot 2 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_2_dest": {
           "choices": [
@@ -4663,7 +5149,8 @@
           "description": "Modulation destination for slot 2",
           "modulatable": false,
           "name": "Slot 2 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_2_enabled": {
           "default": 1.0,
@@ -4673,7 +5160,9 @@
           "modulatable": false,
           "name": "Slot 2 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_2_source": {
           "choices": [
@@ -4762,7 +5251,8 @@
           "description": "Modulation source for slot 2",
           "modulatable": false,
           "name": "Slot 2 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_3_amount": {
           "default": 0.0,
@@ -4772,7 +5262,9 @@
           "modulatable": false,
           "name": "Slot 3 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_3_dest": {
           "choices": [
@@ -4876,7 +5368,8 @@
           "description": "Modulation destination for slot 3",
           "modulatable": false,
           "name": "Slot 3 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_3_enabled": {
           "default": 1.0,
@@ -4886,7 +5379,9 @@
           "modulatable": false,
           "name": "Slot 3 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_3_source": {
           "choices": [
@@ -4975,7 +5470,8 @@
           "description": "Modulation source for slot 3",
           "modulatable": false,
           "name": "Slot 3 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_4_amount": {
           "default": 0.0,
@@ -4985,7 +5481,9 @@
           "modulatable": false,
           "name": "Slot 4 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_4_dest": {
           "choices": [
@@ -5089,7 +5587,8 @@
           "description": "Modulation destination for slot 4",
           "modulatable": false,
           "name": "Slot 4 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_4_enabled": {
           "default": 1.0,
@@ -5099,7 +5598,9 @@
           "modulatable": false,
           "name": "Slot 4 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_4_source": {
           "choices": [
@@ -5188,7 +5689,8 @@
           "description": "Modulation source for slot 4",
           "modulatable": false,
           "name": "Slot 4 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_5_amount": {
           "default": 0.0,
@@ -5198,7 +5700,9 @@
           "modulatable": false,
           "name": "Slot 5 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_5_dest": {
           "choices": [
@@ -5302,7 +5806,8 @@
           "description": "Modulation destination for slot 5",
           "modulatable": false,
           "name": "Slot 5 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_5_enabled": {
           "default": 1.0,
@@ -5312,7 +5817,9 @@
           "modulatable": false,
           "name": "Slot 5 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_5_source": {
           "choices": [
@@ -5401,7 +5908,8 @@
           "description": "Modulation source for slot 5",
           "modulatable": false,
           "name": "Slot 5 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_6_amount": {
           "default": 0.0,
@@ -5411,7 +5919,9 @@
           "modulatable": false,
           "name": "Slot 6 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_6_dest": {
           "choices": [
@@ -5515,7 +6025,8 @@
           "description": "Modulation destination for slot 6",
           "modulatable": false,
           "name": "Slot 6 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_6_enabled": {
           "default": 1.0,
@@ -5525,7 +6036,9 @@
           "modulatable": false,
           "name": "Slot 6 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_6_source": {
           "choices": [
@@ -5614,7 +6127,8 @@
           "description": "Modulation source for slot 6",
           "modulatable": false,
           "name": "Slot 6 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_7_amount": {
           "default": 0.0,
@@ -5624,7 +6138,9 @@
           "modulatable": false,
           "name": "Slot 7 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_7_dest": {
           "choices": [
@@ -5728,7 +6244,8 @@
           "description": "Modulation destination for slot 7",
           "modulatable": false,
           "name": "Slot 7 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_7_enabled": {
           "default": 1.0,
@@ -5738,7 +6255,9 @@
           "modulatable": false,
           "name": "Slot 7 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_7_source": {
           "choices": [
@@ -5827,7 +6346,8 @@
           "description": "Modulation source for slot 7",
           "modulatable": false,
           "name": "Slot 7 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_8_amount": {
           "default": 0.0,
@@ -5837,7 +6357,9 @@
           "modulatable": false,
           "name": "Slot 8 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_8_dest": {
           "choices": [
@@ -5941,7 +6463,8 @@
           "description": "Modulation destination for slot 8",
           "modulatable": false,
           "name": "Slot 8 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_8_enabled": {
           "default": 1.0,
@@ -5951,7 +6474,9 @@
           "modulatable": false,
           "name": "Slot 8 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_8_source": {
           "choices": [
@@ -6040,7 +6565,8 @@
           "description": "Modulation source for slot 8",
           "modulatable": false,
           "name": "Slot 8 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_9_amount": {
           "default": 0.0,
@@ -6050,7 +6576,9 @@
           "modulatable": false,
           "name": "Slot 9 Amount",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "slot_9_dest": {
           "choices": [
@@ -6154,7 +6682,8 @@
           "description": "Modulation destination for slot 9",
           "modulatable": false,
           "name": "Slot 9 Dest",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "slot_9_enabled": {
           "default": 1.0,
@@ -6164,7 +6693,9 @@
           "modulatable": false,
           "name": "Slot 9 Enabled",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "slot_9_source": {
           "choices": [
@@ -6253,7 +6784,8 @@
           "description": "Modulation source for slot 9",
           "modulatable": false,
           "name": "Slot 9 Source",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         }
       }
     },
@@ -6269,7 +6801,9 @@
           "modulatable": true,
           "name": "Base Note",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "brightness": {
           "default": 0.5,
@@ -6279,7 +6813,9 @@
           "modulatable": true,
           "name": "Brightness",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "decay": {
           "default": 0.6000000238418579,
@@ -6289,7 +6825,9 @@
           "modulatable": true,
           "name": "Decay",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -6299,7 +6837,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "modes": {
           "default": 8.0,
@@ -6309,7 +6849,9 @@
           "modulatable": true,
           "name": "Modes",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "spread": {
           "default": 0.30000001192092896,
@@ -6319,7 +6861,9 @@
           "modulatable": true,
           "name": "Spread",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -6335,7 +6879,9 @@
           "modulatable": false,
           "name": "Loop",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "loop_end": {
           "default": 1.0,
@@ -6345,8 +6891,9 @@
           "modulatable": false,
           "name": "Loop End",
           "response_curve": "linear",
-          "step": 1.0,
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "loop_start": {
           "default": 0.0,
@@ -6356,8 +6903,9 @@
           "modulatable": false,
           "name": "Loop Start",
           "response_curve": "linear",
-          "step": 1.0,
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "seg0_curve": {
           "default": 0.0,
@@ -6367,7 +6915,9 @@
           "modulatable": false,
           "name": "Seg 0 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg0_level": {
           "default": 0.0,
@@ -6377,7 +6927,9 @@
           "modulatable": false,
           "name": "Seg 0 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg0_time": {
           "default": 0.10000000149011612,
@@ -6387,7 +6939,9 @@
           "modulatable": false,
           "name": "Seg 0 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg10_curve": {
           "default": 0.0,
@@ -6397,7 +6951,9 @@
           "modulatable": false,
           "name": "Seg 10 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg10_level": {
           "default": 0.0,
@@ -6407,7 +6963,9 @@
           "modulatable": false,
           "name": "Seg 10 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg10_time": {
           "default": 0.10000000149011612,
@@ -6417,7 +6975,9 @@
           "modulatable": false,
           "name": "Seg 10 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg11_curve": {
           "default": 0.0,
@@ -6427,7 +6987,9 @@
           "modulatable": false,
           "name": "Seg 11 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg11_level": {
           "default": 0.0,
@@ -6437,7 +6999,9 @@
           "modulatable": false,
           "name": "Seg 11 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg11_time": {
           "default": 0.10000000149011612,
@@ -6447,7 +7011,9 @@
           "modulatable": false,
           "name": "Seg 11 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg12_curve": {
           "default": 0.0,
@@ -6457,7 +7023,9 @@
           "modulatable": false,
           "name": "Seg 12 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg12_level": {
           "default": 0.0,
@@ -6467,7 +7035,9 @@
           "modulatable": false,
           "name": "Seg 12 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg12_time": {
           "default": 0.10000000149011612,
@@ -6477,7 +7047,9 @@
           "modulatable": false,
           "name": "Seg 12 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg13_curve": {
           "default": 0.0,
@@ -6487,7 +7059,9 @@
           "modulatable": false,
           "name": "Seg 13 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg13_level": {
           "default": 0.0,
@@ -6497,7 +7071,9 @@
           "modulatable": false,
           "name": "Seg 13 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg13_time": {
           "default": 0.10000000149011612,
@@ -6507,7 +7083,9 @@
           "modulatable": false,
           "name": "Seg 13 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg14_curve": {
           "default": 0.0,
@@ -6517,7 +7095,9 @@
           "modulatable": false,
           "name": "Seg 14 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg14_level": {
           "default": 0.0,
@@ -6527,7 +7107,9 @@
           "modulatable": false,
           "name": "Seg 14 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg14_time": {
           "default": 0.10000000149011612,
@@ -6537,7 +7119,9 @@
           "modulatable": false,
           "name": "Seg 14 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg15_curve": {
           "default": 0.0,
@@ -6547,7 +7131,9 @@
           "modulatable": false,
           "name": "Seg 15 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg15_level": {
           "default": 0.0,
@@ -6557,7 +7143,9 @@
           "modulatable": false,
           "name": "Seg 15 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg15_time": {
           "default": 0.10000000149011612,
@@ -6567,7 +7155,9 @@
           "modulatable": false,
           "name": "Seg 15 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg1_curve": {
           "default": 0.0,
@@ -6577,7 +7167,9 @@
           "modulatable": false,
           "name": "Seg 1 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg1_level": {
           "default": 0.0,
@@ -6587,7 +7179,9 @@
           "modulatable": false,
           "name": "Seg 1 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg1_time": {
           "default": 0.10000000149011612,
@@ -6597,7 +7191,9 @@
           "modulatable": false,
           "name": "Seg 1 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg2_curve": {
           "default": 0.0,
@@ -6607,7 +7203,9 @@
           "modulatable": false,
           "name": "Seg 2 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg2_level": {
           "default": 0.0,
@@ -6617,7 +7215,9 @@
           "modulatable": false,
           "name": "Seg 2 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg2_time": {
           "default": 0.10000000149011612,
@@ -6627,7 +7227,9 @@
           "modulatable": false,
           "name": "Seg 2 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg3_curve": {
           "default": 0.0,
@@ -6637,7 +7239,9 @@
           "modulatable": false,
           "name": "Seg 3 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg3_level": {
           "default": 0.0,
@@ -6647,7 +7251,9 @@
           "modulatable": false,
           "name": "Seg 3 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg3_time": {
           "default": 0.10000000149011612,
@@ -6657,7 +7263,9 @@
           "modulatable": false,
           "name": "Seg 3 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg4_curve": {
           "default": 0.0,
@@ -6667,7 +7275,9 @@
           "modulatable": false,
           "name": "Seg 4 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg4_level": {
           "default": 0.0,
@@ -6677,7 +7287,9 @@
           "modulatable": false,
           "name": "Seg 4 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg4_time": {
           "default": 0.10000000149011612,
@@ -6687,7 +7299,9 @@
           "modulatable": false,
           "name": "Seg 4 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg5_curve": {
           "default": 0.0,
@@ -6697,7 +7311,9 @@
           "modulatable": false,
           "name": "Seg 5 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg5_level": {
           "default": 0.0,
@@ -6707,7 +7323,9 @@
           "modulatable": false,
           "name": "Seg 5 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg5_time": {
           "default": 0.10000000149011612,
@@ -6717,7 +7335,9 @@
           "modulatable": false,
           "name": "Seg 5 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg6_curve": {
           "default": 0.0,
@@ -6727,7 +7347,9 @@
           "modulatable": false,
           "name": "Seg 6 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg6_level": {
           "default": 0.0,
@@ -6737,7 +7359,9 @@
           "modulatable": false,
           "name": "Seg 6 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg6_time": {
           "default": 0.10000000149011612,
@@ -6747,7 +7371,9 @@
           "modulatable": false,
           "name": "Seg 6 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg7_curve": {
           "default": 0.0,
@@ -6757,7 +7383,9 @@
           "modulatable": false,
           "name": "Seg 7 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg7_level": {
           "default": 0.0,
@@ -6767,7 +7395,9 @@
           "modulatable": false,
           "name": "Seg 7 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg7_time": {
           "default": 0.10000000149011612,
@@ -6777,7 +7407,9 @@
           "modulatable": false,
           "name": "Seg 7 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg8_curve": {
           "default": 0.0,
@@ -6787,7 +7419,9 @@
           "modulatable": false,
           "name": "Seg 8 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg8_level": {
           "default": 0.0,
@@ -6797,7 +7431,9 @@
           "modulatable": false,
           "name": "Seg 8 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg8_time": {
           "default": 0.10000000149011612,
@@ -6807,7 +7443,9 @@
           "modulatable": false,
           "name": "Seg 8 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "seg9_curve": {
           "default": 0.0,
@@ -6817,7 +7455,9 @@
           "modulatable": false,
           "name": "Seg 9 Curve",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg9_level": {
           "default": 0.0,
@@ -6827,7 +7467,9 @@
           "modulatable": false,
           "name": "Seg 9 Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seg9_time": {
           "default": 0.10000000149011612,
@@ -6837,7 +7479,9 @@
           "modulatable": false,
           "name": "Seg 9 Time",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "segments": {
           "default": 4.0,
@@ -6847,8 +7491,9 @@
           "modulatable": false,
           "name": "Segments",
           "response_curve": "linear",
-          "step": 1.0,
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "sustain_seg": {
           "default": 2.0,
@@ -6858,8 +7503,9 @@
           "modulatable": false,
           "name": "Sustain Seg",
           "response_curve": "linear",
-          "step": 1.0,
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "time_scale": {
           "default": 1.0,
@@ -6869,7 +7515,9 @@
           "modulatable": true,
           "name": "Time Scale",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -6885,7 +7533,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "type": {
           "choices": [
@@ -6929,7 +7579,8 @@
           "description": "Noise color/spectrum",
           "modulatable": false,
           "name": "Type",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         }
       }
     },
@@ -6959,7 +7610,8 @@
           "description": "Anti-aliasing algorithm",
           "modulatable": false,
           "name": "Anti-Alias",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "detune": {
           "default": 0.0,
@@ -6969,7 +7621,9 @@
           "modulatable": true,
           "name": "Detune",
           "response_curve": "linear",
-          "unit": "cents"
+          "type": "number",
+          "unit": "cents",
+          "value_kind": "continuous"
         },
         "fm_amt": {
           "default": 1.0,
@@ -6979,7 +7633,9 @@
           "modulatable": true,
           "name": "FM Amt",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "fm_mode": {
           "choices": [
@@ -6998,7 +7654,8 @@
           "description": "FM input mode: Exponential (1V/oct) or Linear (Hz)",
           "modulatable": false,
           "name": "FM Mode",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "frequency": {
           "default": 440.0,
@@ -7008,7 +7665,9 @@
           "modulatable": true,
           "name": "Frequency",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 1.0,
@@ -7018,7 +7677,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "octave": {
           "default": 0.0,
@@ -7028,7 +7689,9 @@
           "modulatable": false,
           "name": "Octave",
           "response_curve": "linear",
-          "unit": "semitones"
+          "type": "number",
+          "unit": "semitones",
+          "value_kind": "continuous"
         },
         "phase": {
           "default": 0.0,
@@ -7038,7 +7701,9 @@
           "modulatable": false,
           "name": "Phase",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "pulse_width": {
           "default": 0.5,
@@ -7048,7 +7713,9 @@
           "modulatable": true,
           "name": "Pulse Width",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "uni_detune": {
           "default": 10.0,
@@ -7058,7 +7725,9 @@
           "modulatable": true,
           "name": "Uni Detune",
           "response_curve": "linear",
-          "unit": "cents"
+          "type": "number",
+          "unit": "cents",
+          "value_kind": "continuous"
         },
         "uni_phase": {
           "default": 1.0,
@@ -7068,7 +7737,9 @@
           "modulatable": true,
           "name": "Uni Phase",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "uni_spread": {
           "default": 0.5,
@@ -7078,7 +7749,9 @@
           "modulatable": true,
           "name": "Uni Spread",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "unison": {
           "default": 1.0,
@@ -7088,7 +7761,9 @@
           "modulatable": false,
           "name": "Unison",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "waveform": {
           "choices": [
@@ -7127,7 +7802,8 @@
           "description": "Oscillator waveform",
           "modulatable": false,
           "name": "Waveform",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "x_mod": {
           "default": 0.0,
@@ -7137,7 +7813,9 @@
           "modulatable": true,
           "name": "X-Mod",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7153,7 +7831,9 @@
           "modulatable": false,
           "name": "Freeze",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "gain": {
           "default": 1.0,
@@ -7163,7 +7843,9 @@
           "modulatable": true,
           "name": "Gain",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "time": {
           "default": 0.009999999776482582,
@@ -7173,7 +7855,9 @@
           "modulatable": true,
           "name": "Time",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "trig": {
           "default": 0.5,
@@ -7183,7 +7867,9 @@
           "modulatable": true,
           "name": "Trig",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7199,7 +7885,9 @@
           "modulatable": false,
           "name": "Bandwidth",
           "response_curve": "squared",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "base_freq": {
           "default": 261.6300048828125,
@@ -7209,7 +7897,9 @@
           "modulatable": false,
           "name": "Base Freq",
           "response_curve": "exponential",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "detune": {
           "default": 0.0,
@@ -7219,7 +7909,9 @@
           "modulatable": false,
           "name": "Detune",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 0.800000011920929,
@@ -7229,7 +7921,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "tilt": {
           "default": 0.5,
@@ -7239,7 +7933,9 @@
           "modulatable": false,
           "name": "Tilt",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7274,7 +7970,8 @@
           "description": "FFT window size (larger = better frequency resolution)",
           "modulatable": false,
           "name": "FFT Size",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "freeze": {
           "default": 0.0,
@@ -7284,7 +7981,9 @@
           "modulatable": true,
           "name": "Freeze",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "mix": {
           "default": 1.0,
@@ -7294,7 +7993,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "pitch_shift": {
           "default": 0.0,
@@ -7304,7 +8005,9 @@
           "modulatable": true,
           "name": "Pitch Shift",
           "response_curve": "linear",
-          "unit": "semitones"
+          "type": "number",
+          "unit": "semitones",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7320,7 +8023,9 @@
           "modulatable": true,
           "name": "Center Freq",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "depth": {
           "default": 0.699999988079071,
@@ -7330,7 +8035,9 @@
           "modulatable": true,
           "name": "Depth",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "feedback": {
           "default": 0.699999988079071,
@@ -7340,7 +8047,9 @@
           "modulatable": true,
           "name": "Feedback",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 0.5,
@@ -7350,7 +8059,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "rate": {
           "default": 0.5,
@@ -7360,7 +8071,9 @@
           "modulatable": true,
           "name": "Rate",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7376,7 +8089,9 @@
           "modulatable": true,
           "name": "Max Freq",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "min_freq": {
           "default": 50.0,
@@ -7386,7 +8101,9 @@
           "modulatable": true,
           "name": "Min Freq",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "sensitivity": {
           "default": 0.5,
@@ -7396,7 +8113,9 @@
           "modulatable": true,
           "name": "Sensitivity",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "smoothing": {
           "default": 0.30000001192092896,
@@ -7406,7 +8125,9 @@
           "modulatable": true,
           "name": "Smoothing",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7422,7 +8143,9 @@
           "modulatable": true,
           "name": "Burst",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "density": {
           "default": 0.5,
@@ -7432,7 +8155,9 @@
           "modulatable": true,
           "name": "Density",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "gate_len": {
           "default": 0.5,
@@ -7442,7 +8167,9 @@
           "modulatable": true,
           "name": "Gate Len",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "seed": {
           "default": 42.0,
@@ -7452,7 +8179,9 @@
           "modulatable": false,
           "name": "Seed",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         }
       }
     },
@@ -7468,7 +8197,9 @@
           "modulatable": true,
           "name": "Damping",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "decay": {
           "default": 0.5,
@@ -7478,7 +8209,9 @@
           "modulatable": true,
           "name": "Decay",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "diffusion": {
           "default": 0.5,
@@ -7488,7 +8221,9 @@
           "modulatable": true,
           "name": "Diffusion",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "low_cut": {
           "default": 80.0,
@@ -7498,7 +8233,9 @@
           "modulatable": true,
           "name": "Low Cut",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 0.30000001192092896,
@@ -7508,7 +8245,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "pre_delay": {
           "default": 0.0,
@@ -7518,7 +8257,9 @@
           "modulatable": true,
           "name": "Pre-Delay",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "room_size": {
           "default": 0.5,
@@ -7528,7 +8269,9 @@
           "modulatable": true,
           "name": "Room Size",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "width": {
           "default": 1.0,
@@ -7538,7 +8281,9 @@
           "modulatable": true,
           "name": "Width",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7554,7 +8299,9 @@
           "modulatable": true,
           "name": "Gate Time",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -7564,7 +8311,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mode": {
           "choices": [
@@ -7588,7 +8337,8 @@
           "description": "Playback mode",
           "modulatable": false,
           "name": "Mode",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "threshold": {
           "default": -24.0,
@@ -7598,7 +8348,9 @@
           "modulatable": true,
           "name": "Threshold",
           "response_curve": "linear",
-          "unit": "decibels"
+          "type": "number",
+          "unit": "decibels",
+          "value_kind": "continuous"
         },
         "trigger": {
           "choices": [
@@ -7617,7 +8369,8 @@
           "description": "Trigger mode",
           "modulatable": false,
           "name": "Trigger",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "window": {
           "default": 600.0,
@@ -7627,7 +8380,9 @@
           "modulatable": true,
           "name": "Window",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7643,7 +8398,9 @@
           "modulatable": true,
           "name": "Carrier Freq",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "carrier_wave": {
           "choices": [
@@ -7682,7 +8439,8 @@
           "description": "Carrier oscillator waveform",
           "modulatable": false,
           "name": "Carrier Wave",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "freq_ratio": {
           "default": 0.5,
@@ -7692,7 +8450,9 @@
           "modulatable": true,
           "name": "Freq Ratio",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "key_track": {
           "default": 0.0,
@@ -7702,7 +8462,9 @@
           "modulatable": true,
           "name": "Key Track",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 0.5,
@@ -7712,7 +8474,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7742,7 +8506,8 @@
           "description": "Playback direction",
           "modulatable": false,
           "name": "Direction",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "fine_tune": {
           "default": 0.0,
@@ -7752,7 +8517,9 @@
           "modulatable": true,
           "name": "Fine Tune",
           "response_curve": "linear",
-          "unit": "cents"
+          "type": "number",
+          "unit": "cents",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 0.800000011920929,
@@ -7762,7 +8529,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "pitch_tracking": {
           "default": 1.0,
@@ -7772,7 +8541,9 @@
           "modulatable": false,
           "name": "Pitch Track",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "play_mode": {
           "choices": [
@@ -7796,7 +8567,8 @@
           "description": "How the sample responds to note-on/off",
           "modulatable": false,
           "name": "Play Mode",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "sample_select": {
           "default": 0.5,
@@ -7806,7 +8578,8 @@
           "modulatable": false,
           "name": "Sample",
           "response_curve": "linear",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "reference"
         },
         "start_offset": {
           "default": 0.0,
@@ -7816,7 +8589,9 @@
           "modulatable": true,
           "name": "Start",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "velocity_sensitivity": {
           "default": 1.0,
@@ -7826,7 +8601,9 @@
           "modulatable": true,
           "name": "Vel Sens",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7847,7 +8624,9 @@
           "modulatable": true,
           "name": "Damping",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "decay": {
           "default": 0.699999988079071,
@@ -7857,7 +8636,9 @@
           "modulatable": true,
           "name": "Decay",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 0.4000000059604645,
@@ -7867,7 +8648,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "pitch": {
           "default": 12.0,
@@ -7877,7 +8660,9 @@
           "modulatable": true,
           "name": "Pitch",
           "response_curve": "linear",
-          "unit": "semitones"
+          "type": "number",
+          "unit": "semitones",
+          "value_kind": "continuous"
         },
         "pre_delay": {
           "default": 0.0,
@@ -7887,7 +8672,9 @@
           "modulatable": true,
           "name": "Pre-Delay",
           "response_curve": "linear",
-          "unit": "seconds"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "room_size": {
           "default": 0.6000000238418579,
@@ -7897,7 +8684,9 @@
           "modulatable": true,
           "name": "Room Size",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "shimmer": {
           "default": 0.3499999940395355,
@@ -7907,7 +8696,9 @@
           "modulatable": true,
           "name": "Shimmer",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7923,7 +8714,9 @@
           "modulatable": false,
           "name": "Freeze",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "gain": {
           "default": 1.0,
@@ -7933,7 +8726,9 @@
           "modulatable": false,
           "name": "Gain",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "time": {
           "default": 0.009999999776482582,
@@ -7943,7 +8738,9 @@
           "modulatable": false,
           "name": "Time",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "trig": {
           "default": 0.5,
@@ -7953,7 +8750,9 @@
           "modulatable": false,
           "name": "Trig",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -7969,7 +8768,9 @@
           "modulatable": true,
           "name": "Blur Freq",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "blur_time": {
           "default": 0.699999988079071,
@@ -7979,17 +8780,39 @@
           "modulatable": true,
           "name": "Blur Time",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "fft_size": {
-          "default": 1.0,
+          "choices": [
+            {
+              "description": "512-sample FFT — low latency and CPU, coarser frequency resolution.",
+              "id": "512",
+              "name": "512"
+            },
+            {
+              "description": "1024-sample FFT — a balance of latency and quality.",
+              "id": "1024",
+              "name": "1024"
+            },
+            {
+              "description": "2048-sample FFT — finer frequency resolution, higher latency.",
+              "id": "2048",
+              "name": "2048"
+            },
+            {
+              "description": "4096-sample FFT — the finest resolution, highest latency and CPU.",
+              "id": "4096",
+              "name": "4096"
+            }
+          ],
+          "default": "1024",
           "description": "FFT window size",
-          "max": 3.0,
-          "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "FFT Size",
-          "response_curve": "linear",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "freeze": {
           "default": 0.0,
@@ -7999,7 +8822,9 @@
           "modulatable": true,
           "name": "Freeze",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "mix": {
           "default": 1.0,
@@ -8009,7 +8834,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -8025,7 +8852,9 @@
           "modulatable": true,
           "name": "Gain",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -8041,7 +8870,9 @@
           "modulatable": false,
           "name": "Dither",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "limit": {
           "default": 1.0,
@@ -8051,7 +8882,9 @@
           "modulatable": false,
           "name": "Limit",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "master": {
           "default": 0.800000011920929,
@@ -8061,7 +8894,9 @@
           "modulatable": true,
           "name": "Master",
           "response_curve": "squared",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mute": {
           "default": 0.0,
@@ -8071,7 +8906,9 @@
           "modulatable": false,
           "name": "Mute",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "pan": {
           "default": 0.0,
@@ -8081,7 +8918,9 @@
           "modulatable": true,
           "name": "Pan",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -8097,7 +8936,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "octave": {
           "choices": [
@@ -8116,7 +8957,8 @@
           "description": "Octave transposition",
           "modulatable": false,
           "name": "Octave",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "waveform": {
           "choices": [
@@ -8155,7 +8997,8 @@
           "description": "Sub-oscillator waveform",
           "modulatable": false,
           "name": "Waveform",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         }
       }
     },
@@ -8171,7 +9014,9 @@
           "modulatable": true,
           "name": "Center",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -8181,7 +9026,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "tilt": {
           "default": 0.0,
@@ -8191,7 +9038,9 @@
           "modulatable": true,
           "name": "Tilt",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -8207,7 +9056,9 @@
           "modulatable": false,
           "name": "Length",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
         },
         "mutation": {
           "default": 0.5,
@@ -8217,7 +9068,9 @@
           "modulatable": true,
           "name": "Mutation",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "range": {
           "default": 0.5,
@@ -8227,7 +9080,9 @@
           "modulatable": true,
           "name": "Range",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "scale": {
           "choices": [
@@ -8256,7 +9111,8 @@
           "description": "Scale quantization",
           "modulatable": false,
           "name": "Scale",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         }
       }
     },
@@ -8272,7 +9128,9 @@
           "modulatable": true,
           "name": "Depth",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "feedback": {
           "default": 0.30000001192092896,
@@ -8282,7 +9140,9 @@
           "modulatable": true,
           "name": "Feedback",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 0.5,
@@ -8292,7 +9152,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "rate": {
           "default": 2.0,
@@ -8302,7 +9164,9 @@
           "modulatable": true,
           "name": "Rate",
           "response_curve": "logarithmic",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         }
       }
     },
@@ -8318,7 +9182,9 @@
           "modulatable": true,
           "name": "X",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "y": {
           "default": 0.0,
@@ -8328,7 +9194,9 @@
           "modulatable": true,
           "name": "Y",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -8344,7 +9212,9 @@
           "modulatable": true,
           "name": "Breathiness",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "constriction": {
           "default": 0.30000001192092896,
@@ -8354,7 +9224,9 @@
           "modulatable": true,
           "name": "Constriction",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "length": {
           "default": 0.5,
@@ -8364,7 +9236,9 @@
           "modulatable": false,
           "name": "Length",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 0.800000011920929,
@@ -8374,7 +9248,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "lips": {
           "default": 0.5,
@@ -8384,7 +9260,9 @@
           "modulatable": true,
           "name": "Lips",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "nasality": {
           "default": 0.0,
@@ -8394,7 +9272,9 @@
           "modulatable": true,
           "name": "Nasality",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "tongue": {
           "default": 0.5,
@@ -8404,7 +9284,9 @@
           "modulatable": true,
           "name": "Tongue",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -8420,7 +9302,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "order": {
           "default": 0.5,
@@ -8430,7 +9314,9 @@
           "modulatable": true,
           "name": "Order",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "window_size": {
           "default": 20.0,
@@ -8440,7 +9326,9 @@
           "modulatable": true,
           "name": "Window",
           "response_curve": "linear",
-          "unit": "milliseconds"
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
         }
       }
     },
@@ -8456,7 +9344,9 @@
           "modulatable": true,
           "name": "Breathiness",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "formant_shift": {
           "default": 0.5,
@@ -8466,7 +9356,9 @@
           "modulatable": true,
           "name": "Formant Shift",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 0.800000011920929,
@@ -8476,7 +9368,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "open_quotient": {
           "default": 0.5,
@@ -8486,7 +9380,9 @@
           "modulatable": true,
           "name": "Open Quotient",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "tilt": {
           "default": 0.0,
@@ -8496,7 +9392,9 @@
           "modulatable": true,
           "name": "Tilt",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "unison_detune": {
           "default": 15.0,
@@ -8506,7 +9404,9 @@
           "modulatable": true,
           "name": "Unison Detune",
           "response_curve": "linear",
-          "unit": "cents"
+          "type": "number",
+          "unit": "cents",
+          "value_kind": "continuous"
         },
         "unison_spread": {
           "default": 0.699999988079071,
@@ -8516,7 +9416,9 @@
           "modulatable": true,
           "name": "Unison Spread",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "unison_voices": {
           "default": 0.0,
@@ -8526,7 +9428,9 @@
           "modulatable": false,
           "name": "Unison Voices",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "vibrato_depth": {
           "default": 0.0,
@@ -8536,7 +9440,9 @@
           "modulatable": true,
           "name": "Vibrato Depth",
           "response_curve": "linear",
-          "unit": "cents"
+          "type": "number",
+          "unit": "cents",
+          "value_kind": "continuous"
         },
         "vibrato_rate": {
           "default": 5.5,
@@ -8546,7 +9452,9 @@
           "modulatable": true,
           "name": "Vibrato Rate",
           "response_curve": "linear",
-          "unit": "hertz"
+          "type": "number",
+          "unit": "hertz",
+          "value_kind": "continuous"
         },
         "vowel": {
           "default": 0.0,
@@ -8556,7 +9464,9 @@
           "modulatable": true,
           "name": "Vowel",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -8572,7 +9482,9 @@
           "modulatable": true,
           "name": "Bias",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "curve": {
           "choices": [
@@ -8611,7 +9523,8 @@
           "description": "Waveshaping algorithm",
           "modulatable": false,
           "name": "Curve",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         },
         "drive": {
           "default": 0.30000001192092896,
@@ -8621,7 +9534,9 @@
           "modulatable": true,
           "name": "Drive",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "mix": {
           "default": 1.0,
@@ -8631,7 +9546,9 @@
           "modulatable": true,
           "name": "Mix",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         },
         "symmetry": {
           "default": 0.0,
@@ -8641,7 +9558,9 @@
           "modulatable": true,
           "name": "Symmetry",
           "response_curve": "linear",
-          "unit": "none"
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
         }
       }
     },
@@ -8657,7 +9576,9 @@
           "modulatable": true,
           "name": "Detune",
           "response_curve": "linear",
-          "unit": "cents"
+          "type": "number",
+          "unit": "cents",
+          "value_kind": "continuous"
         },
         "level": {
           "default": 0.800000011920929,
@@ -8667,7 +9588,9 @@
           "modulatable": true,
           "name": "Level",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "octave": {
           "default": 0.0,
@@ -8677,7 +9600,9 @@
           "modulatable": false,
           "name": "Octave",
           "response_curve": "linear",
-          "unit": "semitones"
+          "type": "integer",
+          "unit": "octaves",
+          "value_kind": "integer"
         },
         "position": {
           "default": 0.0,
@@ -8687,7 +9612,9 @@
           "modulatable": true,
           "name": "Position",
           "response_curve": "linear",
-          "unit": "percent"
+          "type": "number",
+          "unit": "percent",
+          "value_kind": "continuous"
         },
         "table": {
           "choices": [
@@ -8726,7 +9653,8 @@
           "description": "Wavetable bank selection",
           "modulatable": false,
           "name": "Table",
-          "unit": "none"
+          "unit": "none",
+          "value_kind": "enum"
         }
       }
     }

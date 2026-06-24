@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, PitchTrackerParam};
@@ -263,7 +263,6 @@ impl Describable for PitchTracker {
                 .description("Minimum trackable frequency")
                 .range(20.0, 500.0)
                 .default(50.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -275,7 +274,6 @@ impl Describable for PitchTracker {
                 .description("Maximum trackable frequency")
                 .range(200.0, 8000.0)
                 .default(2000.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

@@ -8,8 +8,8 @@
 
 use synth_core::{
     AudioEffect, BipolarValue, Decibels, Describable, MidSideParam, ModuleCategory,
-    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
-    ProcessContext, StereoSample, WidgetHint,
+    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ProcessContext,
+    StereoSample, WidgetHint,
 };
 
 /// Mid-Side stereo processing effect.
@@ -87,7 +87,6 @@ impl Describable for MidSide {
                 .description("Mid channel gain")
                 .range(-12.0, 12.0)
                 .default(0.0)
-                .unit(ParameterUnit::Decibels)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -99,7 +98,6 @@ impl Describable for MidSide {
                 .description("Side channel gain")
                 .range(-12.0, 12.0)
                 .default(0.0)
-                .unit(ParameterUnit::Decibels)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

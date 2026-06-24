@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{
     BipolarValue, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Seconds, TimeScale,
@@ -404,8 +404,6 @@ impl Describable for Mseg {
                 .description("Number of active segments (1-16)")
                 .range(1.0, 16.0)
                 .default(4.0)
-                .step(1.0)
-                .unit(ParameterUnit::None)
                 // Structural/sizing count: not a continuous modulation target.
                 .modulatable(false)
                 .widget(WidgetHint::Knob),
@@ -419,8 +417,6 @@ impl Describable for Mseg {
                 .description("Segment index where envelope holds until gate off (0-15)")
                 .range(0.0, 15.0)
                 .default(2.0)
-                .step(1.0)
-                .unit(ParameterUnit::None)
                 // Discrete segment index: not a continuous modulation target.
                 .modulatable(false)
                 .widget(WidgetHint::Knob),
@@ -434,7 +430,6 @@ impl Describable for Mseg {
                 .description("Enable segment looping")
                 .range(0.0, 1.0)
                 .default(0.0)
-                .unit(ParameterUnit::None)
                 // Boolean toggle, not a continuous modulation target.
                 .modulatable(false)
                 .widget(WidgetHint::Toggle),
@@ -448,8 +443,6 @@ impl Describable for Mseg {
                 .description("First segment of the loop (0-15)")
                 .range(0.0, 15.0)
                 .default(0.0)
-                .step(1.0)
-                .unit(ParameterUnit::None)
                 .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
@@ -462,8 +455,6 @@ impl Describable for Mseg {
                 .description("Last segment of the loop (0-15)")
                 .range(0.0, 15.0)
                 .default(1.0)
-                .step(1.0)
-                .unit(ParameterUnit::None)
                 .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
@@ -476,7 +467,6 @@ impl Describable for Mseg {
                 .description("Global time scale multiplier (0.01-10.0)")
                 .range(0.01, 10.0)
                 .default(1.0)
-                .unit(ParameterUnit::None)
                 .widget(WidgetHint::Knob),
             );
 
@@ -496,7 +486,6 @@ impl Describable for Mseg {
                     .description("Segment duration in seconds")
                     .range(0.0, 60.0)
                     .default(0.1)
-                    .unit(ParameterUnit::Seconds)
                     .modulatable(false)
                     .widget(WidgetHint::Hidden),
                 )

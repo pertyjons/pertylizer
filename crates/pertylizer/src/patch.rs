@@ -20,7 +20,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use synth_core::{BipolarValue, Bpm, Gain, Param, ParameterDescriptor, Seconds, Semitones};
+use synth_core::{
+    BipolarValue, Bpm, Gain, Param, ParamKind, ParameterDescriptor, Seconds, Semitones,
+};
 use synth_engine::instrument::InstrumentId;
 use thiserror::Error;
 
@@ -457,7 +459,16 @@ impl ParamValue {
         if let Some(choice) = desc.choice_for_value(p.as_f32()) {
             return Self::Choice(choice.id.clone());
         }
-        Self::Float(p.as_f32())
+        // Self-describing typed value by kind (Phase 4): integers serialize as
+        // `Int`, bools as `Bool`, everything else as `Float`. (Reference/enum
+        // cases returned above.) The read path already accepts all variants, so
+        // old `Float`-encoded ints/bools still load.
+        let value = p.as_f32();
+        match p.kind() {
+            ParamKind::Integer => Self::Int(value.round() as i32),
+            ParamKind::Bool => Self::Bool(value > 0.5),
+            _ => Self::Float(value),
+        }
     }
 }
 
@@ -1320,6 +1331,70 @@ mod tests {
         assert_eq!(
             ParamValue::Choice("none".to_string()).to_param(&desc),
             Param::ModMatrix(ModMatrixParam::SlotSource(0, None)),
+        );
+    }
+
+    #[test]
+    fn typed_param_values_round_trip() {
+        use synth_core::params::MsegParam;
+
+        // Integer param → `Int`, round-trips to the engine and through JSON.
+        let d_int =
+            ParameterDescriptor::float("segments", Param::Mseg(MsegParam::SegmentCount(4)), "Seg");
+        let seg = Param::Mseg(MsegParam::SegmentCount(7));
+        let pv = ParamValue::from_param(&seg, &d_int);
+        assert_eq!(pv, ParamValue::Int(7));
+        assert_eq!(pv.to_param(&d_int), seg);
+        let json = serde_json::to_string(&pv).expect("serialize");
+        assert_eq!(json, "7");
+        assert_eq!(
+            serde_json::from_str::<ParamValue>(&json).expect("deserialize"),
+            ParamValue::Int(7)
+        );
+        // A legacy `Float(7.0)` for the same int param still loads correctly.
+        assert_eq!(ParamValue::Float(7.0).to_param(&d_int), seg);
+
+        // Bool param → `Bool`.
+        let d_bool = ParameterDescriptor::float(
+            "loop_enabled",
+            Param::Mseg(MsegParam::LoopEnabled(false)),
+            "Loop",
+        );
+        let on = Param::Mseg(MsegParam::LoopEnabled(true));
+        assert_eq!(ParamValue::from_param(&on, &d_bool), ParamValue::Bool(true));
+        assert_eq!(ParamValue::Bool(true).to_param(&d_bool), on);
+
+        // Integer `with_f32` rounds (not truncates): 6.7 → 7.
+        assert_eq!(MsegParam::SegmentCount(0).with_f32(6.7).as_f32(), 7.0);
+    }
+
+    #[test]
+    fn param_kind_serializes_lowercase() {
+        use synth_core::ParamKind;
+        // The MCP wire form (descriptors.json `value_kind`, DTO `value_kind`).
+        for (k, s) in [
+            (ParamKind::Continuous, "\"continuous\""),
+            (ParamKind::Integer, "\"integer\""),
+            (ParamKind::Bool, "\"bool\""),
+            (ParamKind::Enum, "\"enum\""),
+            (ParamKind::Reference, "\"reference\""),
+        ] {
+            assert_eq!(serde_json::to_string(&k).expect("serialize"), s);
+        }
+    }
+
+    #[test]
+    fn sample_id_round_trips_lossless_u64() {
+        let big = (1u64 << 33) + 5; // > 2^24 — cannot survive an f32 round-trip
+        let desc = ParameterDescriptor::float("sample_select", Param::sample_select(0), "Sample");
+        let p = Param::sample_select(big);
+        let pv = ParamValue::from_param(&p, &desc);
+        assert_eq!(pv, ParamValue::SampleId { sample_id: big });
+        assert_eq!(pv.to_param(&desc), p);
+        let json = serde_json::to_string(&pv).expect("serialize");
+        assert!(
+            json.contains("sample_id"),
+            "expected struct form, got {json}"
         );
     }
 

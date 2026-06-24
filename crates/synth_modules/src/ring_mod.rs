@@ -132,7 +132,6 @@ impl Describable for RingMod {
                 .description("Carrier oscillator frequency")
                 .range(0.1, 20000.0)
                 .default(440.0)
-                .unit(ParameterUnit::Hertz)
                 .curve(ResponseCurve::Logarithmic)
                 .widget(WidgetHint::Knob),
             )
@@ -173,7 +172,6 @@ impl Describable for RingMod {
                 .description("Carrier frequency ratio (0.25x to 4.0x)")
                 .range(0.0, 1.0)
                 .default(0.5)
-                .unit(ParameterUnit::None)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

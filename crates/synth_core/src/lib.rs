@@ -34,3 +34,15 @@ pub use audio::{
 pub use module_traits::*;
 pub use params::*;
 pub use types::*;
+
+/// Convenience re-exports for code that works with parameters generically.
+///
+/// `use synth_core::prelude::*;` brings the parameter traits and the value-kind
+/// classifier into scope so generic `T: ModuleParam` / `T: ScalarParam` code reads
+/// cleanly. (Everything here is also reachable directly at the crate root.)
+pub mod prelude {
+    pub use crate::module_traits::{
+        ModuleParam, ParamKind, ParameterUnit, ResponseCurve, ScalarParam,
+    };
+    pub use crate::params::Param;
+}

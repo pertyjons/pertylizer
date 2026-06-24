@@ -122,6 +122,9 @@ fn parameter_descriptor(param: &ParameterDescriptor) -> Value {
     }
     obj.insert("unit".to_string(), json!(unit_id(param.unit)));
     obj.insert("modulatable".to_string(), json!(param.modulatable));
+    // Authoritative value-kind classifier (Phase 5). Lets a client know whether to
+    // send an integer / boolean / number / choice id, alongside the JSON `type`.
+    obj.insert("value_kind".to_string(), json!(kind_id(param.kind)));
 
     if let Some(choices) = &param.choices {
         let options: Vec<Value> = choices
@@ -147,19 +150,46 @@ fn parameter_descriptor(param: &ParameterDescriptor) -> Value {
         obj.insert("min".to_string(), json!(param.range.min));
         obj.insert("max".to_string(), json!(param.range.max));
         obj.insert("default".to_string(), json!(param.range.default));
+        // First-class JSON type so an LLM/MCP client sends `4` not `4.0`, `true`
+        // not `1.0` (Phase 5). Enum is handled in the `choices` branch; Reference
+        // (sample id) carries its own object shape elsewhere, so no plain `type`.
+        if let Some(ty) = json_type(param.kind) {
+            obj.insert("type".to_string(), json!(ty));
+        }
         obj.insert(
             "response_curve".to_string(),
             json!(response_curve_id(param.response_curve)),
         );
-        if let Some(step) = param.step {
-            obj.insert("step".to_string(), json!(step));
-        }
     }
     Value::Object(obj)
 }
 
 /// Stable lowercase id for a response curve, matching the `ResponseCurve`
 /// variants the exporter must replicate.
+/// Stable lowercase id for a value-kind (the `value_kind` field).
+fn kind_id(kind: synth_core::ParamKind) -> &'static str {
+    use synth_core::ParamKind as K;
+    match kind {
+        K::Continuous => "continuous",
+        K::Integer => "integer",
+        K::Bool => "bool",
+        K::Enum => "enum",
+        K::Reference => "reference",
+    }
+}
+
+/// JSON Schema `type` for a numeric (non-choice) param, or `None` when the param
+/// is not a plain number (`Enum` uses `choices`; `Reference` has its own shape).
+fn json_type(kind: synth_core::ParamKind) -> Option<&'static str> {
+    use synth_core::ParamKind as K;
+    match kind {
+        K::Continuous => Some("number"),
+        K::Integer => Some("integer"),
+        K::Bool => Some("boolean"),
+        K::Enum | K::Reference => None,
+    }
+}
+
 fn response_curve_id(curve: synth_core::ResponseCurve) -> &'static str {
     use synth_core::ResponseCurve as Rc;
     match curve {

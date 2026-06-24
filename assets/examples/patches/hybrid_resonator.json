@@ -240,7 +240,7 @@
       "parameters": {
         "center": 60.0,
         "curve": 0.4,
-        "invert": 0.0,
+        "invert": "normal",
         "spread": 0.7
       }
     },

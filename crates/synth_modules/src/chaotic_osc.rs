@@ -10,8 +10,7 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{ChaoticOscParam, ChaoticSystem, ModuleType, Param};
 use synth_core::{Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
@@ -132,7 +131,6 @@ impl Describable for ChaoticOsc {
                 .description("Iteration speed")
                 .range(0.01, 20.0)
                 .default(1.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob)
                 .curve(ResponseCurve::Logarithmic),
             )

@@ -1,7 +1,7 @@
 //! Flanger effect with LFO-modulated delay.
 
 use synth_core::{
-    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
+    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     PortDescriptor, ProcessContext, StereoSample, WidgetHint,
 };
 use synth_core::{
@@ -94,7 +94,6 @@ impl Describable for Flanger {
                 .description("LFO rate")
                 .range(0.05, 5.0)
                 .default(0.3)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -128,7 +127,6 @@ impl Describable for Flanger {
                 .description("Base delay time")
                 .range(0.1, 10.0)
                 .default(2.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

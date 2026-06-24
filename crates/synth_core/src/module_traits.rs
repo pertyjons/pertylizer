@@ -565,6 +565,124 @@ impl ParameterUnit {
     }
 }
 
+/// What kind of value a parameter holds — the single authoritative classifier,
+/// derived from the engine variant's backing type via [`ScalarParam`], never
+/// hand-declared. Emitted into `descriptors.json` and onto the MCP wire;
+/// `Deserialize` is derived only because [`ParameterDescriptor`] (which carries a
+/// `kind`) derives it — descriptors are code, not persisted, so it is never
+/// actually read back from a file.
+///
+/// See `docs/param-kinds.md` for the per-variant audit and
+/// `plans/param-type-system-plan.md` for the design.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ParamKind {
+    /// f32 within `range`, shaped by `response_curve`, displayed with `unit`.
+    Continuous,
+    /// Discrete integer (count or index). `range` carries min/max; step is 1,
+    /// curve is linear, display is decimal-free.
+    Integer,
+    /// Two-state. Rendered as a toggle; serialized as a JSON bool.
+    Bool,
+    /// Finite named set; the value is an index into `choices`.
+    Enum,
+    /// Opaque id / address outside the numeric scale (sample id, mod-matrix
+    /// address). Deliberately coarse — serialization and the picker widget stay
+    /// variant-specific; `Reference` only flags "not a plain number".
+    Reference,
+}
+
+impl ParamKind {
+    /// Format a value for display, kind-aware (Phase 3). The single source of
+    /// truth for `value → string`, shared by the descriptor and the GUI widgets:
+    /// `Integer` is decimal-free, `Bool` reads `On`/`Off`, everything else uses the
+    /// unit's own formatter.
+    #[must_use]
+    pub fn format(self, unit: ParameterUnit, value: f32) -> String {
+        match self {
+            Self::Integer => format!("{:.0}{}", value.round(), unit.suffix()),
+            Self::Bool => {
+                if value > 0.5 {
+                    "On".to_string()
+                } else {
+                    "Off".to_string()
+                }
+            }
+            // Continuous / Enum / Reference: defer to the unit's own formatter.
+            // (Enum/Reference values rarely reach here — descriptors map them to a
+            // choice name first — but a bare numeric fallback is harmless.)
+            Self::Continuous | Self::Enum | Self::Reference => unit.format(value),
+        }
+    }
+}
+
+/// Type-derived metadata for every value type a `Param` variant can carry.
+///
+/// Implemented once per value type (newtypes, primitives, `bool`, references, and
+/// each choice enum). The provided methods (`scalar_kind`/`scalar_unit`/
+/// `scalar_curve`) are called on a **bound value** by the per-enum `kind()`/`unit()`
+/// methods, so the metadata follows the *actual field type* and can never drift:
+/// change a variant's field type and the resolved kind/unit changes with it.
+///
+/// `UNIT` is the natural display unit (overridable per descriptor). `DEFAULT_CURVE`
+/// is **advisory only** — it is *not* auto-applied by the descriptor constructors
+/// (a response curve is behavioral); it serves the Phase 2b curve audit.
+pub trait ScalarParam {
+    /// The value-kind this type maps to.
+    const KIND: ParamKind;
+    /// Natural display unit for this type.
+    const UNIT: ParameterUnit;
+    /// Suggested response curve (advisory; not auto-applied).
+    const DEFAULT_CURVE: ResponseCurve;
+
+    /// Kind of a bound value — drift-proof dispatch (resolves to `Self::KIND`).
+    #[inline]
+    #[must_use]
+    fn scalar_kind(&self) -> ParamKind {
+        Self::KIND
+    }
+    /// Unit of a bound value (resolves to `Self::UNIT`).
+    #[inline]
+    #[must_use]
+    fn scalar_unit(&self) -> ParameterUnit {
+        Self::UNIT
+    }
+    /// Suggested curve of a bound value (resolves to `Self::DEFAULT_CURVE`).
+    #[inline]
+    #[must_use]
+    fn scalar_curve(&self) -> ResponseCurve {
+        Self::DEFAULT_CURVE
+    }
+}
+
+/// The uniform contract every module parameter enum (and the aggregate [`Param`])
+/// provides: f32 round-tripping for the GUI, same-kind comparison, a display name,
+/// and the value-kind metadata (`kind`/`unit`/`default_curve`).
+///
+/// Phase 7: this formalizes the method set that already exists as inherent methods
+/// on each `*Param` enum, so generic code can be written over `T: ModuleParam`
+/// (test harnesses, serialization helpers) and a new enum that forgets a method is
+/// a compile error. The blanket impls (in `params::module_param`) *delegate* to the
+/// inherent methods — those remain the single definition, so the ~2500 existing
+/// `param.as_f32()` call sites are untouched (inherent methods win name resolution).
+pub trait ModuleParam: Copy {
+    /// Current value as an f32 (for GUI sliders / serialization).
+    fn as_f32(&self) -> f32;
+    /// This parameter with `value` applied (clamped/rounded to its type).
+    #[must_use]
+    fn with_f32(&self, value: f32) -> Self;
+    /// Whether two params are the same kind (ignoring their values).
+    fn same_kind(&self, other: &Self) -> bool;
+    /// Human-readable parameter name.
+    fn name(&self) -> &'static str;
+    /// Value-kind classifier.
+    fn kind(&self) -> ParamKind;
+    /// Display unit.
+    fn unit(&self) -> ParameterUnit;
+    /// Suggested response curve (advisory).
+    fn default_curve(&self) -> ResponseCurve;
+}
+
 /// A choice option for dropdown parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChoiceOption {
@@ -615,11 +733,10 @@ pub struct ParameterDescriptor {
     pub choices: Option<Vec<ChoiceOption>>,
     /// Can this parameter be modulated.
     pub modulatable: bool,
-    /// Optional quantization step in value units (e.g. `1.0` for an integer
-    /// knob). When set, the GUI knob snaps drags to the nearest multiple of
-    /// `step` offset from `range.min`, so discrete params (segment counts,
-    /// indices) land on exact values and reach `max` cleanly. `None` = continuous.
-    pub step: Option<f32>,
+    /// Value-kind classifier, seeded from `id.kind()` by the constructors so it
+    /// can never drift from the engine's backing type. Recomputed in code, never
+    /// read from persisted data.
+    pub kind: ParamKind,
 }
 
 /// Error returned when a value fails validation against a [`ParameterDescriptor`].
@@ -652,18 +769,24 @@ impl ParameterDescriptor {
     /// - `id`: The `Param` variant with its default value.
     /// - `name`: Display name shown in the UI (safe to rename freely).
     pub fn float(type_id: impl Into<String>, id: Param, name: impl Into<String>) -> Self {
+        let kind = id.kind();
+        // Phase 2a: the display unit is derived from the parameter's value type
+        // (`Hertz` → `Hz`, …), killing hand-typed unit drift. Override per descriptor
+        // with `.unit()` for the rare legitimate case (e.g. `NormalizedValue` as
+        // `Percent`). `response_curve` is NOT derived — that is behavioral (§14.6).
+        let unit = id.unit();
         Self {
             type_id: type_id.into(),
             id,
             name: name.into(),
             description: String::new(),
             range: ValueRange::UNIT,
-            unit: ParameterUnit::None,
+            unit,
             widget_hint: WidgetHint::Knob,
             response_curve: ResponseCurve::Linear,
             choices: None,
             modulatable: true,
-            step: None,
+            kind,
         }
     }
 
@@ -680,6 +803,7 @@ impl ParameterDescriptor {
     ) -> Self {
         let max = (choices.len().saturating_sub(1)) as f32;
         let default = id.as_f32();
+        let kind = id.kind();
         Self {
             type_id: type_id.into(),
             id,
@@ -691,7 +815,7 @@ impl ParameterDescriptor {
             response_curve: ResponseCurve::Linear,
             choices: Some(choices),
             modulatable: false,
-            step: None,
+            kind,
         }
     }
 
@@ -726,15 +850,6 @@ impl ParameterDescriptor {
         self
     }
 
-    /// Set a quantization step in value units (e.g. `1.0` for an integer knob).
-    /// The GUI knob snaps drags to the nearest multiple of `step` offset from
-    /// `range.min`. A non-positive step is ignored (stays continuous).
-    #[must_use]
-    pub fn step(mut self, step: f32) -> Self {
-        self.step = (step > 0.0).then_some(step);
-        self
-    }
-
     #[must_use]
     pub fn unit(mut self, unit: ParameterUnit) -> Self {
         self.unit = unit;
@@ -762,11 +877,14 @@ impl ParameterDescriptor {
     /// Whether this parameter may be used as a sequencer automation target.
     ///
     /// A parameter is automatable iff it is **continuous** and **real-time-safe**
-    /// to change per processing block. This reuses the [`modulatable`] flag (the
-    /// existing "continuous + RT-safe" signal — module authors set it `false` for
-    /// structural/sizing params such as unison voice count, pattern length, or
-    /// step counts) and additionally excludes `choice`/enum parameters, which are
-    /// discrete selections (e.g. `FilterMode`, `Waveform`) and cannot be ramped.
+    /// to change per processing block. This requires [`ParamKind::Continuous`] (a
+    /// ramp-able scalar) and the [`modulatable`] flag (the "RT-safe" signal — module
+    /// authors set it `false` for structural/sizing params such as unison voice
+    /// count, pattern length, or step counts). Integer/bool/enum/reference params
+    /// are excluded by kind: they are discrete selections or counts and cannot be
+    /// ramped. (Before the kind model this used `choices.is_none()`, which excluded
+    /// `enum` but not integer/bool — those were already kept out by `modulatable`,
+    /// so the tightening drops nothing; guarded by a regression test.)
     ///
     /// This is a *descriptor-level eligibility* check: it reports whether a param
     /// is the right *kind* to automate, not whether the owning module currently
@@ -778,7 +896,7 @@ impl ParameterDescriptor {
     /// [`modulatable`]: Self::modulatable
     #[must_use]
     pub fn is_automatable(&self) -> bool {
-        self.modulatable && self.choices.is_none()
+        self.modulatable && self.kind == ParamKind::Continuous
     }
 
     /// Map a normalized value (0-1) to the parameter range.
@@ -799,7 +917,7 @@ impl ParameterDescriptor {
         if let Some(choice) = self.choice_for_value(value) {
             return choice.name.clone();
         }
-        self.unit.format(value)
+        self.kind.format(self.unit, value)
     }
 
     /// Look up the `ChoiceOption` corresponding to a numeric parameter
@@ -845,14 +963,38 @@ impl ParameterDescriptor {
         if !value.is_finite() {
             return Err(ParamValueError::NotFinite);
         }
-        if !self.range.contains(value) {
-            return Err(ParamValueError::OutOfRange {
-                value,
-                min: self.range.min,
-                max: self.range.max,
-            });
+        match self.kind {
+            // Bool: accept any finite value; `with_f32` maps it via `> 0.5`.
+            ParamKind::Bool => Ok(value),
+            // Integer: round to nearest (lenient — a `4.3` from an automation/LFO
+            // sweep is accepted, not rejected), then range-check the *rounded*
+            // value. The rounded value is returned so the caller applies — and can
+            // echo — exactly what took effect (Phase 5 / §14.1).
+            ParamKind::Integer => {
+                let rounded = value.round();
+                if self.range.contains(rounded) {
+                    Ok(rounded)
+                } else {
+                    Err(ParamValueError::OutOfRange {
+                        value: rounded,
+                        min: self.range.min,
+                        max: self.range.max,
+                    })
+                }
+            }
+            // Continuous / Enum / Reference: range / choice-index check as before.
+            _ => {
+                if self.range.contains(value) {
+                    Ok(value)
+                } else {
+                    Err(ParamValueError::OutOfRange {
+                        value,
+                        min: self.range.min,
+                        max: self.range.max,
+                    })
+                }
+            }
         }
-        Ok(value)
     }
 }
 
@@ -1595,6 +1737,63 @@ mod tests {
     }
 
     #[test]
+    fn param_kind_and_unit_dispatch() {
+        use crate::params::{ModMatrixParam, MsegParam, OscillatorParam, SampleId, SamplerParam};
+        let freq = Param::Oscillator(OscillatorParam::Frequency(crate::Hertz::new(440.0)));
+        assert_eq!(freq.kind(), ParamKind::Continuous);
+        assert_eq!(freq.unit(), ParameterUnit::Hertz);
+        // `default_curve()` is advisory (Phase 2b) — type-derived, not auto-applied.
+        assert_eq!(freq.default_curve(), ResponseCurve::Logarithmic);
+        assert_eq!(
+            Param::Envelope(crate::params::EnvelopeParam::Attack(crate::Seconds::new(
+                0.1
+            )))
+            .default_curve(),
+            ResponseCurve::Exponential
+        );
+        assert_eq!(
+            Param::Mseg(MsegParam::SegmentCount(4)).kind(),
+            ParamKind::Integer
+        );
+        assert_eq!(
+            Param::Mseg(MsegParam::LoopEnabled(true)).kind(),
+            ParamKind::Bool
+        );
+        assert_eq!(
+            Param::Sampler(SamplerParam::SampleSelect(SampleId(0))).kind(),
+            ParamKind::Reference
+        );
+        assert_eq!(
+            Param::ModMatrix(ModMatrixParam::SlotSource(0, None)).kind(),
+            ParamKind::Reference
+        );
+
+        // Constructors seed `kind` from `id.kind()`.
+        let d = ParameterDescriptor::float("seg", Param::Mseg(MsegParam::SegmentCount(4)), "Seg");
+        assert_eq!(d.kind, ParamKind::Integer);
+        assert!(d.choices.is_none());
+    }
+
+    #[test]
+    fn param_kind_format_is_kind_aware() {
+        // Integer: decimal-free, rounds, keeps the unit suffix.
+        assert_eq!(ParamKind::Integer.format(ParameterUnit::None, 4.0), "4");
+        assert_eq!(ParamKind::Integer.format(ParameterUnit::None, 3.7), "4");
+        assert_eq!(
+            ParamKind::Integer.format(ParameterUnit::Octaves, 2.0),
+            "2 oct"
+        );
+        // Bool: On/Off.
+        assert_eq!(ParamKind::Bool.format(ParameterUnit::None, 1.0), "On");
+        assert_eq!(ParamKind::Bool.format(ParameterUnit::None, 0.0), "Off");
+        // Continuous: defers to the unit formatter.
+        assert_eq!(
+            ParamKind::Continuous.format(ParameterUnit::Hertz, 440.0),
+            "440.0 Hz"
+        );
+    }
+
+    #[test]
     fn validate_f32_accepts_in_range_and_bounds() {
         let pd = descriptor_with_range(-100.0, 100.0, 0.0);
         assert_eq!(pd.validate_f32(0.0), Ok(0.0));
@@ -1627,6 +1826,29 @@ mod tests {
             pd.validate_f32(f32::INFINITY),
             Err(ParamValueError::NotFinite)
         );
+    }
+
+    #[test]
+    fn validate_f32_is_kind_aware() {
+        use crate::params::MsegParam;
+        // Integer: rounds (lenient), then range-checks the rounded value.
+        let int =
+            ParameterDescriptor::float("segments", Param::Mseg(MsegParam::SegmentCount(4)), "Seg")
+                .range(1.0, 16.0);
+        assert_eq!(int.validate_f32(4.3), Ok(4.0)); // 4.3 → 4
+        assert_eq!(int.validate_f32(15.6), Ok(16.0)); // rounds up, still in range
+        assert!(int.validate_f32(20.0).is_err()); // out of range → rejected
+        assert!(int.validate_f32(0.4).is_err()); // rounds to 0, below min 1
+
+        // Bool: accepts any finite value (mapped via `> 0.5` downstream).
+        let b = ParameterDescriptor::float(
+            "loop_enabled",
+            Param::Mseg(MsegParam::LoopEnabled(false)),
+            "Loop",
+        );
+        assert_eq!(b.validate_f32(5.0), Ok(5.0));
+        assert_eq!(b.validate_f32(0.0), Ok(0.0));
+        assert_eq!(b.validate_f32(f32::NAN), Err(ParamValueError::NotFinite));
     }
 
     #[test]

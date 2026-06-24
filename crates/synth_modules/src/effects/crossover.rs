@@ -9,8 +9,8 @@
 
 use synth_core::{
     AudioEffect, CrossoverParam, Describable, Hertz, ModuleCategory, ModuleDescriptor, ModuleType,
-    NormalizedValue, Param, ParameterDescriptor, ParameterUnit, PortDescriptor, ProcessContext,
-    ResponseCurve, SampleCount, SampleRate, StereoSample, WidgetHint,
+    NormalizedValue, Param, ParameterDescriptor, PortDescriptor, ProcessContext, ResponseCurve,
+    SampleCount, SampleRate, StereoSample, WidgetHint,
 };
 use synth_dsp::{LinkwitzRiley, LinkwitzRileyCoeffs};
 
@@ -65,7 +65,6 @@ impl Describable for CrossoverSplitter {
                 )
                 .description("Crossover frequency")
                 .value_range(Hertz::CROSSOVER_RANGE)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob)
                 .curve(ResponseCurve::Logarithmic),
             )

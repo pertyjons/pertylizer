@@ -58,7 +58,9 @@ impl KeyboardPannerParam {
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
             Self::Spread(_) => Self::Spread(NormalizedValue::new(value)),
-            Self::CenterNote(_) => Self::CenterNote(MidiNote::new(value.clamp(0.0, 127.0) as u8)),
+            Self::CenterNote(_) => {
+                Self::CenterNote(MidiNote::new(value.round().clamp(0.0, 127.0) as u8))
+            }
             Self::Curve(_) => Self::Curve(BipolarValue::new(value)),
             Self::Invert(_) => Self::Invert(Polarity::from(value > 0.5)),
         }

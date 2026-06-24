@@ -1,7 +1,7 @@
 //! 3-band parametric equalizer with low shelf, mid peak, and high shelf.
 
 use synth_core::{
-    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
+    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     PortDescriptor, ProcessContext, StereoSample, WidgetHint,
 };
 use synth_core::{Decibels, Hertz, NormalizedValue, SampleRate};
@@ -225,7 +225,6 @@ impl Describable for Eq {
                 .description("Low shelf frequency")
                 .range(20.0, 500.0)
                 .default(200.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -237,7 +236,6 @@ impl Describable for Eq {
                 .description("Low shelf gain")
                 .range(-12.0, 12.0)
                 .default(0.0)
-                .unit(ParameterUnit::Decibels)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -249,7 +247,6 @@ impl Describable for Eq {
                 .description("Mid band frequency")
                 .range(200.0, 5000.0)
                 .default(1000.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -261,7 +258,6 @@ impl Describable for Eq {
                 .description("Mid band gain")
                 .range(-12.0, 12.0)
                 .default(0.0)
-                .unit(ParameterUnit::Decibels)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -284,7 +280,6 @@ impl Describable for Eq {
                 .description("High shelf frequency")
                 .range(1000.0, 16000.0)
                 .default(4000.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -296,7 +291,6 @@ impl Describable for Eq {
                 .description("High shelf gain")
                 .range(-12.0, 12.0)
                 .default(0.0)
-                .unit(ParameterUnit::Decibels)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

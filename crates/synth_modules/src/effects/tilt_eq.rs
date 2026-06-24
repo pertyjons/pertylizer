@@ -8,8 +8,8 @@
 
 use synth_core::{
     AudioEffect, BipolarValue, Describable, Hertz, ModuleCategory, ModuleDescriptor, ModuleType,
-    NormalizedValue, Param, ParameterDescriptor, ParameterUnit, PortDescriptor, ProcessContext,
-    ResponseCurve, SampleCount, SampleRate, StereoSample, TiltEqParam, WidgetHint,
+    NormalizedValue, Param, ParameterDescriptor, PortDescriptor, ProcessContext, ResponseCurve,
+    SampleCount, SampleRate, StereoSample, TiltEqParam, WidgetHint,
 };
 
 /// Tilt EQ — single-knob spectral balance control.
@@ -74,7 +74,6 @@ impl Describable for TiltEq {
                 .description("Pivot frequency")
                 .range(100.0, 8000.0)
                 .default(800.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob)
                 .curve(ResponseCurve::Logarithmic),
             )

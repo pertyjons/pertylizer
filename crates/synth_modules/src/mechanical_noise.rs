@@ -181,7 +181,6 @@ impl Describable for MechanicalNoise {
                 .description("Noise burst duration")
                 .range(1.0, 100.0)
                 .default(10.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::TimeSlider),
             )
             .parameter(
@@ -193,7 +192,6 @@ impl Describable for MechanicalNoise {
                 .description("Noise filter cutoff frequency")
                 .range(100.0, 10000.0)
                 .default(3000.0)
-                .unit(ParameterUnit::Hertz)
                 .curve(ResponseCurve::Logarithmic)
                 .widget(WidgetHint::FrequencySlider),
             )

@@ -265,7 +265,6 @@ impl Describable for Filter {
                 )
                 .description("Cutoff frequency")
                 .value_range(Hertz::FILTER_RANGE)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::FrequencySlider)
                 .curve(ResponseCurve::Logarithmic),
             )
@@ -663,7 +662,6 @@ impl Describable for LadderFilter {
                 )
                 .description("Cutoff frequency")
                 .value_range(Hertz::FILTER_RANGE)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::FrequencySlider)
                 .curve(ResponseCurve::Logarithmic),
             )
@@ -687,7 +685,6 @@ impl Describable for LadderFilter {
                 .description("Saturation amount (soft clipping above 1.0)")
                 .range(0.5, 4.0)
                 .default(1.0)
-                .unit(ParameterUnit::None)
                 .widget(WidgetHint::Knob),
             )
             .port(

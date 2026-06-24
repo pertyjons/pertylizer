@@ -8,8 +8,8 @@
 
 use synth_core::{
     AudioEffect, Describable, Gain, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue,
-    Param, ParameterDescriptor, ParameterUnit, ProcessContext, SampleCount, SampleRate, Seconds,
-    Semitones, ShimmerReverbParam, StereoSample, WidgetHint,
+    Param, ParameterDescriptor, ProcessContext, SampleCount, SampleRate, Seconds, Semitones,
+    ShimmerReverbParam, StereoSample, WidgetHint,
 };
 use synth_dsp::FdnCore;
 
@@ -238,7 +238,6 @@ impl Describable for ShimmerReverb {
                 .description("Initial delay before reverb onset")
                 .range(0.0, 0.5)
                 .default(0.0)
-                .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::TimeSlider),
             )
             .parameter(
@@ -250,7 +249,6 @@ impl Describable for ShimmerReverb {
                 .description("Pitch shift in semitones")
                 .range(-12.0, 24.0)
                 .default(12.0)
-                .unit(ParameterUnit::Semitones)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

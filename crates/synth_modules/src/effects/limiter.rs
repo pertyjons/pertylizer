@@ -8,8 +8,8 @@
 
 use synth_core::{
     AudioEffect, Decibels, Describable, LimiterParam, Milliseconds, ModuleCategory,
-    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ParameterUnit,
-    ProcessContext, ResponseCurve, SampleCount, SampleRate, StereoSample, WidgetHint,
+    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor, ProcessContext,
+    ResponseCurve, SampleCount, SampleRate, StereoSample, WidgetHint,
 };
 
 /// Maximum look-ahead time the limiter advertises (see the `look_ahead`
@@ -102,7 +102,6 @@ impl Describable for Limiter {
                 .description("Output ceiling level")
                 .range(-12.0, 0.0)
                 .default(-0.3)
-                .unit(ParameterUnit::Decibels)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -114,7 +113,6 @@ impl Describable for Limiter {
                 .description("Look-ahead time for peak detection")
                 .range(0.5, 5.0)
                 .default(3.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -126,7 +124,6 @@ impl Describable for Limiter {
                 .description("Gain recovery time")
                 .range(10.0, 500.0)
                 .default(100.0)
-                .unit(ParameterUnit::Milliseconds)
                 .curve(ResponseCurve::Logarithmic)
                 .widget(WidgetHint::Knob),
             )

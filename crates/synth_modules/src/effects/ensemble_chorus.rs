@@ -10,7 +10,7 @@ use synth_core::NoiseState;
 use synth_core::{
     AudioEffect, BufferIndex, Describable, EnsembleChorusParam, Hertz, Milliseconds,
     ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param, ParameterDescriptor,
-    ParameterUnit, Phase, ProcessContext, SampleRate, StereoSample, VoiceCount, WidgetHint,
+    Phase, ProcessContext, SampleRate, StereoSample, VoiceCount, WidgetHint,
 };
 
 /// Maximum delay in milliseconds (for buffer sizing).
@@ -118,7 +118,6 @@ impl Describable for EnsembleChorus {
                 .description("LFO rate")
                 .range(0.2, 1.5)
                 .default(0.6)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -130,7 +129,6 @@ impl Describable for EnsembleChorus {
                 .description("Modulation depth in ms")
                 .range(0.2, 2.5)
                 .default(1.2)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -142,7 +140,6 @@ impl Describable for EnsembleChorus {
                 .description("Base delay time in ms")
                 .range(5.0, 20.0)
                 .default(12.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

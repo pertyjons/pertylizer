@@ -12,7 +12,7 @@
 use eframe::egui::{self, Color32, Ui, Vec2};
 use egui_remixicon::icons as ri;
 
-use synth_core::{ChoiceOption, ModuleDescriptor, ParameterDescriptor, WidgetHint};
+use synth_core::{ChoiceOption, ModuleDescriptor, ParamKind, ParameterDescriptor, WidgetHint};
 
 use super::{Knob, WaveformSelector, WaveformType};
 use crate::gui::theme::theme;
@@ -121,6 +121,18 @@ fn render_group(hint: WidgetHint) -> Option<RenderGroup> {
     }
 }
 
+/// Kind-aware render group for a descriptor (Phase 6). A `Bool`-kind parameter
+/// that renders at all is always a checkbox (Toggle) regardless of its widget hint
+/// — defensive so a bool can never be drawn as a 0–1 slider/knob. A `Hidden`
+/// (custom-UI) bool stays hidden. Otherwise the widget hint decides.
+fn param_render_group(p: &ParameterDescriptor) -> Option<RenderGroup> {
+    let base = render_group(p.widget_hint);
+    if p.kind == ParamKind::Bool && base.is_some() {
+        return Some(RenderGroup::Toggle);
+    }
+    base
+}
+
 /// Render every parameter of `descriptor` as the widget its [`WidgetHint`] asks
 /// for, and return the ones the user changed this frame.
 ///
@@ -143,7 +155,7 @@ pub fn draw_parameter_grid<'d>(
         descriptor
             .parameters
             .iter()
-            .filter(|p| render_group(p.widget_hint) == Some(group))
+            .filter(|p| param_render_group(p) == Some(group))
             .collect()
     };
     let waveform_params = by_group(RenderGroup::Waveform);
@@ -206,7 +218,13 @@ pub fn draw_parameter_grid<'d>(
             }
             ui.add_space(theme().spacing.xs);
             let is_time = matches!(param.widget_hint, WidgetHint::TimeSlider);
-            let slider = if is_time && param.range.min > 0.0 {
+            let slider = if param.kind == ParamKind::Integer {
+                // Integer kind: snap to whole numbers, no decimals (Phase 6).
+                egui::Slider::new(&mut value, param.range.min..=param.range.max)
+                    .step_by(1.0)
+                    .min_decimals(0)
+                    .max_decimals(0)
+            } else if is_time && param.range.min > 0.0 {
                 egui::Slider::new(&mut value, param.range.min..=param.range.max)
                     .logarithmic(true)
                     .suffix("s")
@@ -353,8 +371,32 @@ pub fn draw_knobs<'d>(
 
 #[cfg(test)]
 mod tests {
-    use super::{RenderGroup, render_group};
+    use super::{RenderGroup, param_render_group, render_group};
     use synth_core::WidgetHint;
+
+    #[test]
+    fn bool_kind_renders_as_toggle_but_hidden_stays_hidden() {
+        use synth_core::params::{MsegParam, OscillatorParam};
+        use synth_core::{Hertz, Param, ParameterDescriptor};
+        // A Bool with a Knob hint is forced to a checkbox (Toggle).
+        let bool_knob =
+            ParameterDescriptor::float("loop", Param::Mseg(MsegParam::LoopEnabled(false)), "Loop")
+                .widget(WidgetHint::Knob);
+        assert_eq!(param_render_group(&bool_knob), Some(RenderGroup::Toggle));
+        // A Hidden bool (custom UI) stays hidden — not forced visible.
+        let bool_hidden =
+            ParameterDescriptor::float("loop", Param::Mseg(MsegParam::LoopEnabled(false)), "Loop")
+                .widget(WidgetHint::Hidden);
+        assert_eq!(param_render_group(&bool_hidden), None);
+        // A non-bool param follows its widget hint.
+        let cont = ParameterDescriptor::float(
+            "freq",
+            Param::Oscillator(OscillatorParam::Frequency(Hertz::new(440.0))),
+            "Freq",
+        )
+        .widget(WidgetHint::Knob);
+        assert_eq!(param_render_group(&cont), Some(RenderGroup::Knob));
+    }
 
     #[test]
     fn previously_dropped_hints_now_render() {

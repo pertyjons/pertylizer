@@ -77,10 +77,10 @@ impl MsegParam {
 
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::SegmentCount(_) => Self::SegmentCount((value as u8).clamp(1, 16)),
-            Self::SustainSegment(_) => Self::SustainSegment((value as u8).min(15)),
-            Self::LoopStart(_) => Self::LoopStart((value as u8).min(15)),
-            Self::LoopEnd(_) => Self::LoopEnd((value as u8).min(15)),
+            Self::SegmentCount(_) => Self::SegmentCount((value.round() as u8).clamp(1, 16)),
+            Self::SustainSegment(_) => Self::SustainSegment((value.round() as u8).min(15)),
+            Self::LoopStart(_) => Self::LoopStart((value.round() as u8).min(15)),
+            Self::LoopEnd(_) => Self::LoopEnd((value.round() as u8).min(15)),
             Self::LoopEnabled(_) => Self::LoopEnabled(value > 0.5),
             Self::TimeScale(_) => Self::TimeScale(TimeScale::new(value)),
             Self::SegmentTime(idx, _) => Self::SegmentTime(*idx, Seconds::new(value)),

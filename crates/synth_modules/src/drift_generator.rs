@@ -10,8 +10,7 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{DriftGeneratorParam, ModuleType, Param};
 use synth_core::{Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
@@ -82,7 +81,6 @@ impl Describable for DriftGenerator {
                 .description("How fast the drift wanders")
                 .range(0.01, 5.0)
                 .default(0.2)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob)
                 .curve(ResponseCurve::Logarithmic),
             )

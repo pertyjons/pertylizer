@@ -281,6 +281,27 @@ Three issues observed with the visualizer modules (`Oscilloscope`, `SpectrumAnal
   `crates/pertylizer/src/gui/widgets/spectrum.rs` — add rect clipping and/or clamp/sanitize the plotted
   values, and confirm the painter is clipped to the graph rect.
 
+### 3.8 `ModuleParam` single-definition cleanup (MAYBE — aesthetics only, future)
+
+- [ ] **Collapse the inherent-vs-trait duplication for the param method set — purely for
+  "one definition" tidiness, low priority.** Phase 7 of the param-type-system work
+  (`plans/param-type-system-plan.md` §10, shipped) added the `ModuleParam` trait via a
+  delegation macro: each of the 67 `*Param` enums + `Param` `impl ModuleParam` by
+  *forwarding* to the existing inherent methods (`fn as_f32(&self) { Self::as_f32(self) }`).
+  So the bodies live in the inherent impls and the trait is a thin forwarding layer — there
+  is a small amount of duplication (the ~470 macro-generated one-liners). The "pure" form
+  would make `ModuleParam` the **single** definition and delete the inherent methods.
+  - **Why it's only a maybe:** the literal version means the trait must be in scope at the
+    **~2489 call sites** of `.as_f32()`/`.with_f32()`/`.same_kind()` across the workspace
+    (via a `synth_core::prelude` glob in dozens of files). That is a large, sprawling,
+    purely-cosmetic diff with **zero functional/correctness gain** — the aggregate `Param`
+    match + the macro already force the full contract on every enum (a missing method is a
+    compile error today). YAGNI: nothing currently needs it.
+  - **If we ever do it:** **own branch + own session** (it touches most files in the
+    workspace). Mechanism: move each method body into `impl ModuleParam for X`, delete the
+    inherent method, and add `use synth_core::prelude::*` where the compiler flags missing
+    trait scope. Let the compiler drive the call-site fixes; gate per crate.
+
 ---
 
 ## 4. AI & Automation
@@ -302,6 +323,43 @@ Three issues observed with the visualizer modules (`Oscilloscope`, `SpectrumAnal
   **allow-list of legitimate one-offs** (not every `Hertz`/`Cents` param maps to a shared preset — some
   genuinely have a unique range), or it produces false positives. Belt-and-suspenders on top of the
   per-param asserts; low priority.
+
+### 4.3 `Reference`-kind params: make the schema honest
+
+`ParamKind::Reference` (the 3 params `Sampler/sample_select`, `ModMatrix/slot_source`,
+`ModMatrix/slot_destination`) is *represented* — every one emits `value_kind:
+"reference"` in `descriptors.json` (Phase 5a), and values serialize as a `Choice`
+string or a `{sample_id}` object — but the schema doesn't describe a *usable*
+reference. (Note JSON Schema's `$ref` is schema-reuse, **not** a data-level
+"points-at-another-instance" type; standard JSON Schema cannot validate dynamic
+cross-references, so these need a discovery signal + app/MCP-level validation, not a
+validator.) Three concrete gaps, all in `crates/pertylizer/src/bin/gen_schemas.rs`
+(`parameter_descriptor`) unless noted:
+
+- [ ] **1. `Sampler/sample_select` advertises a meaningless numeric range.** It emits
+  `min: 0.0, max: 1.0, default: 0.5, unit: "none"` for what is really a `u64` sample
+  id. Stop emitting `min`/`max`/`default`/`response_curve` for a `Reference` param;
+  instead mark it as a sample reference and point clients at a discovery tool (e.g.
+  `list_samples`), and constrain the JSON value to the `{ "sample_id": integer }`
+  shape rather than a number. An LLM/MCP client currently has no way to know it should
+  set a sample id (or where to find valid ones).
+- [ ] **2. `ModMatrix/slot_source` & `slot_destination` carry a stale static
+  `choices` list.** The emitted `choices` are the legacy enumerated targets
+  (`osc1_pitch`, `lfo1`, …) but real addressing is now **free-form** dynamic
+  (`flt-3.cutoff`, any `module.param`; macros like `velocity`/`mod_wheel`) parsed by
+  `SrcAddr`/`DestAddr`. So the schema *lies* about what is valid. Replace the static
+  enum with either a `pattern` for the address grammar (`^none$|^[a-z]+-\d+\.\w+$|
+  <macro>$`) or a `"see list_modulation_targets"` pointer field, so the schema doesn't
+  claim a false fixed set. (Relates to §3.4 — the dynamic mod-matrix surfacing.)
+- [ ] **3. Give `Reference` a named, documented shape.** Add a shared
+  `$defs/Reference` (or per-kind `$defs/SampleRef` + `$defs/ModAddress`) in
+  `patch.schema.json` / `project.schema.json` and `$ref` the reference-param values to
+  it, so a reference value has one documented form instead of being an anonymous arm
+  of the untagged `ParamValue` union. Belt-and-suspenders on top of 1 and 2.
+
+Surfaced reviewing the value-kind work (`plans/param-type-system-plan.md`): the
+`Reference` kind is a good **discovery signal** for MCP/AI clients ("don't guess a
+number — call a discovery tool"), but today the schema under-describes it.
 
 ---
 

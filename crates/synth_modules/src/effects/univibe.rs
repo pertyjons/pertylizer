@@ -9,8 +9,8 @@
 
 use synth_core::{
     AudioEffect, Describable, Hertz, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue,
-    Param, ParameterDescriptor, ParameterUnit, Phase, PortDescriptor, ProcessContext,
-    ResponseCurve, SampleCount, SampleRate, StereoSample, UnivibeParam, WidgetHint,
+    Param, ParameterDescriptor, Phase, PortDescriptor, ProcessContext, ResponseCurve, SampleCount,
+    SampleRate, StereoSample, UnivibeParam, WidgetHint,
 };
 
 /// Number of all-pass filter stages.
@@ -127,7 +127,6 @@ impl Describable for Univibe {
                 .description("LFO speed")
                 .range(0.1, 10.0)
                 .default(2.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob)
                 .curve(ResponseCurve::Logarithmic),
             )
