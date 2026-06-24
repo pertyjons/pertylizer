@@ -202,7 +202,6 @@ impl Describable for PhaseVocoder {
                 .description("Pitch shift in semitones")
                 .range(-24.0, 24.0)
                 .default(0.0)
-                .unit(ParameterUnit::Semitones)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

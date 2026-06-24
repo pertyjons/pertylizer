@@ -343,7 +343,6 @@ impl Describable for Envelope {
                 .description("Attack time (silence to peak)")
                 .range(0.0, 10.0)
                 .default(0.01)
-                .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::TimeSlider)
                 .curve(ResponseCurve::Exponential),
             )
@@ -356,7 +355,6 @@ impl Describable for Envelope {
                 .description("Decay time (peak to sustain)")
                 .range(0.0, 10.0)
                 .default(0.1)
-                .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::TimeSlider)
                 .curve(ResponseCurve::Exponential),
             )
@@ -381,7 +379,6 @@ impl Describable for Envelope {
                 .description("Release time (gate-off to silence)")
                 .range(0.0, 10.0)
                 .default(0.3)
-                .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::TimeSlider)
                 .curve(ResponseCurve::Exponential),
             )

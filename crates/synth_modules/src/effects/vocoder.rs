@@ -156,7 +156,6 @@ impl Describable for Vocoder {
                 .description("Analysis window size")
                 .range(5.0, 50.0)
                 .default(20.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
-    ResponseCurve, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortName, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{
     EasingCurve, KineticLoopMode, KineticParam, ModuleType, Param, easing_acceleration,
@@ -96,7 +96,6 @@ impl Describable for KineticModulator {
                 .description("Length of one modulation sweep")
                 .range(0.01, 10.0)
                 .default(0.5)
-                .unit(ParameterUnit::Seconds)
                 .widget(WidgetHint::TimeSlider)
                 .curve(ResponseCurve::Logarithmic),
             )

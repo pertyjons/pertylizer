@@ -16,8 +16,7 @@ use synth_core::{
 };
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
 
 /// Stereo output module - the final destination in the audio graph.
@@ -170,7 +169,6 @@ impl Describable for StereoOutput {
                 .description("Master output volume")
                 .range(0.0, 1.0)
                 .default(0.8)
-                .unit(ParameterUnit::None)
                 .widget(WidgetHint::Slider)
                 .curve(ResponseCurve::Squared),
             )
@@ -183,7 +181,6 @@ impl Describable for StereoOutput {
                 .description("Master stereo pan")
                 .range(-1.0, 1.0)
                 .default(0.0)
-                .unit(ParameterUnit::None)
                 .widget(WidgetHint::PanKnob),
             )
             .parameter(

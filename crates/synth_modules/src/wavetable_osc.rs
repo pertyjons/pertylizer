@@ -127,7 +127,6 @@ impl Describable for WavetableOsc {
                 .description("Detune in cents")
                 .range(-100.0, 100.0)
                 .default(0.0)
-                .unit(ParameterUnit::Cents)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

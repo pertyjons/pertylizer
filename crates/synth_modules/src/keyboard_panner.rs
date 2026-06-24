@@ -124,7 +124,6 @@ impl Describable for KeyboardPanner {
                 .description("Center note for panning (MIDI note)")
                 .range(0.0, 127.0)
                 .default(60.0)
-                .unit(ParameterUnit::None)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -136,7 +135,6 @@ impl Describable for KeyboardPanner {
                 .description("Pan curve shape (-1 to 1)")
                 .range(-1.0, 1.0)
                 .default(0.0)
-                .unit(ParameterUnit::None)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -148,7 +146,6 @@ impl Describable for KeyboardPanner {
                 .description("Invert panning direction")
                 .range(0.0, 1.0)
                 .default(0.0)
-                .unit(ParameterUnit::None)
                 // Discrete polarity toggle, not a continuous automation target.
                 .modulatable(false)
                 .widget(WidgetHint::Toggle),

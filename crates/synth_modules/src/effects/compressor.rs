@@ -1,7 +1,7 @@
 //! Dynamics compressor with adjustable threshold, ratio, attack, and release.
 
 use synth_core::{
-    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
+    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     PortDescriptor, ProcessContext, StereoSample, WidgetHint,
 };
 use synth_core::{CompressorParam, ModuleType, Param};
@@ -129,7 +129,6 @@ impl Describable for Compressor {
                 .description("Compression threshold")
                 .range(-60.0, 0.0)
                 .default(-20.0)
-                .unit(ParameterUnit::Decibels)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -152,7 +151,6 @@ impl Describable for Compressor {
                 .description("Attack time")
                 .range(0.1, 100.0)
                 .default(10.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -164,7 +162,6 @@ impl Describable for Compressor {
                 .description("Release time")
                 .range(10.0, 1000.0)
                 .default(100.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -176,7 +173,6 @@ impl Describable for Compressor {
                 .description("Makeup gain")
                 .range(0.0, 24.0)
                 .default(0.0)
-                .unit(ParameterUnit::Decibels)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -210,7 +206,6 @@ impl Describable for Compressor {
                 .description("Sidechain high-pass filter frequency")
                 .range(20.0, 500.0)
                 .default(80.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
     }

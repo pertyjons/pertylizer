@@ -109,7 +109,6 @@ impl Describable for BodyResonance {
                 .description("Primary resonant frequency")
                 .range(50.0, 2000.0)
                 .default(200.0)
-                .unit(ParameterUnit::Hertz)
                 .curve(ResponseCurve::Logarithmic)
                 .widget(WidgetHint::FrequencySlider),
             )

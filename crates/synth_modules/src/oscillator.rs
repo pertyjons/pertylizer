@@ -348,7 +348,6 @@ impl Describable for Oscillator {
                 )
                 .description("Base frequency")
                 .value_range(Hertz::OSC_RANGE)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::FrequencySlider)
                 .curve(ResponseCurve::Logarithmic),
             )
@@ -360,7 +359,6 @@ impl Describable for Oscillator {
                 )
                 .description("Fine tune in cents")
                 .value_range(Cents::DETUNE_RANGE)
-                .unit(ParameterUnit::Cents)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -372,7 +370,6 @@ impl Describable for Oscillator {
                 .description("Coarse tune in semitones")
                 .range(-24.0, 24.0)
                 .default(0.0)
-                .unit(ParameterUnit::Semitones)
                 // Coarse pitch is set by the dedicated `pitch`/`frequency` mod
                 // targets, not this base param, so it is not a mod target itself.
                 .modulatable(false)
@@ -413,7 +410,6 @@ impl Describable for Oscillator {
                 .description("Output level")
                 .range(0.0, 1.0)
                 .default(1.0)
-                .unit(ParameterUnit::None)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -459,7 +455,6 @@ impl Describable for Oscillator {
                 )
                 .description("Unison detune spread in cents")
                 .value_range(Cents::UNISON_DETUNE_RANGE)
-                .unit(ParameterUnit::Cents)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

@@ -4,7 +4,7 @@ use synth_core::{
     AllpassState, BipolarValue, Hertz, NormalizedValue, Phase, SampleRate, StereoSample,
 };
 use synth_core::{
-    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
+    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{ModuleType, Param, PhaserParam};
@@ -108,7 +108,6 @@ impl Describable for Phaser {
                 .description("LFO rate")
                 .range(0.05, 5.0)
                 .default(0.5)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -142,7 +141,6 @@ impl Describable for Phaser {
                 .description("Center frequency")
                 .range(100.0, 4000.0)
                 .default(1000.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

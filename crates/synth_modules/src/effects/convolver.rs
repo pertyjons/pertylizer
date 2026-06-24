@@ -531,7 +531,6 @@ impl Describable for Convolver {
                 .description("Time before reverb onset")
                 .range(0.0, 200.0)
                 .default(0.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

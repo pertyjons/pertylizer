@@ -10,8 +10,7 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{BeatDetectorParam, ModuleType, Param};
 use synth_core::{Hertz, MidiNote, Milliseconds, NormalizedValue, PortName, SampleRate, Velocity};
@@ -89,7 +88,6 @@ impl Describable for BeatDetector {
                 .description("Envelope lowpass frequency")
                 .range(20.0, 1000.0)
                 .default(150.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob)
                 .curve(ResponseCurve::Logarithmic),
             )
@@ -102,7 +100,6 @@ impl Describable for BeatDetector {
                 .description("Gate hold time")
                 .range(1.0, 500.0)
                 .default(50.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .port(

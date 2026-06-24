@@ -7,7 +7,7 @@
 //! Modes: Up-shift, Down-shift, or Stereo (up L / down R).
 
 use synth_core::{
-    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor, ParameterUnit,
+    AudioEffect, Describable, ModuleCategory, ModuleDescriptor, ParameterDescriptor,
     PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{FrequencyShifterParam, ModuleType, Param};
@@ -107,7 +107,6 @@ impl Describable for FrequencyShifter {
                 .description("Frequency shift amount in Hz")
                 .range(-1000.0, 1000.0)
                 .default(0.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

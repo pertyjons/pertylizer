@@ -75,7 +75,6 @@ impl Describable for EnvelopeFollower {
                 .description("How fast the follower rises")
                 .range(0.1, 100.0)
                 .default(5.0)
-                .unit(ParameterUnit::Milliseconds)
                 .curve(ResponseCurve::Logarithmic)
                 .widget(WidgetHint::Knob),
             )
@@ -90,7 +89,6 @@ impl Describable for EnvelopeFollower {
                 .description("How fast the follower falls")
                 .range(1.0, 1000.0)
                 .default(50.0)
-                .unit(ParameterUnit::Milliseconds)
                 .curve(ResponseCurve::Logarithmic)
                 .widget(WidgetHint::Knob),
             )

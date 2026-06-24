@@ -11,8 +11,7 @@ use std::f32::consts::{PI, TAU};
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{
     BipolarValue, BufferIndex, FrameCount, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName,
@@ -499,7 +498,6 @@ impl Describable for MathOscillator {
                 .description("Base frequency")
                 .range(20.0, 20000.0)
                 .default(440.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::FrequencySlider)
                 .curve(ResponseCurve::Logarithmic),
             )

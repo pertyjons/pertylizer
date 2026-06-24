@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{
     LaSynthParam, MidiNote, Milliseconds, NormalizedValue, PortName, SampleRate, Velocity,
@@ -213,7 +213,6 @@ impl Describable for LaSynth {
                 .description("Duration of attack transient")
                 .range(1.0, 200.0)
                 .default(30.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -236,7 +235,6 @@ impl Describable for LaSynth {
                 .description("Crossfade time from attack to sustain")
                 .range(1.0, 500.0)
                 .default(50.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

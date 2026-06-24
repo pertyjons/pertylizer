@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{Cents, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, VoiceSynthParam};
@@ -397,7 +397,6 @@ impl Describable for VoiceSynth {
                 .description("Vibrato LFO rate")
                 .range(0.0, 12.0)
                 .default(5.5)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -409,7 +408,6 @@ impl Describable for VoiceSynth {
                 .description("Vibrato depth in cents")
                 .range(0.0, 100.0)
                 .default(0.0)
-                .unit(ParameterUnit::Cents)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -435,7 +433,6 @@ impl Describable for VoiceSynth {
                 .description("Pitch spread across unison voices")
                 .range(0.0, 50.0)
                 .default(15.0)
-                .unit(ParameterUnit::Cents)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

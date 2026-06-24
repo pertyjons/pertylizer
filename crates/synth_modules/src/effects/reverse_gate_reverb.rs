@@ -8,7 +8,7 @@
 
 use synth_core::{
     AudioEffect, Decibels, Describable, Milliseconds, ModuleCategory, ModuleDescriptor, ModuleType,
-    NormalizedValue, Param, ParameterDescriptor, ParameterUnit, ProcessContext, ReverseGateMode,
+    NormalizedValue, Param, ParameterDescriptor, ProcessContext, ReverseGateMode,
     ReverseGateReverbParam, ReverseGateTrigger, SampleRate, StereoSample, WidgetHint,
 };
 
@@ -138,7 +138,6 @@ impl Describable for ReverseGateReverb {
                 .description("Capture window length")
                 .range(100.0, 2000.0)
                 .default(600.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -174,7 +173,6 @@ impl Describable for ReverseGateReverb {
                 .description("Threshold for trigger detection")
                 .range(-60.0, 0.0)
                 .default(-24.0)
-                .unit(ParameterUnit::Decibels)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -188,7 +186,6 @@ impl Describable for ReverseGateReverb {
                 .description("Envelope gate/decay time")
                 .range(20.0, 500.0)
                 .default(120.0)
-                .unit(ParameterUnit::Milliseconds)
                 .widget(WidgetHint::Knob),
             )
             .parameter(

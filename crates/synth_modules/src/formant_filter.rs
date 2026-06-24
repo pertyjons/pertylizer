@@ -10,8 +10,7 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{FormantFilterParam, ModuleType, Param};
 use synth_core::{Gain, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
@@ -173,7 +172,6 @@ impl Describable for FormantFilter {
                 .description("Scales formant frequencies")
                 .range(200.0, 5000.0)
                 .default(1000.0)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::FrequencySlider)
                 .curve(ResponseCurve::Logarithmic),
             )

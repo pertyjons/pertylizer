@@ -4,8 +4,7 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{
     BeatDivision, BipolarValue, Hertz, MidiNote, NormalizedValue, Phase, PortName, RetriggerMode,
@@ -162,7 +161,6 @@ impl Describable for Lfo {
                 )
                 .description("LFO rate")
                 .value_range(Hertz::LFO_RANGE)
-                .unit(ParameterUnit::Hertz)
                 .widget(WidgetHint::FrequencySlider)
                 .curve(ResponseCurve::Logarithmic),
             )
@@ -209,7 +207,6 @@ impl Describable for Lfo {
                 .description("Beats per LFO cycle when tempo-synced (1 = quarter note)")
                 .range(0.125, 4.0)
                 .default(1.0)
-                .unit(ParameterUnit::Beats)
                 .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
