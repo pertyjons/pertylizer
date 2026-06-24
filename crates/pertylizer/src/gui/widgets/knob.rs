@@ -6,6 +6,12 @@ use crate::gui::theme::theme;
 use synth_core::ValueRange;
 use synth_core::{ParamKind, ParameterDescriptor, ParameterUnit, ResponseCurve};
 
+/// Pixels of vertical drag per discrete step on a stepped (integer/quantized)
+/// knob. Range-independent on purpose, so small-range integer knobs (e.g. MSEG
+/// segment counts / loop points) aren't sluggish — every `step` is the same
+/// drag distance regardless of how many steps the range spans.
+const STEP_DRAG_PIXELS: f32 = 8.0;
+
 /// A rotary knob widget.
 pub struct Knob<'a> {
     value: &'a mut f32,
@@ -147,10 +153,30 @@ impl<'a> Knob<'a> {
 
         if response.dragged() {
             let delta = -response.drag_delta().y;
-            let sensitivity = t.style.knob_sensitivity;
-            let normalized = self.response_curve.normalize(*self.value, self.range);
-            let new_normalized = (normalized + delta * sensitivity).clamp(0.0, 1.0);
-            *self.value = self.snapped(self.response_curve.denormalize(new_normalized, self.range));
+            if let Some(step) = self.step {
+                // Stepped (integer/quantized) knob: accumulate an unsnapped value
+                // across frames in egui memory so sub-step drag isn't discarded by
+                // snapping each frame, and move in value space at a fixed
+                // pixels-per-step rate (range-independent — small ranges stay
+                // responsive). Snap only the value we write out.
+                let acc_id = response.id.with("knob_drag_acc");
+                let prev = if response.drag_started() {
+                    *self.value
+                } else {
+                    ui.memory(|m| m.data.get_temp::<f32>(acc_id))
+                        .unwrap_or(*self.value)
+                };
+                let acc = (prev + delta * (step / STEP_DRAG_PIXELS))
+                    .clamp(self.range.min, self.range.max);
+                ui.memory_mut(|m| m.data.insert_temp(acc_id, acc));
+                *self.value = self.snapped(acc);
+            } else {
+                // Continuous knob: smooth movement in normalized (curve) space.
+                let sensitivity = t.style.knob_sensitivity;
+                let normalized = self.response_curve.normalize(*self.value, self.range);
+                let new_normalized = (normalized + delta * sensitivity).clamp(0.0, 1.0);
+                *self.value = self.response_curve.denormalize(new_normalized, self.range);
+            }
         }
 
         let painter = ui.painter();
