@@ -1,6 +1,7 @@
 //! Serializable response types for MCP tools.
 
 use serde::{Deserialize, Serialize};
+use synth_core::ParamKind;
 
 /// Information about an instrument.
 #[derive(Debug, Clone, Serialize)]
@@ -174,6 +175,10 @@ pub struct ParameterInfo {
     /// sensibly.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_curve: Option<String>,
+    /// First-class value-kind (`continuous`/`integer`/`bool`/`enum`/`reference`) —
+    /// tells a client whether to send `4` vs `4.0`, `true` vs `1.0`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_kind: Option<ParamKind>,
 }
 
 /// Information about a connection between modules.
@@ -397,6 +402,10 @@ pub struct ParamTypeInfo {
     /// Allowed choices for enum/discrete parameters (id → display name).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub choices: Option<Vec<ChoiceInfo>>,
+    /// First-class value-kind (`continuous`/`integer`/`bool`/`enum`/`reference`) —
+    /// the authoritative type signal alongside `min`/`max`/`choices`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_kind: Option<ParamKind>,
 }
 
 /// A named choice for an enum/discrete parameter.
@@ -796,6 +805,9 @@ pub struct ReturnEffectParamInfo {
     pub value: f32,
     /// Formatted value with unit (e.g. "0.35", "250 ms").
     pub display: String,
+    /// First-class value-kind (`continuous`/`integer`/`bool`/`enum`/`reference`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_kind: Option<ParamKind>,
 }
 
 /// Information about a pattern placement in the arrangement.
@@ -942,6 +954,9 @@ pub struct PatchParamInfo {
     pub name: String,
     /// Parameter value (numeric, string choice, or bool).
     pub value: PatchParamValue,
+    /// First-class value-kind (`continuous`/`integer`/`bool`/`enum`/`reference`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_kind: Option<ParamKind>,
 }
 
 /// Parameter value variants for patch resources.

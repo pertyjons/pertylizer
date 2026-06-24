@@ -248,6 +248,7 @@ impl AppSynthBridge {
             type_id: Some(pd.type_id.clone()),
             is_automatable: Some(pd.is_automatable()),
             response_curve: Some(format!("{:?}", pd.response_curve)),
+            value_kind: Some(pd.kind),
         };
         Ok((mid, pd.id.with_f32(value), info))
     }
@@ -567,6 +568,7 @@ impl SynthBridge for AppSynthBridge {
                                 type_id: pd.map(|pd| pd.type_id.clone()),
                                 is_automatable: pd.map(|pd| pd.is_automatable()),
                                 response_curve: pd.map(|pd| format!("{:?}", pd.response_curve)),
+                                value_kind: pd.map(|pd| pd.kind),
                             }
                         })
                         .collect(),
@@ -1263,6 +1265,7 @@ impl SynthBridge for AppSynthBridge {
                 type_id: Some(pd.type_id.clone()),
                 is_automatable: Some(pd.is_automatable()),
                 response_curve: Some(format!("{:?}", pd.response_curve)),
+                value_kind: Some(pd.kind),
             });
         }
         Ok(ParameterInfo {
@@ -1276,6 +1279,7 @@ impl SynthBridge for AppSynthBridge {
             type_id: None,
             is_automatable: None,
             response_curve: None,
+            value_kind: None,
         })
     }
 
@@ -1361,6 +1365,10 @@ impl SynthBridge for AppSynthBridge {
                                         ParamValue::Bool(b) => PatchParamValue::Bool(*b),
                                         ParamValue::Choice(s) => PatchParamValue::Choice(s.clone()),
                                     },
+                                    // The `PatchParamValue` variant already conveys
+                                    // the type here; a per-param descriptor lookup
+                                    // would rebuild a module instance, so left None.
+                                    value_kind: None,
                                 })
                                 .collect(),
                         })
@@ -7057,7 +7065,8 @@ fn return_effect_info(effect: &synth_engine::ReturnEffectSnapshot) -> synth_mcp:
                 name: pd.map(|pd| pd.name.clone()).unwrap_or_default(),
                 type_id: pd.map(|pd| pd.type_id.clone()).unwrap_or_default(),
                 value,
-                display: pd.map_or_else(|| format!("{value}"), |pd| pd.unit.format(value)),
+                display: pd.map_or_else(|| format!("{value}"), |pd| pd.format(value)),
+                value_kind: pd.map(|pd| pd.kind),
             }
         })
         .collect();
@@ -12526,6 +12535,7 @@ fn build_module_type_info(
                     })
                     .collect()
             }),
+            value_kind: Some(p.kind),
         })
         .collect();
 

@@ -1369,6 +1369,21 @@ mod tests {
     }
 
     #[test]
+    fn param_kind_serializes_lowercase() {
+        use synth_core::ParamKind;
+        // The MCP wire form (descriptors.json `value_kind`, DTO `value_kind`).
+        for (k, s) in [
+            (ParamKind::Continuous, "\"continuous\""),
+            (ParamKind::Integer, "\"integer\""),
+            (ParamKind::Bool, "\"bool\""),
+            (ParamKind::Enum, "\"enum\""),
+            (ParamKind::Reference, "\"reference\""),
+        ] {
+            assert_eq!(serde_json::to_string(&k).expect("serialize"), s);
+        }
+    }
+
+    #[test]
     fn sample_id_round_trips_lossless_u64() {
         let big = (1u64 << 33) + 5; // > 2^24 — cannot survive an f32 round-trip
         let desc = ParameterDescriptor::float("sample_select", Param::sample_select(0), "Sample");

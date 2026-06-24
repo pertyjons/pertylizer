@@ -430,7 +430,7 @@ per `CLAUDE.md`). Dependency order:
 | 2b    | `curve` audit (no silent auto-flip; behavioral) ✅ **done**          | engine        | medium         | 1          |
 | 3     | Kind-aware display (decimal-free ints; bool) ✅ **done**             | core+GUI      | low            | 1          |
 | 4     | Serialization emits `Int`/`Bool`; consistent int rounding ✅ **done** | serialization | low            | 1          |
-| 5     | Schema `type`/`kind`; MCP validation by kind — 5a ✅, 5b (DTOs) next  | schema/MCP    | low            | 1          |
+| 5     | Schema `type`/`kind`; MCP validation by kind ✅ **done** (5a+5b)      | schema/MCP    | low            | 1          |
 | 6     | GUI interaction polish (snap/scroll/text by kind)                    | GUI           | medium         | 3          |
 | 7     | `ModuleParam` shared trait (recommended)                             | engine        | medium (churn) | 1          |
 | 8     | `#[derive(ParamReflect)]` proc-macro — **skipped**                   | —             | —              | —          |
@@ -1020,9 +1020,17 @@ unit; the full gate must be green before each commit.
   bools, range-checks Continuous/Enum as before — returning the validated value.
   Both MCP `set_parameter` paths **capture** it, so a `4.3` integer is applied *and*
   echoed as `4`. Kind-aware `validate_f32` test added. *(done)*
-- [ ] *(Phase 5b)* Extend the Group-B DTOs (`ParamTypeInfo`, `ParameterInfo`,
-  `ReturnEffectParamInfo`, `PatchParamInfo`) with `value_kind`; add an `Int` path to
-  the MCP input carriers (`BridgeParamValue`, `ParamValueInput`).
+- [x] *(Phase 5b)* Extended the Group-B DTOs (`ParameterInfo`, `ParamTypeInfo`,
+  `ReturnEffectParamInfo`, `PatchParamInfo`) with `value_kind: Option<ParamKind>`
+  (`ParamKind` now serializes lowercase, matching `descriptors.json`). Populated at
+  all 7 construction sites from the descriptor (`PatchParamInfo` stays `None` — its
+  `PatchParamValue` variant already conveys the type, and a per-param descriptor
+  lookup would rebuild a module). MCP display routes through the kind-aware
+  formatter. *(done)*
+- [ ] *(Phase 5b — deferred, low value)* typed `Int` path on the MCP input carriers
+  (`BridgeParamValue`, `ParamValueInput`): functionally redundant — integers already
+  round-trip via `Number(f64)` → resolve → kind-aware `validate` (rounds). Add only
+  if a client needs to send a *typed* integer.
 
 **Step 5 — Trait (Phase 7):**
 
